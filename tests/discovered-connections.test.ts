@@ -25,7 +25,12 @@ test(
     const oauthToken = 'fixture-oauth-token';
     const secretKey = randomBytes(32);
     const calls: string[] = [];
-    const cliCalls: Array<{ taskId: string; command: string; args: string[] }> = [];
+    const cliCalls: Array<{
+      taskId: string;
+      command: string;
+      args: string[];
+      signal?: AbortSignal;
+    }> = [];
     const task = { id: randomUUID(), revision: 7 };
     const transport: DiscoveredTransport = {
       validateEndpoint: async (endpoint) => endpoint,
@@ -133,11 +138,11 @@ test(
         keyStore,
         grantVault,
         transport,
-        runCli: async (taskId, command, args, envName, suppliedToken) => {
+        runCli: async (taskId, command, args, envName, suppliedToken, _timeout, signal) => {
           assert.equal(command, 'fixture');
           assert.equal(envName, 'FIXTURE_TOKEN');
           assert.equal(suppliedToken, token);
-          cliCalls.push({ taskId, command, args });
+          cliCalls.push({ taskId, command, args, signal });
           return { exitCode: 0, output: `result ${suppliedToken}` };
         },
         oauth: {
@@ -454,6 +459,7 @@ test(
       );
       assert.equal(JSON.stringify(cliRead).includes(token), false);
       assert.equal((cliRead as { output: string }).output, 'result [redacted]');
+      const cliSignal = new AbortController().signal;
       const declaredRead = await integrations.execute(
         'fixture-owner',
         'CONNECTED_CLI',
@@ -464,8 +470,10 @@ test(
           readOnly: true,
         },
         task.id,
+        cliSignal,
       );
       assert.equal((declaredRead as { output: string }).output, 'result [redacted]');
+      assert.equal(cliCalls.at(-1)?.signal, cliSignal);
       const cliWriteArgs = {
         connectionId: cliAccount.connectionId,
         pathId: cliPath.id,
@@ -522,6 +530,10 @@ test(
           ['account', 'list'],
           ['record', 'create'],
         ],
+      );
+      assert.deepEqual(
+        cliCalls.map((call) => call.taskId),
+        [task.id, task.id, task.id, task.id],
       );
       assert.ok(cliCalls.every((call) => call.command === 'fixture'));
       assert.equal(

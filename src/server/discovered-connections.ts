@@ -136,8 +136,19 @@ function cliLooksLikeWrite(argv: string[]) {
 }
 
 function cliRead(args: Record<string, unknown>, argv: string[], testArgs: string[]) {
+  const readVerb = /^(?:get|inspect|list|search|show|status|view)$/i;
+  const declaredRead =
+    readVerb.test(argv[0] ?? '') ||
+    readVerb.test(argv[1] ?? '') ||
+    (argv[0] === 'api' &&
+      argv.some((value, index) =>
+        /^(?:-X|--method)$/i.test(value)
+          ? argv[index + 1] === 'GET'
+          : /^(?:-X|--method)=GET$/i.test(value),
+      ));
   return (
     !cliLooksLikeWrite(argv) &&
+    declaredRead &&
     (args.readOnly === true || JSON.stringify(argv) === JSON.stringify(testArgs))
   );
 }
@@ -179,6 +190,7 @@ export async function createDiscoveredConnections(
       envName: string,
       token: string,
       timeoutSeconds?: number,
+      signal?: AbortSignal,
     ) => Promise<{ exitCode: number; output: string }>;
     resumeConnection?: (taskId: string, revision: number, service: string) => Promise<boolean>;
     refresh?: () => void;
@@ -277,7 +289,8 @@ export async function createDiscoveredConnections(
     for (const path of parsed.paths) {
       if (path.kind === 'cli') {
         if (!options.runCli) throw error('CLI connections are unavailable.', 503);
-        if (cliLooksLikeWrite(path.testArgs)) throw error('The CLI check must only read.');
+        if (!cliRead({ readOnly: true }, path.testArgs, path.testArgs))
+          throw error('The CLI check must use a read command.');
         if (
           /^(?:bash|dash|env|fish|node|npx|npm|python(?:3(?:\.\d+)?)?|sh|su|sudo|zsh)$/i.test(
             path.command,
@@ -408,7 +421,7 @@ export async function createDiscoveredConnections(
           if (response.status < 200 || response.status >= 300) throw new Error();
         } else {
           const result = await options.runCli?.(
-            pending.id,
+            pending.task_id ?? pending.id,
             path.command,
             path.testArgs,
             path.envName,
@@ -750,6 +763,7 @@ export async function createDiscoveredConnections(
     args: Record<string, unknown>,
     readOnlyRequired = false,
     taskId?: string,
+    signal?: AbortSignal,
   ) {
     const { row, path } = await selected(args);
     const token = await tokenFor(row, path);
@@ -790,6 +804,7 @@ export async function createDiscoveredConnections(
             .min(1)
             .max(120)
             .parse(args.timeoutSeconds ?? 30),
+          signal,
         );
         return safeResult(result);
       } catch {
@@ -820,8 +835,12 @@ export async function createDiscoveredConnections(
     }
   }
   async function describe(args: Record<string, unknown>) {
-    const { row } = await selected(args);
-    return { name: row.name, accountName: row.account_name };
+    const { row, path } = await selected(args);
+    return {
+      name: row.name,
+      accountName: row.account_name,
+      ...(path.kind === 'cli' ? { command: path.command } : {}),
+    };
   }
   function registerRoutes(app: FastifyInstance) {
     app.get<{ Params: { id: string } }>('/api/apps/discovery/:id', async (request, reply) => {

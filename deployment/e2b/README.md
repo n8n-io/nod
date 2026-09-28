@@ -1,6 +1,6 @@
 # E2B computers
 
-The hosted E2B adapter assigns one private sandbox to each authenticated owner. Its browser, workspace, and connected CLI share that sandbox under separate Linux users: `otto-browser` (UID 1001) owns the browser, `node` (UID 1000) runs ordinary workspace commands, and `otto-connected` (UID 1002) runs one Vault-backed CLI command at a time. The server holds the E2B key, selects the template and chooses the execution user. Users do not choose providers or receive sandbox credentials.
+The hosted E2B adapter assigns one private sandbox to each authenticated owner. Its browser, workspace, and connected CLI share that sandbox under separate Linux users: `otto-browser` (UID 1001) owns the browser, `node` (UID 1000) runs ordinary workspace commands, and `otto-connected` (UID and GID 1002) runs one Vault-backed CLI command at a time from its private directory. The server holds the E2B key, selects the template and chooses the execution user. Users do not choose providers or receive sandbox credentials.
 
 The browser uses the existing Chromium/Xvfb worker and `/data/control.sock`. Its home and profile root are mode 0700; the socket and Xauthority files are mode 0600. App source and helpers are root-owned. Workspace files live under `/workspace`, with user-installed tools under `/home/node/.local`. Credential input, masked frames, supervised process-group cancellation and bounded artifact reads retain the existing adapter protocols.
 

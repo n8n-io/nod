@@ -172,7 +172,7 @@ test('a discovered CLI form shows the program and keeps the token private', asyn
     const dialog = document.querySelector('[role="dialog"]')!;
     assert.equal(dialog.querySelector('.app-discovery-path strong')?.textContent, 'CLI');
     assert.equal(dialog.querySelector('.app-discovery-path span')?.textContent, 'fixture');
-    assert.match(dialog.textContent ?? '', /Read check: fixture account show/);
+    assert.match(dialog.textContent ?? '', /Read check: fixture "account" "show"/);
     assert.equal(dialog.querySelector<HTMLInputElement>('[name="token"]')?.type, 'password');
     assert.equal(dialog.textContent?.includes('FIXTURE_TOKEN'), false);
     assert.equal(dialogButton('Connect account').disabled, false);

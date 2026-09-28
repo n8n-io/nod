@@ -88,7 +88,7 @@ export interface TaskDependencies {
     taskId: string,
     action: string,
     args: Record<string, unknown>,
-    options: { readOnly: boolean; revision: number },
+    options: { readOnly: boolean; revision: number; signal: AbortSignal },
   ) => Promise<unknown>;
   connections?: (
     action: 'list' | 'connect' | 'propose',
@@ -1364,6 +1364,7 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
         const result = await dependencies.integration(taskId, action, args, {
           readOnly: task.source_id?.startsWith('onboarding:') === true,
           revision,
+          signal: controller.signal,
         });
         return result;
       },

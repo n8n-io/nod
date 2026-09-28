@@ -30,7 +30,7 @@ def identities():
     connected = pwd.getpwnam("otto-connected")
     if (browser.pw_uid, browser.pw_gid, workspace.pw_uid, workspace.pw_gid) != (1001, 1001, 1000, 1000):
         raise ValueError()
-    if (connected.pw_uid, connected.pw_gid) != (1002, 1000):
+    if (connected.pw_uid, connected.pw_gid) != (1002, 1002):
         raise ValueError()
     for path in ["/app", "/app/src", "/app/node_modules", "/opt/otto", "/opt/otto/computer-guard.py", "/opt/otto/workspace-command.py"]:
         trusted(path)

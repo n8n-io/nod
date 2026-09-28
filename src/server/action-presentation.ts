@@ -53,6 +53,24 @@ function connectedText(value: unknown) {
   return plain(serialized.length > 1800 ? `${serialized.slice(0, 1800)} [truncated]` : serialized);
 }
 
+function cliArguments(value: unknown) {
+  if (!Array.isArray(value)) return connectedText(value);
+  const masked = value.map((part, index) => {
+    if (typeof part !== 'string') return part;
+    const previous = value[index - 1];
+    if (
+      typeof previous === 'string' &&
+      /^(?:--?)(?:api[-_]?key|auth|authorization|password|secret|token)$/i.test(previous)
+    )
+      return '[redacted]';
+    return part.replace(
+      /^(--?(?:api[-_]?key|auth|authorization|password|secret|token)=).+$/i,
+      '$1[redacted]',
+    );
+  });
+  return connectedText(masked);
+}
+
 export function actionConfirmation(
   action: string,
   args: Record<string, unknown>,
@@ -88,7 +106,10 @@ export function actionConfirmation(
     add('Tool', connectedText(args.tool));
     if (args.input !== undefined) add('Input', connectedText(args.input));
   }
-  if (action === 'CONNECTED_CLI') add('Arguments', connectedText(args.argv));
+  if (action === 'CONNECTED_CLI') {
+    add('Program', text(connection?.command));
+    add('Arguments', cliArguments(args.argv));
+  }
   for (const [key, label] of [
     ['title', 'Title'],
     ['subject', 'Subject'],

@@ -97,7 +97,7 @@ export function createE2BAdapters(options: {
           launchE2BCommand(
             allocation,
             'connected',
-            `cd /workspace/${taskId(id)} && export HOME=/home/otto-connected XDG_CONFIG_HOME=/home/otto-connected/.config && exec /usr/bin/setpriv --no-new-privs python3 -u /opt/otto/workspace-command.py`,
+            'cd /home/otto-connected && export HOME=/home/otto-connected XDG_CONFIG_HOME=/home/otto-connected/.config && exec /usr/bin/setpriv --no-new-privs python3 -u /opt/otto/workspace-command.py',
           ),
       });
     },

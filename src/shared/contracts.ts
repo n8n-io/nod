@@ -222,7 +222,9 @@ export interface Approval {
   id: string;
   action: string;
   args: Record<string, unknown>;
-  connection?: Pick<Connection, 'name' | 'accountName' | 'accountEmail'>;
+  connection?: Pick<Connection, 'name' | 'accountName' | 'accountEmail'> & {
+    command?: string;
+  };
   status: 'pending' | 'executing' | 'completed' | 'declined' | 'uncertain' | 'expired';
 }
 export interface Preferences {

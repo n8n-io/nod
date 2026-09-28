@@ -463,7 +463,8 @@ export function Apps() {
                   )}
                   {path.kind === 'cli' && (
                     <span>
-                      Read check: {path.command} {path.testArgs?.join(' ')}
+                      Read check: {path.command}{' '}
+                      {path.testArgs?.map((arg) => JSON.stringify(arg)).join(' ')}
                     </span>
                   )}
                   {path.scope && <span>Requested access: {path.scope}</span>}

@@ -312,7 +312,6 @@ export function createCommandWorkspace(options: {
                 environment: Record<string, string>,
                 timeoutSeconds = 30,
               ) => {
-                await textCommand(id, ['chmod', '-R', 'g+rwX', '.'], { signal: input.signal });
                 return connectedCommand(
                   id,
                   [program, ...args],

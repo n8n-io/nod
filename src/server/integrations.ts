@@ -882,6 +882,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     action: string,
     args: Record<string, unknown>,
     taskId?: string,
+    signal?: AbortSignal,
   ) {
     if (
       action === 'CONNECTED_HTTP' ||
@@ -891,7 +892,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       assertOwner(ownerId);
       if (!options.discovered)
         throw new IntegrationError('Discovered connections are unavailable.', 503);
-      return options.discovered.execute(action, args, false, taskId);
+      return options.discovered.execute(action, args, false, taskId, signal);
     }
     const row = await approvedConnection(ownerId, action, args);
     if ((integrationDownloadActions as readonly string[]).includes(action))
@@ -923,6 +924,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     action: string,
     args: Record<string, unknown>,
     taskId?: string,
+    signal?: AbortSignal,
   ) {
     assertOwner(ownerId);
     if (
@@ -934,7 +936,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         throw new IntegrationError('Discovered connections are unavailable.', 503);
       const read = await options.discovered.isRead(action, args);
       return read
-        ? options.discovered.execute(action, args, true, taskId)
+        ? options.discovered.execute(action, args, true, taskId, signal)
         : { requiresApproval: true, action, args };
     }
     if (action === 'SEARCH_TOOLS') {

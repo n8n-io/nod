@@ -58,6 +58,13 @@ test('connected write confirmation shows bounded request fields and masks secret
   assert.match(mcp, /New record/);
   assert.doesNotMatch(mcp, /private-fixture-key/);
   assert.ok(mcp.length < 2500);
+  const cli = actionConfirmation(
+    'CONNECTED_CLI',
+    { argv: ['api', '--token', 'private-fixture-token', '--api-key=private-fixture-key'] },
+    { name: 'GitHub', accountName: 'fixture-user', command: 'gh' },
+  );
+  assert.match(cli, /Program: gh/);
+  assert.doesNotMatch(cli, /private-fixture-token|private-fixture-key/);
 });
 
 test('schedule confirmation shows local date and frequency while messages retain useful send details', () => {

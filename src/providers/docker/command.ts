@@ -24,7 +24,7 @@ try:
  if home:
   child_env['HOME']=home
   child_env['XDG_CONFIG_HOME']=home+'/.config'
- p=subprocess.Popen(r['args'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True,env=child_env)
+ p=subprocess.Popen(r['args'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True,env=child_env,cwd=home)
 except Exception:
  if home: shutil.rmtree(home,ignore_errors=True)
  print(json.dumps({'type':'error'}),flush=True)
@@ -78,6 +78,7 @@ while True:
   except ProcessLookupError: pass
   killed=True
  if reason and now-stopping>=6:
+  if home: shutil.rmtree(home,ignore_errors=True)
   send({'type':'error'})
   sys.exit(1)
  for key,_ in sel.select(0.05):
@@ -152,7 +153,7 @@ export async function runWorkspaceCommand(options: {
               ]
             : []),
           '--workdir',
-          `/workspace/${id}`,
+          options.connected ? '/home/otto-connected' : `/workspace/${id}`,
           options.container,
           'python3',
           '-u',

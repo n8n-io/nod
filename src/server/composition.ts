@@ -507,14 +507,18 @@ export async function createApplication(
     grantVault,
     transport: createDiscoveredTransport(),
     oauth: createDiscoveredOAuth(),
-    runCli: adapters.workspace.connectedCliAvailable
-      ? async (taskId, command, args, envName, token, timeoutSeconds) => {
+    runCli: workspace.connectedCliAvailable
+      ? async (taskId, command, args, envName, token, timeoutSeconds, signal) => {
           const workspacePath = join(dataRoot, 'workspaces', taskId);
-          await mkdir(workspacePath, { recursive: true, mode: 0o700 });
-          const session = adapters.workspace.open({
+          const session = workspace.open({
             taskId,
             workspacePath,
-            signal: AbortSignal.timeout(125_000),
+            signal: signal
+              ? AbortSignal.any([
+                  signal,
+                  AbortSignal.timeout((timeoutSeconds ?? 30) * 1000 + 20_000),
+                ])
+              : AbortSignal.timeout((timeoutSeconds ?? 30) * 1000 + 20_000),
           });
           if (!session.executeProgram) throw new Error('Connected CLI commands are unavailable.');
           return session.executeProgram(command, args, { [envName]: token }, timeoutSeconds);
@@ -568,7 +572,13 @@ export async function createApplication(
       action.startsWith('OTTO_')
         ? personal.manage(action.slice('OTTO_'.length), args, provenance)
         : providerUsage.withTask(provenance.taskId, () =>
-            integrations.executeApproved(ownerId, action, args, provenance.taskId),
+            integrations.executeApproved(
+              ownerId,
+              action,
+              args,
+              provenance.taskId,
+              provenance.signal,
+            ),
           ),
     async (action, args) => {
       if (action.startsWith('OTTO_'))
@@ -644,7 +654,7 @@ export async function createApplication(
         return vault.request(taskId, ownerId, input);
       },
       integration: async (taskId, action, args, options) => {
-        const result = await integrations.execute(ownerId, action, args, taskId);
+        const result = await integrations.execute(ownerId, action, args, taskId, options?.signal);
         if (
           result &&
           typeof result === 'object' &&
@@ -662,6 +672,7 @@ export async function createApplication(
               ? (result.args as Record<string, unknown>)
               : args,
             { revision: options?.revision },
+            options?.signal,
           );
         }
         return result;
