@@ -20,6 +20,9 @@ import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
 import { createDirectProvider } from '../providers/direct/integrations.ts';
+import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
+import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
+import { createDiscoveredConnections } from './discovered-connections.ts';
 import { createDockerWorkspace } from '../providers/docker/index.ts';
 import { createE2BAdapters } from '../providers/e2b/index.ts';
 import { createCloudflareAdapters } from '../providers/cloudflare-computer/index.ts';
@@ -41,6 +44,7 @@ import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createPiConversationRouter } from '../providers/pi/conversation.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
+import { createWebSearch } from '../providers/public-web/search.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
 import { createApp } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
@@ -440,11 +444,17 @@ export async function createApplication(
   const speechProvider = meterSpeech(adapters.speech, providerUsage);
   const integrationProvider = meterIntegrations(adapters.integrations, providerUsage);
   const classify = meterRelevance(adapters.relevance, providerUsage);
+  const webSearch = createWebSearch();
   const runtime = createAgentRuntime({
     agent: meterAgent(adapters.agent, providerUsage),
     withTool: providerUsage.withTool,
     computer,
     workspace,
+    webSearch: (query, signal) =>
+      providerUsage.track(
+        { provider: 'pi-web-access', category: 'browser', operation: 'search' },
+        () => webSearch(query, signal),
+      ),
     chooseBrowserAction: adapters.chooseBrowserAction
       ? (...args) =>
           providerUsage.track(
@@ -470,6 +480,15 @@ export async function createApplication(
     getProfile: personal.getProfile,
     listGoals: personal.listGoals,
   });
+  const discovered = await createDiscoveredConnections(pool, {
+    ownerId,
+    baseUrl: publicOrigin,
+    keyStore: adapters.keyStore,
+    transport: createDiscoveredTransport(),
+    oauth: createDiscoveredOAuth(),
+    resumeConnection: resumeConnectedTask,
+    refresh,
+  });
   const integrations = await createIntegrations(pool, {
     admission,
     ownerId,
@@ -485,6 +504,7 @@ export async function createApplication(
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,
+    discovered,
   });
   const vault = await createVault(pool, {
     admission,

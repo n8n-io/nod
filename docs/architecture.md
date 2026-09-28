@@ -28,6 +28,8 @@ flowchart TD
 
 `src/server/composition.ts` selects adapters and binds feature factories. `src/ports` defines capabilities without vendor types. `src/providers` contains SDKs, protocol mapping, and concrete execution. `src/runtime` owns tools, budgets, prompts, and task segments. `src/server` owns product policy, authorization, persistence, and HTTP. `src/shared` contains browser-safe types; `src/web` imports only web/shared code.
 
+The `WebSearch` port gives the runtime short public source results. The provider adapter calls the Pi Web Access search engine. The model can select this tool or the task browser. Pi extensions remain disabled; the runtime does not load the extension's file, command, or browser-cookie tools.
+
 Factories capture dependencies rather than reading a mutable service locator. `scripts/check-architecture.mjs` checks import directions. Most feature boundaries are code boundaries in the trusted server. The browser and untrusted shell run in separate containers with separate mounts, processes and network namespaces. See [replacing modules](replacing-modules.md) for state that must migrate with a provider.
 
 ## Hosted accounts and runtime ownership
@@ -105,6 +107,8 @@ Tasks share this local-owner container and home volume. Shell commands can acces
 ## Google accounts and messaging
 
 Composio owns OAuth refresh and vendor tool transport for its accounts. The direct adapter owns OAuth refresh and MCP transport for new Notion and Linear accounts. Otto owns multiple account records, provider identity, consent attempts, revocation, watch intent, approvals, and event deduplication. Each saved account selects its provider; an existing Composio Notion account keeps that provider. Account labels come from provider responses when available. Apps returns the saved account state immediately, then coalesces bounded parallel health checks. Provider outages retain the previous verified state. Failed watch setup retries with persisted backoff. [Connection design](connections.md) describes the package and token boundary.
+
+The discovered-connection feature stores owner-bound account grants and reviewed HTTPS MCP or HTTP API paths. An MCP grant can use OAuth or a token; an HTTP API path uses a token. The server feature owns path selection, encrypted grant storage, task resume, and action review. The provider adapters own public DNS checks, pinned HTTPS requests, MCP transport, OAuth discovery and PKCE. The model receives path IDs and live tool schemas, but no credential. The workspace does not receive a CLI credential. Token account labels are user-entered; generic OAuth accounts use the service name. Generic paths have no background health check.
 
 A Google action resolves an owned local `connectionId` before execution. Proposed writes save that ID in the approval; execution checks it again and supplies the provider account explicitly. Missing, revoked, foreign, or obsolete account references cannot silently choose another account. Old approvals without an account binding require a new request.
 

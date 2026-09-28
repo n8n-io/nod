@@ -15,6 +15,8 @@
 | HTTP ownership, artifacts and chat confirmations                       | `server-boundaries`                                                                                           |
 | Credentials, stale forms and encryption                                | `vault`, `vault-rejected-login`, `credential-feedback`, `runtime-credentials`                                 |
 | App consent, events, file downloads and provider migration             | `integrations`, `integration-apps`, `integration-files`, `provider-adapters`                                  |
+| Discovered path selection and private account tokens                   | `discovered-connections`                                                                                      |
+| Public search result bounds and fixed provider errors                  | `web-search`                                                                                                  |
 | Messaging authentication, inbox/outbox and uncertain delivery          | `channels`, `channel-task-recovery`                                                                           |
 | Goals, schedules and memory                                            | `personal`, `schedules`                                                                                       |
 | Audio policy and cancellation                                          | `speech`, `provider-adapters`                                                                                 |
@@ -30,6 +32,10 @@
 | Browser takeover locks, socket input, expiry and task resume           | `browser-manual`, `browser-control`, `takeover`                                                               |
 
 Inject fakes through ports and factories. Avoid global transport mocks when testing feature policy. Keep adapter protocol tests separate. No real email, channel delivery, paid action or personal data in fixtures. A passing substitute stack is not a live provider check.
+
+`discovered-connections` uses substitute MCP and HTTP services in a disposable schema. It checks one MCP path for read, file push and pull request calls, then changes the account to an HTTP path. It connects a second service through substitute OAuth, refreshes its grant, and checks that one disconnect does not remove the other account. `discovered-oauth` checks generic metadata, client registration, code exchange, refresh and a supplied client ID. These do not make a live account call or prove `gh` execution. `connections-ui` checks private token and OAuth forms with synthetic responses.
+
+`web-search` checks source result limits, URL filtering, fixed errors, and cancellation with an injected search function. It does not call a live search provider or prove the model will select this tool.
 
 `channels` verifies code interception before persistence, masked receipts, fixed conflict guidance through the durable outbox, transaction rollback and stable webhook/polling deduplication across restart. Taskless guidance must retain message ownership, sender/account access, original recipient, reply-window and uncertain-send guards. Generic hook and database errors must leave the receipt unacknowledged without exposing the code. `channel-task-recovery` also verifies typed blocked-task refusals, savepoint rollback, exact-owner outbox routing, once-only responses, later-message progress and retryable unknown failures. These checks use disposable PostgreSQL and synthetic transport callbacks; they never send a live message.
 

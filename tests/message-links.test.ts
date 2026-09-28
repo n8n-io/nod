@@ -10,6 +10,11 @@ test('Apps links use the app route without obsolete aliases', () => {
   assert.equal(safeMessageLink('/connections', origin), null);
   assert.equal(safeMessageLink(`${origin}/connections`, origin), null);
   assert.equal(safeMessageLink('/apps/unknown', origin), null);
+  const connect = '/apps?connect=7f455e58-c202-4401-bb22-0a4e853a3ef5';
+  assert.deepEqual(safeMessageLink(connect, origin), { href: connect, kind: 'navigation' });
+  assert.equal(safeMessageLink('/apps?connect=bad', origin), null);
+  assert.equal(safeMessageLink(`${connect}&next=https://example.com`, origin), null);
+  assert.equal(safeMessageLink(`${connect}#token`, origin), null);
 });
 
 test('markdown artifact links show the filename without markdown punctuation', () => {

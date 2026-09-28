@@ -64,15 +64,15 @@
   font-size: 11px;
   line-height: 1.5;
 }
-.apps-page .app-connect {
+.apps-page .app-connect,
+.apps-page .app-manage {
   min-height: 34px;
   padding: 0 10px;
   border-radius: 8px;
   font-size: 12px;
   white-space: nowrap;
 }
-.apps-page .app-add-account,
-.apps-page .account-disconnect {
+.app-manage-dialog .account-disconnect {
   flex: none;
   width: 32px;
   height: 32px;
@@ -81,34 +81,72 @@
   border-radius: 6px;
   color: var(--muted-foreground);
 }
-.apps-page .account-disconnect:hover:not(:disabled) {
+.app-manage-dialog .account-disconnect:hover:not(:disabled) {
   color: var(--error);
   background: var(--error-soft);
 }
-.apps-page .app-card-accounts {
-  min-width: 0;
-  margin: 0 16px;
-  padding: 6px 0;
-  border-top: 1px solid var(--border);
+.app-manage-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 24px;
 }
-.apps-page .compact-account {
+.app-manage-accounts {
+  margin: 14px 0 20px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.app-manage-dialog .compact-account {
   align-items: center;
   gap: 12px;
   min-height: 34px;
   padding: 2px 0;
 }
-.apps-page .compact-account + .compact-account {
+.app-manage-dialog .compact-account + .compact-account {
   border-top: 1px solid var(--border);
 }
-.apps-page .compact-account-details {
+.app-manage-dialog .compact-account-details {
   flex: 1;
   padding-top: 0;
 }
-.apps-page .compact-account-name {
+.app-manage-dialog .compact-account-name {
   min-width: 0;
   font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+.app-manage-dialog .compact-account-paths {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.app-discovery-dialog {
+  width: min(500px, calc(100vw - 32px));
+  padding: 24px;
+}
+.app-discovery-path {
+  display: grid;
+  gap: 3px;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.app-discovery-path strong {
+  font-size: 11px;
+}
+.app-discovery-dialog form,
+.app-discovery-dialog label {
+  display: grid;
+  gap: 10px;
+}
+.app-discovery-dialog form {
+  margin-top: 16px;
+}
+.app-discovery-dialog input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--foreground);
 }
 .app-disconnect-dialog {
   width: min(400px, calc(100vw - 32px));
@@ -146,13 +184,13 @@
   }
 }
 @media (pointer: coarse) {
-  .apps-page .app-add-account,
-  .apps-page .account-disconnect {
+  .app-manage-dialog .account-disconnect {
     width: 40px;
     height: 40px;
     min-height: 40px;
   }
-  .apps-page .app-connect {
+  .apps-page .app-connect,
+  .apps-page .app-manage {
     min-height: 40px;
   }
 }

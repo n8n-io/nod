@@ -60,7 +60,7 @@ export const MessageText = memo(function MessageText({
               return (
                 <a
                   href={link.href}
-                  target="_blank"
+                  target={link.href.startsWith('/apps?connect=') ? undefined : '_blank'}
                   rel="noopener noreferrer"
                   className={link.kind === 'credential' ? 'credential-link' : undefined}
                 >

@@ -1,0 +1,694 @@
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import type { FastifyInstance } from 'fastify';
+import type { Pool } from 'pg';
+import { z } from 'zod';
+import type { CredentialKeyStore } from '../ports/key-store.ts';
+import type {
+  DiscoveredOAuth,
+  DiscoveredOAuthState,
+  DiscoveredTool,
+  DiscoveredTransport,
+} from '../ports/discovered.ts';
+import type { Connection } from '../shared/contracts.ts';
+import { integrationResultSnapshot } from './integration-result.ts';
+
+const pathSchema = z.object({
+  kind: z.enum(['http', 'mcp']),
+  endpoint: z.url().max(2048),
+  auth: z.enum(['bearer', 'x-api-key', 'oauth']).default('bearer'),
+  testPath: z.string().max(500).optional(),
+  scope: z.string().trim().min(1).max(500).optional(),
+  clientIdRequired: z.boolean().optional(),
+});
+const proposalSchema = z.object({
+  service: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z][a-z0-9-]{1,39}$/),
+  name: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9 .&'_-]{1,79}$/),
+  paths: z.array(pathSchema).min(1).max(4),
+  setupUrl: z.url().max(2048).optional(),
+  setupText: z.string().trim().min(1).max(500).optional(),
+  connectionId: z.uuid().optional(),
+});
+type AccessPath = z.infer<typeof pathSchema> & { id: string };
+type AccountRow = {
+  id: string;
+  owner_id: string;
+  service: string;
+  name: string;
+  account_name: string;
+  paths: AccessPath[];
+  ciphertext: string;
+};
+type ProposalRow = {
+  id: string;
+  owner_id: string;
+  service: string;
+  name: string;
+  paths: AccessPath[];
+  setup_url: string | null;
+  setup_text: string | null;
+  account_name: string | null;
+  oauth_state_hash: string | null;
+  oauth_ciphertext: string | null;
+  connection_id: string | null;
+  task_id: string | null;
+  task_revision: number | null;
+};
+
+export class DiscoveredConnectionError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode = 400,
+  ) {
+    super(message);
+  }
+}
+
+function error(message: string, statusCode = 400) {
+  return new DiscoveredConnectionError(message, statusCode);
+}
+
+function seal(key: Buffer, owner: string, id: string, token: string) {
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, nonce);
+  cipher.setAAD(Buffer.from(JSON.stringify(['otto-discovered-v1', owner, id])));
+  const bytes = Buffer.concat([cipher.update(token), cipher.final()]);
+  return Buffer.concat([nonce, cipher.getAuthTag(), bytes]).toString('base64');
+}
+
+function open(key: Buffer, owner: string, id: string, ciphertext: string) {
+  const bytes = Buffer.from(ciphertext, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+  decipher.setAAD(Buffer.from(JSON.stringify(['otto-discovered-v1', owner, id])));
+  decipher.setAuthTag(bytes.subarray(12, 28));
+  return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString();
+}
+
+function headers(path: AccessPath, token: string): Record<string, string> {
+  return path.auth === 'x-api-key' ? { 'X-API-Key': token } : { Authorization: `Bearer ${token}` };
+}
+
+function redact(value: unknown, token: string): unknown {
+  if (typeof value === 'string') return value.replaceAll(token, '[redacted]');
+  if (Array.isArray(value)) return value.map((item) => redact(item, token));
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([name, item]) => [
+        name.replaceAll(token, '[redacted]'),
+        redact(item, token),
+      ]),
+    );
+  return value;
+}
+
+function target(path: AccessPath, relative: string) {
+  if (!relative || relative.length > 2048 || relative.startsWith('//'))
+    throw error('Use a path in the saved API address.');
+  const base = new URL(path.endpoint);
+  const url = new URL(
+    relative.startsWith('/') ? relative.slice(1) : relative,
+    base.href.endsWith('/') ? base : `${base.href}/`,
+  );
+  const prefix = base.pathname.endsWith('/') ? base.pathname : `${base.pathname}/`;
+  if (url.origin !== base.origin || !url.pathname.startsWith(prefix))
+    throw error('The request must stay in the saved API address.');
+  return url.href;
+}
+
+export async function createDiscoveredConnections(
+  pool: Pool,
+  options: {
+    ownerId: string;
+    baseUrl: string;
+    keyStore: CredentialKeyStore;
+    transport: DiscoveredTransport;
+    oauth: DiscoveredOAuth;
+    resumeConnection?: (taskId: string, revision: number, service: string) => Promise<boolean>;
+    refresh?: () => void;
+  },
+) {
+  const owner = options.ownerId;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS discovered_connections (
+      id uuid PRIMARY KEY,owner_id text NOT NULL,service text NOT NULL,name text NOT NULL,
+      account_name text NOT NULL,paths jsonb NOT NULL,ciphertext text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS discovered_connection_proposals (
+      id uuid PRIMARY KEY,owner_id text NOT NULL,service text NOT NULL,name text NOT NULL,
+      paths jsonb NOT NULL,connection_id uuid,task_id uuid,task_revision integer,
+      setup_url text,setup_text text,
+      account_name text,oauth_state_hash text,oauth_ciphertext text,
+      expires_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes'
+    );
+    ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS setup_url text;
+    ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS setup_text text;
+    ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS account_name text;
+    ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_state_hash text;
+    ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_ciphertext text;
+  `);
+  async function key() {
+    if (!options.keyStore.configured) throw error('Secure storage is unavailable.', 503);
+    return options.keyStore.getKey();
+  }
+  async function account(id: string) {
+    const result = await pool.query<AccountRow>(
+      'SELECT * FROM discovered_connections WHERE owner_id=$1 AND id=$2',
+      [owner, z.uuid().parse(id)],
+    );
+    if (!result.rows[0]) throw error('This connected account is unavailable.', 404);
+    return result.rows[0];
+  }
+  async function list(): Promise<Connection[]> {
+    const rows = (
+      await pool.query<AccountRow>(
+        'SELECT * FROM discovered_connections WHERE owner_id=$1 ORDER BY created_at',
+        [owner],
+      )
+    ).rows;
+    return rows.map((row) => ({
+      slug: row.service,
+      name: row.name,
+      status: 'connected',
+      connectionId: row.id,
+      accountName: row.account_name,
+      triggersEnabled: false,
+      supportsTriggers: false,
+      description: row.paths.map((path) => path.kind.toUpperCase()).join(' · '),
+      accessPaths: row.paths.map(({ id, kind, endpoint }) => ({ id, kind, endpoint })),
+    }));
+  }
+  async function propose(input: unknown, task?: { id: string; revision: number }) {
+    const parsed = proposalSchema.parse(input);
+    if (parsed.paths.some((path) => path.auth === 'oauth')) {
+      if (parsed.paths.length !== 1 || parsed.paths[0].kind !== 'mcp')
+        throw error('OAuth needs one MCP access path.');
+    }
+    if (parsed.paths.some((path) => path.clientIdRequired && path.auth !== 'oauth'))
+      throw error('A client ID needs an OAuth access path.');
+    const setupUrl = parsed.setupUrl
+      ? (await options.transport.validateEndpoint(parsed.setupUrl)).replace(/\/$/, '')
+      : null;
+    if (parsed.connectionId) {
+      const existing = await account(parsed.connectionId);
+      if (existing.service !== parsed.service) throw error('The selected service changed.');
+    }
+    const paths: AccessPath[] = [];
+    for (const path of parsed.paths) {
+      paths.push({
+        ...path,
+        endpoint: await options.transport.validateEndpoint(path.endpoint),
+        id: randomUUID(),
+      });
+    }
+    const id = randomUUID();
+    await pool.query(
+      `INSERT INTO discovered_connection_proposals
+       (id,owner_id,service,name,paths,connection_id,task_id,task_revision,setup_url,setup_text)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [
+        id,
+        owner,
+        parsed.service,
+        parsed.name,
+        JSON.stringify(paths),
+        parsed.connectionId ?? null,
+        task?.id ?? null,
+        task?.revision ?? null,
+        setupUrl,
+        parsed.setupText ?? null,
+      ],
+    );
+    return { name: parsed.name, url: `/apps?connect=${id}` };
+  }
+  async function proposal(id: string) {
+    const row = (
+      await pool.query<ProposalRow>(
+        `SELECT id,owner_id,service,name,paths,connection_id,task_id,task_revision,setup_url,setup_text,account_name,oauth_state_hash,oauth_ciphertext
+       FROM discovered_connection_proposals
+       WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
+        [z.uuid().parse(id), owner],
+      )
+    ).rows[0];
+    if (!row) throw error('This connection request expired.', 404);
+    return row;
+  }
+  async function save(pending: ProposalRow, accountName: string, secret: string) {
+    const idToSave = pending.connection_id ?? randomUUID();
+    const ciphertext = seal(await key(), owner, idToSave, secret);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const used = await client.query(
+        'DELETE FROM discovered_connection_proposals WHERE id=$1 AND owner_id=$2 AND expires_at>now() RETURNING id',
+        [pending.id, owner],
+      );
+      if (!used.rowCount) throw error('This connection request expired.', 409);
+      if (pending.connection_id) {
+        const updated = await client.query(
+          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6,ciphertext=$7
+           WHERE id=$1 AND owner_id=$2 AND service=$3`,
+          [
+            idToSave,
+            owner,
+            pending.service,
+            pending.name,
+            accountName,
+            JSON.stringify(pending.paths),
+            ciphertext,
+          ],
+        );
+        if (!updated.rowCount) throw error('This connected account is unavailable.', 404);
+      } else {
+        await client.query(
+          `INSERT INTO discovered_connections
+           (id,owner_id,service,name,account_name,paths,ciphertext) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+          [
+            idToSave,
+            owner,
+            pending.service,
+            pending.name,
+            accountName,
+            JSON.stringify(pending.paths),
+            ciphertext,
+          ],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (cause) {
+      await client.query('ROLLBACK');
+      throw cause;
+    } finally {
+      client.release();
+    }
+    options.refresh?.();
+    const continued =
+      pending.task_id && pending.task_revision !== null
+        ? await options
+            .resumeConnection?.(pending.task_id, pending.task_revision, pending.name)
+            .catch(() => false)
+        : false;
+    return { ok: true, continued: Boolean(continued) };
+  }
+  async function complete(id: string, input: unknown) {
+    const { token, accountName } = z
+      .object({
+        token: z.string().trim().min(8).max(8192),
+        accountName: z.string().trim().min(1).max(200),
+      })
+      .strict()
+      .parse(input);
+    const pending = await proposal(id);
+    if (pending.paths[0]?.auth === 'oauth') throw error('Use the service sign-in link.');
+    for (const path of pending.paths) {
+      try {
+        if (path.kind === 'mcp') {
+          const tools = await options.transport.listTools(path.endpoint, headers(path, token));
+          if (!tools.length) throw new Error();
+        } else {
+          if (!path.testPath) throw error('The API path needs a read test.');
+          const response = await options.transport.http(
+            target(path, path.testPath),
+            headers(path, token),
+            'GET',
+          );
+          if (response.status < 200 || response.status >= 300) throw new Error();
+        }
+      } catch {
+        throw error(`The ${path.kind.toUpperCase()} access path could not be verified.`, 409);
+      }
+    }
+    return save(pending, accountName, token);
+  }
+  function callbackUrl() {
+    const callback = new URL('/api/apps/callback', options.baseUrl);
+    if (callback.hostname === 'localhost') callback.hostname = '127.0.0.1';
+    return callback.href;
+  }
+  async function beginOAuth(id: string, input: unknown) {
+    const { clientId } = z
+      .object({
+        clientId: z.string().trim().min(1).max(500).optional(),
+      })
+      .strict()
+      .parse(input);
+    const pending = await proposal(id);
+    const path = pending.paths[0];
+    if (path?.kind !== 'mcp' || path.auth !== 'oauth') throw error('This connection uses a token.');
+    if (path.clientIdRequired && !clientId) throw error('Enter the client ID.');
+    const state = randomBytes(32).toString('base64url');
+    let started: Awaited<ReturnType<DiscoveredOAuth['begin']>>;
+    try {
+      started = await options.oauth.begin(
+        path.endpoint,
+        callbackUrl(),
+        state,
+        path.scope,
+        clientId,
+      );
+    } catch {
+      throw error('The service sign-in could not start. Check its access method.', 502);
+    }
+    const updated = await pool.query(
+      `UPDATE discovered_connection_proposals
+       SET account_name=$3,oauth_state_hash=$4,oauth_ciphertext=$5
+       WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
+      [
+        pending.id,
+        owner,
+        pending.name,
+        createHash('sha256').update(state).digest('hex'),
+        seal(await key(), owner, pending.id, JSON.stringify(started.saved)),
+      ],
+    );
+    if (!updated.rowCount) throw error('This connection request expired.', 409);
+    return { url: started.url };
+  }
+  async function completeOAuth(input: unknown) {
+    const parsed = z
+      .object({
+        state: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+        code: z.string().min(1).optional(),
+        error: z.string().optional(),
+        iss: z.string().optional(),
+      })
+      .parse(input);
+    const hash = createHash('sha256').update(parsed.state).digest('hex');
+    const pending = (
+      await pool.query<ProposalRow>(
+        `SELECT * FROM discovered_connection_proposals
+         WHERE owner_id=$1 AND oauth_state_hash=$2 AND expires_at>now()`,
+        [owner, hash],
+      )
+    ).rows[0];
+    if (!pending) return undefined;
+    if (parsed.error || !parsed.code) {
+      await pool.query(
+        'DELETE FROM discovered_connection_proposals WHERE id=$1 AND owner_id=$2 AND oauth_state_hash=$3',
+        [pending.id, owner, hash],
+      );
+      return {
+        outcome: 'cancelled' as const,
+        service: pending.service,
+        returnTo: pending.task_id ? ('chat' as const) : ('apps' as const),
+      };
+    }
+    const path = pending.paths[0];
+    if (path?.kind !== 'mcp' || path.auth !== 'oauth' || !pending.oauth_ciphertext)
+      return {
+        outcome: 'failed' as const,
+        service: pending.service,
+        returnTo: pending.task_id ? ('chat' as const) : ('apps' as const),
+      };
+    try {
+      const saved = JSON.parse(
+        open(await key(), owner, pending.id, pending.oauth_ciphertext),
+      ) as DiscoveredOAuthState;
+      const metadata = saved.discovery?.authorizationServerMetadata;
+      const issuer = metadata?.issuer;
+      if (parsed.iss && parsed.iss !== issuer) throw new Error();
+      if (
+        metadata &&
+        'authorization_response_iss_parameter_supported' in metadata &&
+        metadata.authorization_response_iss_parameter_supported === true &&
+        parsed.iss !== issuer
+      )
+        throw new Error();
+      const connected = await options.oauth.finish(path.endpoint, saved, parsed.code);
+      const token = connected.tokens?.access_token;
+      if (!token) throw new Error();
+      if (!(await options.transport.listTools(path.endpoint, headers(path, token))).length)
+        throw new Error();
+      const result = await save(
+        pending,
+        pending.account_name ?? 'Account',
+        JSON.stringify(connected),
+      );
+      return {
+        outcome: result.continued ? ('continued' as const) : ('connected' as const),
+        service: pending.service,
+        returnTo: pending.task_id ? ('chat' as const) : ('apps' as const),
+      };
+    } catch {
+      return {
+        outcome: 'failed' as const,
+        service: pending.service,
+        returnTo: pending.task_id ? ('chat' as const) : ('apps' as const),
+      };
+    }
+  }
+  const refreshes = new Map<string, Promise<string>>();
+  async function tokenFor(row: AccountRow, path: AccessPath): Promise<string> {
+    const secret = open(await key(), owner, row.id, row.ciphertext);
+    if (path.auth !== 'oauth') return secret;
+    const saved = JSON.parse(secret) as DiscoveredOAuthState;
+    if (!saved.tokens?.access_token) throw error('Connect this account again.', 409);
+    if (!saved.expiresAt || saved.expiresAt > Date.now() + 60_000) return saved.tokens.access_token;
+    const active = refreshes.get(row.id);
+    if (active) return active;
+    const pending = (async () => {
+      const next = await options.oauth.refresh(path.endpoint, saved);
+      if (!next.tokens?.access_token) throw new Error();
+      const changed = await pool.query(
+        'UPDATE discovered_connections SET ciphertext=$3 WHERE id=$1 AND owner_id=$2 AND ciphertext=$4',
+        [row.id, owner, seal(await key(), owner, row.id, JSON.stringify(next)), row.ciphertext],
+      );
+      if (!changed.rowCount) {
+        const current = await account(row.id);
+        const latest = JSON.parse(
+          open(await key(), owner, current.id, current.ciphertext),
+        ) as DiscoveredOAuthState;
+        if (!latest.tokens?.access_token || (latest.expiresAt ?? 0) <= Date.now())
+          throw new Error();
+        return latest.tokens.access_token;
+      }
+      return next.tokens.access_token;
+    })();
+    refreshes.set(row.id, pending);
+    try {
+      return await pending;
+    } catch {
+      throw error('Connect this account again.', 409);
+    } finally {
+      refreshes.delete(row.id);
+    }
+  }
+  async function disconnect(connectionId: string, service: string) {
+    const result = await pool.query(
+      'DELETE FROM discovered_connections WHERE id=$1 AND owner_id=$2 AND service=$3',
+      [z.uuid().parse(connectionId), owner, service],
+    );
+    if (!result.rowCount) throw error('This connected account is unavailable.', 404);
+    options.refresh?.();
+    return { ok: true };
+  }
+  async function reconnect(service: string) {
+    const rows = await pool.query<AccountRow>(
+      'SELECT * FROM discovered_connections WHERE owner_id=$1 AND service=$2 ORDER BY created_at LIMIT 1',
+      [owner, service],
+    );
+    const row = rows.rows[0];
+    if (!row) throw error('This service is unavailable.', 404);
+    return propose({
+      service,
+      name: row.name,
+      paths: row.paths.map(({ kind, endpoint, auth, testPath, scope, clientIdRequired }) => ({
+        kind,
+        endpoint,
+        auth,
+        ...(testPath ? { testPath } : {}),
+        ...(scope ? { scope } : {}),
+        ...(clientIdRequired ? { clientIdRequired } : {}),
+      })),
+    });
+  }
+  async function search(query: string) {
+    const rows = (
+      await pool.query<AccountRow>('SELECT * FROM discovered_connections WHERE owner_id=$1', [
+        owner,
+      ])
+    ).rows;
+    const accounts = await Promise.all(
+      rows.map(async (row) => {
+        const paths = await Promise.all(
+          row.paths.map(async (path) => {
+            if (path.kind !== 'mcp')
+              return { id: path.id, kind: path.kind, endpoint: path.endpoint };
+            try {
+              const token = await tokenFor(row, path);
+              const available = await options.transport.listTools(
+                path.endpoint,
+                headers(path, token),
+              );
+              return {
+                id: path.id,
+                kind: path.kind,
+                endpoint: path.endpoint,
+                ...(row.service.includes(query.toLowerCase()) ||
+                row.name.toLowerCase().includes(query.toLowerCase())
+                  ? {
+                      toolNames: available.slice(0, 200).map((tool) => redact(tool.name, token)),
+                      toolCount: available.length,
+                    }
+                  : {}),
+                tools: available
+                  .filter((tool) =>
+                    `${tool.name} ${tool.description ?? ''}`
+                      .toLowerCase()
+                      .includes(query.toLowerCase()),
+                  )
+                  .map((tool) => ({
+                    name: redact(tool.name, token),
+                    description: redact(tool.description, token),
+                    inputSchema: redact(tool.inputSchema, token),
+                    readOnly: readOnly(tool),
+                  })),
+              };
+            } catch {
+              return { id: path.id, kind: path.kind, endpoint: path.endpoint, unavailable: true };
+            }
+          }),
+        );
+        return { connectionId: row.id, service: row.service, accountName: row.account_name, paths };
+      }),
+    );
+    return { accounts };
+  }
+  function readOnly(tool: DiscoveredTool) {
+    return (
+      tool.annotations?.readOnlyHint === true &&
+      /^(?:get|list|search|fetch|read|find|view|whoami|issue_read|pull_request_read)(?:_|$)/i.test(
+        tool.name,
+      )
+    );
+  }
+  async function selected(args: Record<string, unknown>) {
+    const connectionId = z.uuid().parse(args.connectionId);
+    const pathId = z.uuid().parse(args.pathId);
+    const row = await account(connectionId);
+    const path = row.paths.find((item) => item.id === pathId);
+    if (!path) throw error('This access path is unavailable.', 404);
+    if (JSON.stringify(args).length > 32_768) throw error('The app request is too large.');
+    return { row, path };
+  }
+  async function isRead(action: string, args: Record<string, unknown>) {
+    const { row, path } = await selected(args);
+    if (action === 'CONNECTED_HTTP') {
+      if (path.kind !== 'http') throw error('Choose an HTTP access path.');
+      target(path, z.string().parse(args.path));
+      return args.method === 'GET';
+    }
+    if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
+      throw error('Choose an MCP access path.');
+    const name = z.string().min(1).max(150).parse(args.tool);
+    const token = await tokenFor(row, path);
+    let tools: DiscoveredTool[];
+    try {
+      tools = await options.transport.listTools(path.endpoint, headers(path, token));
+    } catch {
+      throw error('The connected MCP tool list is unavailable.', 502);
+    }
+    const tool = tools.find((item) => item.name === name);
+    if (!tool) throw error('This tool is no longer available.', 409);
+    return readOnly(tool);
+  }
+  async function execute(action: string, args: Record<string, unknown>, readOnlyRequired = false) {
+    const { row, path } = await selected(args);
+    const token = await tokenFor(row, path);
+    const safeResult = (value: unknown) => integrationResultSnapshot(redact(value, token));
+    if (action === 'CONNECTED_HTTP') {
+      if (path.kind !== 'http') throw error('Choose an HTTP access path.');
+      const method = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).parse(args.method);
+      const url = target(path, z.string().parse(args.path));
+      try {
+        return safeResult(
+          await options.transport.http(
+            url,
+            headers(path, token),
+            method,
+            method === 'GET' ? undefined : args.body,
+          ),
+        );
+      } catch {
+        throw error('The connected API request failed. Check its path and account access.', 502);
+      }
+    }
+    if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
+      throw error('Choose an MCP access path.');
+    const name = z.string().min(1).max(150).parse(args.tool);
+    const input = z.record(z.string(), z.unknown()).parse(args.input ?? {});
+    let selectedTool: DiscoveredTool | undefined;
+    try {
+      selectedTool = (await options.transport.listTools(path.endpoint, headers(path, token))).find(
+        (tool) => tool.name === name,
+      );
+    } catch {
+      throw error('The connected MCP tool list is unavailable.', 502);
+    }
+    if (!selectedTool) throw error('This tool is no longer available.', 409);
+    if (readOnlyRequired && !readOnly(selectedTool))
+      throw error('This tool now needs confirmation.', 409);
+    try {
+      return safeResult(
+        await options.transport.callTool(path.endpoint, headers(path, token), name, input),
+      );
+    } catch {
+      throw error('The connected MCP request failed. Check its tool and account access.', 502);
+    }
+  }
+  async function describe(args: Record<string, unknown>) {
+    const { row } = await selected(args);
+    return { name: row.name, accountName: row.account_name };
+  }
+  function registerRoutes(app: FastifyInstance) {
+    app.get<{ Params: { id: string } }>('/api/apps/discovery/:id', async (request, reply) => {
+      const row = await proposal(request.params.id);
+      return reply.header('Cache-Control', 'no-store').send({
+        name: row.name,
+        callbackUrl: row.paths.some((path) => path.clientIdRequired) ? callbackUrl() : undefined,
+        setupUrl: row.setup_url,
+        setupText: row.setup_text,
+        paths: row.paths.map(({ kind, endpoint, auth, scope, clientIdRequired }) => ({
+          kind,
+          endpoint,
+          auth,
+          ...(scope ? { scope } : {}),
+          ...(clientIdRequired ? { clientIdRequired } : {}),
+        })),
+      });
+    });
+    app.post<{ Params: { id: string } }>(
+      '/api/apps/discovery/:id/authorize',
+      async (request, reply) =>
+        reply
+          .header('Cache-Control', 'no-store')
+          .send(await beginOAuth(request.params.id, request.body)),
+    );
+    app.post<{ Params: { id: string } }>(
+      '/api/apps/discovery/:id/complete',
+      async (request, reply) =>
+        reply
+          .header('Cache-Control', 'no-store')
+          .send(await complete(request.params.id, request.body)),
+    );
+  }
+  return {
+    list,
+    propose,
+    completeOAuth,
+    reconnect,
+    search,
+    isRead,
+    execute,
+    selected,
+    describe,
+    disconnect,
+    registerRoutes,
+  };
+}

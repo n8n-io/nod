@@ -91,9 +91,10 @@ export interface TaskDependencies {
     options: { readOnly: boolean; revision: number },
   ) => Promise<unknown>;
   connections?: (
-    action: 'list' | 'connect',
+    action: 'list' | 'connect' | 'propose',
     service?: string,
     task?: { id: string; revision: number },
+    proposal?: unknown,
   ) => Promise<unknown>;
   reactToMessage?: (
     input: AgentReactionInput,
@@ -1240,12 +1241,17 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
           }
         : undefined,
       connections: dependencies.connections
-        ? async (action, service) => {
+        ? async (action, service, proposal) => {
             await ensureCurrent();
-            const result = await dependencies.connections!(action, service, {
-              id: taskId,
-              revision,
-            });
+            const result = await dependencies.connections!(
+              action,
+              service,
+              {
+                id: taskId,
+                revision,
+              },
+              proposal,
+            );
             await ensureCurrent();
             return result;
           }

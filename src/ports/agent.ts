@@ -77,7 +77,11 @@ export interface RuntimeContext {
     messageId: string,
     reaction: MessageReaction | null,
   ): Promise<AgentReactionResult>;
-  connections?(action: 'list' | 'connect', service?: string): Promise<unknown>;
+  connections?(
+    action: 'list' | 'connect' | 'propose',
+    service?: string,
+    proposal?: unknown,
+  ): Promise<unknown>;
   waitForUser?(question: string): Promise<void>;
   delta(text: string, streamId?: string, done?: boolean): void;
   remember(text: string): Promise<void>;

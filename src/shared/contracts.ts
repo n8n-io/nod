@@ -143,6 +143,7 @@ export interface Connection {
   triggersEnabled: boolean;
   description?: string;
   supportsTriggers?: boolean;
+  accessPaths?: Array<{ id: string; kind: 'http' | 'mcp'; endpoint: string }>;
 }
 export interface Configuration {
   provider: string;

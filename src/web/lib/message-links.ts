@@ -7,6 +7,8 @@ export type MessagePart =
   { type: 'text'; text: string } | ({ type: 'link'; text: string } & SafeLink);
 
 const navigationPaths = new Set(['/', '/apps', '/goals', '/schedule', '/channels', '/vault']);
+const connectionPath =
+  /^\/apps\?connect=[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const localPath = /^\/(api\/artifacts|vault|credentials)\/[A-Za-z0-9_-]+\/?$/;
 const credentialLabels = [
   'Vault',
@@ -27,13 +29,24 @@ export function credentialLinkLabel(value: string): string {
 export function safeMessageLink(value: string, origin: string): SafeLink | null {
   if (!value || /[\u0000-\u0020\u007f<>"'\\]/.test(value)) return null;
   const absolute = /^https?:\/\//i.test(value);
-  if (!absolute && !localPath.test(value.split(/[?#]/, 1)[0]) && !navigationPaths.has(value))
+  if (
+    !absolute &&
+    !localPath.test(value.split(/[?#]/, 1)[0]) &&
+    !navigationPaths.has(value) &&
+    !connectionPath.test(value)
+  )
     return null;
   try {
     const base = new URL(origin);
     const url = new URL(value, base);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
     if (!absolute || url.origin === base.origin) {
+      if (
+        url.origin === base.origin &&
+        !url.hash &&
+        connectionPath.test(`${url.pathname}${url.search}`)
+      )
+        return { href: `${url.pathname}${url.search}`, kind: 'navigation' };
       const path = absolute
         ? value.replace(/^https?:\/\/[^/]+/i, '').split(/[?#]/, 1)[0]
         : value.split(/[?#]/, 1)[0];

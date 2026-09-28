@@ -19,6 +19,8 @@ const labels: Record<string, string> = {
   OTTO_profile_update: 'Save these preferences',
   OTTO_notification_preferences_update: 'Save these notification preferences',
   OTTO_memory_propose: 'Remember this',
+  CONNECTED_HTTP: 'Call this connected API',
+  CONNECTED_MCP_CALL: 'Use this connected tool',
 };
 
 function plain(value: string) {
@@ -67,6 +69,11 @@ export function actionConfirmation(
     details.push(`${label}: ${value}`);
   };
   add('For', text(targetTitle));
+  if (action === 'CONNECTED_HTTP') {
+    add('Method', text(args.method));
+    add('Path', text(args.path));
+  }
+  if (action === 'CONNECTED_MCP_CALL') add('Tool', text(args.tool));
   for (const [key, label] of [
     ['title', 'Title'],
     ['subject', 'Subject'],

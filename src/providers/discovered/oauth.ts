@@ -1,0 +1,87 @@
+import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { DiscoveredOAuth, DiscoveredOAuthState } from '../../ports/discovered.ts';
+import { publicUrl } from '../agent-browser/network.ts';
+import { safeRemoteFetch } from './remote.ts';
+
+export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): DiscoveredOAuth {
+  async function run(
+    endpoint: string,
+    saved: DiscoveredOAuthState,
+    options: { state?: string; code?: string },
+  ) {
+    let url: string | undefined;
+    const provider: OAuthClientProvider = {
+      redirectUrl: saved.redirectUri,
+      clientMetadata: {
+        client_name: 'Otto',
+        redirect_uris: [saved.redirectUri],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+        ...(saved.scope ? { scope: saved.scope } : {}),
+      },
+      state: () => options.state ?? '',
+      clientInformation: () => saved.clientInformation,
+      saveClientInformation: (value) => {
+        saved.clientInformation = value;
+      },
+      tokens: () => saved.tokens,
+      saveTokens: (value) => {
+        saved.tokens = value;
+        saved.expiresAt = value.expires_in ? Date.now() + value.expires_in * 1000 : undefined;
+      },
+      redirectToAuthorization: (value) => {
+        url = value.href;
+      },
+      saveCodeVerifier: (value) => {
+        saved.verifier = value;
+      },
+      codeVerifier: () => {
+        if (!saved.verifier) throw new Error('The sign-in request is unavailable.');
+        return saved.verifier;
+      },
+      saveDiscoveryState: (value) => {
+        saved.discovery = value;
+      },
+      discoveryState: () => saved.discovery,
+    };
+    const result = await auth(provider, {
+      serverUrl: endpoint,
+      ...(options.code ? { authorizationCode: options.code } : {}),
+      ...(saved.scope ? { scope: saved.scope } : {}),
+      fetchFn,
+    });
+    return { result, url };
+  }
+
+  return {
+    async begin(endpoint, redirectUri, state, scope, clientId) {
+      const saved: DiscoveredOAuthState = {
+        redirectUri,
+        ...(scope ? { scope } : {}),
+        ...(clientId ? { clientInformation: { client_id: clientId } } : {}),
+      };
+      const result = await run(endpoint, saved, { state });
+      if (result.result !== 'REDIRECT' || !result.url)
+        throw new Error('The service did not provide a sign-in link.');
+      const destination = await publicUrl(result.url);
+      if (destination.url.protocol !== 'https:')
+        throw new Error('The service sign-in link must use HTTPS.');
+      return { url: destination.url.href, saved };
+    },
+    async finish(endpoint, saved, code) {
+      const result = await run(endpoint, saved, { code });
+      if (result.result !== 'AUTHORIZED' || !saved.tokens?.access_token)
+        throw new Error('The service did not complete sign-in.');
+      return saved;
+    },
+    async refresh(endpoint, saved) {
+      if (!saved.tokens?.refresh_token) throw new Error('Connect this account again.');
+      const result = await run(endpoint, saved, {});
+      if (result.result !== 'AUTHORIZED' || !saved.tokens?.access_token)
+        throw new Error('Connect this account again.');
+      return saved;
+    },
+  };
+}

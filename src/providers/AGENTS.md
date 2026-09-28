@@ -4,19 +4,23 @@ Implement the smallest applicable interface in `../ports`. Factories accept cred
 
 `composio/verification-email.ts` provides the private verification-email read capability. Use only fixed Gmail list/get endpoints through the selected connected account, with recipient, sender-domain and time filters, at most five messages, bounded MIME decoding and cancellation. Require visible recipient headers and Google's first authentication result with DMARC pass aligned to the From domain; reject uncertain parsing and pagination. Return mail only to the trusted server matcher, never a model session, tool catalog, event store, usage payload or error message. This path does not send mail or manage accounts.
 
-| Provider                  | Capability                                                                      |
-| ------------------------- | ------------------------------------------------------------------------------- |
-| `pi`                      | OpenAI/Anthropic agent sessions, transcripts and stateless conversation routing |
-| `agent-browser`           | Browser actions, HTTP(S) proxy, observations and credential injection           |
-| `docker`                  | Workspace execution, files and normal Docker networking                         |
-| `composio`                | Google/Slack/Notion authorization, tools, file retrieval and signed events      |
-| `direct`                  | Bundled Notion/Linear MCP packages, OAuth, encrypted tokens and read tools      |
-| `chat-sdk`                | Telegram/WhatsApp webhook protocols and message transport                       |
-| `openai`                  | Speech and cheap event classification                                           |
-| `jev`                     | Optional browser chooser and relevance classifier                               |
-| `keychain`, `environment` | Vault encryption key source                                                     |
+| Provider                  | Capability                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| `pi`                      | OpenAI/Anthropic agent sessions, transcripts and stateless conversation routing  |
+| `agent-browser`           | Browser actions, HTTP(S) proxy, observations and credential injection            |
+| `docker`                  | Workspace execution, files and normal Docker networking                          |
+| `composio`                | Google/Slack/Notion authorization, tools, file retrieval and signed events       |
+| `direct`                  | Bundled Notion/Linear MCP packages, OAuth, encrypted tokens and read tools       |
+| `discovered`              | Public HTTPS MCP and HTTP API transport, OAuth, pinned DNS and bounded responses |
+| `public-web`              | Pi Web Access search with bounded public source results                          |
+| `chat-sdk`                | Telegram/WhatsApp webhook protocols and message transport                        |
+| `openai`                  | Speech and cheap event classification                                            |
+| `jev`                     | Optional browser chooser and relevance classifier                                |
+| `keychain`, `environment` | Vault encryption key source                                                      |
 
 Adapters must not import feature modules or runtime implementations. Normalize errors and output shapes. Never expose keys, OAuth tokens, raw SDK sessions or plaintext vault contents to the runtime, model or web client. The key-store port returns key bytes only to trusted vault and channel-settings services. SDK state that must persist needs an explicit reference and migration policy.
+
+`public-web/search.ts` calls the Pi Web Access search engine. It returns short public source results and a fixed error. It does not load the Pi extension or expose its file, command, or browser-cookie functions as tools. The model can use the task browser to read a source page.
 
 `composio/integrations.ts` resolves missing discovery schemas through the existing session's fixed `COMPOSIO_GET_TOOL_SCHEMAS` metadata endpoint. Hydrate at most 20 advertised supported-toolkit tools in one bounded request, with no retries or application execution. Require complete matching schemas, preserve full schema bytes and remove resolved references before returning discovery. Keep malformed references, partial results and provider errors fail-closed in `composio-discovery.test.ts`; transport fixtures do not establish live account access.
 

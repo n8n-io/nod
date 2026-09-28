@@ -1,6 +1,6 @@
 import { PageTitle } from '../components/page-title';
-import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Link2, LoaderCircle, Plus, X } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { AlertCircle, Link2, LoaderCircle, X } from 'lucide-react';
 import type { Connection } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
@@ -62,6 +62,11 @@ export function ConnectedAccount({
     <div className="compact-account">
       <div className="compact-account-details">
         <span className="compact-account-name">{label}</span>
+        {account.accessPaths && (
+          <span className="compact-account-paths">
+            {account.accessPaths.map((path) => path.kind.toUpperCase()).join(' · ')}
+          </span>
+        )}
         {issue && (
           <p className="compact-account-issue">
             <AlertCircle size={12} aria-hidden="true" />
@@ -95,16 +100,104 @@ export function Apps() {
   } = usePageData<Connection[]>('/api/apps');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [manageService, setManageService] = useState<string | null>(null);
   const [disconnectAccount, setDisconnectAccount] = useState<Connection | null>(null);
   const [disconnectError, setDisconnectError] = useState('');
+  const discoveryId = new URLSearchParams(window.location.search).get('connect');
+  const [discovery, setDiscovery] = useState<{
+    name: string;
+    callbackUrl?: string;
+    setupUrl?: string;
+    setupText?: string;
+    paths: Array<{
+      kind: string;
+      endpoint: string;
+      auth: string;
+      scope?: string;
+      clientIdRequired?: boolean;
+    }>;
+  } | null>(null);
+  const [discoveryError, setDiscoveryError] = useState('');
+  const [savingDiscovery, setSavingDiscovery] = useState(false);
   const page = useRef<HTMLDivElement>(null);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const dialogService = useRef('');
   const actionRequest = useRef<AbortController | null>(null);
   const groups = connectionGroups(connections ?? []);
+  const managed = groups.find((group) => group.service.slug === manageService);
   const connected = groups.filter((group) => group.accounts.length);
   const available = groups.filter((group) => !group.accounts.length);
   useEffect(() => () => actionRequest.current?.abort(), []);
+  useEffect(() => {
+    if (!discoveryId) return;
+    const request = new AbortController();
+    void api<{
+      name: string;
+      callbackUrl?: string;
+      setupUrl?: string;
+      setupText?: string;
+      paths: Array<{
+        kind: string;
+        endpoint: string;
+        auth: string;
+        scope?: string;
+        clientIdRequired?: boolean;
+      }>;
+    }>(`/api/apps/discovery/${encodeURIComponent(discoveryId)}`, { signal: request.signal })
+      .then((value) => {
+        if (!request.signal.aborted) setDiscovery(value);
+      })
+      .catch((cause) => {
+        if (!request.signal.aborted) setDiscoveryError(errorMessage(cause));
+      });
+    return () => request.abort();
+  }, [discoveryId]);
+  async function saveDiscovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!discoveryId || savingDiscovery) return;
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    setSavingDiscovery(true);
+    setDiscoveryError('');
+    try {
+      await api(`/api/apps/discovery/${encodeURIComponent(discoveryId)}/complete`, {
+        method: 'POST',
+        body: JSON.stringify({
+          accountName: values.get('accountName'),
+          token: values.get('token'),
+        }),
+      });
+      form.reset();
+      window.location.assign('/');
+    } catch (cause) {
+      const token = form.elements.namedItem('token');
+      if (token instanceof HTMLInputElement) token.value = '';
+      setDiscoveryError(errorMessage(cause));
+      setSavingDiscovery(false);
+    }
+  }
+  async function authorizeDiscovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!discoveryId || savingDiscovery) return;
+    const values = new FormData(event.currentTarget);
+    setSavingDiscovery(true);
+    setDiscoveryError('');
+    try {
+      const result = await api<{ url: string }>(
+        `/api/apps/discovery/${encodeURIComponent(discoveryId)}/authorize`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            ...(values.get('clientId') ? { clientId: values.get('clientId') } : {}),
+          }),
+        },
+      );
+      window.location.assign(connectionUrl(result.url, window.location.origin));
+    } catch (cause) {
+      setDiscoveryError(errorMessage(cause));
+      setSavingDiscovery(false);
+    }
+  }
   async function connect(connection: Connection) {
     if (actionRequest.current || busy) return;
     const request = new AbortController();
@@ -146,6 +239,7 @@ export function Apps() {
       update((current) =>
         current ? removeConnection(current, connection.connectionId!) : current,
       );
+      setManageService(null);
       setDisconnectAccount(null);
       void refresh();
     } catch (cause) {
@@ -161,63 +255,45 @@ export function Apps() {
     return (
       <div className="app-grid">
         {items.map(({ service, accounts }) => (
-          <article
-            key={service.slug}
-            className={`app-card${accounts.length ? ' has-accounts' : ''}`}
-            aria-labelledby={`app-${service.slug}`}
-          >
+          <article key={service.slug} className="app-card" aria-labelledby={`app-${service.slug}`}>
             <div className="app-card-summary">
               <ServiceLogo slug={service.slug} />
               <div className="app-card-copy">
                 <h3 id={`app-${service.slug}`}>{service.name}</h3>
-                <p className="app-card-description">{service.description}</p>
+                {!accounts.length && <p className="app-card-description">{service.description}</p>}
                 {service.status === 'not_configured' && (
                   <p className="app-card-unavailable">Sign-in unavailable</p>
                 )}
-              </div>
-              <Button
-                variant={accounts.length ? 'ghost' : 'outline'}
-                size={accounts.length ? 'icon' : 'sm'}
-                className={accounts.length ? 'app-add-account' : 'app-connect'}
-                data-connect-service={service.slug}
-                aria-label={
-                  accounts.length ? `Add ${service.name} account` : `Connect ${service.name}`
-                }
-                aria-busy={busy === `connect:${service.slug}`}
-                title={accounts.length ? `Add ${service.name} account` : undefined}
-                disabled={service.status === 'not_configured' || Boolean(busy)}
-                onClick={() => void connect(service)}
-              >
-                {busy === `connect:${service.slug}` ? (
-                  accounts.length ? (
-                    <LoaderCircle size={15} className="spin" aria-hidden="true" />
-                  ) : (
-                    'Opening…'
-                  )
-                ) : accounts.length ? (
-                  <Plus size={15} aria-hidden="true" />
-                ) : (
-                  'Connect'
+                {accounts.some((account) => connectionIssue(account)) && (
+                  <p className="app-card-unavailable">Sign-in required</p>
                 )}
-              </Button>
-            </div>
-            {accounts.length > 0 && (
-              <div className="app-card-accounts">
-                {accounts.map((account) => (
-                  <ConnectedAccount
-                    key={account.connectionId}
-                    account={account}
-                    busy={Boolean(busy)}
-                    onDisconnect={(trigger) => {
-                      dialogTrigger.current = trigger;
-                      dialogService.current = account.slug;
-                      setDisconnectError('');
-                      setDisconnectAccount(account);
-                    }}
-                  />
-                ))}
               </div>
-            )}
+              {accounts.length ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="app-manage"
+                  data-manage-service={service.slug}
+                  aria-label={`Manage ${service.name} accounts`}
+                  onClick={() => setManageService(service.slug)}
+                >
+                  Manage
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="app-connect"
+                  data-connect-service={service.slug}
+                  aria-label={`Connect ${service.name}`}
+                  aria-busy={busy === `connect:${service.slug}`}
+                  disabled={service.status === 'not_configured' || Boolean(busy)}
+                  onClick={() => void connect(service)}
+                >
+                  {busy === `connect:${service.slug}` ? 'Opening…' : 'Connect'}
+                </Button>
+              )}
+            </div>
           </article>
         ))}
       </div>
@@ -253,6 +329,130 @@ export function Apps() {
         </>
       )}
       <Dialog
+        open={Boolean(managed?.accounts.length) && !disconnectAccount}
+        onOpenChange={(open) => {
+          if (!open && !disconnectAccount) setManageService(null);
+        }}
+      >
+        <DialogContent
+          className="app-manage-dialog"
+          onOpenAutoFocus={(event) => {
+            const id = dialogTrigger.current?.dataset.disconnectAccount;
+            const trigger = Array.from(
+              document.querySelectorAll<HTMLButtonElement>('[data-disconnect-account]'),
+            ).find((button) => button.dataset.disconnectAccount === id);
+            if (trigger) {
+              event.preventDefault();
+              trigger.focus();
+            } else {
+              event.preventDefault();
+              document.querySelector<HTMLButtonElement>('[data-add-account]')?.focus();
+            }
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const button = page.current?.querySelector<HTMLButtonElement>(
+              `[data-manage-service="${manageService}"]`,
+            );
+            button?.focus();
+          }}
+        >
+          <DialogTitle>{managed?.service.name} accounts</DialogTitle>
+          <DialogDescription>Manage the accounts Otto can use for this app.</DialogDescription>
+          <div className="app-manage-accounts">
+            {managed?.accounts.map((account) => (
+              <ConnectedAccount
+                key={account.connectionId}
+                account={account}
+                busy={Boolean(busy)}
+                onDisconnect={(trigger) => {
+                  dialogTrigger.current = trigger;
+                  dialogService.current = account.slug;
+                  setDisconnectError('');
+                  setDisconnectAccount(account);
+                }}
+              />
+            ))}
+          </div>
+          <Button
+            data-add-account
+            variant="outline"
+            disabled={Boolean(busy)}
+            onClick={() => managed && void connect(managed.service)}
+          >
+            {busy === `connect:${manageService}` ? (
+              <LoaderCircle size={15} className="spin" aria-hidden="true" />
+            ) : null}
+            Add account
+          </Button>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(discoveryId)}
+        onOpenChange={(open) => {
+          if (!open && !savingDiscovery) window.location.assign('/apps');
+        }}
+      >
+        <DialogContent className="app-discovery-dialog">
+          <DialogTitle>Connect {discovery?.name ?? 'app'}</DialogTitle>
+          <DialogDescription>
+            Check the service address before you connect. Otto will use this account only with the
+            address shown here.
+          </DialogDescription>
+          {discovery?.setupText && <p>{discovery.setupText}</p>}
+          {discovery?.setupUrl && (
+            <a href={discovery.setupUrl} target="_blank" rel="noopener noreferrer">
+              Open setup page
+            </a>
+          )}
+          {discovery?.paths.map((path) => (
+            <div className="app-discovery-path" key={`${path.kind}:${path.endpoint}`}>
+              <strong>{path.kind.toUpperCase()}</strong>
+              <span>{path.endpoint}</span>
+              {path.scope && <span>Requested access: {path.scope}</span>}
+            </div>
+          ))}
+          {discoveryError && <Notice>{discoveryError}</Notice>}
+          {discovery?.paths[0]?.auth === 'oauth' ? (
+            <form onSubmit={(event) => void authorizeDiscovery(event)} autoComplete="off">
+              {discovery.paths[0]?.clientIdRequired && (
+                <label>
+                  Client ID
+                  <input name="clientId" required maxLength={500} autoComplete="off" />
+                </label>
+              )}
+              {discovery.callbackUrl && <p>Set the app callback URL to {discovery.callbackUrl}.</p>}
+              <Button type="submit" disabled={savingDiscovery}>
+                {savingDiscovery ? 'Opening sign-in…' : `Continue to ${discovery.name}`}
+              </Button>
+            </form>
+          ) : discovery ? (
+            <form onSubmit={(event) => void saveDiscovery(event)} autoComplete="off">
+              <p>Your key is saved privately. It will not appear in chat.</p>
+              <label>
+                Account name
+                <input name="accountName" required maxLength={200} autoComplete="off" />
+              </label>
+              <label>
+                Access token
+                <input
+                  name="token"
+                  type="password"
+                  required
+                  minLength={8}
+                  maxLength={8192}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <Button type="submit" disabled={savingDiscovery}>
+                {savingDiscovery ? 'Checking…' : 'Connect account'}
+              </Button>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+      <Dialog
         open={Boolean(disconnectAccount)}
         onOpenChange={(open) => {
           if (!open && !busy) setDisconnectAccount(null);
@@ -271,9 +471,15 @@ export function Apps() {
             if (trigger?.isConnected) trigger.focus();
             else
               Array.from(
-                page.current?.querySelectorAll<HTMLButtonElement>('[data-connect-service]') ?? [],
+                page.current?.querySelectorAll<HTMLButtonElement>(
+                  '[data-manage-service],[data-connect-service]',
+                ) ?? [],
               )
-                .find((button) => button.dataset.connectService === dialogService.current)
+                .find(
+                  (button) =>
+                    button.dataset.manageService === dialogService.current ||
+                    button.dataset.connectService === dialogService.current,
+                )
                 ?.focus();
           }}
         >

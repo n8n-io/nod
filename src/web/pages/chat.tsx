@@ -163,13 +163,11 @@ export function Chat({
         ? integrationServices[slug as keyof typeof integrationServices].name
         : 'App';
     setConnectionNotice(
-      outcome === 'continued'
-        ? `${name} connected. Continuing your request.`
-        : outcome === 'connected'
-          ? `${name} connected. You can continue in chat.`
-          : outcome === 'cancelled'
-            ? `${name} connection cancelled. You can try again in chat or Apps.`
-            : `${name} could not connect. Try again in chat or Apps.`,
+      outcome === 'continued' || outcome === 'connected'
+        ? ''
+        : outcome === 'cancelled'
+          ? `${name} connection cancelled. You can try again in chat or Apps.`
+          : `${name} could not connect. Try again in chat or Apps.`,
     );
     url.searchParams.delete('connection');
     url.searchParams.delete('service');
