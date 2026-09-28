@@ -160,8 +160,10 @@ export function meterWorkspace(workspace: Workspace, usage: ProviderUsageStore):
                 environment: Record<string, string>,
                 timeout?: number,
               ) =>
-                usage.track({ ...base, operation: 'execute' }, () =>
-                  session.executeProgram!(program, args, environment, timeout),
+                usage.track(
+                  { ...base, operation: 'execute' },
+                  () => session.executeProgram!(program, args, environment, timeout),
+                  (result) => ({ status: result.exitCode === 0 ? 'succeeded' : 'failed' }),
                 ),
             }
           : {}),

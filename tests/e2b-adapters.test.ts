@@ -282,7 +282,7 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
       FIXTURE_TOKEN: 'synthetic-private-token',
     });
     setTimeout(() => connectedAbort.abort(), 50);
-    await assert.rejects(stopped);
+    await assert.rejects(stopped, /cancelled/);
     await second.computer.act('task-two', { action: 'snapshot' });
     assert.equal(f.state.records.size, 2);
     const rows = [...f.state.records.values()];

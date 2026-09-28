@@ -577,6 +577,54 @@ test('workspace attachment reads and publications use distinct usage operations 
   assert.doesNotMatch(JSON.stringify(rows), /private-file-path|private-file-bytes/);
 });
 
+test('connected CLI usage records nonzero exits as failures', async () => {
+  const rows: unknown[][] = [];
+  const pool = {
+    query: async (sql: string, values?: unknown[]) => {
+      if (sql.includes('INSERT INTO provider_usage')) rows.push(values!);
+      return { rows: [], rowCount: 1 };
+    },
+  } as unknown as pg.Pool;
+  const usage = createProviderUsageStore(pool, {
+    ownerId: 'owner',
+    enabled: () => true,
+    coverage: [],
+  });
+  let exitCode = 0;
+  const workspace = meterWorkspace(
+    fakeWorkspace({
+      open: () => ({
+        path: '/fixture/workspace',
+        instructions: 'Fixture workspace.',
+        execute: async () => '',
+        readFile: async () => '',
+        writeFile: async () => '',
+        executeProgram: async () => ({ exitCode, output: '' }),
+      }),
+    }),
+    usage,
+  );
+  try {
+    const session = workspace.open({
+      taskId: randomUUID(),
+      workspacePath: '/fixture/workspace',
+      signal: new AbortController().signal,
+    });
+    await session.executeProgram!('fixture', ['read'], {});
+    exitCode = 1;
+    await session.executeProgram!('fixture', ['write'], {});
+  } finally {
+    await usage.close();
+  }
+  assert.deepEqual(
+    rows.map((row) => [row[5], row[7]]).sort((a, b) => String(a[1]).localeCompare(String(b[1]))),
+    [
+      ['execute', 'failed'],
+      ['execute', 'succeeded'],
+    ],
+  );
+});
+
 test('standalone browser control records owner usage without a synthetic task association', async () => {
   const rows: unknown[][] = [];
   const pool = {
