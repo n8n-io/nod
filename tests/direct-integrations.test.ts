@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import pg from 'pg';
 import Fastify from 'fastify';
@@ -7,6 +7,7 @@ import type { IntegrationProvider, IntegrationSession } from '../src/ports/integ
 import { createDirectProvider } from '../src/providers/direct/integrations.ts';
 import { createDirectOAuth } from '../src/providers/direct/oauth.ts';
 import { createIntegrations } from '../src/server/integrations.ts';
+import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 
 test(
   'direct Linear OAuth uses read access and keeps tokens encrypted',
@@ -75,9 +76,15 @@ test(
       throw new Error(`Unexpected request: ${url}`);
     };
     try {
+      const grantVault = await createAppGrantVault(pool, {
+        ownerId: 'fixture-owner',
+        keyStore,
+      });
       const provider = createDirectProvider({
         pool,
         keyStore,
+        grantVault,
+        ownerId: 'fixture-owner',
         request,
       });
       assert.deepEqual(provider.supportedServices, ['notion', 'linear']);
@@ -123,8 +130,19 @@ test(
         'SELECT ciphertext FROM direct_oauth_accounts WHERE id=$1',
         [attempt.accountId],
       );
-      assert.doesNotMatch(encrypted.rows[0].ciphertext, /private-access-token|fixture-client/);
-      const oauth = createDirectOAuth({ pool, keyStore, request });
+      assert.equal(encrypted.rows[0].ciphertext, '');
+      const stored = await pool.query<{ ciphertext: string }>(
+        'SELECT ciphertext FROM vault_app_grants WHERE id=$1',
+        [attempt.accountId],
+      );
+      assert.doesNotMatch(stored.rows[0].ciphertext, /private-access-token|fixture-client/);
+      const oauth = createDirectOAuth({
+        pool,
+        keyStore,
+        grantVault,
+        ownerId: 'fixture-owner',
+        request,
+      });
       assert.deepEqual(await oauth.access('fixture-owner', attempt.accountId), {
         service: 'linear',
         accessToken: 'first-refreshed-access-token',
@@ -146,10 +164,68 @@ test(
         ).rows[0].ciphertext,
         /refreshed-access-token/,
       );
+      const legacyId = randomUUID();
+      const nonce = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', secretKey, nonce);
+      cipher.setAAD(Buffer.from(`otto-direct-oauth-v1:${legacyId}`));
+      const bytes = Buffer.concat([
+        nonce,
+        cipher.update(JSON.stringify({ clientId: 'legacy-client', accessToken: 'legacy-token' })),
+        cipher.final(),
+      ]);
+      const legacyCiphertext = Buffer.concat([
+        bytes.subarray(0, 12),
+        cipher.getAuthTag(),
+        bytes.subarray(12),
+      ]).toString('base64');
+      await pool.query(
+        `INSERT INTO direct_oauth_accounts(id,owner_id,service,ciphertext,connected)
+         VALUES($1,$2,'linear',$3,true)`,
+        [legacyId, 'fixture-owner', legacyCiphertext],
+      );
+      const expiredId = randomUUID();
+      await pool.query(
+        `INSERT INTO direct_oauth_accounts(id,owner_id,service,ciphertext,connected,expires_at)
+         VALUES($1,$2,'linear','expired',false,now()-interval '1 minute')`,
+        [expiredId, 'fixture-owner'],
+      );
+      const migrated = createDirectOAuth({
+        pool,
+        keyStore,
+        grantVault,
+        ownerId: 'fixture-owner',
+        request,
+      });
+      assert.equal((await migrated.access('fixture-owner', legacyId)).accessToken, 'legacy-token');
+      assert.equal(
+        (await pool.query('SELECT id FROM direct_oauth_accounts WHERE id=$1', [expiredId]))
+          .rowCount,
+        0,
+      );
+      assert.equal(
+        (
+          await pool.query<{ ciphertext: string }>(
+            'SELECT ciphertext FROM direct_oauth_accounts WHERE id=$1',
+            [legacyId],
+          )
+        ).rows[0].ciphertext,
+        '',
+      );
       await pool.query(
         `INSERT INTO direct_oauth_accounts(id,owner_id,service,ciphertext,connected)
          VALUES($1,$2,$3,$4,true)`,
         ['00000000-0000-0000-0000-000000000001', 'fixture-owner', 'linear', 'invalid'],
+      );
+      const recovered = createDirectOAuth({
+        pool,
+        keyStore,
+        grantVault,
+        ownerId: 'fixture-owner',
+        request,
+      });
+      assert.equal(
+        (await recovered.access('fixture-owner', attempt.accountId)).accessToken,
+        'refreshed-access-token',
       );
       const connectedSession = await provider.createSession('fixture-owner', {
         linear: ['00000000-0000-0000-0000-000000000001', attempt.accountId],

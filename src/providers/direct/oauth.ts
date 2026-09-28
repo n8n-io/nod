@@ -1,6 +1,7 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import type { AppGrantVault } from '../../ports/app-grants.ts';
 import type { CredentialKeyStore } from '../../ports/key-store.ts';
 import { loadDirectPlugin } from './plugin.ts';
 
@@ -38,14 +39,6 @@ const tokenSchema = z.object({
   expires_in: z.number().optional(),
 });
 
-function seal(key: Buffer, id: string, secrets: Secrets) {
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  cipher.setAAD(Buffer.from(`otto-direct-oauth-v1:${id}`));
-  const body = Buffer.concat([cipher.update(JSON.stringify(secrets)), cipher.final()]);
-  return Buffer.concat([nonce, cipher.getAuthTag(), body]).toString('base64');
-}
-
 function open(key: Buffer, row: AccountRow): Secrets {
   const bytes = Buffer.from(row.ciphertext, 'base64');
   const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
@@ -68,21 +61,46 @@ async function json(response: Response) {
 export function createDirectOAuth(options: {
   pool: Pool;
   keyStore: CredentialKeyStore;
+  grantVault: AppGrantVault;
+  ownerId: string;
   request: typeof fetch;
 }) {
   const refreshes = new Map<string, Promise<Secrets>>();
-  const ready = options.pool.query(`CREATE TABLE IF NOT EXISTS direct_oauth_accounts (
-    id uuid PRIMARY KEY, owner_id text NOT NULL, service text NOT NULL, ciphertext text NOT NULL,
-    state_hash text UNIQUE, expires_at timestamptz, connected boolean NOT NULL DEFAULT false
-  )`);
-
-  async function key() {
-    if (!options.keyStore.configured) throw new Error('The secure key store is unavailable.');
-    return options.keyStore.getKey();
-  }
+  const ready = (async () => {
+    await options.pool.query(`CREATE TABLE IF NOT EXISTS direct_oauth_accounts (
+      id uuid PRIMARY KEY, owner_id text NOT NULL, service text NOT NULL, ciphertext text NOT NULL,
+      state_hash text UNIQUE, expires_at timestamptz, connected boolean NOT NULL DEFAULT false
+    )`);
+    await options.pool.query(
+      'DELETE FROM direct_oauth_accounts WHERE owner_id=$1 AND connected=false AND (expires_at IS NULL OR expires_at<=now())',
+      [options.ownerId],
+    );
+    const legacy = await options.pool.query<AccountRow>(
+      "SELECT * FROM direct_oauth_accounts WHERE owner_id=$1 AND ciphertext<>''",
+      [options.ownerId],
+    );
+    for (const row of legacy.rows) {
+      let secrets: Secrets;
+      try {
+        secrets = open(await options.keyStore.getKey(), row);
+      } catch {
+        continue;
+      }
+      await options.grantVault.adoptPlain(
+        row.id,
+        JSON.stringify(secrets),
+        row.connected ? null : row.expires_at,
+      );
+      await options.pool.query(
+        "UPDATE direct_oauth_accounts SET ciphertext='' WHERE id=$1 AND owner_id=$2 AND ciphertext=$3",
+        [row.id, options.ownerId, row.ciphertext],
+      );
+    }
+  })();
 
   async function row(id: string, ownerId: string) {
     await ready;
+    if (ownerId !== options.ownerId) throw new Error('This connected account is unavailable.');
     const result = await options.pool.query<AccountRow>(
       `SELECT id,owner_id,service,ciphertext,state_hash,expires_at,connected FROM direct_oauth_accounts
        WHERE id=$1 AND connected=true AND owner_id=$2`,
@@ -92,15 +110,9 @@ export function createDirectOAuth(options: {
     return result.rows[0];
   }
 
-  async function update(id: string, secrets: Secrets) {
-    await options.pool.query('UPDATE direct_oauth_accounts SET ciphertext=$2 WHERE id=$1', [
-      id,
-      seal(await key(), id, secrets),
-    ]);
-  }
-
   async function access(account: AccountRow): Promise<Secrets> {
-    const secrets = open(await key(), account);
+    const grant = await options.grantVault.read(account.id);
+    const secrets = JSON.parse(grant.value) as Secrets;
     if (!secrets.accessToken) throw new Error('The connected account has no access token.');
     if (!secrets.expiresAt || secrets.expiresAt > Date.now() + 60_000) return secrets;
     const current = refreshes.get(account.id);
@@ -124,8 +136,9 @@ export function createDirectOAuth(options: {
         expiresAt:
           refreshed.expires_in !== undefined ? Date.now() + refreshed.expires_in * 1000 : undefined,
       };
-      await update(account.id, next);
-      return next;
+      return (await options.grantVault.replace(account.id, grant.version, JSON.stringify(next)))
+        ? next
+        : (JSON.parse((await options.grantVault.read(account.id)).value) as Secrets);
     })();
     refreshes.set(account.id, pending);
     try {
@@ -137,10 +150,12 @@ export function createDirectOAuth(options: {
 
   async function authorize(ownerId: string, service: Service, callbackUrl: string) {
     await ready;
-    await options.pool.query(
-      'DELETE FROM direct_oauth_accounts WHERE owner_id=$1 AND connected=false AND expires_at<now()',
+    if (ownerId !== options.ownerId) throw new Error('This account is unavailable.');
+    const expired = await options.pool.query<{ id: string }>(
+      'DELETE FROM direct_oauth_accounts WHERE owner_id=$1 AND connected=false AND expires_at<now() RETURNING id',
       [ownerId],
     );
+    for (const row of expired.rows) await options.grantVault.remove(row.id);
     await options.pool.query(
       'UPDATE direct_oauth_accounts SET state_hash=NULL,expires_at=NULL WHERE owner_id=$1 AND connected=true AND expires_at<now()',
       [ownerId],
@@ -210,17 +225,27 @@ export function createDirectOAuth(options: {
       requireIssuer: metadata.authorization_response_iss_parameter_supported === true,
       resource: resourceUrl,
     };
-    await options.pool.query(
-      `INSERT INTO direct_oauth_accounts(id,owner_id,service,ciphertext,state_hash,expires_at)
-       VALUES($1,$2,$3,$4,$5,now() + interval '10 minutes')`,
-      [
+    const client = await options.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO direct_oauth_accounts(id,owner_id,service,ciphertext,state_hash,expires_at)
+         VALUES($1,$2,$3,'',$4,now() + interval '10 minutes')`,
+        [id, ownerId, service, createHash('sha256').update(nonce).digest('hex')],
+      );
+      await options.grantVault.put(
         id,
-        ownerId,
-        service,
-        seal(await key(), id, secrets),
-        createHash('sha256').update(nonce).digest('hex'),
-      ],
-    );
+        JSON.stringify(secrets),
+        client,
+        new Date(Date.now() + 600_000),
+      );
+      await client.query('COMMIT');
+    } catch (cause) {
+      await client.query('ROLLBACK');
+      throw cause;
+    } finally {
+      client.release();
+    }
     const url = new URL(metadata.authorization_endpoint);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', registration.client_id);
@@ -243,22 +268,33 @@ export function createDirectOAuth(options: {
     const hash = createHash('sha256').update(input.state).digest('hex');
     const result = await options.pool.query<AccountRow>(
       `SELECT id,owner_id,service,ciphertext,state_hash,expires_at,connected FROM direct_oauth_accounts
-       WHERE state_hash=$1 AND expires_at>now()`,
-      [hash],
+       WHERE state_hash=$1 AND owner_id=$2 AND expires_at>now()`,
+      [hash, options.ownerId],
     );
     const pending = result.rows[0];
     if (!pending) throw new Error('This sign-in link is expired or already used.');
-    const secrets = open(await key(), pending);
+    const secrets = JSON.parse((await options.grantVault.read(pending.id)).value) as Secrets;
     if (input.iss !== undefined && input.iss !== secrets.issuer)
       throw new Error('The authorization server changed.');
     if (secrets.requireIssuer && input.iss !== secrets.issuer)
       throw new Error('The authorization server did not identify itself.');
     if (pending.connected) return { state: input.state, accountId: pending.id, success: true };
     if (input.error || !input.code) {
-      await options.pool.query(
-        'DELETE FROM direct_oauth_accounts WHERE id=$1 AND connected=false',
-        [pending.id],
-      );
+      const client = await options.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          'DELETE FROM direct_oauth_accounts WHERE id=$1 AND owner_id=$2 AND connected=false',
+          [pending.id, options.ownerId],
+        );
+        await options.grantVault.remove(pending.id, client);
+        await client.query('COMMIT');
+      } catch (cause) {
+        await client.query('ROLLBACK');
+        throw cause;
+      } finally {
+        client.release();
+      }
       return { state: input.state, accountId: pending.id, success: false };
     }
     const body = new URLSearchParams({
@@ -283,12 +319,23 @@ export function createDirectOAuth(options: {
       expiresAt:
         tokens.expires_in !== undefined ? Date.now() + tokens.expires_in * 1000 : undefined,
     };
-    const saved = await options.pool.query(
-      `UPDATE direct_oauth_accounts SET ciphertext=$2,connected=true
-       WHERE id=$1 AND state_hash=$3 AND connected=false`,
-      [pending.id, seal(await key(), pending.id, connected), hash],
-    );
-    if (!saved.rowCount) throw new Error('This sign-in link was already used.');
+    const client = await options.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const saved = await client.query(
+        `UPDATE direct_oauth_accounts SET connected=true
+         WHERE id=$1 AND owner_id=$2 AND state_hash=$3 AND connected=false`,
+        [pending.id, options.ownerId, hash],
+      );
+      if (!saved.rowCount) throw new Error('This sign-in link was already used.');
+      await options.grantVault.put(pending.id, JSON.stringify(connected), client);
+      await client.query('COMMIT');
+    } catch (cause) {
+      await client.query('ROLLBACK');
+      throw cause;
+    } finally {
+      client.release();
+    }
     return { state: input.state, accountId: pending.id, success: true };
   }
 
@@ -303,7 +350,21 @@ export function createDirectOAuth(options: {
     },
     async deleteAccount(id: string) {
       await ready;
-      await options.pool.query('DELETE FROM direct_oauth_accounts WHERE id=$1', [id]);
+      const client = await options.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM direct_oauth_accounts WHERE id=$1 AND owner_id=$2', [
+          id,
+          options.ownerId,
+        ]);
+        await options.grantVault.remove(id, client);
+        await client.query('COMMIT');
+      } catch (cause) {
+        await client.query('ROLLBACK');
+        throw cause;
+      } finally {
+        client.release();
+      }
     },
   };
 }

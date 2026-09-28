@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { IntegrationProvider, IntegrationSession } from '../../ports/integrations.ts';
 import type { CredentialKeyStore } from '../../ports/key-store.ts';
+import type { AppGrantVault } from '../../ports/app-grants.ts';
 import { createDirectOAuth, type Service } from './oauth.ts';
 import { withDirectMcp } from './mcp.ts';
 
@@ -17,6 +18,8 @@ const linearTools = {
 export function createDirectProvider(options: {
   pool: Pool;
   keyStore: CredentialKeyStore;
+  grantVault: AppGrantVault;
+  ownerId: string;
   request?: typeof fetch;
 }): IntegrationProvider {
   const request: typeof fetch = (input, init) =>
@@ -28,7 +31,13 @@ export function createDirectProvider(options: {
         : AbortSignal.timeout(30_000),
     });
   const supportedServices: Service[] = ['notion', 'linear'];
-  const oauth = createDirectOAuth({ pool: options.pool, keyStore: options.keyStore, request });
+  const oauth = createDirectOAuth({
+    pool: options.pool,
+    keyStore: options.keyStore,
+    grantVault: options.grantVault,
+    ownerId: options.ownerId,
+    request,
+  });
   const mcp = <T>(service: Service, token: string, operation: (client: Client) => Promise<T>) =>
     withDirectMcp(service, token, request, operation);
 

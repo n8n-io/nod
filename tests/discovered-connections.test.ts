@@ -208,6 +208,13 @@ test(
           paths: [{ kind: 'http', endpoint: 'https://api.github.com/' }],
         }),
       );
+      await assert.rejects(() =>
+        integrations.manageConnections('propose', undefined, task, {
+          service: 'github',
+          name: 'GitHub',
+          paths: [{ kind: 'http', endpoint: 'https://api.github.com/', testPath: 'https://[' }],
+        }),
+      );
       const proposed = await integrations.manageConnections('propose', undefined, task, {
         service: 'GitHub',
         name: 'GitHub',

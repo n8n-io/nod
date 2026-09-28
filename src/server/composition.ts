@@ -125,7 +125,12 @@ export interface ApplicationAdapters {
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
-  directIntegrations?: (pool: pg.Pool, keyStore: CredentialKeyStore) => IntegrationProvider;
+  directIntegrations?: (
+    pool: pg.Pool,
+    keyStore: CredentialKeyStore,
+    grantVault: Awaited<ReturnType<typeof createAppGrantVault>>,
+    ownerId: string,
+  ) => IntegrationProvider;
   keyStore: CredentialKeyStore;
   relevance: RelevanceClassifier;
   messaging?: MessagingTransport;
@@ -273,8 +278,12 @@ export function createDefaultAdapters(
     }),
     ...(['local', 'tenant'].includes(runtimeMode)
       ? {
-          directIntegrations: (pool: pg.Pool, keyStore: CredentialKeyStore) =>
-            createDirectProvider({ pool, keyStore }),
+          directIntegrations: (
+            pool: pg.Pool,
+            keyStore: CredentialKeyStore,
+            grantVault: Awaited<ReturnType<typeof createAppGrantVault>>,
+            ownerId: string,
+          ) => createDirectProvider({ pool, keyStore, grantVault, ownerId }),
         }
       : {}),
     keyStore: env.OTTO_VAULT_KEY
@@ -510,7 +519,10 @@ export async function createApplication(
     ...(adapters.directIntegrations
       ? {
           additionalProviders: [
-            meterIntegrations(adapters.directIntegrations(pool, adapters.keyStore), providerUsage),
+            meterIntegrations(
+              adapters.directIntegrations(pool, adapters.keyStore, grantVault, ownerId),
+              providerUsage,
+            ),
           ],
         }
       : {}),

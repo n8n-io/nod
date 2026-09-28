@@ -114,22 +114,22 @@ function redact(value: unknown, token: string): unknown {
 function target(path: AccessPath, relative: string) {
   if (!relative || relative.length > 2048 || relative.startsWith('//') || relative.includes('\\'))
     throw error('Use a path in the saved API address.');
-  const base = new URL(path.endpoint);
-  const url = new URL(
-    relative.startsWith('/') ? relative.slice(1) : relative,
-    base.href.endsWith('/') ? base : `${base.href}/`,
-  );
   try {
+    const base = new URL(path.endpoint);
+    const url = new URL(
+      relative.startsWith('/') ? relative.slice(1) : relative,
+      base.href.endsWith('/') ? base : `${base.href}/`,
+    );
     if (/%(?:2e|2f|5c|25)/i.test(url.pathname) || /%(?:2e|2f|5c|25)/i.test(base.pathname))
       throw new Error();
     const saved = posix.normalize(decodeURIComponent(base.pathname));
     const requested = posix.normalize(decodeURIComponent(url.pathname));
     const prefix = saved.endsWith('/') ? saved : `${saved}/`;
     if (url.origin !== base.origin || !requested.startsWith(prefix)) throw new Error();
+    return url.href;
   } catch {
     throw error('The request must stay in the saved API address.');
   }
-  return url.href;
 }
 
 export async function createDiscoveredConnections(
@@ -226,11 +226,13 @@ export async function createDiscoveredConnections(
     }
     const paths: AccessPath[] = [];
     for (const path of parsed.paths) {
-      paths.push({
+      const checked = {
         ...path,
         endpoint: await options.transport.validateEndpoint(path.endpoint),
         id: randomUUID(),
-      });
+      };
+      if (checked.kind === 'http') target(checked, checked.testPath);
+      paths.push(checked);
     }
     const id = randomUUID();
     await pool.query(

@@ -89,5 +89,14 @@ export async function createAppGrantVault(
     );
     await read(validId);
   }
-  return { put, read, replace, remove, adoptLegacy };
+  async function adoptPlain(id: string, value: string, expiresAt: Date | null = null) {
+    const validId = z.uuid().parse(id);
+    await pool.query(
+      `INSERT INTO vault_app_grants(id,owner_id,ciphertext,expires_at) VALUES($1,$2,$3,$4)
+       ON CONFLICT(id) DO NOTHING`,
+      [validId, owner, seal(await key(), owner, validId, value), expiresAt],
+    );
+    await read(validId);
+  }
+  return { put, read, replace, remove, adoptLegacy, adoptPlain };
 }

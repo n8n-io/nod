@@ -10,7 +10,7 @@ Implement the smallest applicable interface in `../ports`. Factories accept cred
 | `agent-browser`           | Browser actions, HTTP(S) proxy, observations and credential injection            |
 | `docker`                  | Workspace execution, files and normal Docker networking                          |
 | `composio`                | Google/Slack/Notion authorization, tools, file retrieval and signed events       |
-| `direct`                  | Bundled Notion/Linear MCP packages, OAuth, encrypted tokens and read tools       |
+| `direct`                  | Bundled Notion/Linear MCP packages, Vault-owned grants and read tools            |
 | `discovered`              | Public HTTPS MCP and HTTP API transport, OAuth, pinned DNS and bounded responses |
 | `public-web`              | Pi Web Access search with bounded public source results                          |
 | `chat-sdk`                | Telegram/WhatsApp webhook protocols and message transport                        |
@@ -18,7 +18,7 @@ Implement the smallest applicable interface in `../ports`. Factories accept cred
 | `jev`                     | Optional browser chooser and relevance classifier                                |
 | `keychain`, `environment` | Vault encryption key source                                                      |
 
-Adapters must not import feature modules or runtime implementations. Normalize errors and output shapes. Never expose keys, OAuth tokens, raw SDK sessions or plaintext vault contents to the runtime, model or web client. The key-store port returns key bytes only to trusted vault and channel-settings services. SDK state that must persist needs an explicit reference and migration policy.
+Direct OAuth uses the injected Vault grant port for pending and active secrets. It moves valid older ciphertext at startup; an invalid account grant cannot stop other accounts. Adapters must not import feature modules or runtime implementations. Normalize errors and output shapes. Never expose keys, OAuth tokens, raw SDK sessions or plaintext vault contents to the runtime, model or web client. The key-store port returns key bytes only to trusted vault and channel-settings services. SDK state that must persist needs an explicit reference and migration policy.
 
 `public-web/search.ts` calls the Pi Web Access search engine. It returns short public source results and a fixed error. It does not load the Pi extension or expose its file, command, or browser-cookie functions as tools. The model can use the task browser to read a source page.
 

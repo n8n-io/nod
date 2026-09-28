@@ -145,6 +145,33 @@ test('a discovered account form shows reviewed addresses and clears a failed tok
   }
 });
 
+test('a malformed read check leaves the token form disabled', async () => {
+  const priorFetch = globalThis.fetch;
+  window.history.replaceState(null, '', '/apps?connect=66666666-6666-4666-8666-666666666666');
+  globalThis.fetch = async (url) =>
+    String(url).includes('/discovery/')
+      ? Response.json({
+          name: 'Fixture API',
+          paths: [{ kind: 'http', endpoint: 'https://api.example.test/v1', testPath: 'https://[' }],
+        })
+      : Response.json(accounts);
+  pageDataCache.update('/api/apps', () => accounts);
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(createElement(Apps)));
+    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /unavailable/);
+    assert.equal(dialogButton('Connect account').disabled, true);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    pageDataCache.update('/api/apps', () => null);
+    globalThis.fetch = priorFetch;
+    window.history.replaceState(null, '', '/');
+  }
+});
+
 test('a discovered OAuth account asks for one sign-in action', async () => {
   const priorFetch = globalThis.fetch;
   window.history.replaceState(null, '', '/apps?connect=33333333-3333-4333-8333-333333333333');

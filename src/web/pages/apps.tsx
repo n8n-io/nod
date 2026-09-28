@@ -47,6 +47,18 @@ function accountLabel(account: Connection) {
     : (identity.secondary ?? identity.primary);
 }
 
+function readCheckUrl(path: { endpoint: string; testPath?: string }) {
+  if (!path.testPath) return null;
+  try {
+    return new URL(
+      path.testPath.replace(/^\/+/, ''),
+      path.endpoint.endsWith('/') ? path.endpoint : `${path.endpoint}/`,
+    ).href;
+  } catch {
+    return null;
+  }
+}
+
 export function ConnectedAccount({
   account,
   busy,
@@ -425,15 +437,7 @@ export function Apps() {
               <strong>{path.kind.toUpperCase()}</strong>
               <span>{path.endpoint}</span>
               {path.kind === 'http' && path.testPath && (
-                <span>
-                  Read check: GET{' '}
-                  {
-                    new URL(
-                      path.testPath.replace(/^\/+/, ''),
-                      path.endpoint.endsWith('/') ? path.endpoint : `${path.endpoint}/`,
-                    ).href
-                  }
-                </span>
+                <span>Read check: GET {readCheckUrl(path) ?? 'unavailable'}</span>
               )}
               {path.scope && <span>Requested access: {path.scope}</span>}
             </div>
@@ -471,7 +475,13 @@ export function Apps() {
                   spellCheck={false}
                 />
               </label>
-              <Button type="submit" disabled={savingDiscovery}>
+              <Button
+                type="submit"
+                disabled={
+                  savingDiscovery ||
+                  discovery.paths.some((path) => path.kind === 'http' && !readCheckUrl(path))
+                }
+              >
                 {savingDiscovery ? 'Checking…' : 'Connect account'}
               </Button>
             </form>
