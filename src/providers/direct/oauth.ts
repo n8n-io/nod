@@ -283,11 +283,11 @@ export function createDirectOAuth(options: {
       const client = await options.pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query(
+        const removed = await client.query(
           'DELETE FROM direct_oauth_accounts WHERE id=$1 AND owner_id=$2 AND connected=false',
           [pending.id, options.ownerId],
         );
-        await options.grantVault.remove(pending.id, client);
+        if (removed.rowCount) await options.grantVault.remove(pending.id, client);
         await client.query('COMMIT');
       } catch (cause) {
         await client.query('ROLLBACK');

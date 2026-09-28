@@ -246,6 +246,61 @@ test(
         callback,
       );
       assert.equal(tokenRequests, 3);
+      const raceState = randomBytes(32).toString('base64url');
+      const race = await oauth.authorize(
+        'fixture-owner',
+        'linear',
+        `http://localhost:4310/api/apps/callback?state=${raceState}`,
+      );
+      let resumeRead = () => {};
+      let readStarted = () => {};
+      const readWait = new Promise<void>((resolve) => {
+        resumeRead = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        readStarted = resolve;
+      });
+      const errorCallback = createDirectOAuth({
+        pool,
+        keyStore,
+        grantVault: {
+          ...grantVault,
+          read: async (id) => {
+            const grant = await grantVault.read(id);
+            if (id === race.accountId) {
+              readStarted();
+              await readWait;
+            }
+            return grant;
+          },
+        },
+        ownerId: 'fixture-owner',
+        request,
+      });
+      const errorResult = errorCallback.parseCallback({
+        state: raceState,
+        error: 'access_denied',
+        iss: 'https://mcp.linear.app',
+      });
+      await started;
+      try {
+        await oauth.parseCallback({
+          state: raceState,
+          code: 'fixture-code',
+          iss: 'https://mcp.linear.app',
+        });
+      } finally {
+        resumeRead();
+      }
+      assert.deepEqual(await errorResult, {
+        state: raceState,
+        accountId: race.accountId,
+        success: false,
+      });
+      assert.equal(
+        JSON.parse((await grantVault.read(race.accountId)).value).accessToken,
+        'private-access-token',
+      );
     } finally {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
