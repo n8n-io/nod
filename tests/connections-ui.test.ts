@@ -145,6 +145,46 @@ test('a discovered account form shows reviewed addresses and clears a failed tok
   }
 });
 
+test('a discovered CLI form shows the program and keeps the token private', async () => {
+  const priorFetch = globalThis.fetch;
+  window.history.replaceState(null, '', '/apps?connect=77777777-7777-4777-8777-777777777777');
+  globalThis.fetch = async (url) =>
+    String(url).includes('/discovery/')
+      ? Response.json({
+          name: 'Fixture CLI',
+          paths: [
+            {
+              kind: 'cli',
+              command: 'fixture',
+              auth: 'env',
+              envName: 'FIXTURE_TOKEN',
+              testArgs: ['account', 'show'],
+            },
+          ],
+        })
+      : Response.json(accounts);
+  pageDataCache.update('/api/apps', () => accounts);
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(createElement(Apps)));
+    const dialog = document.querySelector('[role="dialog"]')!;
+    assert.equal(dialog.querySelector('.app-discovery-path strong')?.textContent, 'CLI');
+    assert.equal(dialog.querySelector('.app-discovery-path span')?.textContent, 'fixture');
+    assert.match(dialog.textContent ?? '', /Read check: fixture account show/);
+    assert.equal(dialog.querySelector<HTMLInputElement>('[name="token"]')?.type, 'password');
+    assert.equal(dialog.textContent?.includes('FIXTURE_TOKEN'), false);
+    assert.equal(dialogButton('Connect account').disabled, false);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    pageDataCache.update('/api/apps', () => null);
+    globalThis.fetch = priorFetch;
+    window.history.replaceState(null, '', '/');
+  }
+});
+
 test('a malformed read check leaves the token form disabled', async () => {
   const priorFetch = globalThis.fetch;
   window.history.replaceState(null, '', '/apps?connect=66666666-6666-4666-8666-666666666666');

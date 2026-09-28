@@ -22,6 +22,7 @@ const labels: Record<string, string> = {
   OTTO_memory_propose: 'Remember this',
   CONNECTED_HTTP: 'Call this connected API',
   CONNECTED_MCP_CALL: 'Use this connected tool',
+  CONNECTED_CLI: 'Run this connected command',
 };
 
 function plain(value: string) {
@@ -87,6 +88,7 @@ export function actionConfirmation(
     add('Tool', connectedText(args.tool));
     if (args.input !== undefined) add('Input', connectedText(args.input));
   }
+  if (action === 'CONNECTED_CLI') add('Arguments', connectedText(args.argv));
   for (const [key, label] of [
     ['title', 'Title'],
     ['subject', 'Subject'],

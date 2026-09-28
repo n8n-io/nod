@@ -31,6 +31,13 @@ const pathSchema = z.discriminatedUnion('kind', [
     scope: z.string().trim().min(1).max(500).optional(),
     clientIdRequired: z.boolean().optional(),
   }),
+  z.object({
+    kind: z.literal('cli'),
+    command: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
+    auth: z.literal('env').default('env'),
+    envName: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}(?:TOKEN|API_KEY|SECRET|PASSWORD)$/),
+    testArgs: z.array(z.string().min(1).max(300)).min(1).max(12),
+  }),
 ]);
 const proposalSchema = z.object({
   service: z
@@ -94,7 +101,10 @@ function open(key: Buffer, owner: string, id: string, ciphertext: string) {
   return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString();
 }
 
-function headers(path: AccessPath, token: string): Record<string, string> {
+function headers(
+  path: Extract<AccessPath, { kind: 'http' | 'mcp' }>,
+  token: string,
+): Record<string, string> {
   return path.auth === 'x-api-key' ? { 'X-API-Key': token } : { Authorization: `Bearer ${token}` };
 }
 
@@ -111,7 +121,28 @@ function redact(value: unknown, token: string): unknown {
   return value;
 }
 
-function target(path: AccessPath, relative: string) {
+function cliLooksLikeWrite(argv: string[]) {
+  return argv.some(
+    (value, index) =>
+      /^(?:add|approve|archive|close|commit|create|delete|disable|edit|enable|invite|merge|open|post|publish|push|remove|rename|restore|revoke|send|set|submit|transfer|update|upload)$/i.test(
+        value,
+      ) ||
+      /^(?:-f|-F|--body|--field|--force|--input|--raw-field)(?:=|$)/.test(value) ||
+      (/^(?:-X|--method)(?:=|$)/.test(value) &&
+        !/^(?:GET|--method=GET|-X=GET)$/i.test(
+          argv[index + (value.includes('=') ? 0 : 1)] ?? value,
+        )),
+  );
+}
+
+function cliRead(args: Record<string, unknown>, argv: string[], testArgs: string[]) {
+  return (
+    !cliLooksLikeWrite(argv) &&
+    (args.readOnly === true || JSON.stringify(argv) === JSON.stringify(testArgs))
+  );
+}
+
+function target(path: Extract<AccessPath, { kind: 'http' }>, relative: string) {
   if (!relative || relative.length > 2048 || relative.startsWith('//') || relative.includes('\\'))
     throw error('Use a path in the saved API address.');
   try {
@@ -141,6 +172,14 @@ export async function createDiscoveredConnections(
     grantVault: Awaited<ReturnType<typeof createAppGrantVault>>;
     transport: DiscoveredTransport;
     oauth: DiscoveredOAuth;
+    runCli?: (
+      taskId: string,
+      command: string,
+      args: string[],
+      envName: string,
+      token: string,
+      timeoutSeconds?: number,
+    ) => Promise<{ exitCode: number; output: string }>;
     resumeConnection?: (taskId: string, revision: number, service: string) => Promise<boolean>;
     refresh?: () => void;
   },
@@ -206,16 +245,25 @@ export async function createDiscoveredConnections(
       triggersEnabled: false,
       supportsTriggers: false,
       description: row.paths.map((path) => path.kind.toUpperCase()).join(' · '),
-      accessPaths: row.paths.map(({ id, kind, endpoint }) => ({ id, kind, endpoint })),
+      accessPaths: row.paths.map((path) => ({
+        id: path.id,
+        kind: path.kind,
+        endpoint: path.kind === 'cli' ? path.command : path.endpoint,
+      })),
     }));
   }
   async function propose(input: unknown, task?: { id: string; revision: number }) {
     const parsed = proposalSchema.parse(input);
+    let name = parsed.name;
     if (parsed.paths.some((path) => path.auth === 'oauth')) {
       if (parsed.paths.length !== 1 || parsed.paths[0].kind !== 'mcp')
         throw error('OAuth needs one MCP access path.');
     }
-    if (parsed.paths.some((path) => path.clientIdRequired && path.auth !== 'oauth'))
+    if (
+      parsed.paths.some(
+        (path) => path.kind === 'mcp' && path.clientIdRequired && path.auth !== 'oauth',
+      )
+    )
       throw error('A client ID needs an OAuth access path.');
     const setupUrl = parsed.setupUrl
       ? (await options.transport.validateEndpoint(parsed.setupUrl)).replace(/\/$/, '')
@@ -223,9 +271,22 @@ export async function createDiscoveredConnections(
     if (parsed.connectionId) {
       const existing = await account(parsed.connectionId);
       if (existing.service !== parsed.service) throw error('The selected service changed.');
+      name = existing.name;
     }
     const paths: AccessPath[] = [];
     for (const path of parsed.paths) {
+      if (path.kind === 'cli') {
+        if (!options.runCli) throw error('CLI connections are unavailable.', 503);
+        if (cliLooksLikeWrite(path.testArgs)) throw error('The CLI check must only read.');
+        if (
+          /^(?:bash|dash|env|fish|node|npx|npm|python(?:3(?:\.\d+)?)?|sh|su|sudo|zsh)$/i.test(
+            path.command,
+          )
+        )
+          throw error('Choose a service CLI, not a shell or interpreter.');
+        paths.push({ ...path, id: randomUUID() });
+        continue;
+      }
       const checked = {
         ...path,
         endpoint: await options.transport.validateEndpoint(path.endpoint),
@@ -243,7 +304,7 @@ export async function createDiscoveredConnections(
         id,
         owner,
         parsed.service,
-        parsed.name,
+        name,
         JSON.stringify(paths),
         parsed.connectionId ?? null,
         task?.id ?? null,
@@ -252,7 +313,7 @@ export async function createDiscoveredConnections(
         parsed.setupText ?? null,
       ],
     );
-    return { name: parsed.name, url: `/apps?connect=${id}` };
+    return { name, url: `/apps?connect=${id}` };
   }
   async function proposal(id: string) {
     const row = (
@@ -337,7 +398,7 @@ export async function createDiscoveredConnections(
         if (path.kind === 'mcp') {
           const tools = await options.transport.listTools(path.endpoint, headers(path, token));
           if (!tools.length) throw new Error();
-        } else {
+        } else if (path.kind === 'http') {
           if (!path.testPath) throw error('The API path needs a read test.');
           const response = await options.transport.http(
             target(path, path.testPath),
@@ -345,6 +406,15 @@ export async function createDiscoveredConnections(
             'GET',
           );
           if (response.status < 200 || response.status >= 300) throw new Error();
+        } else {
+          const result = await options.runCli?.(
+            pending.id,
+            path.command,
+            path.testArgs,
+            path.envName,
+            token,
+          );
+          if (!result || result.exitCode !== 0) throw new Error();
         }
       } catch {
         throw error(`The ${path.kind.toUpperCase()} access path could not be verified.`, 409);
@@ -555,14 +625,24 @@ export async function createDiscoveredConnections(
     return propose({
       service,
       name: row.name,
-      paths: row.paths.map(({ kind, endpoint, auth, testPath, scope, clientIdRequired }) => ({
-        kind,
-        endpoint,
-        auth,
-        ...(testPath ? { testPath } : {}),
-        ...(scope ? { scope } : {}),
-        ...(clientIdRequired ? { clientIdRequired } : {}),
-      })),
+      paths: row.paths.map((path) => {
+        if (path.kind === 'cli')
+          return {
+            kind: path.kind,
+            command: path.command,
+            auth: path.auth,
+            envName: path.envName,
+            testArgs: path.testArgs,
+          };
+        return {
+          kind: path.kind,
+          endpoint: path.endpoint,
+          auth: path.auth,
+          ...(path.testPath ? { testPath: path.testPath } : {}),
+          ...(path.scope ? { scope: path.scope } : {}),
+          ...(path.clientIdRequired ? { clientIdRequired: path.clientIdRequired } : {}),
+        };
+      }),
     });
   }
   async function search(query: string) {
@@ -576,7 +656,12 @@ export async function createDiscoveredConnections(
         const paths = await Promise.all(
           row.paths.map(async (path) => {
             if (path.kind !== 'mcp')
-              return { id: path.id, kind: path.kind, endpoint: path.endpoint };
+              return {
+                id: path.id,
+                kind: path.kind,
+                endpoint: path.kind === 'cli' ? path.command : path.endpoint,
+                ...(path.kind === 'cli' ? { testArgs: path.testArgs } : {}),
+              };
             try {
               const token = await tokenFor(row, path);
               const available = await options.transport.listTools(
@@ -641,6 +726,11 @@ export async function createDiscoveredConnections(
       target(path, z.string().parse(args.path));
       return args.method === 'GET';
     }
+    if (action === 'CONNECTED_CLI') {
+      if (path.kind !== 'cli') throw error('Choose a CLI access path.');
+      const argv = z.array(z.string().min(1).max(1000)).min(1).max(32).parse(args.argv);
+      return cliRead(args, argv, path.testArgs);
+    }
     if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
       throw error('Choose an MCP access path.');
     const name = z.string().min(1).max(150).parse(args.tool);
@@ -655,7 +745,12 @@ export async function createDiscoveredConnections(
     if (!tool) throw error('This tool is no longer available.', 409);
     return readOnly(tool);
   }
-  async function execute(action: string, args: Record<string, unknown>, readOnlyRequired = false) {
+  async function execute(
+    action: string,
+    args: Record<string, unknown>,
+    readOnlyRequired = false,
+    taskId?: string,
+  ) {
     const { row, path } = await selected(args);
     const token = await tokenFor(row, path);
     const safeResult = (value: unknown) => integrationResultSnapshot(redact(value, token));
@@ -674,6 +769,31 @@ export async function createDiscoveredConnections(
         );
       } catch {
         throw error('The connected API request failed. Check its path and account access.', 502);
+      }
+    }
+    if (action === 'CONNECTED_CLI') {
+      if (path.kind !== 'cli') throw error('Choose a CLI access path.');
+      if (!taskId || !options.runCli) throw error('CLI connections are unavailable.', 503);
+      const argv = z.array(z.string().min(1).max(1000)).min(1).max(32).parse(args.argv);
+      if (readOnlyRequired && !cliRead(args, argv, path.testArgs))
+        throw error('This CLI command needs confirmation.', 409);
+      try {
+        const result = await options.runCli(
+          taskId,
+          path.command,
+          argv,
+          path.envName,
+          token,
+          z
+            .number()
+            .int()
+            .min(1)
+            .max(120)
+            .parse(args.timeoutSeconds ?? 30),
+        );
+        return safeResult(result);
+      } catch {
+        throw error('The connected CLI command failed. Check its account access.', 502);
       }
     }
     if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
@@ -708,17 +828,29 @@ export async function createDiscoveredConnections(
       const row = await proposal(request.params.id);
       return reply.header('Cache-Control', 'no-store').send({
         name: row.name,
-        callbackUrl: row.paths.some((path) => path.clientIdRequired) ? callbackUrl() : undefined,
+        callbackUrl: row.paths.some((path) => path.kind === 'mcp' && path.clientIdRequired)
+          ? callbackUrl()
+          : undefined,
         setupUrl: row.setup_url,
         setupText: row.setup_text,
-        paths: row.paths.map(({ kind, endpoint, auth, testPath, scope, clientIdRequired }) => ({
-          kind,
-          endpoint,
-          auth,
-          ...(testPath ? { testPath } : {}),
-          ...(scope ? { scope } : {}),
-          ...(clientIdRequired ? { clientIdRequired } : {}),
-        })),
+        paths: row.paths.map((path) =>
+          path.kind === 'cli'
+            ? {
+                kind: path.kind,
+                command: path.command,
+                auth: path.auth,
+                envName: path.envName,
+                testArgs: path.testArgs,
+              }
+            : {
+                kind: path.kind,
+                endpoint: path.endpoint,
+                auth: path.auth,
+                ...(path.testPath ? { testPath: path.testPath } : {}),
+                ...(path.scope ? { scope: path.scope } : {}),
+                ...(path.clientIdRequired ? { clientIdRequired: path.clientIdRequired } : {}),
+              },
+        ),
       });
     });
     app.post<{ Params: { id: string } }>(

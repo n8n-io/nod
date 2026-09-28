@@ -1,6 +1,7 @@
 FROM node:24.21.0-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends chromium xvfb xauth xdotool ffmpeg fonts-liberation ca-certificates python3 python-is-python3 python3-pip python3-venv pipx curl git unzip nftables iproute2 libcap2-bin util-linux && rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid 1001 otto-browser && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin otto-browser
+RUN useradd --uid 1002 --gid 1000 --create-home --shell /usr/sbin/nologin otto-connected && chmod 700 /home/otto-connected
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci && npm cache clean --force

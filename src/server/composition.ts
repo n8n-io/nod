@@ -507,6 +507,19 @@ export async function createApplication(
     grantVault,
     transport: createDiscoveredTransport(),
     oauth: createDiscoveredOAuth(),
+    runCli: adapters.workspace.connectedCliAvailable
+      ? async (taskId, command, args, envName, token, timeoutSeconds) => {
+          const workspacePath = join(dataRoot, 'workspaces', taskId);
+          await mkdir(workspacePath, { recursive: true, mode: 0o700 });
+          const session = adapters.workspace.open({
+            taskId,
+            workspacePath,
+            signal: AbortSignal.timeout(125_000),
+          });
+          if (!session.executeProgram) throw new Error('Connected CLI commands are unavailable.');
+          return session.executeProgram(command, args, { [envName]: token }, timeoutSeconds);
+        }
+      : undefined,
     resumeConnection: resumeConnectedTask,
     refresh,
   });
@@ -555,7 +568,7 @@ export async function createApplication(
       action.startsWith('OTTO_')
         ? personal.manage(action.slice('OTTO_'.length), args, provenance)
         : providerUsage.withTask(provenance.taskId, () =>
-            integrations.executeApproved(ownerId, action, args),
+            integrations.executeApproved(ownerId, action, args, provenance.taskId),
           ),
     async (action, args) => {
       if (action.startsWith('OTTO_'))
@@ -631,7 +644,7 @@ export async function createApplication(
         return vault.request(taskId, ownerId, input);
       },
       integration: async (taskId, action, args, options) => {
-        const result = await integrations.execute(ownerId, action, args);
+        const result = await integrations.execute(ownerId, action, args, taskId);
         if (
           result &&
           typeof result === 'object' &&

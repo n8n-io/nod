@@ -111,6 +111,15 @@ export function createDockerWorkspace(options: {
         ...input,
         spawn: options.spawn,
       }),
+    runConnectedCommand: (id, args, input) =>
+      runWorkspaceCommand({
+        container: options.container,
+        taskId: id,
+        args,
+        ...input,
+        connected: true,
+        spawn: options.spawn,
+      }),
   });
 }
 
@@ -121,7 +130,23 @@ export function createCommandWorkspace(options: {
   runCommand(
     id: string,
     args: string[],
-    input: { input?: string; signal?: AbortSignal; timeoutMs?: number; maxBytes?: number },
+    input: {
+      input?: string;
+      environment?: Record<string, string>;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      maxBytes?: number;
+    },
+  ): Promise<{ stdout: Buffer; stderr: Buffer; exitCode: number }>;
+  runConnectedCommand?(
+    id: string,
+    args: string[],
+    input: {
+      environment: Record<string, string>;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      maxBytes?: number;
+    },
   ): Promise<{ stdout: Buffer; stderr: Buffer; exitCode: number }>;
 }): Workspace {
   let unavailable = false;
@@ -131,7 +156,13 @@ export function createCommandWorkspace(options: {
   async function command(
     id: string,
     args: string[],
-    input: { input?: string; signal?: AbortSignal; timeoutMs?: number; maxBytes?: number } = {},
+    input: {
+      input?: string;
+      environment?: Record<string, string>;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      maxBytes?: number;
+    } = {},
   ) {
     if (unavailable || disposed)
       throw new Error('The workspace is unavailable. Restart Otto before continuing.');
@@ -162,12 +193,51 @@ export function createCommandWorkspace(options: {
   async function textCommand(
     id: string,
     args: string[],
-    input: { input?: string; signal?: AbortSignal; timeoutMs?: number } = {},
+    input: {
+      input?: string;
+      environment?: Record<string, string>;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    } = {},
   ) {
     const result = await command(id, args, input);
     return Buffer.concat([result.stdout, result.stderr]).toString('utf8');
   }
+  async function connectedCommand(
+    id: string,
+    args: string[],
+    environment: Record<string, string>,
+    signal: AbortSignal,
+    timeoutMs: number,
+  ) {
+    if (!options.runConnectedCommand) throw new Error('Connected CLI commands are unavailable.');
+    if (unavailable || disposed)
+      throw new Error('The workspace is unavailable. Restart Otto before continuing.');
+    const operation = options.runConnectedCommand(id, args, {
+      environment,
+      signal: AbortSignal.any([signal, lifecycle.signal]),
+      timeoutMs,
+    });
+    pending.add(operation);
+    try {
+      const result = await operation;
+      return {
+        exitCode: result.exitCode,
+        output: Buffer.concat([result.stdout, result.stderr]).toString('utf8'),
+      };
+    } catch (error) {
+      if (error instanceof WorkspaceCommandError && error.uncertain) {
+        unavailable = true;
+        lifecycle.abort();
+        await Promise.allSettled([...pending]);
+      }
+      throw error;
+    } finally {
+      pending.delete(operation);
+    }
+  }
   return {
+    connectedCliAvailable: Boolean(options.runConnectedCommand),
     status: () => (unavailable ? 'Workspace needs a restart.' : options.status),
     dispose: async () => {
       disposed = true;
@@ -234,6 +304,25 @@ export function createCommandWorkspace(options: {
             signal: input.signal,
             timeoutMs: Math.max(1, Math.min(timeoutSeconds, 120)) * 1000,
           }),
+        ...(options.runConnectedCommand
+          ? {
+              executeProgram: async (
+                program: string,
+                args: string[],
+                environment: Record<string, string>,
+                timeoutSeconds = 30,
+              ) => {
+                await textCommand(id, ['chmod', '-R', 'g+rwX', '.'], { signal: input.signal });
+                return connectedCommand(
+                  id,
+                  [program, ...args],
+                  environment,
+                  input.signal,
+                  Math.max(1, Math.min(timeoutSeconds, 120)) * 1000,
+                );
+              },
+            }
+          : {}),
         readFile: (path) => file('read', path),
         writeFile: async (path, content) => {
           if (Buffer.byteLength(content) > 256 * 1024)

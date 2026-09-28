@@ -25,6 +25,7 @@ test(
     const oauthToken = 'fixture-oauth-token';
     const secretKey = randomBytes(32);
     const calls: string[] = [];
+    const cliCalls: Array<{ taskId: string; command: string; args: string[] }> = [];
     const task = { id: randomUUID(), revision: 7 };
     const transport: DiscoveredTransport = {
       validateEndpoint: async (endpoint) => endpoint,
@@ -132,6 +133,13 @@ test(
         keyStore,
         grantVault,
         transport,
+        runCli: async (taskId, command, args, envName, suppliedToken) => {
+          assert.equal(command, 'fixture');
+          assert.equal(envName, 'FIXTURE_TOKEN');
+          assert.equal(suppliedToken, token);
+          cliCalls.push({ taskId, command, args });
+          return { exitCode: 0, output: `result ${suppliedToken}` };
+        },
         oauth: {
           begin: async (endpoint, redirectUri, state, scope, clientId) => {
             assert.equal(endpoint, 'https://mcp.fixturedesk.test/mcp');
@@ -201,6 +209,29 @@ test(
       assert.deepEqual(browser?.accessPaths, [
         { id: browserEntry.id, kind: 'browser', endpoint: 'https://github.com' },
       ]);
+      await assert.rejects(() =>
+        integrations.manageConnections('propose', undefined, task, {
+          service: 'fixturecli',
+          name: 'Fixture CLI',
+          paths: [
+            {
+              kind: 'cli',
+              command: 'fixture',
+              envName: 'FIXTURE_TOKEN',
+              testArgs: ['record', 'create'],
+            },
+          ],
+        }),
+      );
+      await assert.rejects(() =>
+        integrations.manageConnections('propose', undefined, task, {
+          service: 'fixturecli',
+          name: 'Fixture CLI',
+          paths: [
+            { kind: 'cli', command: 'sh', envName: 'FIXTURE_TOKEN', testArgs: ['-c', 'true'] },
+          ],
+        }),
+      );
       await assert.rejects(() =>
         integrations.manageConnections('propose', undefined, task, {
           service: 'github',
@@ -310,7 +341,7 @@ test(
       assert.ok(calls.includes('MCP create_pull_request'));
       const replacement = await integrations.manageConnections('propose', undefined, undefined, {
         service: 'github',
-        name: 'GitHub',
+        name: 'GitHub API',
         connectionId: saved.connectionId,
         paths: [{ kind: 'http', endpoint: 'https://api.example.test/v1', testPath: '/user' }],
       });
@@ -326,6 +357,7 @@ test(
       assert.equal(replaced.statusCode, 200);
       const refreshed = (await integrations.list()).find((item) => item.slug === 'github')!;
       assert.equal(refreshed.connectionId, saved.connectionId);
+      assert.equal(refreshed.name, 'GitHub');
       assert.deepEqual(
         refreshed.accessPaths?.map((path) => path.kind),
         ['http'],
@@ -367,6 +399,140 @@ test(
         calls.includes('PATCH https://api.example.test/v1/repos/demo/app/git/refs/heads/feature'),
       );
       assert.ok(calls.includes('POST https://api.example.test/v1/repos/demo/app/pulls'));
+      const cliProposal = await integrations.manageConnections('propose', undefined, task, {
+        service: 'fixturecli',
+        name: 'Fixture CLI',
+        paths: [
+          {
+            kind: 'cli',
+            command: 'fixture',
+            envName: 'FIXTURE_TOKEN',
+            testArgs: ['account', 'show'],
+          },
+        ],
+      });
+      const cliId = new URL(
+        (cliProposal as { url: string }).url,
+        'http://localhost:4310',
+      ).searchParams.get('connect')!;
+      const cliMetadata = await app.inject({ method: 'GET', url: `/api/apps/discovery/${cliId}` });
+      assert.equal(cliMetadata.statusCode, 200);
+      assert.deepEqual(cliMetadata.json().paths[0], {
+        kind: 'cli',
+        command: 'fixture',
+        auth: 'env',
+        envName: 'FIXTURE_TOKEN',
+        testArgs: ['account', 'show'],
+      });
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/apps/discovery/${cliId}/complete`,
+            payload: { token, accountName: 'fixture-user' },
+          })
+        ).statusCode,
+        200,
+      );
+      const cliAccount = (await integrations.list()).find((item) => item.slug === 'fixturecli')!;
+      assert.equal(cliAccount.accessPaths?.[0].kind, 'cli');
+      assert.equal(cliAccount.accessPaths?.[0].endpoint, 'fixture');
+      const cliPath = cliAccount.accessPaths![0];
+      const cliSearch = await integrations.execute('fixture-owner', 'SEARCH_TOOLS', {
+        query: 'fixturecli',
+      });
+      assert.equal(JSON.stringify(cliSearch).includes(token), false);
+      const cliRead = await integrations.execute(
+        'fixture-owner',
+        'CONNECTED_CLI',
+        {
+          connectionId: cliAccount.connectionId,
+          pathId: cliPath.id,
+          argv: ['account', 'show'],
+        },
+        task.id,
+      );
+      assert.equal(JSON.stringify(cliRead).includes(token), false);
+      assert.equal((cliRead as { output: string }).output, 'result [redacted]');
+      const declaredRead = await integrations.execute(
+        'fixture-owner',
+        'CONNECTED_CLI',
+        {
+          connectionId: cliAccount.connectionId,
+          pathId: cliPath.id,
+          argv: ['account', 'list'],
+          readOnly: true,
+        },
+        task.id,
+      );
+      assert.equal((declaredRead as { output: string }).output, 'result [redacted]');
+      const cliWriteArgs = {
+        connectionId: cliAccount.connectionId,
+        pathId: cliPath.id,
+        argv: ['record', 'create'],
+      };
+      assert.equal(
+        (
+          (await integrations.execute('fixture-owner', 'CONNECTED_CLI', cliWriteArgs, task.id)) as {
+            requiresApproval: boolean;
+          }
+        ).requiresApproval,
+        true,
+      );
+      await integrations.validateApproval('fixture-owner', 'CONNECTED_CLI', cliWriteArgs);
+      const cliWrite = await integrations.executeApproved(
+        'fixture-owner',
+        'CONNECTED_CLI',
+        cliWriteArgs,
+        task.id,
+      );
+      assert.equal(JSON.stringify(cliWrite).includes(token), false);
+      assert.equal(
+        (
+          (await integrations.execute(
+            'fixture-owner',
+            'CONNECTED_CLI',
+            { ...cliWriteArgs, readOnly: true },
+            task.id,
+          )) as { requiresApproval: boolean }
+        ).requiresApproval,
+        true,
+      );
+      assert.equal(
+        (
+          (await integrations.execute(
+            'fixture-owner',
+            'CONNECTED_CLI',
+            {
+              connectionId: cliAccount.connectionId,
+              pathId: cliPath.id,
+              argv: ['api', 'records', '--method', 'POST'],
+              readOnly: true,
+            },
+            task.id,
+          )) as { requiresApproval: boolean }
+        ).requiresApproval,
+        true,
+      );
+      assert.deepEqual(
+        cliCalls.map((call) => call.args),
+        [
+          ['account', 'show'],
+          ['account', 'show'],
+          ['account', 'list'],
+          ['record', 'create'],
+        ],
+      );
+      assert.ok(cliCalls.every((call) => call.command === 'fixture'));
+      assert.equal(
+        (
+          await pool.query<{ ciphertext: string }>(
+            'SELECT ciphertext FROM vault_app_grants WHERE id=$1',
+            [cliAccount.connectionId],
+          )
+        ).rows[0].ciphertext.includes(token),
+        false,
+      );
       await assert.rejects(() =>
         integrations.execute('fixture-owner', 'CONNECTED_HTTP', {
           connectionId: saved.connectionId,

@@ -87,6 +87,20 @@ export function createE2BAdapters(options: {
           ),
       });
     },
+    runConnectedCommand: (id, args, input) => {
+      if (draining) return Promise.reject(new Error('The remote computer is paused.'));
+      return runSupervisedCommand({
+        args,
+        ...input,
+        drainTimeoutMs: options.drainTimeoutMs,
+        launch: () =>
+          launchE2BCommand(
+            allocation,
+            'connected',
+            `cd /workspace/${taskId(id)} && export HOME=/home/otto-connected XDG_CONFIG_HOME=/home/otto-connected/.config && exec /usr/bin/setpriv --no-new-privs python3 -u /opt/otto/workspace-command.py`,
+          ),
+      });
+    },
   });
   async function release() {
     if (browserDisposed && workspaceDisposed) {

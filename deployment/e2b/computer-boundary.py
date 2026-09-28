@@ -16,13 +16,14 @@ def require(condition, check):
 
 
 def user_environment(uid, env=None):
-    return {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/home/otto-browser" if uid == 1001 else "/home/node", "LANG": "C.UTF-8", **(env or {})}
+    home = {1000: "/home/node", 1001: "/home/otto-browser", 1002: "/home/otto-connected"}[uid]
+    return {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home, "LANG": "C.UTF-8", **(env or {})}
 
 
 def as_user(uid, args, timeout=15, env=None):
     def identity():
         os.setgroups([])
-        os.setgid(uid)
+        os.setgid(1000 if uid == 1002 else uid)
         os.setuid(uid)
     return subprocess.run(["/usr/bin/setpriv", "--no-new-privs", *args], capture_output=True, timeout=timeout, preexec_fn=identity, env=user_environment(uid, env))
 
@@ -68,6 +69,7 @@ def main():
                 probe = f"import socket; s=socket.create_connection(({host!r},{port}),2); s.close()"
             require(as_user(1001, ["python3", "-c", probe]).returncode == 0, f"browser-network-{index}")
             require(as_user(1000, ["python3", "-c", probe]).returncode != 0, f"workspace-network-{index}")
+            require(as_user(1002, ["python3", "-c", probe]).returncode != 0, f"connected-network-{index}")
         checks = [
             "from pathlib import Path; Path('/data/boundary-private').read_bytes()",
             "from pathlib import Path; Path('/data/boundary-profile').iterdir().__next__()",
@@ -80,6 +82,7 @@ def main():
         ]
         for index, script in enumerate(checks):
             require(as_user(1000, ["python3", "-c", script]).returncode != 0, f"workspace-private-{index}")
+            require(as_user(1002, ["python3", "-c", script]).returncode != 0, f"connected-private-{index}")
         require(as_user(1000, ["nft", "list", "ruleset"]).returncode != 0, "workspace-firewall")
         require(as_user(1000, ["xdotool", "getdisplaygeometry"], env={"DISPLAY": ":107", "XAUTHORITY": authority}).returncode != 0, "workspace-x11")
         safe = as_user(1000, ["python3", "-c", "from pathlib import Path; import socket; s=Path('/proc/self/status').read_text(); assert 'NoNewPrivs:\\t1' in s; assert all(int(line.split()[1],16)==0 for line in s.splitlines() if line.startswith(('CapEff:','CapPrm:','CapAmb:'))); p=Path('/workspace/boundary.txt'); p.write_text('synthetic'); assert p.read_text()=='synthetic'; assert socket.getaddrinfo('example.com',443)"])
@@ -88,7 +91,7 @@ def main():
         require(subprocess.run(["python3", "/opt/otto/computer-guard.py", "check"], capture_output=True, timeout=20).returncode == 0, "unchanged-firewall-readiness")
         subprocess.run(["nft", "delete", "table", "inet", "otto"], check=True, capture_output=True)
         require(subprocess.run(["python3", "/opt/otto/computer-guard.py", "check"], capture_output=True, timeout=20).returncode != 0, "changed-firewall-readiness")
-        print(json.dumps({"browserCdpAndX11": True, "workspaceNetworkDenied": len(targets), "workspaceFileAndProcessDenied": len(checks), "workspacePrivilegeDenied": True, "workspaceInternetDnsFiles": True, "changedFirewallRejected": True}))
+        print(json.dumps({"browserCdpAndX11": True, "workspaceNetworkDenied": len(targets), "connectedNetworkDenied": len(targets), "workspaceFileAndProcessDenied": len(checks), "connectedFileAndProcessDenied": len(checks), "workspacePrivilegeDenied": True, "workspaceInternetDnsFiles": True, "changedFirewallRejected": True}))
     finally:
         for child in children:
             child.terminate()

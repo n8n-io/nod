@@ -151,7 +151,7 @@ export async function createApprovals(
         !action.startsWith('OTTO_') &&
         (explicit ||
           (task.action_resume_kind === 'approval' &&
-            ['CONNECTED_HTTP', 'CONNECTED_MCP_CALL'].includes(action))) &&
+            ['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action))) &&
         ['credentials', 'manual_control', 'connection', 'approval'].includes(
           task.action_resume_kind,
         ) &&

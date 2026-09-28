@@ -1,6 +1,6 @@
 # E2B computers
 
-The hosted E2B adapter assigns one private sandbox to each authenticated owner. Its browser and workspace share that sandbox while using separate Linux users: `otto-browser` (UID 1001) owns the browser, and `node` (UID 1000) runs workspace commands. The server holds the E2B key, selects the template and chooses the execution user. Users do not choose providers or receive sandbox credentials.
+The hosted E2B adapter assigns one private sandbox to each authenticated owner. Its browser, workspace, and connected CLI share that sandbox under separate Linux users: `otto-browser` (UID 1001) owns the browser, `node` (UID 1000) runs ordinary workspace commands, and `otto-connected` (UID 1002) runs one Vault-backed CLI command at a time. The server holds the E2B key, selects the template and chooses the execution user. Users do not choose providers or receive sandbox credentials.
 
 The browser uses the existing Chromium/Xvfb worker and `/data/control.sock`. Its home and profile root are mode 0700; the socket and Xauthority files are mode 0600. App source and helpers are root-owned. Workspace files live under `/workspace`, with user-installed tools under `/home/node/.local`. Credential input, masked frames, supervised process-group cancellation and bounded artifact reads retain the existing adapter protocols.
 
@@ -22,9 +22,9 @@ node --import tsx deployment/e2b/build-local.ts
 node deployment/e2b/validate-computer.mjs otto-e2b-computer:<source-hash-prefix>
 ```
 
-The build downloads public Docker, Debian and npm dependencies; it does not forward application environment variables into Docker. The fixture creates only its own temporary Docker container, with NET_ADMIN as the only added capability, no host network or bind mounts, and synthetic files. It checks real Chromium CDP and authenticated Xvfb access as the browser user; workspace denial of CDP, IPv4/IPv6 loopback, the container's own address, synthetic metadata addresses, the control port, browser files/socket, process access, helper writes and privilege escalation. Workspace DNS, HTTPS and ordinary file writes must still work. Missing NET_ADMIN and a changed firewall must fail readiness. The fixture removes only its own container. These checks do not prove the live E2B kernel, networking or pause/resume behavior.
+The build downloads public Docker, Debian and npm dependencies; it does not forward application environment variables into Docker. The fixture creates only its own temporary Docker container, with NET_ADMIN as the only added capability, no host network or bind mounts, and synthetic files. It checks real Chromium CDP and authenticated Xvfb access as the browser user; workspace and connected CLI denial of CDP, IPv4/IPv6 loopback, the container's own address, synthetic metadata addresses, the control port, browser files/socket, process access, helper writes and privilege escalation. Workspace DNS, HTTPS and ordinary file writes must still work. Missing NET_ADMIN and a changed firewall must fail readiness. The fixture removes only its own container. These checks do not prove the live E2B kernel, networking or pause/resume behavior.
 
-On 2026-09-27, the combined linux/amd64 image passed that local fixture, including the positive browser and workspace checks, six denied network targets, eight denied file/process operations, and both readiness failures. The six template/readiness tests and TypeScript check also passed. No live E2B template or sandbox was created for this evidence.
+On 2026-09-27, the combined linux/amd64 image passed that local fixture, including the positive browser and workspace checks, six denied network targets, eight denied file/process operations, and both readiness failures. The six template/readiness tests and TypeScript check also passed. On 2026-09-28, the local combined image was rebuilt with the connected CLI user. The boundary fixture passed six network and eight private file/process denials for both ordinary workspace and connected CLI users. No live E2B template or sandbox was created for this evidence.
 
 After confirming the development key's project, build a versioned template explicitly:
 
@@ -36,7 +36,7 @@ This contacts E2B and creates billable provider resources according to the proje
 
 ## Startup and isolation gate
 
-`computer-guard.py start` runs as root, installs a dedicated nftables `inet` OUTPUT chain, records its exact accepted rules, then drops groups and switches to `otto-browser` before starting the browser worker. The rules match workspace UID 1000 across IPv4 and IPv6. They reject local interface addresses, loopback, private/link-local/metadata networks and TCP port 49983. Only DNS on port 53 to the sandbox's configured resolvers is exempted before those denies. Browser traffic uses its existing trusted browser policy.
+`computer-guard.py start` runs as root, installs a dedicated nftables `inet` OUTPUT chain, records its exact accepted rules, then drops groups and switches to `otto-browser` before starting the browser worker. The rules match workspace UID 1000 and connected CLI UID 1002 across IPv4 and IPv6. They reject local interface addresses, loopback, private/link-local/metadata networks and TCP port 49983. Only DNS on port 53 to the sandbox's configured resolvers is exempted before those denies. Browser traffic uses its existing trusted browser policy.
 
 The image removes setuid/setgid bits and file capabilities and contains no sudo. Workspace execution additionally uses `setpriv --no-new-privs`. The workspace cannot change root-owned files or firewall rules. Public sandbox traffic is disabled separately by the SDK; that setting alone does not isolate processes inside a sandbox.
 

@@ -27,12 +27,16 @@ def identities():
         raise ValueError()
     browser = pwd.getpwnam("otto-browser")
     workspace = pwd.getpwnam("node")
+    connected = pwd.getpwnam("otto-connected")
     if (browser.pw_uid, browser.pw_gid, workspace.pw_uid, workspace.pw_gid) != (1001, 1001, 1000, 1000):
+        raise ValueError()
+    if (connected.pw_uid, connected.pw_gid) != (1002, 1000):
         raise ValueError()
     for path in ["/app", "/app/src", "/app/node_modules", "/opt/otto", "/opt/otto/computer-guard.py", "/opt/otto/workspace-command.py"]:
         trusted(path)
     trusted("/data", 1001, True)
     trusted("/home/otto-browser", 1001, True)
+    trusted("/home/otto-connected", 1002, True)
     trusted("/run/otto", 0, True)
     if pathlib.Path("/usr/bin/sudo").exists() or pathlib.Path("/bin/sudo").exists():
         raise ValueError()
@@ -52,7 +56,7 @@ def network_rules():
             resolvers[address.version].add(str(address))
     if not any(resolvers.values()):
         raise ValueError()
-    lines = ["table inet otto {", "chain workspace_output {", "type filter hook output priority -150; policy accept;", "meta skuid != 1000 return"]
+    lines = ["table inet otto {", "chain workspace_output {", "type filter hook output priority -150; policy accept;", "meta skuid != { 1000, 1002 } return"]
     for family, version in [("ip", 4), ("ip6", 6)]:
         if resolvers[version]:
             destinations = ", ".join(sorted(resolvers[version]))

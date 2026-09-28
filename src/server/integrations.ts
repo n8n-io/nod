@@ -744,7 +744,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
 
   async function validateApproval(ownerId: string, action: string, args: Record<string, unknown>) {
-    if (action === 'CONNECTED_HTTP' || action === 'CONNECTED_MCP_CALL') {
+    if (
+      action === 'CONNECTED_HTTP' ||
+      action === 'CONNECTED_MCP_CALL' ||
+      action === 'CONNECTED_CLI'
+    ) {
       assertOwner(ownerId);
       if (!options.discovered)
         throw new IntegrationError('Discovered connections are unavailable.', 503);
@@ -760,7 +764,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     args: Record<string, unknown>,
   ): Promise<Approval['connection']> {
     assertOwner(ownerId);
-    if (action === 'CONNECTED_HTTP' || action === 'CONNECTED_MCP_CALL')
+    if (
+      action === 'CONNECTED_HTTP' ||
+      action === 'CONNECTED_MCP_CALL' ||
+      action === 'CONNECTED_CLI'
+    )
       return options.discovered?.describe(args);
     const slug = slugSchema.safeParse(action.split('_')[0].toLowerCase());
     const connectionId = z.uuid().safeParse(args.connectionId);
@@ -869,12 +877,21 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return target.label;
   }
 
-  async function executeApproved(ownerId: string, action: string, args: Record<string, unknown>) {
-    if (action === 'CONNECTED_HTTP' || action === 'CONNECTED_MCP_CALL') {
+  async function executeApproved(
+    ownerId: string,
+    action: string,
+    args: Record<string, unknown>,
+    taskId?: string,
+  ) {
+    if (
+      action === 'CONNECTED_HTTP' ||
+      action === 'CONNECTED_MCP_CALL' ||
+      action === 'CONNECTED_CLI'
+    ) {
       assertOwner(ownerId);
       if (!options.discovered)
         throw new IntegrationError('Discovered connections are unavailable.', 503);
-      return options.discovered.execute(action, args);
+      return options.discovered.execute(action, args, false, taskId);
     }
     const row = await approvedConnection(ownerId, action, args);
     if ((integrationDownloadActions as readonly string[]).includes(action))
@@ -901,14 +918,23 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     }
   }
 
-  async function execute(ownerId: string, action: string, args: Record<string, unknown>) {
+  async function execute(
+    ownerId: string,
+    action: string,
+    args: Record<string, unknown>,
+    taskId?: string,
+  ) {
     assertOwner(ownerId);
-    if (action === 'CONNECTED_HTTP' || action === 'CONNECTED_MCP_CALL') {
+    if (
+      action === 'CONNECTED_HTTP' ||
+      action === 'CONNECTED_MCP_CALL' ||
+      action === 'CONNECTED_CLI'
+    ) {
       if (!options.discovered)
         throw new IntegrationError('Discovered connections are unavailable.', 503);
       const read = await options.discovered.isRead(action, args);
       return read
-        ? options.discovered.execute(action, args, true)
+        ? options.discovered.execute(action, args, true, taskId)
         : { requiresApproval: true, action, args };
     }
     if (action === 'SEARCH_TOOLS') {
@@ -1002,6 +1028,17 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 pathId: 'Saved path ID.',
                 tool: 'Exact MCP tool name.',
                 input: 'Exact tool arguments.',
+              },
+            },
+            CONNECTED_CLI: {
+              description:
+                'Run one saved CLI path with its Vault grant. Mark a verified read with readOnly:true. Writes use account review.',
+              parameters: {
+                connectionId: 'Saved account ID.',
+                pathId: 'Saved path ID.',
+                argv: 'CLI arguments without the program name or a token.',
+                readOnly: 'True only for a verified read command with no side effects.',
+                timeoutSeconds: 'Optional limit from 1 to 120 seconds.',
               },
             },
           });

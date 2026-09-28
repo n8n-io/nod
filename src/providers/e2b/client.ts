@@ -7,7 +7,7 @@ export interface E2BCommand {
   disconnect(): Promise<void>;
 }
 
-export type E2BCommandRole = 'browser' | 'workspace';
+export type E2BCommandRole = 'browser' | 'workspace' | 'connected';
 
 export interface E2BSandbox {
   id: string;
@@ -59,12 +59,17 @@ export function createE2BClient(options: {
         }
       },
       async start(input) {
-        if (input.role !== 'browser' && input.role !== 'workspace')
+        if (input.role !== 'browser' && input.role !== 'workspace' && input.role !== 'connected')
           throw new Error('The remote computer command is invalid.');
         const handle = await sandbox.commands.run(input.command, {
           background: true,
           stdin: true,
-          user: input.role === 'browser' ? 'otto-browser' : 'node',
+          user:
+            input.role === 'browser'
+              ? 'otto-browser'
+              : input.role === 'connected'
+                ? 'otto-connected'
+                : 'node',
           envs: {},
           timeoutMs: 180_000,
           requestTimeoutMs,

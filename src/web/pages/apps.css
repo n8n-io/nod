@@ -132,6 +132,13 @@
 .app-discovery-path strong {
   font-size: 11px;
 }
+.app-discovery-methods {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.app-discovery-methods summary {
+  cursor: pointer;
+}
 .app-discovery-dialog form,
 .app-discovery-dialog label {
   display: grid;

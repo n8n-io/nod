@@ -123,8 +123,11 @@ export function Apps() {
     setupText?: string;
     paths: Array<{
       kind: string;
-      endpoint: string;
+      endpoint?: string;
+      command?: string;
       auth: string;
+      envName?: string;
+      testArgs?: string[];
       testPath?: string;
       scope?: string;
       clientIdRequired?: boolean;
@@ -151,8 +154,11 @@ export function Apps() {
       setupText?: string;
       paths: Array<{
         kind: string;
-        endpoint: string;
+        endpoint?: string;
+        command?: string;
         auth: string;
+        envName?: string;
+        testArgs?: string[];
         testPath?: string;
         scope?: string;
         clientIdRequired?: boolean;
@@ -423,8 +429,7 @@ export function Apps() {
         <DialogContent className="app-discovery-dialog">
           <DialogTitle>Connect {discovery?.name ?? 'app'}</DialogTitle>
           <DialogDescription>
-            Check the service address before you connect. Otto will use this account only with the
-            address shown here.
+            Add your account securely. Otto will check access before it saves the connection.
           </DialogDescription>
           {discovery?.setupText && <p>{discovery.setupText}</p>}
           {discovery?.setupUrl && (
@@ -433,15 +438,39 @@ export function Apps() {
             </a>
           )}
           {discovery?.paths.map((path) => (
-            <div className="app-discovery-path" key={`${path.kind}:${path.endpoint}`}>
+            <div
+              className="app-discovery-path"
+              key={`${path.kind}:${path.endpoint ?? path.command}`}
+            >
               <strong>{path.kind.toUpperCase()}</strong>
-              <span>{path.endpoint}</span>
-              {path.kind === 'http' && path.testPath && (
-                <span>Read check: GET {readCheckUrl(path) ?? 'unavailable'}</span>
-              )}
-              {path.scope && <span>Requested access: {path.scope}</span>}
+              <span>{path.endpoint ?? path.command}</span>
             </div>
           ))}
+          {discovery?.paths.some((path) => path.testPath || path.kind === 'cli' || path.scope) && (
+            <details className="app-discovery-methods">
+              <summary>Connection details</summary>
+              {discovery.paths.map((path) => (
+                <div
+                  className="app-discovery-path"
+                  key={`${path.kind}:${path.endpoint ?? path.command}`}
+                >
+                  {path.kind === 'http' && path.testPath && (
+                    <span>
+                      Read check: GET{' '}
+                      {readCheckUrl({ endpoint: path.endpoint ?? '', testPath: path.testPath }) ??
+                        'unavailable'}
+                    </span>
+                  )}
+                  {path.kind === 'cli' && (
+                    <span>
+                      Read check: {path.command} {path.testArgs?.join(' ')}
+                    </span>
+                  )}
+                  {path.scope && <span>Requested access: {path.scope}</span>}
+                </div>
+              ))}
+            </details>
+          )}
           {discoveryError && <Notice>{discoveryError}</Notice>}
           {discovery?.paths[0]?.auth === 'oauth' ? (
             <form onSubmit={(event) => void authorizeDiscovery(event)} autoComplete="off">
@@ -458,7 +487,6 @@ export function Apps() {
             </form>
           ) : discovery ? (
             <form onSubmit={(event) => void saveDiscovery(event)} autoComplete="off">
-              <p>Your key is saved privately. It will not appear in chat.</p>
               <label>
                 Account name
                 <input name="accountName" required maxLength={200} autoComplete="off" />
@@ -479,7 +507,11 @@ export function Apps() {
                 type="submit"
                 disabled={
                   savingDiscovery ||
-                  discovery.paths.some((path) => path.kind === 'http' && !readCheckUrl(path))
+                  discovery.paths.some(
+                    (path) =>
+                      path.kind === 'http' &&
+                      !readCheckUrl({ endpoint: path.endpoint ?? '', testPath: path.testPath }),
+                  )
                 }
               >
                 {savingDiscovery ? 'Checking…' : 'Connect account'}

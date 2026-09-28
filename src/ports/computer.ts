@@ -119,10 +119,17 @@ export interface WorkspaceSession {
   path: string;
   instructions: string;
   execute(command: string, timeoutSeconds?: number): Promise<string>;
+  executeProgram?(
+    program: string,
+    args: string[],
+    environment: Record<string, string>,
+    timeoutSeconds?: number,
+  ): Promise<{ exitCode: number; output: string }>;
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<string>;
 }
 export interface Workspace {
+  connectedCliAvailable?: boolean;
   writeArtifact?(
     taskId: string,
     path: string,

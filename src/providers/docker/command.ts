@@ -7,16 +7,26 @@ import { serviceEnvironment } from '../process.ts';
 import { taskId } from '../../ports/task-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
 
-export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading
+export const workspaceCommandProgram = `import os,sys,json,base64,selectors,subprocess,signal,time,threading,re,tempfile,shutil
 line=sys.stdin.buffer.raw.readline(1048577)
+home=None
 try:
  r=json.loads(line)
  if len(line)>1048576 or not isinstance(r['args'],list) or not r['args'] or not all(isinstance(v,str) for v in r['args']): raise ValueError()
+ env=r.get('environment',{})
+ if not isinstance(env,dict) or len(env)>1 or not all(isinstance(k,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{1,63}(?:TOKEN|API_KEY|SECRET|PASSWORD)',k) and isinstance(v,str) and 8<=len(v)<=8192 for k,v in env.items()): raise ValueError()
  limit=int(r['maxBytes'])
  timeout=float(r['timeoutMs'])/1000
  if not 1<=limit<=16777216 or not 0<timeout<=120: raise ValueError()
- p=subprocess.Popen(r['args'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+ child_env=os.environ.copy()
+ child_env.update(env)
+ home=tempfile.mkdtemp(prefix='otto-cli-') if env else None
+ if home:
+  child_env['HOME']=home
+  child_env['XDG_CONFIG_HOME']=home+'/.config'
+ p=subprocess.Popen(r['args'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True,env=child_env)
 except Exception:
+ if home: shutil.rmtree(home,ignore_errors=True)
  print(json.dumps({'type':'error'}),flush=True)
  sys.exit(1)
 sel=selectors.DefaultSelector()
@@ -88,6 +98,7 @@ while True:
  streams=any(key.data in ['stdout','stderr'] for key in sel.get_map().values())
  if code is not None and not streams and not group_running(): break
 p.wait()
+if home: shutil.rmtree(home,ignore_errors=True)
 if connected: send({'type':'exit','code':code,'reason':reason})
 `;
 
@@ -111,6 +122,8 @@ export async function runWorkspaceCommand(options: {
   taskId: string;
   args: string[];
   input?: string;
+  environment?: Record<string, string>;
+  connected?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
   maxBytes?: number;
@@ -129,7 +142,15 @@ export async function runWorkspaceCommand(options: {
           'exec',
           '-i',
           '--user',
-          'node',
+          options.connected ? 'otto-connected' : 'node',
+          ...(options.connected
+            ? [
+                '--env',
+                'HOME=/home/otto-connected',
+                '--env',
+                'XDG_CONFIG_HOME=/home/otto-connected/.config',
+              ]
+            : []),
           '--workdir',
           `/workspace/${id}`,
           options.container,
@@ -146,6 +167,7 @@ export async function runWorkspaceCommand(options: {
 export function runSupervisedCommand(options: {
   args: string[];
   input?: string;
+  environment?: Record<string, string>;
   signal?: AbortSignal;
   timeoutMs?: number;
   maxBytes?: number;
@@ -160,7 +182,13 @@ export function runSupervisedCommand(options: {
   const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 30_000, 120_000));
   const maxBytes = Math.max(1, Math.min(options.maxBytes ?? 64 * 1024, 16 * 1024 * 1024));
   const request =
-    JSON.stringify({ args: options.args, input: options.input ?? '', timeoutMs, maxBytes }) + '\n';
+    JSON.stringify({
+      args: options.args,
+      input: options.input ?? '',
+      environment: options.environment ?? {},
+      timeoutMs,
+      maxBytes,
+    }) + '\n';
   if (Buffer.byteLength(request) > 1024 * 1024)
     throw new Error('The workspace command is too large.');
   return new Promise((resolve, reject) => {
