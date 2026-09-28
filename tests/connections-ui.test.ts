@@ -86,7 +86,14 @@ test('a discovered account form shows reviewed addresses and clears a failed tok
         name: 'Fixture Forge',
         setupUrl: 'https://example.test/settings/tokens',
         setupText: 'Create a token for the requested actions.',
-        paths: [{ kind: 'mcp', endpoint: 'https://mcp.example.test/mcp', auth: 'bearer' }],
+        paths: [
+          {
+            kind: 'http',
+            endpoint: 'https://api.example.test/v1',
+            auth: 'bearer',
+            testPath: '/user',
+          },
+        ],
       });
     return Response.json(accounts);
   };
@@ -98,7 +105,11 @@ test('a discovered account form shows reviewed addresses and clears a failed tok
     await act(async () => root.render(createElement(Apps)));
     assert.match(
       document.querySelector('[role="dialog"]')?.textContent ?? '',
-      /https:\/\/mcp.example.test\/mcp/,
+      /https:\/\/api.example.test\/v1/,
+    );
+    assert.match(
+      document.querySelector('[role="dialog"]')?.textContent ?? '',
+      /Read check: GET https:\/\/api.example.test\/v1\/user/,
     );
     assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Create a token/);
     assert.equal(
@@ -180,6 +191,52 @@ test('a discovered OAuth account asks for one sign-in action', async () => {
     pageDataCache.update('/api/apps', () => null);
     globalThis.fetch = priorFetch;
     window.history.replaceState(null, '', '/');
+  }
+});
+
+test('a discovered account with a native service name keeps its path on Add account', async () => {
+  const priorFetch = globalThis.fetch;
+  const connectionId = '44444444-4444-4444-8444-444444444444';
+  const records: Connection[] = [
+    { slug: 'notion', name: 'Notion', status: 'disconnected', triggersEnabled: false },
+    {
+      slug: 'notion',
+      name: 'Notion',
+      status: 'connected',
+      connectionId,
+      accountName: 'Fixture account',
+      triggersEnabled: false,
+      accessPaths: [
+        {
+          id: '55555555-5555-4555-8555-555555555555',
+          kind: 'http',
+          endpoint: 'https://api.example.test/v1',
+        },
+      ],
+    },
+  ];
+  let submitted = '';
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/connect')) {
+      submitted = String(options?.body);
+      return Response.json({ error: 'Fixture stop.' }, { status: 409 });
+    }
+    return Response.json(records);
+  };
+  pageDataCache.update('/api/apps', () => records);
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(createElement(Apps)));
+    await openManage(container, 'Notion');
+    await act(async () => click(dialogButton('Add account')));
+    assert.equal(JSON.parse(submitted).connectionId, connectionId);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    pageDataCache.update('/api/apps', () => null);
+    globalThis.fetch = priorFetch;
   }
 });
 

@@ -14,6 +14,7 @@ test('web search bounds public results and hides provider errors', async () => {
       answer: 'a'.repeat(4000),
       results: [
         { title: 'private', url: 'https://user:secret@example.com/', snippet: 'hidden' },
+        { title: 'too long', url: `https://example.com/${'x'.repeat(2048)}`, snippet: 'hidden' },
         ...Array.from({ length: 10 }, (_, index) => ({
           title: `result ${index}`.padEnd(250, 'x'),
           url: `https://example.com/${index}`,
@@ -29,6 +30,7 @@ test('web search bounds public results and hides provider errors', async () => {
   assert.equal(result.results[0]?.title.length, 200);
   assert.equal(result.results[0]?.snippet.length, 600);
   assert.ok(result.results.every((item) => !item.url.includes('secret')));
+  assert.ok(result.results.every((item) => !item.url.includes('x'.repeat(100))));
 
   const failing = createWebSearch(async () => {
     throw new Error('private provider detail');

@@ -58,20 +58,29 @@ export const toolDefinitions = {
           setupUrl: Type.Optional(Type.String({ maxLength: 2048 })),
           setupText: Type.Optional(Type.String({ maxLength: 500 })),
           paths: Type.Array(
-            Type.Object({
-              kind: Type.Union([Type.Literal('http'), Type.Literal('mcp')]),
-              endpoint: Type.String({ maxLength: 2048 }),
-              auth: Type.Optional(
-                Type.Union([
-                  Type.Literal('bearer'),
-                  Type.Literal('x-api-key'),
-                  Type.Literal('oauth'),
-                ]),
-              ),
-              testPath: Type.Optional(Type.String({ maxLength: 500 })),
-              scope: Type.Optional(Type.String({ maxLength: 500 })),
-              clientIdRequired: Type.Optional(Type.Boolean()),
-            }),
+            Type.Union([
+              Type.Object({
+                kind: Type.Literal('http'),
+                endpoint: Type.String({ maxLength: 2048 }),
+                auth: Type.Optional(
+                  Type.Union([Type.Literal('bearer'), Type.Literal('x-api-key')]),
+                ),
+                testPath: Type.String({ minLength: 1, maxLength: 500 }),
+              }),
+              Type.Object({
+                kind: Type.Literal('mcp'),
+                endpoint: Type.String({ maxLength: 2048 }),
+                auth: Type.Optional(
+                  Type.Union([
+                    Type.Literal('bearer'),
+                    Type.Literal('x-api-key'),
+                    Type.Literal('oauth'),
+                  ]),
+                ),
+                scope: Type.Optional(Type.String({ maxLength: 500 })),
+                clientIdRequired: Type.Optional(Type.Boolean()),
+              }),
+            ]),
             { minItems: 1, maxItems: 4 },
           ),
         }),

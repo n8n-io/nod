@@ -40,6 +40,26 @@ test('goal confirmation uses its owned title, readable changes and escaped user 
   assert.doesNotMatch(question, /hidden-goal|nextAction/);
 });
 
+test('connected write confirmation shows bounded request fields and masks secrets', () => {
+  const http = actionConfirmation('CONNECTED_HTTP', {
+    method: 'PUT',
+    path: '/repos/example/file',
+    body: { title: 'Update guide', authorization: 'Bearer private-fixture-token' },
+  });
+  assert.match(http, /Method: PUT/);
+  assert.match(http, /Path: \/repos\/example\/file/);
+  assert.match(http, /Update guide/);
+  assert.doesNotMatch(http, /private-fixture-token/);
+  const mcp = actionConfirmation('CONNECTED_MCP_CALL', {
+    tool: 'create_record',
+    input: { title: 'New record', apiKey: 'private-fixture-key', text: 'x'.repeat(5000) },
+  });
+  assert.ok(mcp.includes('Tool: create\\_record'));
+  assert.match(mcp, /New record/);
+  assert.doesNotMatch(mcp, /private-fixture-key/);
+  assert.ok(mcp.length < 2500);
+});
+
 test('schedule confirmation shows local date and frequency while messages retain useful send details', () => {
   const question = actionConfirmation('OTTO_schedule_create', {
     title: 'Portfolio check',

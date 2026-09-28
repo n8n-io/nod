@@ -29,7 +29,8 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
       tokens: () => saved.tokens,
       saveTokens: (value) => {
         saved.tokens = value;
-        saved.expiresAt = value.expires_in ? Date.now() + value.expires_in * 1000 : undefined;
+        saved.expiresAt =
+          value.expires_in === undefined ? undefined : Date.now() + value.expires_in * 1000;
       },
       redirectToAuthorization: (value) => {
         url = value.href;

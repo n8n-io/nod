@@ -12,7 +12,12 @@ export function createWebSearch(run: typeof search = search): WebSearch {
           .filter((item) => {
             try {
               const url = new URL(item.url);
-              return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+              return (
+                item.url.length <= 2048 &&
+                ['http:', 'https:'].includes(url.protocol) &&
+                !url.username &&
+                !url.password
+              );
             } catch {
               return false;
             }
@@ -20,7 +25,7 @@ export function createWebSearch(run: typeof search = search): WebSearch {
           .slice(0, 8)
           .map((item) => ({
             title: item.title.slice(0, 200),
-            url: item.url.slice(0, 2048),
+            url: item.url,
             snippet: item.snippet.slice(0, 600),
           })),
       };

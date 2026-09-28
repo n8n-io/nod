@@ -371,6 +371,12 @@ export async function createApplication(
         status: 'recorded',
         note: 'Local browser operations, screen captures and secure/manual steps. Hosting and visited-site charges are not measured.',
       },
+      {
+        provider: 'pi-web-access',
+        category: 'browser',
+        status: 'recorded',
+        note: 'Public search operations and duration. Provider prices and network charges are unavailable.',
+      },
       ...(adapters.linkPreviews
         ? [
             {

@@ -1,4 +1,5 @@
 import type { Approval } from '../shared/contracts.ts';
+import { createInspectorRedactor } from './inspector-redaction.ts';
 
 const labels: Record<string, string> = {
   GMAIL_SEND_EMAIL: 'Send this email',
@@ -43,6 +44,14 @@ function recipients(value: unknown) {
   return values.map((entry) => plain(entry as string)).join(', ');
 }
 
+const redactConnected = createInspectorRedactor([], { string: 2000, payload: 2400 });
+
+function connectedText(value: unknown) {
+  const safe = redactConnected(value);
+  const serialized = typeof safe === 'string' ? safe : JSON.stringify(safe);
+  return plain(serialized.length > 1800 ? `${serialized.slice(0, 1800)} [truncated]` : serialized);
+}
+
 export function actionConfirmation(
   action: string,
   args: Record<string, unknown>,
@@ -70,10 +79,14 @@ export function actionConfirmation(
   };
   add('For', text(targetTitle));
   if (action === 'CONNECTED_HTTP') {
-    add('Method', text(args.method));
-    add('Path', text(args.path));
+    add('Method', connectedText(args.method));
+    add('Path', connectedText(args.path));
+    if (args.body !== undefined) add('Request', connectedText(args.body));
   }
-  if (action === 'CONNECTED_MCP_CALL') add('Tool', text(args.tool));
+  if (action === 'CONNECTED_MCP_CALL') {
+    add('Tool', connectedText(args.tool));
+    if (args.input !== undefined) add('Input', connectedText(args.input));
+  }
   for (const [key, label] of [
     ['title', 'Title'],
     ['subject', 'Subject'],

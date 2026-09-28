@@ -70,13 +70,14 @@ type IntegrationOptions = {
 };
 
 function browserService(origin: string) {
-  const domain = getDomain(new URL(origin).hostname, { allowPrivateDomains: true });
-  const name = domain ?? new URL(origin).hostname;
+  const url = new URL(origin);
+  const domain = getDomain(url.hostname, { allowPrivateDomains: true });
+  const name = domain ?? url.hostname;
   return {
-    slug: name
-      .split('.')[0]
-      .replace(/[^a-z0-9-]/gi, '-')
-      .toLowerCase(),
+    slug: `browser-${name
+      .replace(/[^a-z0-9]/gi, '-')
+      .toLowerCase()
+      .slice(0, 40)}-${createHash('sha256').update(url.origin).digest('hex').slice(0, 12)}`,
     name,
   };
 }
@@ -1231,18 +1232,21 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       });
       scope.get('/api/apps', async () => list());
       options.discovered?.registerRoutes(scope);
-      scope.post<{ Params: { slug: string } }>('/api/apps/:slug/connect', async (request) =>
-        slugSchema.safeParse(request.params.slug).success
-          ? connect(
-              slugSchema.parse(request.params.slug),
-              z
-                .object({ returnTo: z.enum(['apps', 'onboarding']).default('apps') })
-                .strict()
-                .parse(request.body ?? {}).returnTo,
-            )
-          : (options.discovered?.reconnect(request.params.slug) ??
-            Promise.reject(new IntegrationError('This service is unavailable.', 404))),
-      );
+      scope.post<{ Params: { slug: string } }>('/api/apps/:slug/connect', async (request) => {
+        const input = z
+          .object({
+            returnTo: z.enum(['apps', 'onboarding']).default('apps'),
+            connectionId: z.uuid().optional(),
+          })
+          .strict()
+          .parse(request.body ?? {});
+        if (input.connectionId || !slugSchema.safeParse(request.params.slug).success)
+          return (
+            options.discovered?.reconnect(request.params.slug, input.connectionId) ??
+            Promise.reject(new IntegrationError('This service is unavailable.', 404))
+          );
+        return connect(slugSchema.parse(request.params.slug), input.returnTo);
+      });
       scope.get('/api/apps/callback', async (request, reply) => {
         let returnTo: 'apps' | 'onboarding' | 'chat' = 'apps';
         let outcome: 'connected' | 'continued' | 'cancelled' | 'failed' | 'expired' = 'expired';
@@ -1324,6 +1328,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             options.refresh?.();
             return { ok: true };
           }
+          if (
+            (await options.discovered?.list())?.some(
+              (entry) => entry.connectionId === id && entry.slug === request.params.slug,
+            )
+          )
+            return options.discovered!.disconnect(id, request.params.slug);
           return slugSchema.safeParse(request.params.slug).success
             ? disconnect(slugSchema.parse(request.params.slug), id)
             : (options.discovered?.disconnect(id, request.params.slug) ??

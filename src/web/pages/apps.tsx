@@ -113,6 +113,7 @@ export function Apps() {
       kind: string;
       endpoint: string;
       auth: string;
+      testPath?: string;
       scope?: string;
       clientIdRequired?: boolean;
     }>;
@@ -140,6 +141,7 @@ export function Apps() {
         kind: string;
         endpoint: string;
         auth: string;
+        testPath?: string;
         scope?: string;
         clientIdRequired?: boolean;
       }>;
@@ -211,7 +213,16 @@ export function Apps() {
     try {
       const result = await api<{ url: string }>(
         `/api/apps/${encodeURIComponent(connection.slug)}/connect`,
-        { method: 'POST', body: JSON.stringify({ returnTo: 'apps' }), signal: request.signal },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            returnTo: 'apps',
+            ...(connection.accessPaths?.some((path) => path.kind !== 'browser')
+              ? { connectionId: connection.connectionId }
+              : {}),
+          }),
+          signal: request.signal,
+        },
       );
       if (request.signal.aborted) return;
       window.location.assign(connectionUrl(result.url, window.location.origin));
@@ -382,7 +393,7 @@ export function Apps() {
             data-add-account
             variant="outline"
             disabled={Boolean(busy)}
-            onClick={() => managed && void connect(managed.service)}
+            onClick={() => managed && void connect(managed.accounts[0])}
           >
             {busy === `connect:${manageService}` ? (
               <LoaderCircle size={15} className="spin" aria-hidden="true" />
@@ -413,6 +424,17 @@ export function Apps() {
             <div className="app-discovery-path" key={`${path.kind}:${path.endpoint}`}>
               <strong>{path.kind.toUpperCase()}</strong>
               <span>{path.endpoint}</span>
+              {path.kind === 'http' && path.testPath && (
+                <span>
+                  Read check: GET{' '}
+                  {
+                    new URL(
+                      path.testPath.replace(/^\/+/, ''),
+                      path.endpoint.endsWith('/') ? path.endpoint : `${path.endpoint}/`,
+                    ).href
+                  }
+                </span>
+              )}
               {path.scope && <span>Requested access: {path.scope}</span>}
             </div>
           ))}

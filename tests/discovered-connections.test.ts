@@ -113,7 +113,12 @@ test(
       usernameHint: 'fi…',
       updatedAt: new Date().toISOString(),
     };
-    let browserAccounts = [browserEntry];
+    const otherBrowserEntry = {
+      ...browserEntry,
+      id: randomUUID(),
+      origin: 'https://github.org',
+    };
+    let browserAccounts = [browserEntry, otherBrowserEntry];
     let oauthRefreshes = 0;
     try {
       const keyStore = { id: 'fixture', configured: true, getKey: async () => secretKey };
@@ -187,7 +192,12 @@ test(
       const browser = (await integrations.list()).find(
         (item) => item.connectionId === browserEntry.id,
       );
-      assert.equal(browser?.slug, 'github');
+      assert.match(browser?.slug ?? '', /^browser-github-com-/);
+      assert.notEqual(
+        browser?.slug,
+        (await integrations.list()).find((item) => item.connectionId === otherBrowserEntry.id)
+          ?.slug,
+      );
       assert.deepEqual(browser?.accessPaths, [
         { id: browserEntry.id, kind: 'browser', endpoint: 'https://github.com' },
       ]);
@@ -358,6 +368,15 @@ test(
           path: 'https://different.example.test/user',
         }),
       );
+      for (const path of ['%2e%2e%2fadmin', '%252e%252e%252fadmin'])
+        await assert.rejects(() =>
+          integrations.execute('fixture-owner', 'CONNECTED_HTTP', {
+            connectionId: saved.connectionId,
+            pathId: httpPath.id,
+            method: 'GET',
+            path,
+          }),
+        );
       const oauthProposal = await integrations.manageConnections('propose', undefined, task, {
         service: 'fixturedesk',
         name: 'Fixture Desk',
@@ -425,6 +444,42 @@ test(
       assert.equal(JSON.stringify(oauthRead).includes(oauthToken), false);
       assert.equal(oauthRefreshes, 1);
       await assert.rejects(() => grantVault.read(oauthId));
+      const knownProposal = await integrations.manageConnections('propose', undefined, undefined, {
+        service: 'notion',
+        name: 'Notion',
+        paths: [{ kind: 'http', endpoint: 'https://api.example.test/v1', testPath: '/user' }],
+      });
+      const knownId = new URL(
+        (knownProposal as { url: string }).url,
+        'http://localhost:4310',
+      ).searchParams.get('connect')!;
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/apps/discovery/${knownId}/complete`,
+            payload: { token, accountName: 'fixture-user' },
+          })
+        ).statusCode,
+        200,
+      );
+      const known = (await integrations.list()).find(
+        (item) => item.slug === 'notion' && item.accessPaths?.[0]?.kind === 'http',
+      )!;
+      const another = await app.inject({
+        method: 'POST',
+        url: '/api/apps/notion/connect',
+        payload: { connectionId: known.connectionId, returnTo: 'apps' },
+      });
+      assert.equal(another.statusCode, 200);
+      assert.match(another.json().url, /^\/apps\?connect=/);
+      const knownRemoved = await app.inject({
+        method: 'POST',
+        url: `/api/apps/notion/accounts/${known.connectionId}/disconnect`,
+        payload: {},
+      });
+      assert.equal(knownRemoved.statusCode, 200);
+      await assert.rejects(() => grantVault.read(known.connectionId!));
       const removed = await app.inject({
         method: 'POST',
         url: `/api/apps/github/accounts/${saved.connectionId}/disconnect`,
@@ -434,11 +489,11 @@ test(
       await assert.rejects(() => grantVault.read(saved.connectionId!));
       const browserRemoved = await app.inject({
         method: 'POST',
-        url: `/api/apps/github/accounts/${browserEntry.id}/disconnect`,
+        url: `/api/apps/${browser!.slug}/accounts/${browserEntry.id}/disconnect`,
         payload: {},
       });
       assert.equal(browserRemoved.statusCode, 200);
-      assert.equal(browserAccounts.length, 0);
+      assert.equal(browserAccounts.length, 1);
       assert.ok((await integrations.list()).some((item) => item.slug === 'fixturedesk'));
       await assert.rejects(() =>
         integrations.execute('fixture-owner', 'CONNECTED_HTTP', {

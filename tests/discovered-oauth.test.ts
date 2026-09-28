@@ -28,11 +28,17 @@ test('a discovered MCP server can register, sign in and refresh without service 
       return Response.json({ ...JSON.parse(await value.text()), client_id: 'fixture-client' });
     if (url.pathname === '/token') {
       const form = new URLSearchParams(await value.text());
+      const refresh = form.get('grant_type') === 'refresh_token';
+      if (refresh) assert.equal(form.get('refresh_token'), 'fixture-refresh');
+      else {
+        assert.equal(form.get('grant_type'), 'authorization_code');
+        assert.equal(form.get('code'), 'fixture-code');
+      }
       return Response.json({
-        access_token: form.get('grant_type') === 'refresh_token' ? 'fresh-token' : 'first-token',
+        access_token: refresh ? 'fresh-token' : 'first-token',
         refresh_token: 'fixture-refresh',
         token_type: 'Bearer',
-        expires_in: 3600,
+        expires_in: refresh ? 3600 : 0,
       });
     }
     throw new Error(`Unexpected OAuth request: ${url.pathname}`);
@@ -50,6 +56,7 @@ test('a discovered MCP server can register, sign in and refresh without service 
   assert.equal(authorize.searchParams.get('scope'), 'read write');
   const finished = await oauth.finish('https://example.com/mcp', started.saved, 'fixture-code');
   assert.equal(finished.tokens?.access_token, 'first-token');
+  assert.ok(finished.expiresAt !== undefined && finished.expiresAt <= Date.now());
   const refreshed = await oauth.refresh('https://example.com/mcp', finished);
   assert.equal(refreshed.tokens?.access_token, 'fresh-token');
   assert.ok(calls.includes('POST /register'));

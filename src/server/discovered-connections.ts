@@ -1,4 +1,5 @@
 import { createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { posix } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -13,14 +14,24 @@ import type { Connection } from '../shared/contracts.ts';
 import { integrationResultSnapshot } from './integration-result.ts';
 import type { createAppGrantVault } from './vault-app-grants.ts';
 
-const pathSchema = z.object({
-  kind: z.enum(['http', 'mcp']),
-  endpoint: z.url().max(2048),
-  auth: z.enum(['bearer', 'x-api-key', 'oauth']).default('bearer'),
-  testPath: z.string().max(500).optional(),
-  scope: z.string().trim().min(1).max(500).optional(),
-  clientIdRequired: z.boolean().optional(),
-});
+const pathSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('http'),
+    endpoint: z.url().max(2048),
+    auth: z.enum(['bearer', 'x-api-key']).default('bearer'),
+    testPath: z.string().min(1).max(500),
+    scope: z.never().optional(),
+    clientIdRequired: z.never().optional(),
+  }),
+  z.object({
+    kind: z.literal('mcp'),
+    endpoint: z.url().max(2048),
+    auth: z.enum(['bearer', 'x-api-key', 'oauth']).default('bearer'),
+    testPath: z.string().max(500).optional(),
+    scope: z.string().trim().min(1).max(500).optional(),
+    clientIdRequired: z.boolean().optional(),
+  }),
+]);
 const proposalSchema = z.object({
   service: z
     .string()
@@ -101,16 +112,23 @@ function redact(value: unknown, token: string): unknown {
 }
 
 function target(path: AccessPath, relative: string) {
-  if (!relative || relative.length > 2048 || relative.startsWith('//'))
+  if (!relative || relative.length > 2048 || relative.startsWith('//') || relative.includes('\\'))
     throw error('Use a path in the saved API address.');
   const base = new URL(path.endpoint);
   const url = new URL(
     relative.startsWith('/') ? relative.slice(1) : relative,
     base.href.endsWith('/') ? base : `${base.href}/`,
   );
-  const prefix = base.pathname.endsWith('/') ? base.pathname : `${base.pathname}/`;
-  if (url.origin !== base.origin || !url.pathname.startsWith(prefix))
+  try {
+    if (/%(?:2e|2f|5c|25)/i.test(url.pathname) || /%(?:2e|2f|5c|25)/i.test(base.pathname))
+      throw new Error();
+    const saved = posix.normalize(decodeURIComponent(base.pathname));
+    const requested = posix.normalize(decodeURIComponent(url.pathname));
+    const prefix = saved.endsWith('/') ? saved : `${saved}/`;
+    if (url.origin !== base.origin || !requested.startsWith(prefix)) throw new Error();
+  } catch {
     throw error('The request must stay in the saved API address.');
+  }
   return url.href;
 }
 
@@ -193,8 +211,6 @@ export async function createDiscoveredConnections(
   }
   async function propose(input: unknown, task?: { id: string; revision: number }) {
     const parsed = proposalSchema.parse(input);
-    if (parsed.paths.some((path) => path.kind === 'http' && !path.testPath))
-      throw error('An HTTP access path needs a GET test path.');
     if (parsed.paths.some((path) => path.auth === 'oauth')) {
       if (parsed.paths.length !== 1 || parsed.paths[0].kind !== 'mcp')
         throw error('OAuth needs one MCP access path.');
@@ -527,10 +543,10 @@ export async function createDiscoveredConnections(
     options.refresh?.();
     return { ok: true };
   }
-  async function reconnect(service: string) {
+  async function reconnect(service: string, templateId?: string) {
     const rows = await pool.query<AccountRow>(
-      'SELECT * FROM discovered_connections WHERE owner_id=$1 AND service=$2 ORDER BY created_at LIMIT 1',
-      [owner, service],
+      'SELECT * FROM discovered_connections WHERE owner_id=$1 AND service=$2 AND ($3::uuid IS NULL OR id=$3) ORDER BY created_at LIMIT 1',
+      [owner, service, templateId ? z.uuid().parse(templateId) : null],
     );
     const row = rows.rows[0];
     if (!row) throw error('This service is unavailable.', 404);
