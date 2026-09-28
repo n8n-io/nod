@@ -519,6 +519,46 @@ test(
       );
 
       await t.test(
+        'a confirmed app write can request review for the next user task step',
+        async () => {
+          const id = await begin('Create a branch, add a file, and open a pull request.');
+          const source = (await row(id)).source_message_id;
+          const base = { connectionId: randomUUID(), pathId: randomUUID() };
+          const first = {
+            ...base,
+            method: 'POST',
+            path: 'repos/fixture/repo/git/refs',
+            body: { ref: 'refs/heads/fixture' },
+          };
+          await approvals.request(id, 'CONNECTED_HTTP', first, { revision: 0 });
+          const saved = await proposal(id);
+          await messages.submit('Yes.', [], { replyToMessageId: saved.confirmation_message_id });
+          const revision = (await row(id)).revision;
+          await db.pool.query("UPDATE tasks SET status='running' WHERE id=$1", [id]);
+          await approvals.executeConfirmed(id, revision, new AbortController().signal);
+          const next = await approvals.request(
+            id,
+            'CONNECTED_HTTP',
+            {
+              ...base,
+              method: 'PUT',
+              path: 'repos/fixture/repo/contents/file.txt',
+              body: { content: 'fixture' },
+            },
+            { revision },
+          );
+          assert.equal(next.requiresConfirmation, true);
+          assert.equal((await row(id)).status, 'waiting_user');
+          assert.equal((await row(id)).source_message_id, null);
+          const approvalsForTask = await db.pool.query(
+            'SELECT source_message_id FROM approvals WHERE task_id=$1 AND task_revision=$2',
+            [id, revision],
+          );
+          assert.equal(approvalsForTask.rows[0].source_message_id, source);
+        },
+      );
+
+      await t.test(
         'an oversized confirmed result remains completed once with explicitly incomplete evidence',
         async () => {
           const id = await begin('Find the synthetic page.');

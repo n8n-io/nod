@@ -7,6 +7,7 @@ import type { DiscoveredTransport } from '../src/ports/discovered.ts';
 import type { IntegrationProvider, IntegrationSession } from '../src/ports/integrations.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { createIntegrations } from '../src/server/integrations.ts';
+import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 
 test(
   'a researched account uses read and write paths with a private token',
@@ -104,12 +105,27 @@ test(
       matchesSubscription: () => false,
     };
     const resumes: Array<[string, number, string]> = [];
+    const browserEntry = {
+      kind: 'login' as const,
+      id: randomUUID(),
+      label: 'Browser account',
+      origin: 'https://github.com',
+      usernameHint: 'fi…',
+      updatedAt: new Date().toISOString(),
+    };
+    let browserAccounts = [browserEntry];
     let oauthRefreshes = 0;
     try {
+      const keyStore = { id: 'fixture', configured: true, getKey: async () => secretKey };
+      const grantVault = await createAppGrantVault(pool, {
+        ownerId: 'fixture-owner',
+        keyStore,
+      });
       const discovered = await createDiscoveredConnections(pool, {
         ownerId: 'fixture-owner',
         baseUrl: 'http://localhost:4310',
-        keyStore: { id: 'fixture', configured: true, getKey: async () => secretKey },
+        keyStore,
+        grantVault,
         transport,
         oauth: {
           begin: async (endpoint, redirectUri, state, scope, clientId) => {
@@ -162,8 +178,26 @@ test(
         baseUrl: 'http://localhost:4310',
         wake: async () => {},
         discovered,
+        browserAccounts: async () => browserAccounts,
+        removeBrowserAccount: async (id) => {
+          browserAccounts = browserAccounts.filter((entry) => entry.id !== id);
+        },
       });
       integrations.registerRoutes(app);
+      const browser = (await integrations.list()).find(
+        (item) => item.connectionId === browserEntry.id,
+      );
+      assert.equal(browser?.slug, 'github');
+      assert.deepEqual(browser?.accessPaths, [
+        { id: browserEntry.id, kind: 'browser', endpoint: 'https://github.com' },
+      ]);
+      await assert.rejects(() =>
+        integrations.manageConnections('propose', undefined, task, {
+          service: 'github',
+          name: 'GitHub',
+          paths: [{ kind: 'http', endpoint: 'https://api.github.com/' }],
+        }),
+      );
       const proposed = await integrations.manageConnections('propose', undefined, task, {
         service: 'GitHub',
         name: 'GitHub',
@@ -191,11 +225,21 @@ test(
       assert.equal(complete.json().continued, true);
       assert.deepEqual(resumes, [[task.id, task.revision, 'GitHub']]);
       const ciphertext = (
-        await pool.query<{ ciphertext: string }>('SELECT ciphertext FROM discovered_connections')
+        await pool.query<{ ciphertext: string }>('SELECT ciphertext FROM vault_app_grants')
       ).rows[0]?.ciphertext;
       assert.ok(ciphertext);
       assert.equal(ciphertext!.includes(token), false);
+      assert.equal(
+        (await pool.query<{ ciphertext: string }>('SELECT ciphertext FROM discovered_connections'))
+          .rows[0]?.ciphertext,
+        '',
+      );
       const saved = (await integrations.list()).find((item) => item.slug === 'github')!;
+      const foreignVault = await createAppGrantVault(pool, {
+        ownerId: 'other-owner',
+        keyStore,
+      });
+      await assert.rejects(() => foreignVault.read(saved.connectionId!));
       assert.equal(saved.accountName, 'fixture-user');
       assert.deepEqual(
         saved.accessPaths?.map((path) => path.kind),
@@ -343,6 +387,16 @@ test(
         payload: { clientId: 'fixture-client' },
       });
       assert.equal(started.statusCode, 200);
+      assert.equal(
+        (
+          await pool.query<{ oauth_ciphertext: string | null }>(
+            'SELECT oauth_ciphertext FROM discovered_connection_proposals WHERE id=$1',
+            [oauthId],
+          )
+        ).rows[0].oauth_ciphertext,
+        null,
+      );
+      assert.equal((await grantVault.read(oauthId)).value.includes('fixture-verifier'), true);
       const state = new URL(started.json().url).searchParams.get('state')!;
       const callback = await app.inject({
         method: 'GET',
@@ -356,8 +410,8 @@ test(
       assert.equal(
         (
           await pool.query<{ ciphertext: string }>(
-            'SELECT ciphertext FROM discovered_connections WHERE service=$1',
-            ['fixturedesk'],
+            'SELECT ciphertext FROM vault_app_grants WHERE id=$1',
+            [oauthAccount.connectionId],
           )
         ).rows[0].ciphertext.includes(oauthToken),
         false,
@@ -370,12 +424,21 @@ test(
       });
       assert.equal(JSON.stringify(oauthRead).includes(oauthToken), false);
       assert.equal(oauthRefreshes, 1);
+      await assert.rejects(() => grantVault.read(oauthId));
       const removed = await app.inject({
         method: 'POST',
         url: `/api/apps/github/accounts/${saved.connectionId}/disconnect`,
         payload: {},
       });
       assert.equal(removed.statusCode, 200);
+      await assert.rejects(() => grantVault.read(saved.connectionId!));
+      const browserRemoved = await app.inject({
+        method: 'POST',
+        url: `/api/apps/github/accounts/${browserEntry.id}/disconnect`,
+        payload: {},
+      });
+      assert.equal(browserRemoved.statusCode, 200);
+      assert.equal(browserAccounts.length, 0);
       assert.ok((await integrations.list()).some((item) => item.slug === 'fixturedesk'));
       await assert.rejects(() =>
         integrations.execute('fixture-owner', 'CONNECTED_HTTP', {

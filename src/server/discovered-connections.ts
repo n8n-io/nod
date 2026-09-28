@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -11,6 +11,7 @@ import type {
 } from '../ports/discovered.ts';
 import type { Connection } from '../shared/contracts.ts';
 import { integrationResultSnapshot } from './integration-result.ts';
+import type { createAppGrantVault } from './vault-app-grants.ts';
 
 const pathSchema = z.object({
   kind: z.enum(['http', 'mcp']),
@@ -74,14 +75,6 @@ function error(message: string, statusCode = 400) {
   return new DiscoveredConnectionError(message, statusCode);
 }
 
-function seal(key: Buffer, owner: string, id: string, token: string) {
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  cipher.setAAD(Buffer.from(JSON.stringify(['otto-discovered-v1', owner, id])));
-  const bytes = Buffer.concat([cipher.update(token), cipher.final()]);
-  return Buffer.concat([nonce, cipher.getAuthTag(), bytes]).toString('base64');
-}
-
 function open(key: Buffer, owner: string, id: string, ciphertext: string) {
   const bytes = Buffer.from(ciphertext, 'base64');
   const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
@@ -127,6 +120,7 @@ export async function createDiscoveredConnections(
     ownerId: string;
     baseUrl: string;
     keyStore: CredentialKeyStore;
+    grantVault: Awaited<ReturnType<typeof createAppGrantVault>>;
     transport: DiscoveredTransport;
     oauth: DiscoveredOAuth;
     resumeConnection?: (taskId: string, revision: number, service: string) => Promise<boolean>;
@@ -153,6 +147,19 @@ export async function createDiscoveredConnections(
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_state_hash text;
     ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_ciphertext text;
   `);
+  const legacy = (
+    await pool.query<{ id: string; ciphertext: string }>(
+      "SELECT id,ciphertext FROM discovered_connections WHERE owner_id=$1 AND ciphertext<>''",
+      [owner],
+    )
+  ).rows;
+  for (const row of legacy) {
+    await options.grantVault.adoptLegacy(row.id, row.ciphertext);
+    await pool.query(
+      "UPDATE discovered_connections SET ciphertext='' WHERE id=$1 AND owner_id=$2 AND ciphertext=$3",
+      [row.id, owner, row.ciphertext],
+    );
+  }
   async function key() {
     if (!options.keyStore.configured) throw error('Secure storage is unavailable.', 503);
     return options.keyStore.getKey();
@@ -186,6 +193,8 @@ export async function createDiscoveredConnections(
   }
   async function propose(input: unknown, task?: { id: string; revision: number }) {
     const parsed = proposalSchema.parse(input);
+    if (parsed.paths.some((path) => path.kind === 'http' && !path.testPath))
+      throw error('An HTTP access path needs a GET test path.');
     if (parsed.paths.some((path) => path.auth === 'oauth')) {
       if (parsed.paths.length !== 1 || parsed.paths[0].kind !== 'mcp')
         throw error('OAuth needs one MCP access path.');
@@ -241,7 +250,6 @@ export async function createDiscoveredConnections(
   }
   async function save(pending: ProposalRow, accountName: string, secret: string) {
     const idToSave = pending.connection_id ?? randomUUID();
-    const ciphertext = seal(await key(), owner, idToSave, secret);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -252,7 +260,7 @@ export async function createDiscoveredConnections(
       if (!used.rowCount) throw error('This connection request expired.', 409);
       if (pending.connection_id) {
         const updated = await client.query(
-          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6,ciphertext=$7
+          `UPDATE discovered_connections SET name=$4,account_name=$5,paths=$6
            WHERE id=$1 AND owner_id=$2 AND service=$3`,
           [
             idToSave,
@@ -261,14 +269,13 @@ export async function createDiscoveredConnections(
             pending.name,
             accountName,
             JSON.stringify(pending.paths),
-            ciphertext,
           ],
         );
         if (!updated.rowCount) throw error('This connected account is unavailable.', 404);
       } else {
         await client.query(
           `INSERT INTO discovered_connections
-           (id,owner_id,service,name,account_name,paths,ciphertext) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+           (id,owner_id,service,name,account_name,paths,ciphertext) VALUES($1,$2,$3,$4,$5,$6,'')`,
           [
             idToSave,
             owner,
@@ -276,10 +283,11 @@ export async function createDiscoveredConnections(
             pending.name,
             accountName,
             JSON.stringify(pending.paths),
-            ciphertext,
           ],
         );
       }
+      await options.grantVault.put(idToSave, secret, client);
+      if (pending.oauth_state_hash) await options.grantVault.remove(pending.id, client);
       await client.query('COMMIT');
     } catch (cause) {
       await client.query('ROLLBACK');
@@ -355,19 +363,29 @@ export async function createDiscoveredConnections(
     } catch {
       throw error('The service sign-in could not start. Check its access method.', 502);
     }
-    const updated = await pool.query(
-      `UPDATE discovered_connection_proposals
-       SET account_name=$3,oauth_state_hash=$4,oauth_ciphertext=$5
-       WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
-      [
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const updated = await client.query(
+        `UPDATE discovered_connection_proposals
+         SET account_name=$3,oauth_state_hash=$4,oauth_ciphertext=NULL
+         WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
+        [pending.id, owner, pending.name, createHash('sha256').update(state).digest('hex')],
+      );
+      if (!updated.rowCount) throw error('This connection request expired.', 409);
+      await options.grantVault.put(
         pending.id,
-        owner,
-        pending.name,
-        createHash('sha256').update(state).digest('hex'),
-        seal(await key(), owner, pending.id, JSON.stringify(started.saved)),
-      ],
-    );
-    if (!updated.rowCount) throw error('This connection request expired.', 409);
+        JSON.stringify(started.saved),
+        client,
+        new Date(Date.now() + 15 * 60_000),
+      );
+      await client.query('COMMIT');
+    } catch (cause) {
+      await client.query('ROLLBACK');
+      throw cause;
+    } finally {
+      client.release();
+    }
     return { url: started.url };
   }
   async function completeOAuth(input: unknown) {
@@ -389,10 +407,21 @@ export async function createDiscoveredConnections(
     ).rows[0];
     if (!pending) return undefined;
     if (parsed.error || !parsed.code) {
-      await pool.query(
-        'DELETE FROM discovered_connection_proposals WHERE id=$1 AND owner_id=$2 AND oauth_state_hash=$3',
-        [pending.id, owner, hash],
-      );
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          'DELETE FROM discovered_connection_proposals WHERE id=$1 AND owner_id=$2 AND oauth_state_hash=$3',
+          [pending.id, owner, hash],
+        );
+        await options.grantVault.remove(pending.id, client);
+        await client.query('COMMIT');
+      } catch (cause) {
+        await client.query('ROLLBACK');
+        throw cause;
+      } finally {
+        client.release();
+      }
       return {
         outcome: 'cancelled' as const,
         service: pending.service,
@@ -400,7 +429,7 @@ export async function createDiscoveredConnections(
       };
     }
     const path = pending.paths[0];
-    if (path?.kind !== 'mcp' || path.auth !== 'oauth' || !pending.oauth_ciphertext)
+    if (path?.kind !== 'mcp' || path.auth !== 'oauth')
       return {
         outcome: 'failed' as const,
         service: pending.service,
@@ -408,7 +437,9 @@ export async function createDiscoveredConnections(
       };
     try {
       const saved = JSON.parse(
-        open(await key(), owner, pending.id, pending.oauth_ciphertext),
+        pending.oauth_ciphertext
+          ? open(await key(), owner, pending.id, pending.oauth_ciphertext)
+          : (await options.grantVault.read(pending.id)).value,
       ) as DiscoveredOAuthState;
       const metadata = saved.discovery?.authorizationServerMetadata;
       const issuer = metadata?.issuer;
@@ -445,7 +476,8 @@ export async function createDiscoveredConnections(
   }
   const refreshes = new Map<string, Promise<string>>();
   async function tokenFor(row: AccountRow, path: AccessPath): Promise<string> {
-    const secret = open(await key(), owner, row.id, row.ciphertext);
+    const grant = await options.grantVault.read(row.id);
+    const secret = grant.value;
     if (path.auth !== 'oauth') return secret;
     const saved = JSON.parse(secret) as DiscoveredOAuthState;
     if (!saved.tokens?.access_token) throw error('Connect this account again.', 409);
@@ -455,14 +487,10 @@ export async function createDiscoveredConnections(
     const pending = (async () => {
       const next = await options.oauth.refresh(path.endpoint, saved);
       if (!next.tokens?.access_token) throw new Error();
-      const changed = await pool.query(
-        'UPDATE discovered_connections SET ciphertext=$3 WHERE id=$1 AND owner_id=$2 AND ciphertext=$4',
-        [row.id, owner, seal(await key(), owner, row.id, JSON.stringify(next)), row.ciphertext],
-      );
-      if (!changed.rowCount) {
-        const current = await account(row.id);
+      const changed = await options.grantVault.replace(row.id, grant.version, JSON.stringify(next));
+      if (!changed) {
         const latest = JSON.parse(
-          open(await key(), owner, current.id, current.ciphertext),
+          (await options.grantVault.read(row.id)).value,
         ) as DiscoveredOAuthState;
         if (!latest.tokens?.access_token || (latest.expiresAt ?? 0) <= Date.now())
           throw new Error();
@@ -480,11 +508,22 @@ export async function createDiscoveredConnections(
     }
   }
   async function disconnect(connectionId: string, service: string) {
-    const result = await pool.query(
-      'DELETE FROM discovered_connections WHERE id=$1 AND owner_id=$2 AND service=$3',
-      [z.uuid().parse(connectionId), owner, service],
-    );
-    if (!result.rowCount) throw error('This connected account is unavailable.', 404);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        'DELETE FROM discovered_connections WHERE id=$1 AND owner_id=$2 AND service=$3',
+        [z.uuid().parse(connectionId), owner, service],
+      );
+      if (!result.rowCount) throw error('This connected account is unavailable.', 404);
+      await options.grantVault.remove(connectionId, client);
+      await client.query('COMMIT');
+    } catch (cause) {
+      await client.query('ROLLBACK');
+      throw cause;
+    } finally {
+      client.release();
+    }
     options.refresh?.();
     return { ok: true };
   }
@@ -654,10 +693,11 @@ export async function createDiscoveredConnections(
         callbackUrl: row.paths.some((path) => path.clientIdRequired) ? callbackUrl() : undefined,
         setupUrl: row.setup_url,
         setupText: row.setup_text,
-        paths: row.paths.map(({ kind, endpoint, auth, scope, clientIdRequired }) => ({
+        paths: row.paths.map(({ kind, endpoint, auth, testPath, scope, clientIdRequired }) => ({
           kind,
           endpoint,
           auth,
+          ...(testPath ? { testPath } : {}),
           ...(scope ? { scope } : {}),
           ...(clientIdRequired ? { clientIdRequired } : {}),
         })),

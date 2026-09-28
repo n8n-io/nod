@@ -2,8 +2,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
+import { getDomain } from 'tldts';
 import { integrationResultSnapshot } from './integration-result.ts';
-import type { Approval, Connection } from '../shared/contracts.ts';
+import type { Approval, Connection, VaultLoginEntry } from '../shared/contracts.ts';
 import type {
   IntegrationFile,
   IntegrationProvider,
@@ -64,7 +65,21 @@ type IntegrationOptions = {
   baseUrl: string;
   refresh?(): void;
   discovered?: Awaited<ReturnType<typeof createDiscoveredConnections>>;
+  browserAccounts?: () => Promise<VaultLoginEntry[]>;
+  removeBrowserAccount?: (id: string) => Promise<void>;
 };
+
+function browserService(origin: string) {
+  const domain = getDomain(new URL(origin).hostname, { allowPrivateDomains: true });
+  const name = domain ?? new URL(origin).hostname;
+  return {
+    slug: name
+      .split('.')[0]
+      .replace(/[^a-z0-9-]/gi, '-')
+      .toLowerCase(),
+    name,
+  };
+}
 class IntegrationError extends Error {
   constructor(
     message: string,
@@ -485,7 +500,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         });
       }
     }
-    return [...result, ...((await options.discovered?.list()) ?? [])];
+    const browserAccounts = (await options.browserAccounts?.()) ?? [];
+    return [
+      ...result,
+      ...((await options.discovered?.list()) ?? []),
+      ...browserAccounts.map((entry): Connection => {
+        const service = browserService(entry.origin);
+        return {
+          slug: service.slug,
+          name: service.name,
+          status: 'connected',
+          connectionId: entry.id,
+          accountName: entry.label,
+          triggersEnabled: false,
+          supportsTriggers: false,
+          accessPaths: [{ id: entry.id, kind: 'browser', endpoint: entry.origin }],
+        };
+      }),
+    ];
   }
 
   async function selectConnection(
@@ -1280,16 +1312,23 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
       scope.post<{ Params: { slug: string; connectionId: string } }>(
         '/api/apps/:slug/accounts/:connectionId/disconnect',
-        async (request) =>
-          slugSchema.safeParse(request.params.slug).success
-            ? disconnect(
-                slugSchema.parse(request.params.slug),
-                z.uuid().parse(request.params.connectionId),
-              )
-            : (options.discovered?.disconnect(
-                z.uuid().parse(request.params.connectionId),
-                request.params.slug,
-              ) ?? Promise.reject(new IntegrationError('This service is unavailable.', 404))),
+        async (request) => {
+          const id = z.uuid().parse(request.params.connectionId);
+          const browser = ((await options.browserAccounts?.()) ?? []).find(
+            (entry) => entry.id === id && browserService(entry.origin).slug === request.params.slug,
+          );
+          if (browser) {
+            if (!options.removeBrowserAccount)
+              throw new IntegrationError('This account is unavailable.', 503);
+            await options.removeBrowserAccount(id);
+            options.refresh?.();
+            return { ok: true };
+          }
+          return slugSchema.safeParse(request.params.slug).success
+            ? disconnect(slugSchema.parse(request.params.slug), id)
+            : (options.discovered?.disconnect(id, request.params.slug) ??
+                Promise.reject(new IntegrationError('This service is unavailable.', 404)));
+        },
       );
       scope.post<{ Params: { slug: string; connectionId: string } }>(
         '/api/apps/:slug/accounts/:connectionId/triggers',

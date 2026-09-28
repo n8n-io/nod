@@ -470,6 +470,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return rows.map((entry) => metadata(entry));
   }
 
+  async function removeLogin(id: string) {
+    const result = await pool.query('DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2', [
+      z.uuid().parse(id),
+      owner,
+    ]);
+    if (!result.rowCount) throw new VaultError('This saved login could not be found.', 404);
+  }
+
   async function listEntries(): Promise<VaultListEntry[]> {
     let logins = await pool.query<EntryRow>(
       'SELECT * FROM vault_entries WHERE owner_id=$1 ORDER BY updated_at DESC',
@@ -1893,6 +1901,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     registerRoutes,
     request,
     list,
+    removeLogin,
     fillSaved,
     fillSelected,
     fillEmailCode,

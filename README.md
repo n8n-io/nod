@@ -22,7 +22,7 @@ The local setup supports one owner and listens only on `127.0.0.1`. Chat and com
 
 ## Optional connections
 
-- **Apps:** Connect Notion and Linear through their hosted MCP servers from **Apps** or chat. Gmail, Calendar, Drive, Sheets, Docs, and Slack use Composio; set `COMPOSIO_API_KEY` for those services and for existing Composio Notion accounts. For other services, Otto can research an HTTPS MCP or HTTP API path. A discovered MCP path can use OAuth or a token; an HTTP API path uses a token. See [connections](docs/connections.md) and [Composio setup](docs/composio.md).
+- **Apps:** Connect Notion and Linear through their hosted MCP servers from **Apps** or chat. Gmail, Calendar, Drive, Sheets, Docs, and Slack use Composio; set `COMPOSIO_API_KEY` for those services and for existing Composio Notion accounts. For other services, Otto can research an HTTPS MCP or HTTP API path. A discovered MCP path can use OAuth or a token; an HTTP API path uses a token. Vault holds these grants, and Apps lists saved website logins as browser paths. See [connections](docs/connections.md) and [Composio setup](docs/composio.md).
 - **Channels:** Set up Telegram or WhatsApp from **Channels**. Telegram can poll locally. WhatsApp needs a Meta callback and an eligible account. See [channel setup](docs/channels.md).
 - **Vault:** On macOS, Keychain supplies the encryption key. Other hosts need `OTTO_VAULT_KEY`. See [vault setup](docs/vault.md).
 

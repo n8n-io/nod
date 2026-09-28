@@ -200,6 +200,10 @@ export function Apps() {
   }
   async function connect(connection: Connection) {
     if (actionRequest.current || busy) return;
+    if (connection.accessPaths?.some((path) => path.kind === 'browser')) {
+      window.location.assign('/vault');
+      return;
+    }
     const request = new AbortController();
     actionRequest.current = request;
     setBusy(`connect:${connection.slug}`);

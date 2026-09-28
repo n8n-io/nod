@@ -101,7 +101,13 @@ export async function createApprovals(
       const task = (
         await client.query(
           `SELECT t.*,m.id AS author_message_id,m.text AS author_instruction FROM tasks t
-         LEFT JOIN messages m ON m.id=t.source_message_id AND m.task_id=t.id AND m.owner_id=t.owner_id AND m.role='user'
+         LEFT JOIN messages m ON m.id=COALESCE(t.source_message_id,(
+           SELECT a.source_message_id FROM approvals a
+           WHERE a.task_id=t.id AND a.owner_id=t.owner_id AND a.status='completed'
+           AND a.execution_revision=t.revision AND t.action_resume_kind='approval'
+           AND t.action_resume_revision=t.revision
+           LIMIT 1
+         )) AND m.task_id=t.id AND m.owner_id=t.owner_id AND m.role='user'
          WHERE t.id=$1 AND t.owner_id=$2 AND t.status='running' AND t.revision=$3 AND ${currentConversationSql()} FOR UPDATE OF t`,
           [taskId, ownerId, expected.revision],
         )
@@ -143,8 +149,12 @@ export async function createApprovals(
       const currentSource = task.author_instruction === task.prompt;
       const resumedSource =
         !action.startsWith('OTTO_') &&
-        explicit &&
-        ['credentials', 'manual_control', 'connection'].includes(task.action_resume_kind) &&
+        (explicit ||
+          (task.action_resume_kind === 'approval' &&
+            ['CONNECTED_HTTP', 'CONNECTED_MCP_CALL'].includes(action))) &&
+        ['credentials', 'manual_control', 'connection', 'approval'].includes(
+          task.action_resume_kind,
+        ) &&
         task.action_resume_revision === expected.revision;
       if (!scheduled && !currentSource && !resumedSource)
         throw new Error('This action needs a direct request from the user.');
@@ -273,6 +283,11 @@ export async function createApprovals(
     const revision = (
       await client.query('SELECT revision FROM tasks WHERE id=$1', [approval.task_id])
     ).rows[0].revision;
+    if (approved)
+      await client.query(
+        "UPDATE tasks SET action_resume_kind='approval',action_resume_revision=$2 WHERE id=$1 AND owner_id=$3 AND revision=$2",
+        [approval.task_id, revision, ownerId],
+      );
     await client.query(
       'UPDATE approvals SET status=$2,confirmation_reply_id=$3,execution_revision=$4 WHERE id=$1',
       [approval.id, approved ? 'confirmed' : 'declined', messageId, revision],

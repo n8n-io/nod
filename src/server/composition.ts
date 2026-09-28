@@ -23,6 +23,7 @@ import { createDirectProvider } from '../providers/direct/integrations.ts';
 import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
 import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
 import { createDiscoveredConnections } from './discovered-connections.ts';
+import { createAppGrantVault } from './vault-app-grants.ts';
 import { createDockerWorkspace } from '../providers/docker/index.ts';
 import { createE2BAdapters } from '../providers/e2b/index.ts';
 import { createCloudflareAdapters } from '../providers/cloudflare-computer/index.ts';
@@ -480,15 +481,21 @@ export async function createApplication(
     getProfile: personal.getProfile,
     listGoals: personal.listGoals,
   });
+  const grantVault = await createAppGrantVault(pool, {
+    ownerId,
+    keyStore: adapters.keyStore,
+  });
   const discovered = await createDiscoveredConnections(pool, {
     ownerId,
     baseUrl: publicOrigin,
     keyStore: adapters.keyStore,
+    grantVault,
     transport: createDiscoveredTransport(),
     oauth: createDiscoveredOAuth(),
     resumeConnection: resumeConnectedTask,
     refresh,
   });
+  let vault!: Awaited<ReturnType<typeof createVault>>;
   const integrations = await createIntegrations(pool, {
     admission,
     ownerId,
@@ -505,8 +512,10 @@ export async function createApplication(
     refresh,
     baseUrl: publicOrigin,
     discovered,
+    browserAccounts: () => vault.list(ownerId),
+    removeBrowserAccount: (id) => vault.removeLogin(id),
   });
-  const vault = await createVault(pool, {
+  vault = await createVault(pool, {
     admission,
     keyStore: adapters.keyStore,
     resume: resumeTask,
