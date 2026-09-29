@@ -255,7 +255,7 @@ export const toolDefinitions = {
   ),
   download_app_file: defineTool(
     'download_app_file',
-    'Retrieve a file from the selected connected account and send it as a private attachment in this conversation. Discover the exact action schema with apps SEARCH_TOOLS first. Supply args.connectionId and the observed message/attachment or file identifiers. Gmail attachments and Drive downloads are supported. The server retrieves the file without exposing provider URLs, credentials or base64 to you. A successful call already delivers the attachment; do not repeat a link or confirmation. This is not permission to send email, post to another channel, or make a file public.',
+    'Retrieve a file from the selected connected account and send it as a private attachment in this conversation. Discover the exact action schema with apps SEARCH_TOOLS first. Supply args.connectionId and the observed message/attachment or file identifiers. Gmail attachments and Drive downloads are supported. A small UTF-8 CSV also returns its text as content so you can analyze its rows. The server retrieves the file without exposing provider URLs, credentials or base64 to you. A successful call already delivers the attachment; do not repeat a link or confirmation. This is not permission to send email, post to another channel, or make a file public.',
     Type.Object({
       action: Type.Union(integrationDownloadActions.map((value) => Type.Literal(value))),
       args: Type.Record(Type.String(), Type.Unknown()),

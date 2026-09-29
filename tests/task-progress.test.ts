@@ -112,7 +112,9 @@ test(
           return {
             name: 'invoice.csv',
             mimeType: 'text/csv',
-            bytes: Buffer.from('invoice,total\nNS-1042,240\n'),
+            bytes: Buffer.from(
+              args.large ? 'invoice,total\n'.repeat(1000) : 'invoice,total\nNS-1042,240\n',
+            ),
           };
         },
         async manage() {
@@ -165,6 +167,7 @@ test(
         async () => {
           const first = await begin('Retrieve the file');
           const artifact = await first.context.downloadIntegrationFile!('GMAIL_GET_ATTACHMENT', {});
+          assert.equal(artifact.content, 'invoice,total\nNS-1042,240\n');
           const stored = (
             await db.pool.query('SELECT owner_id,task_id,storage_path FROM artifacts WHERE id=$1', [
               artifact.id,
@@ -173,9 +176,19 @@ test(
           assert.equal(stored.owner_id, 'local-development');
           assert.equal(stored.task_id, first.id);
           assert.equal(JSON.stringify(artifact).includes('storage_path'), false);
-          assert.deepEqual((await messages(first.id))[0].attachments, [artifact]);
+          const { content: _content, ...savedArtifact } = artifact;
+          assert.deepEqual((await messages(first.id))[0].attachments, [savedArtifact]);
           assert.equal((await messages(first.id))[0].text, '');
           await finish(first.id);
+          const large = await begin('Retrieve a large file');
+          const largeArtifact = await large.context.downloadIntegrationFile!(
+            'GMAIL_GET_ATTACHMENT',
+            {
+              large: true,
+            },
+          );
+          assert.equal(largeArtifact.content, undefined);
+          await finish(large.id);
           const late = await begin('Retrieve a delayed file');
           const pending = late.context.downloadIntegrationFile!('GMAIL_GET_ATTACHMENT', {
             delayed: true,

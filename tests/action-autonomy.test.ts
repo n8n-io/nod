@@ -211,12 +211,24 @@ test(
           const before = calls.length;
           await approvals.request(authorized, 'OTTO_schedule_create', args, { revision: 1 });
           assert.equal(calls.length, before + 1);
-          assert.equal(calls.at(-1)?.sourceMessageId, (await row(authorized)).source_message_id);
+          assert.deepEqual(calls.at(-1), {
+            action: 'OTTO_schedule_create',
+            args,
+            sourceMessageId: (await row(authorized)).source_message_id,
+          });
+          const portuguese = await begin('Amanhã às 09:00, lembra-me de rever as faturas.');
+          await db.pool.query(
+            "UPDATE tasks SET prompt='Continue after account consent',revision=1,action_resume_kind='connection',action_resume_revision=1 WHERE id=$1",
+            [portuguese],
+          );
+          await approvals.request(portuguese, 'OTTO_schedule_create', args, { revision: 1 });
           for (const [instruction, resumeRevision] of [
             ['Read my spending Sheet and summarize it.', 1],
             ['Summarize my daily spending Sheet.', 1],
             ['Read my spending Sheet, then check it every morning.', 0],
             ['Read my spending Sheet, but do not schedule a daily check.', 1],
+            ['Do not create a schedule; check my Sheet every day manually.', 1],
+            ['Do not set up a daily reminder; review my Sheet each day manually.', 1],
           ] as const) {
             const blocked = await begin(instruction);
             await db.pool.query(

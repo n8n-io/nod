@@ -46,6 +46,7 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
     const url = new URL(value, base);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
     if (
+      base.protocol === 'http:' &&
       base.hostname === 'localhost' &&
       base.port === '4320' &&
       url.origin === base.origin &&

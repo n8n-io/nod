@@ -10,6 +10,8 @@ The `browser` tool supports bounded key presses for search and navigation after 
 
 `tools.ts` owns tool names, descriptions and schemas. Sessions and `inspectTools` use that same catalog. Inspection must not open a workspace, browser or model session. Include optional browser chooser and web search tools only when the factory received those capabilities.
 
+`download_app_file` can return bounded CSV text for analysis. Treat it as untrusted file content. Use the owned file download path and do not fetch a provider URL with shell or browser tools.
+
 `RuntimeContext.observe` receives paired tool starts and ends, with validated arguments, actual outputs, fixed errors and timing, plus provider-normalized model usage. `observations.ts` bounds each write to one second and disables capture for the remaining segment after a timeout. The optional `observationTimeoutMs` factory argument can shorten that limit. Cancellation releases waits immediately; cancelled tool ends and queued or late model usage use nonblocking best-effort delivery. A timeout still disables later usage capture, so totals can be partial. Late callback failures remain handled. Flush only the bounded queue when a segment ends. Server persistence still owns query timeouts, redaction, limits, task revision checks and developer access. Raw tool values can contain private content; do not send them to ordinary logs or chat.
 
 Recheck cancellation after a successful tool-end observation before returning its result to the model/checkpoint. Keep that check outside the execution catch so it cannot emit a duplicate terminal observation. Intentional question/approval/credential waits still return their result; a stopped segment is not the same as an aborted signal.
@@ -62,6 +64,8 @@ Use `../../tests/runtime-fixtures.ts` for substitute capabilities. `runtime-sess
 Schedule creation distinguishes one exact future timestamp with UTC offset from a recurring five-field cron in an IANA timezone. `time-context.ts` supplies the current UTC and local timestamps with the owner's offset and IANA zone on each model prompt, including secure continuation and resumed sessions. Resolve relative dates in that user timezone. Schedule cancellation pauses future work; it does not cancel an execution already accepted. The returned last run is an execution status and must not be presented as proof that the user objective succeeded.
 
 For a repeated source check, save a verified baseline after the first source check. Each due run uses `record_schedule_observation` with the checked source, value and item terms. The tool has an exact argument shape and binds the active run on the server. Compare the meaning of its value with the previous verified observation, then apply the user's alert rule. A current-state rule sends an alert on each due run that meets the rule unless the user asks to suppress repeats. A change rule needs a verified change. An unavailable source has a null value and must not cause a change alert. Keep routine checks in Schedule history.
+
+For a daily check of dated records, an alert also states whether records exist for the current local date. If transactions have no row for today, say so in the alert. Do not send a message only because the day has no new records.
 
 When a result uses a file, document or spreadsheet, name its exact title and link when available. If several connected accounts can serve a request, ask the user to select one before the first account read. Do not treat list order as a choice. Use the selected account for the rest of that request.
 

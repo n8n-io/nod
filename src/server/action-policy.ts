@@ -42,14 +42,20 @@ export function requestsConnectedSchedule(action: string, instruction: string) {
     ' ',
   );
   if (
-    /\b(?:don't|do not|never|não)\s+(?:schedule|remind|check|monitor|notify|alert)\b/i.test(request)
+    /\b(?:don't|do not|never|não|nao)\s+(?:(?:create|make|add|set(?:\s+up)?|start|run|send)\s+)?(?:(?:an?|the|any|another)\s+)?(?:(?:daily|recurring|automatic|scheduled)\s+)?(?:schedule|reminder|check|monitor|notify|alert|lembrete|agenda)\b/i.test(
+      request,
+    )
   )
     return false;
   const timing =
     /\b(?:daily|weekly|monthly|tomorrow|every\s+(?:day|morning|evening|night|week|weekday|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|each\s+(?:day|morning|evening|night|week|weekday|month)|at\s+\d{1,2}(?::\d{2})?|on\s+\d{4}-\d{2}-\d{2}|todos\s+os\s+dias|todas\s+as\s+manhãs)\b/i;
+  const portugueseTiming =
+    /(?:^|\s)(?:amanhã|amanha|hoje|às?\s+\d{1,2}(?::\d{2}|h\d{2})?|todos\s+os\s+(?:dias|sábados|sabados|domingos)|todas\s+as\s+(?:manhãs|manhas|noites|semanas|(?:segundas|terças|tercas|quartas|quintas|sextas)(?:-feiras)?))(?=$|[\s,.:;!?])/i;
   const work =
     /\b(?:schedule|remind\s+me|set\s+up\s+a\s+reminder|check|monitor|review|notify|alert|tell|run|send|agenda|lembra-me|lembre-me|verifica|avisa)\b/i;
-  return request.split(/[.!?;]|\bthen\b/i).some((part) => timing.test(part) && work.test(part));
+  return request
+    .split(/[.!?;]|\bthen\b/i)
+    .some((part) => (timing.test(part) || portugueseTiming.test(part)) && work.test(part));
 }
 
 const intentWords: Record<Intent, RegExp> = {

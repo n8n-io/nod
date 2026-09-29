@@ -128,6 +128,7 @@ test('app downloads publish through the trusted callback and reject external wri
     mimeType: 'text/csv',
     size: 40,
     url: '/api/artifacts/fixture-file',
+    content: 'invoice,total\nNS-1042,240\n',
   };
   const calls: unknown[] = [];
   const result = await fixture(

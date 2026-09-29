@@ -39,13 +39,13 @@ The case result is one binary score. It passes only when C1–C14 pass in the sa
 
 ## Evaluator correction C380.v2
 
-C380.v1 remains red on C10. Its due alert reported the verified overage but did not say that no transaction was dated 29 September. LAB-380 asks Otto to alert when spending exceeds a budget; it does not ask for a daily transaction count. C10 therefore added a reporting requirement outside the user task. Keep that red result as evidence of an invalid check.
+C380.v1 remains red on C10. Its due alert reported the verified overage but did not say that no transaction was dated 29 September. The first review treated C10 as outside the chat prompt. That review was wrong: LAB-380 task check T4 explicitly requires a plain no-transactions statement. Keep this red result as a product failure.
 
 C380.v2 uses the same Sheet and answer key. Its prompt is:
 
 > Using my spending Google Sheet, tell me what I spent this week by category and how that compares with my monthly budget. Then check it every morning at 12:05 Europe/Madrid and tell me if I'm over.
 
-The new check time permits a second due run on 29 September. C10 now passes only when the due run reads the dated source rows again, uses current-month totals, and does not invent a new transaction. All other checks keep their C380.v1 meanings. Score C380.v2 from a fresh isolated task, account and due run; do not rescore the first run.
+The new check time permits a second due run on 29 September. C10 was relaxed to pass when the due run reads the dated source rows again, uses current-month totals, and does not invent a new transaction. This diagnostic variant does not satisfy LAB-380 task check T4. All other checks keep their C380.v1 meanings. Score C380.v2 from a fresh isolated task, account and due run; do not rescore the first run.
 
 The C380.v2 run passed the due read, observation, single alert and no-write checks. It remains red on C3: the initial answer linked the Sheet but called it “your sheet” rather than naming its available title. This replay prompt also conflicted with itself: “morning” and 12:05 name different parts of the day. The user's answer resolved that conflict. The question was valid. C8 and C9 in this version did not state the changed due time, so this version does not establish a full-case pass.
 
@@ -85,7 +85,7 @@ C380.v6 keeps the C380.v5 setup, answer key and checks. It changes only the due 
 
 C8 and C9 use 12:26 Europe/Madrid. All other checks keep their C380.v5 meanings. The fix tells Otto to send an alert on each due run that meets a current-state rule, unless the user asked to suppress repeats. A change-only rule still requires a verified change. Score C380.v6 from a new isolated task, account and due run.
 
-C380.v6 passed C1–C14. Its normal due job started 0.340 seconds after 12:26 with no Otto browser open. It read the Sheet, saved a verified current-month observation, sent one Transport €25-over alert, and made no Sheet write. The initial and due messages each showed elapsed time and recorded cost. Its initial schedule kept the baseline in prompt text but did not save a structured baseline observation. This run proves the daily alert result; it does not by itself prove behavior when `record_schedule_observation` returns an unchanged previous value.
+C380.v6 passed the relaxed C1–C14 checks. Its normal due job started 0.340 seconds after 12:26 with no Otto browser open. It read the Sheet, saved a verified current-month observation, sent one Transport €25-over alert, and made no Sheet write. The initial and due messages each showed elapsed time and recorded cost. Its initial schedule kept the baseline in prompt text but did not save a structured baseline observation. This run proves the daily alert result; it does not by itself prove behavior when `record_schedule_observation` returns an unchanged previous value or satisfy T4.
 
 ## Account-choice regression replay C380.v7
 
@@ -95,17 +95,37 @@ C380.v7 keeps the C380.v6 setup, answer key and checks. It changes only the due 
 
 C8 and C9 use 12:37 Europe/Madrid. All other checks keep their C380.v6 meanings. Score C380.v7 from a new isolated task, account and due run.
 
-C380.v7 passed C1–C14 in one isolated run with the real agent and the synthetic Sheets account. The first answer named and linked **September spending test**, gave all three fixed totals, and identified Transport as €25.00 over budget. It saved one daily schedule and a structured, verified baseline observation. The normal dispatcher started the due task 0.698 seconds after 12:37, with no Otto browser open. The task read the Sheet again, saved a verified observation, received the unchanged previous baseline, and sent one Transport over-budget alert. The integration audit recorded no Sheet write. The initial and due tasks succeeded; each final answer showed elapsed time and cost. The run record is in the ignored local evidence directory.
+C380.v7 passed the relaxed C1–C14 checks in one isolated run with the real agent and the synthetic Sheets account. The first answer named and linked **September spending test**, gave all three fixed totals, and identified Transport as €25.00 over budget. It saved one daily schedule and a structured, verified baseline observation. The normal dispatcher started the due task 0.698 seconds after 12:37, with no Otto browser open. The task read the Sheet again, saved a verified observation, received the unchanged previous baseline, and sent one Transport over-budget alert. The integration audit recorded no Sheet write. The initial and due tasks succeeded; each final answer showed elapsed time and cost. Its due alert did not satisfy T4. The run record is in the ignored local evidence directory.
+
+## Ticket-check replay C380.v8 and C380.v9
+
+C380.v8 ran after the branch was brought up to date with main. Its prompt used a daily check at 12:54 Europe/Madrid. The first answer gave the three correct totals and exact Sheet link, then saved an editable daily schedule and a verified baseline. The normal due job started 0.769 seconds after its set time with no Otto browser open. It read the Sheet again and sent one Transport €25-over alert, with no Sheet write. The alert did not say that no transactions were dated 29 September. C380.v8 is red on LAB-380 task check T4.
+
+C380.v9 restores the original C10: the due alert must plainly say that there were no transactions on 29 September, based on a fresh read of dated rows. It must also report the verified overage. The prompt is:
+
+> Using my spending Google Sheet, tell me what I spent this week by category and how that compares with my monthly budget. Then check it every day at 13:00 Europe/Madrid and tell me if I'm over.
+
+C8 and C9 use 13:00 Europe/Madrid. C1–C7 and C11–C14 keep their C380.v7 meanings. Score C380.v9 from a new isolated task, account and due run. A pass requires C1–C14, including the restored C10, in one run.
+
+C380.v9 passed C1–C14 in one isolated run. The first answer named and linked **September spending test**, gave Food €50.00, Transport €125.00 and Software €40.00, and identified Transport as €25.00 over its €100.00 monthly budget. It saved one editable daily schedule with a verified baseline. The normal due job started 1.157 seconds after 13:00 with no Otto browser open, read the Sheet again, saved a verified observation and sent one over-budget alert. That alert plainly said there were no transactions dated 29 September. The audit recorded no Sheet write. Both tasks succeeded and showed elapsed time and recorded cost.
+
+C380.v10 repeats the same answer key and C1–C14 checks on the final source. Its prompt changes only the daily check time to 13:16 Europe/Madrid. C8 and C9 use that time. Score it from a new isolated task, account and due run.
+
+C380.v10 passed C1–C14. The first answer gave the exact Sheet title and link, the three fixed totals and the €25.00 Transport overage. It saved one editable daily check at 13:16 Europe/Madrid. With no Otto browser tab open, the normal dispatcher started 1.163 seconds after the set time. The due task read the Sheet again and sent one alert. The alert stated that Transport was €25 over its monthly budget and that no transactions were dated 29 September. The audit shows no Sheet write. Both tasks succeeded and showed elapsed time and recorded cost.
 
 ## Holdouts
 
-H1 asks, “Which subscriptions did I pay for this month?” in the same connected Sheet. It passes when Otto names both Software payments, €20.00 each, with the Sheet link and no other payment. H3 has two synthetic Google Sheets accounts, both with the same fixed Sheet. It asks, “Find my Google Sheet named September spending test. Tell me this week's spending by category and which monthly budget is over. Do not edit it.” It passes when Otto asks which account to use, then finds the named Sheet in the selected account, gives the three fixed totals, names Transport as €25.00 over, links the Sheet, and makes no write. H1 and H3 are the required holdouts for the connected-Sheets case. H2 is an unrun extension: it gives the same data in a Drive CSV and asks for the category and budget comparison. It passes when the three totals and the €25.00 overage match C380.v1, without a Sheets read. Keep the prompts, files, and answer keys fixed before the first holdout run.
+H1 asks, “Which subscriptions did I pay for this month?” in the same connected Sheet. It passes when Otto names both Software payments, €20.00 each, with the Sheet link and no other payment. H2 uses a synthetic Google Drive CSV export named **September spending export.csv**. Each row has a date, category, amount and that category's monthly budget. Its frozen prompt is, “Using my Google Drive CSV export named September spending export.csv, tell me what I spent this week by category and how that compares with each monthly budget. Do not edit the file.” It passes when the three totals and the €25.00 overage match C380.v1, with the file title and link and no Sheets read or write. H1 and H2 are required by LAB-380. H3 has two synthetic Google Sheets accounts, both with the same fixed Sheet. It asks, “Find my Google Sheet named September spending test. Tell me this week's spending by category and which monthly budget is over. Do not edit it.” It passes when Otto asks which account to use, then finds the named Sheet in the selected account, gives the three fixed totals, names Transport as €25.00 over, links the Sheet, and makes no write. H3 is an added account-choice holdout. Keep the prompts, files, and answer keys fixed before the first holdout run.
 
 H1 passed on the C380.v7 build. The answer named Figma and Notion at €20.00 each, gave the €40.00 total and linked the Sheet. The first H3 attempt gave the right totals, source and no-write result, but used the first account without asking. Earlier tasks in that conversation had already used that account and the same Sheet. This context makes the account-choice check invalid. H3.v2 keeps the same prompt and answer key, but connects both accounts before the first chat task in a fresh isolated run. It scores the account question only in that clean state.
+
+H1 also passed after C380.v10. Otto read the connected Sheet, named Figma and Notion at €20.00 each, gave the €40.00 total and linked the source.
 
 H3.v2 is red on the account question. The fresh app tool search returned both synthetic account labels. Otto used the first connection without asking, then gave the right Sheet result. H3.v3 keeps the H3.v2 setup, prompt and answer key. It repeats the fresh run after a general account-selection instruction: ask for a choice before the first account read when several accounts fit and the user did not select one.
 
 H3.v3 passed. Otto asked which of the two synthetic account emails to use before a Sheet read. After the user selected the second account, all three Sheet reads used that account. The answer gave the fixed totals, the €25 Transport overage and the Sheet link, with no write.
+
+H2.v1 is red. Otto found the exact CSV and link, but tried `GOOGLEDRIVE_PARSE_FILE` to read it. The server refused that operation before provider execution. The predicted safe path was an owned file download that could expose bounded CSV text to the agent without a provider URL. H2.v2 kept the frozen prompt, file and answer key. It downloaded the file, but the runtime treated its `content` data field as a tool response wrapper. The model did not receive usable rows and asked for a user attachment. H2.v2 is red. H2.v3 fixes that response handling and repeats the same holdout in a fresh isolated run. It passed: Otto downloaded the CSV once, linked its exact title, gave the three fixed totals and the €25.00 Transport overage, and said it had not edited the file. The audit shows no Sheets read or write and no file write. This result uses a synthetic Drive account and file.
 
 ## Google Sheets connection experience
 

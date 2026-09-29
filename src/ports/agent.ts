@@ -114,7 +114,10 @@ export interface RuntimeContext {
     submitSelector?: string;
   }): Promise<{ url?: string; filled?: boolean; invitation?: CredentialInvitation }>;
   integration(action: string, args: Record<string, unknown>): Promise<unknown>;
-  downloadIntegrationFile?(action: string, args: Record<string, unknown>): Promise<Artifact>;
+  downloadIntegrationFile?(
+    action: string,
+    args: Record<string, unknown>,
+  ): Promise<Artifact & { content?: string }>;
   manage(action: string, args: Record<string, unknown>): Promise<unknown>;
 }
 export interface PromptSnapshot {

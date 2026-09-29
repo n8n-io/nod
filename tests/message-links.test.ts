@@ -25,7 +25,10 @@ test('isolated E2E consent links work only on the harness origin', () => {
     kind: 'navigation',
   });
   assert.equal(safeMessageLink(`${origin}${path}?next=/apps`, origin), null);
+  assert.equal(safeMessageLink(`${origin}${path}?next=https://evil.example`, origin), null);
+  assert.equal(safeMessageLink(`${origin}${path}#token`, origin), null);
   assert.equal(safeMessageLink(path, 'http://localhost:4310'), null);
+  assert.equal(safeMessageLink(path, 'https://localhost:4320'), null);
 });
 
 test('markdown artifact links show the filename without markdown punctuation', () => {

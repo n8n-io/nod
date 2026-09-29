@@ -1426,16 +1426,25 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
               args,
               controller.signal,
             );
+            const bytes = Buffer.from(file.bytes);
             const artifact = await current(async () =>
               (dependencies.artifacts ?? localArtifacts).storeArtifact(
-                Buffer.from(file.bytes),
+                bytes,
                 file.name,
                 file.mimeType,
                 taskId,
               ),
             );
             await reply(taskId, '', [artifact], revision);
-            return artifact;
+            if (file.mimeType !== 'text/csv' || bytes.length > 12_000) return artifact;
+            try {
+              return {
+                ...artifact,
+                content: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+              };
+            } catch {
+              return artifact;
+            }
           }
         : undefined,
       manage: async (action, args) => {
