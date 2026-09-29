@@ -11,6 +11,7 @@ import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { JSDOM } from 'jsdom';
+import { downloadArguments } from '../src/providers/composio/downloads.ts';
 import type { IntegrationService } from '../src/ports/integrations.ts';
 import { ChannelSetupFailure } from '../src/ports/channel-settings.ts';
 import { createChannelSettings } from '../src/server/channel-settings.ts';
@@ -558,11 +559,9 @@ test('synthetic Drive CSV gives the same spending totals without a Sheets read',
       account.accountId,
     )) as { files: Array<{ id: string; name: string }> };
     assert.equal(found.files[0].name, 'September spending export.csv');
-    const file = await session.download!(
-      'GOOGLEDRIVE_DOWNLOAD_FILE',
-      { file_id: found.files[0].id },
-      account.accountId,
-    );
+    const args = { fileId: found.files[0].id };
+    assert.deepEqual(downloadArguments('GOOGLEDRIVE_DOWNLOAD_FILE', args), args);
+    const file = await session.download!('GOOGLEDRIVE_DOWNLOAD_FILE', args, account.accountId);
     const rows = Buffer.from(file.bytes)
       .toString('utf8')
       .split('\n')

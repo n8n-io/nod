@@ -434,8 +434,8 @@ const toolDefinitions = [
     description: 'Download an observed synthetic CSV file by ID for private text analysis.',
     parameters: {
       type: 'object',
-      properties: { file_id: { type: 'string' } },
-      required: ['file_id'],
+      properties: { fileId: { type: 'string' } },
+      required: ['fileId'],
     },
   },
   {
@@ -938,7 +938,7 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
           if (action === 'GOOGLEDRIVE_DOWNLOAD_FILE') {
             if (
               account.service !== 'googledrive' ||
-              args.file_id !== 'otto-e2e-spending-csv-2026-09'
+              args.fileId !== 'otto-e2e-spending-csv-2026-09'
             )
               throw new Error('The synthetic CSV file was not found in this account.');
             audit('fixture_integration_download', { action, accountId });

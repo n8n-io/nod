@@ -60,7 +60,7 @@ test(
         (await db.pool.query("SELECT id FROM tasks WHERE source_id='onboarding:welcome'")).rowCount,
         0,
       );
-      await db.pool.query("UPDATE tasks SET status='succeeded' WHERE id=$1", [earlier]);
+      await tasks.cancelTask(earlier);
       const landing = () =>
         app.inject({ method: 'POST', url: '/api/account/welcome', headers, payload: {} });
       assert.equal((await landing()).statusCode, 409);
@@ -221,6 +221,13 @@ test(
         },
         manage: async () => ({}),
       });
+      const ordinary = await tasks.submitTask('Later synthetic request');
+      for (let attempt = 0; attempt < 800; attempt++) {
+        const result = await db.pool.query('SELECT status FROM tasks WHERE id=$1', [ordinary]);
+        if (result.rows[0]?.status === 'succeeded') break;
+        await delay(25);
+      }
+      assert.ok(seen.some((context) => context.taskId === ordinary && !context.readOnly));
       await tasks.startOnboarding('Alex', ['Gmail']);
       const discovery = (
         await db.pool.query("SELECT id FROM tasks WHERE source_id='onboarding:welcome'")

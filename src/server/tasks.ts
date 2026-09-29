@@ -1689,7 +1689,8 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
               ),
             );
             await reply(taskId, '', [artifact], revision);
-            if (file.mimeType !== 'text/csv' || bytes.length > 12_000) return artifact;
+            if (file.mimeType.toLowerCase() !== 'text/csv' || bytes.length > 12_000)
+              return artifact;
             try {
               return {
                 ...artifact,

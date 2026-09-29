@@ -111,7 +111,7 @@ test(
             });
           return {
             name: 'invoice.csv',
-            mimeType: 'text/csv',
+            mimeType: 'TEXT/CSV',
             bytes: Buffer.from(
               args.large ? 'invoice,total\n'.repeat(1000) : 'invoice,total\nNS-1042,240\n',
             ),
