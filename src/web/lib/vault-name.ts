@@ -16,3 +16,11 @@ export function suggestLoginName(origin: string, existingNames: readonly string[
   }
   return base;
 }
+
+export function originLabel(origin: string) {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return 'Website';
+  }
+}

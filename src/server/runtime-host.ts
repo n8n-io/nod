@@ -256,13 +256,19 @@ export function createTenantRuntimeHost(options: {
     }
   }
 
-  async function ensure(owner: string) {
-    if (closed || deployment) throw new Error('The account runtime is unavailable.');
-    if (await options.transport.deploymentClosed?.()) throw new DeploymentControlError();
+  function healthy(entry: Entry | undefined): entry is Entry {
+    return Boolean(entry?.healthy && Date.parse(entry.lease.expiresAt) > Date.now());
+  }
+
+  async function ensure(owner: string, kind?: 'user' | 'webhook' | 'wake') {
     if (closed || deployment) throw new Error('The account runtime is unavailable.');
     const ownerId = z.uuid().parse(owner).toLowerCase();
+    const admitted = entries.get(ownerId);
+    if (kind !== 'wake' && healthy(admitted)) return admitted;
+    if (await options.transport.deploymentClosed?.()) throw new DeploymentControlError();
+    if (closed || deployment) throw new Error('The account runtime is unavailable.');
     const entry = entries.get(ownerId);
-    if (entry?.healthy && Date.parse(entry.lease.expiresAt) > Date.now()) return entry;
+    if (healthy(entry)) return entry;
     if (entry) await stop(entry);
     if (closed || deployment) throw new Error('The account runtime is unavailable.');
     let operation = pending.get(ownerId);
@@ -440,8 +446,11 @@ export function createTenantRuntimeHost(options: {
 
   return {
     async fetch(ownerId, request, access) {
-      const entry = await ensure(ownerId);
+      const entry = await ensure(ownerId, access.kind);
       return signedFetch(entry, request, access);
+    },
+    async warm(ownerId) {
+      await ensure(ownerId);
     },
     prepareDeployment,
     async resumeDeployment(raw) {

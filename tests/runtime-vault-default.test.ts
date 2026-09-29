@@ -119,7 +119,7 @@ for (const [prompt, solicitation] of [
           },
         ]);
         assert.deepEqual(replies, [
-          'https://x.com needs you to sign in. [Enter login details](/vault/current-x-login).',
+          'https://x.com needs you to sign in. [Enter login details](/vault/current-x-login) and I will continue the task.',
         ]);
         assert.doesNotMatch(
           deltas.join(''),

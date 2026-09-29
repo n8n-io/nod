@@ -35,14 +35,25 @@ export class TaskReviewRequiredError extends Error {
   static readonly publicMessage =
     'I can’t safely repeat the earlier action because its outcome is unknown.';
   readonly statusCode = 409;
+  readonly code = 'task_review_required';
 
-  constructor() {
+  constructor(
+    readonly taskId: string,
+    readonly summary: string,
+  ) {
     super(TaskReviewRequiredError.publicMessage);
   }
 }
 
-export function taskNeedsReview(status: string, waitingReason?: string | null) {
-  return status === 'failed' || (status === 'waiting_user' && waitingReason === 'recovery');
+export function taskNeedsReview(
+  status: string,
+  waitingReason: string | null | undefined,
+  externalAction: boolean | null | undefined,
+) {
+  return (
+    (status === 'waiting_user' && waitingReason === 'recovery') ||
+    (status === 'failed' && externalAction !== false)
+  );
 }
 
 export function routingMessageDigest(text: string, attachments: Artifact[], channel: string) {
@@ -104,7 +115,7 @@ export function createConversationRouting(options: {
     if (request.skip || !options.routeConversation) return prepared;
     const rows = await options.pool.query(
       `SELECT o.id AS "outcomeId",o.title,o.objective,t.id AS "taskId",t.status,
-         t.waiting_reason AS "waitingReason"
+         t.waiting_reason AS "waitingReason",t.external_action AS "externalAction"
        FROM outcomes o JOIN LATERAL (
          SELECT * FROM tasks t WHERE t.outcome_id=o.id AND t.owner_id=o.owner_id
            AND t.channel=o.channel AND ${currentConversationSql()}
@@ -116,8 +127,8 @@ export function createConversationRouting(options: {
       [options.ownerId, channel, revision],
     );
     const candidateMessageIds: string[] = [];
-    const outcomes: ConversationRoutingContext['candidates'] = await Promise.all(
-      rows.rows.map(async (row) => {
+    const outcomes = await Promise.all(
+      rows.rows.map(async ({ externalAction, ...row }, index) => {
         const messages = await options.pool.query<{
           id: string;
           role: 'user' | 'assistant';
@@ -133,6 +144,8 @@ export function createConversationRouting(options: {
         candidateMessageIds.push(...messages.rows.map((message) => message.id));
         return {
           ...row,
+          blocked: taskNeedsReview(row.status, row.waitingReason, externalAction),
+          recency: index + 1,
           title: String(row.title).slice(0, 100),
           objective: String(row.objective).slice(0, 2000),
           recentMessages: messages.rows.map(({ role, text }) => ({ role, text })),
@@ -156,12 +169,12 @@ export function createConversationRouting(options: {
         [options.ownerId, channel, candidateMessageIds],
       )
     ).rows;
-    const candidates = outcomes.filter(
-      (candidate) => !taskNeedsReview(candidate.status, candidate.waitingReason),
-    );
-    const blockedCandidates = outcomes.filter((candidate) =>
-      taskNeedsReview(candidate.status, candidate.waitingReason),
-    );
+    const candidates = outcomes
+      .filter(({ blocked }) => !blocked)
+      .map(({ blocked, ...item }) => item);
+    const blockedCandidates = outcomes
+      .filter(({ blocked }) => blocked)
+      .map(({ blocked, ...item }) => item);
     prepared.candidateIds = candidates.map((candidate) => candidate.outcomeId);
     prepared.blockedOutcomeIds = blockedCandidates.map((candidate) => candidate.outcomeId);
     const controller = new AbortController();

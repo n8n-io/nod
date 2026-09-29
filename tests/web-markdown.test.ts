@@ -17,17 +17,17 @@ test('chat renders Markdown, tables, static HTML and secure local links', () => 
   assert.match(result, /<table>/);
   assert.match(result, /<strong>HTML works<\/strong>/);
   assert.match(result, /href="\/credentials\/example-token"/);
-  assert.match(result, />Vault/);
+  assert.match(result, /<strong class="setup-phrase">Vault<\/strong>/);
 });
 
 test('secure chat links keep action labels while hiding raw request tokens', () => {
   const result = render(
     '[Add login](/vault/add-token) [Enter verification code](/vault/otp-token) [sensitive-token](/vault/hidden-token)',
   );
-  assert.match(result, />Add login<svg/);
-  assert.match(result, />Enter verification code<svg/);
+  assert.match(result, /<svg[^>]*>.*<\/svg>Add login<\/a>/);
+  assert.match(result, /Enter verification code<\/a>/);
   assert.doesNotMatch(result, />sensitive-token</);
-  assert.match(result, /class="credential-link"/);
+  assert.match(result, /class="setup-group"/);
 });
 
 test('chat HTML cannot run scripts, submit forms, load trackers or link to local internals', () => {
@@ -45,7 +45,7 @@ test('chat HTML cannot run scripts, submit forms, load trackers or link to local
     /href="\/api\/state"/,
   ])
     assert.doesNotMatch(result, expression);
-  assert.match(result, /type="checkbox"[^>]*disabled=""/);
+  assert.match(result, /<input(?=[^>]*type="checkbox")(?=[^>]*disabled="")[^>]*>/);
 });
 
 test('code examples stay literal and artifact images are allowed', () => {
@@ -61,7 +61,7 @@ test('local links consume private suffixes and do not nest inside formatted link
     '/vault/request?token=hidden#secret. Next [**/vault/label**](https://example.com/article) and /approvals/retired.',
   );
   assert.match(result, /href="\/vault\/request"/);
-  assert.doesNotMatch(result, /hidden|#secret|href="\/vault\/label"|href="\/approvals/);
+  assert.doesNotMatch(result, /(?<!aria-)hidden|#secret|href="\/vault\/label"|href="\/approvals/);
   assert.equal((result.match(/<a /g) ?? []).length, 2);
   assert.match(result, /Next/);
   assert.match(result, /\/approvals\/retired/);

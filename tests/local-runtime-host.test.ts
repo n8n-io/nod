@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 import { createLocalRuntimeTransport } from '../src/providers/runtime-host/local.ts';
 import { createTenantRuntimeHost } from '../src/server/runtime-host.ts';
@@ -33,7 +34,17 @@ test(
     t.after(async () => {
       await host?.close().catch(() => {});
       await admin?.end();
-      if (created) await root.query(`DROP DATABASE "${database}"`);
+      if (created) {
+        const deadline = Date.now() + 5000;
+        while (
+          (await root.query('SELECT 1 FROM pg_stat_activity WHERE datname=$1 LIMIT 1', [database]))
+            .rowCount
+        ) {
+          assert.ok(Date.now() < deadline, 'Fixture database connections did not close.');
+          await delay(10);
+        }
+        await root.query(`DROP DATABASE "${database}"`);
+      }
       for (const owner of [ownerA, ownerB])
         await root.query(`DROP ROLE IF EXISTS "${tenantIdentifiers(owner, environment).role}"`);
       await root.end();

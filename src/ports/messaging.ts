@@ -24,7 +24,18 @@ export interface InboundMessage {
   sentAt: Date;
 }
 
-export interface MessagingWebhook {
+export interface ChannelPairingRequest {
+  channelId: string;
+  accountId: string;
+  senderId: string;
+  senderName: string;
+  messageId: string;
+  threadId: string;
+  code: string;
+  sentAt: Date;
+}
+
+interface MessagingWebhook {
   channelId: string;
   method: string;
   headers: Record<string, string | string[] | undefined>;
@@ -37,12 +48,16 @@ export interface MessagingWebhookResult {
   body: string | Record<string, unknown>;
   contentType?: string;
   messages?: InboundMessage[];
+  pairing?: ChannelPairingRequest;
 }
 
 export interface MessagingTransport {
   channels: MessagingChannel[];
   pollingEnabled?: boolean;
-  poll?(accept: (message: InboundMessage) => Promise<void>): Promise<void>;
+  poll?(
+    accept: (message: InboundMessage) => Promise<void>,
+    pair?: (request: ChannelPairingRequest) => Promise<void>,
+  ): Promise<void>;
   receive(request: MessagingWebhook): Promise<MessagingWebhookResult>;
   post(input: {
     channelId: string;

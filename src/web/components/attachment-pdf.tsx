@@ -31,16 +31,18 @@ export const loadPreviewPdf: LoadPdf = async (url, signal) => {
   });
 };
 
-function PdfPage({
+export function PdfPage({
   document,
   number,
   width,
   onError,
+  onRendered,
 }: {
   document: PreviewPdfDocument;
   number: number;
   width: number;
   onError(): void;
+  onRendered?(): void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [loading, setLoading] = useState(true);
@@ -79,7 +81,9 @@ function PdfPage({
           transform: density === 1 ? undefined : [density, 0, 0, density, 0, 0],
         });
         await rendering.promise;
-        if (active) setLoading(false);
+        if (!active) return;
+        setLoading(false);
+        onRendered?.();
       } catch {
         if (active) onError();
       }
@@ -88,7 +92,7 @@ function PdfPage({
       active = false;
       rendering?.cancel();
     };
-  }, [document, number, width, onError]);
+  }, [document, number, width, onError, onRendered]);
   return (
     <div className="attachment-pdf-page" aria-busy={loading}>
       {loading && (

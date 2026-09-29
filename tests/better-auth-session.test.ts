@@ -62,12 +62,13 @@ test(
       const session = randomUUID();
       const token = randomBytes(32).toString('base64url');
       await database.query(
-        'INSERT INTO "user" (id,name,email,"emailVerified",image,"createdAt","updatedAt") VALUES ($1,$2,$3,true,$4,now(),now())',
+        'INSERT INTO "user" (id,name,email,"emailVerified",image,"givenName","createdAt","updatedAt") VALUES ($1,$2,$3,true,$4,$5,now(),now())',
         [
           user,
           'Synthetic Example',
           'synthetic@example.test',
           'https://lh3.googleusercontent.com/synthetic-avatar',
+          'Synthetic',
         ],
       );
       await database.query(
@@ -84,6 +85,8 @@ test(
       assert.equal(accepted?.id, session);
       assert.equal(accepted?.user.avatarUrl, null);
       assert.equal(accepted?.avatarSource, 'https://lh3.googleusercontent.com/synthetic-avatar');
+      assert.equal(accepted?.givenName, 'Synthetic');
+      assert.equal(accepted?.user.name, 'Synthetic Example');
       const tampered = new Headers({
         cookie: `otto-fixture.session_token=${encodeURIComponent(`${token}.invalid`)}`,
         origin,

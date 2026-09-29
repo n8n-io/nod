@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { ArrowUpRight, CalendarClock, Clock3, LoaderCircle } from 'lucide-react';
 import type { InspectorWorkItem, InspectorWorkResponse } from '../../shared/inspector-work';
 import { api, errorMessage } from '../lib/api';
-import { relativeTime } from '../lib/utils';
+import {
+  formatDateTime,
+  formatRelativeTime,
+  useDateFormat,
+  type DateFormat,
+} from '../lib/date-format';
 import { Button, Loading, Notice } from './ui';
 
 export function workStatus(item: InspectorWorkItem) {
@@ -21,22 +26,17 @@ export function workStatus(item: InspectorWorkItem) {
   );
 }
 
-function scheduledTime(value: string | null, timeZone: string) {
+function scheduledTime(value: string | null, timeZone: string, format: DateFormat) {
   if (!value) return 'Time not scheduled';
   try {
-    return `${new Date(value).toLocaleString(undefined, {
-      timeZone,
-      day: 'numeric',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-    })} · ${timeZone}`;
+    return `${formatDateTime(value, format, { timeZone })} · ${timeZone}`;
   } catch {
     return 'Schedule time unavailable';
   }
 }
 
 export function InspectorWork({ onInspect }: { onInspect(taskId: string): void }) {
+  const dateFormat = useDateFormat();
   const [data, setData] = useState<InspectorWorkResponse | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -136,7 +136,7 @@ export function InspectorWork({ onInspect }: { onInspect(taskId: string): void }
                   <strong>{item.title}</strong>
                   <small>
                     <time dateTime={item.runAt ?? undefined}>
-                      {scheduledTime(item.runAt, item.timeZone)}
+                      {scheduledTime(item.runAt, item.timeZone, dateFormat)}
                     </time>
                     {!item.queued && ' · awaiting dispatch setup'}
                   </small>
@@ -190,7 +190,7 @@ export function InspectorWork({ onInspect }: { onInspect(taskId: string): void }
                   }
                 </span>
                 <p>{item.reason}</p>
-                <small>{relativeTime(item.createdAt)}</small>
+                <small>{formatRelativeTime(item.createdAt, dateFormat)}</small>
               </div>
             ))}
             {data.decisionsTotal > data.decisions.length && (

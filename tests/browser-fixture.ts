@@ -29,7 +29,14 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
         if (preferRealSocket || !sessions.has(session)) {
           const result = await run(executable, args, input);
           if (!sessions.has(session)) return result;
-          const response = JSON.parse(result.stdout);
+          let response;
+          try {
+            response = JSON.parse(result.stdout);
+          } catch {
+            throw new DaemonCommandError();
+          }
+          if (!response || typeof response !== 'object' || Array.isArray(response))
+            throw new DaemonCommandError();
           const info = response.data;
           if (
             info?.active &&
@@ -66,8 +73,19 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
           ...session.options,
           signal,
         });
-        const response = JSON.parse(result.stdout);
-        if (result.exitCode || response.success === false) throw new DaemonCommandError();
+        let response;
+        try {
+          response = JSON.parse(result.stdout);
+        } catch {
+          throw new DaemonCommandError();
+        }
+        if (
+          !response ||
+          typeof response !== 'object' ||
+          result.exitCode ||
+          response.success === false
+        )
+          throw new DaemonCommandError();
         return { tabs: [{ tabId: 't1', active: true, url: String(response.data?.url ?? '') }] };
       }
       const args =

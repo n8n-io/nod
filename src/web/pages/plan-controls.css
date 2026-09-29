@@ -1,0 +1,132 @@
+.secondary-heading-actions {
+  position: relative;
+}
+.connection-menu-options.new-plan-card {
+  width: min(460px, calc(100vw - 32px));
+  padding: 14px;
+}
+.ask-otto {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.saved-plan .ask-otto {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.new-plan-card .ask-otto {
+  margin-top: 0;
+}
+.ask-otto-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ask-otto-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ask-otto-exchange {
+  display: grid;
+  gap: 8px;
+}
+.ask-otto-request {
+  justify-self: end;
+  max-width: 85%;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.ask-otto-reply {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.ask-otto-reply .message-text {
+  min-width: 0;
+  padding-top: 2px;
+}
+.ask-otto-reply .message-text p {
+  margin: 0;
+}
+.ask-otto-working,
+.ask-otto-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.ask-otto-after {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.plan-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.plan-controls:empty {
+  display: none;
+}
+.plan-controls .plan-input {
+  width: auto;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+.plan-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.plan-range {
+  width: 140px;
+}
+.plan-range-value {
+  min-width: 3ch;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.plan-toast {
+  position: fixed;
+  z-index: 70;
+  left: 50%;
+  bottom: 20px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  transform: translateX(-50%);
+}
+.plan-toast .notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding-block: 6px;
+}
+@media (max-width: 640px) {
+  .plan-toast {
+    top: 64px;
+    bottom: auto;
+  }
+  .connection-menu-options.new-plan-card {
+    position: fixed;
+    top: auto;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    max-width: none;
+  }
+}

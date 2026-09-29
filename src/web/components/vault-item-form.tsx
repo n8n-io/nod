@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import { Copy } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { CreditCard, Globe } from 'lucide-react';
 import type { VaultEntry, VaultEntryDetails, VaultListEntry } from '../../shared/contracts';
 import { api } from '../lib/api';
 import { Button, Field, Input, Notice } from './ui';
+import { VaultTitle } from './vault-surface';
 
 export function formatCardExpiry(month: number, year: number) {
   return `${String(month).padStart(2, '0')} / ${year}`;
@@ -34,7 +35,6 @@ function VaultSecretField({
   saved = true,
   mask = '••••••••',
   disabled,
-  controls,
   onChange,
 }: {
   name: VaultSecretName;
@@ -43,10 +43,10 @@ function VaultSecretField({
   saved?: boolean;
   mask?: string;
   disabled: boolean;
-  controls?: React.ReactNode;
   onChange?(): void;
 }) {
   const [mode, setMode] = useState<'keep' | 'replace' | 'remove'>('keep');
+  const id = useId();
   const input = useRef<HTMLInputElement>(null);
   const trigger = useRef<HTMLDivElement>(null);
   const previous = useRef(mode);
@@ -62,12 +62,10 @@ function VaultSecretField({
   if (editing && mode !== 'replace')
     return (
       <div className="field vault-secret-field">
-        <span className="field-label">{label}</span>
-        <div className="vault-secret-saved" ref={trigger}>
-          {mode === 'remove' ? (
-            <>
-              <span className="vault-secret-empty">Will be removed</span>
-              <input name="removeSecurityCode" type="hidden" value="true" />
+        <div className="vault-field-heading">
+          <span className="field-label">{label}</span>
+          <div className="vault-field-heading-actions" ref={trigger}>
+            {mode === 'remove' ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -78,90 +76,93 @@ function VaultSecretField({
               >
                 Cancel removal
               </Button>
-            </>
-          ) : (
-            <>
-              {saved ? (
-                (controls ?? (
-                  <span className="vault-password-mask" aria-label={`${label} hidden`}>
-                    {mask}
-                  </span>
-                ))
-              ) : (
-                <span className="vault-secret-empty">Not saved</span>
-              )}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                data-change-secret
-                aria-label={`${saved ? 'Change' : 'Add'} ${label.toLowerCase()}`}
-                disabled={disabled}
-                onClick={() => setMode('replace')}
-              >
-                {saved ? 'Change' : 'Add'}
-              </Button>
-              {name === 'securityCode' && saved && (
+            ) : (
+              <>
+                {name === 'securityCode' && saved && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Remove security code"
+                    disabled={disabled}
+                    onClick={() => setMode('remove')}
+                  >
+                    Remove
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  aria-label="Remove security code"
+                  data-change-secret
+                  aria-label={`${saved ? 'Change' : 'Add'} ${label.toLowerCase()}`}
                   disabled={disabled}
-                  onClick={() => setMode('remove')}
+                  onClick={() => setMode('replace')}
                 >
-                  Remove
+                  {saved ? 'Change' : 'Add'}
                 </Button>
-              )}
+              </>
+            )}
+          </div>
+        </div>
+        <div className="vault-field-box">
+          {mode === 'remove' ? (
+            <>
+              <span className="vault-secret-empty">Will be removed</span>
+              <input name="removeSecurityCode" type="hidden" value="true" />
             </>
+          ) : saved ? (
+            <span className="vault-password-mask" aria-label={`${label} hidden`}>
+              {mask}
+            </span>
+          ) : (
+            <span className="vault-secret-empty">Not saved</span>
           )}
         </div>
       </div>
     );
   return (
-    <div className="vault-secret-field">
-      <Field
-        label={
-          editing
+    <div className="field vault-secret-field">
+      <div className="vault-field-heading">
+        <label className="field-label" htmlFor={id}>
+          {editing
             ? `New ${label.toLowerCase()}`
             : name === 'securityCode'
               ? `${label} (CVC/CVV, optional)`
-              : label
+              : label}
+        </label>
+        {editing && (
+          <div className="vault-field-heading-actions">
+            <Button
+              className="vault-secret-cancel"
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={disabled}
+              onClick={() => {
+                if (input.current) input.current.value = '';
+                setMode('keep');
+              }}
+            >
+              Cancel change
+            </Button>
+          </div>
+        )}
+      </div>
+      <Input
+        ref={input}
+        id={id}
+        name={name}
+        type="password"
+        inputMode={name === 'password' ? undefined : 'numeric'}
+        autoComplete={
+          name === 'cardNumber' ? 'cc-number' : name === 'securityCode' ? 'cc-csc' : 'new-password'
         }
-      >
-        <Input
-          ref={input}
-          name={name}
-          type="password"
-          inputMode={name === 'password' ? undefined : 'numeric'}
-          autoComplete={
-            name === 'cardNumber'
-              ? 'cc-number'
-              : name === 'securityCode'
-                ? 'cc-csc'
-                : 'new-password'
-          }
-          maxLength={name === 'cardNumber' ? 32 : name === 'securityCode' ? 4 : 8192}
-          pattern={name === 'securityCode' ? '[0-9]{3,4}' : undefined}
-          required={editing || name !== 'securityCode'}
-          disabled={disabled}
-        />
-      </Field>
-      {editing && (
-        <Button
-          className="vault-secret-cancel"
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={disabled}
-          onClick={() => {
-            if (input.current) input.current.value = '';
-            setMode('keep');
-          }}
-        >
-          Cancel change
-        </Button>
-      )}
+        maxLength={name === 'cardNumber' ? 32 : name === 'securityCode' ? 4 : 8192}
+        pattern={name === 'securityCode' ? '[0-9]{3,4}' : undefined}
+        required={editing || name !== 'securityCode'}
+        disabled={disabled}
+      />
     </div>
   );
 }
@@ -170,18 +171,12 @@ export function VaultFields({
   kind,
   details,
   disabled,
-  secretControls,
   onSecretChange,
-  onCopyIdentity,
-  identityBusy = false,
 }: {
   kind: 'login' | 'card';
   details?: VaultEntryDetails;
   disabled: boolean;
-  secretControls?: Partial<Record<VaultSecretName, React.ReactNode>>;
   onSecretChange?(): void;
-  onCopyIdentity?(): void;
-  identityBusy?: boolean;
 }) {
   const identityLabel =
     details?.kind === 'login'
@@ -214,39 +209,24 @@ export function VaultFields({
           />
         </Field>
       )}
-      <div className="vault-identity-field">
-        <Field label={identityLabel}>
-          <Input
-            name={kind === 'card' ? 'cardholder' : 'username'}
-            defaultValue={details?.kind === 'card' ? details.cardholder : (details?.username ?? '')}
-            autoComplete={kind === 'card' ? 'cc-name' : 'username'}
-            autoCapitalize="none"
-            spellCheck={false}
-            maxLength={kind === 'card' ? 200 : 320}
-            required={kind === 'card'}
-            disabled={disabled}
-          />
-        </Field>
-        {onCopyIdentity && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={`Copy ${identityLabel.toLowerCase()}`}
-            disabled={disabled || identityBusy}
-            onClick={onCopyIdentity}
-          >
-            <Copy size={16} aria-hidden="true" />
-          </Button>
-        )}
-      </div>
+      <Field label={identityLabel}>
+        <Input
+          name={kind === 'card' ? 'cardholder' : 'username'}
+          defaultValue={details?.kind === 'card' ? details.cardholder : (details?.username ?? '')}
+          autoComplete={kind === 'card' ? 'cc-name' : 'username'}
+          autoCapitalize="none"
+          spellCheck={false}
+          maxLength={kind === 'card' ? 200 : 320}
+          required={kind === 'card'}
+          disabled={disabled}
+        />
+      </Field>
       <VaultSecretField
         name={kind === 'card' ? 'cardNumber' : 'password'}
         label={kind === 'card' ? 'Card number' : 'Password'}
         editing={Boolean(details)}
         mask={details?.kind === 'card' ? `•••• ${details.last4}` : undefined}
         disabled={disabled}
-        controls={secretControls?.[kind === 'card' ? 'cardNumber' : 'password']}
         onChange={onSecretChange}
       />
       {kind === 'card' && (
@@ -274,7 +254,6 @@ export function VaultFields({
             saved={details?.kind === 'card' && details.hasSecurityCode}
             mask="••••"
             disabled={disabled}
-            controls={secretControls?.securityCode}
             onChange={onSecretChange}
           />
         </>
@@ -286,11 +265,17 @@ export function VaultFields({
 export function VaultItemForm({
   kind,
   onSaved,
+  onCancel,
+  onSavingChange,
 }: {
   kind: 'login' | 'card';
   onSaved(entry: VaultListEntry): void;
+  onCancel(): void;
+  onSavingChange?(saving: boolean): void;
 }) {
+  const formId = useId();
   const [saving, setSaving] = useState(false);
+  useEffect(() => onSavingChange?.(saving), [saving, onSavingChange]);
   const [error, setError] = useState('');
   const form = useRef<HTMLFormElement>(null);
   const active = useRef(false);
@@ -382,17 +367,33 @@ export function VaultItemForm({
   }
 
   return (
-    <form
-      ref={form}
-      onSubmit={(event) => void submit(event)}
-      className="form-stack vault-add-form"
-      autoComplete="off"
-    >
-      <VaultFields kind={kind} disabled={saving} />
+    <>
+      <div className="vault-bar">
+        <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onCancel}>
+          Cancel
+        </Button>
+        <div className="vault-bar-actions">
+          <Button type="submit" size="sm" form={formId} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      </div>
+      <div className="vault-hero">
+        <span className="vault-hero-icon" aria-hidden="true">
+          {kind === 'card' ? <CreditCard size={44} /> : <Globe size={44} />}
+        </span>
+        <VaultTitle>{kind === 'card' ? 'New payment card' : 'New login'}</VaultTitle>
+      </div>
+      <form
+        id={formId}
+        ref={form}
+        onSubmit={(event) => void submit(event)}
+        className="vault-inset vault-add-form"
+        autoComplete="off"
+      >
+        <VaultFields kind={kind} disabled={saving} />
+      </form>
       {error && <Notice>{error}</Notice>}
-      <Button type="submit" disabled={saving}>
-        {saving ? 'Saving…' : kind === 'card' ? 'Save card' : 'Save login'}
-      </Button>
-    </form>
+    </>
   );
 }

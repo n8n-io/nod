@@ -110,6 +110,9 @@ test('time zone search accepts cities, spaces, underscores and regions without s
   try {
     await picker.open();
     assert.equal(document.activeElement, picker.input());
+    assert.ok(picker.input().matches('.search-field > .input'));
+    assert.ok(document.querySelector('.time-zone-picker-panel')?.classList.contains('menu'));
+    assert.ok(picker.active()?.classList.contains('menu-item'));
     assert.equal(picker.active()?.textContent, 'Europe/Lisbon');
     assert.equal(picker.active()?.getAttribute('aria-selected'), 'true');
     for (const query of ['new york', 'america/new_york', 'america new york']) {

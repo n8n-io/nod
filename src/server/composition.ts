@@ -65,6 +65,7 @@ import {
   runtimeMode,
 } from './config.ts';
 import { createAccountStore } from './account-store.ts';
+import { createAccountProfileStore, runtimeAccount } from './account-profile.ts';
 import { createAccountSession } from './account.ts';
 import { createComputerAllocationStore } from './computer-allocations.ts';
 import { createPostgresObjectStore } from './object-storage.ts';
@@ -92,6 +93,7 @@ import {
   resumeTask,
   resumeConnectedTask,
   restartOnboarding,
+  startOnboarding,
   retryTaskCredentials,
   startTaskWorkers,
   stopTasks,
@@ -565,6 +567,16 @@ export async function createApplication(
     hold: computer.hold,
     selectMethod: computer.selectLoginMethod,
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
+    ...(adapters.linkPreviews?.icon
+      ? {
+          icon: (origin: string) =>
+            providerUsage.track(
+              { provider: 'public-web', category: 'browser', operation: 'site_icon' },
+              () => adapters.linkPreviews!.icon!(origin),
+              (icon) => ({ bytes: icon?.bytes.byteLength ?? 0 }),
+            ),
+        }
+      : {}),
   });
   browserConnections = await createBrowserConnections(pool, {
     ownerId,
@@ -602,6 +614,20 @@ export async function createApplication(
     (action, args) => integrations.describeTarget(ownerId, action, args),
   );
   const reactions = createAgentReactionService({ pool, ownerId, refresh });
+  const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;
+  const accountProfiles = createAccountProfileStore(pool, ownerId);
+  await (localAccounts ?? accountProfiles).initialize();
+  const accountProfile = async () =>
+    runtimeAccount(
+      localAccounts
+        ? {
+            name: null,
+            givenName: null,
+            email: null,
+            preferredName: (await localAccounts.read(ownerId)).displayName,
+          }
+        : await accountProfiles.read(),
+    );
   const userMessages = createUserMessageService({
     routeConversation: adapters.createConversationRouter?.(providerUsage.record),
     confirmAction: approvals.acceptChat,
@@ -623,6 +649,7 @@ export async function createApplication(
       recordFailure: inspector.recordFailure,
       inspectPrompt: promptInspector.record,
       finishObservationSegment: inspector.finishSegment,
+      accountProfile,
       connections: integrations.manageConnections,
       browserConnection: (request, task, signal) =>
         browserConnections.request(request, task, signal),
@@ -677,9 +704,11 @@ export async function createApplication(
           result.requiresApproval
         ) {
           if (options?.readOnly)
-            throw new Error(
-              'Getting started can inspect connected apps but cannot change their data.',
-            );
+            return {
+              status: 'rejected',
+              code: 'read_only',
+              message: 'This task can only read connected apps. It cannot change their data.',
+            };
           return approvals.request(
             taskId,
             action,
@@ -694,6 +723,13 @@ export async function createApplication(
       },
     });
   }
+  const welcome = async (name?: string) => {
+    if (!adapters.model.configured) return;
+    const connected = (await integrations.list()).filter(
+      (connection) => connection.status === 'connected',
+    );
+    await startOnboarding(name, [...new Set(connected.map((connection) => connection.name))]);
+  };
   const app = await createApp({
     admission,
     deploymentDrain,
@@ -704,6 +740,7 @@ export async function createApplication(
       if (timeZone) await triage.updatePreferences({ timeZone });
       return restartOnboarding(conversationRevision);
     },
+    startOnboarding: welcome,
     speech,
     computer,
     runtime,
@@ -719,16 +756,15 @@ export async function createApplication(
         browserAssistReady: Boolean(adapters.chooseBrowserAction),
       }),
   });
-  if (runtimeMode === 'local') {
+  if (localAccounts) {
     registerPrivacyNotice(app, privacyNotice);
-    const accounts = createAccountStore(pool);
-    await accounts.initialize();
     createAccountSession({
-      accounts,
+      accounts: localAccounts,
       origin: publicOrigin,
       localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
       developerIds: configuration().inspectorEnabled ? new Set([ownerId]) : new Set(),
       prepare: async () => adapters.prepareComputer?.(),
+      start: (_owner, name) => welcome(name),
     }).register(app);
   } else {
     app.post('/api/account/prepare', async (request) => {
@@ -736,6 +772,10 @@ export async function createApplication(
         .strict()
         .parse(request.body ?? {});
       await adapters.prepareComputer?.();
+      return { ok: true };
+    });
+    app.put('/api/account/profile', async (request) => {
+      await accountProfiles.save(request.body);
       return { ok: true };
     });
   }
@@ -814,6 +854,10 @@ export async function createApplication(
           if (!channels) throw new Error('Messaging is not ready.');
           await channels.replaceTransport(meterMessaging(setup.create(environment), providerUsage));
         },
+        paired: async (candidate, client) => {
+          if (!channels) throw new Error('Messaging is not ready.');
+          return channels.announcePairing(candidate, client);
+        },
       });
       channelSettings.registerRoutes(app);
     }
@@ -825,6 +869,7 @@ export async function createApplication(
       ownerId,
       appOrigin: runtimeMode === 'tenant' ? publicOrigin : undefined,
       resolveAttachments: artifacts.readTaskArtifacts,
+      ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: meterMessaging(messaging, providerUsage),
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       subscribe(listener) {

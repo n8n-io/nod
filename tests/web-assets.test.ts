@@ -36,6 +36,24 @@ test('browser icons and the early theme script are real static assets rather tha
     assert.match(html, /rel="apple-touch-icon"[^>]+href="\/apple-touch-icon\.png"/);
     assert.ok(html.indexOf('/theme-init.js') < html.indexOf('</head>'));
     assert.ok(html.indexOf('/theme-init.js') < html.indexOf('/src/web/main.tsx'));
+    const brand = await readFile(
+      new URL('../src/web/components/brand.tsx', import.meta.url),
+      'utf8',
+    );
+    const splash = html.slice(
+      html.indexOf('<div id="root">'),
+      html.indexOf('<script type="module"'),
+    );
+    assert.match(splash, /class="app-shell startup-shell"/);
+    const circles = [...brand.matchAll(/<circle [^>]+\/>/g)].map(([circle]) =>
+      circle.replace('strokeWidth', 'stroke-width'),
+    );
+    assert.equal(circles.length, 2);
+    for (const circle of circles) assert.ok(splash.includes(circle), circle);
+    assert.match(splash, /Opening Otto/);
+    assert.doesNotMatch(splash.replace(/<[^>]+>/g, ' '), /workspace|connecting/i);
+    const { navigationItems } = await import('../src/web/lib/navigation.ts');
+    for (const item of navigationItems) assert.ok(splash.includes(`>${item.label}<`), item.label);
   } finally {
     await app.close();
   }

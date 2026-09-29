@@ -17,8 +17,9 @@ import type {
   RuntimeResult,
 } from '../ports/agent.ts';
 import { conversationRevision, currentConversationSql, lockConversation } from './conversations.ts';
+import { welcomeGreeting, welcomePrompt } from './welcome.ts';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
-import { defaultPreferences } from './preferences.ts';
+import { defaultLocale, defaultPreferences } from './preferences.ts';
 import type { ConversationRouter } from '../ports/conversation.ts';
 import type { IntegrationFile } from '../ports/integrations.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
@@ -74,6 +75,7 @@ export interface TaskDependencies {
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
   recordFailure?: (taskId: string, revision: number, error: unknown) => Promise<void>;
+  recoveryDelaysSeconds?: number[];
   observe?: (taskId: string, revision: number, event: RuntimeObservation) => Promise<void>;
   inspectPrompt?: (
     taskId: string,
@@ -81,6 +83,7 @@ export interface TaskDependencies {
     snapshot: Parameters<NonNullable<RuntimeContext['inspectPrompt']>>[0],
   ) => Promise<void>;
   finishObservationSegment?: (taskId: string, revision: number) => Promise<void>;
+  accountProfile?: () => Promise<RuntimeContext['account']>;
   runTask: (
     context: RuntimeContext,
   ) => Promise<{ status: string; waitingFor?: RuntimeResult['waitingFor']; question?: string }>;
@@ -130,6 +133,11 @@ export async function initializeTaskSchema() {
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS waiting_question text;
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS action_resume_kind text;
     ALTER TABLE tasks ADD COLUMN IF NOT EXISTS action_resume_revision integer;
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS external_action boolean;
+    ALTER TABLE tasks ALTER COLUMN external_action SET DEFAULT false;
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recovery_attempts integer NOT NULL DEFAULT 0;
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recovery_mode text;
+    ALTER TABLE tasks ADD COLUMN IF NOT EXISTS fresh_session boolean NOT NULL DEFAULT false;
     CREATE UNIQUE INDEX IF NOT EXISTS tasks_owner_source ON tasks(owner_id,source_id) WHERE source_id IS NOT NULL;
     CREATE TABLE IF NOT EXISTS task_continuations (
       owner_id text NOT NULL, source_id text NOT NULL, task_id uuid NOT NULL REFERENCES tasks(id),
@@ -283,8 +291,14 @@ export async function submitTask(
         );
       revision = found.rows[0].revision + 1;
       await client.query(
-        "UPDATE tasks SET prompt=$2,status='queued',revision=$3,error=NULL,source=$4,waiting_reason=NULL,waiting_question=NULL,updated_at=now() WHERE id=$1",
-        [taskId, text, revision, options.source ?? (silent ? found.rows[0].source : 'user')],
+        "UPDATE tasks SET prompt=$2,status='queued',revision=$3,error=NULL,source=$4,waiting_reason=NULL,waiting_question=NULL,external_action=CASE WHEN $5 THEN external_action ELSE false END,recovery_attempts=CASE WHEN $5 THEN recovery_attempts ELSE 0 END,recovery_mode=NULL,updated_at=now() WHERE id=$1",
+        [
+          taskId,
+          text,
+          revision,
+          options.source ?? (silent ? found.rows[0].source : 'user'),
+          silent,
+        ],
       );
       if (options.sourceId)
         await client.query(
@@ -510,7 +524,7 @@ async function activatePendingInput(client: PoolClient, taskId: string) {
   ).rows[0];
   if (!next) return false;
   const updated = await client.query(
-    "UPDATE tasks SET prompt=$2,source_message_id=$3,source='user',status='queued',revision=revision+1,error=NULL,waiting_reason=NULL,waiting_question=NULL,updated_at=now() WHERE id=$1 RETURNING revision",
+    "UPDATE tasks SET prompt=$2,source_message_id=$3,source='user',status='queued',revision=revision+1,error=NULL,waiting_reason=NULL,waiting_question=NULL,external_action=false,recovery_attempts=0,recovery_mode=NULL,updated_at=now() WHERE id=$1 RETURNING revision",
     [taskId, next.text, next.message_id],
   );
   await client.query(
@@ -558,6 +572,10 @@ async function queueUserInput(
       [ownerId, options.sourceId, taskId],
     );
   await activatePendingInput(client, taskId);
+}
+
+function reviewRequired(task: { id: string; summary: string }) {
+  return new TaskReviewRequiredError(task.id, String(task.summary).slice(0, 100));
 }
 
 export async function submitUserMessage(
@@ -697,7 +715,7 @@ export async function submitUserMessage(
         )
           throw Object.assign(new Error('This work is no longer available.'), { statusCode: 409 });
         const selected = await client.query(
-          `SELECT t.id,t.status,t.waiting_reason FROM outcomes o JOIN tasks t ON t.outcome_id=o.id
+          `SELECT t.id,t.status,t.waiting_reason,t.external_action,o.title AS summary FROM outcomes o JOIN tasks t ON t.outcome_id=o.id
            WHERE o.id=$1 AND o.owner_id=$2 AND o.channel=$3 AND o.conversation_revision=$4 AND o.status='open'
              AND t.owner_id=$2 AND t.channel=$3 AND ${currentConversationSql()}
            ORDER BY t.updated_at DESC,t.id DESC LIMIT 1 FOR UPDATE OF t`,
@@ -707,9 +725,13 @@ export async function submitUserMessage(
           throw Object.assign(new Error('This work is no longer available.'), { statusCode: 409 });
         if (
           prepared.blockedOutcomeIds.includes(decision.outcomeId) ||
-          taskNeedsReview(selected.rows[0].status, selected.rows[0].waiting_reason)
+          taskNeedsReview(
+            selected.rows[0].status,
+            selected.rows[0].waiting_reason,
+            selected.rows[0].external_action,
+          )
         )
-          throw new TaskReviewRequiredError();
+          throw reviewRequired(selected.rows[0]);
         existingId = selected.rows[0].id;
       } else if (decision.kind === 'new_outcome') {
         outcomeId = randomUUID();
@@ -722,28 +744,32 @@ export async function submitUserMessage(
     if (existingId) {
       const selected = (
         await client.query(
-          `SELECT channel,status,waiting_reason,outcome_id FROM tasks t WHERE id=$1 AND owner_id=$2 AND ${currentConversationSql()} FOR UPDATE`,
+          `SELECT id,channel,status,waiting_reason,external_action,outcome_id,title AS summary FROM tasks t WHERE id=$1 AND owner_id=$2 AND ${currentConversationSql()} FOR UPDATE`,
           [existingId, ownerId],
         )
       ).rows[0];
       if (!selected || selected.channel !== channel || selected.status === 'cancelled')
         throw Object.assign(new Error('Task not found in this conversation.'), { statusCode: 404 });
-      if (taskNeedsReview(selected.status, selected.waiting_reason))
-        throw new TaskReviewRequiredError();
       if (selected.outcome_id) {
         const latest = (
           await client.query(
-            `SELECT status,waiting_reason FROM tasks t
-             WHERE outcome_id=$1 AND owner_id=$2 AND channel=$3 AND ${currentConversationSql()}
-             ORDER BY updated_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+            `SELECT t.id,t.status,t.waiting_reason,t.external_action,o.title AS summary FROM tasks t
+             JOIN outcomes o ON o.id=t.outcome_id AND o.owner_id=t.owner_id
+             WHERE t.outcome_id=$1 AND t.owner_id=$2 AND t.channel=$3 AND ${currentConversationSql()}
+             ORDER BY t.updated_at DESC,t.id DESC LIMIT 1 FOR UPDATE OF t`,
             [selected.outcome_id, ownerId, channel],
           )
         ).rows[0];
         if (!latest)
           throw Object.assign(new Error('This work is no longer available.'), { statusCode: 409 });
-        if (taskNeedsReview(latest.status, latest.waiting_reason))
-          throw new TaskReviewRequiredError();
-      }
+        if (taskNeedsReview(selected.status, selected.waiting_reason, selected.external_action))
+          throw reviewRequired({ ...selected, summary: latest.summary });
+        if (taskNeedsReview(latest.status, latest.waiting_reason, latest.external_action))
+          throw reviewRequired(latest);
+      } else if (
+        taskNeedsReview(selected.status, selected.waiting_reason, selected.external_action)
+      )
+        throw reviewRequired(selected);
       if (!selected.outcome_id) {
         if (selected.status === 'waiting_credentials')
           throw Object.assign(new Error('Complete the secure sign-in form to continue.'), {
@@ -759,17 +785,20 @@ export async function submitUserMessage(
             statusCode: 409,
           });
       }
-      await queueUserInput(client, existingId, text, attachments, options);
-      if (selected.outcome_id)
-        await client.query('UPDATE outcomes SET updated_at=now() WHERE id=$1 AND owner_id=$2', [
-          selected.outcome_id,
-          ownerId,
-        ]);
-      return {
-        taskId: existingId,
-        continued: true,
-        ...(options.clientMessageId ? { messageId: options.clientMessageId } : {}),
-      };
+      if (selected.status === 'failed') outcomeId = selected.outcome_id ?? undefined;
+      else {
+        await queueUserInput(client, existingId, text, attachments, options);
+        if (selected.outcome_id)
+          await client.query('UPDATE outcomes SET updated_at=now() WHERE id=$1 AND owner_id=$2', [
+            selected.outcome_id,
+            ownerId,
+          ]);
+        return {
+          taskId: existingId,
+          continued: true,
+          ...(options.clientMessageId ? { messageId: options.clientMessageId } : {}),
+        };
+      }
     }
     const taskId = await submitTask(text, attachments, undefined, false, {
       sourceId: options.sourceId,
@@ -780,6 +809,11 @@ export async function submitUserMessage(
       outcomeId,
       messageId: options.clientMessageId,
     });
+    if (outcomeId)
+      await client.query('UPDATE outcomes SET updated_at=now() WHERE id=$1 AND owner_id=$2', [
+        outcomeId,
+        ownerId,
+      ]);
     return {
       taskId,
       continued: false,
@@ -858,6 +892,36 @@ export async function restartOnboarding(expectedConversationRevision?: number) {
   for (const id of result.superseded) running.get(id)?.abort();
   refresh();
   return { taskId: result.taskId, continued: result.continued };
+}
+export const welcomeSourceId = 'onboarding:welcome';
+export async function startOnboarding(name?: string, apps: string[] = []) {
+  const greeting = welcomeGreeting(name, apps);
+  const started = await transaction(async (client) => {
+    await lockConversation(client, ownerId);
+    const active = await client.query(
+      `SELECT 1 FROM tasks t WHERE t.owner_id=$1 AND t.channel='web' AND t.source='user' AND t.status IN ('queued','running','waiting_user','waiting_credentials') AND ${currentConversationSql()} LIMIT 1`,
+      [ownerId],
+    );
+    if (active.rowCount) return false;
+    const prior = await client.query('SELECT id FROM tasks WHERE owner_id=$1 AND source_id=$2', [
+      ownerId,
+      welcomeSourceId,
+    ]);
+    if (prior.rowCount) return false;
+    const taskId = await submitTask(welcomePrompt(greeting), [], undefined, true, {
+      source: 'event',
+      sourceId: welcomeSourceId,
+      channel: 'web',
+      client,
+    });
+    await insertReply(client, taskId, greeting, []);
+    if (!apps.length)
+      await client.query("UPDATE tasks SET status='succeeded',updated_at=now() WHERE id=$1", [
+        taskId,
+      ]);
+    return true;
+  });
+  if (started) refresh();
 }
 export async function reactToAssistantMessage(
   messageId: string,
@@ -1012,7 +1076,7 @@ export async function pauseOwnedTaskForControl(taskId: string): Promise<{ revisi
 export async function resumeOwnedTaskFromControl(taskId: string, expectedRevision: number) {
   await transaction(async (client) => {
     const result = await client.query(
-      "UPDATE tasks SET status='queued',waiting_reason=NULL,waiting_question=NULL,action_resume_kind='manual_control',action_resume_revision=revision+1,revision=revision+1,error=NULL,prompt='The user finished manual browser control. Inspect the current page and continue the prior request. Do not repeat completed external actions or ask for login details in chat.',updated_at=now() WHERE id=$1 AND owner_id=$2 AND revision=$3 AND status='waiting_user' AND waiting_reason='manual_control' RETURNING revision",
+      "UPDATE tasks SET status='queued',waiting_reason=NULL,waiting_question=NULL,recovery_mode=NULL,action_resume_kind='manual_control',action_resume_revision=revision+1,revision=revision+1,error=NULL,prompt='The user finished manual browser control. Inspect the current page and continue the prior request. Do not repeat completed external actions or ask for login details in chat.',updated_at=now() WHERE id=$1 AND owner_id=$2 AND revision=$3 AND status='waiting_user' AND waiting_reason='manual_control' RETURNING revision",
       [taskId, ownerId, expectedRevision],
     );
     if (!result.rows[0]) throw taskStopped();
@@ -1057,11 +1121,130 @@ export async function initializeTasks() {
   await boss.start();
   await boss.createQueue(queue, { retryLimit: 0, expireInSeconds: 1800 });
 }
+const recoveryLimit = 2;
+async function originalRequest(
+  client: PoolClient,
+  task: { id: string; prompt: string; source_message_id: string | null },
+) {
+  const source = task.source_message_id
+    ? (
+        await client.query(
+          "SELECT text FROM messages WHERE id=$1 AND owner_id=$2 AND task_id=$3 AND role='user'",
+          [task.source_message_id, ownerId, task.id],
+        )
+      ).rows[0]
+    : undefined;
+  return String(source?.text ?? task.prompt);
+}
+async function outsideActions(
+  client: PoolClient,
+  task: { id: string; source_message_id: string | null },
+) {
+  const table = (await client.query("SELECT to_regclass('approvals') AS name")).rows[0].name;
+  const approvals = table
+    ? (
+        await client.query(
+          "SELECT action,args FROM approvals WHERE task_id=$1 AND owner_id=$2 AND status IN ('executing','uncertain','completed') AND source_message_id IS NOT DISTINCT FROM $3 ORDER BY id LIMIT 5",
+          [task.id, ownerId, task.source_message_id],
+        )
+      ).rows
+    : [];
+  return [
+    ...approvals.map((row) => `${row.action} ${JSON.stringify(row.args).slice(0, 600)}`),
+    'a browser step such as a click, key press or typed text',
+  ].join('; ');
+}
+async function recoverTask(
+  client: PoolClient,
+  taskId: string,
+  revision: number,
+  delays: number[] = [5, 30],
+) {
+  const task = (
+    await client.query(
+      `SELECT t.*,o.title AS outcome_title FROM tasks t LEFT JOIN outcomes o ON o.id=t.outcome_id AND o.owner_id=t.owner_id
+       WHERE t.id=$1 AND t.owner_id=$2 AND t.revision=$3 AND t.status='running' AND ${currentConversationSql()} FOR UPDATE OF t`,
+      [taskId, ownerId, revision],
+    )
+  ).rows[0];
+  if (!task) return false;
+  const verify = task.external_action !== false;
+  const attempt = task.recovery_attempts + 1;
+  const event = (type: string, summary: string) =>
+    client.query('INSERT INTO task_events(id,task_id,type,summary) VALUES($1,$2,$3,$4)', [
+      randomUUID(),
+      taskId,
+      type,
+      summary,
+    ]);
+  if (attempt > recoveryLimit) {
+    const title = String(task.outcome_title ?? task.title).slice(0, 100);
+    if (verify && task.source === 'user') {
+      const question = `I couldn’t check whether “${title}” went through. Can you check it and tell me?`;
+      await client.query(
+        "UPDATE tasks SET status='waiting_user',waiting_reason='question',waiting_question=$2,recovery_mode=NULL,fresh_session=true,updated_at=now() WHERE id=$1",
+        [taskId, question],
+      );
+      await client.query(
+        "INSERT INTO messages(id,owner_id,role,text,task_id,stream_id) VALUES($1,$2,'assistant',$3,$4,$5)",
+        [randomUUID(), ownerId, question, taskId, `failure:${taskId}:${revision}`],
+      );
+      await event('waiting_user', 'Task is waiting for your input.');
+      return true;
+    }
+    await client.query(
+      "UPDATE tasks SET status='failed',error='I couldn’t finish that.',recovery_mode=NULL,fresh_session=true,updated_at=now() WHERE id=$1",
+      [taskId],
+    );
+    await event('failed', 'I couldn’t finish that.');
+    if (task.source === 'user')
+      await client.query(
+        "INSERT INTO messages(id,owner_id,role,text,task_id,stream_id) VALUES($1,$2,'assistant',$3,$4,$5)",
+        [randomUUID(), ownerId, recoveryFailure, taskId, `failure:${taskId}:${revision}`],
+      );
+    return true;
+  }
+  const next = revision + 1;
+  const prompt = verify
+    ? `An earlier attempt at the request below stopped after Otto may have taken an outside action. Possible actions: ${await outsideActions(client, task)}. Before anything else, check with read-only steps whether it completed, for example the sent mail, the created item, the calendar event or the current page. Then call report_outcome once: completed with one short sentence that it went through, not_completed with one short sentence if it did not happen, or unknown with one short question if you cannot check. Do not repeat or change anything in this step. Request: ${JSON.stringify(await originalRequest(client, task))}`
+    : task.prompt;
+  await client.query(
+    `UPDATE tasks SET status='queued',revision=$2,prompt=$3,recovery_attempts=$4,recovery_mode=$5,fresh_session=true,error=NULL,
+     waiting_reason=NULL,waiting_question=NULL,
+     action_resume_revision=CASE WHEN NOT $6 AND action_resume_revision=revision THEN $2 ELSE action_resume_revision END,
+     updated_at=now() WHERE id=$1`,
+    [taskId, next, prompt, attempt, verify ? 'verify' : null, verify],
+  );
+  if (!verify && (await client.query("SELECT to_regclass('approvals') AS name")).rows[0].name)
+    await client.query(
+      "UPDATE approvals SET execution_revision=$3 WHERE task_id=$1 AND owner_id=$2 AND status='confirmed' AND execution_revision=$4",
+      [taskId, ownerId, next, revision],
+    );
+  await event('recovering', verify ? 'Checking the earlier outcome.' : 'Trying again.');
+  await boss.send(
+    queue,
+    { taskId, revision: next },
+    {
+      db: { executeSql: (sql, values) => client.query(sql, values) },
+      startAfter: delays[attempt - 1] ?? delays.at(-1) ?? 0,
+      retryLimit: 0,
+      expireInSeconds: 1800,
+    },
+  );
+  return true;
+}
+export const recoveryFailure =
+  'I tried a few times and couldn’t finish this. Tell me when you want me to try again, or give me another way to do it.';
 export async function startTaskWorkers(dependencies: TaskDependencies) {
-  await pool.query(
-    "UPDATE tasks SET status='waiting_user',waiting_reason='recovery',waiting_question=NULL,error='The server stopped during this task. Review its last action before continuing.',revision=revision+1,updated_at=now() WHERE owner_id=$1 AND status='running'",
+  const interrupted = await pool.query(
+    "SELECT id,revision,channel FROM tasks WHERE owner_id=$1 AND status='running'",
     [ownerId],
   );
+  for (const task of interrupted.rows)
+    await transaction(async (client) => {
+      await lockConversation(client, ownerId, task.channel);
+      await recoverTask(client, task.id, task.revision, dependencies.recoveryDelaysSeconds);
+    });
   const retainedInputs = await pool.query(
     `SELECT DISTINCT t.id,t.channel FROM tasks t JOIN pending_task_inputs p ON p.task_id=t.id
      WHERE t.owner_id=$1 AND p.owner_id=$1 AND p.state='pending' AND ${currentConversationSql()}
@@ -1114,6 +1297,7 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
   );
   if (!selected.rowCount) return;
   const task = selected.rows[0];
+  const checkOutcome = task.recovery_mode === 'verify';
   const controller = new AbortController();
   running.set(taskId, controller);
   if (stopping) controller.abort();
@@ -1124,6 +1308,11 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
   };
   const ensureCurrent = () => current(async () => {});
   try {
+    if (task.fresh_session)
+      await pool.query('UPDATE tasks SET fresh_session=false WHERE id=$1 AND revision=$2', [
+        taskId,
+        revision,
+      ]);
     const confirmed = await dependencies.executeConfirmation?.(taskId, revision, controller.signal);
     if (confirmed) task.prompt = confirmed.prompt;
     await ensureCurrent();
@@ -1169,13 +1358,16 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
       'SELECT text FROM memory_facts WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 30',
       [ownerId],
     );
-    const [profile, goals, preferences] = await Promise.all([
+    const [profile, goals, preferences, account] = await Promise.all([
       pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
       pool.query(
         'SELECT left(title,180) AS title,left(description,500) AS description,progress,left(next_action,300) AS "nextAction",target_date AS "targetDate" FROM goals WHERE owner_id=$1 AND status=\'active\' ORDER BY updated_at DESC LIMIT 10',
         [ownerId],
       ),
-      pool.query('SELECT time_zone FROM preferences WHERE owner_id=$1', [ownerId]),
+      pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [
+        ownerId,
+      ]),
+      dependencies.accountProfile?.().catch(() => undefined),
     ]);
     const storedProfile = profile.rows[0]?.data ?? {};
     const profileData = {
@@ -1234,8 +1426,12 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
       ownerId,
       prompt: task.prompt,
       background: task.source !== 'user',
+      readOnly: task.source_id === welcomeSourceId,
       channel: task.channel.split(':')[0],
       timeZone: preferences.rows[0]?.time_zone || defaultPreferences.timeZone,
+      locale: preferences.rows[0]?.locale || defaultLocale,
+      hourCycle: preferences.rows[0]?.hour_cycle || defaultPreferences.hourCycle,
+      ...(account ? { account } : {}),
       currentMessageId: sourceMessageId ?? undefined,
       replyTo: target?.rows[0] && withAttachments(target.rows[0]),
       history: history.rows.map(withAttachments),
@@ -1303,6 +1499,63 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
             );
             await ensureCurrent();
             return result;
+          }
+        : undefined,
+      freshSession: task.fresh_session === true,
+      checkOutcome,
+      startExternalAction: () =>
+        current(async (client) => {
+          if (checkOutcome)
+            throw new Error('Check the earlier outcome before you change anything.');
+          await client.query('UPDATE tasks SET external_action=true WHERE id=$1', [taskId]);
+        }),
+      reportOutcome: checkOutcome
+        ? async (outcome, message) => {
+            await current(async (client) => {
+              if (task.source === 'user')
+                await insertReply(client, taskId, message.slice(0, 2000), []);
+              const request = await originalRequest(client, task);
+              const next = revision + 1;
+              if (outcome === 'not_completed' && task.recovery_attempts >= recoveryLimit) {
+                await client.query(
+                  "UPDATE tasks SET status='failed',error='I couldn’t finish that.',recovery_mode=NULL,fresh_session=true,updated_at=now() WHERE id=$1",
+                  [taskId],
+                );
+                if (task.source === 'user')
+                  await client.query(
+                    "INSERT INTO messages(id,owner_id,role,text,task_id,stream_id,created_at) VALUES($1,$2,'assistant',$3,$4,$5,clock_timestamp())",
+                    [
+                      randomUUID(),
+                      ownerId,
+                      recoveryFailure,
+                      taskId,
+                      `failure:${taskId}:${revision}`,
+                    ],
+                  );
+                return;
+              }
+              await client.query(
+                "UPDATE tasks SET status='queued',revision=$2,prompt=$3,recovery_mode=NULL,external_action=false,fresh_session=($4=1),recovery_attempts=recovery_attempts+$4,waiting_reason=NULL,waiting_question=NULL,updated_at=now() WHERE id=$1",
+                [
+                  taskId,
+                  next,
+                  outcome === 'completed'
+                    ? `The earlier step went through. Continue the rest of this request without repeating that step. If nothing is left, finish without another message. Request: ${JSON.stringify(request)}`
+                    : request,
+                  outcome === 'not_completed' ? 1 : 0,
+                ],
+              );
+              await boss.send(
+                queue,
+                { taskId, revision: next },
+                {
+                  db: { executeSql: (sql, values) => client.query(sql, values) },
+                  retryLimit: 0,
+                  expireInSeconds: 1800,
+                },
+              );
+            });
+            refresh();
           }
         : undefined,
       waitForUser: async (question) => {
@@ -1411,7 +1664,7 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
       integration: async (action, args) => {
         await ensureCurrent();
         const result = await dependencies.integration(taskId, action, args, {
-          readOnly: task.source_id?.startsWith('onboarding:') === true,
+          readOnly: checkOutcome || task.source_id?.startsWith('onboarding:') === true,
           revision,
           signal: controller.signal,
         });
@@ -1449,6 +1702,7 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
         : undefined,
       manage: async (action, args) => {
         await ensureCurrent();
+        if (checkOutcome) throw new Error('Check the earlier outcome before you change anything.');
         const result = await dependencies.manage(taskId, action, args, {
           taskId,
           sourceMessageId,
@@ -1479,37 +1733,13 @@ async function executeTask(taskId: string, revision: number, dependencies: TaskD
         ]);
     });
   } catch (error) {
-    const safeError = controller.signal.aborted ? 'The task stopped.' : 'I couldn’t finish that.';
-    const accepted = await transaction(async (client) => {
-      await lockConversation(client, ownerId, task.channel);
-      const updated = await client.query(
-        `UPDATE tasks SET status='failed',error=$3,updated_at=now() WHERE id=$1 AND revision=$2
-         AND owner_id=$4 AND status='running' AND ${currentConversationSql('tasks')} RETURNING id`,
-        [taskId, revision, safeError, ownerId],
-      );
-      if (!updated.rowCount) return false;
-      await client.query('INSERT INTO task_events(id,task_id,type,summary) VALUES($1,$2,$3,$4)', [
-        randomUUID(),
-        taskId,
-        'failed',
-        safeError,
-      ]);
-      if (task.source === 'user' && !controller.signal.aborted)
-        await client.query(
-          `INSERT INTO messages(id,owner_id,role,text,task_id,stream_id)
-           SELECT $1,$2,'assistant',$3,$4,$5 WHERE NOT EXISTS
-             (SELECT 1 FROM messages WHERE task_id=$4 AND owner_id=$2 AND stream_id=$5)`,
-          [
-            randomUUID(),
-            ownerId,
-            'I couldn’t finish that.',
-            taskId,
-            `failure:${taskId}:${revision}`,
-          ],
-        );
-      return true;
-    });
-    if (accepted && !controller.signal.aborted)
+    const accepted =
+      !stopping &&
+      (await transaction(async (client) => {
+        await lockConversation(client, ownerId, task.channel);
+        return recoverTask(client, taskId, revision, dependencies.recoveryDelaysSeconds);
+      }));
+    if (accepted)
       void Promise.resolve()
         .then(() => dependencies.recordFailure?.(taskId, revision, error))
         .catch(() => {});

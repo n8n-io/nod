@@ -5,8 +5,9 @@ import { api, errorMessage } from '../lib/api';
 import { formatModelCost, formatToolDuration } from '../lib/inspector-observations';
 import { groupProviderUsage, operationLabel, summarizeProviderUsage } from '../lib/provider-usage';
 import { Loading, Notice } from './ui';
+import { formatNumber } from '../lib/date-format';
 
-const count = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+const count = { format: (value: number) => formatNumber(value, { maximumFractionDigits: 2 }) };
 const pricingLabels = {
   reported: 'Reported cost',
   sdk_estimate: 'SDK estimate',

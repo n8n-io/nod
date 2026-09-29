@@ -5,6 +5,7 @@ export interface AuthenticatedSession {
   expiresAt: Date;
   user: AccountUser;
   avatarSource?: string;
+  givenName?: string;
 }
 
 export interface AuthenticationAvatar {

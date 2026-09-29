@@ -163,7 +163,8 @@
   pointer-events: none;
 }
 .chat-page .message-selected .message-actions,
-.chat-page .message:focus-within .message-actions {
+.chat-page .message:focus-visible .message-actions,
+.chat-page .message:has(:focus-visible) .message-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -171,12 +172,6 @@
   .chat-page .message:hover .message-actions {
     opacity: 1;
     pointer-events: auto;
-  }
-}
-@media (hover: none) {
-  .chat-page .message:not(.message-selected):not(:focus-within) .message-actions {
-    opacity: 0;
-    pointer-events: none;
   }
 }
 .chat-page .message-actions .button {
@@ -200,30 +195,7 @@
 .chat-message-menu {
   position: fixed;
   min-width: 192px;
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 8px 32px #2a14351c;
   z-index: 90;
-}
-.chat-message-menu > button {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 8px 9px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  text-align: left;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.chat-message-menu button:hover,
-.chat-message-menu button:focus-visible {
-  background: var(--secondary);
-  outline: 0;
 }
 .message-reaction-options {
   display: flex;
@@ -257,8 +229,8 @@
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 8px 32px #1b19241f;
+  background: var(--surface-overlay);
+  box-shadow: 0 8px 32px var(--shadow-overlay);
   outline: none;
 }
 .chat-emoji-heading {
@@ -272,16 +244,20 @@
   font-weight: 550;
 }
 .chat-emoji-popover .EmojiPickerReact {
-  --epr-bg-color: var(--surface);
+  --epr-bg-color: var(--surface-overlay);
   --epr-text-color: var(--foreground);
   --epr-picker-border-color: transparent;
-  --epr-category-label-bg-color: var(--surface);
+  --epr-category-label-bg-color: var(--surface-overlay);
   --epr-search-input-bg-color: var(--secondary);
   --epr-search-input-text-color: var(--foreground);
   --epr-hover-bg-color: var(--accent-soft);
   --epr-focus-bg-color: var(--accent-soft);
   --epr-highlight-color: var(--accent);
   max-height: calc(100dvh - 68px);
+}
+.message-reaction-options button:hover:not(:disabled),
+.message-reaction-options button:focus-visible {
+  background: var(--hover);
 }
 .message-reaction-options button[aria-checked='true'] {
   background: var(--accent-soft);
@@ -438,6 +414,19 @@
   padding-left: 32px;
   padding-right: 32px;
 }
+.history-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 12px 0 4px;
+}
+.history-skeleton > .ghost-bubble {
+  align-self: flex-end;
+}
+.history-skeleton-reply {
+  display: flex;
+  gap: 14px;
+}
 .chat-turn-rail {
   position: absolute;
   top: 25px;
@@ -499,8 +488,8 @@
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 9px;
-  background: var(--surface);
-  box-shadow: 0 6px 24px #34194414;
+  background: var(--surface-overlay);
+  box-shadow: 0 6px 24px var(--shadow-overlay);
   pointer-events: none;
   color: var(--text-secondary);
   font-size: 12px;
@@ -529,28 +518,25 @@
     opacity: 0;
     pointer-events: none;
   }
-  .chat-page .message:hover .message-more-action,
   .chat-page .message-selected .message-more-action,
-  .chat-page .message:focus-within .message-more-action {
+  .chat-page .message:focus-visible .message-more-action,
+  .chat-page .message:has(:focus-visible) .message-more-action {
     opacity: 1;
     pointer-events: auto;
   }
-  .chat-page .conversation-scroll > .conversation-column {
-    padding-left: 28px;
-    padding-right: 16px;
+  .chat-turn-rail {
+    display: none;
   }
+  .chat-page .conversation-scroll > .conversation-column,
   .chat-page > .chat-bottom.conversation-column {
     padding-left: 16px;
     padding-right: 16px;
   }
-}
-@media (max-width: 600px) {
-  .chat-turn-rail {
-    left: 0;
-    width: 17px;
-  }
-  .chat-turn-marker {
-    width: 17px;
+  @media (hover: hover) {
+    .chat-page .message:hover .message-more-action {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -567,12 +553,22 @@
 }
 
 @media (pointer: coarse) {
-  .chat-page .message-more-action {
-    display: inline-flex;
-    opacity: 1;
-    pointer-events: auto;
-  }
   .chat-page .composer-editor {
     font-size: 16px;
+  }
+}
+.chat-page .message-focused {
+  border-radius: var(--radius);
+  animation: chat-message-focus 2.4s ease-out;
+}
+@keyframes chat-message-focus {
+  0%,
+  45% {
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 6px var(--accent-soft);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 6px transparent;
   }
 }

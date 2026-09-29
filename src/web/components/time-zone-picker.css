@@ -1,41 +1,5 @@
 .time-zone-picker-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
   width: 54%;
-  min-width: 0;
-  min-height: 40px;
-  padding: 10px 12px;
-  border: 1px solid var(--control-border);
-  border-radius: 8px;
-  background: var(--control);
-  color: var(--foreground);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.time-zone-picker-trigger > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.time-zone-picker-trigger > svg {
-  flex: none;
-  color: var(--muted-foreground);
-}
-.time-zone-picker-trigger:hover,
-.time-zone-picker-trigger[data-state='open'] {
-  border-color: var(--text-secondary);
-  background: var(--control-hover);
-}
-.time-zone-picker-trigger:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
-}
-.time-zone-picker-trigger:disabled {
-  cursor: default;
-  opacity: 0.5;
 }
 .time-zone-picker-panel {
   z-index: 55;
@@ -44,60 +8,11 @@
   width: min(310px, calc(100vw - 24px));
   max-height: min(336px, var(--radix-popover-content-available-height));
   overflow: hidden;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  color: var(--foreground);
-  box-shadow: 0 10px 36px rgb(27 25 36 / 15%);
   outline: none;
 }
 .time-zone-picker-search {
-  display: flex;
   flex: none;
-  align-items: center;
-  gap: 9px;
-  padding: 4px 6px 9px;
   margin-bottom: 5px;
-  border-bottom: 1px solid var(--border);
-  color: var(--muted-foreground);
-}
-.time-zone-picker-search > svg {
-  flex: none;
-}
-.time-zone-picker-search input {
-  width: 100%;
-  min-width: 0;
-  min-height: 32px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--foreground);
-  font: inherit;
-  font-size: 13px;
-  outline: none;
-}
-.time-zone-picker-search input::placeholder {
-  color: var(--muted-foreground);
-}
-.time-zone-picker-search button {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-.time-zone-picker-search button:hover,
-.time-zone-picker-search button:focus-visible {
-  background: var(--hover);
-  color: var(--foreground);
-  outline: none;
 }
 .time-zone-picker-options {
   min-height: 0;
@@ -105,40 +20,17 @@
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
-.time-zone-picker-options > button {
-  display: flex;
-  align-items: center;
+.time-zone-picker-options > .menu-item {
   justify-content: space-between;
   gap: 12px;
-  width: 100%;
-  min-height: 38px;
-  padding: 9px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--foreground);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.4;
-  text-align: left;
-  cursor: pointer;
 }
-.time-zone-picker-options > button > span {
+.time-zone-picker-options > .menu-item > span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.time-zone-picker-options > button > svg {
+.time-zone-picker-options > .menu-item > svg {
   flex: none;
   color: var(--accent);
-}
-.time-zone-picker-options > button[data-active='true'],
-.time-zone-picker-options > button:focus-visible {
-  background: var(--hover);
-  outline: none;
-}
-.time-zone-picker-options > button[aria-selected='true'] {
-  background: var(--accent-soft);
-  color: var(--foreground);
 }
 .time-zone-picker-empty {
   margin: 0;
@@ -148,21 +40,12 @@
   text-align: center;
 }
 @container account-settings (max-width: 330px) {
-  .account-time-zone-row {
+  .account-picker-row {
     align-items: stretch;
     flex-direction: column;
     gap: 12px;
   }
   .time-zone-picker-trigger {
     width: 100%;
-  }
-}
-@media (max-width: 640px) {
-  .time-zone-picker-search input {
-    font-size: 16px;
-  }
-  .time-zone-picker-trigger,
-  .time-zone-picker-options > button {
-    min-height: 44px;
   }
 }

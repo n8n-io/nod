@@ -415,3 +415,26 @@ for (const change of ['owner', 'epoch', 'signout'] as const)
     assert.equal(f.app().streams.stale, undefined);
     assert.deepEqual(f.reads(), reads);
   });
+
+test('opening the stream keeps an in-flight state read and queues one follow-up read', async (t) => {
+  const f = await fixture(t);
+  const reads: Array<{ signal: AbortSignal; finish(response: Response): void }> = [];
+  globalThis.fetch = (path, options) => {
+    assert.equal(path, '/api/state');
+    return new Promise((resolve) => reads.push({ signal: options!.signal!, finish: resolve }));
+  };
+  const source = Events.all[0];
+  await act(async () => source.emit({ type: 'refresh' }));
+  assert.equal(reads.length, 1);
+  await act(async () => {
+    source.open();
+    source.open();
+  });
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].signal.aborted, false);
+  await act(async () => reads[0].finish(Response.json({ ...state, conversationRevision: 1 })));
+  assert.equal(f.app().state?.conversationRevision, 1);
+  assert.equal(reads.length, 2);
+  await act(async () => reads[1].finish(Response.json({ ...state, conversationRevision: 1 })));
+  assert.equal(reads.length, 2);
+});

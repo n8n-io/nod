@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Monitor, Terminal, FileText, ExternalLink } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogTitle, Notice } from './ui';
 import { post, errorMessage, apiResponse } from '../lib/api';
+import { formatTime } from '../lib/date-format';
 import { BrowserControl } from './browser-control';
 import type { BrowserDetail, InspectorDetail } from '../hooks/use-inspector-state';
 import { browserErrorMessage } from '../../shared/browser-errors';
@@ -274,7 +275,9 @@ export function InspectorScreen({
               onEnlarge={() => setEnlarged(true)}
             />
             {updated && (
-              <div className="screen-caption">Updated {updated.toLocaleTimeString()}</div>
+              <div className="screen-caption">
+                Updated {formatTime(updated, undefined, { seconds: true })}
+              </div>
             )}
           </section>
           {showDetails && (
@@ -318,7 +321,9 @@ export function InspectorScreen({
             <DialogContent className="screen-dialog">
               <DialogTitle>Browser screen</DialogTitle>
               <img src={currentScreen} alt="Enlarged browser screen" />
-              <p className="field-hint">{updated && `Captured ${updated.toLocaleTimeString()}`}</p>
+              <p className="field-hint">
+                {updated && `Captured ${formatTime(updated, undefined, { seconds: true })}`}
+              </p>
             </DialogContent>
           </Dialog>
         </>

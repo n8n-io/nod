@@ -16,6 +16,8 @@ type Entry = {
   timer?: ReturnType<typeof setTimeout>;
   lastStarted: number;
   needsRefresh: boolean;
+  visited: boolean;
+  fetchedAt?: number;
 };
 
 export function createPageDataCache(
@@ -32,6 +34,7 @@ export function createPageDataCache(
         generation: 0,
         lastStarted: 0,
         needsRefresh: false,
+        visited: false,
       };
       entries.set(path, value);
     }
@@ -71,6 +74,7 @@ export function createPageDataCache(
       .then(() => fetcher(path, controller.signal))
       .then((data) => {
         if (generation !== value.generation || controller.signal.aborted) return;
+        value.fetchedAt = Date.now();
         publish(value, { data, error: '', loading: false, refreshing: false });
       })
       .catch((cause) => {
@@ -91,12 +95,22 @@ export function createPageDataCache(
     value.pending = pending;
     return pending;
   }
+  function expirePrefetch(value: Entry) {
+    if (!value.visited && value.fetchedAt !== undefined && Date.now() - value.fetchedAt >= 30_000) {
+      value.fetchedAt = undefined;
+      value.snapshot = { data: null, error: '', loading: true, refreshing: !!value.pending };
+    }
+  }
   return {
     getSnapshot<T>(path: string) {
-      return entry(path).snapshot as PageDataSnapshot<T>;
+      const value = entry(path);
+      expirePrefetch(value);
+      return value.snapshot as PageDataSnapshot<T>;
     },
     subscribe(path: string, listener: () => void) {
       const value = entry(path);
+      expirePrefetch(value);
+      value.visited = true;
       value.listeners.add(listener);
       return () => {
         value.listeners.delete(listener);
@@ -122,7 +136,17 @@ export function createPageDataCache(
     },
     revalidateActive() {
       for (const [path, value] of entries) {
-        if (!value.listeners.size) continue;
+        if (!value.listeners.size) {
+          if (!value.visited) {
+            value.generation++;
+            value.controller?.abort();
+            value.controller = undefined;
+            value.pending = undefined;
+            value.fetchedAt = undefined;
+            publish(value, { data: null, error: '', loading: true, refreshing: false });
+          }
+          continue;
+        }
         value.needsRefresh = true;
         schedule(path, value);
       }
@@ -137,6 +161,7 @@ export function createPageDataCache(
       value.timer = undefined;
       value.needsRefresh = false;
       const data = update(value.snapshot.data as T | null);
+      value.fetchedAt = Date.now();
       publish(value, { data, error: '', loading: false, refreshing: false });
     },
   };

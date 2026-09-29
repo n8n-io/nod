@@ -47,13 +47,23 @@ interface MessageAttachment {
   workspaceFile?: string;
 }
 
+export interface RuntimeAccount {
+  preferredName: string | null;
+  fullName: string | null;
+  email: string | null;
+}
+
 export interface RuntimeContext {
   taskId: string;
   ownerId: string;
   prompt: string;
   background?: boolean;
+  readOnly?: boolean;
   channel?: string;
   timeZone?: string;
+  locale?: string;
+  hourCycle?: 'auto' | 'h12' | 'h23';
+  account?: RuntimeAccount;
   currentMessageId?: string;
   replyTo?: { id: string; role: string; text: string; attachments?: MessageAttachment[] };
   history: Array<{
@@ -95,6 +105,10 @@ export interface RuntimeContext {
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
   waitForUser?(question: string): Promise<void>;
+  startExternalAction?(): Promise<void>;
+  freshSession?: boolean;
+  checkOutcome?: boolean;
+  reportOutcome?(outcome: 'completed' | 'not_completed', message: string): Promise<void>;
   delta(text: string, streamId?: string, done?: boolean): void;
   remember(text: string): Promise<void>;
   publish(path: string, name?: string): Promise<Artifact>;
@@ -166,6 +180,7 @@ export interface AgentSessionOptions {
   tools: AgentTool[];
   onEvent(event: AgentEvent): void;
   shouldStop(): boolean;
+  fresh?: boolean;
 }
 export interface AgentSession {
   resumed: boolean;

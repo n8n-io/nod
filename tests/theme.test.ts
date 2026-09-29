@@ -60,7 +60,7 @@ test('theme is selected before app rendering from a saved choice or OS preferenc
     assert.equal(dom.window.document.documentElement.style.colorScheme, expected);
     assert.equal(
       dom.window.document.querySelector('meta[name="theme-color"]')?.getAttribute('content'),
-      expected === 'dark' ? '#18171c' : '#fefdfc',
+      expected === 'dark' ? '#1c1c1f' : '#fefdfc',
     );
     dom.window.close();
   }
@@ -186,7 +186,17 @@ test('light and dark semantic text and button pairs meet normal-text contrast', 
       'placeholder',
       'link',
     ]) {
-      for (const background of ['canvas', 'sidebar', 'surface', 'surface-subtle', 'muted']) {
+      for (const background of [
+        'canvas',
+        'sidebar',
+        'surface',
+        'surface-overlay',
+        'surface-subtle',
+        'surface-inset',
+        'secondary',
+        'muted',
+        'input-background',
+      ]) {
         const values = [luminance(palette[foreground]!), luminance(palette[background]!)].sort(
           (a, b) => b - a,
         );
@@ -213,5 +223,32 @@ test('light and dark semantic text and button pairs meet normal-text contrast', 
       const ratio = (values[0]! + 0.05) / (values[1]! + 0.05);
       assert.ok(ratio >= 4.5, `${name} ${foreground}/${background}: ${ratio.toFixed(2)}`);
     }
+    for (const background of [
+      'canvas',
+      'sidebar',
+      'surface',
+      'surface-overlay',
+      'surface-subtle',
+      'surface-inset',
+      'secondary',
+      'muted',
+      'control',
+    ]) {
+      const values = [luminance(palette.ring!), luminance(palette[background]!)].sort(
+        (a, b) => b - a,
+      );
+      const ratio = (values[0]! + 0.05) / (values[1]! + 0.05);
+      assert.ok(ratio >= 3, `${name} ring/${background}: ${ratio.toFixed(2)}`);
+    }
   }
+  assert.ok(
+    luminance(dark['control-border']!) <= luminance(dark.border!),
+    'dark control borders must not outline controls brighter than their card',
+  );
+  for (const [lower, upper] of [
+    ['canvas', 'surface'],
+    ['surface', 'surface-overlay'],
+    ['surface-overlay', 'hover'],
+  ])
+    assert.ok(luminance(dark[upper]!) > luminance(dark[lower]!), `dark ${upper} above ${lower}`);
 });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { Message } from '../../shared/contracts';
+import { formatDateTime, formatFullDateTime, useDateFormat } from '../lib/date-format';
 
 export function ChatTurnRail({
   messages,
@@ -16,6 +17,7 @@ export function ChatTurnRail({
   const [preview, setPreview] = useState<{ message: Message; left: number; top: number } | null>(
     null,
   );
+  const dateFormat = useDateFormat();
   const track = useRef<HTMLDivElement>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const turns = messages.filter((message) => message.role === 'user');
@@ -89,7 +91,7 @@ export function ChatTurnRail({
               className={`chat-turn-marker${activeId === message.id ? ' is-active' : ''}${visibleIds.includes(message.id) ? ' is-visible' : ''}`}
               aria-current={activeId === message.id ? 'location' : undefined}
               tabIndex={currentId === message.id ? 0 : -1}
-              aria-label={`Your message, ${new Date(message.createdAt).toLocaleString()}: ${excerpt(message)}`}
+              aria-label={`Your message, ${formatFullDateTime(message.createdAt, dateFormat)}: ${excerpt(message)}`}
               aria-describedby={
                 preview?.message.id === message.id ? 'chat-turn-preview' : undefined
               }
@@ -119,12 +121,7 @@ export function ChatTurnRail({
             style={{ left: preview.left, top: preview.top }}
           >
             <time dateTime={preview.message.createdAt}>
-              {new Date(preview.message.createdAt).toLocaleString([], {
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
+              {formatDateTime(preview.message.createdAt, dateFormat)}
             </time>
             <span>{excerpt(preview.message)}</span>
           </div>,

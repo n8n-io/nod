@@ -1596,27 +1596,27 @@ small {
   border-radius: 4px;
 }
 .theme-sample.dark {
-  background: #18171c;
-  border-color: #453e4e;
+  background: #1c1c1f;
+  border-color: #313136;
 }
 .theme-sample.dark > i {
-  background: #1d1b22;
-  border-color: #453e4e;
+  background: #151517;
+  border-color: #313136;
 }
 .theme-sample.dark b {
-  background: #63576c;
+  background: #4a4a52;
 }
 .theme-sample.dark b:first-child {
-  background: #302b37;
+  background: #2e2e33;
 }
 .theme-sample.dark > span > em {
-  border-color: #453e4e;
+  border-color: #313136;
 }
 .theme-sample.system {
-  background: linear-gradient(115deg, #fefdfc 45%, #18171c 45%);
+  background: linear-gradient(115deg, #fefdfc 45%, #1c1c1f 45%);
 }
 .theme-sample.system > span > em {
-  border-color: #63576c;
+  border-color: #5d5d66;
 }
 .setting-row {
   display: flex;

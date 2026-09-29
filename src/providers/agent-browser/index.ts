@@ -326,7 +326,7 @@ export function createAgentBrowserComputer(options: {
   async function command(
     state: BrowserState,
     args: string[],
-    options: { input?: string; signal?: AbortSignal; maxBytes?: number } = {},
+    options: { input?: string; signal?: AbortSignal; maxBytes?: number; timeoutMs?: number } = {},
   ): Promise<Record<string, unknown>> {
     options.signal?.throwIfAborted();
     if (state.socket) {
@@ -376,7 +376,13 @@ export function createAgentBrowserComputer(options: {
                                     : null;
       if (!request) throw new Error('Reopen this page before continuing browser actions.');
       const result = await drainInterruptedCommand(state, args[0], () =>
-        requestDaemon(state.socket!, request, options.signal, 45_000, options.maxBytes),
+        requestDaemon(
+          state.socket!,
+          request,
+          options.signal,
+          options.timeoutMs ?? 45_000,
+          options.maxBytes,
+        ),
       );
       if (args[0] === 'close') await closeDisplay(state);
       return result;
@@ -435,7 +441,7 @@ export function createAgentBrowserComputer(options: {
           },
           input: options.input,
           signal: options.signal,
-          timeoutMs: 45_000,
+          timeoutMs: options.timeoutMs ?? 45_000,
           maxBytes: 256 * 1024,
         },
       ),
@@ -499,8 +505,8 @@ export function createAgentBrowserComputer(options: {
     return url;
   }
 
-  async function browserTabs(state: BrowserState, signal?: AbortSignal) {
-    const data = await command(state, ['tab', 'list'], { signal });
+  async function browserTabs(state: BrowserState, signal?: AbortSignal, timeoutMs?: number) {
+    const data = await command(state, ['tab', 'list'], { signal, timeoutMs });
     return browserTabList.parse(data.tabs);
   }
 
@@ -514,7 +520,7 @@ export function createAgentBrowserComputer(options: {
     const deadline = Date.now() + 5000;
     let candidate: string | undefined;
     for (;;) {
-      const tabs = await browserTabs(state, signal);
+      const tabs = await browserTabs(state, signal, Math.max(1, deadline - Date.now()));
       const opened = tabs.filter((tab) => !known.has(tab.tabId));
       const loading = opened.some((tab) => !/^https?:/.test(tab.url));
       const loaded = opened.findLast((tab) => /^https?:/.test(tab.url));
@@ -534,7 +540,10 @@ export function createAgentBrowserComputer(options: {
       if (target) {
         if (!tabs.some((tab) => tab.tabId === target && !tab.active)) return;
         try {
-          await command(state, ['tab', 'switch', target], { signal });
+          await command(state, ['tab', 'switch', target], {
+            signal,
+            timeoutMs: Math.max(1, deadline - Date.now()),
+          });
           return;
         } catch (error) {
           if (target === opener || !(error instanceof DaemonCommandError)) throw error;

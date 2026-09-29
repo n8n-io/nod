@@ -48,18 +48,17 @@ test('channel verifier checks the selected accounts and requires an explicit cha
       assert.fail('Unexpected provider call');
     },
   });
-  const polling = await verifier.verify('telegram', { botToken: token, allowedUserId: '123' });
+  const polling = await verifier.verify('telegram', { botToken: token });
   assert.equal(polling.environment.TELEGRAM_MODE, 'polling');
   assert.equal(polling.summary.accountHandle, '@fixture_bot');
   assert.equal(JSON.stringify(polling.summary).includes(token), false);
   existingWebhook = 'https://old.example.com/handler';
   await assert.rejects(
-    verifier.verify('telegram', { botToken: token, allowedUserId: '123' }),
+    verifier.verify('telegram', { botToken: token }),
     (error) => error instanceof ChannelSetupFailure && error.reason === 'existing_webhook',
   );
   const webhook = await verifier.verify('telegram', {
     botToken: token,
-    allowedUserId: '123',
     webhookUrl: 'https://webhook.example.com/api/webhooks/telegram',
   });
   assert.equal(webhook.summary.webhookStatus, 'registration_pending');
@@ -72,7 +71,6 @@ test('channel verifier checks the selected accounts and requires an explicit cha
   await assert.rejects(
     verifier.verify('telegram', {
       botToken: token,
-      allowedUserId: '123',
       webhookUrl: 'https://127.0.0.1/api/webhooks/telegram',
     }),
   );
@@ -150,7 +148,6 @@ test(
         url: '/api/channel-settings/telegram',
         payload: {
           botToken: token,
-          allowedUserId: '123',
           ...(webhook ? { webhookUrl: 'https://webhook.example.com/api/webhooks/telegram' } : {}),
         },
       });
@@ -289,7 +286,7 @@ test(
       const saved = await app.inject({
         method: 'PUT',
         url: '/api/channel-settings/telegram',
-        payload: { botToken: token, allowedUserId: '123' },
+        payload: { botToken: token },
       });
       assert.equal(saved.statusCode, 200);
       assert.equal(saved.body.includes(token), false);
@@ -304,7 +301,7 @@ test(
       const failed = await app.inject({
         method: 'PUT',
         url: '/api/channel-settings/telegram',
-        payload: { botToken: 'bad-key', allowedUserId: '123' },
+        payload: { botToken: 'bad-key' },
       });
       assert.equal(failed.statusCode, 503);
       assert.equal(failed.body.includes('secret-provider-error'), false);
@@ -498,6 +495,444 @@ test(
     } finally {
       release();
       await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+for (const mode of ['polling', 'webhook'] as const)
+  test(
+    `Telegram ${mode} setup binds only the Start sender that the owner confirms`,
+    { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+    async (t) => {
+      const schema = `test_channel_pairing_${randomUUID().replaceAll('-', '')}`;
+      const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+      await admin.query(`CREATE SCHEMA ${schema}`);
+      const pool = new pg.Pool({
+        connectionString: process.env.TEST_DATABASE_URL,
+        options: `-c search_path=${schema}`,
+      });
+      await pool.query(
+        "CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text,role text,text text,task_id uuid,attachments jsonb DEFAULT '[]')",
+      );
+      const base = `https://api.telegram.org/bot${token}`;
+      const updates: { update_id: number }[] = [];
+      const sent: Record<string, unknown>[] = [];
+      t.mock.method(
+        globalThis,
+        'fetch',
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const body =
+            typeof init?.body === 'string'
+              ? (JSON.parse(init.body) as Record<string, unknown>)
+              : {};
+          if (url === `${base}/getMe`)
+            return Response.json({
+              ok: true,
+              result: { id: 987, is_bot: true, first_name: 'Fixture bot', username: 'fixture_bot' },
+            });
+          if (url === `${base}/getWebhookInfo`)
+            return Response.json({ ok: true, result: { url: '' } });
+          if (url === `${base}/setWebhook`) return Response.json({ ok: true, result: true });
+          if (url === `${base}/getUpdates`)
+            return Response.json({
+              ok: true,
+              result: updates.filter((update) => update.update_id >= Number(body.offset)),
+            });
+          if (url.startsWith(`${base}/send`)) {
+            sent.push(body);
+            return Response.json({
+              ok: true,
+              result: {
+                message_id: 500 + sent.length,
+                date: Math.floor(Date.now() / 1000),
+                chat: { id: 123, type: 'private' },
+                text: 'Fixture reply',
+              },
+            });
+          }
+          throw new Error('Unexpected fixture provider call.');
+        },
+      );
+      const submitted: string[] = [];
+      const app = Fastify();
+      const key = randomBytes(32);
+      let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
+      const settings = await createChannelSettings(pool, {
+        ownerId: 'local-development',
+        keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+        verifier: createChatSdkSetupVerifier(),
+        apply: async (environment) =>
+          channels!.replaceTransport(createChatSdkTransport(pool, environment)),
+        paired: async (candidate, client) => channels!.announcePairing(candidate, client),
+      });
+      channels = await createChannels(pool, {
+        ownerId: 'local-development',
+        transport: createChatSdkTransport(pool, await settings.environment()),
+        subscribe: () => () => {},
+        intervalMs: 600000,
+        pair: settings.pair,
+        submit: async (text) => {
+          submitted.push(text);
+          return randomUUID();
+        },
+      });
+      settings.registerRoutes(app);
+      channels.registerRoutes(app);
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+      const waitFor = async (check: () => Promise<boolean> | boolean) => {
+        for (let attempt = 0; attempt < 100 && !(await check()); attempt++) await settle();
+        assert.equal(await check(), true);
+      };
+      const telegram = async () => (await settings.status()).channels[0];
+      let updateId = 1;
+      const deliver = async (from: number, text: string, username?: string) => {
+        const update = {
+          update_id: updateId,
+          message: {
+            message_id: updateId++,
+            date: Math.floor(Date.now() / 1000),
+            text,
+            from: { id: from, is_bot: false, first_name: 'Fixture', ...(username && { username }) },
+            chat: { id: from, type: 'private' },
+          },
+        };
+        if (mode === 'polling') {
+          updates.push(update);
+          await channels!.drain();
+        } else {
+          const response = await app.inject({
+            method: 'POST',
+            url: '/api/webhooks/telegram',
+            headers: {
+              'content-type': 'application/json',
+              'x-telegram-bot-api-secret-token': (await settings.environment())
+                .TELEGRAM_WEBHOOK_SECRET_TOKEN,
+            },
+            payload: JSON.stringify(update),
+          });
+          assert.equal(response.statusCode, 200);
+        }
+        await settle();
+      };
+      try {
+        const saved = await app.inject({
+          method: 'PUT',
+          url: '/api/channel-settings/telegram',
+          payload: {
+            botToken: token,
+            ...(mode === 'webhook' && {
+              webhookUrl: 'https://webhook.example.com/api/webhooks/telegram',
+            }),
+          },
+        });
+        assert.equal(saved.statusCode, 200);
+        assert.match(saved.json().pairingUrl, /^https:\/\/t\.me\/fixture_bot\?start=[\w-]{32}$/);
+        assert.ok(saved.json().channel.pairingExpiresAt);
+        const firstCode = new URL(saved.json().pairingUrl).searchParams.get('start')!;
+        assert.equal(
+          (
+            await app.inject({
+              method: 'PUT',
+              url: '/api/channel-settings/telegram',
+              payload: { botToken: token, allowedUserId: '123' },
+            })
+          ).statusCode,
+          400,
+        );
+        const restarted = await app.inject({
+          method: 'POST',
+          url: '/api/channel-settings/telegram/pairing',
+          payload: {},
+        });
+        assert.equal(restarted.statusCode, 200);
+        const code = new URL(restarted.json().pairingUrl).searchParams.get('start')!;
+        assert.notEqual(code, firstCode);
+        const stored = JSON.stringify((await pool.query('SELECT * FROM channel_settings')).rows);
+        assert.equal(stored.includes(code), false);
+        assert.equal(JSON.stringify(await settings.environment()).includes(code), false);
+
+        await deliver(555, 'Fixture stranger request');
+        await deliver(555, `/start ${'x'.repeat(32)}`);
+        await deliver(555, `/start ${firstCode}`);
+        const now = Date.now;
+        Date.now = () => now() + 16 * 60 * 1000;
+        try {
+          assert.equal(
+            await settings.pair({
+              channelId: 'telegram',
+              accountId: '987',
+              senderId: '555',
+              senderName: 'Fixture',
+              messageId: 'fixture-expired',
+              threadId: 'telegram:555',
+              code,
+              sentAt: new Date(),
+            }),
+            false,
+          );
+        } finally {
+          Date.now = now;
+        }
+        assert.equal((await telegram())?.pairingCandidate, undefined);
+        const confirm = () =>
+          app.inject({
+            method: 'POST',
+            url: '/api/channel-settings/telegram/confirm',
+            payload: {},
+          });
+        assert.equal((await confirm()).statusCode, 400);
+
+        await deliver(555, `/start ${code}`, 'fixture_stranger');
+        await waitFor(async () => (await telegram())?.pairingCandidate?.id === '555');
+        assert.equal((await telegram())?.pairingCandidate?.name, '@fixture_stranger');
+        assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, '');
+        await deliver(555, 'Fixture stranger request after Start');
+        const rejected = await app.inject({
+          method: 'POST',
+          url: '/api/channel-settings/telegram/pairing',
+          payload: {},
+        });
+        assert.equal(rejected.statusCode, 200);
+        assert.equal(rejected.json().channel.pairingCandidate, undefined);
+        const secondCode = new URL(rejected.json().pairingUrl).searchParams.get('start')!;
+        assert.equal((await confirm()).statusCode, 400);
+        await deliver(123, `/start ${code}`, 'fixture_owner');
+        assert.equal((await telegram())?.pairingCandidate, undefined);
+
+        await deliver(123, `/start ${secondCode}`, 'fixture_owner');
+        await waitFor(async () => (await telegram())?.pairingCandidate?.id === '123');
+        await deliver(123, 'Fixture request before confirmation');
+        assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 0);
+        assert.equal(sent.length, 0);
+        assert.equal(submitted.length, 0);
+
+        await pool.query(`CREATE FUNCTION fail_pairing_notice() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'Synthetic pairing notice failure'; END $$`);
+        await pool.query(`CREATE TRIGGER fail_pairing_notice BEFORE INSERT ON channel_outbox
+          FOR EACH ROW EXECUTE FUNCTION fail_pairing_notice()`);
+        assert.equal((await confirm()).statusCode, 503);
+        assert.equal((await telegram())?.pairingCandidate?.id, '123');
+        assert.equal((await telegram())?.allowedUserId, undefined);
+        assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, '');
+        assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 0);
+        assert.equal((await pool.query('SELECT * FROM messages')).rowCount, 0);
+        assert.equal(sent.length, 0);
+        await pool.query('DROP TRIGGER fail_pairing_notice ON channel_outbox');
+
+        const confirmed = await confirm();
+        assert.equal(confirmed.statusCode, 200);
+        assert.equal(confirmed.json().channel.allowedUserId, '123');
+        assert.equal(confirmed.json().channel.pairedUser, '@fixture_owner');
+        assert.equal(confirmed.json().channel.pairingExpiresAt, undefined);
+        assert.equal(confirmed.json().channel.pairingCandidate, undefined);
+        const bound = await settings.environment();
+        assert.equal(bound.TELEGRAM_ALLOWED_USER_ID, '123');
+        assert.equal(
+          Object.keys(bound).some((key) => key.startsWith('TELEGRAM_PAIRING_')),
+          false,
+        );
+        await waitFor(() => sent.length === 1);
+        assert.equal(String(sent[0].chat_id), '123');
+        assert.match(JSON.stringify(sent[0]), /Otto is connected/);
+        assert.equal((await confirm()).statusCode, 400);
+
+        await deliver(999, `/start ${secondCode}`);
+        await deliver(999, 'Fixture intruder request');
+        await deliver(123, `/start ${secondCode}`);
+        assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, '123');
+        await deliver(123, 'Fixture owner request');
+        await waitFor(() => submitted.length === 1);
+        assert.deepEqual(submitted, ['Fixture owner request']);
+        const inbox = JSON.stringify((await pool.query('SELECT * FROM channel_inbox')).rows);
+        assert.equal(inbox.includes(secondCode), false);
+        assert.equal(inbox.includes('Fixture intruder request'), false);
+        assert.equal(inbox.includes('before confirmation'), false);
+        assert.equal(sent.length, 1);
+        assert.equal(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/api/channel-settings/telegram/pairing',
+              payload: {},
+            })
+          ).statusCode,
+          400,
+        );
+      } finally {
+        await app.close();
+        await pool.end();
+        await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+        await admin.end();
+      }
+    },
+  );
+
+test(
+  'Telegram setup accepts a manually entered positive user ID as the only sender',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_channel_manual_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const app = Fastify();
+    const key = randomBytes(32);
+    let applied: Record<string, string> = {};
+    const settings = await createChannelSettings(pool, {
+      ownerId: 'local-development',
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      verifier: {
+        verify: async () => ({
+          environment: {
+            TELEGRAM_ENABLED: 'true',
+            TELEGRAM_BOT_TOKEN: token,
+            TELEGRAM_ALLOWED_USER_ID: '',
+            TELEGRAM_WEBHOOK_SECRET_TOKEN: 'fixture-webhook-secret-long-enough',
+            TELEGRAM_MODE: 'polling',
+          },
+          summary: {
+            provider: 'telegram' as const,
+            enabled: true,
+            mode: 'polling' as const,
+            accountHandle: '@fixture_bot',
+          },
+        }),
+      },
+      apply: async (environment) => {
+        applied = environment;
+      },
+    });
+    settings.registerRoutes(app);
+    const enter = (allowedUserId: unknown) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/channel-settings/telegram/user',
+        payload: { allowedUserId },
+      });
+    try {
+      assert.equal((await enter('4242')).statusCode, 400);
+      assert.equal(
+        (
+          await app.inject({
+            method: 'PUT',
+            url: '/api/channel-settings/telegram',
+            payload: { botToken: token },
+          })
+        ).statusCode,
+        200,
+      );
+      for (const invalid of ['0', '-4', '12.5', 'abc', '@fixture', '12345678901234567', 4242])
+        assert.equal((await enter(invalid)).statusCode, 400);
+      assert.equal(applied.TELEGRAM_ALLOWED_USER_ID, '');
+      const saved = await enter(' 4242 ');
+      assert.equal(saved.statusCode, 200);
+      assert.equal(saved.json().channel.allowedUserId, '4242');
+      assert.equal(saved.json().channel.pairedUser, undefined);
+      assert.equal(saved.json().channel.pairingExpiresAt, undefined);
+      assert.equal(applied.TELEGRAM_ALLOWED_USER_ID, '4242');
+      assert.equal(applied.TELEGRAM_PAIRING_EXPIRES_AT, undefined);
+      const transport = createChatSdkTransport(pool, applied);
+      assert.deepEqual(transport.channels[0].allowedSenderIds, ['4242']);
+      await transport.close();
+      assert.equal((await enter('5353')).statusCode, 400);
+      assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, '4242');
+    } finally {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'Telegram polling keeps a Start update until its pairing candidate is stored',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_channel_pair_poll_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const offsets: number[] = [];
+    const code = 'fixture-start-code-0123456789abcdef';
+    const transport = createChatSdkTransport(
+      pool,
+      {
+        TELEGRAM_ENABLED: 'true',
+        TELEGRAM_BOT_TOKEN: token,
+        TELEGRAM_ALLOWED_USER_ID: '',
+        TELEGRAM_PAIRING_EXPIRES_AT: String(Date.now() + 600000),
+        TELEGRAM_WEBHOOK_SECRET_TOKEN: 'fixture-secret-long-enough',
+        TELEGRAM_MODE: 'polling',
+      },
+      {
+        fetch: async (_url, init) => {
+          offsets.push(JSON.parse(String(init?.body)).offset);
+          return Response.json({
+            ok: true,
+            result:
+              offsets.at(-1) === 8
+                ? []
+                : [
+                    {
+                      update_id: 7,
+                      message: {
+                        message_id: 3,
+                        date: Math.floor(Date.now() / 1000),
+                        text: `/start ${code}`,
+                        from: { id: 123, is_bot: false, first_name: 'Fixture', username: 'owner' },
+                        chat: { id: 123, type: 'private' },
+                      },
+                    },
+                  ],
+          });
+        },
+      },
+    );
+    try {
+      const accepted: string[] = [];
+      const paired: string[] = [];
+      await assert.rejects(
+        transport.poll!(
+          async () => {
+            accepted.push('message');
+          },
+          async () => {
+            throw new Error('Synthetic pairing write failure');
+          },
+        ),
+      );
+      await transport.poll!(
+        async () => {
+          accepted.push('message');
+        },
+        async (request) => {
+          paired.push(`${request.senderId}:${request.senderName}:${request.code}`);
+        },
+      );
+      await transport.poll!(
+        async () => {
+          accepted.push('message');
+        },
+        async () => {
+          assert.fail('Already stored pairing update');
+        },
+      );
+      assert.deepEqual(offsets, [0, 0, 8]);
+      assert.deepEqual(paired, [`123:@owner:${code}`]);
+      assert.deepEqual(accepted, []);
+    } finally {
+      await transport.close();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();

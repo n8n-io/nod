@@ -76,9 +76,18 @@ export function createPiAgent(options: {
       if (!model)
         throw new Error('The configured model is not present in the installed Pi catalog.');
       const durable = options.objectStore
-        ? await createPiCheckpoint({ store: options.objectStore, taskId: input.taskId, directory })
+        ? await createPiCheckpoint({
+            store: options.objectStore,
+            taskId: input.taskId,
+            directory,
+            fresh: input.fresh,
+          })
         : undefined;
-      const manager = durable?.manager ?? SessionManager.continueRecent(directory, directory);
+      const manager =
+        durable?.manager ??
+        (input.fresh
+          ? SessionManager.create(directory, directory)
+          : SessionManager.continueRecent(directory, directory));
       const completedEvents: AgentEvent[] = [];
       const checkpoint = async () => {
         await durable?.checkpoint();

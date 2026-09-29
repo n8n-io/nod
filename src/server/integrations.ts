@@ -28,10 +28,16 @@ import {
   verificationSenderDomain,
   type EmailCodeRequest,
 } from './email-code.ts';
-export { integrationActions } from './integration-policy.ts';
 
 const slugSchema = z.enum(integrationServiceIds);
 type Slug = z.infer<typeof slugSchema>;
+const returnPaths = {
+  apps: '/apps',
+  onboarding: '/onboarding',
+  window: '/connected.html',
+  chat: '/',
+} as const;
+type ReturnTarget = keyof typeof returnPaths;
 const catalogs = integrationServices;
 type ConnectionRow = {
   id: string;
@@ -41,7 +47,7 @@ type ConnectionRow = {
   pending_account_id: string | null;
   callback_hash: string | null;
   callback_expires: Date | null;
-  callback_return_to: 'apps' | 'onboarding' | 'chat';
+  callback_return_to: ReturnTarget;
   trigger_id: string | null;
   triggers_enabled: boolean;
   watch_requested: boolean;
@@ -450,7 +456,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
 
   async function list(ownerId = configuredOwner): Promise<Connection[]> {
-    const rows = await connectionRows(ownerId);
+    const [rows, browserAccounts, discovered, browserConnections] = await Promise.all([
+      connectionRows(ownerId),
+      options.browserAccounts?.() ?? [],
+      options.discovered?.list() ?? [],
+      options.browserConnections?.() ?? [],
+    ]);
     if (providers.some((item) => item.configured) && !closed && !refreshing) {
       refreshing = background(() => refreshAccounts(rows))
         ?.catch(() => {})
@@ -504,11 +515,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         });
       }
     }
-    const browserAccounts = (await options.browserAccounts?.()) ?? [];
     return [
       ...result,
-      ...((await options.discovered?.list()) ?? []),
-      ...((await options.browserConnections?.()) ?? []),
+      ...discovered,
+      ...browserConnections,
       ...browserAccounts.map((entry): Connection => {
         const service = browserService(entry.origin);
         return {
@@ -556,7 +566,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   async function connect(
     slug: Slug,
-    returnTo: 'apps' | 'onboarding' | 'chat' = 'apps',
+    returnTo: ReturnTarget = 'apps',
     task?: { id: string; revision: number },
   ) {
     requireService(slug);
@@ -601,11 +611,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           task?.revision ?? null,
         ],
       );
-      return { url: attempt.url };
+      return { url: attempt.url, ...(returnTo === 'window' ? { attempt: nonce } : {}) };
     } finally {
-      try {
-        await selected.deleteSession(session.id);
-      } catch {}
+      selected.deleteSession(session.id).catch(() => {});
     }
   }
 
@@ -1293,7 +1301,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       scope.post<{ Params: { slug: string } }>('/api/apps/:slug/connect', async (request) => {
         const input = z
           .object({
-            returnTo: z.enum(['apps', 'onboarding']).default('apps'),
+            returnTo: z.enum(['apps', 'onboarding', 'window']).default('apps'),
             connectionId: z.uuid().optional(),
           })
           .strict()
@@ -1306,9 +1314,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         return connect(slugSchema.parse(request.params.slug), input.returnTo);
       });
       scope.get('/api/apps/callback', async (request, reply) => {
-        let returnTo: 'apps' | 'onboarding' | 'chat' = 'apps';
+        let returnTo: ReturnTarget = 'apps';
         let outcome: 'connected' | 'continued' | 'cancelled' | 'failed' | 'expired' = 'expired';
         let service: string | undefined;
+        let attempt: string | undefined;
         const state = z
           .object({ state: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
           .safeParse(request.query);
@@ -1321,8 +1330,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             )
           ).rows[0];
           if (row) {
+            attempt = state.data.state;
             service = row.slug;
-            returnTo = ['apps', 'onboarding', 'chat'].includes(row.callback_return_to)
+            returnTo = Object.hasOwn(returnPaths, row.callback_return_to)
               ? row.callback_return_to
               : 'apps';
             if (row.callback_expires && new Date(row.callback_expires).getTime() > Date.now()) {
@@ -1358,7 +1368,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .header('Referrer-Policy', 'no-referrer')
           .redirect(
             new URL(
-              `${returnTo === 'chat' ? '/' : `/${returnTo}`}?connection=${outcome}${returnTo === 'chat' && service ? `&service=${service}` : ''}`,
+              `${returnPaths[returnTo]}?connection=${outcome}${(returnTo === 'chat' || returnTo === 'window') && service ? `&service=${service}` : ''}${returnTo === 'window' && attempt ? `&attempt=${attempt}` : ''}`,
               options.baseUrl,
             ).href,
           );

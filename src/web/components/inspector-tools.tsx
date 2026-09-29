@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Search } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import type { TaskEvent } from '../../shared/contracts';
 import type {
   InspectorObservationsResponse,
@@ -10,6 +10,7 @@ import type {
   InspectorTool,
 } from '../../shared/inspector';
 import { api, errorMessage } from '../lib/api';
+import { formatFullDateTime, formatNumber, formatTime } from '../lib/date-format';
 import {
   filterToolCalls,
   completeObservationRefresh,
@@ -20,14 +21,14 @@ import {
   groupTaskActivity,
   type ToolStatusFilter,
 } from '../lib/inspector-observations';
-import { Button, Input, Loading, Notice } from './ui';
+import { Button, Loading, Notice, SearchField } from './ui';
 
 const statuses: Array<{ value: ToolStatusFilter; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'failed', label: 'Failed' },
   { value: 'running', label: 'Running' },
 ];
-const counts = new Intl.NumberFormat('en-US');
+const counts = { format: (value: number) => formatNumber(value) };
 
 function RecordedJson({ label, value }: { label: string; value: unknown }) {
   return (
@@ -48,7 +49,7 @@ export function ToolCallRecord({ call }: { call: ToolCall }) {
         <span className="inspector-record-title">
           <strong>{call.name}</strong>
           <small>
-            {new Date(call.startedAt).toLocaleTimeString()} · revision {call.revision}
+            {formatTime(call.startedAt, undefined, { seconds: true })} · revision {call.revision}
           </small>
         </span>
         <span className="inspector-record-state">
@@ -68,9 +69,9 @@ export function ToolCallRecord({ call }: { call: ToolCall }) {
       <div className="inspector-record-body">
         <dl className="inspector-record-facts">
           <dt>Started</dt>
-          <dd>{new Date(call.startedAt).toLocaleString()}</dd>
+          <dd>{formatFullDateTime(call.startedAt)}</dd>
           <dt>Finished</dt>
-          <dd>{call.finishedAt ? new Date(call.finishedAt).toLocaleString() : 'Not recorded'}</dd>
+          <dd>{call.finishedAt ? formatFullDateTime(call.finishedAt) : 'Not recorded'}</dd>
           <dt>Duration</dt>
           <dd>{call.status === 'running' ? 'In progress' : formatToolDuration(call.durationMs)}</dd>
         </dl>
@@ -174,7 +175,7 @@ export function ModelUsageRecord({ usage }: { usage: ModelUsage }) {
           <strong>{usage.model}</strong>
           <small>
             {usage.provider} · revision {usage.revision} ·{' '}
-            {new Date(usage.createdAt).toLocaleTimeString()}
+            {formatTime(usage.createdAt, undefined, { seconds: true })}
           </small>
         </span>
         <span className="inspector-record-state">
@@ -351,15 +352,12 @@ function ToolDrilldown({
   return (
     <div className="inspector-tool-drilldown">
       {definition && <p className="inspector-tool-description">{definition.description}</p>}
-      <label className="inspector-search">
-        <Search size={14} />
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search loaded inputs, outputs and errors"
-          aria-label={`Search ${usage.name} calls`}
-        />
-      </label>
+      <SearchField
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search loaded inputs, outputs and errors"
+        aria-label={`Search ${usage.name} calls`}
+      />
       {observationError && <Notice>{observationError}</Notice>}
       {!observations && !observationError && <Loading label="Loading calls…" />}
       {observations && (
@@ -403,7 +401,7 @@ function ToolDrilldown({
   );
 }
 
-export function ToolUsageFacts({ usage }: { usage: ToolUsage }) {
+function ToolUsageFacts({ usage }: { usage: ToolUsage }) {
   return (
     <div className="inspector-tool-facts">
       <span>
@@ -539,15 +537,12 @@ export function InspectorTools({ taskId }: { taskId?: string }) {
         ))}
       </div>
       <div className="inspector-tool-filters">
-        <label className="inspector-search">
-          <Search size={14} />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={view === 'calls' ? 'Search loaded calls' : 'Find a tool'}
-            aria-label={view === 'calls' ? 'Search loaded calls' : 'Find a tool'}
-          />
-        </label>
+        <SearchField
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={view === 'calls' ? 'Search loaded calls' : 'Find a tool'}
+          aria-label={view === 'calls' ? 'Search loaded calls' : 'Find a tool'}
+        />
         {view !== 'catalog' && (
           <div className="inspector-scope-toggle" role="group" aria-label="Tool call status">
             {statuses.map((item) => (
@@ -740,7 +735,7 @@ export function InspectorActivity({ taskId, events }: { taskId?: string; events:
                 <p>{item.title}</p>
                 <small>
                   <time dateTime={item.startedAt}>
-                    {new Date(item.startedAt).toLocaleTimeString()}
+                    {formatTime(item.startedAt, undefined, { seconds: true })}
                   </time>
                   {labels[item.status] && ` · ${labels[item.status]}`}
                   {item.durationMs !== null && ` · ${formatToolDuration(item.durationMs)}`}

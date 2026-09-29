@@ -252,6 +252,7 @@ test(
             ['preview.pdf', 'application/pdf'],
             ['preview.mp4', 'video/mp4'],
             ['preview.m4a', 'audio/mp4'],
+            ['preview.svg', 'image/svg+xml'],
           ]) {
             await writeFile(join(workspace, name), '0123456789');
             const media = await artifacts.publishArtifact(id, name, undefined, read);
@@ -260,6 +261,7 @@ test(
             assert.match(String(full.headers['content-disposition']), /^inline;/);
             assert.equal(full.headers['cache-control'], 'private, no-store');
             assert.equal(full.headers['content-security-policy'], "default-src 'none'; sandbox");
+            assert.equal(full.headers['x-content-type-options'], 'nosniff');
             const partial = await app.inject({
               method: 'GET',
               url: media.url,

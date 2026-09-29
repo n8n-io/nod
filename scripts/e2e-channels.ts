@@ -5,7 +5,6 @@ import type { MessagingTransport } from '../src/ports/messaging.ts';
 export const fixtureChannelCredentials = {
   telegram: {
     botToken: '777000111:synthetic-channel-fixture',
-    allowedUserId: '123456789',
   },
   whatsapp: {
     phoneNumberId: '987654321',
@@ -20,7 +19,6 @@ export const fixtureChannelCredentials = {
 const telegramInput = z
   .object({
     botToken: z.literal(fixtureChannelCredentials.telegram.botToken),
-    allowedUserId: z.literal(fixtureChannelCredentials.telegram.allowedUserId),
     webhookUrl: z.literal('https://channels.example.test/api/webhooks/telegram').optional(),
   })
   .strict();
@@ -50,13 +48,14 @@ export function createFixtureMessagingSetup(): {
           environment: {
             TELEGRAM_ENABLED: 'true',
             TELEGRAM_BOT_TOKEN: input.botToken,
-            TELEGRAM_ALLOWED_USER_ID: input.allowedUserId,
+            TELEGRAM_ALLOWED_USER_ID: '',
             TELEGRAM_MODE: input.webhookUrl ? 'webhook' : 'polling',
           },
           summary: {
             provider,
             enabled: true,
             accountName: 'Synthetic Telegram bot (UI only)',
+            accountHandle: '@otto_synthetic_fixture_bot',
             mode: input.webhookUrl ? 'webhook' : 'polling',
             ...(input.webhookUrl && {
               webhookUrl: input.webhookUrl,
@@ -99,7 +98,7 @@ export function createFixtureMessagingSetup(): {
             status: environment.TELEGRAM_ENABLED === 'true' ? 'configured' : 'disabled',
             missing: [],
             accountId: '777000111',
-            allowedSenderIds: [fixtureChannelCredentials.telegram.allowedUserId],
+            allowedSenderIds: [],
           },
           {
             id: 'whatsapp',

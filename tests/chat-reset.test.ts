@@ -3,6 +3,7 @@ import test, { after } from 'node:test';
 import { registerHooks } from 'node:module';
 import { JSDOM } from 'jsdom';
 import { act, createElement } from 'react';
+import type { Editor } from '@tiptap/core';
 import type { AppState, Message } from '../src/shared/contracts.ts';
 
 const css = registerHooks({
@@ -77,6 +78,7 @@ const { createRoot } = await import('react-dom/client');
 const { useAppState } = await import('../src/web/hooks/use-app-state.ts');
 const { sessionStore } = await import('../src/web/lib/session.ts');
 const { Chat } = await import('../src/web/pages/chat.tsx');
+const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 25));
 const message: Message = {
   id: 'old-message',
@@ -88,6 +90,7 @@ const message: Message = {
 };
 const base: AppState = {
   conversationRevision: 0,
+  hasEarlierMessages: true,
   messages: [message],
   tasks: [],
   configuration: {
@@ -234,7 +237,10 @@ test('restart setup clears archived messages, history, replies and stale streams
     );
     await act(async () => {
       finishHistory(
-        new Response(JSON.stringify([{ ...message, id: 'older-message', text: 'Stale history' }])),
+        Response.json({
+          messages: [{ ...message, id: 'older-message', text: 'Stale history' }],
+          hasMore: false,
+        }),
       );
       finishState(new Response(JSON.stringify(base)));
       await staleRefresh;
@@ -271,7 +277,7 @@ test('restart setup clears archived messages, history, replies and stale streams
   }
 });
 
-test('Get started uses the same restart event and failed reset preserves the existing conversation', async () => {
+test('the restart setup event resets once and a failed reset preserves the existing conversation', async () => {
   const priorFetch = globalThis.fetch;
   const requests: string[] = [];
   let failReset = true;
@@ -282,6 +288,7 @@ test('Get started uses the same restart event and failed reset preserves the exi
       return failReset
         ? new Response(JSON.stringify({ error: 'Restart failed.' }), { status: 503 })
         : new Response(JSON.stringify({ ok: true, conversationRevision: 1 }));
+    if (path === '/api/apps') return Response.json([]);
     return new Response('{}');
   };
   const fixture = await mount();
@@ -300,15 +307,7 @@ test('Get started uses the same restart event and failed reset preserves the exi
     });
     assert.equal(requests.filter((path) => path === '/api/onboarding').length, 1);
     assert.doesNotMatch(fixture.element.textContent ?? '', /Archived conversation/);
-    const button = [...fixture.element.querySelectorAll('button')].find((item) =>
-      item.textContent?.includes('Get started'),
-    )!;
-    assert.ok(button);
-    await act(async () => {
-      button.click();
-      await tick();
-    });
-    assert.equal(requests.filter((path) => path === '/api/conversation/reset').length, 3);
+    assert.equal(requests.filter((path) => path === '/api/conversation/reset').length, 2);
   } finally {
     await fixture.dispose();
     globalThis.fetch = priorFetch;
@@ -355,6 +354,7 @@ test('setup cannot archive a conversation when its model is unavailable', async 
   const paths: string[] = [];
   globalThis.fetch = async (path) => {
     paths.push(String(path));
+    if (path === '/api/apps') return Response.json([]);
     return Response.json({
       ...base,
       messages: [],
@@ -363,10 +363,6 @@ test('setup cannot archive a conversation when its model is unavailable', async 
   };
   const fixture = await mount();
   try {
-    const button = [...fixture.element.querySelectorAll('button')].find((item) =>
-      item.textContent?.includes('Get started'),
-    )!;
-    assert.equal(button.disabled, true);
     await act(async () => {
       window.dispatchEvent(new CustomEvent('otto:restart-setup'));
       await tick();
@@ -377,6 +373,170 @@ test('setup cannot archive a conversation when its model is unavailable', async 
     );
   } finally {
     await fixture.dispose();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('landing on an empty chat asks Otto to reach out once and shows the greeting with typing', async () => {
+  const originalFetch = globalThis.fetch;
+  const greeting: Message = {
+    id: 'greeting',
+    role: 'assistant',
+    text: 'Hi Alex, I’m looking through your Gmail for things I can take off your plate.',
+    taskId: 'welcome',
+    attachments: [],
+    createdAt: '2026-09-28T12:00:00Z',
+  };
+  let welcomed = 0;
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  globalThis.fetch = async (path, options) => {
+    if (path === '/api/account/welcome' && options?.method === 'POST') {
+      await answered;
+      welcomed++;
+      return Response.json({ ok: true });
+    }
+    if (path === '/api/apps') return Response.json([]);
+    return Response.json({
+      ...base,
+      messages: welcomed ? [greeting] : [],
+      tasks: welcomed
+        ? [
+            {
+              id: 'welcome',
+              title: 'Welcome',
+              status: 'running',
+              showTyping: true,
+              createdAt: greeting.createdAt,
+              updatedAt: greeting.createdAt,
+            },
+          ]
+        : [],
+    });
+  };
+  pageDataCache.clear();
+  const fixture = await mount();
+  try {
+    await act(async () => {
+      fixture.element
+        .querySelector<HTMLElement & { editor: Editor }>('.ProseMirror')!
+        .editor.commands.setContent({
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Early message' }] }],
+        });
+      await tick();
+    });
+    const sendButton = () =>
+      fixture.element.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')!;
+    assert.equal(sendButton().disabled, true);
+    assert.equal(fixture.element.querySelector('.welcome'), null);
+    assert.ok(fixture.element.querySelector('[aria-label="Otto is typing"]'));
+    await act(async () => {
+      answer();
+      await tick();
+    });
+    assert.equal(welcomed, 1);
+    assert.equal(sendButton().disabled, false);
+    assert.match(fixture.element.textContent ?? '', /Hi Alex, I’m looking through your Gmail/);
+    assert.ok(fixture.element.querySelector('[aria-label="Otto is typing"]'));
+    assert.doesNotMatch(fixture.element.textContent ?? '', /What’s on your mind|Make Otto yours/);
+  } finally {
+    await fixture.dispose();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('an empty chat after the welcome was sent shows app suggestions', async () => {
+  const originalFetch = globalThis.fetch;
+  const paths: string[] = [];
+  globalThis.fetch = async (path) => {
+    paths.push(String(path));
+    if (path === '/api/apps')
+      return Response.json(
+        ['gmail', 'googlecalendar', 'slack', 'notion'].map((slug) => ({
+          slug,
+          name: slug,
+          status: slug === 'gmail' || slug === 'slack' ? 'connected' : 'disconnected',
+          triggersEnabled: false,
+        })),
+      );
+    if (path === '/api/account/welcome') return Response.json({ ok: true });
+    return Response.json({ ...base, messages: [] });
+  };
+  pageDataCache.clear();
+  const fixture = await mount();
+  try {
+    await act(async () => {
+      await tick();
+    });
+    assert.deepEqual(
+      [...fixture.element.querySelectorAll('.starter-actions button')].map(
+        (button) => button.textContent,
+      ),
+      ['Find the email I still need to answer', 'Catch me up on my Slack mentions', 'Plan my day'],
+    );
+    assert.equal(paths.filter((path) => path === '/api/account/welcome').length, 1);
+    assert.doesNotMatch(fixture.element.textContent ?? '', /Make Otto yours|Get started/);
+  } finally {
+    await fixture.dispose();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a chat with messages does not ask Otto to reach out', async () => {
+  const originalFetch = globalThis.fetch;
+  const paths: string[] = [];
+  globalThis.fetch = async (path) => {
+    paths.push(String(path));
+    return Response.json(base);
+  };
+  const fixture = await mount();
+  try {
+    assert.equal(paths.includes('/api/account/welcome'), false);
+  } finally {
+    await fixture.dispose();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a failed welcome request shows its error and releases the composer', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (path) => {
+    if (path === '/api/account/welcome')
+      return Response.json(
+        { error: 'Otto could not start your welcome. Try again.' },
+        { status: 503 },
+      );
+    if (path === '/api/apps') return Response.json([]);
+    return Response.json({ ...base, messages: [], tasks: [] });
+  };
+  pageDataCache.clear();
+  let fixture: Awaited<ReturnType<typeof mount>> | undefined;
+  try {
+    fixture = await mount();
+    await act(async () => {
+      fixture!.element
+        .querySelector<HTMLElement & { editor: Editor }>('.ProseMirror')!
+        .editor.commands.setContent({
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Hello Otto' }] }],
+        });
+      await tick();
+    });
+    assert.match(
+      fixture.element.querySelector('[role="alert"]')?.textContent ?? '',
+      /Otto could not start your welcome/,
+    );
+    assert.equal(fixture.element.querySelector('[aria-label="Otto is typing"]'), null);
+    assert.equal(
+      fixture.element.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.disabled,
+      false,
+    );
+  } finally {
+    await fixture?.dispose();
+    pageDataCache.clear();
     globalThis.fetch = originalFetch;
   }
 });

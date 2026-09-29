@@ -1,12 +1,25 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUpRight } from 'lucide-react';
-import type { AppState, Artifact, Message, SubmitMessageResponse } from '../../shared/contracts';
-import { integrationServices } from '../../shared/integrations';
+import type {
+  AppState,
+  Artifact,
+  Connection,
+  Message,
+  MessageHistoryPage,
+  SubmitMessageResponse,
+  TaskReviewRequired,
+} from '../../shared/contracts';
+import {
+  integrationServiceIds,
+  integrationServices,
+  type IntegrationService,
+} from '../../shared/integrations';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
-import { Button, Notice } from '../components/ui';
+import { Button, Notice, Skeleton } from '../components/ui';
+import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
 import {
   collapseScreenshotMessages,
@@ -14,19 +27,8 @@ import {
   messagesAreGrouped,
   visibleConversationTurns,
 } from '../lib/chat-messages';
+import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
 
-function dayLabel(date: string) {
-  const value = new Date(date);
-  const today = new Date();
-  if (value.toDateString() === today.toDateString()) return 'Today';
-  today.setDate(today.getDate() - 1);
-  if (value.toDateString() === today.toDateString()) return 'Yesterday';
-  return value.toLocaleDateString([], {
-    day: 'numeric',
-    month: 'long',
-    year: value.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined,
-  });
-}
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
   ambiguous: boolean,
@@ -39,25 +41,69 @@ function verificationFailure(
     return 'That verification request is no longer available. Wait for a new code request.';
   return 'The verification code could not be confirmed. Check the sign-in request and try again.';
 }
+function scrollBehavior(): ScrollBehavior {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
+}
+const appSuggestions: Record<IntegrationService, string> = {
+  gmail: 'Find the email I still need to answer',
+  googlecalendar: 'Prepare me for my next meeting',
+  googledrive: 'Find a file in Google Drive',
+  googlesheets: 'Review a spreadsheet',
+  googledocs: 'Summarize a document',
+  slack: 'Catch me up on my Slack mentions',
+  notion: 'Summarize my recent Notion pages',
+  linear: 'Review my open Linear issues',
+};
+const starterSuggestions = ['Plan my day', 'Help me research something', 'Start a goal'];
+function Welcome({ onPick }: { onPick(label: string): void }) {
+  const { data, loading } = usePageData<Connection[]>('/api/apps');
+  const connected = integrationServiceIds.filter((slug) =>
+    data?.some((connection) => connection.slug === slug && connection.status === 'connected'),
+  );
+  const labels = [...connected.map((slug) => appSuggestions[slug]), ...starterSuggestions].slice(
+    0,
+    3,
+  );
+  return (
+    <div className="welcome">
+      <BrandMark />
+      <h1>What’s on your mind?</h1>
+      {!loading && (
+        <div className="starter-actions">
+          {labels.map((label) => (
+            <button key={label} onClick={() => onPick(label)}>
+              {label}
+              <ArrowUpRight size={15} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 export function Chat({
   state,
   streams,
   refresh,
   resetConversation,
-  composerDraft,
+  initialFocusMessageId,
 }: {
   state: AppState;
   streams: Record<string, string>;
   refresh(): Promise<void>;
   resetConversation(): Promise<number>;
-  composerDraft?: { text: string; nonce: number };
+  initialFocusMessageId?: string;
 }) {
+  const dateFormat = useDateFormat();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState('');
   const [connectionNotice, setConnectionNotice] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [focusTarget, setFocusTarget] = useState<{ id: string; pages: number } | null>(() =>
+    initialFocusMessageId ? { id: initialFocusMessageId, pages: 0 } : null,
+  );
   const [optimistic, setOptimistic] = useState<Array<{ revision: number; message: Message }>>([]);
   const composer = useRef<ComposerHandle>(null);
   const sendLock = useRef<{ id: string; revision: number } | null>(null);
@@ -66,16 +112,23 @@ export function Chat({
   const revision = state.conversationRevision ?? 0;
   const revisionRef = useRef(revision);
   revisionRef.current = revision;
-  const [historyPage, setHistoryPage] = useState<{ revision: number; messages: Message[] }>({
+  const [historyPage, setHistoryPage] = useState<{
+    revision: number;
+    messages: Message[];
+    hasMore?: boolean;
+  }>({
     revision,
     messages: [],
   });
   const older = historyPage.revision === revision ? historyPage.messages : [];
+  const hasEarlier =
+    (historyPage.revision === revision ? historyPage.hasMore : undefined) ??
+    state.hasEarlierMessages === true;
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [hasEarlier, setHasEarlier] = useState(true);
   const [activeTurn, setActiveTurn] = useState<string | null>(null);
   const [visibleTurns, setVisibleTurns] = useState<string[]>([]);
-  const [scrolledUp, setScrolledUp] = useState(false);
+  const [away, setAway] = useState<{ since: number; shown: boolean } | null>(null);
+  const returning = useRef(0);
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -96,6 +149,20 @@ export function Chat({
       .map((item) => item.message),
   ];
   const working = hasVisibleChatActivity(state.tasks);
+  const [welcoming, setWelcoming] = useState(
+    () => allMessages.length === 0 && !working && state.configuration.llmReady,
+  );
+  useEffect(() => {
+    if (!welcoming) return;
+    void post('/api/account/welcome', {})
+      .then(() => refresh())
+      .catch((cause) => setError(errorMessage(cause)))
+      .finally(() => setWelcoming(false));
+  }, []);
+  const pick = (label: string) => {
+    setText(label);
+    composer.current?.focus();
+  };
   const persistedStreams = new Set(allMessages.map((message) => message.streamId).filter(Boolean));
   const streamEntries = Object.entries(streams).filter(
     ([id, value]) => value && !persistedStreams.has(id),
@@ -126,10 +193,15 @@ export function Chat({
     if (message.role === 'user' && message.taskId)
       latestUserMessageAt.set(message.taskId, message.createdAt);
   }
-  const onboardingVisible = allMessages.length === 0 && !working && !resetting;
+  const unseen = away
+    ? persistedMessages.filter(
+        (message) => message.role === 'assistant' && Date.parse(message.createdAt) > away.since,
+      ).length
+    : 0;
   useLayoutEffect(() => {
     if (stickToBottom.current)
       bottom.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
+    else updateAway();
   }, [state.messages, streams, sending, resetting, optimistic]);
   useEffect(() => {
     const ids = new Set(state.messages.map((message) => message.id));
@@ -144,10 +216,9 @@ export function Chat({
     historyVersion.current++;
     setHistoryPage({ revision, messages: [] });
     setLoadingHistory(false);
-    setHasEarlier(true);
     setActiveTurn(null);
     setVisibleTurns([]);
-    setScrolledUp(false);
+    setAway(null);
     setReplyTo(null);
     setOptimistic([]);
     sendLock.current = null;
@@ -183,22 +254,44 @@ export function Chat({
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }, []);
   useEffect(() => {
-    if (!composerDraft) return;
-    setText(composerDraft.text);
-    requestAnimationFrame(() => composer.current?.focus());
-  }, [composerDraft]);
-  useEffect(() => {
-    const compose = (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: unknown }>).detail;
-      if (typeof detail?.text !== 'string') return;
-      setText(detail.text);
-      requestAnimationFrame(() => composer.current?.focus());
+    const focusMessage = (event: Event) => {
+      const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
+      if (typeof detail?.messageId === 'string') setFocusTarget({ id: detail.messageId, pages: 0 });
     };
-    window.addEventListener('otto:compose', compose);
-    return () => window.removeEventListener('otto:compose', compose);
+    window.addEventListener('otto:focus-message', focusMessage);
+    return () => window.removeEventListener('otto:focus-message', focusMessage);
   }, []);
+  useEffect(() => {
+    if (!focusTarget || loadingHistory) return;
+    if (focusTarget.pages && error) {
+      setFocusTarget(null);
+      return;
+    }
+    const target = Array.from(
+      scroll.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [],
+    ).find((element) => element.dataset.messageId === focusTarget.id);
+    if (target) {
+      setFocusTarget(null);
+      stickToBottom.current = false;
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ block: 'center', behavior: scrollBehavior() });
+        target.focus({ preventScroll: true });
+        target.classList.add('message-focused');
+        setTimeout(() => target.classList.remove('message-focused'), 2400);
+      });
+      return;
+    }
+    if (hasEarlier && persistedMessages.length && focusTarget.pages < 5) {
+      setFocusTarget({ ...focusTarget, pages: focusTarget.pages + 1 });
+      void history();
+      return;
+    }
+    setFocusTarget(null);
+    setError('Could not find that message in this chat.');
+  }, [focusTarget, loadingHistory, historyPage, hasEarlier, error]);
   async function send(value: string, attachments: Artifact[]): Promise<ComposerSendResult> {
-    if (sendLock.current || resetLock.current) return { sent: false, restoreText: true };
+    if (sendLock.current || resetLock.current || welcoming)
+      return { sent: false, restoreText: true };
     const sentRevision = revision;
     const reply = replyTo;
     const verificationRequests = (state.verificationRequests ?? []).filter(
@@ -260,9 +353,28 @@ export function Chat({
           ...(verificationRequestId ? { verificationRequestId } : {}),
         }),
       });
-      const result = (await response.json()) as Partial<SubmitMessageResponse> & { error?: string };
+      const result = (await response.json()) as Partial<SubmitMessageResponse> &
+        Partial<TaskReviewRequired>;
       verificationStatus = result.verificationStatus;
       privateVerification ||= verificationStatus !== undefined;
+      if (response.status === 409 && result.code === 'task_review_required') {
+        if (revisionRef.current !== sentRevision) return { sent: true };
+        retry.current = null;
+        const reviewReply: Message = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          text: `I stopped earlier and may have already done part of “${result.summary || 'that'}”. Please check it, then tell me what you see.`,
+          taskId: null,
+          attachments: [],
+          createdAt: new Date().toISOString(),
+        };
+        setOptimistic((current) => [
+          ...current.filter((item) => item.message.id !== id),
+          { revision: sentRevision, message: reviewReply },
+        ]);
+        setReplyTo((current) => (current?.id === replyId ? null : current));
+        return { sent: true };
+      }
       if (!response.ok) {
         throw new Error(result.error || 'The message could not be sent.');
       }
@@ -334,13 +446,13 @@ export function Chat({
         ...(before ? { before } : {}),
         ...(first ? { beforeId: first.id } : {}),
       });
-      const result = await api<Message[]>(`/api/messages?${query}`);
+      const result = await api<MessageHistoryPage>(`/api/messages?${query}`);
       if (version !== historyVersion.current || revisionRef.current !== revision) return;
       setHistoryPage((current) => ({
         revision,
-        messages: [...result, ...(current.revision === revision ? current.messages : [])],
+        messages: [...result.messages, ...(current.revision === revision ? current.messages : [])],
+        hasMore: result.hasMore,
       }));
-      setHasEarlier(result.length === 60);
       requestAnimationFrame(() => {
         if (scroll.current) scroll.current.scrollTop += scroll.current.scrollHeight - height;
       });
@@ -350,6 +462,23 @@ export function Chat({
     } finally {
       if (version === historyVersion.current) setLoadingHistory(false);
     }
+  }
+  function cancelReturn() {
+    returning.current = 0;
+  }
+  function updateAway() {
+    const element = scroll.current;
+    if (!element) return;
+    const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+    if (distance >= 160 && Date.now() < returning.current) return;
+    returning.current = 0;
+    stickToBottom.current = distance < 160;
+    const since = Date.parse(allMessages.at(-1)?.createdAt ?? '') || Date.now();
+    setAway((current) => {
+      if (distance < 160) return null;
+      const shown = Boolean(current?.shown) || distance > element.clientHeight;
+      return current?.shown === shown ? current : { since: current?.since ?? since, shown };
+    });
   }
   function updateActiveTurn() {
     const element = scroll.current;
@@ -422,61 +551,51 @@ export function Chat({
           ).find((element) => element.dataset.messageId === id);
           if (!target) return;
           stickToBottom.current = false;
-          setScrolledUp(true);
+          returning.current = 0;
           setActiveTurn(id);
-          target.scrollIntoView({
-            block: 'start',
-            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-              ? 'instant'
-              : 'smooth',
-          });
+          target.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
         }}
       />
       <div
         className="conversation-scroll"
         ref={scroll}
         onScroll={() => {
-          const element = scroll.current;
-          if (element) {
-            stickToBottom.current =
-              element.scrollHeight - element.scrollTop - element.clientHeight < 160;
-            setScrolledUp(!stickToBottom.current);
-            updateActiveTurn();
-          }
+          updateActiveTurn();
+          updateAway();
         }}
+        onWheel={cancelReturn}
+        onTouchStart={cancelReturn}
+        onPointerDown={cancelReturn}
+        onKeyDown={cancelReturn}
       >
         <div className="conversation-column">
-          {persistedMessages.length > 0 && hasEarlier && (
-            <div className="history-control">
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={loadingHistory}
-                onClick={() => void history()}
-              >
-                {loadingHistory ? 'Loading…' : 'Load earlier messages'}
-              </Button>
-            </div>
-          )}
-          {visibleMessages.length === 0 && (
-            <div className="welcome">
-              <BrandMark />
-              <h1>What’s on your mind?</h1>
-              <div className="starter-actions">
-                {['Plan my day', 'Help me research something', 'Start a goal'].map((label) => (
-                  <button
-                    key={label}
-                    onClick={() => {
-                      setText(label);
-                      composer.current?.focus();
-                    }}
-                  >
-                    {label}
-                    <ArrowUpRight size={15} />
-                  </button>
-                ))}
+          {loadingHistory ? (
+            <div className="history-skeleton" role="status" aria-label="Loading earlier messages">
+              <Skeleton className="ghost-bubble" style={{ width: 'min(240px, 50%)' }} />
+              <div className="history-skeleton-reply">
+                <div className="assistant-mark">
+                  <BrandMark small />
+                </div>
+                <div className="skeleton-lines">
+                  <Skeleton style={{ width: 'min(420px, 70%)' }} />
+                  <Skeleton style={{ width: 'min(360px, 60%)' }} />
+                  <Skeleton style={{ width: 'min(260px, 45%)' }} />
+                </div>
               </div>
+              <Skeleton className="ghost-bubble" style={{ width: 'min(180px, 36%)' }} />
             </div>
+          ) : (
+            persistedMessages.length > 0 &&
+            hasEarlier && (
+              <div className="history-control">
+                <Button variant="ghost" size="sm" onClick={() => void history()}>
+                  Load earlier messages
+                </Button>
+              </div>
+            )
+          )}
+          {visibleMessages.length === 0 && !welcoming && !resetting && !working && !sending && (
+            <Welcome onPick={pick} />
           )}
           <div
             className="messages"
@@ -488,10 +607,13 @@ export function Chat({
             {visibleMessages.map((message, index) => (
               <Fragment key={message.streamId ?? message.id}>
                 {(!index ||
-                  new Date(visibleMessages[index - 1].createdAt).toDateString() !==
-                    new Date(message.createdAt).toDateString()) && (
+                  !isSameDay(
+                    visibleMessages[index - 1].createdAt,
+                    message.createdAt,
+                    dateFormat,
+                  )) && (
                   <div className="day-divider">
-                    <span>{dayLabel(message.createdAt)}</span>
+                    <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
                   </div>
                 )}
                 <MessageBubble
@@ -506,10 +628,10 @@ export function Chat({
                   }
                   streaming={streamIds.has(message.streamId ?? '')}
                   inspectorEnabled={state.configuration.inspectorEnabled}
-                  grouped={messagesAreGrouped(visibleMessages[index - 1], message)}
+                  grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
                   showTimestamp={
                     !streamIds.has(message.streamId ?? '') &&
-                    !messagesAreGrouped(message, visibleMessages[index + 1])
+                    !messagesAreGrouped(message, visibleMessages[index + 1], dateFormat)
                   }
                   onReply={
                     message.taskId || persistedIds.has(message.id)
@@ -522,7 +644,7 @@ export function Chat({
                 />
               </Fragment>
             ))}
-            {(sending || resetting || working) && streamEntries.length === 0 && (
+            {(sending || resetting || working || welcoming) && streamEntries.length === 0 && (
               <div
                 className="thinking"
                 role="status"
@@ -541,43 +663,34 @@ export function Chat({
               </div>
             )}
           </div>
-          {onboardingVisible && (
-            <section className="onboarding-card">
-              <div>
-                <h2>Make Otto yours.</h2>
-                <p>Connect your tools and pick something to work on.</p>
-              </div>
-              <Button
-                variant="outline"
-                disabled={sending || resetting || !state.configuration.llmReady}
-                onClick={() => window.dispatchEvent(new CustomEvent('otto:restart-setup'))}
-              >
-                Get started
-                <ArrowUpRight size={15} />
-              </Button>
-            </section>
-          )}
           <div ref={bottom} />
         </div>
       </div>
       <div className="chat-bottom conversation-column">
-        {scrolledUp && (
+        {away?.shown && (
           <Button
-            className="jump-latest"
+            className={`jump-latest${unseen ? ' has-unseen' : ''}`}
             variant="outline"
             size="sm"
+            aria-label={
+              unseen
+                ? `Back to latest, ${unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
+                : 'Back to latest'
+            }
             onClick={() => {
-              historyVersion.current++;
-              setLoadingHistory(false);
-              setHasEarlier(true);
               stickToBottom.current = true;
-              requestAnimationFrame(() => bottom.current?.scrollIntoView({ block: 'end' }));
+              returning.current = Date.now() + 1000;
+              setAway(null);
+              bottom.current?.scrollIntoView({ block: 'end', behavior: scrollBehavior() });
             }}
           >
             <ArrowDown size={14} />
-            Back to latest
+            {unseen
+              ? `${unseen > 99 ? '99+' : unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
+              : 'Back to latest'}
           </Button>
         )}
+        {away?.shown && <div className="jump-latest-fade" aria-hidden="true" />}
         {error && <Notice>{error}</Notice>}
         {connectionNotice && <Notice kind="info">{connectionNotice}</Notice>}
         {!state.configuration.llmReady && (
@@ -588,7 +701,7 @@ export function Chat({
         <Composer
           key={revision}
           ref={composer}
-          ready={state.configuration.llmReady && !resetting}
+          ready={state.configuration.llmReady && !resetting && !welcoming}
           sending={sending || resetting}
           text={text}
           setText={setText}

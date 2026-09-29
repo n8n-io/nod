@@ -61,6 +61,14 @@ test(
       assert.equal((await legacy.get()).quietHoursEnabled, true);
       await legacy.update({ quietHoursEnabled: false });
       assert.equal((await legacy.get()).quietStart, '22:00');
+      assert.equal((await legacy.get()).locale, null);
+      assert.equal((await legacy.get()).hourCycle, 'auto');
+      assert.equal((await legacy.update({ locale: 'pt-pt' })).locale, 'pt-PT');
+      await assert.rejects(legacy.update({ locale: 'not a region' }), /valid region/);
+      await assert.rejects(legacy.update({ hourCycle: 'h24' }));
+      assert.equal((await legacy.update({ hourCycle: 'h23' })).hourCycle, 'h23');
+      assert.equal((await legacy.get()).locale, 'pt-PT');
+      assert.equal((await legacy.get()).quietHoursEnabled, false);
       assert.equal((await getPreferences()).quietHoursEnabled, true);
       await assert.rejects(updatePreferences({ quietHoursEnabled: 'false' }));
       await db.pool.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS reaction text');
@@ -150,6 +158,19 @@ test(
       });
       assert.equal(legacyPut.statusCode, 200);
       assert.equal(legacyPut.json().quietHoursEnabled, false);
+      const original = (await app.inject({ url: '/api/preferences' })).json();
+      assert.equal(original.locale, null);
+      const roundTrip = await app.inject({
+        method: 'PUT',
+        url: '/api/preferences',
+        payload: original,
+      });
+      assert.equal(roundTrip.statusCode, 200);
+      assert.deepEqual(roundTrip.json(), original);
+      await updatePreferences({ locale: 'pt-PT' });
+      assert.equal((await updatePreferences({ locale: null })).locale, null);
+      await updatePreferences({ locale: 'en-US' });
+      assert.equal((await updatePreferences({ timeZone: 'UTC' })).locale, 'en-US');
       const foreign = await app.inject({
         method: 'PATCH',
         url: '/api/preferences',

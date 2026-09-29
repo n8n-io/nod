@@ -69,9 +69,9 @@ test('sent images form a capped gallery with overflow, preserve files, and share
     assert.equal(container.querySelectorAll('.attachment-image-tile').length, 4);
     assert.equal(container.querySelector('.attachment-image-more')?.textContent, '+2');
     assert.doesNotMatch(container.textContent ?? '', /Picture 1/);
-    assert.match(container.querySelector('.file-attachment')?.textContent ?? '', /notes.zip/);
+    assert.match(container.querySelector('.attachment-file')?.textContent ?? '', /notes.zip/);
     assert.equal(
-      container.querySelector('.file-attachment')?.getAttribute('href'),
+      container.querySelector('.attachment-file')?.getAttribute('href'),
       '/api/artifacts/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     );
     const first = container.querySelector<HTMLButtonElement>('[aria-label="View image 1 of 6"]')!;
@@ -136,7 +136,7 @@ test('sent images form a capped gallery with overflow, preserve files, and share
   }
 });
 
-test('mixed owned media share the capped viewer while native media keys and download fallbacks remain available', async () => {
+test('mixed owned media keep visual tiles in the gallery, documents in cards and native media keys', async () => {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
@@ -157,17 +157,17 @@ test('mixed owned media share the capped viewer while native media keys and down
   };
   try {
     await act(async () => root.render(createElement(MessageBubble, { message })));
-    assert.equal(container.querySelectorAll('.attachment-image-tile').length, 4);
-    assert.equal(container.querySelector('.attachment-image-more')?.textContent, '+1');
-    assert.equal(container.querySelector('.file-attachment'), null);
-    const trigger = container.querySelector<HTMLButtonElement>(
-      '[aria-label="View attachment 2 of 5"]',
-    )!;
+    assert.equal(container.querySelectorAll('.attachment-image-tile').length, 3);
+    assert.equal(container.querySelector('.attachment-image-more'), null);
+    assert.ok(container.querySelector('.attachment-card.is-audio'));
+    assert.ok(container.querySelector('.attachment-card.is-pdf'));
+    assert.equal(container.querySelector('.attachment-file'), null);
+    const card = container.querySelector<HTMLButtonElement>('.is-audio .attachment-card-open')!;
     await act(async () => {
-      click(trigger);
+      click(card);
       await tick();
     });
-    const viewer = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    let viewer = document.querySelector<HTMLElement>('[role="dialog"]')!;
     const audio = viewer.querySelector('audio')!;
     assert.ok(audio.controls);
     assert.equal(audio.getAttribute('src'), media[1].url);
@@ -183,8 +183,8 @@ test('mixed owned media share the capped viewer while native media keys and down
       audio.dispatchEvent(event);
       assert.equal(event.defaultPrevented, false);
     });
-    assert.equal(viewer.querySelector('[role="status"]')?.textContent, '2 / 5');
-    const surface = viewer.querySelector<HTMLElement>('.attachment-viewer-surface')!;
+    assert.equal(viewer.querySelector('[role="status"]')?.textContent, '1 / 2');
+    let surface = viewer.querySelector<HTMLElement>('.attachment-viewer-surface')!;
     await act(async () => {
       surface.focus();
       surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
@@ -192,9 +192,20 @@ test('mixed owned media share the capped viewer while native media keys and down
     assert.equal(viewer.querySelector('object'), null);
     assert.ok(viewer.querySelector('.attachment-viewer-surface.is-pdf'));
     assert.equal(viewer.querySelector('a[download]')?.getAttribute('href'), media[2].url);
-    await act(async () =>
-      surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })),
-    );
+    await act(async () => {
+      viewer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await tick();
+    });
+    assert.equal(document.activeElement, card);
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="View attachment 2 of 3"]',
+    )!;
+    await act(async () => {
+      click(trigger);
+      await tick();
+    });
+    viewer = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    surface = viewer.querySelector<HTMLElement>('.attachment-viewer-surface')!;
     const video = viewer.querySelector('video')!;
     assert.ok(video.controls);
     assert.equal(video.getAttribute('src'), media[3].url);
@@ -209,7 +220,7 @@ test('mixed owned media share the capped viewer while native media keys and down
       next.focus();
       next.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
     });
-    assert.equal(viewer.querySelector('[role="status"]')?.textContent, '5 / 5');
+    assert.equal(viewer.querySelector('[role="status"]')?.textContent, '3 / 3');
     assert.equal(viewer.querySelector('video'), null);
     assert.equal(viewer.querySelector('img')?.getAttribute('src'), media[4].url);
     assert.equal(next.getAttribute('aria-disabled'), 'true');
@@ -226,15 +237,10 @@ test('mixed owned media share the capped viewer while native media keys and down
 });
 
 test('media previews reject unsafe URLs and active types, including direct viewer inputs', async () => {
-  for (const mimeType of [
-    'text/html',
-    'image/svg+xml',
-    'application/xhtml+xml',
-    'video/not-real',
-  ]) {
+  for (const mimeType of ['text/html', 'application/xhtml+xml', 'video/not-real']) {
     assert.equal(artifactPreview({ ...pictures[0], mimeType }), null);
   }
-  for (const mimeType of ['application/pdf', 'audio/mp4', 'video/webm']) {
+  for (const mimeType of ['application/pdf', 'audio/mp4', 'video/webm', 'image/svg+xml']) {
     assert.ok(artifactPreview({ ...pictures[0], mimeType }));
     for (const url of [
       'https://example.com/file',
@@ -253,6 +259,7 @@ test('media previews reject unsafe URLs and active types, including direct viewe
       { ...pictures[0], mimeType: 'application/pdf', url: 'https://example.com/document.pdf' },
       { ...pictures[0], mimeType: 'text/html' },
       { ...pictures[0], mimeType: 'video/mp4', url: 'blob:untrusted' },
+      { ...pictures[0], mimeType: 'image/svg+xml', url: 'blob:local-vector', local: true },
     ]) {
       await act(async () =>
         root.render(
@@ -262,6 +269,7 @@ test('media previews reject unsafe URLs and active types, including direct viewe
             onSelect() {},
             onClose() {},
             restoreFocus() {},
+            allowLocalPreviews: 'local' in item,
           }),
         ),
       );
@@ -307,9 +315,14 @@ test('owned Markdown and CSV open readable previews with safe links and exact ta
   };
   try {
     await act(async () => root.render(createElement(MessageBubble, { message })));
-    assert.equal(container.querySelectorAll('.attachment-image-tile').length, 2);
+    assert.equal(container.querySelectorAll('.attachment-image-tile').length, 0);
+    assert.equal(
+      container.querySelectorAll('.attachment-cards > .is-markdown, .attachment-cards > .is-csv')
+        .length,
+      2,
+    );
     await act(async () => {
-      click(container.querySelector('[aria-label="View attachment 1 of 2"]')!);
+      click(container.querySelector('.is-markdown .attachment-card-open')!);
       await tick();
     });
     let viewer = document.querySelector<HTMLElement>('[role="dialog"]')!;
@@ -405,7 +418,8 @@ test('gallery sources accept owned raster images and reject remote, private and 
     '/api/artifacts/abc?token=private',
   ])
     assert.equal(artifactImage({ ...pictures[0], url }), null);
-  assert.equal(artifactImage({ ...pictures[0], mimeType: 'image/svg+xml' }), null);
+  const vector = artifactImage({ ...pictures[0], mimeType: 'image/svg+xml' });
+  assert.ok(vector);
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
@@ -419,6 +433,18 @@ test('gallery sources accept owned raster images and reject remote, private and 
     );
     assert.equal(container.querySelector('img'), null);
     assert.equal(container.querySelector('button'), null);
+    await act(async () => root.render(createElement(ImageGallery, { images: [vector] })));
+    const image = container.querySelector('img')!;
+    assert.equal(image.getAttribute('src'), pictures[0].url);
+    assert.ok(image.classList.contains('is-vector'));
+    assert.equal(container.querySelector('svg,object,iframe,embed'), null);
+    await act(async () => {
+      click(container.querySelector('button')!);
+      await tick();
+    });
+    const viewer = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    assert.ok(viewer.querySelector('.attachment-viewer-surface img.is-vector'));
+    assert.equal(viewer.querySelector('.attachment-viewer-surface svg,object,iframe,embed'), null);
   } finally {
     await act(async () => root.unmount());
     container.remove();

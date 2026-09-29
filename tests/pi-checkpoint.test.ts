@@ -433,3 +433,44 @@ test('the real runtime error wrapper leaves an uncertain browser action fenced a
     await f.close();
   }
 });
+
+test('a fresh Pi session replaces an interrupted checkpoint only when requested', async () => {
+  const f = await fixture();
+  try {
+    const first = await createPiCheckpoint({
+      store: f.store,
+      taskId: f.taskId,
+      directory: join(f.directory, 'first'),
+    });
+    await assert.rejects(
+      first.execute('call', 'browser', async () => {
+        throw new Error('fixture read failure');
+      }),
+      /result could be confirmed/,
+    );
+    await assert.rejects(
+      createPiCheckpoint({ store: f.store, taskId: f.taskId, directory: join(f.directory, 'a') }),
+      /interrupted before its result/,
+    );
+    const fresh = await createPiCheckpoint({
+      store: f.store,
+      taskId: f.taskId,
+      directory: join(f.directory, 'fresh'),
+      fresh: true,
+    });
+    assert.equal(
+      fresh.manager.getEntries().some((entry) => entry.type === 'custom'),
+      false,
+    );
+    const saved = await f.store.read(`sessions/${f.taskId}.jsonl`, 1024 * 1024);
+    assert.doesNotMatch(saved!.bytes.toString(), /otto_tool_pending/);
+    const resumed = await createPiCheckpoint({
+      store: f.store,
+      taskId: f.taskId,
+      directory: join(f.directory, 'resumed'),
+    });
+    assert.ok(resumed.manager);
+  } finally {
+    await f.close();
+  }
+});

@@ -137,8 +137,47 @@ async function fixture(t: TestContext) {
     removed,
     sessions,
     wakes,
+    callbacks,
   };
 }
+
+test(
+  'new-window consent returns before session cleanup and closes through a fixed page',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t);
+    let release!: () => void;
+    f.provider.deleteSession = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    const response = await f.app.inject({
+      method: 'POST',
+      url: '/api/apps/slack/connect',
+      payload: { returnTo: 'window' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    release();
+    const url = new URL(f.callbacks.at(-1)!);
+    assert.equal(response.json().attempt, url.searchParams.get('state'));
+    url.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+    const callback = await f.app.inject({ url: `${url.pathname}${url.search}` });
+    assert.equal(
+      callback.headers.location,
+      `http://localhost:4310/connected.html?connection=connected&service=slack&attempt=${response.json().attempt}`,
+    );
+    const forged = await f.app.inject({
+      url: `/api/apps/callback?state=${'x'.repeat(43)}&returnTo=window&service=slack`,
+    });
+    assert.equal(forged.headers.location, 'http://localhost:4310/apps?connection=expired');
+    const rejected = await f.app.inject({
+      method: 'POST',
+      url: '/api/apps/slack/connect',
+      payload: { returnTo: 'https://attacker.example.test' },
+    });
+    assert.equal(rejected.statusCode, 400);
+  },
+);
 
 test(
   'owned app reads omit oversized results while discovery preserves complete schemas',
@@ -457,5 +496,40 @@ test(
     controller.abort();
     await assert.rejects(cancelled, { name: 'AbortError' });
     finish(file);
+  },
+);
+
+test(
+  'app listing reads connections, discovered apps and browser access at the same time',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await fixture(t);
+    const entered: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read =
+      <T>(name: string, value: T) =>
+      async () => {
+        entered.push(name);
+        await gate;
+        return value;
+      };
+    const service = await createIntegrations(f.pool, {
+      ownerId: 'local-development',
+      provider: f.provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => {},
+      browserAccounts: read('logins', []),
+      discovered: { list: read('discovered', []) } as never,
+      browserConnections: read('browser', []),
+    });
+    const listing = service.list();
+    for (let attempt = 0; entered.length < 3 && attempt < 100; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(entered.sort(), ['browser', 'discovered', 'logins']);
+    release();
+    assert.ok((await listing).length > 0);
   },
 );

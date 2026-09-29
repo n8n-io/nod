@@ -520,6 +520,69 @@ test(
         },
       );
 
+      await t.test(
+        'history links a run to its first owned assistant message in the current web chat',
+        async () => {
+          const schedule = await create({ kind: 'once', runAt: '2035-11-09T10:00:00Z' });
+          await deliver([await jobFor(schedule.id)]);
+          let run = (await runs(schedule.id))[0]!;
+          assert.equal(run.messageId, null);
+          assert.equal(run.messagePreview, null);
+          const insert = (id: string, owner: string, role: string, text: string, at: string) =>
+            db.pool.query(
+              'INSERT INTO messages(id,owner_id,role,text,task_id,created_at) VALUES($1,$2,$3,$4,$5,$6)',
+              [id, owner, role, text, run.taskId, at],
+            );
+          const first = randomUUID();
+          await insert(
+            randomUUID(),
+            'foreign-owner',
+            'assistant',
+            'Foreign',
+            '2035-11-09T10:00:01Z',
+          );
+          await insert(
+            randomUUID(),
+            'local-development',
+            'user',
+            'Synthetic',
+            '2035-11-09T10:00:02Z',
+          );
+          await insert(
+            first,
+            'local-development',
+            'assistant',
+            `Synthetic   summary\n\n${'word '.repeat(60)}`,
+            '2035-11-09T10:00:03Z',
+          );
+          await insert(
+            randomUUID(),
+            'local-development',
+            'assistant',
+            'Later',
+            '2035-11-09T10:00:04Z',
+          );
+          run = (await runs(schedule.id))[0]!;
+          assert.equal(run.messageId, first);
+          assert.equal(run.messagePreview!.length, 160);
+          assert.match(run.messagePreview!, /^Synthetic summary word word .*…$/);
+          assert.equal(run.messageText, `Synthetic   summary\n\n${'word '.repeat(60)}`);
+          assert.equal((await saved(schedule.id)).lastRun?.messageId, first);
+          await db.pool.query("UPDATE tasks SET channel='telegram' WHERE id=$1", [run.taskId]);
+          assert.equal((await runs(schedule.id))[0]!.messageId, null);
+          await db.pool.query("UPDATE tasks SET channel='web' WHERE id=$1", [run.taskId]);
+          assert.equal((await runs(schedule.id))[0]!.messageId, first);
+          await db.pool.query(
+            `INSERT INTO conversations(owner_id,channel,revision) VALUES('local-development','web',1)
+             ON CONFLICT(owner_id,channel) DO UPDATE SET revision=conversations.revision+1`,
+          );
+          const archived = (await runs(schedule.id))[0]!;
+          assert.equal(archived.messageId, null);
+          assert.equal(archived.messagePreview, null);
+          assert.equal(archived.messageText, null);
+        },
+      );
+
       await t.test('invalid or ambiguous timing cannot create jobs', async () => {
         const before = (await personal.listSchedules()).length;
         for (const timing of [

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
+  LayoutGrid,
   Monitor,
   Moon,
-  Menu,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -10,6 +10,7 @@ import {
   Sun,
 } from 'lucide-react';
 import { BrandMark } from './brand';
+import { AccountAvatar } from './account-avatar';
 import { ConnectionMenu } from './connection-menu';
 import { AccountMenu, AccountMenuItems, type AccountControls } from './account-menu';
 import { currentTheme, setTheme, subscribeTheme } from '../lib/theme';
@@ -46,7 +47,8 @@ export function Sidebar({
   const [hints, setHints] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
-  const mobileNavigation = useRef<HTMLDivElement>(null);
+  const mobileTrigger = useRef<HTMLButtonElement>(null);
+  const mobileSheet = useRef<HTMLDialogElement>(null);
   const theme = useSyncExternalStore(subscribeTheme, currentTheme, () => 'light');
   const ThemeIcon = theme === 'dark' ? Sun : Moon;
   const themeLabel = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
@@ -56,6 +58,22 @@ export function Sidebar({
   navigate.current = onNavigate;
   const toggles = useRef({ onToggle, onToggleInspector, inspectorEnabled });
   toggles.current = { onToggle, onToggleInspector, inspectorEnabled };
+  const closeMobileMenu = () => {
+    setMobileMenuOpen(false);
+    (window.innerWidth <= 640
+      ? mobileTrigger.current
+      : document.getElementById('workspace')
+    )?.focus();
+  };
+  useEffect(() => {
+    const sheet = mobileSheet.current;
+    if (!sheet) return;
+    if (mobileMenuOpen && !sheet.open) {
+      sheet.showModal();
+      sheet.querySelector<HTMLElement>('.mobile-sheet-body')?.focus();
+    }
+    if (!mobileMenuOpen && sheet.open) sheet.close();
+  }, [mobileMenuOpen]);
   useEffect(() => {
     setMobileMenuOpen(false);
     setAppMenuOpen(false);
@@ -109,16 +127,12 @@ export function Sidebar({
       event.preventDefault();
       event.stopPropagation();
       if (action.type === 'sidebar') {
-        if (window.innerWidth <= 640) {
-          const trigger = mobileNavigation.current?.querySelector<HTMLButtonElement>(
-            'button[aria-haspopup="menu"]',
-          );
-          trigger?.focus();
-          trigger?.click();
-        } else toggles.current.onToggle();
+        if (window.innerWidth <= 640) setMobileMenuOpen((open) => !open);
+        else toggles.current.onToggle();
         return;
       }
       if (action.type === 'inspector') {
+        setMobileMenuOpen(false);
         toggles.current.onToggleInspector?.();
         return;
       }
@@ -154,40 +168,6 @@ export function Sidebar({
       document.removeEventListener('visibilitychange', clear);
     };
   }, [mac]);
-  const appActions = (close: () => void) => (
-    <>
-      {inspectorEnabled && (
-        <button
-          type="button"
-          role="menuitem"
-          aria-expanded={inspectorOpen}
-          aria-controls="developer-inspector"
-          aria-keyshortcuts="Meta+I Control+I"
-          title={`Inspector (${shortcutLabel('i', mac)})`}
-          onClick={() => {
-            close();
-            onToggleInspector?.();
-          }}
-        >
-          <Monitor size={18} aria-hidden="true" /> Inspector
-        </button>
-      )}
-      <button
-        type="button"
-        role="menuitem"
-        onClick={() => {
-          close();
-          onRestart();
-        }}
-      >
-        <RotateCcw size={18} aria-hidden="true" />
-        <span>
-          Restart setup
-          <small>Starts a new chat. Keeps your saved data.</small>
-        </span>
-      </button>
-    </>
-  );
   return (
     <aside className={`sidebar ${hints ? 'show-shortcuts' : ''}`} aria-label="Sidebar">
       <a
@@ -266,7 +246,7 @@ export function Sidebar({
           })}
         </ul>
       </nav>
-      <div className="mobile-navigation" ref={mobileNavigation}>
+      <div className="mobile-top-bar">
         <a
           href="/"
           className="mobile-chat-link"
@@ -286,25 +266,41 @@ export function Sidebar({
             onNavigate('/');
           }}
         >
-          <BrandMark small />
-          <span>Chat</span>
+          <BrandMark />
         </a>
-        <ConnectionMenu
-          label="Navigation menu"
-          compact
-          open={mobileMenuOpen}
-          onOpenChange={setMobileMenuOpen}
-          trigger={<Menu size={22} aria-hidden="true" />}
+        <button
+          type="button"
+          ref={mobileTrigger}
+          className="mobile-menu-trigger"
+          aria-label="Navigation menu"
+          aria-haspopup="dialog"
+          aria-expanded={mobileMenuOpen}
+          onClick={() => setMobileMenuOpen(true)}
         >
-          {(close) => (
-            <>
+          {account ? (
+            <AccountAvatar user={account.user} />
+          ) : (
+            <LayoutGrid size={22} aria-hidden="true" />
+          )}
+        </button>
+        <dialog
+          ref={mobileSheet}
+          className="mobile-sheet"
+          aria-label="Navigation menu"
+          onClose={closeMobileMenu}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeMobileMenu();
+          }}
+        >
+          <div className="mobile-sheet-body" tabIndex={-1}>
+            <nav className="mobile-sections" aria-label="Sections">
               {navigationItems.map((item) => {
                 const Icon = item.icon;
                 return (
                   <a
                     key={item.path}
                     href={item.path}
-                    role="menuitem"
+                    className="mobile-section"
                     aria-current={path === item.path ? 'page' : undefined}
                     onClick={(event) => {
                       if (
@@ -316,34 +312,49 @@ export function Sidebar({
                       )
                         return;
                       event.preventDefault();
-                      close();
+                      closeMobileMenu();
                       onNavigate(item.path);
                     }}
                   >
-                    <Icon size={18} aria-hidden="true" />
+                    <Icon size={24} strokeWidth={1.8} aria-hidden="true" />
                     <span>{item.label}</span>
                   </a>
                 );
               })}
-              <div className="mobile-menu-separator" role="separator" />
+            </nav>
+            <div className="mobile-sheet-actions">
               {account ? (
-                <AccountMenuItems account={account} close={close} />
-              ) : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    toggleTheme();
-                    close();
+                <AccountMenuItems
+                  account={{
+                    ...account,
+                    onSettings: (tab) =>
+                      account.onSettings(tab, mobileTrigger.current ?? undefined),
                   }}
-                >
+                  close={closeMobileMenu}
+                  shortcuts={false}
+                  menu={false}
+                />
+              ) : (
+                <button type="button" onClick={toggleTheme}>
                   <ThemeIcon size={18} aria-hidden="true" /> {themeLabel}
                 </button>
               )}
-              {appActions(close)}
-            </>
-          )}
-        </ConnectionMenu>
+              {inspectorEnabled && (
+                <button
+                  type="button"
+                  aria-expanded={inspectorOpen}
+                  aria-controls="developer-inspector"
+                  onClick={() => {
+                    closeMobileMenu();
+                    onToggleInspector?.();
+                  }}
+                >
+                  <Monitor size={18} aria-hidden="true" /> Inspector
+                </button>
+              )}
+            </div>
+          </div>
+        </dialog>
       </div>
       <div className="sidebar-bottom">
         {!account && (
@@ -388,23 +399,40 @@ export function Sidebar({
             <span className="nav-label">Get started</span>
           </button>
         ) : (
-          <div className="sidebar-app-menu">
-            <ConnectionMenu
-              label="App menu"
-              triggerClassName="nav-link"
-              compact
-              open={appMenuOpen}
-              onOpenChange={setAppMenuOpen}
-              trigger={
-                <>
-                  <MoreHorizontal size={22} aria-hidden="true" />
-                  <span className="nav-label">More</span>
-                </>
-              }
-            >
-              {appActions}
-            </ConnectionMenu>
-          </div>
+          inspectorEnabled && (
+            <div className="sidebar-app-menu">
+              <ConnectionMenu
+                label="App menu"
+                triggerClassName="nav-link"
+                compact
+                open={appMenuOpen}
+                onOpenChange={setAppMenuOpen}
+                trigger={
+                  <>
+                    <MoreHorizontal size={22} aria-hidden="true" />
+                    <span className="nav-label">More</span>
+                  </>
+                }
+              >
+                {(close) => (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-expanded={inspectorOpen}
+                    aria-controls="developer-inspector"
+                    aria-keyshortcuts="Meta+I Control+I"
+                    title={`Inspector (${shortcutLabel('i', mac)})`}
+                    onClick={() => {
+                      close();
+                      onToggleInspector?.();
+                    }}
+                  >
+                    <Monitor size={18} aria-hidden="true" /> Inspector
+                  </button>
+                )}
+              </ConnectionMenu>
+            </div>
+          )
         )}
         <button
           type="button"

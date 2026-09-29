@@ -4,6 +4,7 @@ import type { InspectorPromptsResponse } from '../../shared/inspector-prompts';
 import { api, errorMessage } from '../lib/api';
 import { Button, Loading, Notice } from './ui';
 import { compactActivityText } from '../lib/inspector-observations';
+import { formatDateTime, formatNumber, useDateFormat } from '../lib/date-format';
 
 function PromptText({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
@@ -14,7 +15,7 @@ function PromptText({ label, text }: { label: string; text: string }) {
           <ChevronDown size={13} />
           {label}
         </span>
-        <small>{text.length.toLocaleString()} characters</small>
+        <small>{formatNumber(text.length)} characters</small>
       </summary>
       <Button
         variant="ghost"
@@ -39,6 +40,7 @@ export function InspectorPrompts({ taskId }: { taskId?: string }) {
 }
 
 function PromptHistory({ taskId }: { taskId?: string }) {
+  const dateFormat = useDateFormat();
   const [data, setData] = useState<InspectorPromptsResponse | null>(null);
   const [error, setError] = useState('');
   const [older, setOlder] = useState(false);
@@ -133,7 +135,7 @@ function PromptHistory({ taskId }: { taskId?: string }) {
             <span>
               <strong>{compactActivityText(prompt.title, 90)}</strong>
               <small>
-                {new Date(prompt.createdAt).toLocaleString()} · {prompt.provider} / {prompt.model}
+                {formatDateTime(prompt.createdAt, dateFormat)} · {prompt.provider} / {prompt.model}
               </small>
             </span>
           </header>

@@ -9,6 +9,7 @@ export interface TenantRuntimeHost {
       kind?: 'user' | 'webhook' | 'wake';
     },
   ): Promise<Response>;
+  warm?(ownerId: string): Promise<void>;
   prepareDeployment?(input: DeploymentInput): Promise<DeploymentReceipt[]>;
   resumeDeployment?(input: DeploymentInput): Promise<void>;
   close(): Promise<void>;

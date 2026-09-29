@@ -216,6 +216,9 @@ test(
       assert.equal(response.statusCode, 409, response.body);
       assert.deepEqual(response.json(), {
         error: 'I can’t safely repeat the earlier action because its outcome is unknown.',
+        code: 'task_review_required',
+        taskId,
+        summary: 'Synthetic uncertain action',
       });
       assert.equal(submissions, 1);
       assert.equal(routes, 1);

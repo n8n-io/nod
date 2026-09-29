@@ -9,6 +9,7 @@ import {
   ImageViewer,
   AttachmentThumbnail,
   attachmentKind,
+  localPreviewable,
   ownedArtifactUrl,
   previewableImage,
   type ImagePreview,
@@ -137,7 +138,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       const controller = new AbortController();
       uploads.current.add(controller);
       let previewUrl: string | undefined;
-      if (attachmentKind(file.type)) {
+      if (localPreviewable(file.type)) {
         try {
           previewUrl = URL.createObjectURL(file);
           previewUrls.current.add(previewUrl);

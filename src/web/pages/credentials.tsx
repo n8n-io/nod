@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, KeyRound, LockKeyhole, ArrowUpRight } from 'lucide-react';
 import type { CredentialRequest } from '../../shared/contracts';
 import { api } from '../lib/api';
-import { suggestLoginName } from '../lib/vault-name';
+import { originLabel, suggestLoginName } from '../lib/vault-name';
 import { Button, Field, Input, Loading, Notice } from '../components/ui';
 import { BrandMark } from '../components/brand';
 
@@ -173,7 +173,7 @@ function CredentialForm({ id }: { id: string }) {
         {saving ? (
           <div className="credential-complete" role="status" aria-live="polite">
             <h1>{request?.kind === 'otp' ? 'Checking your code…' : 'Continuing sign-in…'}</h1>
-            {request && <p>{request.origin}</p>}
+            {request && <p>{originLabel(request.origin)}</p>}
             <Loading label="Waiting for the website…" />
           </div>
         ) : !request && !error ? (
@@ -219,7 +219,9 @@ function CredentialForm({ id }: { id: string }) {
               <div>
                 <h1>{request?.kind === 'otp' ? 'Enter verification code' : 'Sign in'}</h1>
                 <p className="credential-intro">
-                  {request?.origin ?? 'Return to chat to request a new sign-in link.'}
+                  {request
+                    ? originLabel(request.origin)
+                    : 'Return to chat to request a new sign-in link.'}
                 </p>
               </div>
             </header>

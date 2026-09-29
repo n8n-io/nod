@@ -1,30 +1,27 @@
-import { Children, lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  FileText,
-  ExternalLink,
-  Copy,
-  Check,
-  CornerUpLeft,
-  SmilePlus,
-  ScanSearch,
-  MoreHorizontal,
-  X,
-} from 'lucide-react';
+import { Copy, Check, CornerUpLeft, SmilePlus, ScanSearch, MoreHorizontal, X } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
-import type { Artifact, Message, Task } from '../../shared/contracts';
+import type { Message, Task } from '../../shared/contracts';
 import { reactionEmoji } from '../../shared/emoji';
-import { Button, Loading, Notice } from './ui';
+import { Button, Checkbox, Loading, Notice } from './ui';
 import { BrandMark } from './brand';
 import { errorMessage, post } from '../lib/api';
-import { credentialLinkLabel, safeMessageLink } from '../lib/message-links';
-import { remarkLocalLinks } from '../lib/markdown';
+import {
+  messageLinkText,
+  messageSetupLinks,
+  safeMessageLink,
+  setupLink,
+} from '../lib/message-links';
+import { rehypeLocalLinks } from '../lib/markdown';
 import { nextReaction, reactionName } from '../lib/reactions';
 import { MessageLinkPreviews } from './link-previews';
-import { artifactPreview, ImageGallery, ownedArtifactUrl } from './attachment-images';
+import { SetupActions } from './setup-link';
+import { MessageAttachments } from './attachment-card';
+import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
 
@@ -36,40 +33,33 @@ export const MessageText = memo(function MessageText({
   previews?: boolean;
 }) {
   const content = useRef<HTMLDivElement>(null);
+  const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
+  const actions = messageSetupLinks(text, origin);
   return (
     <>
       <div className="message-text" ref={content}>
         <Markdown
-          remarkPlugins={[remarkGfm, remarkLocalLinks]}
-          rehypePlugins={[rehypeRaw, rehypeSanitize]}
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw, rehypeLocalLinks, rehypeSanitize]}
           components={{
-            a: ({ href, children }) => {
-              const link = safeMessageLink(
-                href ?? '',
-                typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin,
-              );
+            a: ({ href, children, node }) => {
+              const link = safeMessageLink(href ?? '', origin);
               if (!link) return <span>{children}</span>;
-              const label =
-                link.kind === 'credential'
-                  ? credentialLinkLabel(
-                      Children.toArray(children)
-                        .filter((child) => typeof child === 'string')
-                        .join(''),
-                    )
-                  : children;
+              const setup = setupLink(link, messageLinkText(node?.children ?? []));
+              if (setup && actions.some((action) => action.href === setup.href))
+                return <strong className="setup-phrase">{setup.label}</strong>;
               return (
                 <a
                   href={link.href}
                   target={
-                    link.href.startsWith('/apps?connect=') || link.href.startsWith('/e2e/connect/')
+                    setup?.href.startsWith('/apps?connect=') ||
+                    link.href.startsWith('/e2e/connect/')
                       ? undefined
                       : '_blank'
                   }
                   rel="noopener noreferrer"
-                  className={link.kind === 'credential' ? 'credential-link' : undefined}
                 >
-                  {label}
-                  {link.kind === 'credential' && <ExternalLink size={12} />}
+                  {setup ? setup.label : children}
                 </a>
               );
             },
@@ -79,34 +69,17 @@ export const MessageText = memo(function MessageText({
               ) : (
                 <span>{alt || 'Image'}</span>
               ),
-            input: ({ checked }) => (
-              <input type="checkbox" checked={checked ?? false} readOnly disabled />
-            ),
+            input: ({ checked }) => <Checkbox checked={checked ?? false} readOnly disabled />,
           }}
         >
           {text}
         </Markdown>
+        <SetupActions actions={actions} />
       </div>
       {previews && <MessageLinkPreviews content={content} text={text} />}
     </>
   );
 });
-
-export function Attachment({ artifact }: { artifact: Artifact }) {
-  const url = ownedArtifactUrl(artifact.url) ? artifact.url : '';
-  if (!url) return null;
-  const image = artifactPreview(artifact);
-  if (image) return <ImageGallery images={[image]} />;
-  return (
-    <a className="file-attachment" href={url} download={artifact.name}>
-      <FileText size={18} />
-      <span>
-        {artifact.name}
-        <small>{Math.max(1, Math.round(artifact.size / 1024))} KB</small>
-      </span>
-    </a>
-  );
-}
 
 function taskRunLabel(task: Task, startedAt?: string) {
   if (!['succeeded', 'failed', 'cancelled'].includes(task.status)) return null;
@@ -150,6 +123,7 @@ export function MessageBubble({
   streaming?: boolean;
   onReply?(): void;
 }) {
+  const dateFormat = useDateFormat();
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [reaction, setReaction] = useState(message.reaction ?? null);
@@ -161,6 +135,7 @@ export function MessageBubble({
   const [selected, setSelected] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const articleElement = useRef<HTMLElement>(null);
   const menuElement = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLElement | null>(null);
   const pickerTrigger = useRef<HTMLElement | null>(null);
@@ -170,10 +145,6 @@ export function MessageBubble({
     message.role === 'user'
       ? reactionEmoji(message.reactions?.find((item) => item.actor === 'assistant')?.reaction ?? '')
       : '';
-  const images = message.attachments.flatMap((artifact) => {
-    const image = artifactPreview(artifact);
-    return image ? [image] : [];
-  });
   useEffect(() => {
     setSelectedName('');
     setReaction(
@@ -188,6 +159,14 @@ export function MessageBubble({
     },
     [],
   );
+  useEffect(() => {
+    if (!selected) return;
+    const outside = (event: PointerEvent) => {
+      if (!articleElement.current?.contains(event.target as Node)) setSelected(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [selected]);
   useEffect(() => {
     if (!menu) return;
     const close = (event: PointerEvent) => {
@@ -337,15 +316,15 @@ export function MessageBubble({
       y: Math.max(8, Math.min(y, window.innerHeight - 230)),
     });
   }
-  const sent = new Date(message.createdAt);
   const taskResult = task ? taskRunLabel(task, taskStartedAt) : null;
   const timestamp = showTimestamp && !streaming && (
-    <time dateTime={message.createdAt} title={sent.toLocaleString()}>
-      {sent.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+    <time dateTime={message.createdAt} title={formatFullDateTime(message.createdAt, dateFormat)}>
+      {formatTime(message.createdAt, dateFormat)}
     </time>
   );
   return (
     <article
+      ref={articleElement}
       className={`message message-${message.role}${streaming ? ' streaming-message' : ''}${grouped ? ' message-grouped' : ''}${!showTimestamp ? ' message-continuing' : ''}${selected ? ' message-selected' : ''}`}
       aria-label={streaming ? 'Otto is responding' : message.role === 'user' ? 'You' : 'Otto'}
       data-message-id={streaming ? undefined : message.id}
@@ -380,14 +359,7 @@ export function MessageBubble({
             </blockquote>
           )}
           {message.attachments.length > 0 && (
-            <div className="message-attachments">
-              {images.length > 0 && <ImageGallery images={images} />}
-              {message.attachments
-                .filter((artifact) => !artifactPreview(artifact))
-                .map((artifact) => (
-                  <Attachment key={artifact.id} artifact={artifact} />
-                ))}
-            </div>
+            <MessageAttachments attachments={message.attachments} />
           )}
           {message.text && <MessageText text={message.text} previews={!streaming} />}
           {streaming && <span className="stream-cursor" />}
@@ -497,7 +469,7 @@ export function MessageBubble({
       {menu &&
         createPortal(
           <div
-            className="chat-message-menu"
+            className="chat-message-menu menu"
             ref={menuElement}
             role="menu"
             aria-label="Message actions"

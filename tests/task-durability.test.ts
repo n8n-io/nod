@@ -53,6 +53,7 @@ test(
       feedback: Array<{ feedback: string }>;
     }> = [];
     const ran = new Set<string>();
+    const segments: RuntimeContext[] = [];
     let rolledBackTask = '';
     const triage = createTriage({
       getProfile: personal.getProfile,
@@ -67,16 +68,29 @@ test(
         },
       },
     });
+    const { createAccountProfileStore, runtimeAccount } =
+      await import('../src/server/account-profile.ts');
+    const accountProfiles = createAccountProfileStore(db.pool, 'local-development');
     const dependencies: TaskDependencies = {
+      accountProfile: async () => runtimeAccount(await accountProfiles.read()),
       speech: {
         synthesize: async () => {
           throw new Error('Unused fixture');
         },
       },
+      recoveryDelaysSeconds: [0, 0],
       runTask: async (context) => {
         ran.add(context.taskId);
+        segments.push(context);
         assert.equal(context.personalContext?.profile.phone, 'PRIVATE-PHONE-FIXTURE');
         assert.equal(context.personalContext?.profile.name, 'Fixture Person');
+        assert.deepEqual(context.account, {
+          preferredName: 'Fixture',
+          fullName: 'Synthetic Fixture Person',
+          email: 'fixture@example.test',
+        });
+        assert.equal(context.locale, 'pt-PT');
+        assert.equal(context.hourCycle, 'h12');
         if (context.prompt === 'cancel-fence-fixture') {
           captured = context;
           await gate;
@@ -150,8 +164,15 @@ test(
         },
       ]);
       await db.pool.query(
-        "INSERT INTO preferences(owner_id,notification_rule,quiet_start,quiet_end) VALUES('local-development','Notify about fixture events','00:00','00:00')",
+        "INSERT INTO preferences(owner_id,notification_rule,quiet_start,quiet_end,locale,hour_cycle) VALUES('local-development','Notify about fixture events','00:00','00:00','pt-PT','h12')",
       );
+      await accountProfiles.initialize();
+      await accountProfiles.save({
+        name: 'Synthetic Fixture Person',
+        givenName: 'Synthetic',
+        email: 'fixture@example.test',
+        preferredName: 'Fixture',
+      });
 
       await t.test('task and job roll back together in the caller transaction', async () => {
         await assert.rejects(
@@ -473,7 +494,7 @@ test(
       );
 
       await t.test(
-        'restart requeues queued tasks but sends interrupted execution to review',
+        'restart recovers interrupted work once: outside actions are checked and reads retry',
         async () => {
           const missingJob = await tasks.submitTask('recovery-fixture', [], undefined, true, {
             sourceId: 'recovery-fixture',
@@ -482,9 +503,11 @@ test(
             missingJob,
           ]);
           const interrupted = randomUUID();
+          const legacy = randomUUID();
+          const readOnly = randomUUID();
           await db.pool.query(
-            "INSERT INTO tasks(id,owner_id,title,prompt,status) VALUES($1,'local-development','Interrupted','Do not repeat','running')",
-            [interrupted],
+            "INSERT INTO tasks(id,owner_id,title,prompt,status,external_action) VALUES($1,'local-development','Interrupted','Do not repeat','running',true),($2,'local-development','Legacy','Do not repeat','running',NULL),($3,'local-development','Read only','Read the synthetic page','running',false)",
+            [interrupted, legacy, readOnly],
           );
           await tasks.startTaskWorkers(dependencies);
           await waitFor(
@@ -492,12 +515,48 @@ test(
               (await db.pool.query('SELECT status FROM tasks WHERE id=$1', [missingJob])).rows[0]
                 .status === 'succeeded',
           );
-          assert.equal(
-            (await db.pool.query('SELECT status FROM tasks WHERE id=$1', [interrupted])).rows[0]
-              .status,
-            'waiting_user',
+          await waitFor(async () =>
+            (
+              await db.pool.query('SELECT status FROM tasks WHERE id=ANY($1::uuid[])', [
+                [interrupted, legacy, readOnly],
+              ])
+            ).rows.every((row) => row.status === 'succeeded'),
           );
-          assert.equal(ran.has(interrupted), false);
+          const recovered = (id: string) =>
+            segments
+              .filter((context) => context.taskId === id)
+              .map((context) => [
+                context.checkOutcome,
+                context.freshSession,
+                context.prompt.slice(0, 22),
+              ]);
+          assert.deepEqual(recovered(interrupted), [[true, true, 'An earlier attempt at ']]);
+          assert.deepEqual(recovered(legacy), [[true, true, 'An earlier attempt at ']]);
+          assert.deepEqual(recovered(readOnly), [[false, true, 'Read the synthetic pag']]);
+          for (const id of [interrupted, legacy, readOnly]) {
+            const task = (
+              await db.pool.query('SELECT revision,recovery_attempts FROM tasks WHERE id=$1', [id])
+            ).rows[0];
+            assert.deepEqual(task, { revision: 1, recovery_attempts: 1 });
+            assert.equal(
+              (
+                await db.pool.query(
+                  "SELECT id FROM task_events WHERE task_id=$1 AND type='recovering'",
+                  [id],
+                )
+              ).rowCount,
+              1,
+            );
+            assert.equal(
+              (
+                await db.pool.query(
+                  "SELECT id FROM messages WHERE task_id=$1 AND role='assistant'",
+                  [id],
+                )
+              ).rowCount,
+              0,
+            );
+          }
         },
       );
 
@@ -513,6 +572,7 @@ test(
           await assert.rejects(context.remember('late-memory-fixture'));
           await assert.rejects(context.manage('profile_update', { name: 'Injected' }));
           await assert.rejects(context.integration('GMAIL_FETCH_EMAILS', {}));
+          await assert.rejects(context.startExternalAction!());
           await assert.rejects(
             context.requestCredential({
               origin: 'https://example.com',

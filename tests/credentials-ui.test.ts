@@ -193,7 +193,8 @@ test('another login suggests a distinct name and retains edits while switching s
 test('multiple saved logins show named choices and submit only the selected entry ID', async () => {
   const f = await setup(undefined, { request: { savedEntries } });
   try {
-    assert.match(f.element.textContent!, /https:\/\/example.com/);
+    assert.match(f.element.textContent!, /Sign inexample\.com/);
+    assert.doesNotMatch(f.element.textContent!, /https:\/\//);
     assert.match(f.element.textContent!, /Choose a login/);
     assert.equal(f.element.querySelector('input[name=password]'), null);
     const selected = [...f.element.querySelectorAll('button')].find((button) =>
@@ -359,7 +360,7 @@ test('a late secure result cannot navigate or complete a replacement form', asyn
     await act(async () =>
       response.resolve(json({ ok: false, retryUrl: '/vault/obsolete-secure-request-12345' })),
     );
-    assert.match(f.element.textContent!, /https:\/\/next.test/);
+    assert.match(f.element.textContent!, /next\.test/);
     assert.equal(f.element.querySelector('[aria-busy=true]'), null);
     assert.ok(f.element.querySelector('input[name=password]'));
     assert.doesNotMatch(f.element.textContent!, /Details submitted|not accept/);

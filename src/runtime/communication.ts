@@ -10,14 +10,14 @@ export function vaultInvitation(step: CredentialInvitation, url?: string) {
   if (!url || !/^\/(?:vault|credentials)\/[A-Za-z0-9_-]{1,256}$/.test(url))
     throw new Error('The Vault link is unavailable.');
   if (step.methodSelection)
-    return `${site} needs you to sign in. [Choose a sign-in method](${url}).`;
+    return `${site} needs you to sign in. [Choose a sign-in method](${url}) and I will continue the task.`;
   if (!['identifier', 'password'].includes(step.kind))
     throw new Error('The sign-in step is unavailable.');
   if (step.savedLoginAvailable === false)
-    return `${site} needs you to sign in. There isn’t a login saved for this website in Vault. [Add login](${url}).`;
+    return `${site} needs you to sign in. There isn’t a login saved for this website in Vault. [Add login](${url}) and I will continue the task.`;
   if (step.savedLoginAvailable === true)
-    return `${site} needs you to sign in. [Continue sign-in](${url}).`;
-  return `${site} needs you to sign in. [Enter login details](${url}).`;
+    return `${site} needs you to sign in. [Continue sign-in](${url}) with your saved login and I will continue the task.`;
+  return `${site} needs you to sign in. [Enter login details](${url}) and I will continue the task.`;
 }
 
 export function requestsLoginDetails(text: string) {

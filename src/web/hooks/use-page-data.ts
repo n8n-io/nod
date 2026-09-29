@@ -23,3 +23,7 @@ export function usePageData<T>(path: string) {
   }, [path, refresh]);
   return { ...data, refresh, update };
 }
+
+export function prefetchPageData(paths: string[]) {
+  for (const path of paths) void pageDataCache.refresh(path);
+}

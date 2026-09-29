@@ -256,7 +256,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
     );
     assert.equal(prompts[1].includes('runtime-fixture-key'), false);
     assert.deepEqual(replies, [
-      'https://example.com needs you to sign in. [Enter login details](/credentials/fixture).',
+      'https://example.com needs you to sign in. [Enter login details](/credentials/fixture) and I will continue the task.',
       'Resumed successfully.',
     ]);
     assert.deepEqual(

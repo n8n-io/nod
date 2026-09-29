@@ -11,10 +11,6 @@ const telegramInput = z
       .trim()
       .regex(/^\d+:[A-Za-z0-9_-]+$/)
       .max(512),
-    allowedUserId: z
-      .string()
-      .trim()
-      .regex(/^\d{1,16}$/),
     webhookUrl,
   })
   .strict();
@@ -111,7 +107,7 @@ export function createChatSdkSetupVerifier(
             environment: {
               TELEGRAM_ENABLED: 'true',
               TELEGRAM_BOT_TOKEN: value.botToken,
-              TELEGRAM_ALLOWED_USER_ID: value.allowedUserId,
+              TELEGRAM_ALLOWED_USER_ID: '',
               TELEGRAM_WEBHOOK_SECRET_TOKEN: secret,
               TELEGRAM_MODE: webhookEndpoint ? 'webhook' : 'polling',
             },
@@ -180,7 +176,6 @@ export function createChatSdkSetupVerifier(
           throw new ChannelSetupFailure('invalid_input');
         const value = telegramInput.parse({
           botToken: environment.TELEGRAM_BOT_TOKEN,
-          allowedUserId: environment.TELEGRAM_ALLOWED_USER_ID,
           webhookUrl: summary.webhookUrl,
         });
         const webhookEndpoint = endpoint(value.webhookUrl, provider);

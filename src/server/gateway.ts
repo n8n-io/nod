@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { z } from 'zod';
 import type { AuthenticatedSession, AuthenticationProvider } from '../ports/authentication.ts';
 import type { TenantRuntimeHost } from '../ports/tenant-runtime.ts';
-import type { AccountStore } from './account-store.ts';
+import type { AccountStore, StoredAccount } from './account-store.ts';
 import { authenticationHeaders, createAccountSession, sendFetchResponse } from './account.ts';
 import { canonicalRequestPath } from './runtime-auth.ts';
 import { parsePrivacyNotice, registerPrivacyNotice } from './privacy.ts';
@@ -124,28 +124,122 @@ export async function createGateway(options: {
     trustProxy: false,
     forceCloseConnections: true,
   });
+  async function setup(
+    ownerId: string,
+    path: string,
+    body: Record<string, string | undefined> = {},
+  ) {
+    const response = await options.runtimes.fetch(
+      ownerId,
+      new Request(new URL(path, origin), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+      { developer: false },
+    );
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error('Account setup failed.');
+    }
+    z.object({ ok: z.literal(true) })
+      .strict()
+      .parse(await response.json());
+  }
+  const profileAccounts = new Map<string, StoredAccount>();
+  const accountVersions = new Map<string, number>();
+  const accountStore: AccountStore = {
+    async read(ownerId) {
+      const version = accountVersions.get(ownerId);
+      const account = await options.accounts.read(ownerId);
+      if (accountVersions.get(ownerId) === version) profileAccounts.set(ownerId, account);
+      return account;
+    },
+    async update(ownerId, input) {
+      const version = (accountVersions.get(ownerId) ?? 0) + 1;
+      accountVersions.set(ownerId, version);
+      profileAccounts.delete(ownerId);
+      const account = await options.accounts.update(ownerId, input);
+      if (accountVersions.get(ownerId) === version) {
+        accountVersions.set(ownerId, version + 1);
+        profileAccounts.set(ownerId, account);
+      }
+      return account;
+    },
+  };
   const accounts = createAccountSession({
     ...options,
+    accounts: accountStore,
+    withProfile,
     origin: origin.origin,
-    async prepare(ownerId) {
-      const response = await options.runtimes.fetch(
-        ownerId,
-        new Request(new URL('/api/account/prepare', origin), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: '{}',
-        }),
-        { developer: false },
-      );
-      if (!response.ok) {
-        await response.body?.cancel();
-        throw new Error('Account preparation failed.');
-      }
-      z.object({ ok: z.literal(true) })
-        .strict()
-        .parse(await response.json());
+    prepare: (ownerId) => setup(ownerId, '/api/account/prepare'),
+    start: (ownerId, name) => setup(ownerId, '/api/onboarding/start', { name }),
+    warm(ownerId) {
+      options.runtimes.warm?.(ownerId).catch(() => {});
     },
   });
+  const syncedProfiles = new Map<string, string>();
+  const profileSyncs = new Map<string, Promise<void>>();
+  const welcomeProfiles = new Map<string, string>();
+  const welcomeSyncs = new Map<string, Promise<void>>();
+  function withProfile(
+    session: AuthenticatedSession,
+    name: string | undefined,
+    operation: () => Promise<void>,
+    current: () => Promise<boolean>,
+  ) {
+    const owner = session.user.id;
+    const next = (welcomeSyncs.get(owner) ?? Promise.resolve()).then(async () => {
+      if (!(await current())) return;
+      if (name !== undefined) welcomeProfiles.set(owner, name);
+      try {
+        await syncProfile(session);
+        await operation();
+      } finally {
+        welcomeProfiles.delete(owner);
+      }
+    });
+    const settled = next.catch(() => {});
+    welcomeSyncs.set(owner, settled);
+    void settled.then(() => {
+      if (welcomeSyncs.get(owner) === settled) welcomeSyncs.delete(owner);
+    });
+    return next;
+  }
+  function syncProfile(session: AuthenticatedSession) {
+    const owner = session.user.id;
+    const next = (profileSyncs.get(owner) ?? Promise.resolve()).then(() => sendProfile(session));
+    const settled = next.catch(() => {});
+    profileSyncs.set(owner, settled);
+    void settled.then(() => {
+      if (profileSyncs.get(owner) === settled) profileSyncs.delete(owner);
+    });
+    return next;
+  }
+  async function sendProfile(session: AuthenticatedSession) {
+    const account =
+      profileAccounts.get(session.user.id) ?? (await accountStore.read(session.user.id));
+    const body = JSON.stringify({
+      name: session.user.name.trim().slice(0, 200) || null,
+      givenName: session.givenName?.slice(0, 100) || null,
+      email: session.user.email?.slice(0, 320) || null,
+      preferredName:
+        (welcomeProfiles.get(session.user.id) ?? account.displayName)?.slice(0, 100) || null,
+    });
+    if (syncedProfiles.get(session.user.id) === body) return;
+    const response = await options.runtimes.fetch(
+      session.user.id,
+      new Request(new URL('/api/account/profile', origin), {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      { developer: false },
+    );
+    await response.body?.cancel();
+    if (!response.ok) throw new Error('Account profile could not be synchronized.');
+    syncedProfiles.set(session.user.id, body);
+  }
   const deployment = options.deployment
     ? createDeploymentControl({ ...options.deployment, runtimes: options.runtimes })
     : undefined;
@@ -192,9 +286,13 @@ export async function createGateway(options: {
   });
   app.addHook('preValidation', async (request) => {
     if (
-      ['/api/login', '/api/logout', '/api/account', '/api/account/prepare'].includes(
-        request.url.split('?')[0],
-      ) &&
+      [
+        '/api/login',
+        '/api/logout',
+        '/api/account',
+        '/api/account/prepare',
+        '/api/account/welcome',
+      ].includes(request.url.split('?')[0]) &&
       Buffer.isBuffer(request.body)
     ) {
       try {
@@ -306,7 +404,9 @@ export async function createGateway(options: {
       url.pathname.startsWith('/api/auth/') ||
       url.pathname.startsWith('/api/webhooks/') ||
       url.pathname.startsWith('/api/internal/') ||
-      url.pathname.startsWith('/api/runtime/')
+      url.pathname.startsWith('/api/runtime/') ||
+      url.pathname === '/api/onboarding/start' ||
+      url.pathname === '/api/account/profile'
     )
       return reply.code(404).send({ error: 'Route not found.' });
     if (url.pathname === '/api/events' && url.searchParams.get('account') !== session.user.id)
@@ -334,22 +434,24 @@ export async function createGateway(options: {
         ? { body: Buffer.isBuffer(request.body) ? new Uint8Array(request.body) : new Uint8Array() }
         : {}),
     });
+    await syncProfile(session).catch(() => {});
     let result = await options.runtimes.fetch(session.user.id, forwarded, { developer });
-    try {
-      const current = await options.authentication.session(authenticationHeaders(request));
-      if (
-        !current ||
-        current.id !== session.id ||
-        current.user.id !== session.user.id ||
-        current.expiresAt <= new Date()
-      ) {
+    if (url.pathname === '/api/events')
+      try {
+        const current = await options.authentication.session(authenticationHeaders(request));
+        if (
+          !current ||
+          current.id !== session.id ||
+          current.user.id !== session.user.id ||
+          current.expiresAt <= new Date()
+        ) {
+          await result.body?.cancel().catch(() => {});
+          return reply.code(401).send({ error: 'Sign in to continue.' });
+        }
+      } catch {
         await result.body?.cancel().catch(() => {});
-        return reply.code(401).send({ error: 'Sign in to continue.' });
+        return reply.code(503).send({ error: 'This request could not be completed. Try again.' });
       }
-    } catch {
-      await result.body?.cancel().catch(() => {});
-      return reply.code(503).send({ error: 'This request could not be completed. Try again.' });
-    }
     result = privateRuntimeResponse(result, url.pathname.startsWith('/api/artifacts/'));
     if (url.pathname === '/api/events' && result.ok)
       result = guardedStream(result, {

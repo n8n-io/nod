@@ -223,3 +223,90 @@ test('reopening a persisted Pi session sends the current date and owner time zon
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('the signed-in profile, region and clock reach the model but not observations or task events', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-account-context-'));
+  const prompts: string[] = [];
+  const observed: unknown[] = [];
+  const events: string[] = [];
+  const agent: Agent = {
+    open: async (options) => {
+      prompts.push(options.systemPrompt);
+      return {
+        resumed: false,
+        prompt: async () => {
+          await options.tools
+            .find((tool) => tool.name === 'manage_personal_context')!
+            .execute({ action: 'history_search', args: { query: 'dentist' } });
+          options.onEvent({
+            type: 'model_usage',
+            id: randomUUID(),
+            provider: 'fixture',
+            model: 'fixture-model',
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 2,
+            costUsd: null,
+            costSource: 'unavailable',
+            createdAt: new Date().toISOString(),
+          });
+          options.onEvent({ type: 'final', text: 'Hello again.' });
+        },
+        abort() {},
+        dispose() {},
+      };
+    },
+    dispose() {},
+  };
+  const runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    const result = await runtime.runTask(
+      context(directory, {
+        locale: 'pt-PT',
+        hourCycle: 'h12',
+        account: {
+          preferredName: 'Sam',
+          fullName: 'Samantha Synthetic',
+          email: 'sam.synthetic@example.test',
+        },
+        observe: async (event) => {
+          observed.push(event);
+        },
+        emit: async (type, summary) => {
+          events.push(`${type}:${summary}`);
+        },
+      }),
+    );
+    assert.equal(result.status, 'succeeded');
+    assert.equal(prompts.length, 1);
+    assert.ok(
+      prompts[0].includes(
+        '"preferredName":"Sam","fullName":"Samantha Synthetic","email":"sam.synthetic@example.test","region":"Portugal","clock":"h12","timeZone":"Europe/Lisbon"',
+      ),
+    );
+    assert.match(prompts[0], /Call the user by preferredName naturally/);
+    assert.match(
+      prompts[0],
+      /Write dates and times in English in the same format as the app, for example [A-Z][a-z]{2}, \d{1,2} [A-Z][a-z]{2,3} \d{4}, \d{1,2}:\d{2} [ap]m\. If the user writes in another language, use that language for dates too\./,
+    );
+    assert.deepEqual(
+      observed.map((item) => (item as { type: string }).type),
+      ['tool_start', 'tool_end', 'model_usage'],
+    );
+    assert.deepEqual(events, [
+      'tool_start:manage personal context',
+      'tool_complete:manage personal context',
+    ]);
+    for (const value of [...observed.map((item) => JSON.stringify(item)), ...events])
+      assert.doesNotMatch(value, /Samantha|sam\.synthetic|Sam\b/);
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

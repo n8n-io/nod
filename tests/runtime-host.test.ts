@@ -65,6 +65,7 @@ function fixture(
     denyLease?: boolean;
   } = {};
   let closes = 0;
+  let closedChecks = 0;
   const record = (ownerId: string) => ({
     ownerId,
     environment: 'development',
@@ -136,6 +137,7 @@ function fixture(
     },
     transport: {
       async deploymentClosed() {
+        closedChecks++;
         return hooks.deploymentClosed ?? false;
       },
       async deploymentStopped(ownerId, generation) {
@@ -187,6 +189,7 @@ function fixture(
     hooks,
     request,
     closes: () => closes,
+    closedChecks: () => closedChecks,
   };
 }
 
@@ -708,4 +711,71 @@ test('lease loss retains ownership until stop succeeds and concurrent retries cr
   assert.equal(f.starts.length, 2);
   assert.equal(f.releases.length, 1);
   assert.equal(f.starts[1].generation, '2');
+});
+
+test('ready runtimes serve admitted requests without a deployment status round trip', async (t) => {
+  const f = fixture(t);
+  const owner = randomUUID();
+  await f.request(owner);
+  assert.equal(f.closedChecks(), 1);
+  await f.request(owner);
+  await f.host.fetch(owner, new Request('https://otto.example.test/api/webhooks/composio'), {
+    developer: false,
+    kind: 'webhook',
+  });
+  await f.host.warm!(owner);
+  assert.equal(f.closedChecks(), 1);
+  assert.equal(f.requests.length, 3);
+  f.hooks.deploymentClosed = true;
+  await assert.rejects(
+    f.host.fetch(owner, new Request('http://otto.runtime/api/runtime/wake', { method: 'POST' }), {
+      developer: false,
+      kind: 'wake',
+    }),
+  );
+  await assert.rejects(f.host.warm!(randomUUID()));
+  assert.equal(f.closedChecks(), 3);
+  assert.equal(f.requests.length, 3);
+  assert.equal(f.starts.length, 1);
+  assert.equal(f.leases.size, 1);
+});
+
+test('an in-process drain rejects ready runtimes before any tenant request', async (t) => {
+  const f = fixture(t);
+  const owner = randomUUID();
+  await f.request(owner);
+  const drained = deferred<Response>();
+  f.hooks.fetch = async (_owner, request) =>
+    new URL(request.url).pathname === '/api/runtime/drain'
+      ? drained.promise
+      : Response.json({ ok: true });
+  const operation = f.host.prepareDeployment!(deploymentInput());
+  await setImmediate();
+  await assert.rejects(f.request(owner));
+  await assert.rejects(f.host.warm!(owner));
+  assert.equal(f.requests.length, 2);
+  assert.equal(new URL(f.requests[1].request.url).pathname, '/api/runtime/drain');
+  drained.reject(new Error('Synthetic drain stop.'));
+  await assert.rejects(operation);
+});
+
+test('session warm-up shares one runtime start with the first request', async (t) => {
+  const f = fixture(t);
+  const owner = randomUUID();
+  const entered = deferred();
+  const ready = deferred();
+  f.hooks.start = async () => {
+    entered.resolve();
+    await ready.promise;
+  };
+  const warming = f.host.warm!(owner);
+  await bounded(entered.promise);
+  const request = f.request(owner);
+  const repeated = f.host.warm!(owner);
+  ready.resolve();
+  await Promise.all([warming, request, repeated]);
+  await f.host.warm!(owner);
+  assert.equal(f.starts.length, 1);
+  assert.equal(f.leases.size, 1);
+  assert.equal(f.requests.length, 1);
 });

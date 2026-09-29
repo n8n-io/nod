@@ -300,6 +300,61 @@ test('Pi routing preserves identical blocked read context for fresh observations
   assert.deepEqual(await value.router(input), decision);
 });
 
+test('Pi routing marks retryable failures apart from blocked outside actions', async () => {
+  const input = context();
+  input.text = 'Try again';
+  input.candidates = [
+    {
+      outcomeId: 'retryable-read',
+      taskId: 'private-retryable-read',
+      title: 'Read the weather',
+      objective: 'Read the current weather.',
+      status: 'failed',
+      waitingReason: null,
+      recency: 2,
+      recentMessages: [{ role: 'assistant', text: 'I couldn’t finish that.' }],
+    },
+    { ...context().candidates[0], recency: 3 },
+  ];
+  input.blockedCandidates = [
+    {
+      outcomeId: 'blocked-send',
+      taskId: 'private-blocked-send',
+      title: 'Send confirmation',
+      objective: 'Send the confirmation email.',
+      status: 'failed',
+      waitingReason: null,
+      recency: 1,
+      recentMessages: [],
+    },
+  ];
+  const value = fixture(async (_model, request) => {
+    const data = JSON.parse(String((request.messages[0] as { content: string }).content));
+    assert.deepEqual(
+      data.candidates.map((item: { outcomeId: string; retryable: boolean }) => [
+        item.outcomeId,
+        item.retryable,
+      ]),
+      [
+        ['retryable-read', true],
+        ['outcome-one', false],
+      ],
+    );
+    assert.equal(data.blockedCandidates[0].retryable, false);
+    assert.deepEqual(
+      [...data.candidates, ...data.blockedCandidates].map(
+        (item: { recency: number }) => item.recency,
+      ),
+      [2, 3, 1],
+    );
+    assert.match(request.systemPrompt ?? '', /retryable true failed before Otto took any outside/);
+    assert.match(request.systemPrompt ?? '', /may have already taken an outside action/);
+    assert.doesNotMatch(JSON.stringify(request), /private-retryable-read|private-blocked-send/);
+    return response('{"kind":"continue","outcomeId":"retryable-read"}');
+  });
+  assert.deepEqual(await value.router(input), { kind: 'continue', outcomeId: 'retryable-read' });
+});
+
 test('Pi routing accepts only strict decisions and rejects foreign IDs, extra authority and malformed output', async () => {
   let text = '{"kind":"conversation"}';
   let stopReason: AssistantMessage['stopReason'] = 'stop';

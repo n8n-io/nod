@@ -1,22 +1,37 @@
-import type { Root, Text, Link, Parent } from 'mdast';
+import type { Root, Text, Element } from 'hast';
 import { SKIP, visit } from 'unist-util-visit';
 
-export function remarkLocalLinks() {
+function unlinkCode(node: Element) {
+  node.children = node.children.flatMap((child) => {
+    if (child.type !== 'element') return [child];
+    unlinkCode(child);
+    return child.tagName === 'a' ? child.children : [child];
+  });
+}
+
+export function rehypeLocalLinks() {
   return (tree: Root) => {
     visit(tree, (node, index, parent) => {
-      if (node.type === 'link' || node.type === 'linkReference') return SKIP;
+      if (node.type === 'element') {
+        if (node.tagName === 'code' || node.tagName === 'pre') {
+          unlinkCode(node);
+          return SKIP;
+        }
+        if (['a', 'script', 'style', 'textarea', 'title'].includes(node.tagName)) return SKIP;
+      }
       if (node.type !== 'text' || index === undefined || !parent) return;
-      const parts: (Text | Link)[] = [];
+      const parts: (Text | Element)[] = [];
       const pattern =
-        /(?<![\w/:])\/(?:api\/artifacts|vault|credentials)\/[A-Za-z0-9_-]+(?:[?#][^\s<>"'\[\]()]+)?/g;
+        /(?<![\w/:])\/(?:api\/artifacts|vault|credentials|browser-connect)\/[A-Za-z0-9_-]+(?:[?#][^\s<>"'\[\]()]+)?/g;
       let cursor = 0;
       for (const match of node.value.matchAll(pattern)) {
         if (match.index > cursor)
           parts.push({ type: 'text', value: node.value.slice(cursor, match.index) });
         const destination = match[0].replace(/[.,;:!?]+$/, '');
         parts.push({
-          type: 'link',
-          url: destination,
+          type: 'element',
+          tagName: 'a',
+          properties: { href: destination },
           children: [{ type: 'text', value: destination }],
         });
         if (destination.length < match[0].length)
@@ -25,7 +40,7 @@ export function remarkLocalLinks() {
       }
       if (!parts.length) return;
       if (cursor < node.value.length) parts.push({ type: 'text', value: node.value.slice(cursor) });
-      (parent as Parent).children.splice(index, 1, ...parts);
+      parent.children.splice(index, 1, ...parts);
       return index + parts.length;
     });
   };

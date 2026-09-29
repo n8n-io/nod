@@ -204,6 +204,7 @@ test(
         },
       );
       await tasks.startTaskWorkers({
+        recoveryDelaysSeconds: [0, 0],
         async runTask(context) {
           seen.push(context);
           contextByPrompt.set(context.prompt, context);
@@ -211,6 +212,11 @@ test(
             return new Promise<RuntimeResult>((resolve) => releases.set(context.taskId, resolve));
           if (context.prompt === 'I prefer concise replies.')
             await context.manage('memory_remember', { quote: context.prompt });
+          if (context.prompt === 'Press the synthetic send button') {
+            await context.startExternalAction!();
+            return { status: 'waiting_user', waitingFor: 'question', question: 'Which inbox?' };
+          }
+          if (context.prompt === 'The fixture inbox') throw new Error('Synthetic model failure');
           return { status: 'succeeded' };
         },
         speech: {
@@ -514,6 +520,28 @@ test(
             (await db.pool.query('SELECT * FROM outcomes WHERE id=$1', [selectedOutcome])).rowCount,
             1,
           );
+        },
+      );
+      await t.test(
+        'an outside action marks its instruction and a later user instruction starts clean',
+        async () => {
+          newOutcome = true;
+          const sent = await userMessages.submit('Press the synthetic send button');
+          newOutcome = false;
+          await waitFor(async () => (await row(sent.taskId)).status === 'waiting_user');
+          assert.equal((await row(sent.taskId)).external_action, true);
+          selectedOutcome = (await row(sent.taskId)).outcome_id;
+          const answer = await userMessages.submit('The fixture inbox');
+          assert.equal(answer.taskId, sent.taskId);
+          await waitFor(async () => (await row(sent.taskId)).status === 'failed');
+          assert.equal((await row(sent.taskId)).external_action, false);
+          const prepared = await userMessages.prepare('Try again');
+          assert.ok(prepared.candidateIds.includes(selectedOutcome));
+          assert.equal(prepared.blockedOutcomeIds.includes(selectedOutcome), false);
+          await db.pool.query('UPDATE tasks SET external_action=NULL WHERE id=$1', [sent.taskId]);
+          const legacy = await userMessages.prepare('Try again');
+          assert.ok(legacy.blockedOutcomeIds.includes(selectedOutcome));
+          assert.equal(routes.at(-1)?.blockedCandidates?.[0]?.outcomeId, selectedOutcome);
         },
       );
     } finally {

@@ -37,32 +37,71 @@
   gap: 14px;
   min-width: 0;
   min-height: 82px;
-  padding: 18px;
+  padding: 16px 18px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
 }
-.onboarding-integration img {
+.onboarding-logo {
+  display: grid;
   flex-shrink: 0;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--surface-inset);
 }
 .onboarding-integration h2 {
-  flex: 1;
-  min-width: 0;
   margin: 0;
   font-size: 14px;
   font-weight: 600;
+  line-height: 1.5;
 }
-.onboarding-integration.connected {
-  border-color: color-mix(in srgb, var(--success) 30%, var(--border));
-  background: var(--success-soft);
+.onboarding-integration p {
+  margin: 2px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.onboarding-integration.waiting p {
+  color: var(--foreground);
+}
+.onboarding-integration-copy {
+  flex: 1;
+  min-width: 0;
 }
 .onboarding-connected {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--success);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
+}
+.onboarding-integration .onboarding-connect {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 0 12px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: var(--secondary);
+  white-space: nowrap;
+}
+.onboarding-integration .onboarding-connect:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--control-foreground) 40%, var(--control-border));
+  background: var(--hover);
+  color: var(--foreground);
+}
+.onboarding-integration .onboarding-connect:disabled {
+  opacity: 0.6;
+}
+.onboarding-integration.connected {
+  border-color: color-mix(in srgb, var(--success) 30%, var(--border));
+  background: var(--success-soft);
+}
+.onboarding-integration.connected .onboarding-logo {
+  background: var(--surface);
 }
 .account-onboarding-actions {
   display: flex;
@@ -93,7 +132,8 @@
     padding: 14px;
     gap: 12px;
   }
-  .onboarding-integration h2 {
-    font-size: 13px;
+  .onboarding-logo {
+    width: 36px;
+    height: 36px;
   }
 }

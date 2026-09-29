@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Copy, CreditCard, Eye, EyeOff, KeyRound, Trash2 } from 'lucide-react';
+import { Copy, Eye, EyeOff, ExternalLink, Trash2 } from 'lucide-react';
 import type {
   VaultEntry,
   VaultEntryDetails,
@@ -9,12 +9,15 @@ import type {
   VaultListEntry,
 } from '../../shared/contracts';
 import { api } from '../lib/api';
+import { originLabel } from '../lib/vault-name';
 import {
   clearVaultSecret,
+  formatCardExpiry,
   parseCardExpiry,
   VaultFields,
   type VaultSecretName,
 } from './vault-item-form';
+import { VaultBackButton, VaultEntryIcon, VaultSurface, VaultTitle } from './vault-surface';
 import {
   Button,
   Dialog,
@@ -43,15 +46,13 @@ function hasChanges(form: HTMLFormElement, details: VaultEntryDetails) {
 
 export function VaultDetails({
   entry,
-  returnFocus,
-  fallbackFocus,
+  autoFocus,
   onClose,
   onSaved,
   onDeleted,
 }: {
   entry: VaultEntry;
-  returnFocus: HTMLElement | null;
-  fallbackFocus?: HTMLElement | null;
+  autoFocus?: boolean;
   onClose(): void;
   onSaved(entry: VaultListEntry): void;
   onDeleted(id: string): void;
@@ -66,11 +67,13 @@ export function VaultDetails({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [formRevision, setFormRevision] = useState(0);
   const formId = useId();
-  const title = useRef<HTMLHeadingElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
   const editForm = useRef<HTMLFormElement>(null);
   const footer = useRef<HTMLDivElement>(null);
   const previousDeleting = useRef(deleting);
@@ -152,17 +155,23 @@ export function VaultDetails({
   useEffect(() => {
     if (previousDeleting.current === deleting) return;
     previousDeleting.current = deleting;
-    footer.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    if (deleting) footer.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    else deleteTrigger.current?.focus();
   }, [deleting]);
 
   useEffect(() => {
-    if (formRevision) title.current?.focus();
+    if (editing) editForm.current?.querySelector<HTMLInputElement>('input[name="label"]')?.focus();
+  }, [editing]);
+
+  useEffect(() => {
+    if (formRevision) bar.current?.querySelector<HTMLButtonElement>('[data-vault-edit]')?.focus();
   }, [formRevision]);
 
   function discardChanges() {
     hideSecrets();
     setFormRevision((value) => value + 1);
     setDirty(false);
+    setEditing(false);
   }
 
   async function saveChanges(event: React.FormEvent<HTMLFormElement>) {
@@ -247,6 +256,7 @@ export function VaultDetails({
       );
       setFormRevision((value) => value + 1);
       setDirty(false);
+      setEditing(false);
       setNotice(isCard ? 'Card updated.' : 'Login updated.');
       onSaved(updated.kind === 'card' ? updated : { ...updated, username });
     } catch {
@@ -313,10 +323,7 @@ export function VaultDetails({
     let value = '';
     try {
       if (action === 'identity')
-        value =
-          editForm.current?.querySelector<HTMLInputElement>(
-            `input[name="${isCard ? 'cardholder' : 'username'}"]`,
-          )?.value ?? '';
+        value = details.kind === 'card' ? details.cardholder : details.username;
       else if (name && secrets[name] !== undefined) value = secrets[name]!;
       else if (name) {
         const endpoint =
@@ -419,146 +426,211 @@ export function VaultDetails({
     onClose();
   }
 
+  const host = entry.kind === 'login' ? originLabel(entry.origin) : '';
+  const name = details?.label ?? entry.label;
+  const removal = `Otto will remove “${name}”${host ? ` for ${host}` : ''} from your vault. You cannot undo this.`;
+  const copyButton = (label: string, onClick: () => void) => (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={`Copy ${label.toLowerCase()}`}
+      disabled={saving || busy !== null}
+      onClick={onClick}
+    >
+      <Copy size={16} aria-hidden="true" />
+    </Button>
+  );
+  const field = (label: string, value: React.ReactNode, actions?: React.ReactNode) => (
+    <div className="vault-inset-row">
+      <span className="vault-inset-label">{label}</span>
+      <div className="vault-inset-value">
+        {value}
+        {actions && <div className="vault-detail-actions">{actions}</div>}
+      </div>
+    </div>
+  );
+
   return (
-    <Dialog open onOpenChange={(open) => !open && close()}>
-      <DialogContent
-        className="vault-details"
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          title.current?.focus();
-        }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          if (returnFocus?.isConnected) returnFocus.focus();
-          else if (fallbackFocus?.isConnected) fallbackFocus.focus();
-        }}
-      >
-        <div className="dialog-heading">
-          {isCard ? (
-            <CreditCard size={22} aria-hidden="true" />
-          ) : (
-            <KeyRound size={22} aria-hidden="true" />
-          )}
-          <DialogTitle ref={title} tabIndex={-1}>
-            {deleting ? `Delete this ${item}?` : (details?.label ?? entry.label)}
-          </DialogTitle>
-          <DialogDescription className="sr-only">
-            View and manage this saved {item}.
-          </DialogDescription>
-        </div>
-        {deleting && (
-          <div className="vault-delete-confirmation">
-            <p>
-              <strong>{details?.label ?? entry.label}</strong> will be removed from your vault.
-            </p>
-            {error && <Notice>{error}</Notice>}
-            <div ref={footer} className="dialog-actions">
+    <VaultSurface label={name} autoFocus={autoFocus} onClose={close}>
+      <div className="vault-bar" ref={bar}>
+        <VaultBackButton onClick={close} />
+        <div className="vault-bar-actions">
+          {editing ? (
+            <>
               <Button
+                type="button"
                 variant="ghost"
+                size="sm"
                 disabled={saving}
-                onClick={() => {
-                  setError('');
-                  setDeleting(false);
-                }}
+                onClick={discardChanges}
               >
-                Keep {item}
+                Cancel
               </Button>
-              <Button variant="destructive" disabled={saving} onClick={() => void remove()}>
-                {saving ? 'Deleting…' : `Delete ${item}`}
+              <Button type="submit" size="sm" form={formId} disabled={saving || !dirty}>
+                {saving ? 'Saving…' : 'Save'}
               </Button>
-            </div>
-          </div>
-        )}
-        <div hidden={deleting}>
-          {entry.kind === 'login' && (
-            <dl className="vault-detail-fields">
-              <div>
-                <dt>Website</dt>
-                <dd className="vault-detail-value">{entry.origin}</dd>
-              </div>
-            </dl>
-          )}
-          {details ? (
-            <form
-              id={formId}
-              key={formRevision}
-              ref={editForm}
-              onSubmit={(event) => void saveChanges(event)}
-              onInput={updateDirty}
-              className="form-stack vault-edit-form"
-              autoComplete="off"
-            >
-              <VaultFields
-                kind={entry.kind}
-                details={details}
-                disabled={saving}
-                identityBusy={busy !== null}
-                onCopyIdentity={() => void performAction('identity')}
-                onSecretChange={() => {
-                  hideRevealed();
-                  updateDirty();
-                }}
-                secretControls={{
-                  password: secretControls('password', 'Password', '••••••••'),
-                  cardNumber: secretControls(
-                    'cardNumber',
-                    'Card number',
-                    details.kind === 'card' ? `•••• ${details.last4}` : '••••',
-                  ),
-                  securityCode: secretControls('securityCode', 'Security code', '••••'),
-                }}
-              />
-            </form>
-          ) : detailsError ? (
-            <div className="form-stack">
-              <Notice>This {item} could not be opened. Try again.</Notice>
-              <Button variant="outline" onClick={() => void loadDetails()}>
-                Try again
-              </Button>
-            </div>
+            </>
           ) : (
-            <Loading label={`Opening ${item}…`} />
-          )}
-          {error && <Notice>{error}</Notice>}
-          <p
-            className={notice ? 'vault-detail-status' : 'sr-only'}
-            role="status"
-            aria-live="polite"
-          >
-            {notice}
-          </p>
-          <div ref={deleting ? undefined : footer} className="vault-detail-footer">
             <Button
-              className="vault-delete-trigger"
-              variant="ghost"
-              disabled={saving}
+              type="button"
+              variant="outline"
+              size="sm"
+              data-vault-edit
+              disabled={!details || saving}
               onClick={() => {
-                hideSecrets();
-                setDeleting(true);
+                hideRevealed();
+                setEditing(true);
               }}
             >
-              <Trash2 size={15} aria-hidden="true" />
-              Delete {item}
+              Edit
             </Button>
-            <div className="vault-save-actions">
-              {dirty ? (
-                <>
-                  <Button type="button" variant="ghost" disabled={saving} onClick={discardChanges}>
-                    Cancel changes
-                  </Button>
-                  <Button type="submit" form={formId} disabled={saving}>
-                    {saving ? 'Saving…' : 'Save changes'}
-                  </Button>
-                </>
-              ) : (
-                <Button type="button" variant="outline" onClick={close}>
-                  Done
-                </Button>
-              )}
-            </div>
-          </div>
+          )}
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+      <div className="vault-hero">
+        <span className="vault-hero-icon" aria-hidden="true">
+          <VaultEntryIcon entry={entry} size={56} />
+        </span>
+        <VaultTitle>{name}</VaultTitle>
+        <p>{entry.kind === 'card' ? `${entry.brand} •••• ${entry.last4}` : host}</p>
+      </div>
+      {!details ? (
+        detailsError ? (
+          <div className="vault-inset-note">
+            <Notice>This {item} could not be opened. Try again.</Notice>
+            <Button variant="outline" onClick={() => void loadDetails()}>
+              Try again
+            </Button>
+          </div>
+        ) : (
+          <Loading label={`Opening ${item}…`} />
+        )
+      ) : editing ? (
+        <form
+          id={formId}
+          key={formRevision}
+          ref={editForm}
+          onSubmit={(event) => void saveChanges(event)}
+          onInput={updateDirty}
+          className="vault-inset vault-edit-form"
+          autoComplete="off"
+        >
+          <VaultFields
+            kind={entry.kind}
+            details={details}
+            disabled={saving}
+            onSecretChange={() => {
+              hideRevealed();
+              updateDirty();
+            }}
+          />
+          {entry.kind === 'login' &&
+            field('Website', <span className="vault-detail-value">{host}</span>)}
+        </form>
+      ) : (
+        <div className="vault-inset">
+          {field(
+            identityName,
+            <span className="vault-detail-value">
+              {details.kind === 'card' ? details.cardholder : details.username || '—'}
+            </span>,
+            copyButton(identityName, () => void performAction('identity')),
+          )}
+          {details.kind === 'card' ? (
+            <>
+              {field(
+                'Card number',
+                secretControls('cardNumber', 'Card number', `•••• ${details.last4}`),
+              )}
+              {field(
+                'Expiry date',
+                <span className="vault-detail-value">
+                  {formatCardExpiry(details.expiryMonth, details.expiryYear)}
+                </span>,
+              )}
+              {details.hasSecurityCode &&
+                field('Security code', secretControls('securityCode', 'Security code', '••••'))}
+            </>
+          ) : (
+            <>
+              {field('Password', secretControls('password', 'Password', '••••••••'))}
+              {field(
+                'Website',
+                <span className="vault-detail-value">{host}</span>,
+                <Button asChild variant="ghost" size="icon">
+                  <a
+                    href={entry.kind === 'login' ? entry.origin : undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Open ${host}`}
+                  >
+                    <ExternalLink size={16} aria-hidden="true" />
+                  </a>
+                </Button>,
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {error && !deleting && <Notice>{error}</Notice>}
+      <p className={notice ? 'vault-detail-status' : 'sr-only'} role="status" aria-live="polite">
+        {notice}
+      </p>
+      {details && !editing && (
+        <div className="vault-inset">
+          <button
+            ref={deleteTrigger}
+            type="button"
+            className="button button-ghost button-default vault-delete-row"
+            disabled={saving}
+            onClick={() => {
+              hideSecrets();
+              setDeleting(true);
+            }}
+          >
+            <Trash2 size={15} aria-hidden="true" />
+            Delete {item}
+          </button>
+        </div>
+      )}
+      <Dialog
+        open={deleting}
+        onOpenChange={(open) => {
+          if (!open && !saving) {
+            setError('');
+            setDeleting(false);
+          }
+        }}
+      >
+        <DialogContent
+          className="vault-confirm"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            footer.current?.querySelector<HTMLButtonElement>('button')?.focus();
+          }}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        >
+          <DialogTitle>Delete this {item}?</DialogTitle>
+          <DialogDescription>{removal}</DialogDescription>
+          {error && <Notice>{error}</Notice>}
+          <div ref={footer} className="vault-confirm-actions">
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => {
+                setError('');
+                setDeleting(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={saving} onClick={() => void remove()}>
+              {saving ? 'Deleting…' : `Delete ${item}`}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </VaultSurface>
   );
 }

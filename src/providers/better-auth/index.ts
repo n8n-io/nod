@@ -29,7 +29,15 @@ export function createGoogleAuthentication(options: {
         clientSecret: options.clientSecret,
         scope: ['openid', 'email', 'profile'],
         prompt: 'select_account',
+        overrideUserInfoOnSignIn: true,
+        mapProfileToUser: (profile) => ({
+          givenName:
+            typeof profile.given_name === 'string' ? profile.given_name.slice(0, 100) : null,
+        }),
       },
+    },
+    user: {
+      additionalFields: { givenName: { type: 'string', required: false } },
     },
     account: {
       accountLinking: { enabled: false },
@@ -62,10 +70,13 @@ export function createGoogleAuthentication(options: {
       if (!result || !result.user.emailVerified || result.session.expiresAt <= new Date())
         return null;
       const avatarSource = googleAvatarUrl(result.user.image);
+      const givenName =
+        typeof result.user.givenName === 'string' ? result.user.givenName.trim() : '';
       return {
         id: result.session.id,
         expiresAt: result.session.expiresAt,
         ...(avatarSource ? { avatarSource } : {}),
+        ...(givenName ? { givenName } : {}),
         user: {
           id: result.user.id,
           name: result.user.name,

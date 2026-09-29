@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { after } from 'node:test';
 import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
-import type { Goal } from '../src/shared/contracts.ts';
+import type { AppState, Goal } from '../src/shared/contracts.ts';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { Goals } from '../src/web/pages/goals.tsx';
 
@@ -101,7 +101,7 @@ test('cached goals remain usable through failed refreshes and navigation', async
     assert.match(container.textContent ?? '', /Could not load goals\./);
     assert.match(container.textContent ?? '', /25%/);
     const pause = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Pause goal Complete Northstar review"]',
+      '[role="switch"][aria-label="Complete Northstar review active"]',
     )!;
     assert.ok(pause);
     assert.equal(pause.disabled, false);
@@ -109,11 +109,25 @@ test('cached goals remain usable through failed refreshes and navigation', async
     assert.equal(container.querySelector('.loading'), null);
     assert.match(container.textContent ?? '', /Complete Northstar review/);
     await act(async () => reads[1](Response.json([{ ...goal, status: 'paused' }])));
-    assert.ok(container.querySelector('[aria-label="Resume goal Complete Northstar review"]'));
+    assert.equal(
+      container
+        .querySelector<HTMLButtonElement>(
+          '[role="switch"][aria-label="Complete Northstar review active"]',
+        )
+        ?.getAttribute('aria-checked'),
+      'false',
+    );
     await act(async () => root.render(null));
     await act(async () => root.render(createElement(Goals)));
     assert.equal(container.querySelector('.loading'), null);
-    assert.ok(container.querySelector('[aria-label="Resume goal Complete Northstar review"]'));
+    assert.equal(
+      container
+        .querySelector<HTMLButtonElement>(
+          '[role="switch"][aria-label="Complete Northstar review active"]',
+        )
+        ?.getAttribute('aria-checked'),
+      'false',
+    );
     await act(async () => reads[2](Response.json([{ ...goal, status: 'paused' }])));
   } finally {
     await act(async () => root.unmount());
@@ -123,68 +137,150 @@ test('cached goals remain usable through failed refreshes and navigation', async
   }
 });
 
-test('goal actions have distinct accessible names and open unsent drafts for the named goal', async () => {
+test('goal controls save first-party changes in place with Undo and never open chat', async () => {
   const previousFetch = globalThis.fetch;
   const goals: Goal[] = [
     goal,
-    { ...goal, id: 'paused-goal', title: 'Read a book', status: 'paused' },
     { ...goal, id: 'done-goal', title: 'Finished review', status: 'completed', progress: 100 },
   ];
-  globalThis.fetch = async (_path, options) => {
-    assert.equal(options?.method ?? 'GET', 'GET');
+  const patches: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const chatEvents: string[] = [];
+  const onChat = (event: Event) => chatEvents.push(event.type);
+  window.addEventListener('otto:compose', onChat);
+  window.addEventListener('otto:focus-message', onChat);
+  globalThis.fetch = async (path, options) => {
+    assert.notEqual(path, '/api/messages');
+    if (options?.method === 'PATCH') {
+      const body = JSON.parse(String(options.body)) as Record<string, unknown>;
+      patches.push({ path: String(path), body });
+      return Response.json({ ...goal, ...body });
+    }
     return Response.json(goals);
   };
   pageDataCache.update('/api/goals', () => goals);
-  const drafts: Array<{ text: string; send: boolean }> = [];
-  const onDraft = (event: Event) => drafts.push((event as CustomEvent).detail);
-  window.addEventListener('otto:compose', onDraft);
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
   try {
     await act(async () => root.render(createElement(Goals)));
-    for (const article of container.querySelectorAll('article')) {
-      const label = article.getAttribute('aria-labelledby');
-      assert.ok(label);
-      assert.equal(document.getElementById(label), article.querySelector('h2'));
-    }
-    assert.doesNotMatch(container.textContent ?? '', /Finished review/);
-    const paused = container.querySelector<HTMLDetailsElement>('.goals-paused')!;
-    assert.equal(paused.open, false);
-    await act(async () => click(paused.querySelector('summary')!));
-    assert.equal(paused.open, true);
-    for (const label of [
-      'Pause goal Complete Northstar review',
-      'Resume goal Read a book',
-      'Update goal Complete Northstar review',
-    ]) {
-      const button = container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
-      assert.ok(button);
-      assert.equal(button.tagName, 'BUTTON');
-      assert.equal(button.tabIndex, 0);
-      button.focus();
-      assert.equal(document.activeElement, button);
-      await act(async () => click(button));
-    }
-    assert.deepEqual(drafts, [
-      {
-        text: `Pause the goal "Complete Northstar review".`,
-        send: false,
-      },
-      { text: 'Resume the goal "Read a book".', send: false },
-      {
-        text: `Let's review the goal "Complete Northstar review" and decide what to do next.`,
-        send: false,
-      },
-    ]);
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="Complete Northstar review active"]',
+    )!;
+    assert.equal(toggle.getAttribute('aria-checked'), 'true');
+    await act(async () => click(toggle));
+    assert.deepEqual(patches[0], { path: `/api/goals/${goal.id}`, body: { status: 'paused' } });
+    assert.match(
+      container.querySelector('.plan-toast')?.textContent ?? '',
+      /Paused Complete Northstar review\. Progress and next step stay saved\./,
+    );
+    const undo = [...container.querySelectorAll<HTMLButtonElement>('.plan-toast button')].find(
+      (button) => button.textContent === 'Undo',
+    )!;
+    await act(async () => click(undo));
+    assert.deepEqual(patches[1]?.body, { status: 'active' });
+    assert.equal(container.querySelector('.plan-toast .notice'), null);
+    const progress = container.querySelector<HTMLInputElement>(
+      '[aria-label="Complete Northstar review progress"]',
+    )!;
+    assert.equal(progress.type, 'range');
+    progress.value = '40';
+    await act(async () =>
+      progress.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true })),
+    );
+    assert.deepEqual(patches[2]?.body, { progress: 40 });
+    assert.match(container.querySelector('.plan-toast')?.textContent ?? '', /40% done/);
     await act(async () => click(container.querySelector('[role="tab"][data-view="completed"]')!));
     const completed = container.querySelector('article')!;
+    assert.equal(completed.querySelector('[role="switch"]'), null);
     assert.equal(completed.querySelector('.saved-plan-next'), null);
-    assert.equal(completed.querySelectorAll('button').length, 2);
-    assert.ok(completed.querySelector('[aria-label="Update goal Finished review"]'));
+    assert.ok(completed.querySelector('progress'));
+    assert.ok(completed.querySelector('[aria-label="Ask Otto about Finished review"]'));
     assert.ok(completed.querySelector('[aria-label="Delete goal Finished review"]'));
+    assert.deepEqual(chatEvents, []);
   } finally {
-    window.removeEventListener('otto:compose', onDraft);
+    window.removeEventListener('otto:compose', onChat);
+    window.removeEventListener('otto:focus-message', onChat);
+    await act(async () => root.unmount());
+    container.remove();
+    pageDataCache.update('/api/goals', () => null);
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Ask Otto sends a named request through the conversation and shows the reply in place', async () => {
+  const previousFetch = globalThis.fetch;
+  const posts: Array<{ text: string; clientMessageId: string; conversationRevision?: number }> = [];
+  globalThis.fetch = async (path, options) => {
+    if (path === '/api/messages' && options?.method === 'POST') {
+      posts.push(JSON.parse(String(options.body)));
+      return Response.json({ taskId: 'ask-task', messageId: posts[0].clientMessageId });
+    }
+    return Response.json([goal]);
+  };
+  pageDataCache.update('/api/goals', () => [goal]);
+  const focused: unknown[] = [];
+  const onFocus = (event: Event) => focused.push((event as CustomEvent).detail);
+  window.addEventListener('otto:focus-message', onFocus);
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const conversation = (tasks: AppState['tasks'], messages: AppState['messages']): AppState => ({
+    conversationRevision: 3,
+    messages,
+    tasks,
+    configuration: {} as AppState['configuration'],
+  });
+  try {
+    await act(async () =>
+      root.render(createElement(Goals, { conversation: conversation([], []) })),
+    );
+    await act(async () =>
+      click(container.querySelector('[aria-label="Ask Otto about Complete Northstar review"]')!),
+    );
+    const chip = [...container.querySelectorAll<HTMLButtonElement>('.ask-otto-chips button')].find(
+      (button) => button.textContent === 'Mark it 50% done',
+    )!;
+    await act(async () => click(chip));
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].text, 'About the goal "Complete Northstar review": Mark it 50% done');
+    assert.equal(posts[0].conversationRevision, 3);
+    assert.match(container.textContent ?? '', /Otto is on it/);
+    const task = { id: 'ask-task', title: 'Goal', createdAt: '', updatedAt: '' };
+    await act(async () =>
+      root.render(
+        createElement(Goals, {
+          conversation: conversation(
+            [{ ...task, status: 'succeeded' }],
+            [
+              {
+                id: 'reply',
+                role: 'assistant',
+                text: 'Done. The goal is 50% done.',
+                taskId: 'ask-task',
+                attachments: [],
+                createdAt: '2026-09-29T08:00:00.000Z',
+              },
+            ],
+          ),
+        }),
+      ),
+    );
+    assert.match(container.querySelector('.ask-otto-reply')?.textContent ?? '', /50% done/);
+    const open = [...container.querySelectorAll<HTMLButtonElement>('.ask-otto button')].find(
+      (button) => button.textContent === 'Open conversation',
+    )!;
+    await act(async () => click(open));
+    assert.deepEqual(focused, [{ messageId: posts[0].clientMessageId }]);
+    await act(async () =>
+      root.render(
+        createElement(Goals, {
+          conversation: conversation([{ ...task, status: 'waiting_credentials' }], []),
+        }),
+      ),
+    );
+    assert.match(container.querySelector('.ask-otto-reply')?.textContent ?? '', /needs your input/);
+  } finally {
+    window.removeEventListener('otto:focus-message', onFocus);
     await act(async () => root.unmount());
     container.remove();
     pageDataCache.update('/api/goals', () => null);
@@ -268,7 +364,14 @@ test('paused-only goals stay visible and resumable outside the completed view', 
     assert.match(f.element.textContent!, /No active goals/);
     assert.match(f.element.textContent!, /Resume a paused goal/);
     assert.equal(f.element.querySelector<HTMLDetailsElement>('.goals-paused')!.open, true);
-    assert.ok(f.element.querySelector('[aria-label="Resume goal Complete Northstar review"]'));
+    assert.equal(
+      f.element
+        .querySelector<HTMLButtonElement>(
+          '[role="switch"][aria-label="Complete Northstar review active"]',
+        )
+        ?.getAttribute('aria-checked'),
+      'false',
+    );
     await act(async () => click(f.tab('completed')));
     assert.match(f.element.textContent!, /No completed goals yet/);
     assert.equal(f.element.querySelector('article'), null);
@@ -299,5 +402,57 @@ test('each view has a specific empty state and accepted cache changes preserve t
     assert.equal(f.reads(), 1);
   } finally {
     await f.close();
+  }
+});
+
+test('Ask Otto retries a failed request with the same message ID', async () => {
+  const previousFetch = globalThis.fetch;
+  const posts: Array<{ text: string; clientMessageId: string }> = [];
+  globalThis.fetch = async (path, options) => {
+    if (path === '/api/messages' && options?.method === 'POST') {
+      posts.push(JSON.parse(String(options.body)));
+      return posts.length === 1
+        ? Response.json({ error: 'Otto is unavailable.' }, { status: 503 })
+        : Response.json({ taskId: 'retry-task', messageId: posts[0].clientMessageId });
+    }
+    return Response.json([goal]);
+  };
+  pageDataCache.update('/api/goals', () => [goal]);
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const chip = () =>
+    [
+      ...container.querySelectorAll<HTMLButtonElement>('.ask-otto-chips button, .ask-otto button'),
+    ].find((button) => button.textContent === 'Mark it 50% done');
+  try {
+    await act(async () => root.render(createElement(Goals)));
+    await act(async () =>
+      click(container.querySelector('[aria-label="Ask Otto about Complete Northstar review"]')!),
+    );
+    await act(async () => click(chip()!));
+    assert.match(container.textContent ?? '', /Otto is unavailable\./);
+    const input = container.querySelector<HTMLInputElement>('.ask-otto-field input')!;
+    const setValue = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )!.set!;
+    await act(async () => {
+      setValue.call(input, 'Mark it 50% done');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () =>
+      container
+        .querySelector('.ask-otto-field')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
+    assert.equal(posts.length, 2);
+    assert.equal(posts[1].clientMessageId, posts[0].clientMessageId);
+    assert.equal(posts[1].text, posts[0].text);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    pageDataCache.update('/api/goals', () => null);
+    globalThis.fetch = previousFetch;
   }
 });

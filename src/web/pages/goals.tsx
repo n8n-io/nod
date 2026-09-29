@@ -1,14 +1,21 @@
 import { PageTitle } from '../components/page-title';
 import { useId, useState } from 'react';
-import { ArrowUpRight, Pause, Play, Plus } from 'lucide-react';
-import type { Goal } from '../../shared/contracts';
+import type { AppState, Goal } from '../../shared/contracts';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
-import { draftInChat, goalDraft } from '../lib/secondary-pages';
 import { DeletePlan } from '../components/delete-plan';
+import { NewPlan, PlanFooter, PlanToast } from '../components/plan-controls';
+import { formatCalendarDate, useDateFormat } from '../lib/date-format';
 
-export function GoalRow({ goal }: { goal: Goal }) {
+export function GoalRow({
+  goal,
+  conversation = null,
+}: {
+  goal: Goal;
+  conversation?: AppState | null;
+}) {
   const headingId = useId();
+  const dateFormat = useDateFormat();
   return (
     <article className="saved-plan" aria-labelledby={headingId}>
       <div className="saved-plan-title">
@@ -16,68 +23,47 @@ export function GoalRow({ goal }: { goal: Goal }) {
         <span className="saved-plan-status">{goal.status}</span>
       </div>
       {goal.description && <p className="saved-plan-description">{goal.description}</p>}
-      <div className="saved-goal-progress">
-        <progress aria-label={`${goal.title} progress`} max={100} value={goal.progress} />
-        <span>{goal.progress}%</span>
-      </div>
+      {goal.status === 'completed' && (
+        <div className="saved-goal-progress">
+          <progress aria-label={`${goal.title} progress`} max={100} value={goal.progress} />
+          <span>{goal.progress}%</span>
+        </div>
+      )}
       {goal.nextAction && goal.status !== 'completed' && (
         <p className="saved-plan-next">
           <span>Next</span>
           {goal.nextAction}
         </p>
       )}
-      <div className="saved-plan-footer">
-        <span>{goal.targetDate ? `Target ${goal.targetDate}` : ''}</span>
-        <div className="saved-plan-actions">
-          {goal.status !== 'completed' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label={`${goal.status === 'active' ? 'Pause' : 'Resume'} goal ${goal.title}`}
-              onClick={() => draftInChat(goalDraft(goal, 'status'))}
-            >
-              {goal.status === 'active' ? <Pause size={13} /> : <Play size={13} />}
-              {goal.status === 'active' ? 'Pause' : 'Resume'}
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Update goal ${goal.title}`}
-            onClick={() => draftInChat(goalDraft(goal, 'discuss'))}
-          >
-            Update <ArrowUpRight size={14} />
-          </Button>
-          <DeletePlan kind="goal" id={goal.id} title={goal.title} />
-        </div>
-      </div>
+      <PlanFooter
+        kind="goal"
+        item={goal}
+        canPause={goal.status !== 'completed'}
+        meta={goal.targetDate ? `Target ${formatCalendarDate(goal.targetDate, dateFormat)}` : ''}
+        remove={<DeletePlan kind="goal" id={goal.id} title={goal.title} />}
+        conversation={conversation}
+      />
     </article>
   );
 }
 
-export function Goals() {
+export function Goals({ conversation = null }: { conversation?: AppState | null }) {
   const { data: goals, error, loading, refreshing, refresh } = usePageData<Goal[]>('/api/goals');
   const [view, setView] = useState<'active' | 'completed'>('active');
   const tabsId = useId();
   const active = (goals ?? []).filter((goal) => goal.status === 'active');
   const paused = (goals ?? []).filter((goal) => goal.status === 'paused');
   const completed = (goals ?? []).filter((goal) => goal.status === 'completed');
-  const add = () =>
-    draftInChat(
-      "I'd like to set a new goal. Help me define what I want to achieve and the next step.",
-    );
   return (
     <div className="content-page secondary-page goals-page">
+      <PlanToast />
       <header className="page-heading secondary-heading">
         <div>
           <PageTitle path="/goals" />
           <p>Your goals and next steps.</p>
         </div>
         <div className="secondary-heading-actions">
-          <Button size="sm" onClick={add}>
-            <Plus size={14} />
-            Add goal
-          </Button>
+          <NewPlan kind="goal" conversation={conversation} />
         </div>
       </header>
       <div
@@ -149,7 +135,7 @@ export function Goals() {
               completed.length ? (
                 <div className="saved-plan-list">
                   {completed.map((goal) => (
-                    <GoalRow key={goal.id} goal={goal} />
+                    <GoalRow key={goal.id} goal={goal} conversation={conversation} />
                   ))}
                 </div>
               ) : (
@@ -163,7 +149,7 @@ export function Goals() {
                 {active.length ? (
                   <div className="saved-plan-list">
                     {active.map((goal) => (
-                      <GoalRow key={goal.id} goal={goal} />
+                      <GoalRow key={goal.id} goal={goal} conversation={conversation} />
                     ))}
                   </div>
                 ) : (
@@ -183,7 +169,7 @@ export function Goals() {
                     </summary>
                     <div className="saved-plan-list">
                       {paused.map((goal) => (
-                        <GoalRow key={goal.id} goal={goal} />
+                        <GoalRow key={goal.id} goal={goal} conversation={conversation} />
                       ))}
                     </div>
                   </details>

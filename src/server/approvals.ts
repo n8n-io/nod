@@ -228,7 +228,8 @@ export async function createApprovals(
           ],
         )
       ).rows[0];
-      if (!direct)
+      if (direct) await client.query('UPDATE tasks SET external_action=true WHERE id=$1', [taskId]);
+      else
         await client.query(
           "UPDATE tasks SET status='waiting_user',waiting_reason='approval',waiting_question=$2,updated_at=now() WHERE id=$1",
           [taskId, question],
@@ -323,6 +324,7 @@ export async function createApprovals(
       await preflight?.(selected.action, selected.args);
       signal.throwIfAborted();
       await client.query("UPDATE approvals SET status='executing' WHERE id=$1", [selected.id]);
+      await client.query('UPDATE tasks SET external_action=true WHERE id=$1', [taskId]);
       return selected;
     });
     if (!approval) return undefined;

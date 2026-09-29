@@ -1,0 +1,126 @@
+.message-attachments:has(.attachment-cards) {
+  display: block;
+}
+
+.attachment-cards {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.attachment-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--foreground);
+}
+
+.attachment-card-open {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.attachment-card-open:focus-visible {
+  outline-offset: -2px;
+}
+
+.attachment-card-preview {
+  display: block;
+  height: 136px;
+  padding: 14px 16px 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-inset);
+}
+
+.attachment-card-preview .attachment-pdf-page {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 0;
+  background: transparent;
+}
+
+.attachment-card-preview .attachment-pdf-loading {
+  display: none;
+}
+
+.attachment-card-preview canvas {
+  display: block;
+  border-radius: 3px 3px 0 0;
+}
+
+.attachment-card-details {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 9px 48px 9px 12px;
+}
+
+.attachment-card-glyph {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.attachment-card-text {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.attachment-card-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-card-meta {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-card-download.button {
+  position: absolute;
+  right: 8px;
+  bottom: 12px;
+}
+
+.attachment-file {
+  flex-direction: row;
+  align-items: center;
+}
+
+.attachment-file .attachment-card-details {
+  flex: 1;
+  padding-right: 8px;
+}
+
+.attachment-file-action {
+  margin-right: 16px;
+  color: var(--muted-foreground);
+}

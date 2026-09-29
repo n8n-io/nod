@@ -15,6 +15,7 @@ export function useAppState(accountId?: string) {
   const resetRequest = useRef<Promise<number> | null>(null);
   const active = useRef(false);
   const stateRequest = useRef<AbortController | null>(null);
+  const refreshAfterRequest = useRef(false);
   const advanceConversation = useCallback((revision: number) => {
     if (revision <= conversationRevision.current) return;
     conversationRevision.current = revision;
@@ -34,6 +35,7 @@ export function useAppState(accountId?: string) {
   const refresh = useCallback(async () => {
     if (!active.current) return;
     const version = ++requestVersion.current;
+    refreshAfterRequest.current = false;
     stateRequest.current?.abort();
     const controller = new AbortController();
     stateRequest.current = controller;
@@ -57,6 +59,11 @@ export function useAppState(accountId?: string) {
     } catch (cause) {
       if (active.current && !controller.signal.aborted && version === requestVersion.current)
         setError(errorMessage(cause));
+    } finally {
+      if (stateRequest.current === controller) {
+        stateRequest.current = null;
+        if (refreshAfterRequest.current) void refresh();
+      }
     }
   }, [advanceConversation]);
 
@@ -91,7 +98,8 @@ export function useAppState(accountId?: string) {
       open() {
         if (!subscribed) return;
         setConnected(true);
-        void refresh();
+        if (stateRequest.current) refreshAfterRequest.current = true;
+        else void refresh();
       },
       error() {
         if (!subscribed || !active.current) return;

@@ -36,6 +36,7 @@ export interface ConversationRoutingContext {
     taskId: string;
     status: TaskStatus;
     waitingReason: string | null;
+    recency?: number;
     recentMessages: Array<{ role: 'user' | 'assistant'; text: string }>;
   }>;
   blockedCandidates?: ConversationRoutingContext['candidates'];

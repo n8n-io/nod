@@ -1,26 +1,39 @@
 import { z } from 'zod';
 import type { Pool } from 'pg';
 
+const hourCycles = ['auto', 'h12', 'h23'] as const;
 export const preferencesSchema = z
   .object({
     notificationRule: z.string().max(4000),
     timeZone: z.string().max(100),
+    locale: z.string().trim().min(2).max(35).nullable(),
+    hourCycle: z.enum(hourCycles),
     quietHoursEnabled: z.boolean(),
     quietStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     quietEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   })
   .strict();
 export type Preferences = z.infer<typeof preferencesSchema>;
+export const defaultLocale = 'en-GB';
 export const defaultPreferences: Preferences = {
   notificationRule:
     'Only interrupt me for a time-sensitive message that needs my reply, a meaningful calendar change affecting me, or a concrete next step for an active goal. Keep newsletters, routine updates, uncertain relevance and repeated reminders quiet.',
   timeZone: 'Europe/Lisbon',
+  locale: null,
+  hourCycle: 'auto',
   quietHoursEnabled: true,
   quietStart: '22:00',
   quietEnd: '08:00',
 };
+function canonicalLocale(value: string) {
+  try {
+    const [locale] = Intl.getCanonicalLocales(value);
+    if (locale && Intl.DateTimeFormat.supportedLocalesOf(locale).length) return locale;
+  } catch {}
+  return null;
+}
 const columns =
-  'notification_rule AS "notificationRule",time_zone AS "timeZone",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd"';
+  'notification_rule AS "notificationRule",time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd"';
 export function createPreferencesStore(pool: Pool, ownerId: string) {
   function validate(raw: unknown) {
     const patch = preferencesSchema.partial().parse(raw);
@@ -30,6 +43,11 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
       } catch {
         throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
       }
+    }
+    if (patch.locale !== undefined && patch.locale !== null) {
+      const locale = canonicalLocale(patch.locale);
+      if (!locale) throw Object.assign(new Error('Choose a valid region.'), { statusCode: 400 });
+      patch.locale = locale;
     }
     return patch;
   }
@@ -44,11 +62,12 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
     async update(raw: unknown): Promise<Preferences> {
       const patch = validate(raw);
       const result = await pool.query(
-        `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled)
-        VALUES($1,COALESCE($2,$7),COALESCE($3,$8),COALESCE($4,$9),COALESCE($5,$10),COALESCE($6::boolean,$11::boolean))
+        `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle)
+        VALUES($1,COALESCE($2,$7),COALESCE($3,$8),COALESCE($4,$9),COALESCE($5,$10),COALESCE($6::boolean,$11::boolean),$12,COALESCE($13,$14))
         ON CONFLICT(owner_id) DO UPDATE SET notification_rule=COALESCE($2,preferences.notification_rule),
         time_zone=COALESCE($3,preferences.time_zone),quiet_start=COALESCE($4,preferences.quiet_start),quiet_end=COALESCE($5,preferences.quiet_end),
-        quiet_hours_enabled=COALESCE($6,preferences.quiet_hours_enabled)
+        quiet_hours_enabled=COALESCE($6,preferences.quiet_hours_enabled),locale=CASE WHEN $15 THEN $12 ELSE preferences.locale END,
+        hour_cycle=COALESCE($13,preferences.hour_cycle)
         RETURNING ${columns}`,
         [
           ownerId,
@@ -62,6 +81,10 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
           defaultPreferences.quietStart,
           defaultPreferences.quietEnd,
           defaultPreferences.quietHoursEnabled,
+          patch.locale ?? null,
+          patch.hourCycle ?? null,
+          defaultPreferences.hourCycle,
+          patch.locale !== undefined,
         ],
       );
       return result.rows[0];

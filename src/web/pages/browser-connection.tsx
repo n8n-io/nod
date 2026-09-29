@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Check, Globe2, LockKeyhole } from 'lucide-react';
 import { BrowserControl } from '../components/browser-control';
 import { BrandMark } from '../components/brand';
-import { Button, Field, Input, Loading, Notice } from '../components/ui';
+import { Button, Checkbox, Field, Input, Loading, Notice } from '../components/ui';
 import { api, errorMessage } from '../lib/api';
 
 type Inspection = {
@@ -392,8 +392,7 @@ export function BrowserConnection({ token }: { token: string }) {
                   )}
                   {hasPassword && (
                     <label className="browser-connection-save">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={saveLogin}
                         onChange={(event) => setSaveLogin(event.target.checked)}
                         disabled={busy}

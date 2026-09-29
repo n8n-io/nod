@@ -268,14 +268,17 @@ export function meterMessaging(
     ...transport,
     ...(transport.poll
       ? {
-          poll: async (accept: Parameters<NonNullable<MessagingTransport['poll']>>[0]) => {
+          poll: async (
+            accept: Parameters<NonNullable<MessagingTransport['poll']>>[0],
+            pair?: Parameters<NonNullable<MessagingTransport['poll']>>[1],
+          ) => {
             if (
               transport.pollingEnabled === false ||
               !transport.channels.some(
                 (channel) => channel.id === 'telegram' && channel.status === 'configured',
               )
             )
-              return transport.poll!(accept);
+              return transport.poll!(accept, pair);
             return usage.track(
               { provider: 'telegram', category: 'channel', operation: 'poll' },
               () =>
@@ -289,7 +292,7 @@ export function meterMessaging(
                     durationMs: 0,
                     messages: 1,
                   });
-                }),
+                }, pair),
             );
           },
         }

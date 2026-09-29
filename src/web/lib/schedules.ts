@@ -1,13 +1,7 @@
+import { formatClockTime, formatDateTime, type DateFormat } from './date-format';
+
 export type ScheduleFrequency = 'daily' | 'weekly' | 'custom';
-export const weekDays = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-];
+const weekDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export function readSchedule(cron: string) {
   const match = /^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+(\*|[0-7])$/.exec(cron.trim());
@@ -34,10 +28,10 @@ export function scheduleExpression(
   return `${Number(match[2])} ${Number(match[1])} * * ${frequency === 'weekly' ? day : '*'}`;
 }
 
-export function scheduleLabel(cron: string) {
+export function scheduleLabel(cron: string, format?: DateFormat) {
   const value = readSchedule(cron);
   if (value.frequency !== 'custom')
-    return `${value.frequency === 'daily' ? 'Every day' : `Every ${weekDays[Number(value.day)]}`} at ${value.time}`;
+    return `${value.frequency === 'daily' ? 'Every day' : `Every ${weekDays[Number(value.day)]}`} at ${formatClockTime(value.time, format)}`;
   const fields = cron.trim().split(/\s+/);
   if (fields.length !== 5) return 'Custom timing';
   const [minute, hour, day, month, weekday] = fields;
@@ -56,7 +50,7 @@ export function scheduleLabel(cron: string) {
   const hasTime =
     /^\d{1,2}$/.test(minute) && /^\d{1,2}$/.test(hour) && Number(minute) < 60 && Number(hour) < 24;
   if (hasTime && month === '*') {
-    const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    const time = formatClockTime(`${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`, format);
     if (day === '*' && weekday === '1-5') return `Every weekday at ${time}`;
     if (day === '*' && ['0,6', '6,0', '6-7'].includes(weekday))
       return `Every Saturday and Sunday at ${time}`;
@@ -66,14 +60,10 @@ export function scheduleLabel(cron: string) {
   return 'Custom timing';
 }
 
-export function scheduleDate(value: string, timeZone: string) {
+export function scheduleDate(value: string, timeZone: string, format?: DateFormat) {
   try {
-    return new Intl.DateTimeFormat('en-GB', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      hourCycle: 'h23',
-      timeZone,
-    }).format(new Date(value));
+    if (!Number.isFinite(Date.parse(value))) throw new Error();
+    return formatDateTime(value, format, { timeZone });
   } catch {
     return 'Time unavailable';
   }

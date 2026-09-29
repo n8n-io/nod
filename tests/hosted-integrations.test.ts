@@ -260,7 +260,7 @@ test(
         apps[index].inject({
           method: 'PUT',
           url: '/api/channel-settings/telegram',
-          payload: { botToken: token, allowedUserId: '123', ...extra },
+          payload: { botToken: token, ...extra },
         });
       assert.equal(
         (
@@ -328,7 +328,12 @@ test(
                   TELEGRAM_BOT_TOKEN: `${String(input)}:synthetic-never-live`,
                   TELEGRAM_MODE: 'polling',
                 },
-                summary: { provider, enabled: true, mode: 'polling' },
+                summary: {
+                  provider,
+                  enabled: true,
+                  mode: 'polling',
+                  accountHandle: '@synthetic_bot',
+                },
               };
             },
           };
@@ -456,7 +461,12 @@ test(
                     TELEGRAM_BOT_TOKEN: `${accountId}:synthetic-never-live`,
                     TELEGRAM_MODE: 'polling',
                   },
-                  summary: { provider, enabled: true, mode: 'polling' as const },
+                  summary: {
+                    provider,
+                    enabled: true,
+                    mode: 'polling' as const,
+                    accountHandle: '@synthetic_bot',
+                  },
                 };
               },
             },

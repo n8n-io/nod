@@ -139,19 +139,6 @@
   right: 0;
   width: 268px;
   max-width: calc(100vw - 48px);
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 8px 24px rgb(27 25 36 / 10%);
-}
-.connection-menu > .button:focus-visible {
-  outline: 1px solid var(--text-secondary);
-  outline-offset: 3px;
-}
-.connection-menu-options > button:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 1px var(--border);
 }
 .delete-plan-dialog {
   max-width: 440px;
@@ -172,29 +159,6 @@
 }
 .connection-account-menu .connection-menu-options {
   width: 194px;
-}
-.connection-menu-options > button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--foreground);
-  text-align: left;
-  font-size: 12px;
-  line-height: 1.4;
-  cursor: pointer;
-}
-.connection-menu-options > button:hover,
-.connection-menu-options > button:focus-visible {
-  background: var(--secondary);
-}
-.connection-menu-options > button:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 .connection-menu-options > button > img,
 .connection-menu-options > button > svg {
@@ -356,28 +320,6 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.channel-setup-review {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 15px;
-  border-radius: 8px;
-  background: var(--secondary);
-}
-.channel-setup-review > svg {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-.channel-setup-review strong {
-  font-size: 13px;
-  font-weight: 500;
-}
-.channel-setup-review p {
-  margin-top: 5px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  line-height: 1.6;
-}
 .channel-advanced > summary {
   color: var(--muted-foreground);
   font-size: 12px;
@@ -401,11 +343,6 @@
   color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.6;
-}
-.channel-policy > input {
-  flex-shrink: 0;
-  margin-top: 3px;
-  accent-color: var(--primary);
 }
 .channel-wizard-actions {
   display: flex;
@@ -510,6 +447,59 @@
 .schedule-run > .schedule-run-error {
   color: var(--foreground);
   overflow-wrap: anywhere;
+}
+.schedule-run-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 0 6px 10px;
+  border: 0;
+  border-left: 2px solid var(--border);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+.schedule-run-preview > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.schedule-run-preview > svg {
+  flex: none;
+  margin: 3px 0 0 auto;
+  color: var(--muted-foreground);
+}
+.schedule-run-open .schedule-run-preview {
+  padding-bottom: 0;
+}
+.schedule-run-open .schedule-run-preview > svg {
+  transform: rotate(180deg);
+}
+.schedule-run-body {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  padding: 0 0 8px 10px;
+  border-left: 2px solid var(--border);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.schedule-run-body .message-text {
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+.schedule-run-body > .button {
+  justify-self: end;
+}
+.schedule-run > .schedule-run-empty {
+  color: var(--muted-foreground);
+  font-size: 11px;
 }
 .schedule-history-more {
   margin-top: 14px;

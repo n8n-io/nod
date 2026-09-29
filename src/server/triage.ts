@@ -213,7 +213,7 @@ export function createTriage(options: {
   ) {
     if (notification.decision !== 'wake' || notification.task_id) return;
     const current = await client.query(
-      'SELECT notification_rule AS "notificationRule",time_zone AS "timeZone",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd" FROM preferences WHERE owner_id=$1',
+      'SELECT notification_rule AS "notificationRule",time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd" FROM preferences WHERE owner_id=$1',
       [ownerId],
     );
     const preferences: Preferences = current.rows[0] || defaultPreferences;
@@ -294,7 +294,11 @@ export function createTriage(options: {
     app.get('/api/preferences', getPreferences);
     app.put('/api/preferences', async (request) => {
       const input = preferencesSchema
-        .extend({ quietHoursEnabled: z.boolean().optional() })
+        .extend({
+          locale: preferencesSchema.shape.locale.optional(),
+          hourCycle: preferencesSchema.shape.hourCycle.optional(),
+          quietHoursEnabled: z.boolean().optional(),
+        })
         .parse(request.body);
       return updatePreferences(input);
     });

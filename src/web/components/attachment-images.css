@@ -6,12 +6,18 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 5px;
-  width: min(100%, 320px);
+  width: 320px;
+  max-width: 100%;
   margin-bottom: 8px;
 }
 
 .attachment-image-gallery.is-single {
   display: block;
+}
+
+.attachment-image-gallery.is-single:has(> .is-image) {
+  width: fit-content;
+  max-width: min(100%, 320px);
 }
 
 .attachment-image-tile {
@@ -50,6 +56,14 @@
   max-width: 100%;
   height: auto;
   max-height: 250px;
+  object-fit: contain;
+}
+
+.attachment-image-tile img.is-vector,
+.pending-attachment .pending-image-preview img.is-vector,
+.attachment-viewer-surface img.is-vector {
+  padding: 8px;
+  background: white;
   object-fit: contain;
 }
 
@@ -95,10 +109,6 @@
   color: #fff;
   font-size: 26px;
   font-weight: 600;
-}
-
-.message-attachments > .file-attachment {
-  margin-bottom: 6px;
 }
 
 .pending-attachment.is-preview {

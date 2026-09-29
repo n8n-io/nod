@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { once } from 'node:events';
+import { getEventListeners, once } from 'node:events';
 import test from 'node:test';
 import Fastify from 'fastify';
 import {
   createPublicLinkPreviewProvider,
   parseLinkMetadata,
   requestPublicPreview,
-  type PreviewRequest,
 } from '../src/providers/public-web/link-preview.ts';
 import { createLinkPreviews } from '../src/server/link-previews.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
@@ -347,6 +346,41 @@ test('a stalled DNS lookup reaches the overall preview deadline without an HTTP 
   }
 });
 
+test('an expired icon request does not start fallback DNS or retain completed lookup listeners', async () => {
+  let lookups = 0;
+  let requests = 0;
+  let lookupListeners = -1;
+  const provider = createPublicLinkPreviewProvider({
+    timeoutMs: 15,
+    resolver: async () => {
+      lookups++;
+      return lookups === 1 ? addresses() : new Promise(() => {});
+    },
+    request: async ({ signal }) => {
+      requests++;
+      lookupListeners = getEventListeners(signal, 'abort').length;
+      return new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    },
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      provider.icon!('https://example.com'),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve('deadline exceeded'), 500);
+      }),
+    ]);
+    assert.equal(result, null);
+    assert.equal(lookups, 1);
+    assert.equal(requests, 1);
+    assert.equal(lookupListeners, 0);
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
 test('image capacity eviction refreshes its paired preview instead of returning a broken cached image', async () => {
   let calls = 0;
   const previews = createLinkPreviews({
@@ -386,5 +420,154 @@ test('image previews reject PNG animation chunks and truncated chunk lengths', a
       request: async () => ({ status: 200, headers: { 'content-type': 'image/png' }, body }),
     });
     assert.equal(await provider.image('https://example.com/image'), null);
+  }
+});
+
+test('saved website icons use the pinned public fetcher and accept only ICO or raster bytes', async () => {
+  const entry = Buffer.alloc(16);
+  entry.set([16, 16, 0, 0, 1, 0, 32, 0]);
+  entry.writeUInt32LE(png.length, 8);
+  entry.writeUInt32LE(22, 12);
+  const ico = Buffer.concat([Buffer.from([0, 0, 1, 0, 1, 0]), entry, png]);
+  const emptyIco = Buffer.concat([Buffer.from([0, 0, 1, 0, 1, 0]), Buffer.alloc(16), png]);
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  const fetchWith = (routes: Record<string, { status: number; type?: string; body: Buffer }>) => {
+    const calls: string[] = [];
+    const provider = createPublicLinkPreviewProvider({
+      resolver: addresses,
+      request: async ({ url, address, purpose }) => {
+        assert.equal(address, '93.184.216.34');
+        assert.equal(purpose, url.pathname === '/' ? undefined : 'icon');
+        calls.push(url.href);
+        const route = routes[url.href] ?? { status: 404, body: Buffer.alloc(0) };
+        return {
+          status: route.status,
+          headers: { 'content-type': route.type },
+          body: route.body,
+        };
+      },
+    });
+    return { provider, calls };
+  };
+
+  const empty = fetchWith({
+    'https://example.com/favicon.ico': { status: 200, type: 'image/x-icon', body: emptyIco },
+  });
+  assert.equal(await empty.provider.icon!('https://example.com'), null);
+
+  const direct = fetchWith({
+    'https://login.example.com/favicon.ico': { status: 200, type: 'text/plain', body: ico },
+  });
+  const icon = await direct.provider.icon!('https://login.example.com');
+  assert.equal(icon?.mimeType, 'image/x-icon');
+  assert.deepEqual(direct.calls, ['https://login.example.com/favicon.ico']);
+
+  const linked = fetchWith({
+    'https://example.com/': {
+      status: 200,
+      type: 'text/html',
+      body: Buffer.from(
+        '<html><head><link rel="icon" type="image/svg+xml" href="/icon.svg"><link rel="shortcut icon" href="/static/icon.png"></head></html>',
+      ),
+    },
+    'https://example.com/static/icon.png': { status: 200, type: 'image/png', body: png },
+  });
+  assert.equal((await linked.provider.icon!('https://example.com'))?.mimeType, 'image/png');
+  assert.deepEqual(linked.calls, [
+    'https://example.com/favicon.ico',
+    'https://example.com/',
+    'https://example.com/static/icon.png',
+  ]);
+
+  const alternatives = fetchWith({
+    'https://example.com/': {
+      status: 200,
+      type: 'text/html',
+      body: Buffer.from(
+        '<html><head><link rel="icon" href="/invalid.png"><link rel="icon" href="/missing.png"><link rel="apple-touch-icon-precomposed" href="/valid.png"></head></html>',
+      ),
+    },
+    'https://example.com/invalid.png': {
+      status: 200,
+      type: 'image/png',
+      body: Buffer.from('invalid image'),
+    },
+    'https://example.com/valid.png': { status: 200, type: 'image/png', body: png },
+  });
+  assert.equal((await alternatives.provider.icon!('https://example.com'))?.mimeType, 'image/png');
+  assert.deepEqual(alternatives.calls, [
+    'https://example.com/favicon.ico',
+    'https://example.com/',
+    'https://example.com/invalid.png',
+    'https://example.com/missing.png',
+    'https://example.com/valid.png',
+  ]);
+
+  const vector = fetchWith({
+    'https://example.com/favicon.ico': { status: 200, type: 'image/x-icon', body: svg },
+    'https://example.com/': {
+      status: 200,
+      type: 'text/html',
+      body: Buffer.from('<html><head><link rel="icon" href="/icon.svg"></head></html>'),
+    },
+  });
+  assert.equal(await vector.provider.icon!('https://example.com'), null);
+  assert.deepEqual(vector.calls, ['https://example.com/favicon.ico', 'https://example.com/']);
+
+  const large = fetchWith({
+    'https://example.com/favicon.ico': {
+      status: 200,
+      type: 'image/x-icon',
+      body: Buffer.alloc(128 * 1024 + 1),
+    },
+  });
+  assert.equal(await large.provider.icon!('https://example.com'), null);
+
+  let requested = false;
+  const privateSite = createPublicLinkPreviewProvider({
+    resolver: async () => [{ address: '10.0.0.2', family: 4 }],
+    request: async () => {
+      requested = true;
+      return { status: 200, headers: {}, body: ico };
+    },
+  });
+  assert.equal(await privateSite.icon!('https://intranet.example.com'), null);
+  assert.equal(await privateSite.icon!('http://localhost:3000'), null);
+  assert.equal(requested, false);
+});
+
+test('saved website icons try at most eight unique eligible fallback links', async () => {
+  for (const validCandidate of [8, 9]) {
+    const resolved: string[] = [];
+    const requested: string[] = [];
+    const links = Array.from({ length: 20 }, (_, index) =>
+      `<link rel="icon" href="/icon-${index + 1}.png">`.repeat(2),
+    ).join('');
+    const provider = createPublicLinkPreviewProvider({
+      resolver: async (host) => {
+        resolved.push(host);
+        return addresses();
+      },
+      request: async ({ url, address }) => {
+        assert.equal(address, '93.184.216.34');
+        requested.push(url.pathname);
+        if (url.pathname === '/') return html(`<link rel="icon" href="/icon.svg">${links}`);
+        if (url.pathname === `/icon-${validCandidate}.png`)
+          return { status: 200, headers: { 'content-type': 'image/png' }, body: png };
+        return { status: 404, headers: {}, body: Buffer.alloc(0) };
+      },
+    });
+
+    const icon = await provider.icon!('https://example.com');
+    assert.equal(icon?.mimeType ?? null, validCandidate === 8 ? 'image/png' : null);
+    assert.deepEqual(requested, [
+      '/favicon.ico',
+      '/',
+      ...Array.from({ length: 8 }, (_, index) => `/icon-${index + 1}.png`),
+    ]);
+    assert.deepEqual(
+      resolved,
+      Array.from({ length: 10 }, () => 'example.com'),
+    );
   }
 });

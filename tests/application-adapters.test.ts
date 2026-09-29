@@ -29,6 +29,7 @@ test(
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, ownerId, port } = await import('../src/server/config.ts');
     const { events } = await import('../src/server/events.ts');
+    const { welcomeGreeting } = await import('../src/server/welcome.ts');
     const integrationCalls: Array<{ action: string; args: Record<string, unknown> }> = [];
     const spoken: string[] = [];
     const browserTasks: string[] = [];
@@ -122,15 +123,20 @@ test(
                 );
               }
               await call('apps', { action: 'GMAIL_FETCH_EMAILS', args: { max_results: 2 } });
-              await assert.rejects(
-                call('apps', {
-                  action: 'GMAIL_SEND_EMAIL',
-                  args: {
-                    recipient_email: 'fixture@example.test',
-                    subject: 'Must not send during setup',
-                  },
-                }),
-                /could not be completed/,
+              const refused = await call('apps', {
+                action: 'GMAIL_SEND_EMAIL',
+                args: {
+                  recipient_email: 'fixture@example.test',
+                  subject: 'Must not send during setup',
+                },
+              });
+              assert.deepEqual(
+                refused.content[0].type === 'text' && JSON.parse(refused.content[0].text),
+                {
+                  status: 'rejected',
+                  code: 'read_only',
+                  message: 'This task can only read connected apps. It cannot change their data.',
+                },
               );
               input.onEvent({
                 type: 'final',
@@ -315,6 +321,15 @@ test(
         200,
       );
       assert.equal(prepared, 2);
+      const welcome = (
+        await pool.query("SELECT id FROM tasks WHERE source_id='onboarding:welcome'")
+      ).rows[0].id as string;
+      taskIds.push(welcome);
+      await waitFor(welcome, 'succeeded');
+      assert.deepEqual(
+        (await pool.query('SELECT role,text FROM messages WHERE task_id=$1', [welcome])).rows,
+        [{ role: 'assistant', text: welcomeGreeting(undefined, []) }],
+      );
       assert.equal((await request('POST', '/api/apps/gmail/connect')).statusCode, 200);
       const connected = new URL(callback);
       connected.searchParams.set('account_ref', 'replacement-account');

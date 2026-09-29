@@ -40,6 +40,7 @@ test(
       status: string,
       reason: string | null = null,
       outcomeId = randomUUID(),
+      externalAction = true,
     ) => {
       await db.pool.query(
         `INSERT INTO outcomes(id,owner_id,channel,conversation_revision,title,objective)
@@ -57,8 +58,8 @@ test(
         },
       );
       await db.pool.query(
-        "UPDATE tasks SET status=$2,waiting_reason=$3,waiting_question='Which city?',updated_at=clock_timestamp() WHERE id=$1",
-        [taskId, status, reason],
+        "UPDATE tasks SET status=$2,waiting_reason=$3,external_action=$4,waiting_question='Which city?',updated_at=clock_timestamp() WHERE id=$1",
+        [taskId, status, reason, externalAction],
       );
       await db.pool.query('UPDATE outcomes SET updated_at=clock_timestamp() WHERE id=$1', [
         outcomeId,
@@ -85,6 +86,7 @@ test(
     });
     const blocked = {
       statusCode: 409,
+      code: 'task_review_required',
       message: 'I can’t safely repeat the earlier action because its outcome is unknown.',
     };
     try {
@@ -117,6 +119,12 @@ test(
             ),
           );
           assert.ok(prepared.blockedOutcomeIds.every((id) => !prepared.candidateIds.includes(id)));
+          assert.deepEqual(
+            [...observed.candidates, ...observed.blockedCandidates!]
+              .map((candidate) => candidate.recency)
+              .sort((a, b) => a! - b!),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+          );
         },
       );
       await t.test(
@@ -182,7 +190,7 @@ test(
                 clientMessageId: randomUUID(),
                 sourceId: randomUUID(),
               }),
-              blocked,
+              { ...blocked, taskId: old.taskId, summary: 'Synthetic weather lookup' },
             );
             await assert.rejects(
               service.submit('Continue', [], {
@@ -318,6 +326,54 @@ test(
                 latest.taskId,
               );
           }
+        },
+      );
+      await t.test(
+        'a failure without an outside action is retryable as a fresh task in the same outcome',
+        async () => {
+          const old = await create('failed', null, randomUUID(), false);
+          decide = (context) => {
+            assert.equal(
+              context.candidates.find((candidate) => candidate.outcomeId === old.outcomeId)?.status,
+              'failed',
+            );
+            assert.equal(
+              context.blockedCandidates?.some((candidate) => candidate.outcomeId === old.outcomeId),
+              false,
+            );
+            return { kind: 'continue', outcomeId: old.outcomeId };
+          };
+          const before = await row(old.taskId);
+          const clientMessageId = randomUUID();
+          const retried = await service.submit('Try again', [], { clientMessageId });
+          assert.equal(retried.continued, false);
+          assert.notEqual(retried.taskId, old.taskId);
+          assert.equal(retried.messageId, clientMessageId);
+          const fresh = await row(retried.taskId);
+          assert.equal(fresh.outcome_id, old.outcomeId);
+          assert.equal(fresh.status, 'queued');
+          assert.equal(fresh.external_action, false);
+          assert.deepEqual(await row(old.taskId), before);
+          assert.equal(
+            (
+              await db.pool.query('SELECT id FROM pending_task_inputs WHERE task_id=$1', [
+                old.taskId,
+              ])
+            ).rowCount,
+            0,
+          );
+          const again = await create('failed', null, randomUUID(), false);
+          for (const target of [{ taskId: again.taskId }, { replyToMessageId: again.messageId }]) {
+            const result = await service.submit('Continue', [], target);
+            assert.equal(result.continued, false);
+            assert.notEqual(result.taskId, again.taskId);
+            assert.equal((await row(result.taskId)).outcome_id, again.outcomeId);
+            await db.pool.query("UPDATE tasks SET status='cancelled' WHERE id=$1", [result.taskId]);
+            await db.pool.query('UPDATE tasks SET updated_at=clock_timestamp() WHERE id=$1', [
+              again.taskId,
+            ]);
+          }
+          assert.equal((await row(again.taskId)).status, 'failed');
         },
       );
       await t.test(

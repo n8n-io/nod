@@ -89,7 +89,9 @@ test('ready Channels offer a bot conversation and direct removal without setup m
       whatsapp.querySelector('.channel-option-benefit')?.textContent ?? '',
       /Chat with Otto in WhatsApp\./,
     );
-    assert.ok(whatsapp.querySelector('[aria-label="Connect WhatsApp"]'));
+    assert.equal(whatsapp.querySelector('[aria-label="Connect WhatsApp"]'), null);
+    assert.equal(whatsapp.querySelector('.channel-coming-soon')?.textContent, 'Coming soon');
+    assert.equal(whatsapp.querySelector('button'), null);
     assert.equal(Boolean(container.querySelector('select')), false);
     assert.equal(telegram.querySelector('a')?.textContent, 'Start conversation');
     assert.doesNotMatch(

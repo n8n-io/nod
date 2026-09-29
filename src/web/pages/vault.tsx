@@ -1,26 +1,33 @@
 import { PageTitle } from '../components/page-title';
-import { useRef, useState } from 'react';
-import { usePageData } from '../hooks/use-page-data';
-import { ArrowLeft, ChevronRight, CreditCard, Globe2, KeyRound, Plus } from 'lucide-react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import * as Popover from '@radix-ui/react-popover';
+import { ChevronRight, CreditCard, Globe, Plus } from 'lucide-react';
 import type { VaultListEntry } from '../../shared/contracts';
+import { usePageData } from '../hooks/use-page-data';
 import { VaultDetails } from '../components/vault-details';
+import { VaultEntryIcon, VaultSurface } from '../components/vault-surface';
 import { formatCardExpiry, VaultItemForm } from '../components/vault-item-form';
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-  Loading,
-  Notice,
-} from '../components/ui';
+import { originLabel } from '../lib/vault-name';
+import { cn } from '../lib/utils';
+import { Loading, Notice, SearchField } from '../components/ui';
 
-export function originLabel(origin: string) {
-  try {
-    return new URL(origin).host;
-  } catch {
-    return 'Website';
-  }
+const phoneQuery = '(max-width: 720px)';
+
+function usePhone() {
+  return useSyncExternalStore(
+    (change) => {
+      const media = window.matchMedia?.(phoneQuery);
+      media?.addEventListener('change', change);
+      return () => media?.removeEventListener('change', change);
+    },
+    () => window.matchMedia?.(phoneQuery).matches ?? false,
+  );
+}
+
+function subtitle(entry: VaultListEntry) {
+  return entry.kind === 'card'
+    ? `${entry.brand} •••• ${entry.last4} · ${formatCardExpiry(entry.expiryMonth, entry.expiryYear)}`
+    : entry.username || originLabel(entry.origin);
 }
 
 export function Vault() {
@@ -31,185 +38,211 @@ export function Vault() {
     refresh,
     update,
   } = usePageData<VaultListEntry[]>('/api/vault');
-  const [open, setOpen] = useState(false);
+  const phone = usePhone();
+  const [query, setQuery] = useState('');
+  const [menu, setMenu] = useState(false);
   const [adding, setAdding] = useState<'login' | 'card' | null>(null);
-  const [selected, setSelected] = useState<VaultListEntry | null>(null);
-  const addTrigger = useRef<HTMLButtonElement | null>(null);
-  const detailsTrigger = useRef<HTMLButtonElement | null>(null);
-  const addTitle = useRef<HTMLHeadingElement>(null);
+  const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
+  const [savingNew, setSavingNew] = useState(false);
+  const [chosen, setChosen] = useState(false);
+  const returnTo = useRef<string | null>(null);
+  const newTrigger = useRef<HTMLButtonElement>(null);
+  const split = !phone;
+  const search = query.trim().toLowerCase();
+  const visible = [...(entries ?? [])]
+    .filter(
+      (entry) =>
+        !search ||
+        [entry.label, subtitle(entry), entry.kind === 'login' ? originLabel(entry.origin) : '']
+          .join(' ')
+          .toLowerCase()
+          .includes(search),
+    )
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const selected =
+    entries?.find((entry) => entry.id === selectedId) ??
+    (selectedId === undefined && split && !adding ? visible[0] : undefined);
+  const detailOpen = Boolean(adding || selected);
+  const pageMode = detailOpen && !split;
+
+  useEffect(() => {
+    if (pageMode || !returnTo.current) return;
+    const id = returnTo.current;
+    returnTo.current = null;
+    (id === 'new'
+      ? newTrigger.current
+      : [...document.querySelectorAll<HTMLElement>('[data-vault-item]')].find(
+          (item) => item.dataset.vaultItem === id,
+        )
+    )?.focus();
+  }, [pageMode, adding, selectedId]);
 
   function save(entry: VaultListEntry) {
     update((current) => [entry, ...(current ?? []).filter((value) => value.id !== entry.id)]);
     void refresh();
   }
 
-  return (
-    <div className="content-page secondary-page">
-      <header className="page-heading secondary-heading">
-        <div>
-          <PageTitle path="/vault" />
-          <p>Your saved logins and payment cards.</p>
-        </div>
-        <span
-          ref={(node) => {
-            addTrigger.current = node?.querySelector('button') ?? null;
-          }}
-        >
-          <Button
-            size="sm"
-            onClick={() => {
-              setAdding(null);
-              setOpen(true);
-            }}
-          >
-            <Plus size={14} />
-            Add to Vault
-          </Button>
+  function open(entry: VaultListEntry) {
+    setAdding(null);
+    setChosen(true);
+    setSelectedId(entry.id);
+  }
+
+  function closeDetail() {
+    if (split) return;
+    returnTo.current = selectedId ?? null;
+    setChosen(false);
+    setSelectedId(null);
+  }
+
+  function start(kind: 'login' | 'card') {
+    setMenu(false);
+    setChosen(true);
+    setAdding(kind);
+  }
+
+  function closeAdd() {
+    if (savingNew) return;
+    returnTo.current = 'new';
+    setChosen(false);
+    setAdding(null);
+  }
+
+  function row(entry: VaultListEntry) {
+    return (
+      <button
+        key={entry.id}
+        type="button"
+        className={cn(
+          'button vault-item',
+          split && selected?.id === entry.id ? 'button-secondary' : 'button-ghost',
+        )}
+        data-vault-item={entry.id}
+        aria-current={split && selected?.id === entry.id ? 'true' : undefined}
+        onClick={() => open(entry)}
+      >
+        <span className="vault-item-icon" aria-hidden="true">
+          <VaultEntryIcon entry={entry} size={24} />
         </span>
-      </header>
-      {loadError && <Notice>Could not load your vault.</Notice>}
-      {!entries ? (
-        loading && <Loading label="Opening your vault…" />
-      ) : entries.length ? (
-        <div className="resource-list vault-list">
-          {entries.map((entry) => (
-            <div className="resource-row vault-row" key={entry.id}>
-              <span className="resource-icon" aria-hidden="true">
-                {entry.kind === 'card' ? <CreditCard size={20} /> : <Globe2 size={20} />}
-              </span>
-              <div className="resource-description">
-                <h2>
-                  <button
-                    type="button"
-                    className="vault-entry-trigger"
-                    aria-label={`View ${entry.label}`}
-                    aria-haspopup="dialog"
-                    onClick={(event) => {
-                      detailsTrigger.current = event.currentTarget;
-                      setSelected(entry);
-                    }}
-                  >
-                    {entry.label}
-                  </button>
-                </h2>
-                <p className="vault-entry-meta">
-                  {entry.kind === 'card' ? (
-                    <>
-                      <span>
-                        {entry.brand} · •••• {entry.last4}
-                      </span>
-                      <span>Expires {formatCardExpiry(entry.expiryMonth, entry.expiryYear)}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>{originLabel(entry.origin)}</span>
-                      {entry.username && (
-                        <span className="vault-entry-username">{entry.username}</span>
-                      )}
-                    </>
-                  )}
-                </p>
-              </div>
-              <ChevronRight className="vault-entry-chevron" size={16} aria-hidden="true" />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="secondary-empty">
-          <h2>Your vault is empty</h2>
-          <p>Add a login or payment card to your vault.</p>
-        </div>
+        <span className="vault-item-text">
+          <strong>{entry.label}</strong>
+          <span>{subtitle(entry)}</span>
+        </span>
+        {!split && <ChevronRight className="vault-item-chevron" size={16} aria-hidden="true" />}
+      </button>
+    );
+  }
+
+  const detail = adding ? (
+    <VaultSurface
+      key={`new-${adding}`}
+      label={adding === 'card' ? 'New payment card' : 'New login'}
+      autoFocus={false}
+      onClose={closeAdd}
+    >
+      <VaultItemForm
+        kind={adding}
+        onCancel={closeAdd}
+        onSavingChange={setSavingNew}
+        onSaved={(entry) => {
+          setSavingNew(false);
+          save(entry);
+          setAdding(null);
+          setSelectedId(entry.id);
+        }}
+      />
+    </VaultSurface>
+  ) : selected ? (
+    <VaultDetails
+      key={selected.id}
+      entry={selected}
+      autoFocus={chosen && selectedId === selected.id}
+      onClose={closeDetail}
+      onSaved={(entry) => {
+        save(entry);
+        setSelectedId(entry.id);
+      }}
+      onDeleted={(id) => {
+        update((current) => current?.filter((value) => value.id !== id) ?? current);
+        returnTo.current = 'new';
+        setSelectedId(null);
+        void refresh();
+      }}
+    />
+  ) : null;
+
+  return (
+    <div
+      className={cn(
+        'content-page secondary-page vault-page',
+        split && 'is-split',
+        pageMode && 'is-detail',
       )}
-      {selected && (
-        <VaultDetails
-          key={selected.id}
-          entry={selected}
-          returnFocus={detailsTrigger.current}
-          fallbackFocus={addTrigger.current}
-          onClose={() => setSelected(null)}
-          onSaved={(entry) => {
-            save(entry);
-            setSelected(entry);
-          }}
-          onDeleted={(id) => {
-            update((current) => current?.filter((value) => value.id !== id) ?? current);
-            setSelected(null);
-            void refresh();
-          }}
-        />
-      )}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent
-          className="vault-details"
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            addTitle.current?.focus();
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            addTrigger.current?.focus();
-          }}
-        >
-          <div className="dialog-heading">
-            {adding === 'card' ? (
-              <CreditCard size={22} aria-hidden="true" />
-            ) : (
-              <KeyRound size={22} aria-hidden="true" />
-            )}
-            <DialogTitle ref={addTitle} tabIndex={-1}>
-              {adding === 'card'
-                ? 'Add a payment card'
-                : adding === 'login'
-                  ? 'Add a login'
-                  : 'Add to Vault'}
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              Choose what to save in your vault.
-            </DialogDescription>
+    >
+      {!pageMode && (
+        <header className="page-heading secondary-heading">
+          <div>
+            <PageTitle path="/vault" />
+            <p>Your saved logins and payment cards.</p>
           </div>
-          {adding ? (
-            <>
-              <Button
-                className="vault-type-back"
-                variant="ghost"
-                size="sm"
-                aria-label="Choose what to save"
-                onClick={() => setAdding(null)}
+          <Popover.Root open={menu} onOpenChange={setMenu}>
+            <Popover.Trigger asChild>
+              <button
+                ref={newTrigger}
+                type="button"
+                className="button button-primary button-sm vault-new"
               >
-                <ArrowLeft size={14} aria-hidden="true" />
-                Back
-              </Button>
-              <VaultItemForm
-                key={adding}
-                kind={adding}
-                onSaved={(entry) => {
-                  save(entry);
-                  setOpen(false);
-                }}
-              />
-            </>
-          ) : (
-            <div className="vault-item-types">
-              <button type="button" aria-label="Login" onClick={() => setAdding('login')}>
-                <KeyRound size={20} aria-hidden="true" />
-                <span>
-                  <strong>Login</strong>
-                  <span>Username and password for a website</span>
-                </span>
-                <ChevronRight size={16} aria-hidden="true" />
+                <Plus size={14} aria-hidden="true" />
+                New
               </button>
-              <button type="button" aria-label="Payment card" onClick={() => setAdding('card')}>
-                <CreditCard size={20} aria-hidden="true" />
-                <span>
-                  <strong>Payment card</strong>
-                  <span>Cardholder, number and expiry date</span>
-                </span>
-                <ChevronRight size={16} aria-hidden="true" />
-              </button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                className="connection-menu-options menu vault-new-menu"
+                align="end"
+                sideOffset={6}
+              >
+                <button type="button" className="menu-item" onClick={() => start('login')}>
+                  <Globe size={16} aria-hidden="true" />
+                  New login
+                </button>
+                <button type="button" className="menu-item" onClick={() => start('card')}>
+                  <CreditCard size={16} aria-hidden="true" />
+                  New payment card
+                </button>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+        </header>
+      )}
+      {loadError && <Notice>Could not load your vault.</Notice>}
+      <div className="vault-layout">
+        {!pageMode && (
+          <div className="vault-browser">
+            <SearchField
+              className="vault-search"
+              type="search"
+              value={query}
+              placeholder="Search"
+              aria-label="Search Vault"
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            {!entries ? (
+              loading && <Loading label="Opening your vault…" />
+            ) : !entries.length ? (
+              <div className="secondary-empty">
+                <h2>Your vault is empty</h2>
+                <p>Add a login or payment card to your vault.</p>
+              </div>
+            ) : visible.length ? (
+              <div className="vault-items">{visible.map(row)}</div>
+            ) : (
+              <p className="vault-no-results">No items match “{query.trim()}”.</p>
+            )}
+          </div>
+        )}
+        {detail && <div className="vault-detail-column">{detail}</div>}
+      </div>
     </div>
   );
 }

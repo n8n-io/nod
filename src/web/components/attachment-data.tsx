@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ExternalLink, FileText } from 'lucide-react';
 import { safeMessageLink } from '../lib/message-links';
+import { formatNumber } from '../lib/date-format';
 
 type Sheet = { name: string; rows: string[][]; header: boolean };
 type Content = { kind: 'markdown'; text: string } | { kind: 'spreadsheet'; sheets: Sheet[] };
@@ -115,7 +116,7 @@ function Spreadsheet({ sheets }: { sheets: Sheet[] }) {
             </select>
           </label>
         )}
-        <span>{rows.length.toLocaleString()} rows</span>
+        <span>{formatNumber(rows.length)} rows</span>
       </div>
       <div className="attachment-table-scroll" role="region" aria-label="Spreadsheet" tabIndex={0}>
         <table>

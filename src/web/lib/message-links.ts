@@ -1,10 +1,17 @@
-type LinkKind = 'artifact' | 'credential' | 'external' | 'navigation';
-interface SafeLink {
-  href: string;
-  kind: LinkKind;
-}
-export type MessagePart =
-  { type: 'text'; text: string } | ({ type: 'link'; text: string } & SafeLink);
+import type { Root, RootContent } from 'hast';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
+import remarkRehype from 'remark-rehype';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
+import { SKIP, visit } from 'unist-util-visit';
+import { rehypeLocalLinks } from './markdown';
+
+export type SetupKind = 'vault' | 'website' | 'app';
+type SafeLink =
+  | { href: string; kind: 'artifact' | 'external' | 'navigation' }
+  | { href: string; kind: 'setup'; setup: SetupKind };
 
 const navigationPaths = new Set(['/', '/apps', '/goals', '/schedule', '/channels', '/vault']);
 const connectionPath =
@@ -13,21 +20,39 @@ const e2eConsentPath =
   /^\/e2e\/connect\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const localPath =
   /^\/(?:api\/artifacts|vault|credentials)\/[A-Za-z0-9_-]+\/?$|^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/;
-const credentialLabels = [
-  'Vault',
-  'Open Vault',
-  'Sign in',
-  'Add login',
-  'Enter login details',
-  'Continue sign-in',
-  'Enter verification code',
-  'Choose a sign-in method',
-  'Connect website',
-];
+const setupLabels = {
+  vault: [
+    'Vault',
+    'Open Vault',
+    'Sign in',
+    'Add login',
+    'Enter login details',
+    'Continue sign-in',
+    'Enter verification code',
+    'Choose a sign-in method',
+  ],
+  website: ['Connect website', 'Continue sign-in'],
+};
+const appLabel = /^Connect [\p{L}\p{N}][\p{L}\p{N} .&()+-]{0,79}$/u;
 
-export function credentialLinkLabel(value: string): string {
-  const label = value.trim().toLowerCase();
-  return credentialLabels.find((candidate) => candidate.toLowerCase() === label) ?? 'Vault';
+export function setupLink(
+  link: SafeLink,
+  text: string,
+): { href: string; setup: SetupKind; label: string } | null {
+  const label = text.trim().replace(/\s+/g, ' ');
+  if (link.kind === 'external')
+    return link.href.startsWith('https://') && appLabel.test(label)
+      ? { href: link.href, setup: 'app', label }
+      : null;
+  if (link.kind !== 'setup') return null;
+  if (link.setup === 'app')
+    return { href: link.href, setup: 'app', label: appLabel.test(label) ? label : 'Connect app' };
+  const labels = setupLabels[link.setup];
+  return {
+    href: link.href,
+    setup: link.setup,
+    label: labels.find((candidate) => candidate.toLowerCase() === label.toLowerCase()) ?? labels[0],
+  };
 }
 
 export function safeMessageLink(value: string, origin: string): SafeLink | null {
@@ -61,7 +86,7 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
         !url.hash &&
         connectionPath.test(`${url.pathname}${url.search}`)
       )
-        return { href: `${url.pathname}${url.search}`, kind: 'navigation' };
+        return { href: `${url.pathname}${url.search}`, kind: 'setup', setup: 'app' };
       const path = absolute
         ? value.replace(/^https?:\/\/[^/]+/i, '').split(/[?#]/, 1)[0]
         : value.split(/[?#]/, 1)[0];
@@ -73,14 +98,12 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
         return { href: url.pathname, kind: 'navigation' };
       if (url.origin !== base.origin || !localPath.test(path) || !localPath.test(url.pathname))
         return null;
+      if (url.pathname.startsWith('/api/artifacts/'))
+        return { href: url.pathname, kind: 'artifact' };
       return {
         href: url.pathname,
-        kind:
-          url.pathname.startsWith('/credentials/') ||
-          url.pathname.startsWith('/vault/') ||
-          url.pathname.startsWith('/browser-connect/')
-            ? 'credential'
-            : 'artifact',
+        kind: 'setup',
+        setup: url.pathname.startsWith('/browser-connect/') ? 'website' : 'vault',
       };
     }
     return { href: url.href, kind: 'external' };
@@ -89,32 +112,35 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
   }
 }
 
-export function parseMessageText(text: string, origin: string): MessagePart[] {
-  const parts: MessagePart[] = [];
-  const pattern =
-    /\[([^\]\n]+)\]\(([^()\s]+)\)|(?<![\w:/])(?:https?:\/\/|\/(?:api\/artifacts|vault|credentials|browser-connect)\/)[^\s<>"'\[\]()]+/gi;
-  let cursor = 0;
-  for (const match of text.matchAll(pattern)) {
-    if (match.index > cursor) parts.push({ type: 'text', text: text.slice(cursor, match.index) });
-    const markdown = match[1] !== undefined;
-    const destination = markdown ? match[2] : match[0].replace(/[.,;:!?]+$/, '');
-    const link = safeMessageLink(destination, origin);
-    if (!link) parts.push({ type: 'text', text: match[0] });
-    else {
-      const label =
-        link.kind === 'credential'
-          ? credentialLinkLabel(markdown ? match[1] : '')
-          : markdown
-            ? match[1]
-            : link.kind === 'artifact'
-              ? 'Open file'
-              : destination;
-      parts.push({ type: 'link', text: label, ...link });
-      if (!markdown && destination.length < match[0].length)
-        parts.push({ type: 'text', text: match[0].slice(destination.length) });
-    }
-    cursor = match.index + match[0].length;
-  }
-  if (cursor < text.length) parts.push({ type: 'text', text: text.slice(cursor) });
-  return parts;
+const setupParser = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeRaw)
+  .use(rehypeLocalLinks)
+  .use(rehypeSanitize);
+
+export function messageLinkText(children: RootContent[]): string {
+  return children
+    .map((child) =>
+      child.type === 'text'
+        ? child.value
+        : 'children' in child
+          ? messageLinkText(child.children)
+          : '',
+    )
+    .join('');
+}
+
+export function messageSetupLinks(text: string, origin: string) {
+  const actions = new Map<string, { href: string; setup: SetupKind; label: string }>();
+  const tree = setupParser.runSync(setupParser.parse(text)) as Root;
+  visit(tree, 'element', (node) => {
+    if (node.tagName === 'code' || node.tagName === 'pre') return SKIP;
+    if (node.tagName !== 'a' || typeof node.properties.href !== 'string') return;
+    const link = safeMessageLink(node.properties.href, origin);
+    const setup = link && setupLink(link, messageLinkText(node.children));
+    if (setup && !actions.has(setup.href)) actions.set(setup.href, setup);
+  });
+  return [...actions.values()];
 }

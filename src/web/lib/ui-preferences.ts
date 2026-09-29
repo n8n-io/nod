@@ -1,4 +1,4 @@
-type UiPreference = 'otto.sidebar' | 'otto.inspector' | 'otto.inspector.width';
+type UiPreference = 'otto.sidebar' | 'otto.inspector' | 'otto.inspector.width' | 'otto.chat-layout';
 
 export function readUiPreference(key: UiPreference) {
   try {

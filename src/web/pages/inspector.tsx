@@ -9,6 +9,7 @@ import { InspectorProviders } from '../components/inspector-providers';
 import { InspectorPrompts } from '../components/inspector-prompts';
 import { InspectorWork } from '../components/inspector-work';
 import { readUiPreference, writeUiPreference } from '../lib/ui-preferences';
+import { useDateFormat } from '../lib/date-format';
 
 export function Inspector({
   onClose,
@@ -17,6 +18,7 @@ export function Inspector({
   onClose(): void;
   focus?: { messageId: string; taskId: string };
 }) {
+  useDateFormat();
   const { data, error, browserStopped } = useInspectorState();
   const [scope, setScope] = useState(focus?.taskId);
   const [scopeSource, setScopeSource] = useState<'message' | 'work'>('message');

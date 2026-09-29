@@ -1,7 +1,7 @@
-import type { Connection, Goal, Schedule } from '../../shared/contracts';
+import type { Connection } from '../../shared/contracts';
 
-export function draftInChat(text: string) {
-  window.dispatchEvent(new CustomEvent('otto:compose', { detail: { text, send: false } }));
+export function focusChatMessage(messageId: string) {
+  window.dispatchEvent(new CustomEvent('otto:focus-message', { detail: { messageId } }));
 }
 
 export function connectionGroups(connections: Connection[]) {
@@ -51,23 +51,8 @@ export function removeConnection(connections: Connection[], connectionId: string
   );
 }
 
-export function goalDraft(goal: Goal, action: 'discuss' | 'status') {
-  const reference = `the goal ${JSON.stringify(goal.title)}`;
-  return action === 'status'
-    ? `${goal.status === 'active' ? 'Pause' : 'Resume'} ${reference}.`
-    : `Let's review ${reference} and decide what to do next.`;
-}
-
-export function scheduleDraft(schedule: Schedule, action: 'discuss' | 'status') {
-  const reference = `the schedule ${JSON.stringify(schedule.title)}`;
-  const timing = schedule.kind === 'once' ? `a one-time run at ${schedule.runAt}` : schedule.cron;
-  return action === 'status'
-    ? `${schedule.enabled ? 'Pause' : 'Resume'} ${reference}.`
-    : `I'd like to change ${reference}. Its current timing is ${timing} in ${schedule.timeZone}.`;
-}
-
 export type ChannelProvider = 'telegram' | 'whatsapp';
-export type ChannelStatus = {
+type ChannelStatus = {
   provider: string;
   status: 'disabled' | 'setup_required' | 'configured';
   missing: string[];
@@ -81,13 +66,25 @@ export type ChannelSetup = {
   mode?: 'polling' | 'webhook';
   webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
   webhookUrl?: string;
+  pairedUser?: string;
+  allowedUserId?: string;
+  pairingCandidate?: { id: string; name: string };
+  pairingExpiresAt?: string;
 };
 export type ChannelSettings = { ready: boolean; channels: ChannelSetup[] };
 
 export function channelLabel(setup: ChannelSetup | undefined, configured: boolean) {
   if (!setup?.enabled) return configured ? 'Configuration present' : 'Not connected';
-  if (setup.mode === 'polling') return null;
   if (setup.webhookStatus === 'registration_pending') return 'Setup needs a retry';
+  if (setup.pairingExpiresAt) {
+    if (Date.parse(setup.pairingExpiresAt) <= Date.now()) return 'Start link expired';
+    return setup.pairingCandidate
+      ? 'Confirm your Telegram account'
+      : 'Waiting for Start in Telegram';
+  }
+  if (setup.allowedUserId)
+    return `Only ${setup.pairedUser ? `${setup.pairedUser}, ` : ''}ID ${setup.allowedUserId} can message Otto`;
+  if (setup.mode === 'polling') return null;
   return setup.webhookStatus === 'registered' ? 'Webhook registered' : 'Finish delivery setup';
 }
 
@@ -104,7 +101,6 @@ export function channelSetupBody(
   if (provider === 'telegram')
     return {
       botToken: fields.botToken?.trim(),
-      allowedUserId: fields.allowedUserId?.trim(),
       webhookUrl,
     };
   return {

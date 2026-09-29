@@ -36,7 +36,13 @@ async function fixture(
     headers: Headers;
     developer: boolean;
   }[] = [];
+  const profiles: { owner: string; body: string; developer: boolean; method: string }[] = [];
+  let displayName: string | null = null;
+  let profileStatus = 200;
   let streamCancelled = 0;
+  let lookups = 0;
+  let accountReads = 0;
+  let beforeAccountRead: () => void | Promise<void> = () => {};
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   let reply: (owner: string, request: Request) => Promise<Response> = async (owner) =>
     Response.json({ owner, record: `Synthetic data for ${owner}` });
@@ -44,6 +50,7 @@ async function fixture(
     configured: true,
     async initialize() {},
     async session(headers) {
+      lookups++;
       const token = headers.get('cookie')?.match(/(?:^|;\s*)fixture=([^;]+)/)?.[1];
       const [id, signature] = token?.split('.') ?? [];
       if (!id || !signature) return null;
@@ -68,6 +75,15 @@ async function fixture(
   };
   const runtimes: TenantRuntimeHost = {
     async fetch(owner, request, options) {
+      if (new URL(request.url).pathname === '/api/account/profile') {
+        profiles.push({
+          owner,
+          body: await request.text(),
+          developer: options.developer,
+          method: request.method,
+        });
+        return Response.json({ ok: profileStatus === 200 }, { status: profileStatus });
+      }
       calls.push({
         owner,
         url: request.url,
@@ -89,10 +105,13 @@ async function fixture(
     sessionCheckIntervalMs: 10,
     accounts: {
       async read() {
-        return { theme: 'system', onboardingCompleted: true, displayName: null };
+        accountReads++;
+        await beforeAccountRead();
+        return { theme: 'system', onboardingCompleted: true, displayName };
       },
-      async update() {
-        return { theme: 'system', onboardingCompleted: true, displayName: null };
+      async update(_owner, input) {
+        if (input.name) displayName = input.name;
+        return { theme: 'system', onboardingCompleted: true, displayName };
       },
     },
   });
@@ -102,7 +121,14 @@ async function fixture(
     users,
     cookies,
     calls,
+    profiles,
     sessions,
+    displayName: (value: string | null) => {
+      displayName = value;
+    },
+    profileStatus: (value: number) => {
+      profileStatus = value;
+    },
     headers: (index = 0) => ({ host, cookie: cookies[index], 'x-otto-account': users[index] }),
     reply: (value: typeof reply) => {
       reply = value;
@@ -124,6 +150,11 @@ async function fixture(
     },
     stream: () => stream,
     streamCancelled: () => streamCancelled,
+    lookups: () => lookups,
+    accountReads: () => accountReads,
+    beforeAccountRead: (value: typeof beforeAccountRead) => {
+      beforeAccountRead = value;
+    },
   };
 }
 
@@ -204,6 +235,56 @@ test('onboarding preparation routes only the authenticated owner with a fixed pr
   });
   assert.equal(failed.statusCode, 503);
   assert.doesNotMatch(failed.body, /private|sandboxId/);
+});
+
+test('completing onboarding starts the welcome in the authenticated owner runtime', async (t) => {
+  const f = await fixture();
+  t.after(() => f.app.close());
+  let start = 200;
+  f.reply(async (_owner, request) =>
+    new URL(request.url).pathname === '/api/onboarding/start' && start !== 200
+      ? Response.json({ error: 'Setup is unavailable.' }, { status: start })
+      : Response.json({ ok: true }),
+  );
+  const direct = await f.app.inject({
+    method: 'POST',
+    url: '/api/onboarding/start',
+    headers: { ...f.headers(1), origin },
+    payload: { name: 'Forged' },
+  });
+  assert.equal(direct.statusCode, 404);
+  assert.equal(f.calls.length, 0);
+  const complete = () =>
+    f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers: { ...f.headers(1), origin },
+      payload: { onboardingCompleted: true },
+    });
+  assert.equal((await complete()).statusCode, 200);
+  assert.deepEqual(
+    f.calls.map((call) => [call.owner, call.url, call.method, call.body, call.developer]),
+    [
+      [f.users[1], `${origin}/api/account/prepare`, 'POST', '{}', false],
+      [f.users[1], `${origin}/api/onboarding/start`, 'POST', '{"name":"Synthetic user"}', false],
+    ],
+  );
+  const landed = await f.app.inject({
+    method: 'POST',
+    url: '/api/account/welcome',
+    headers: { ...f.headers(1), origin, 'content-type': 'application/json' },
+    payload: '{}',
+  });
+  assert.equal(landed.statusCode, 200);
+  assert.equal(f.calls.length, 3);
+  assert.deepEqual(
+    [f.calls.at(-1)!.owner, f.calls.at(-1)!.url, f.calls.at(-1)!.body],
+    [f.users[1], `${origin}/api/onboarding/start`, '{"name":"Synthetic user"}'],
+  );
+  start = 503;
+  const failed = await complete();
+  assert.equal(failed.statusCode, 503);
+  assert.doesNotMatch(failed.body, /unavailable/);
 });
 
 test('gateway routes two signed users only by their cookie identity and strips client routing credentials', async () => {
@@ -602,11 +683,302 @@ test('gateway returns the authentication failure when discarded response cancell
     );
   });
   try {
-    const response = await f.app.inject({ url: '/api/state', headers: f.headers() });
+    const response = await f.app.inject({
+      url: `/api/events?account=${f.users[0]}`,
+      headers: f.headers(),
+    });
     assert.equal(response.statusCode, 401);
     assert.deepEqual(response.json(), { error: 'Sign in to continue.' });
     assert.equal(cancelled, 1);
   } finally {
     await f.app.close();
   }
+});
+
+test('gateway sends the signed-in profile to the owner runtime once per change and keeps the route private', async (t) => {
+  const f = await fixture();
+  t.after(() => f.app.close());
+  Object.assign(f.sessions.get(f.users[0])!, { givenName: 'Synthetic' });
+  const state = (index = 0) => f.app.inject({ url: '/api/state', headers: f.headers(index) });
+  f.profileStatus(503);
+  assert.equal((await state()).statusCode, 200);
+  assert.equal(f.calls.length, 1);
+  f.profileStatus(200);
+  assert.equal((await state()).statusCode, 200);
+  assert.equal((await state()).statusCode, 200);
+  assert.equal((await state(1)).statusCode, 200);
+  f.displayName('Syn');
+  await f.app.inject({ url: '/api/session', headers: f.headers() });
+  assert.equal((await state()).statusCode, 200);
+  assert.deepEqual(
+    f.profiles.map(({ owner, body, developer, method }) => ({
+      owner,
+      profile: JSON.parse(body),
+      developer,
+      method,
+    })),
+    [
+      ...[0, 0].map(() => ({
+        owner: f.users[0],
+        profile: {
+          name: 'Synthetic user',
+          givenName: 'Synthetic',
+          email: 'synthetic@example.test',
+          preferredName: null,
+        },
+        developer: false,
+        method: 'PUT',
+      })),
+      {
+        owner: f.users[1],
+        profile: {
+          name: 'Synthetic user',
+          givenName: null,
+          email: 'synthetic@example.test',
+          preferredName: null,
+        },
+        developer: false,
+        method: 'PUT',
+      },
+      {
+        owner: f.users[0],
+        profile: {
+          name: 'Synthetic user',
+          givenName: 'Synthetic',
+          email: 'synthetic@example.test',
+          preferredName: 'Syn',
+        },
+        developer: false,
+        method: 'PUT',
+      },
+    ],
+  );
+  assert.equal(f.calls.length, 5);
+  const direct = await f.app.inject({
+    method: 'PUT',
+    url: '/api/account/profile',
+    headers: { ...f.headers(), origin },
+    payload: { name: 'Forged', givenName: null, email: null, preferredName: null },
+  });
+  assert.equal(direct.statusCode, 404);
+  assert.equal(f.profiles.length, 4);
+  assert.equal(f.calls.length, 5);
+  await f.app.inject({
+    method: 'PATCH',
+    url: '/api/account',
+    headers: { ...f.headers(), origin },
+    payload: { name: 'Sy' },
+  });
+  const beforeReads = f.accountReads();
+  await Promise.all([state(), state(), state()]);
+  assert.equal(f.profiles.length, 5);
+  assert.equal(JSON.parse(f.profiles[4].body).preferredName, 'Sy');
+  assert.equal(f.accountReads(), beforeReads);
+});
+
+test('ordinary runtime requests look up the session once', async () => {
+  const f = await fixture();
+  try {
+    const response = await f.app.inject({ url: '/api/apps', headers: f.headers() });
+    assert.equal(response.statusCode, 200);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.lookups(), 1);
+  } finally {
+    await f.app.close();
+  }
+});
+
+test('a signed-in session read warms only its own runtime without waiting for it', async () => {
+  const f = await fixture();
+  const warmed: string[] = [];
+  f.runtimes.warm = (owner) => {
+    warmed.push(owner);
+    return warmed.length === 1 ? new Promise(() => {}) : Promise.reject(new Error('Synthetic'));
+  };
+  try {
+    assert.equal((await f.app.inject({ url: '/api/session', headers: { host } })).statusCode, 200);
+    assert.deepEqual(warmed, []);
+    for (const index of [0, 1]) {
+      const response = await f.app.inject({ url: '/api/session', headers: f.headers(index) });
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.json().user.id, f.users[index]);
+    }
+    assert.deepEqual(warmed, f.users);
+    assert.equal(f.calls.length, 0);
+  } finally {
+    await f.app.close();
+  }
+});
+
+test('welcome synchronizes the signed-in profile before starting and retries a failed sync', async (t) => {
+  const f = await fixture();
+  t.after(() => f.app.close());
+  f.reply(async (owner, request) => {
+    if (new URL(request.url).pathname === '/api/onboarding/start') {
+      assert.equal(f.profiles.at(-1)?.owner, owner);
+      assert.equal(JSON.parse(f.profiles.at(-1)!.body).email, 'synthetic@example.test');
+    }
+    return Response.json({ ok: true });
+  });
+  const welcome = () =>
+    f.app.inject({
+      method: 'POST',
+      url: '/api/account/welcome',
+      headers: { ...f.headers(), origin },
+      payload: {},
+    });
+  f.profileStatus(503);
+  assert.equal((await welcome()).statusCode, 503);
+  assert.equal(f.calls.length, 0);
+  f.profileStatus(200);
+  assert.equal((await welcome()).statusCode, 200);
+  assert.equal(f.profiles.length, 2);
+  const completed = await f.app.inject({
+    method: 'PATCH',
+    url: '/api/account',
+    headers: { ...f.headers(1), origin },
+    payload: { name: 'Preferred fixture', onboardingCompleted: true },
+  });
+  assert.equal(completed.statusCode, 200);
+  assert.equal(JSON.parse(f.profiles.at(-1)!.body).preferredName, 'Preferred fixture');
+});
+
+test('welcome keeps its pending preferred name through concurrent requests and releases it after failure', async (t) => {
+  for (const failed of [false, true])
+    await t.test(failed ? 'failed start' : 'successful start', async (t) => {
+      const f = await fixture();
+      t.after(() => f.app.close());
+      f.displayName('Saved fixture');
+      let started!: () => void;
+      let finish!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      t.after(() => finish());
+      f.reply(async (_owner, request) => {
+        if (new URL(request.url).pathname === '/api/onboarding/start') {
+          started();
+          await held;
+          if (failed) return Response.json({ ok: false }, { status: 503 });
+        }
+        return Response.json({ ok: true });
+      });
+      const completing = f.app
+        .inject({
+          method: 'PATCH',
+          url: '/api/account',
+          headers: { ...f.headers(), origin },
+          payload: { name: 'Welcome fixture', onboardingCompleted: true },
+        })
+        .then((response) => response);
+      await entered;
+      await f.app.inject({ url: '/api/state', headers: f.headers() });
+      await f.app.inject({ url: '/api/state', headers: f.headers(1) });
+      const profile = (owner: string) =>
+        JSON.parse(f.profiles.findLast((profile) => profile.owner === owner)!.body);
+      assert.equal(profile(f.users[0]).preferredName, 'Welcome fixture');
+      assert.equal(profile(f.users[1]).preferredName, 'Saved fixture');
+      finish();
+      assert.equal((await completing).statusCode, failed ? 503 : 200);
+      const saved = await f.app.inject({ url: '/api/session', headers: f.headers() });
+      assert.equal(saved.json().user.name, failed ? 'Saved fixture' : 'Welcome fixture');
+      const reads = f.accountReads();
+      await f.app.inject({ url: '/api/state', headers: f.headers() });
+      assert.equal(profile(f.users[0]).preferredName, failed ? 'Saved fixture' : 'Welcome fixture');
+      assert.equal(f.accountReads(), reads);
+    });
+});
+
+test('overlapping welcome starts retain their own name and recheck the queued session', async (t) => {
+  for (const revoked of [false, true])
+    await t.test(revoked ? 'revoked session' : 'current session', async (t) => {
+      const f = await fixture();
+      let finish!: () => void;
+      let started!: () => void;
+      let prepared!: () => void;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const secondPrepared = new Promise<void>((resolve) => {
+        prepared = resolve;
+      });
+      t.after(async () => {
+        finish();
+        await f.app.close();
+      });
+      let preparations = 0;
+      const names: string[] = [];
+      f.reply(async (_owner, request) => {
+        const path = new URL(request.url).pathname;
+        if (path === '/api/account/prepare' && ++preparations === 2) prepared();
+        if (path === '/api/onboarding/start') {
+          names.push((await request.json()).name);
+          if (names.length === 1) {
+            started();
+            await held;
+          }
+        }
+        return Response.json({ ok: true });
+      });
+      const complete = (name: string) =>
+        f.app
+          .inject({
+            method: 'PATCH',
+            url: '/api/account',
+            headers: { ...f.headers(), origin },
+            payload: { name, onboardingCompleted: true },
+          })
+          .then((response) => response);
+      const first = complete('First fixture');
+      await entered;
+      const second = complete('Second fixture');
+      await secondPrepared;
+      await f.app.inject({ url: '/api/state', headers: f.headers() });
+      assert.deepEqual(names, ['First fixture']);
+      assert.equal(JSON.parse(f.profiles.at(-1)!.body).preferredName, 'First fixture');
+      if (revoked) f.sessions.delete(f.users[0]);
+      finish();
+      assert.equal((await first).statusCode, 200);
+      assert.equal((await second).statusCode, revoked ? 401 : 200);
+      assert.deepEqual(names, revoked ? ['First fixture'] : ['First fixture', 'Second fixture']);
+      assert.equal(
+        f.profiles.some((profile) => JSON.parse(profile.body).preferredName === 'Second fixture'),
+        !revoked,
+      );
+    });
+});
+
+test('welcome rechecks its principal before profile writes and after synchronization', async (t) => {
+  for (const phase of ['account read', 'profile synchronization'])
+    await t.test(phase, async (t) => {
+      const f = await fixture();
+      t.after(() => f.app.close());
+      if (phase === 'account read')
+        f.beforeAccountRead(() => {
+          f.sessions.delete(f.users[0]);
+        });
+      else {
+        const fetch = f.runtimes.fetch;
+        f.runtimes.fetch = async (owner, request, options) => {
+          const response = await fetch(owner, request, options);
+          if (new URL(request.url).pathname === '/api/account/profile') f.sessions.delete(owner);
+          return response;
+        };
+      }
+      const response = await f.app.inject({
+        method: 'POST',
+        url: '/api/account/welcome',
+        headers: { ...f.headers(), origin },
+        payload: {},
+      });
+      assert.equal(response.statusCode, 401);
+      assert.equal(f.profiles.length, phase === 'account read' ? 0 : 1);
+      assert.equal(f.calls.length, 0);
+    });
 });

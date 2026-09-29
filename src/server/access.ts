@@ -7,6 +7,8 @@ export function registerLocalAccess(app: FastifyInstance, port: number) {
     '/goals',
     '/schedule',
     '/apps',
+    '/onboarding',
+    '/connected.html',
     '/channels',
     '/vault',
     '/you',

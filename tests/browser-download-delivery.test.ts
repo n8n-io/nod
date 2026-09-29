@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import type { Agent, RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
-import type { Artifact, AppState, Message } from '../src/shared/contracts.ts';
+import type { Artifact, AppState, MessageHistoryPage } from '../src/shared/contracts.ts';
 import { createAgentBrowserComputer } from '../src/providers/agent-browser/index.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
@@ -364,7 +364,7 @@ test(
             ).json<AppState>();
             const history = (
               await app.inject({ method: 'GET', url: '/api/messages', headers })
-            ).json<Message[]>();
+            ).json<MessageHistoryPage>().messages;
             for (const messages of [state.messages, history]) {
               assert.equal(
                 messages.some((message) => message.taskId === telegramId),

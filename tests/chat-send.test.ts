@@ -1,3 +1,4 @@
+import type { Editor } from '@tiptap/core';
 import assert from 'node:assert/strict';
 import test, { after } from 'node:test';
 import { registerHooks } from 'node:module';
@@ -176,7 +177,11 @@ const sendKey = (element: Element) =>
   );
 async function draft(text: string) {
   await act(async () => {
-    window.dispatchEvent(new CustomEvent('otto:compose', { detail: { text, send: false } }));
+    const input = document.querySelector<HTMLElement>('[role="textbox"]')!;
+    (input as HTMLElement & { editor: Editor }).editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] }],
+    });
     await tick();
   });
 }
@@ -343,7 +348,10 @@ test('sending keeps the existing conversation mounted and scrolls the new bubble
   try {
     const existing = fixture.element.querySelector('.message-assistant');
     const composer = fixture.element.querySelector('[role="textbox"]');
-    await draft('Keep the conversation steady.');
+    const literal = '<label> & **plain**';
+    await draft(literal);
+    assert.equal(composer?.textContent, literal);
+    assert.equal(composer?.querySelector('label, strong'), null);
     await act(async () => {
       sendKey(composer!);
       await tick();
@@ -352,6 +360,10 @@ test('sending keeps the existing conversation mounted and scrolls the new bubble
       unpositionedCommits,
       [],
       'The new message should be positioned before a frame can paint',
+    );
+    assert.equal(
+      fixture.element.querySelector('.message-user .message-text')?.textContent,
+      literal,
     );
     assert.equal(fixture.element.querySelector('.message-assistant'), existing);
     assert.equal(fixture.element.querySelector('[role="textbox"]'), composer);
@@ -1091,5 +1103,122 @@ test('a late verification rejection preserves new draft text and combines both a
   } finally {
     await fixture.dispose();
     globalThis.fetch = priorFetch;
+  }
+});
+
+test('focus-message scrolls to a loaded message, pages back a bounded number of times and reports a missing one', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousMedia = Object.getOwnPropertyDescriptor(dom.window, 'matchMedia');
+  Object.defineProperty(dom.window, 'matchMedia', {
+    configurable: true,
+    value: () => ({ matches: true }),
+  });
+  const scrolled: string[] = [];
+  const previousScroll = dom.window.HTMLElement.prototype.scrollIntoView;
+  dom.window.HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+    if (this.dataset.messageId) scrolled.push(this.dataset.messageId);
+  };
+  const older: Message = {
+    ...message,
+    id: 'older-message',
+    text: 'Your weekly summary is ready.',
+    createdAt: '2026-09-24T12:00:00Z',
+  };
+  const filler = (page: number) =>
+    Array.from({ length: 60 }, (_, index): Message => ({
+      ...message,
+      id: `filler-${page}-${index}`,
+      createdAt: new Date(
+        Date.parse('2026-09-01T00:00:00Z') - (page * 60 + index) * 1000,
+      ).toISOString(),
+    })).reverse();
+  let pages: Message[][] = [[older]];
+  const historyRequests: string[] = [];
+  globalThis.fetch = async (path) => {
+    if (path === '/api/state') return Response.json({ ...base, hasEarlierMessages: true });
+    if (String(path).startsWith('/api/messages?')) {
+      historyRequests.push(String(path));
+      return Response.json({ messages: pages.shift() ?? [], hasMore: false });
+    }
+    throw new Error('Unexpected fixture request');
+  };
+  const fixture = await mount();
+  const focus = async (messageId: string) => {
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('otto:focus-message', { detail: { messageId } }));
+      await tick();
+    });
+    await act(async () => {
+      for (let index = 0; index < 4; index++) await tick();
+    });
+  };
+  try {
+    await focus('old-message');
+    const loaded = fixture.element.querySelector<HTMLElement>('[data-message-id="old-message"]')!;
+    assert.deepEqual(scrolled, ['old-message']);
+    assert.equal(loaded.classList.contains('message-focused'), true);
+    assert.equal(document.activeElement, loaded);
+    assert.equal(historyRequests.length, 0);
+    await focus('older-message');
+    assert.equal(historyRequests.length, 1);
+    assert.match(historyRequests[0], /beforeId=old-message/);
+    assert.deepEqual(scrolled, ['old-message', 'older-message']);
+    await focus('missing-message');
+    assert.equal(historyRequests.length, 1);
+    assert.match(fixture.element.textContent ?? '', /Could not find that message in this chat\./);
+  } finally {
+    await fixture.dispose();
+    globalThis.fetch = previousFetch;
+  }
+  pages = [0, 1, 2, 3, 4, 5, 6].map(filler);
+  historyRequests.length = 0;
+  globalThis.fetch = async (path) => {
+    if (path === '/api/state') return Response.json({ ...base, hasEarlierMessages: true });
+    if (String(path).startsWith('/api/messages?')) {
+      historyRequests.push(String(path));
+      return Response.json({ messages: pages.shift() ?? [], hasMore: true });
+    }
+    throw new Error('Unexpected fixture request');
+  };
+  const bounded = await mount();
+  try {
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('otto:focus-message', { detail: { messageId: 'never-loaded' } }),
+      );
+      for (let index = 0; index < 12; index++) await tick();
+    });
+    assert.equal(historyRequests.length, 5);
+    assert.match(bounded.element.textContent ?? '', /Could not find that message in this chat\./);
+  } finally {
+    await bounded.dispose();
+    globalThis.fetch = previousFetch;
+  }
+  historyRequests.length = 0;
+  globalThis.fetch = async (path) => {
+    if (path === '/api/state') return Response.json({ ...base, hasEarlierMessages: true });
+    if (String(path).startsWith('/api/messages?')) {
+      historyRequests.push(String(path));
+      return Response.json({ error: 'History is unavailable.' }, { status: 503 });
+    }
+    throw new Error('Unexpected fixture request');
+  };
+  const failing = await mount();
+  try {
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('otto:focus-message', { detail: { messageId: 'never-loaded' } }),
+      );
+      for (let index = 0; index < 8; index++) await tick();
+    });
+    assert.equal(historyRequests.length, 1);
+    assert.match(failing.element.textContent ?? '', /History is unavailable\./);
+    assert.doesNotMatch(failing.element.textContent ?? '', /Could not find that message/);
+  } finally {
+    await failing.dispose();
+    globalThis.fetch = previousFetch;
+    dom.window.HTMLElement.prototype.scrollIntoView = previousScroll;
+    if (previousMedia) Object.defineProperty(dom.window, 'matchMedia', previousMedia);
+    else Reflect.deleteProperty(dom.window, 'matchMedia');
   }
 });

@@ -15,7 +15,7 @@ TL;DR: Otto is a local assistant that can do work from one chat: use connected a
 
 **What you can try**
 
-Public browsing and screenshots; file creation and attachment previews; named logins and cards in Vault; goals with active/completed views; one-off and recurring schedules; mobile navigation and light/dark themes; and Inspector for tool calls, activity and estimated costs. Vault has a Cmd/Ctrl+K shortcut outside editing. Production builds put Inspector and Restart setup in More; mobile keeps Chat visible and moves the other controls into the top-right menu. Gmail, Calendar, Drive, Docs, Sheets, Slack and Notion adapters are present, with optional Telegram/WhatsApp channels. Each provider still needs its own live validation.
+Public browsing and screenshots; file creation and attachment previews; named logins and cards in Vault; goals with active/completed views; one-off and recurring schedules; mobile navigation and light/dark themes; and Inspector for tool calls, activity and estimated costs. Vault has a Cmd/Ctrl+K shortcut outside editing. Production builds put Inspector in More; small screens show a chat-first top bar, and the avatar opens a sheet with the other sections and account controls. Gmail, Calendar, Drive, Docs, Sheets, Slack and Notion adapters are present, with optional Telegram/WhatsApp channels. Each provider still needs its own live validation.
 
 **Run it**
 

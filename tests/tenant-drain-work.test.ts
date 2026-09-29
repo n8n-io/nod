@@ -141,9 +141,9 @@ test(
       await blocker.query('COMMIT');
       await Promise.all([closingConsumers, stopping]);
       assert.equal(signals.has(third), false);
-      assert.equal(await state(third), 'failed');
+      assert.equal(await state(third), 'running');
       assert.equal(signals.get(fourth)!.aborted, true);
-      assert.equal(await state(fourth), 'failed');
+      assert.equal(await state(fourth), 'running');
       await assert.rejects(consumers.resume());
       assert.throws(() => admission.resume());
     } finally {

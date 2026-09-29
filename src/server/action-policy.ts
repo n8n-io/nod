@@ -35,27 +35,59 @@ export function isReversiblePlanAction(action: string) {
 }
 
 export function requestsConnectedSchedule(action: string, instruction: string) {
-  if (action !== 'OTTO_schedule_create' || !instruction.trim() || instruction.length > 12_000)
+  if (
+    action !== 'OTTO_schedule_create' ||
+    !instruction.trim() ||
+    instruction.length > 12_000 ||
+    /[\r\n]|<\/?[A-Za-z!]/.test(instruction)
+  )
     return false;
   const request = requestedInstruction(instruction).replace(
-    /"(?:\\.|[^"\\])*"|“[^”]*”|(?:^|\s)'(?:\\.|[^'\\])*'(?=\s|[.,!?]|$)/g,
+    /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`]*`|"(?:\\.|[^"\\])*"|“[^”]*”|‘[^’]*’|(?:^|\s)'(?:\\.|[^'\\])*'(?=\s|[.,!?]|$)/g,
     ' ',
   );
   if (
-    /\b(?:don't|do not|never|não|nao)\s+(?:(?:create|make|add|set(?:\s+up)?|start|run|send)\s+)?(?:(?:an?|the|any|another)\s+)?(?:(?:daily|recurring|automatic|scheduled)\s+)?(?:schedule|reminder|check|monitor|notify|alert|lembrete|agenda)\b/i.test(
+    /\b(?:don['’]t|do not|never|can['’]t|cannot|without|não|nao|nunca|jamais|sem|manually|manualmente)\b/i.test(
+      request,
+    ) ||
+    /\b(?:no|not\s+(?:a|an|the))\s+(?:(?:new|automatic|recurring|daily|weekly|monthly)\s+)*(?:schedules?|reminders?|automation)\b/i.test(
       request,
     )
   )
     return false;
+  const instructions = request.split(/[.!?;]|\b(?:then|depois)\b/i).map(requestedInstruction);
+  if (
+    instructions.some((part) =>
+      /^(?:draft|explain|describe|outline|suggest|tell\s+me\s+(?:how|whether)|show\s+me\s+how)\b/i.test(
+        part,
+      ),
+    )
+  )
+    return false;
   const timing =
-    /\b(?:daily|weekly|monthly|tomorrow|every\s+(?:day|morning|evening|night|week|weekday|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|each\s+(?:day|morning|evening|night|week|weekday|month)|at\s+\d{1,2}(?::\d{2})?|on\s+\d{4}-\d{2}-\d{2}|todos\s+os\s+dias|todas\s+as\s+manhãs)\b/i;
-  const portugueseTiming =
-    /(?:^|\s)(?:amanhã|amanha|hoje|às?\s+\d{1,2}(?::\d{2}|h\d{2})?|todos\s+os\s+(?:dias|sábados|sabados|domingos)|todas\s+as\s+(?:manhãs|manhas|noites|semanas|(?:segundas|terças|tercas|quartas|quintas|sextas)(?:-feiras)?))(?=$|[\s,.:;!?])/i;
+    /(?:(?:daily|weekly|monthly|today(?=\s+at\s+\d)|tomorrow|(?:every|each)\s+(?:day|morning|evening|night|week|weekday|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|on\s+\d{4}-\d{2}-\d{2}|amanhã|amanha|hoje(?=\s+(?:às|as)\s+\d)|(?:no\s+dia|em)\s+\d{4}-\d{2}-\d{2}|todos\s+os\s+(?:dias|sábados|sabados|domingos)|todas\s+as\s+(?:manhãs|manhas|noites|semanas|(?:segundas|terças|tercas|quartas|quintas|sextas)(?:-feiras)?))(?:\s+(?:at|às|as)\s+\d{1,2}(?::\d{2}|h\d{2})?\s*(?:am|pm)?(?:\s+(?:[A-Za-z_]+\/[A-Za-z_/]+|UTC|GMT))?)?|(?:at|às|as)\s+\d{1,2}(?::\d{2}|h\d{2})?\s*(?:am|pm)?(?:\s+(?:[A-Za-z_]+\/[A-Za-z_/]+|UTC|GMT))?)/;
+  const timedPrefix = new RegExp(`^${timing.source}(?:\\s*[, :]\\s*|\\s+)(.+)$`, 'i');
+  const timedSuffix = new RegExp(
+    `\\s+${timing.source}(?:\\s+(?:and\\s+(?:tell|notify|alert)|e\\s+(?:avisa(?:-me)?|alerta(?:-me)?|diz(?:-me)?))(?=\\s|$).*)?\\s*$`,
+    'i',
+  );
   const work =
-    /\b(?:schedule|remind\s+me|set\s+up\s+a\s+reminder|check|monitor|review|notify|alert|tell|run|send|agenda|lembra-me|lembre-me|verifica|avisa)\b/i;
-  return request
-    .split(/[.!?;]|\bthen\b/i)
-    .some((part) => (timing.test(part) || portugueseTiming.test(part)) && work.test(part));
+    /^(?:schedule|create\s+(?:a\s+)?(?:recurring\s+|one-off\s+)?schedule|remind\s+me|set\s+(?:up\s+)?(?:a\s+)?reminder|check|monitor|review|notify|alert|tell|run|send|agenda|lembra-me|lembre-me|verifica|avisa(?:-me)?|revê|reve|monitoriza|executa|consulta)(?=\s|$)/i;
+  return instructions.some((instruction) => {
+    if (
+      /^(?:schedule\s+(?:(?:a|the)\s+)?(?:daily|weekly|monthly)\s+\S|create\s+(?:a\s+)?(?:daily|weekly|monthly)\s+schedule\b|set\s+(?:up\s+)?(?:a\s+)?(?:daily|weekly|monthly)\s+reminder\b)/i.test(
+        instruction,
+      )
+    )
+      return true;
+    const timed = instruction.match(timedPrefix);
+    if (timed && work.test(requestedInstruction(timed[1]!))) return true;
+    if (!work.test(instruction)) return false;
+    if (timedSuffix.test(instruction)) return true;
+    const reminder = instruction.replace(/^(?:remind\s+me|lembra-me|lembre-me)\s+/i, '');
+    const reminderTime = reminder !== instruction ? reminder.match(timedPrefix) : null;
+    return !!reminderTime && /^(?:to|de|para)\s+/i.test(reminderTime[1]!);
+  });
 }
 
 const intentWords: Record<Intent, RegExp> = {

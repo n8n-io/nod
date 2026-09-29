@@ -9,24 +9,53 @@ import { Inspector } from './pages/inspector';
 import { Goals } from './pages/goals';
 import { SchedulePage } from './pages/schedule';
 import { useAppState } from './hooks/use-app-state';
+import { prefetchPageData } from './hooks/use-page-data';
 import { Button, Loading, Notice } from './components/ui';
+import { ChatSkeleton, Splash } from './components/startup';
 import { Sidebar } from './components/sidebar';
 import { navigationItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
 import { BrowserConnection } from './pages/browser-connection';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
-import type { AccountUpdate, SessionResponse } from '../shared/account';
+import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
 import { useSession } from './hooks/use-session';
 import { SignIn } from './pages/sign-in';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
 import type { AccountControls, AccountTab } from './components/account-menu';
+import { usePageData } from './hooks/use-page-data';
+import { setDateFormat } from './lib/date-format';
+import { saveBrowserLocale } from './lib/preferences';
 
 function navigate(path: string) {
   window.history.pushState(null, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
+function useSavedDateFormat() {
+  const { data } = usePageData<AccountPreferences>('/api/preferences');
+  useEffect(() => {
+    if (!data) return;
+    setDateFormat(data);
+    if (data.locale) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = 1000;
+    const save = () => {
+      void saveBrowserLocale(controller.signal).catch(() => {
+        if (controller.signal.aborted) return;
+        timer = setTimeout(save, delay);
+        delay = Math.min(delay * 2, 30_000);
+      });
+    };
+    save();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [data]);
+}
+
 function Workspace({
   path,
   session,
@@ -43,6 +72,7 @@ function Workspace({
   const { state, streams, error, connected, refresh, resetConversation } = useAppState(
     session.user!.id,
   );
+  useSavedDateFormat();
   const [inspector, setInspector] = useState(
     () =>
       path === '/dev' || (window.innerWidth > 720 && readUiPreference('otto.inspector') === 'open'),
@@ -50,7 +80,7 @@ function Workspace({
   const [collapsed, setCollapsed] = useState(
     () => readUiPreference('otto.sidebar') === 'collapsed',
   );
-  const [composerDraft, setComposerDraft] = useState<{ text: string; nonce: number }>();
+  const [pendingMessageFocus, setPendingMessageFocus] = useState<string>();
   const [inspectionFocus, setInspectionFocus] = useState<{ messageId: string; taskId: string }>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<AccountTab>('Profile');
@@ -82,11 +112,12 @@ function Workspace({
     return () => window.removeEventListener('keydown', shortcut);
   }, [settingsOpen]);
   useEffect(() => {
-    const compose = (event: Event) => {
-      const detail = (event as CustomEvent<{ text: string }>).detail;
-      if (!detail?.text) return;
-      setComposerDraft({ text: detail.text, nonce: Date.now() });
-      navigate('/');
+    const focusMessage = (event: Event) => {
+      const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
+      if (typeof detail?.messageId === 'string') {
+        if (!state) setPendingMessageFocus(detail.messageId);
+        navigate('/');
+      }
     };
     const inspect = (event: Event) => {
       if (!developer) return;
@@ -95,14 +126,35 @@ function Workspace({
       setInspectionFocus(detail);
       setInspector(true);
     };
-    window.addEventListener('otto:compose', compose);
+    window.addEventListener('otto:focus-message', focusMessage);
     window.addEventListener('otto:inspect-message', inspect);
     return () => {
-      window.removeEventListener('otto:compose', compose);
+      window.removeEventListener('otto:focus-message', focusMessage);
       window.removeEventListener('otto:inspect-message', inspect);
     };
-  }, [developer]);
+  }, [developer, state]);
   const currentPath = path === '/dev' || path === '/you' ? '/' : path;
+  const loaded = !!state;
+  const hasMessages = state ? state.messages.length > 0 : null;
+  useEffect(() => {
+    if (hasMessages !== null)
+      writeUiPreference('otto.chat-layout', hasMessages ? 'conversation' : 'welcome');
+  }, [hasMessages]);
+  const [handoff, setHandoff] = useState(false);
+  const [entering, setEntering] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setEntering(false), 600);
+    return () => clearTimeout(timer);
+  }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    setHandoff(true);
+    const timer = setTimeout(() => setHandoff(false), 700);
+    return () => clearTimeout(timer);
+  }, [loaded]);
+  useEffect(() => {
+    prefetchPageData(['/api/vault', '/api/goals', '/api/schedules', '/api/apps']);
+  }, []);
   useEffect(() => {
     if (path === '/dev') setInspector(true);
   }, [path]);
@@ -135,7 +187,7 @@ function Workspace({
   };
   return (
     <div
-      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${inspectorOpen ? 'with-inspector' : ''}`}
+      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${inspectorOpen ? 'with-inspector' : ''} ${entering ? 'shell-entering' : ''}`}
     >
       <a href="#workspace" className="skip-link">
         Skip to content
@@ -151,7 +203,6 @@ function Workspace({
         account={account}
         onRestart={() => {
           navigate('/');
-          setComposerDraft(undefined);
           setInspectionFocus(undefined);
           window.dispatchEvent(new CustomEvent('otto:restart-setup'));
         }}
@@ -159,47 +210,47 @@ function Workspace({
       <div className="workspace-frame">
         <div className="workspace-body">
           <main id="workspace" className="main-workspace" tabIndex={-1}>
-            {!visibleState ? (
-              <div className="initial-loading">
-                {error ? (
-                  <>
-                    <Notice>{error}</Notice>
-                    <Button variant="outline" onClick={() => void refresh()}>
-                      Try again
-                    </Button>
-                  </>
-                ) : (
-                  <Loading label="Opening Otto…" />
-                )}
-              </div>
-            ) : (
-              <>
-                <div className="chat-route" hidden={currentPath !== '/'}>
-                  <Chat
-                    state={visibleState}
-                    streams={streams}
-                    refresh={refresh}
-                    resetConversation={resetConversation}
-                    composerDraft={composerDraft}
-                  />
+            <div
+              className={`chat-route ${handoff ? 'chat-entering' : ''}`}
+              hidden={currentPath !== '/'}
+            >
+              {visibleState ? (
+                <Chat
+                  state={visibleState}
+                  streams={streams}
+                  refresh={refresh}
+                  resetConversation={resetConversation}
+                  initialFocusMessageId={pendingMessageFocus}
+                />
+              ) : error ? (
+                <div className="initial-loading">
+                  <Notice>{error}</Notice>
+                  <Button variant="outline" onClick={() => void refresh()}>
+                    Try again
+                  </Button>
                 </div>
-                {currentPath === '/vault' && <Vault />}
-                {currentPath === '/apps' && <Apps />}
-                {currentPath === '/channels' && (
-                  <Channels hosted={session.auth.mode === 'google'} />
-                )}
-                {currentPath === '/goals' && <Goals />}
-                {currentPath === '/schedule' && <SchedulePage />}
-                {!navigationItems.some((item) => item.path === currentPath) && (
-                  <div className="empty-state">
-                    <h1>This page isn’t here.</h1>
-                    <Button variant="outline" onClick={() => navigate('/')}>
-                      <ArrowLeft size={16} />
-                      Back to chat
-                    </Button>
-                  </div>
-                )}
-              </>
+              ) : (
+                <ChatSkeleton />
+              )}
+              {handoff && (
+                <div className="startup-leaving" aria-hidden="true">
+                  <ChatSkeleton />
+                </div>
+              )}
+            </div>
+            {currentPath === '/vault' && <Vault />}
+            {currentPath === '/apps' && <Apps />}
+            {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
+            {currentPath === '/goals' && <Goals conversation={visibleState} />}
+            {currentPath === '/schedule' && <SchedulePage conversation={visibleState} />}
+            {!navigationItems.some((item) => item.path === currentPath) && (
+              <div className="empty-state">
+                <h1>This page isn’t here.</h1>
+                <Button variant="outline" onClick={() => navigate('/')}>
+                  <ArrowLeft size={16} />
+                  Back to chat
+                </Button>
+              </div>
             )}
             {state && (error || !connected) && (
               <div className="connection-notice">
@@ -264,12 +315,7 @@ function AccountApp({ path, setPath }: { path: string; setPath(path: string): vo
         )}
       </main>
     );
-  if (sessionState.loading)
-    return (
-      <main className="initial-loading">
-        <Loading label="Opening Otto…" />
-      </main>
-    );
+  if (sessionState.loading) return <Splash />;
   if (!session?.user)
     return (
       <SignIn

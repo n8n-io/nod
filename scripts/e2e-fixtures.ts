@@ -18,7 +18,7 @@ import type {
 import { runProcess } from '../src/providers/process.ts';
 import { fixtureChannelCredentials } from './e2e-channels.ts';
 
-export const fixtureOrigin = 'https://example.com';
+const fixtureOrigin = 'https://example.com';
 export const fixturePrefix = '/__otto_e2e__/';
 export const fixtureLogin = fixtureOrigin + fixturePrefix + 'login';
 export const fixtureHotel = fixtureOrigin + fixturePrefix + 'hotel';
@@ -848,10 +848,21 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
             action === 'GOOGLESHEETS_GET_SPREADSHEET_INFO' ||
             action === 'GOOGLESHEETS_BATCH_GET'
           ) {
-            const id = String(args.spreadsheet_id ?? '').match(
-              /(?:\/d\/)?(otto-e2e-spending-2026-09)/,
-            )?.[1];
-            if (!id) throw new Error('The synthetic spreadsheet was not found.');
+            const id = 'otto-e2e-spending-2026-09';
+            let matched = args.spreadsheet_id === id;
+            if (!matched && typeof args.spreadsheet_id === 'string') {
+              try {
+                const url = new URL(args.spreadsheet_id);
+                matched =
+                  url.origin === 'https://docs.google.com' &&
+                  !url.username &&
+                  !url.password &&
+                  [`/spreadsheets/d/${id}`, `/spreadsheets/d/${id}/edit`].includes(
+                    url.pathname.replace(/\/$/, ''),
+                  );
+              } catch {}
+            }
+            if (!matched) throw new Error('The synthetic spreadsheet was not found.');
             if (action === 'GOOGLESHEETS_GET_SPREADSHEET_INFO')
               return {
                 spreadsheetId: id,
@@ -859,15 +870,30 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
                 sheets: ['Spending', 'Budget'].map((title) => ({ properties: { title } })),
                 fixture: true,
               };
+            if (args.ranges !== undefined && !Array.isArray(args.ranges))
+              throw new Error('The synthetic cell ranges are invalid.');
             const valueRanges = (
               Array.isArray(args.ranges) ? args.ranges : ['Spending!A1:E20']
             ).map((range) => {
-              const requested = String(range);
-              const cells = requested.match(
-                /^'?([^'!]+)'?(?:!([A-Za-z]*)(\d*)(?::([A-Za-z]*)(\d*))?)?$/,
-              );
-              if (!cells) throw new Error('The synthetic sheet range is invalid.');
-              const tab = cells[1];
+              const cells =
+                typeof range === 'string'
+                  ? /^(?:'([^']+)'|([^'!]+))!\$?([A-Z]{1,3})\$?([1-9]\d{0,7})(?::\$?([A-Z]{1,3})\$?([1-9]\d{0,7}))?$/i.exec(
+                      range,
+                    )
+                  : null;
+              if (!cells) throw new Error('The synthetic cell range is invalid.');
+              const tab = cells[1] ?? cells[2];
+              const column = (name: string) =>
+                [...name.toUpperCase()].reduce(
+                  (value, letter) => value * 26 + letter.charCodeAt(0) - 64,
+                  0,
+                );
+              const firstColumn = column(cells[3]);
+              const lastColumn = column(cells[5] ?? cells[3]);
+              const firstRow = Number(cells[4]);
+              const lastRow = Number(cells[6] ?? cells[4]);
+              if (lastColumn < firstColumn || lastRow < firstRow)
+                throw new Error('The synthetic cell range is invalid.');
               const values =
                 tab === 'Spending'
                   ? [
@@ -887,30 +913,12 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
                       ]
                     : undefined;
               if (!values) throw new Error('The synthetic sheet tab was not found.');
-              const column = (letters: string) =>
-                [...letters.toUpperCase()].reduce(
-                  (number, letter) => number * 26 + letter.charCodeAt(0) - 64,
-                  0,
-                );
-              const firstRow = Number(cells[3] || 1);
-              const firstColumn = cells[2] ? column(cells[2]) : 1;
-              const lastRow = Number(
-                cells[5] || (requested.includes(':') ? values.length : cells[3] || values.length),
-              );
-              const lastColumn = cells[4]
-                ? column(cells[4])
-                : requested.includes(':')
-                  ? values[0].length
-                  : cells[2]
-                    ? firstColumn
-                    : values[0].length;
-              if (firstRow < 1 || firstColumn < 1 || lastRow < firstRow || lastColumn < firstColumn)
-                throw new Error('The synthetic sheet range is invalid.');
               return {
                 range,
                 values: values
                   .slice(firstRow - 1, lastRow)
-                  .map((row) => row.slice(firstColumn - 1, lastColumn)),
+                  .map((row) => row.slice(firstColumn - 1, lastColumn))
+                  .filter((row) => row.length > 0),
               };
             });
             return { spreadsheetId: id, valueRanges, fixture: true };
@@ -1043,7 +1051,7 @@ consentForm.addEventListener('submit', async (event) => {
     });
     if (!response.ok) throw new Error('Connection failed');
     const destination = new URL(response.url, location.href);
-    if (destination.origin !== location.origin || !['/apps', '/'].includes(destination.pathname))
+    if (destination.origin !== location.origin || !['/apps', '/', '/onboarding', '/connected.html'].includes(destination.pathname))
       throw new Error('Unexpected destination');
     location.assign(destination.href);
   } catch {
@@ -1076,6 +1084,6 @@ consentForm.addEventListener('submit', async (event) => {
 export function operatorPage() {
   return html(
     'Otto isolated acceptance environment',
-    `<p><a href="/">Open Otto</a> · <a href="/e2e/status">Timing events</a></p><p>The assistant and browser are real. Google, Slack and Notion accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd><dt>Your Telegram user ID</dt><dd>${fixtureChannelCredentials.telegram.allowedUserId}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only).</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
+    `<p><a href="/">Open Otto</a> · <a href="/e2e/status">Timing events</a></p><p>The assistant and browser are real. Google, Slack and Notion accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
   );
 }

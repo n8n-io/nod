@@ -23,6 +23,7 @@ const mimeTypes: Record<string, string> = {
   '.gif': 'image/gif',
   '.avif': 'image/avif',
   '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.webm': 'audio/webm',
@@ -204,4 +205,4 @@ export const localArtifacts = createArtifactService({
   ownerId,
   localRoot: dataRoot,
 });
-export const { storeArtifact, publishArtifact, readArtifact, readTaskArtifacts } = localArtifacts;
+export const { storeArtifact, publishArtifact, readTaskArtifacts } = localArtifacts;

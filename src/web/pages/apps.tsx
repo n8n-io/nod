@@ -601,10 +601,9 @@ export function Apps() {
           {discovery?.paths[0]?.auth === 'oauth' ? (
             <form onSubmit={(event) => void authorizeDiscovery(event)} autoComplete="off">
               {discovery.paths[0]?.clientIdRequired && (
-                <label>
-                  Client ID
-                  <input name="clientId" required maxLength={500} autoComplete="off" />
-                </label>
+                <Field label="Client ID">
+                  <Input name="clientId" required maxLength={500} autoComplete="off" />
+                </Field>
               )}
               {discovery.callbackUrl && <p>Set the app callback URL to {discovery.callbackUrl}.</p>}
               <Button type="submit" disabled={savingDiscovery}>
@@ -613,13 +612,11 @@ export function Apps() {
             </form>
           ) : discovery ? (
             <form onSubmit={(event) => void saveDiscovery(event)} autoComplete="off">
-              <label>
-                Account name
-                <input name="accountName" required maxLength={200} autoComplete="off" />
-              </label>
-              <label>
-                Access token
-                <input
+              <Field label="Account name">
+                <Input name="accountName" required maxLength={200} autoComplete="off" />
+              </Field>
+              <Field label="Access token">
+                <Input
                   name="token"
                   type="password"
                   required
@@ -628,7 +625,7 @@ export function Apps() {
                   autoComplete="off"
                   spellCheck={false}
                 />
-              </label>
+              </Field>
               <Button
                 type="submit"
                 disabled={

@@ -23,6 +23,7 @@ const telegramMessage = z.object({
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     is_bot: z.literal(false),
     first_name: z.string().max(256),
+    username: z.string().max(256).optional(),
   }),
   chat: z.object({
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -68,7 +69,7 @@ export function channelConfiguration(env: Environment) {
   const telegramMissing = [
     'TELEGRAM_BOT_TOKEN',
     'TELEGRAM_WEBHOOK_SECRET_TOKEN',
-    'TELEGRAM_ALLOWED_USER_ID',
+    ...(env.TELEGRAM_PAIRING_EXPIRES_AT ? [] : ['TELEGRAM_ALLOWED_USER_ID']),
   ].filter((key) => !env[key]);
   if (env.TELEGRAM_ALLOWED_USER_ID && !/^\d{1,16}$/.test(env.TELEGRAM_ALLOWED_USER_ID))
     telegramMissing.push('TELEGRAM_ALLOWED_USER_ID');
@@ -122,7 +123,7 @@ export function createChatSdkTransport(
     ? createTelegramAdapter({
         botToken: env.TELEGRAM_BOT_TOKEN!,
         secretToken: env.TELEGRAM_WEBHOOK_SECRET_TOKEN!,
-        allowedUserIds: [env.TELEGRAM_ALLOWED_USER_ID!],
+        allowedUserIds: [env.TELEGRAM_ALLOWED_USER_ID ?? ''],
         mode: 'webhook',
         allowUnverifiedWebhooks: false,
         apiUrl: 'https://api.telegram.org',
@@ -176,7 +177,7 @@ export function createChatSdkTransport(
   const transport: MessagingTransport = {
     channels,
     pollingEnabled: Boolean(telegram && env.TELEGRAM_MODE === 'polling'),
-    async poll(accept) {
+    async poll(accept, pair) {
       if (closed || polling || !telegram || env.TELEGRAM_MODE !== 'polling') return;
       polling = true;
       try {
@@ -229,6 +230,7 @@ export function createChatSdkTransport(
           if (parsed.status < 200 || parsed.status >= 300)
             throw new Error('Telegram update could not be accepted.');
           for (const message of parsed.messages ?? []) await accept(message);
+          if (parsed.pairing) await pair?.(parsed.pairing);
           await pool.query(
             `INSERT INTO channel_poll_offsets(provider,account_id,next_offset) VALUES('telegram',$1,$2)
             ON CONFLICT(provider,account_id) DO UPDATE SET next_offset=GREATEST(channel_poll_offsets.next_offset,EXCLUDED.next_offset)`,
@@ -287,7 +289,30 @@ export function createChatSdkTransport(
         const parsed = telegramMessage.safeParse(update.success ? update.data.message : undefined);
         if (!parsed.success || String(parsed.data.from.id) !== String(parsed.data.chat.id))
           return accepted();
+        const start = /^\/start(?:\s+(\S+))?$/.exec(parsed.data.text);
+        if (env.TELEGRAM_ALLOWED_USER_ID && start) return accepted();
         const message = telegram.parseMessage(parsed.data);
+        if (!env.TELEGRAM_ALLOWED_USER_ID) {
+          const code = start?.[1];
+          if (!code || !/^[A-Za-z0-9_-]{16,64}$/.test(code)) return accepted();
+          const { username, first_name } = parsed.data.from;
+          return {
+            ...accepted(),
+            pairing: {
+              channelId: 'telegram',
+              accountId: env.TELEGRAM_BOT_TOKEN!.split(':')[0],
+              senderId: String(parsed.data.from.id),
+              senderName:
+                username && /^[A-Za-z0-9_]{1,64}$/.test(username)
+                  ? `@${username}`
+                  : first_name.trim().slice(0, 100) || 'your Telegram account',
+              messageId: message.id,
+              threadId: message.threadId,
+              code,
+              sentAt: message.metadata.dateSent,
+            },
+          };
+        }
         return accepted([
           {
             channelId: 'telegram',

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { currentUserTime } from '../src/runtime/time-context.ts';
+import { currentUserTime, userFormat } from '../src/runtime/time-context.ts';
+import { dateFormatFrom, formatDateTime } from '../src/web/lib/date-format.ts';
+import { runtimeAccount } from '../src/server/account-profile.ts';
 
 test('Lisbon local time keeps the correct date and UTC offset across both DST transitions', () => {
   for (const [utc, local] of [
@@ -28,5 +30,49 @@ test('owner time zones use their own calendar day and fractional offset', () => 
     const context = currentUserTime(timeZone, new Date('2026-09-25T00:15:00Z'));
     assert.ok(context.includes(`Current local time: ${local}.`), context);
     assert.ok(context.includes(`User time zone: ${timeZone}.`));
+  }
+});
+
+test('the preferred name override wins over the Google first name and full name', () => {
+  const google = {
+    name: 'Samantha Synthetic',
+    givenName: 'Samantha',
+    email: 'sam@example.test',
+    preferredName: null,
+  };
+  assert.deepEqual(runtimeAccount(google), {
+    preferredName: 'Samantha',
+    fullName: 'Samantha Synthetic',
+    email: 'sam@example.test',
+  });
+  assert.equal(runtimeAccount({ ...google, preferredName: 'Sam' })?.preferredName, 'Sam');
+  assert.equal(runtimeAccount({ ...google, givenName: null })?.preferredName, 'Samantha');
+  assert.equal(
+    runtimeAccount({ name: null, givenName: null, email: null, preferredName: 'Sam' })?.fullName,
+    null,
+  );
+  assert.equal(
+    runtimeAccount({ name: null, givenName: null, email: null, preferredName: null }),
+    undefined,
+  );
+  assert.equal(runtimeAccount(null), undefined);
+});
+
+test('the model gets the same date format the app shows for each region and clock', () => {
+  const now = new Date('2025-03-04T08:05:00Z');
+  for (const [locale, hourCycle] of [
+    ['pt-PT', 'auto'],
+    ['en-US', 'auto'],
+    ['ko-KR', 'auto'],
+    ['en-GB', 'h12'],
+  ] as const) {
+    const format = dateFormatFrom({ locale, hourCycle, timeZone: 'Europe/Lisbon' });
+    const shown = formatDateTime(now, format, { weekday: true, now: new Date('2026-01-01') });
+    assert.ok(
+      userFormat({ locale, hourCycle, timeZone: 'Europe/Lisbon' }, now).includes(
+        `for example ${shown}.`,
+      ),
+      `${locale} ${hourCycle}: ${shown}`,
+    );
   }
 });

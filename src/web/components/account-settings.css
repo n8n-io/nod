@@ -130,10 +130,10 @@
   color: var(--muted-foreground);
   background: transparent;
 }
-.account-menu-themes button[aria-checked='true'] {
-  background: var(--surface);
+.account-menu-themes button[aria-checked='true'],
+.account-menu-themes button[aria-pressed='true'] {
+  background: var(--hover);
   color: var(--foreground);
-  box-shadow: 0 1px 4px #00000015;
 }
 .account-menu-error {
   margin: 8px 10px;
@@ -147,19 +147,10 @@
   overflow: hidden;
 }
 .account-settings .dialog-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   top: 18px;
   right: 18px;
   width: 36px;
   height: 36px;
-  padding: 0;
-  border-radius: 8px;
-}
-.account-settings .dialog-close:hover {
-  background: var(--hover);
-  color: var(--foreground);
 }
 .account-settings-layout {
   display: grid;
@@ -201,6 +192,10 @@
 }
 .account-settings-layout > nav button[aria-selected='true'] {
   background: var(--accent-soft);
+  color: var(--foreground);
+  font-weight: 550;
+}
+.account-settings-layout > nav button[aria-selected='true'] svg {
   color: var(--accent);
 }
 .account-settings-body {
@@ -265,10 +260,6 @@
   min-width: 0;
   margin: 0;
 }
-.account-settings-body input {
-  min-width: 0;
-  width: 100%;
-}
 .account-profile-email {
   display: flex;
   align-items: center;
@@ -307,10 +298,6 @@
   padding: 18px 0;
   font-size: 13px;
 }
-.account-preference-row:first-child {
-  padding-top: 0;
-  border-bottom: 1px solid var(--border);
-}
 .account-preference-row > span,
 .account-preference-label {
   display: flex;
@@ -324,47 +311,11 @@
 .account-preference-row strong {
   font-weight: 400;
 }
-.account-preference-row select {
-  width: 50%;
-  min-width: 0;
-  max-width: 210px;
-  min-height: 40px;
-  padding: 10px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--control);
-  color: var(--foreground);
-  font: inherit;
-}
 .account-quiet-times {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 20px;
-}
-.account-toggle {
-  display: flex;
-  flex-shrink: 0;
-  width: 34px;
-  height: 21px;
-  padding: 3px;
-  border: 0;
-  border-radius: 14px;
-  background: var(--muted-foreground);
-  cursor: pointer;
-}
-.account-toggle > span {
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 160ms ease;
-}
-.account-toggle.on {
-  background: var(--accent);
-}
-.account-toggle.on > span {
-  transform: translateX(13px);
 }
 .account-theme-previews {
   display: grid;
@@ -453,27 +404,27 @@
   border-radius: 4px;
 }
 .account-theme-sample.dark {
-  background: #18171c;
-  border-color: #453e4e;
+  background: #1c1c1f;
+  border-color: #313136;
 }
 .account-theme-sample.dark > i {
-  background: #1d1b22;
-  border-color: #453e4e;
+  background: #151517;
+  border-color: #313136;
 }
 .account-theme-sample.dark b {
-  background: #63576c;
+  background: #4a4a52;
 }
 .account-theme-sample.dark b:first-child {
-  background: #302b37;
+  background: #2e2e33;
 }
 .account-theme-sample.dark > span > em {
-  border-color: #453e4e;
+  border-color: #313136;
 }
 .account-theme-sample.system {
-  background: linear-gradient(115deg, #fefdfc 45%, #18171c 45%);
+  background: linear-gradient(115deg, #fefdfc 45%, #1c1c1f 45%);
 }
 .account-theme-sample.system > span > em {
-  border-color: #63576c;
+  border-color: #5d5d66;
 }
 .account-settings-body .notice {
   margin-top: 18px;
@@ -565,9 +516,6 @@
     height: 48px;
     font-size: 17px;
   }
-  .account-settings-body input {
-    font-size: 16px;
-  }
 }
 @container account-settings (max-width: 350px) {
   .account-theme-previews {
@@ -625,8 +573,25 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .account-toggle > span {
-    transition: none;
-  }
+.account-region {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.account-region h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.account-region .account-preference-row {
+  padding: 12px 0;
+  border-bottom: 0;
+}
+.account-region .field-hint {
+  margin: 4px 0 0;
+}
+.account-clock-options {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }

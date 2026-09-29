@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import type { RuntimeContext, RuntimeResult } from '../src/ports/agent.ts';
-import type { AppState, Message } from '../src/shared/contracts.ts';
+import type { AppState, MessageHistoryPage } from '../src/shared/contracts.ts';
 import { initialStreamState, streamReducer, type StreamAction } from '../src/web/lib/streams.ts';
 
 test(
@@ -157,9 +157,9 @@ test(
       const persisted = (
         await app.inject({ method: 'GET', url: '/api/state', headers })
       ).json<AppState>();
-      const history = (await app.inject({ method: 'GET', url: '/api/messages', headers })).json<
-        Message[]
-      >();
+      const history = (
+        await app.inject({ method: 'GET', url: '/api/messages', headers })
+      ).json<MessageHistoryPage>().messages;
       const expected = ['web-event', 'web-reminder', 'web-reply'];
       await t.test(
         'reload and history retain web replies and quiet background reminders',

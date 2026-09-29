@@ -50,13 +50,14 @@ export async function createPiCheckpoint(options: {
   store: PrivateObjectStore;
   taskId: string;
   directory: string;
+  fresh?: boolean;
 }) {
   const key = `sessions/${options.taskId}.jsonl`;
   const saved = await options.store.read(key, maximum);
   const manager = SessionManager.inMemory(
     options.directory,
     undefined,
-    saved ? entries(saved.bytes) : undefined,
+    saved && !options.fresh ? entries(saved.bytes) : undefined,
   );
   let version = saved?.version ?? null;
   let failed = false;

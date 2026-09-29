@@ -5,7 +5,10 @@ import type { AuthenticationProvider } from '../src/ports/authentication.ts';
 import type { AccountStore, StoredAccount } from '../src/server/account-store.ts';
 import { createAccountSession } from '../src/server/account.ts';
 
-async function fixture(prepare?: (ownerId: string) => Promise<void>) {
+async function fixture(
+  prepare?: (ownerId: string) => Promise<void>,
+  start?: (ownerId: string) => Promise<void>,
+) {
   const records = new Map<string, StoredAccount>();
   const calls = {
     signIn: 0,
@@ -13,6 +16,7 @@ async function fixture(prepare?: (ownerId: string) => Promise<void>) {
     callback: '',
     writes: [] as string[],
     prepared: [] as string[],
+    started: [] as string[],
   };
   let enabled = true;
   const accounts: AccountStore = {
@@ -79,6 +83,10 @@ async function fixture(prepare?: (ownerId: string) => Promise<void>) {
     async prepare(owner) {
       calls.prepared.push(owner);
       await prepare?.(owner);
+    },
+    async start(owner) {
+      calls.started.push(owner);
+      await start?.(owner);
     },
   });
   account.register(app);
@@ -203,6 +211,34 @@ test('onboarding completion waits for preparation and failure cannot change any 
   assert.equal(f.records.get('alex')?.onboardingCompleted, true);
   assert.equal(f.records.has('sam'), false);
   assert.deepEqual(f.calls.prepared, ['alex', 'alex']);
+});
+
+test('onboarding completion starts the welcome after preparation and a failed start saves nothing', async (t) => {
+  let fail = true;
+  const writesAtStart: string[][] = [];
+  const f = await fixture(undefined, async () => {
+    writesAtStart.push([...f.calls.writes]);
+    if (fail) throw new Error('synthetic private runtime failure');
+  });
+  t.after(() => f.app.close());
+  const request = (payload: Record<string, unknown>) =>
+    f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers: { origin: 'https://otto.example.test', cookie: 'fixture=alex' },
+      payload,
+    });
+  const rejected = await request({ onboardingCompleted: true });
+  assert.equal(rejected.statusCode, 503);
+  assert.deepEqual(rejected.json(), { error: 'Setup could not be completed. Try again.' });
+  assert.equal(f.records.size, 0);
+  fail = false;
+  assert.equal((await request({ onboardingCompleted: true })).statusCode, 200);
+  assert.equal(f.records.get('alex')?.onboardingCompleted, true);
+  assert.equal((await request({ theme: 'dark' })).statusCode, 200);
+  assert.deepEqual(f.calls.prepared, ['alex', 'alex']);
+  assert.deepEqual(f.calls.started, ['alex', 'alex']);
+  assert.deepEqual(writesAtStart, [[], []]);
 });
 
 test('a revoked session cannot finish onboarding after a late successful preparation', async (t) => {

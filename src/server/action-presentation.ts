@@ -127,6 +127,7 @@ export function actionConfirmation(
     ['quietStart', 'Quiet hours start'],
     ['quietEnd', 'Quiet hours end'],
     ['timeZone', 'Time zone'],
+    ['locale', 'Region'],
   ])
     add(label!, text(args[key!]));
   for (const key of ['to', 'recipients', 'recipient_email', 'to_email'])
@@ -136,6 +137,10 @@ export function actionConfirmation(
     add('Progress', `${args.progress}%`);
   if (['active', 'paused', 'completed'].includes(String(args.status)))
     add('Status', String(args.status));
+  const clock = ({ auto: 'Automatic', h12: '12-hour', h23: '24-hour' } as Record<string, string>)[
+    String(args.hourCycle)
+  ];
+  if (clock) add('Clock', clock);
   if (typeof args.enabled === 'boolean') add('Schedule', args.enabled ? 'Active' : 'Paused');
   if (typeof args.targetDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.targetDate))
     add('Target date', args.targetDate);

@@ -7,7 +7,10 @@ import type { Schedule, ScheduleHistory, ScheduleRun } from '../src/shared/contr
 import { SchedulePage, ScheduleRow, ScheduleRunRow } from '../src/web/pages/schedule.tsx';
 import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { scheduleDate, scheduleExpression, scheduleLabel } from '../src/web/lib/schedules.ts';
-import { scheduleDraft } from '../src/web/lib/secondary-pages.ts';
+import { PlanToast } from '../src/web/components/plan-controls.tsx';
+import { setDateFormat } from '../src/web/lib/date-format.ts';
+
+setDateFormat({ locale: 'en-GB', hourCycle: 'auto', timeZone: 'Europe/Lisbon' });
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   url: 'http://localhost:4310',
@@ -63,6 +66,9 @@ const run: ScheduleRun = {
   status: 'failed',
   error: 'The task could not finish.',
   observation: null,
+  messageId: null,
+  messagePreview: null,
+  messageText: null,
 };
 const click = (element: Element) =>
   element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -87,6 +93,12 @@ test('common recurring timings have readable labels without rounding irregular c
     ['  */10   * * * *  ', 'Every 10 minutes'],
   ])
     assert.equal(scheduleLabel(cron), label, cron);
+  const twelveHour = { locale: 'en-GB', hourCycle: 'h12' as const, timeZone: 'UTC' };
+  assert.equal(scheduleLabel('5 21 * * *', twelveHour), 'Every day at 9:05 pm');
+  assert.equal(
+    scheduleLabel('0 9 * * 1-5', { locale: 'en-US', hourCycle: 'auto', timeZone: 'UTC' }),
+    'Every weekday at 9:00 AM',
+  );
   for (const cron of [
     '*/7 * * * *',
     '*/0 * * * *',
@@ -103,24 +115,28 @@ test('common recurring timings have readable labels without rounding irregular c
   }
 });
 
-test('one-time and recurring schedules keep their timezone and draft changes without converting a one-time run to cron', () => {
+test('one-time and recurring schedules keep their timezone without converting a one-time run to cron', () => {
   assert.equal(scheduleDate(once.runAt!, once.timeZone), '1 Apr 2030, 09:30');
+  assert.equal(
+    scheduleDate(once.runAt!, once.timeZone, {
+      locale: 'en-US',
+      hourCycle: 'auto',
+      timeZone: 'Asia/Tokyo',
+    }),
+    'Apr 1, 2030, 9:30 AM',
+  );
   assert.equal(scheduleDate('invalid', once.timeZone), 'Time unavailable');
   const html = renderToStaticMarkup(createElement(ScheduleRow, { schedule: once }));
   assert.match(html, /One time/);
   assert.match(html, /1 Apr 2030, 09:30/);
   assert.doesNotMatch(html, /Custom timing|null|<select|<form/);
-  assert.match(
-    scheduleDraft(once, 'discuss'),
-    /one-time run at 2030-04-01T08:30:00.000Z in Europe\/Lisbon/,
-  );
   const past = renderToStaticMarkup(
     createElement(ScheduleRow, {
       schedule: { ...once, enabled: false, runAt: '2020-01-01T00:00:00Z', nextRun: null },
     }),
   );
-  assert.match(past, /Reschedule/);
-  assert.doesNotMatch(past, />Resume</);
+  assert.doesNotMatch(past, /role="switch"/);
+  assert.match(past, /Ask Otto/);
   const failed = renderToStaticMarkup(
     createElement(ScheduleRunRow, { run: { ...run, error: '<script>bad()</script>' } }),
   );
@@ -164,7 +180,10 @@ test('a paused rescheduled one-time task stays visible while its previous execut
   try {
     const html = renderToStaticMarkup(createElement(SchedulePage));
     assert.match(html, /Paused future reminder/);
-    assert.match(html, />Resume</);
+    assert.match(
+      html,
+      /aria-label="Paused future reminder on" type="button" role="switch" aria-checked="false"/,
+    );
     assert.match(html, /<details class="schedule-inactive" open=""/);
     assert.doesNotMatch(html, /Already dispatched reminder/);
   } finally {
@@ -172,7 +191,7 @@ test('a paused rescheduled one-time task stays visible while its previous execut
   }
 });
 
-test('Schedule shows cached upcoming work, lazy read-only history and keyboard tabs while actions remain chat drafts', async () => {
+test('Schedule shows cached upcoming work, lazy read-only history and keyboard tabs while new schedules stay in place', async () => {
   const priorFetch = globalThis.fetch;
   const requests: string[] = [];
   const readReplies: Array<(response: Response) => void> = [];
@@ -186,9 +205,6 @@ test('Schedule shows cached upcoming work, lazy read-only history and keyboard t
     runs: [run],
     nextCursor: 'older-cursor',
   }));
-  const drafts: unknown[] = [];
-  const onDraft = (event: Event) => drafts.push((event as CustomEvent).detail);
-  window.addEventListener('otto:compose', onDraft);
   const element = document.createElement('div');
   document.body.append(element);
   const root = createRoot(element);
@@ -201,11 +217,15 @@ test('Schedule shows cached upcoming work, lazy read-only history and keyboard t
     );
     assert.deepEqual(requests, ['/api/schedules']);
     const add = [...element.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Add schedule',
+      (button) => button.textContent === 'New schedule',
     )!;
     await act(async () => click(add));
-    assert.equal((drafts[0] as { send: boolean }).send, false);
-    assert.match((drafts[0] as { text: string }).text, /whether it should repeat/);
+    assert.equal(add.getAttribute('aria-expanded'), 'true');
+    assert.ok(
+      element.querySelector('.new-plan-card [aria-label="What should Otto do, and when?"]'),
+    );
+    assert.deepEqual(requests, ['/api/schedules']);
+    await act(async () => click(add));
     const upcoming = element.querySelector<HTMLButtonElement>('#schedule-tab-upcoming')!;
     upcoming.focus();
     await act(async () =>
@@ -221,6 +241,7 @@ test('Schedule shows cached upcoming work, lazy read-only history and keyboard t
     assert.match(element.textContent ?? '', /Past reminder/);
     assert.match(element.textContent ?? '', /Could not finish/);
     assert.equal(element.querySelector('.schedule-run button'), null);
+    assert.match(element.querySelector('.schedule-run')?.textContent ?? '', /No message/);
     assert.equal(element.querySelector('select'), null);
     assert.deepEqual(requests, ['/api/schedules', historyPath]);
     await act(async () => readReplies[0](new Response(JSON.stringify([recurring, once]))));
@@ -266,7 +287,6 @@ test('Schedule shows cached upcoming work, lazy read-only history and keyboard t
   } finally {
     await act(async () => root.unmount());
     element.remove();
-    window.removeEventListener('otto:compose', onDraft);
     pageDataCache.update('/api/schedules', () => null);
     pageDataCache.update(historyPath, () => null);
     globalThis.fetch = priorFetch;
@@ -366,49 +386,150 @@ test('history refresh updates loaded older active runs, keeps existing rows and 
   }
 });
 
-test('named pause, resume, change and overdue reschedule actions keep the schedule name and scope in an unsent draft', async () => {
-  const drafts: Array<{ text: string; send: boolean }> = [];
-  const onDraft = (event: Event) => drafts.push((event as CustomEvent).detail);
-  window.addEventListener('otto:compose', onDraft);
+test('schedule controls pause, resume and retime through the owned route with Undo and no chat draft', async () => {
+  const priorFetch = globalThis.fetch;
+  const patches: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const chatEvents: string[] = [];
+  const onChat = (event: Event) => chatEvents.push(event.type);
+  window.addEventListener('otto:compose', onChat);
+  window.addEventListener('otto:focus-message', onChat);
+  globalThis.fetch = async (path, options) => {
+    assert.notEqual(path, '/api/messages');
+    if (options?.method === 'PATCH') {
+      const body = JSON.parse(String(options.body)) as Record<string, unknown>;
+      patches.push({ path: String(path), body });
+      return Response.json({ ...recurring, ...body });
+    }
+    return Response.json([recurring]);
+  };
+  const element = document.createElement('div');
+  document.body.append(element);
+  const root = createRoot(element);
+  const render = (schedule: Schedule) =>
+    act(async () =>
+      root.render(
+        createElement('div', {}, [
+          createElement(PlanToast, { key: 'toast' }),
+          createElement(ScheduleRow, { key: 'row', schedule }),
+        ]),
+      ),
+    );
+  try {
+    await render(recurring);
+    const toggle = element.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="Weekly review on"]',
+    )!;
+    assert.equal(toggle.getAttribute('aria-checked'), 'true');
+    await act(async () => click(toggle));
+    assert.deepEqual(patches[0], {
+      path: `/api/schedules/${recurring.id}`,
+      body: { enabled: false },
+    });
+    assert.match(
+      element.querySelector('.plan-toast')?.textContent ?? '',
+      /Paused Weekly review\. Otto will not run it until you resume it\./,
+    );
+    await act(async () =>
+      click(
+        [...element.querySelectorAll<HTMLButtonElement>('.plan-toast button')].find(
+          (button) => button.textContent === 'Undo',
+        )!,
+      ),
+    );
+    assert.deepEqual(patches[1], {
+      path: `/api/schedules/${recurring.id}`,
+      body: { enabled: true },
+    });
+    await render({ ...recurring, enabled: false, nextRun: null });
+    assert.doesNotMatch(element.textContent ?? '', /Next /);
+    await act(async () => click(element.querySelector('[aria-label="Weekly review on"]')!));
+    assert.deepEqual(patches[2], {
+      path: `/api/schedules/${recurring.id}`,
+      body: { enabled: true },
+    });
+    assert.match(
+      element.querySelector('.plan-toast')?.textContent ?? '',
+      /Resumed Weekly review\./,
+    );
+    const days = element.querySelector<HTMLSelectElement>('[aria-label="Weekly review days"]')!;
+    assert.equal(days.value, '1');
+    days.value = '1-5';
+    await act(async () => days.dispatchEvent(new Event('change', { bubbles: true })));
+    assert.deepEqual(patches[3], {
+      path: `/api/schedules/${recurring.id}`,
+      body: { cron: '0 9 * * 1-5' },
+    });
+    assert.match(element.querySelector('.plan-toast')?.textContent ?? '', /runs on weekdays/);
+    const time = element.querySelector<HTMLInputElement>('[aria-label="Weekly review time"]')!;
+    assert.equal(time.value, '09:00');
+    time.value = '07:45';
+    await act(async () => time.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true })));
+    assert.deepEqual(patches[4], {
+      path: `/api/schedules/${recurring.id}`,
+      body: { cron: '45 7 * * 1' },
+    });
+    const overdue = { ...once, runAt: '2020-01-01T00:00:00.000Z', enabled: false, nextRun: null };
+    await render(overdue);
+    assert.equal(element.querySelector('[role="switch"]'), null);
+    assert.ok(element.querySelector('[aria-label="Ask Otto about Send a reminder"]'));
+    assert.deepEqual(chatEvents, []);
+  } finally {
+    window.removeEventListener('otto:compose', onChat);
+    window.removeEventListener('otto:focus-message', onChat);
+    await act(async () => root.unmount());
+    element.remove();
+    globalThis.fetch = priorFetch;
+  }
+});
+
+test('a run message is readable in place and opens in the conversation on request', async () => {
+  const focused: unknown[] = [];
+  const onFocus = (event: Event) => focused.push((event as CustomEvent).detail);
+  window.addEventListener('otto:focus-message', onFocus);
   const element = document.createElement('div');
   document.body.append(element);
   const root = createRoot(element);
   try {
-    await act(async () => root.render(createElement(ScheduleRow, { schedule: recurring })));
-    await act(async () => click(element.querySelector('[aria-label="Pause Weekly review"]')!));
-    assert.deepEqual(drafts[0], {
-      text: 'Pause the schedule "Weekly review".',
-      send: false,
-    });
     await act(async () =>
       root.render(
-        createElement(ScheduleRow, { schedule: { ...recurring, enabled: false, nextRun: null } }),
+        createElement(ScheduleRunRow, {
+          run: {
+            ...run,
+            status: 'succeeded',
+            error: null,
+            messageId: 'posted-message',
+            messagePreview: 'Your weekly summary is ready. Two items need a reply.',
+            messageText:
+              'Your **weekly** summary is ready.\n\nTwo items need a reply.<script>bad()</script>',
+          },
+        }),
       ),
     );
-    assert.doesNotMatch(element.textContent ?? '', /Next /);
-    await act(async () => click(element.querySelector('[aria-label="Resume Weekly review"]')!));
-    assert.deepEqual(drafts[1], {
-      text: 'Resume the schedule "Weekly review".',
-      send: false,
-    });
-    await act(async () => click(element.querySelector('[aria-label="Change Weekly review"]')!));
-    assert.deepEqual(drafts[2], { text: scheduleDraft(recurring, 'discuss'), send: false });
-    const overdue = {
-      ...once,
-      runAt: '2020-01-01T00:00:00.000Z',
-      enabled: false,
-      nextRun: null,
-    };
-    await act(async () => root.render(createElement(ScheduleRow, { schedule: overdue })));
-    assert.equal(element.querySelector('[aria-label="Resume Send a reminder"]'), null);
+    const preview = element.querySelector<HTMLButtonElement>('.schedule-run-preview')!;
+    assert.equal(preview.getAttribute('aria-expanded'), 'false');
+    assert.match(preview.textContent ?? '', /Your weekly summary is ready/);
+    assert.equal(element.querySelector('.schedule-run-body'), null);
+    assert.equal(focused.length, 0);
+    await act(async () => click(preview));
+    assert.equal(preview.getAttribute('aria-expanded'), 'true');
+    const body = element.querySelector('.schedule-run-body')!;
+    assert.equal(body.id, preview.getAttribute('aria-controls'));
+    assert.equal(body.querySelector('strong')?.textContent, 'weekly');
+    assert.match(body.textContent ?? '', /Two items need a reply/);
+    assert.equal(body.querySelector('script'), null);
+    assert.doesNotMatch(element.textContent ?? '', /No message/);
     await act(async () =>
-      click(element.querySelector('[aria-label="Reschedule Send a reminder"]')!),
+      click(
+        element.querySelector(
+          '[aria-label="Open the message from Past reminder in the conversation"]',
+        )!,
+      ),
     );
-    assert.deepEqual(drafts[3], { text: scheduleDraft(overdue, 'discuss'), send: false });
+    assert.deepEqual(focused, [{ messageId: 'posted-message' }]);
   } finally {
     await act(async () => root.unmount());
     element.remove();
-    window.removeEventListener('otto:compose', onDraft);
+    window.removeEventListener('otto:focus-message', onFocus);
   }
 });
 
@@ -463,5 +584,52 @@ test('failed schedule and history reads offer a retry and keep saved rows visibl
     pageDataCache.update('/api/schedules', () => null);
     pageDataCache.update(historyPath, () => null);
     globalThis.fetch = priorFetch;
+  }
+});
+
+test('every saved weekday is selected and remains unchanged when editing its time', async () => {
+  const previousFetch = globalThis.fetch;
+  const patches: Array<{ path: string; body: unknown }> = [];
+  const reads: string[] = [];
+  globalThis.fetch = async (path, options) => {
+    if (options?.method === 'PATCH') {
+      const body = JSON.parse(String(options.body));
+      patches.push({ path: String(path), body });
+      return Response.json({ ...recurring, ...body });
+    }
+    reads.push(String(path));
+    return Response.json([recurring]);
+  };
+  const element = document.createElement('div');
+  document.body.append(element);
+  const root = createRoot(element);
+  try {
+    for (let day = 0; day < 7; day++) {
+      const schedule = { ...recurring, cron: `0 9 * * ${day}` };
+      await act(async () => root.render(createElement(ScheduleRow, { key: day, schedule })));
+      const select = element.querySelector<HTMLSelectElement>('[aria-label="Weekly review days"]')!;
+      assert.equal(select.value, String(day));
+      const time = element.querySelector<HTMLInputElement>('[aria-label="Weekly review time"]')!;
+      time.value = '07:45';
+      await act(async () =>
+        time.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true })),
+      );
+      assert.deepEqual(patches.at(-1), {
+        path: `/api/schedules/${recurring.id}`,
+        body: { cron: `45 7 * * ${day}` },
+      });
+    }
+    assert.equal(patches.length, 7);
+    assert.deepEqual(
+      reads,
+      Array.from({ length: 7 }, () => '/api/schedules'),
+    );
+    assert.equal(pageDataCache.getSnapshot('/api/schedules').error, '');
+    assert.deepEqual(pageDataCache.getSnapshot('/api/schedules').data, [recurring]);
+  } finally {
+    await act(async () => root.unmount());
+    element.remove();
+    pageDataCache.update('/api/schedules', () => null);
+    globalThis.fetch = previousFetch;
   }
 });

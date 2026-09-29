@@ -15,6 +15,7 @@ for (const key of [
   'navigator',
   'HTMLElement',
   'HTMLInputElement',
+  'HTMLButtonElement',
   'Element',
   'Node',
   'NodeFilter',
@@ -30,6 +31,15 @@ for (const key of [
 ] as const)
   Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
+let phone = true;
+Object.defineProperty(dom.window, 'matchMedia', {
+  configurable: true,
+  value: () => ({
+    matches: phone,
+    addEventListener() {},
+    removeEventListener() {},
+  }),
+});
 after(() => dom.window.close());
 const { createRoot } = await import('react-dom/client');
 const { Vault } = await import('../src/web/pages/vault.tsx');
@@ -63,15 +73,30 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function click(label: string, scope: ParentNode = document) {
-  const button = [...scope.querySelectorAll<HTMLButtonElement>('button')].find(
-    (value) => value.getAttribute('aria-label') === label || value.textContent?.trim() === label,
+function item(label: string) {
+  return [...document.querySelectorAll<HTMLButtonElement>('[data-vault-item]')].find(
+    (value) => value.querySelector('strong')?.textContent === label,
   );
+}
+
+async function click(label: string, scope: ParentNode = document) {
+  const button = label.startsWith('View ')
+    ? item(label.slice(5))
+    : [...scope.querySelectorAll<HTMLButtonElement>('button')].find(
+        (value) =>
+          value.getAttribute('aria-label') === label || value.textContent?.trim() === label,
+      );
   assert.ok(button, `Missing button: ${label}`);
   assert.equal(button.disabled, false);
   await act(async () => button.click());
   return button;
 }
+
+const surface = () => document.querySelector<HTMLElement>('.vault-surface')!;
+const confirmation = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
+const title = () => document.querySelector<HTMLElement>('[data-vault-title]')!;
+const back = () => click('Vault');
+const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 
 async function mountVault() {
   pageDataCache.update('/api/vault', () => null);
@@ -86,6 +111,7 @@ async function mountVault() {
       await act(async () => root.unmount());
       container.remove();
       pageDataCache.update('/api/vault', () => null);
+      phone = true;
     },
   };
 }
@@ -96,6 +122,7 @@ function mockVaultRequests(
   const requests: Array<{ path: string; options: RequestInit }> = [];
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
+    if (path.endsWith('/icon')) return new Response(null, { status: 204 });
     requests.push({ path, options });
     if (path === '/api/vault') return respond?.(path, options) ?? Response.json(savedLogins);
     assert.ok(options.method === 'POST' || options.method === 'PATCH');
@@ -120,12 +147,34 @@ function setClipboard(writeText: (value: string) => Promise<void>) {
   });
 }
 
-test('Vault accepts named bare-domain logins and retains separate accounts for the same website', async () => {
+async function submit(form: HTMLFormElement) {
+  await act(async () =>
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+  );
+}
+
+async function inputValue(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function startNew(kind: 'New login' | 'New payment card') {
+  await click('New');
+  await click(kind);
+  return document.querySelector<HTMLFormElement>('.vault-add-form')!;
+}
+
+test('New login accepts named bare-domain logins and retains separate accounts for the same website', async () => {
   const previousFetch = globalThis.fetch;
   const entries: VaultLoginDetails[] = [];
   const writes: Array<{ label: string; origin: string; username: string; password: string }> = [];
   globalThis.fetch = async (url, options) => {
-    assert.equal(String(url), '/api/vault');
+    const path = String(url);
+    if (path.endsWith('/details'))
+      return Response.json(entries.find((entry) => path.includes(encodeURIComponent(entry.id))));
+    assert.equal(path, '/api/vault');
     if (options?.method !== 'POST') return Response.json(entries);
     const input = JSON.parse(String(options.body));
     writes.push(input);
@@ -141,24 +190,16 @@ test('Vault accepts named bare-domain logins and retains separate accounts for t
     entries.unshift(entry);
     return Response.json(entry);
   };
-  pageDataCache.update('/api/vault', () => null);
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
+  const mounted = await mountVault();
   try {
-    await act(async () => root.render(createElement(Vault)));
     for (const label of ['Personal account', 'Work account']) {
-      const trigger = [...container.querySelectorAll('button')].find((button) =>
-        button.textContent?.includes('Add to Vault'),
-      )!;
-      await act(async () => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-      await click('Login');
-      const dialog = document.querySelector('[role="dialog"]')!;
-      const form = dialog.querySelector('form')!;
+      const form = await startNew('New login');
       const name = form.querySelector<HTMLInputElement>('input[name="label"]')!;
       const website = form.querySelector<HTMLInputElement>('input[name="origin"]')!;
       const username = form.querySelector<HTMLInputElement>('input[name="username"]')!;
       const password = form.querySelector<HTMLInputElement>('input[name="password"]')!;
+      assert.equal(document.activeElement, name);
+      assert.equal(title().textContent, 'New login');
       assert.equal(name.maxLength, 100);
       assert.equal(name.required, true);
       assert.match(name.labels![0].textContent ?? '', /Name/);
@@ -168,10 +209,11 @@ test('Vault accepts named bare-domain logins and retains separate accounts for t
       username.value = `fixture-${writes.length}@example.test`;
       password.value = 'synthetic-only-password';
       assert.equal(form.checkValidity(), true);
-      await act(async () =>
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
-      );
-      assert.equal(document.querySelector('[role="dialog"]'), null);
+      await submit(form);
+      assert.equal(password.value, '');
+      assert.equal(title().textContent, label);
+      assert.equal(document.querySelector('.vault-add-form'), null);
+      await back();
     }
     assert.deepEqual(
       writes.map(({ label, origin }) => ({ label, origin })),
@@ -180,29 +222,24 @@ test('Vault accepts named bare-domain logins and retains separate accounts for t
         { label: 'Work account', origin: 'example.com' },
       ],
     );
-    await act(async () => root.render(null));
+    await act(async () => mounted.root.render(null));
     pageDataCache.update('/api/vault', () => null);
-    await act(async () => root.render(createElement(Vault)));
-    const rows = [...container.querySelectorAll('.resource-row')];
-    assert.equal(rows.length, 2);
+    await act(async () => mounted.root.render(createElement(Vault)));
+    const rows = [...mounted.container.querySelectorAll('[data-vault-item]')];
     assert.deepEqual(
-      rows.map((row) => row.querySelector('h2')?.textContent),
-      ['Work account', 'Personal account'],
+      rows.map((row) => row.querySelector('strong')?.textContent),
+      ['Personal account', 'Work account'],
     );
-    for (const row of rows) assert.match(row.textContent ?? '', /example\.com/);
-    assert.equal(container.querySelector('[aria-label^="Delete"]'), null);
-    assert.match(container.textContent ?? '', /fixture-0@example/);
-    assert.match(container.textContent ?? '', /fixture-1@example/);
-    assert.doesNotMatch(container.textContent ?? '', /synthetic-only-password/);
+    assert.match(mounted.container.textContent ?? '', /fixture-0@example/);
+    assert.match(mounted.container.textContent ?? '', /fixture-1@example/);
+    assert.doesNotMatch(mounted.container.textContent ?? '', /synthetic-only-password|Delete/);
   } finally {
-    await act(async () => root.unmount());
-    container.remove();
-    pageDataCache.update('/api/vault', () => null);
+    await mounted.unmount();
     globalThis.fetch = previousFetch;
   }
 });
 
-test('Vault details preserve exact values and only read passwords after explicit reveal or copy', async () => {
+test('Vault details preserve exact values, read passwords only on demand and return focus on Back', async () => {
   const previousFetch = globalThis.fetch;
   const requests = mockVaultRequests();
   const clipboard: string[] = [];
@@ -212,66 +249,112 @@ test('Vault details preserve exact values and only read passwords after explicit
   const mounted = await mountVault();
   try {
     assert.equal(requests.length, 1);
-    const trigger = mounted.container.querySelector<HTMLButtonElement>(
-      '[aria-label="View Personal account"]',
-    )!;
-    assert.equal(trigger.getAttribute('aria-haspopup'), 'dialog');
-    assert.ok(trigger.closest('h2'));
+    const trigger = item('Personal account')!;
+    assert.match(trigger.textContent ?? '', /personal-fixture@example\.test/);
     assert.equal(trigger.querySelector('button'), null);
-    assert.equal(
-      trigger.contains(mounted.container.querySelector('[aria-label="Delete Personal account"]')),
-      false,
-    );
     trigger.focus();
     await click('View Personal account');
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
-    const title = document.getElementById(dialog.getAttribute('aria-labelledby')!)!;
-    assert.equal(title.textContent, savedLogins[0].label);
-    assert.equal(document.activeElement, title);
-    assert.ok(document.getElementById(dialog.getAttribute('aria-describedby')!));
-    assert.match(dialog.textContent ?? '', /https:\/\/accounts\.example\.test:8443/);
-    assert.equal(dialog.querySelector<HTMLInputElement>('[name="username"]')?.value, usernames[0]);
+    const view = surface();
+    assert.equal(title().textContent, 'Personal account');
+    assert.equal(document.activeElement, title());
+    assert.equal(view.getAttribute('aria-label'), 'Personal account');
+    assert.match(view.textContent ?? '', /accounts\.example\.test:8443/);
+    assert.doesNotMatch(view.textContent ?? '', /https:\/\//);
+    assert.equal(view.querySelector('img.vault-site-icon'), null);
+    assert.equal(
+      view.querySelector('a[aria-label="Open accounts.example.test:8443"]')?.getAttribute('rel'),
+      'noopener noreferrer',
+    );
+    assert.equal(mounted.container.querySelector('[data-vault-item]'), null);
+    assert.equal(view.querySelector('form'), null);
+    assert.match(view.textContent ?? '', new RegExp(usernames[0]));
     assert.equal(requests.filter(({ path }) => path.endsWith('/password')).length, 0);
     assert.equal(requests[1].path, '/api/vault/personal%2Flogin/details');
-    assert.ok(dialog.querySelector('[aria-label="Password hidden"]'));
+    assert.ok(view.querySelector('[aria-label="Password hidden"]'));
     await click('Copy username');
     assert.deepEqual(clipboard, [usernames[0]]);
-    assert.match(dialog.textContent ?? '', /Username copied/);
+    assert.match(view.textContent ?? '', /Username copied/);
     await click('Show password');
-    assert.equal(dialog.querySelector('.vault-password-visible')?.textContent, syntheticPassword);
+    assert.equal(view.querySelector('.vault-password-visible')?.textContent, syntheticPassword);
     assert.equal(requests.at(-1)?.path, '/api/vault/personal%2Flogin/password');
     assert.equal(
-      dialog.querySelector('[aria-label="Hide password"]')?.getAttribute('aria-pressed'),
+      view.querySelector('[aria-label="Hide password"]')?.getAttribute('aria-pressed'),
       'true',
     );
     await click('Hide password');
-    assert.equal(dialog.textContent?.includes(syntheticPassword), false);
+    assert.equal(view.textContent?.includes(syntheticPassword), false);
     await click('Show password');
     assert.equal(requests.filter(({ path }) => path.endsWith('/password')).length, 2);
     await act(async () =>
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })),
+      title().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })),
     );
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
-    assert.equal(document.querySelector('[role="dialog"]'), null);
-    assert.equal(document.activeElement, trigger);
+    await settle();
+    assert.equal(document.querySelector('.vault-surface'), null);
+    assert.equal(document.activeElement, item('Personal account'));
     await click('View Personal account');
     assert.equal(document.body.textContent?.includes(syntheticPassword), false);
+    await back();
+    await settle();
+    assert.equal(document.activeElement, item('Personal account'));
     assert.equal(requests.filter(({ path }) => path.endsWith('/details')).length, 2);
     assert.equal(requests.filter(({ path }) => path.endsWith('/password')).length, 2);
-    await act(async () => mounted.root.render(null));
-    await act(async () => mounted.root.render(createElement(Vault)));
     await click('View Work account');
     assert.ok(document.body.textContent?.includes(usernames[1]));
-    assert.equal(
-      document.querySelector('[role="dialog"]')?.textContent?.includes(usernames[0]),
-      false,
-    );
+    assert.equal(surface().textContent?.includes(usernames[0]), false);
     assert.equal(requests.at(-1)?.path, '/api/vault/work%20login/details');
-    assert.equal(document.body.textContent?.includes(syntheticPassword), false);
     const cached = JSON.stringify(pageDataCache.getSnapshot('/api/vault'));
     assert.equal(cached.includes(usernames[0]), true);
     assert.equal(cached.includes(syntheticPassword), false);
     assert.equal(dom.window.localStorage.length, 0);
+  } finally {
+    await mounted.unmount();
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Desktop Vault shows a searchable list beside the selected item without reading passwords', async () => {
+  const previousFetch = globalThis.fetch;
+  phone = false;
+  const requests = mockVaultRequests();
+  const mounted = await mountVault();
+  try {
+    assert.ok(mounted.container.querySelector('.vault-page.is-split'));
+    assert.equal(title().textContent, 'Personal account');
+    assert.notEqual(document.activeElement, title());
+    assert.equal(item('Personal account')?.getAttribute('aria-current'), 'true');
+    assert.equal(requests.at(-1)?.path, '/api/vault/personal%2Flogin/details');
+    await click('View Work account');
+    assert.equal(title().textContent, 'Work account');
+    assert.equal(document.activeElement, title());
+    assert.equal(item('Work account')?.getAttribute('aria-current'), 'true');
+    assert.equal(item('Personal account')?.getAttribute('aria-current'), null);
+    const search = mounted.container.querySelector<HTMLInputElement>('input[type="search"]')!;
+    assert.equal(search.getAttribute('aria-label'), 'Search Vault');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        'value',
+      )!.set!;
+      setter.call(search, 'work-fixture');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    assert.deepEqual(
+      [...mounted.container.querySelectorAll('[data-vault-item] strong')].map(
+        (value) => value.textContent,
+      ),
+      ['Work account'],
+    );
+    assert.equal(
+      requests.some(({ path }) => path.endsWith('/password')),
+      false,
+    );
+    const form = await startNew('New login');
+    assert.ok(form);
+    assert.ok(mounted.container.querySelector('[data-vault-item]'));
+    await click('Cancel');
+    await settle();
+    assert.equal(document.activeElement?.textContent?.trim(), 'New');
+    assert.equal(title().textContent, 'Work account');
   } finally {
     await mounted.unmount();
     globalThis.fetch = previousFetch;
@@ -314,7 +397,7 @@ test('Copy password stays masked and clipboard errors clear revealed values with
   }
 });
 
-test('Closing or replacing Vault details aborts reads and ignores late details and password responses', async () => {
+test('Leaving or replacing Vault details aborts reads and ignores late details and password responses', async () => {
   const previousFetch = globalThis.fetch;
   const details = deferred<Response>();
   const password = deferred<Response>();
@@ -330,20 +413,17 @@ test('Closing or replacing Vault details aborts reads and ignores late details a
   try {
     await click('View Personal account');
     const first = requests.at(-1)!;
-    await click('Close');
+    await back();
     assert.equal(first.options.signal?.aborted, true);
     await click('View Work account');
     await act(async () =>
       details.resolve(Response.json({ ...savedLogins[0], username: usernames[0] })),
     );
     assert.ok(document.body.textContent?.includes(usernames[1]));
-    assert.equal(
-      document.querySelector('[role="dialog"]')?.textContent?.includes(usernames[0]),
-      false,
-    );
+    assert.equal(surface().textContent?.includes(usernames[0]), false);
     await click('Copy password');
     const copying = requests.at(-1)!;
-    await click('Close');
+    await back();
     assert.equal(copying.options.signal?.aborted, true);
     await click('View Work account');
     await act(async () => password.resolve(Response.json({ password: syntheticPassword })));
@@ -391,7 +471,7 @@ test('Vault clears revealed passwords and fences pending reads when the window o
   }
 });
 
-test('Vault navigation aborts pending secrets and late clipboard completion does not update a new dialog', async () => {
+test('Vault navigation aborts pending secrets and late clipboard completion does not update new details', async () => {
   const previousFetch = globalThis.fetch;
   const latePassword = deferred<Response>();
   let holdPassword = true;
@@ -413,7 +493,7 @@ test('Vault navigation aborts pending secrets and late clipboard completion does
     assert.equal(document.body.textContent?.includes(syntheticPassword), false);
     holdPassword = false;
     await click('Copy password');
-    await click('Close');
+    await back();
     await click('View Personal account');
     await act(async () => copied.resolve());
     assert.equal(document.body.textContent?.includes('Password copied.'), false);
@@ -446,6 +526,7 @@ test('Vault detail failures use fixed errors, support retry, and do not read pas
     );
     assert.equal(document.body.textContent?.includes(syntheticPassword), false);
     assert.equal(document.querySelector('[aria-label="Show password"]'), null);
+    assert.equal(document.querySelector<HTMLButtonElement>('[data-vault-edit]')?.disabled, true);
     assert.equal(
       requests.some(({ path }) => path.endsWith('/password')),
       false,
@@ -489,14 +570,18 @@ test('Vault edits a named account and updates the private list without reading i
   const mounted = await mountVault();
   try {
     await click('View Personal account');
+    await click('Edit');
     const form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     const name = form.querySelector<HTMLInputElement>('[name="label"]')!;
     const username = form.querySelector<HTMLInputElement>('[name="username"]')!;
-    assert.equal(document.activeElement?.textContent, savedLogins[0].label);
+    assert.equal(document.activeElement, name);
     assert.equal(name.value, 'Personal account');
     assert.equal(username.value, usernames[0]);
     assert.equal(form.querySelector('[name="password"]'), null);
+    assert.equal(form.querySelector('[name="origin"]'), null);
+    assert.match(form.textContent ?? '', /Websiteaccounts\.example\.test:8443/);
     assert.ok(form.querySelector('[aria-label="Password hidden"]'));
+    assert.equal(form.querySelector('[aria-label="Show password"]'), null);
     await click('Change password', form);
     const password = form.querySelector<HTMLInputElement>('[name="password"]')!;
     assert.equal(password.required, true);
@@ -508,16 +593,9 @@ test('Vault edits a named account and updates the private list without reading i
     assert.equal(password.value, '');
     assert.equal(form.querySelector('[name="password"]'), null);
     assert.equal(document.activeElement?.getAttribute('aria-label'), 'Change password');
-    assert.equal(form.querySelector('[name="origin"]'), null);
-    assert.match(
-      document.querySelector('[role="dialog"]')?.textContent ?? '',
-      /https:\/\/accounts\.example\.test:8443/,
-    );
-    name.value = 'Everyday account';
-    username.value = 'new-private-username@example.test';
-    await act(async () =>
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
-    );
+    await inputValue(name, 'Everyday account');
+    await inputValue(username, 'new-private-username@example.test');
+    await submit(form);
     assert.deepEqual(writes, [
       { label: 'Everyday account', username: 'new-private-username@example.test' },
     ]);
@@ -525,15 +603,16 @@ test('Vault edits a named account and updates the private list without reading i
       requests.some((request) => request.path.endsWith('/password')),
       false,
     );
+    assert.equal(document.querySelector('.vault-edit-form'), null);
     assert.ok(document.querySelector('[aria-label="Password hidden"]'));
-    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Login updated/);
-    assert.equal(document.activeElement?.textContent?.trim(), 'Everyday account');
-    assert.ok(mounted.container.querySelector('[aria-label="View Everyday account"]'));
-    assert.ok(mounted.container.querySelector('[aria-label="View Work account"]'));
-    assert.match(
-      mounted.container.querySelector('.vault-entry-meta')?.textContent ?? '',
-      /accounts\.example\.test:8443/,
-    );
+    assert.match(surface().textContent ?? '', /Login updated/);
+    assert.equal(title().textContent, 'Everyday account');
+    assert.match(surface().textContent ?? '', /new-private-username@example\.test/);
+    assert.equal(document.activeElement, document.querySelector('[data-vault-edit]'));
+    await back();
+    assert.ok(item('Everyday account'));
+    assert.ok(item('Work account'));
+    assert.match(item('Everyday account')?.textContent ?? '', /new-private-username/);
     const cached = JSON.stringify(pageDataCache.getSnapshot('/api/vault'));
     assert.match(cached, /Everyday account/);
     assert.match(cached, /new-private-username/);
@@ -550,7 +629,9 @@ test('Vault uses the saved website identifier label in details and edits without
   const label = 'Member number';
   const requests = mockVaultRequests((path) =>
     path.endsWith('/details')
-      ? Promise.resolve(Response.json({ ...savedLogins[0], identifierLabel: label }))
+      ? Promise.resolve(
+          Response.json({ ...savedLogins[0], username: usernames[0], identifierLabel: label }),
+        )
       : undefined,
   );
   const copied: string[] = [];
@@ -560,22 +641,19 @@ test('Vault uses the saved website identifier label in details and edits without
   const mounted = await mountVault();
   try {
     await click('View Personal account');
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
-    assert.deepEqual(
-      [...dialog.querySelectorAll('dt')].map((value) => value.textContent),
-      ['Website'],
-    );
-    const status = dialog.querySelector('[role="status"]')!;
+    const view = surface();
+    const status = view.querySelector('[role="status"]')!;
     assert.equal(status.className, 'sr-only');
+    assert.match(view.textContent ?? '', /Member number/);
     await click('Copy member number');
     assert.deepEqual(copied, [usernames[0]]);
     assert.equal(status.textContent, 'Member number copied.');
     assert.equal(status.className, 'vault-detail-status');
-    assert.equal(status.nextElementSibling?.className, 'vault-detail-footer');
-    const input = dialog.querySelector<HTMLInputElement>('[name="username"]')!;
+    await click('Edit');
+    const input = view.querySelector<HTMLInputElement>('[name="username"]')!;
     assert.equal(input.labels![0].textContent, label);
     assert.equal(input.value, usernames[0]);
-    await click('Done');
+    await click('Cancel');
     assert.equal(
       requests.some(({ path }) => path.endsWith('/password')),
       false,
@@ -601,13 +679,16 @@ test('Vault edit cancel, blur and failed submission discard replacement password
   try {
     await click('View Personal account');
     await click('Show password');
+    await click('Edit');
+    assert.equal(document.body.textContent?.includes(syntheticPassword), false);
     let form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     await click('Change password', form);
-    assert.equal(document.body.textContent?.includes(syntheticPassword), false);
     form.querySelector<HTMLInputElement>('[name="password"]')!.value = 'cancelled-secret';
-    await click('Cancel changes');
+    await click('Cancel');
     assert.equal(writes.length, 0);
-    assert.ok(document.querySelector('.vault-edit-form'));
+    assert.equal(document.querySelector('.vault-edit-form'), null);
+    assert.equal(document.activeElement, document.querySelector('[data-vault-edit]'));
+    await click('Edit');
     form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     assert.equal(form.querySelector('[name="password"]'), null);
     await click('Change password', form);
@@ -617,15 +698,14 @@ test('Vault edit cancel, blur and failed submission discard replacement password
     await act(async () => window.dispatchEvent(new Event('blur')));
     assert.equal(password.value, '');
     password.value = 'replacement-secret';
-    await act(async () =>
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
-    );
+    await submit(form);
     assert.equal(writes[0].password, 'replacement-secret');
     assert.equal(password.value, '');
     assert.equal(
       document.querySelector('[role="alert"]')?.textContent,
       'This login could not be updated. Try again.',
     );
+    assert.ok(document.querySelector('.vault-edit-form'));
     assert.doesNotMatch(
       document.body.textContent ?? '',
       /replacement-secret|private-new-password-error/,
@@ -641,7 +721,7 @@ test('Vault edit cancel, blur and failed submission discard replacement password
   }
 });
 
-test('Closing a pending Vault edit aborts its request and fences a late save from the next account', async () => {
+test('Leaving a pending Vault edit aborts its request and fences a late save from the next account', async () => {
   const previousFetch = globalThis.fetch;
   const pending = deferred<Response>();
   const requests = mockVaultRequests((_path, options) =>
@@ -650,23 +730,22 @@ test('Closing a pending Vault edit aborts its request and fences a late save fro
   const mounted = await mountVault();
   try {
     await click('View Personal account');
+    await click('Edit');
     const form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
-    form.querySelector<HTMLInputElement>('[name="label"]')!.value = 'Late account';
+    await inputValue(form.querySelector<HTMLInputElement>('[name="label"]')!, 'Late account');
     await click('Change password', form);
     const password = form.querySelector<HTMLInputElement>('[name="password"]')!;
     password.value = 'pending-secret';
-    await act(async () =>
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
-    );
+    await submit(form);
     const request = requests.at(-1)!;
     assert.equal(password.value, '');
-    await click('Close');
+    await back();
     assert.equal(request.options.signal?.aborted, true);
     await click('View Work account');
     await act(async () =>
       pending.resolve(Response.json({ ...savedLogins[0], label: 'Late account' })),
     );
-    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Work account/);
+    assert.equal(title().textContent, 'Work account');
     assert.doesNotMatch(
       document.body.textContent ?? '',
       /Late account|pending-secret|Login updated/,
@@ -700,6 +779,7 @@ function mockCardRequests(
   const requests: Array<{ path: string; options: RequestInit }> = [];
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
+    if (path.endsWith('/icon')) return new Response(null, { status: 204 });
     requests.push({ path, options });
     const response = respond?.(path, options);
     if (response) return response;
@@ -724,60 +804,45 @@ function mockCardRequests(
   return requests;
 }
 
-async function submit(form: HTMLFormElement) {
-  await act(async () =>
-    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
-  );
-}
-
-async function inputValue(input: HTMLInputElement, value: string) {
-  await act(async () => {
-    input.value = value;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-}
-
-test('Vault opens editable and only offers Save changes for an actual edit', async () => {
+test('Vault Edit only enables Save for an actual change and Cancel restores saved values', async () => {
   const previousFetch = globalThis.fetch;
   const requests = mockVaultRequests();
-  const copied: string[] = [];
-  setClipboard(async (value) => {
-    copied.push(value);
-  });
   const mounted = await mountVault();
-  const saveButton = () =>
-    [...document.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Save changes',
-    );
+  const save = () =>
+    [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Save',
+    )!;
   try {
     await click('View Personal account');
-    let form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
+    assert.equal(document.querySelector('.vault-edit-form'), null);
+    await click('Edit');
+    const form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     const name = form.querySelector<HTMLInputElement>('[name="label"]')!;
     const username = form.querySelector<HTMLInputElement>('[name="username"]')!;
     assert.equal(name.disabled, false);
     assert.equal(username.disabled, false);
-    assert.doesNotMatch(document.querySelector('[role="dialog"]')?.textContent ?? '', /Edit login/);
-    assert.equal(saveButton(), undefined);
+    assert.equal(save().disabled, true);
+    assert.equal(document.querySelector('.vault-delete-row'), null);
     await inputValue(name, 'Changed account');
-    assert.ok(saveButton());
+    assert.equal(save().disabled, false);
     await inputValue(name, savedLogins[0].label);
-    assert.equal(saveButton(), undefined);
+    assert.equal(save().disabled, true);
     await inputValue(username, 'edited-identifier@example.test');
-    await click('Copy username');
-    assert.deepEqual(copied, ['edited-identifier@example.test']);
     await click('Change password');
     const password = form.querySelector<HTMLInputElement>('[name="password"]')!;
     await inputValue(password, 'cancelled-secret');
-    await click('Cancel changes');
-    form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
+    await click('Cancel');
     assert.equal(password.value, '');
-    assert.equal(form.querySelector<HTMLInputElement>('[name="username"]')?.value, usernames[0]);
-    assert.equal(form.querySelector('[name="password"]'), null);
-    assert.equal(saveButton(), undefined);
-    assert.equal(document.activeElement?.textContent, savedLogins[0].label);
+    assert.match(surface().textContent ?? '', new RegExp(usernames[0]));
+    assert.doesNotMatch(surface().textContent ?? '', /edited-identifier/);
+    await click('Edit');
+    assert.equal(
+      document.querySelector<HTMLInputElement>('.vault-edit-form [name="username"]')?.value,
+      usernames[0],
+    );
+    assert.equal(save().disabled, true);
     assert.equal(requests.filter(({ options }) => options.method === 'PATCH').length, 0);
     assert.equal(requests.filter(({ path }) => path.endsWith('/password')).length, 0);
-    await click('Done');
   } finally {
     await mounted.unmount();
     globalThis.fetch = previousFetch;
@@ -811,6 +876,7 @@ test('Card security code can be added, revealed, replaced or removed without ent
     await click('View Everyday card');
     assert.equal(document.querySelector('[aria-label="Show security code"]'), null);
     assert.equal(requests.filter(({ path }) => path.endsWith('/security-code')).length, 0);
+    await click('Edit');
     await click('Add security code');
     let form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     let field = form.querySelector<HTMLInputElement>('[name="securityCode"]')!;
@@ -840,8 +906,9 @@ test('Card security code can be added, revealed, replaced or removed without ent
     assert.deepEqual(JSON.parse(String(request.options.body)), {});
     await click('Show security code');
     assert.equal(document.querySelector('.vault-password-visible')?.textContent, '734');
-    await click('Change security code');
+    await click('Edit');
     assert.equal(document.querySelector('.vault-password-visible'), null);
+    await click('Change security code');
     form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     field = form.querySelector<HTMLInputElement>('[name="securityCode"]')!;
     await inputValue(field, '9876');
@@ -853,6 +920,7 @@ test('Card security code can be added, revealed, replaced or removed without ent
     await submit(form);
     assert.equal('securityCode' in writes[1], false);
     assert.equal(code, '734');
+    await click('Edit');
     await click('Change security code');
     form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     field = form.querySelector<HTMLInputElement>('[name="securityCode"]')!;
@@ -860,6 +928,7 @@ test('Card security code can be added, revealed, replaced or removed without ent
     await submit(form);
     assert.equal(writes[2].securityCode, '9876');
     assert.equal(field.value, '');
+    await click('Edit');
     await click('Remove security code');
     assert.equal(document.activeElement?.textContent, 'Cancel removal');
     await click('Cancel removal');
@@ -870,6 +939,8 @@ test('Card security code can be added, revealed, replaced or removed without ent
     await submit(form);
     assert.equal(writes[3].securityCode, null);
     assert.equal(document.querySelector('[aria-label="Show security code"]'), null);
+    assert.doesNotMatch(surface().textContent ?? '', /Security code/);
+    await click('Edit');
     assert.ok(document.querySelector('[aria-label="Add security code"]'));
     assert.equal(requests.filter(({ path }) => path.endsWith('/card-number')).length, 0);
     assert.doesNotMatch(
@@ -882,7 +953,7 @@ test('Card security code can be added, revealed, replaced or removed without ent
   }
 });
 
-test('Card security code reads and replacement inputs are cleared and fenced across hiding and closing', async () => {
+test('Card security code reads and replacement inputs are cleared and fenced across hiding and leaving', async () => {
   const previousFetch = globalThis.fetch;
   const lateShow = deferred<Response>();
   const lateCopy = deferred<Response>();
@@ -916,6 +987,7 @@ test('Card security code reads and replacement inputs are cleared and fenced acr
     await act(async () => lateShow.resolve(Response.json({ securityCode: '681' })));
     assert.equal(document.querySelector('.vault-password-visible'), null);
     held = undefined;
+    await click('Edit');
     await click('Change security code');
     const form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     const input = form.querySelector<HTMLInputElement>('[name="securityCode"]')!;
@@ -930,11 +1002,11 @@ test('Card security code reads and replacement inputs are cleared and fenced acr
       'This card could not be updated. Try again.',
     );
     assert.doesNotMatch(document.body.textContent ?? '', /private-code-681/);
-    await click('Cancel changes');
+    await click('Cancel');
     held = lateCopy.promise;
     await click('Copy security code');
     const copying = requests.at(-1)!;
-    await click('Close');
+    await back();
     assert.equal(copying.options.signal?.aborted, true);
     await click('View Personal account');
     await act(async () => lateCopy.resolve(Response.json({ securityCode: '681' })));
@@ -951,7 +1023,7 @@ test('Card security code reads and replacement inputs are cleared and fenced acr
   }
 });
 
-test('Add to Vault supports an optional security code and returns only card metadata to the list', async () => {
+test('New payment card supports an optional security code and returns only card metadata to the list', async () => {
   const previousFetch = globalThis.fetch;
   let added = false;
   const writes: Record<string, unknown>[] = [];
@@ -968,11 +1040,10 @@ test('Add to Vault supports an optional security code and returns only card meta
   });
   const mounted = await mountVault();
   try {
-    const trigger = await click('Add to Vault');
     assert.equal(document.querySelector('form'), null);
-    await click('Payment card');
-    const form = document.querySelector<HTMLFormElement>('.vault-add-form')!;
+    const form = await startNew('New payment card');
     const code = form.querySelector<HTMLInputElement>('[name="securityCode"]')!;
+    assert.equal(title().textContent, 'New payment card');
     assert.equal(code.required, false);
     assert.equal(code.type, 'password');
     assert.equal(code.maxLength, 4);
@@ -1005,16 +1076,14 @@ test('Add to Vault supports an optional security code and returns only card meta
     ]);
     assert.equal(number.value, '');
     assert.equal(code.value, '');
-    assert.equal(document.querySelector('[role="dialog"]'), null);
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
-    assert.equal(document.activeElement, trigger);
-    const row = mounted.container.querySelector('.vault-row')!;
-    assert.match(row.textContent ?? '', /Everyday card/);
-    assert.match(row.textContent ?? '', /Visa · •••• 4242/);
-    assert.match(row.textContent ?? '', /04 \/ 2032/);
+    assert.equal(document.querySelector('.vault-add-form'), null);
+    assert.equal(title().textContent, 'Everyday card');
+    await back();
+    await settle();
+    const row = item('Everyday card')!;
+    assert.equal(document.activeElement, row);
+    assert.match(row.textContent ?? '', /Visa •••• 4242/);
     assert.doesNotMatch(row.textContent ?? '', /Synthetic Cardholder|4242424242424242/);
-    assert.equal(row.querySelectorAll('button').length, 1);
-    assert.equal(row.querySelector('[aria-label^="Delete"]'), null);
     assert.doesNotMatch(
       JSON.stringify(pageDataCache.getSnapshot('/api/vault')),
       /4242424242424242|Synthetic Cardholder/,
@@ -1039,44 +1108,38 @@ test('Card details reveal and copy only on demand and clear a late number after 
   const mounted = await mountVault();
   try {
     await click('View Everyday card');
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
-    assert.equal(
-      dialog.querySelector<HTMLInputElement>('[name="cardholder"]')?.value,
-      syntheticCardholder,
-    );
-    assert.equal(dialog.querySelector<HTMLInputElement>('[name="expiry"]')?.value, '04 / 2032');
+    const view = surface();
+    assert.match(view.textContent ?? '', /Synthetic Cardholder/);
+    assert.match(view.textContent ?? '', /Expiry date04 \/ 2032/);
     assert.equal(
       requests.some(({ path }) => path.endsWith('/card-number')),
       false,
     );
-    assert.equal(dialog.querySelector('[aria-label="Password hidden"]'), null);
-    assert.ok(dialog.querySelector('[aria-label="Card number hidden"]'));
-    const description = document.getElementById(dialog.getAttribute('aria-describedby')!)!;
-    assert.equal(description.className, 'sr-only');
-    assert.doesNotMatch(dialog.textContent ?? '', /Saved login details/);
+    assert.equal(view.querySelector('[aria-label="Password hidden"]'), null);
+    assert.ok(view.querySelector('[aria-label="Card number hidden"]'));
+    assert.equal(title().textContent, 'Everyday card');
+    assert.match(view.querySelector('.vault-hero p')?.textContent ?? '', /^Visa •••• 4242$/);
+    assert.equal(view.querySelector('img'), null);
     await click('Copy cardholder name');
     await click('Copy card number');
     assert.deepEqual(copied, [syntheticCardholder, syntheticCardNumber]);
-    assert.ok(dialog.querySelector('[aria-label="Card number hidden"]'));
-    assert.equal(dialog.textContent?.includes(syntheticCardNumber), false);
+    assert.ok(view.querySelector('[aria-label="Card number hidden"]'));
+    assert.equal(view.textContent?.includes(syntheticCardNumber), false);
     await click('Show card number');
-    assert.equal(dialog.querySelector('.vault-password-visible')?.textContent, syntheticCardNumber);
+    assert.equal(view.querySelector('.vault-password-visible')?.textContent, syntheticCardNumber);
     await act(async () => window.dispatchEvent(new Event('blur')));
-    assert.equal(dialog.textContent?.includes(syntheticCardNumber), false);
+    assert.equal(view.textContent?.includes(syntheticCardNumber), false);
     delay = true;
     await click('Show card number');
     const request = requests.at(-1)!;
     await act(async () => window.dispatchEvent(new Event('blur')));
     assert.equal(request.options.signal?.aborted, true);
     await act(async () => late.resolve(Response.json({ cardNumber: syntheticCardNumber })));
-    assert.equal(dialog.textContent?.includes(syntheticCardNumber), false);
-    await click('Close');
+    assert.equal(view.textContent?.includes(syntheticCardNumber), false);
+    await back();
     await click('View Personal account');
     assert.ok(document.querySelector('[aria-label="Password hidden"]'));
-    assert.doesNotMatch(
-      document.querySelector('[role="dialog"]')?.textContent ?? '',
-      /4242424242424242|Synthetic Cardholder/,
-    );
+    assert.doesNotMatch(surface().textContent ?? '', /4242424242424242|Synthetic Cardholder/);
     assert.doesNotMatch(
       JSON.stringify(pageDataCache.getSnapshot('/api/vault')),
       /4242424242424242|Synthetic Cardholder/,
@@ -1094,6 +1157,14 @@ test('Card edits preserve an omitted number and clear replacement input on cance
   const writes: Record<string, unknown>[] = [];
   const requests = mockCardRequests((path, options) => {
     if (path === '/api/vault') return Promise.resolve(Response.json([card, ...savedLogins]));
+    if (path === '/api/vault/card%2Fprivate/details')
+      return Promise.resolve(
+        Response.json({
+          ...card,
+          cardholder: writes.length ? 'Updated Holder' : syntheticCardholder,
+          hasSecurityCode: false,
+        }),
+      );
     if (options.method !== 'PATCH') return;
     const input = JSON.parse(String(options.body));
     writes.push(input);
@@ -1112,6 +1183,7 @@ test('Card edits preserve an omitted number and clear replacement input on cance
   const mounted = await mountVault();
   try {
     await click('View Everyday card');
+    await click('Edit');
     let form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     assert.equal(form.elements.namedItem('cardNumber'), null);
     assert.match(
@@ -1140,9 +1212,9 @@ test('Card edits preserve an omitted number and clear replacement input on cance
       (form.elements.namedItem('cardholder') as HTMLInputElement).value,
       syntheticCardholder,
     );
-    (form.elements.namedItem('label') as HTMLInputElement).value = 'Travel card';
-    (form.elements.namedItem('cardholder') as HTMLInputElement).value = 'Updated Holder';
-    (form.elements.namedItem('expiry') as HTMLInputElement).value = '05 / 2033';
+    await inputValue(form.elements.namedItem('label') as HTMLInputElement, 'Travel card');
+    await inputValue(form.elements.namedItem('cardholder') as HTMLInputElement, 'Updated Holder');
+    await inputValue(form.elements.namedItem('expiry') as HTMLInputElement, '05 / 2033');
     await submit(form);
     assert.deepEqual(writes[0], {
       kind: 'card',
@@ -1155,15 +1227,14 @@ test('Card edits preserve an omitted number and clear replacement input on cance
       requests.some(({ path }) => path.endsWith('/card-number')),
       false,
     );
-    assert.ok(mounted.container.querySelector('[aria-label="View Travel card"]'));
-    assert.equal(
-      document.querySelector<HTMLInputElement>('[name="cardholder"]')?.value,
-      'Updated Holder',
-    );
+    assert.equal(title().textContent, 'Travel card');
+    assert.match(surface().textContent ?? '', /Updated Holder/);
+    await click('Edit');
     form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     await click('Change card number', form);
     (form.elements.namedItem('cardNumber') as HTMLInputElement).value = syntheticCardNumber;
-    await click('Cancel changes');
+    await click('Cancel');
+    await click('Edit');
     form = document.querySelector<HTMLFormElement>('.vault-edit-form')!;
     assert.equal(form.elements.namedItem('cardNumber'), null);
     await click('Change card number', form);
@@ -1181,6 +1252,8 @@ test('Card edits preserve an omitted number and clear replacement input on cance
       'This card could not be updated. Try again.',
     );
     assert.doesNotMatch(document.body.textContent ?? '', /4242424242424242|private /);
+    await back();
+    assert.ok(item('Travel card'));
     assert.doesNotMatch(
       JSON.stringify(pageDataCache.getSnapshot('/api/vault')),
       /4242424242424242|Updated Holder/,
@@ -1191,7 +1264,7 @@ test('Card edits preserve an omitted number and clear replacement input on cance
   }
 });
 
-test('Vault deletion is only available in details and requires an explicit confirmation there', async () => {
+test('Vault deletion is only available in details and requires an explicit confirmation', async () => {
   const previousFetch = globalThis.fetch;
   let removed = false;
   let fail = true;
@@ -1209,7 +1282,6 @@ test('Vault deletion is only available in details and requires an explicit confi
   });
   const mounted = await mountVault();
   try {
-    assert.equal(mounted.container.querySelector('[aria-label^="Delete"]'), null);
     assert.equal(
       [...mounted.container.querySelectorAll('button')].some((button) =>
         button.textContent?.includes('Delete'),
@@ -1217,44 +1289,55 @@ test('Vault deletion is only available in details and requires an explicit confi
       false,
     );
     await click('View Everyday card');
-    await click('Delete card');
+    const row = await click('Delete card');
     assert.equal(document.querySelectorAll('[role="dialog"]').length, 1);
+    assert.match(confirmation().textContent ?? '', /Delete this card\?/);
     assert.match(
-      document.querySelector('[role="dialog"]')?.textContent ?? '',
-      /Delete this card\?/,
+      confirmation().textContent ?? '',
+      /Otto will remove “Everyday card” from your vault\. You cannot undo this\./,
     );
-    assert.match(
-      document.querySelector('[role="dialog"]')?.textContent ?? '',
-      /Everyday card will be removed/,
-    );
-    assert.equal(document.activeElement?.textContent?.trim(), 'Keep card');
+    assert.equal(document.activeElement?.textContent?.trim(), 'Cancel');
     assert.equal(
       requests.some(({ options }) => options.method === 'DELETE'),
       false,
     );
-    await click('Keep card');
+    await act(async () =>
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      ),
+    );
+    await settle();
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.ok(document.querySelector('.vault-surface'));
+    assert.equal(document.activeElement, row);
+    await click('Delete card');
+    await click('Cancel', confirmation());
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(document.activeElement, row);
     assert.ok(document.querySelector('[aria-label="Card number hidden"]'));
     await click('Delete card');
-    await click('Delete card');
+    await click('Delete card', confirmation());
     assert.equal(
-      document.querySelector('[role="alert"]')?.textContent,
+      confirmation().querySelector('[role="alert"]')?.textContent,
       'This card could not be deleted. Try again.',
     );
     assert.equal(document.body.textContent?.includes('private deletion error'), false);
     fail = false;
-    await click('Delete card');
+    await click('Delete card', confirmation());
+    await settle();
     assert.equal(document.querySelector('[role="dialog"]'), null);
-    assert.equal(mounted.container.querySelector('[aria-label="View Everyday card"]'), null);
-    assert.ok(mounted.container.querySelector('[aria-label="View Personal account"]'));
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
-    assert.equal(document.activeElement?.textContent?.trim(), 'Add to Vault');
+    assert.equal(document.querySelector('.vault-surface'), null);
+    assert.equal(item('Everyday card'), undefined);
+    assert.ok(item('Personal account'));
+    assert.equal(document.activeElement?.textContent?.trim(), 'New');
     await click('View Personal account');
     await click('Delete login');
+    assert.match(confirmation().textContent ?? '', /Delete this login\?/);
     assert.match(
-      document.querySelector('[role="dialog"]')?.textContent ?? '',
-      /Delete this login\?/,
+      confirmation().textContent ?? '',
+      /“Personal account” for accounts\.example\.test:8443/,
     );
-    await click('Keep login');
+    await click('Cancel', confirmation());
     assert.ok(document.querySelector('[aria-label="Password hidden"]'));
   } finally {
     await mounted.unmount();
@@ -1262,7 +1345,7 @@ test('Vault deletion is only available in details and requires an explicit confi
   }
 });
 
-test('Closing Add to Vault aborts a pending card save and fences it from a new login form', async () => {
+test('New payment card blocks cancellation while saving and fences responses after unmount', async () => {
   const previousFetch = globalThis.fetch;
   const pending = deferred<Response>();
   const requests = mockCardRequests((path, options) =>
@@ -1270,9 +1353,7 @@ test('Closing Add to Vault aborts a pending card save and fences it from a new l
   );
   const mounted = await mountVault();
   try {
-    await click('Add to Vault');
-    await click('Payment card');
-    let form = document.querySelector<HTMLFormElement>('.vault-add-form')!;
+    let form = await startNew('New payment card');
     (form.elements.namedItem('label') as HTMLInputElement).value = 'Pending card';
     (form.elements.namedItem('cardholder') as HTMLInputElement).value = syntheticCardholder;
     const number = form.elements.namedItem('cardNumber') as HTMLInputElement;
@@ -1284,14 +1365,23 @@ test('Closing Add to Vault aborts a pending card save and fences it from a new l
     await submit(form);
     const saving = requests.at(-1)!;
     assert.equal(number.value, '');
-    await click('Close');
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Cancel',
+    )!;
+    assert.equal(cancel.disabled, true);
+    await act(async () => cancel.click());
+    await act(async () =>
+      form.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })),
+    );
+    assert.equal(document.querySelector('.vault-add-form'), form);
+    assert.equal(saving.options.signal?.aborted, false);
+    await act(async () => mounted.root.render(null));
     assert.equal(saving.options.signal?.aborted, true);
-    await click('Add to Vault');
-    await click('Login');
-    form = document.querySelector<HTMLFormElement>('.vault-add-form')!;
+    await act(async () => mounted.root.render(createElement(Vault)));
+    form = await startNew('New login');
     assert.equal((form.elements.namedItem('password') as HTMLInputElement).value, '');
     await act(async () => pending.resolve(Response.json({ ...savedCard, label: 'Pending card' })));
-    assert.ok(document.querySelector('[role="dialog"]')?.textContent?.includes('Add a login'));
+    assert.equal(title().textContent, 'New login');
     assert.doesNotMatch(document.body.textContent ?? '', /Pending card|4242424242424242/);
     assert.doesNotMatch(
       JSON.stringify(pageDataCache.getSnapshot('/api/vault')),
@@ -1300,5 +1390,84 @@ test('Closing Add to Vault aborts a pending card save and fences it from a new l
   } finally {
     await mounted.unmount();
     globalThis.fetch = previousFetch;
+  }
+});
+
+test('deleting the default desktop Vault item closes details and returns focus to New', async () => {
+  const previousFetch = globalThis.fetch;
+  let removed = false;
+  mockCardRequests((path, options) => {
+    if (path === '/api/vault')
+      return Promise.resolve(Response.json(removed ? savedLogins : [savedCard, ...savedLogins]));
+    if (options.method === 'DELETE') {
+      assert.equal(path, '/api/vault/card%2Fprivate');
+      removed = true;
+      return Promise.resolve(Response.json({ ok: true }));
+    }
+  });
+  phone = false;
+  const mounted = await mountVault();
+  try {
+    assert.equal(title().textContent, 'Everyday card');
+    await click('Delete card');
+    await click('Delete card', confirmation());
+    await settle();
+    assert.equal(Boolean(surface()), false);
+    assert.ok(item('Personal account'));
+    assert.equal(document.activeElement?.textContent?.trim(), 'New');
+    await click('View Personal account');
+    assert.equal(title().textContent, 'Personal account');
+  } finally {
+    await mounted.unmount();
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Vault icons use guarded account requests and discard stale loads and revoke object URLs', async () => {
+  const { VaultEntryIcon } = await import('../src/web/components/vault-surface.tsx');
+  const { setRequestAccount } = await import('../src/web/lib/api.ts');
+  const previousFetch = globalThis.fetch;
+  const createUrl = URL.createObjectURL;
+  const revokeUrl = URL.revokeObjectURL;
+  const created: Blob[] = [];
+  const revoked: string[] = [];
+  const pending = deferred<Response>();
+  const requests: Array<{ path: string; options: RequestInit }> = [];
+  URL.createObjectURL = (blob) => {
+    assert.ok(blob instanceof Blob);
+    created.push(blob);
+    return `blob:fixture-${created.length}`;
+  };
+  URL.revokeObjectURL = (url) => revoked.push(url);
+  globalThis.fetch = async (path, options = {}) => {
+    requests.push({ path: String(path), options });
+    return requests.length === 1 ? pending.promise : new Response('synthetic-icon');
+  };
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    setRequestAccount('first-owner');
+    await act(async () => root.render(createElement(VaultEntryIcon, { entry: savedLogins[0] })));
+    assert.equal(requests[0].path, '/api/vault/personal%2Flogin/icon');
+    assert.equal(new Headers(requests[0].options.headers).get('X-Otto-Account'), 'first-owner');
+    assert.equal(requests[0].options.cache, 'no-store');
+    setRequestAccount('second-owner');
+    assert.equal(requests[0].options.signal?.aborted, true);
+    await act(async () => pending.resolve(new Response('stale-icon')));
+    assert.equal(created.length, 0);
+    assert.equal(container.querySelector('img'), null);
+    await act(async () => root.render(createElement(VaultEntryIcon, { entry: savedLogins[1] })));
+    assert.equal(new Headers(requests[1].options.headers).get('X-Otto-Account'), 'second-owner');
+    assert.equal(container.querySelector('img')?.getAttribute('src'), 'blob:fixture-1');
+    await act(async () => root.render(null));
+    assert.deepEqual(revoked, ['blob:fixture-1']);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    setRequestAccount(null);
+    globalThis.fetch = previousFetch;
+    URL.createObjectURL = createUrl;
+    URL.revokeObjectURL = revokeUrl;
   }
 });

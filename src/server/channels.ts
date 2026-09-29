@@ -6,6 +6,7 @@ import { TaskReviewRequiredError, type PreparedUserRoute } from './outcomes.ts';
 import type { SubmitMessageResponse } from '../shared/contracts.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type {
+  ChannelPairingRequest,
   InboundMessage,
   MessagingAttachment,
   MessagingTransport,
@@ -36,6 +37,7 @@ interface ChannelOptions {
   intervalMs?: number;
   resolveAttachments?: (taskId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   appOrigin?: string;
+  pair?: (request: ChannelPairingRequest) => Promise<unknown>;
 }
 interface ChannelIdentity {
   provider: string;
@@ -299,6 +301,64 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     }
   }
 
+  async function completePairing(request: ChannelPairingRequest) {
+    if (closed || !options.pair) return;
+    try {
+      await options.pair(request);
+    } catch {
+      throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
+        statusCode: 503,
+      });
+    }
+  }
+
+  async function announcePairing(
+    request: {
+      senderId: string;
+      accountId: string;
+      messageId: string;
+      threadId: string;
+      sentAt: string;
+    },
+    client: PoolClient,
+  ) {
+    const identity = {
+      provider: 'telegram',
+      account_id: request.accountId,
+      sender_id: request.senderId,
+    };
+    const sourceId = `channel:telegram:${request.accountId}:${request.messageId}`;
+    if (closed || replacing || !permitted(identity))
+      throw new Error('Channel configuration changed.');
+    const receipt = await client.query(
+      `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,owner_id)
+       VALUES($1,'telegram',$2,$3,$4,'/start',$5,$6,'discarded',$7) ON CONFLICT(source_id) DO NOTHING`,
+      [
+        sourceId,
+        request.accountId,
+        request.senderId,
+        request.threadId,
+        request.sentAt,
+        inboundMessageId(ownerId, sourceId),
+        ownerId,
+      ],
+    );
+    if (receipt.rowCount) {
+      const replyId = randomUUID();
+      await client.query(
+        "INSERT INTO messages(id,owner_id,role,text) VALUES($1,$2,'assistant',$3)",
+        [replyId, ownerId, 'Otto is connected. Send a message to start.'],
+      );
+      await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
+        replyId,
+        sourceId,
+      ]);
+    }
+    return () => {
+      void drain();
+    };
+  }
+
   async function drainInbox() {
     for (let index = 0; index < 25 && !closed && !replacing; index++) {
       const pending = (
@@ -511,7 +571,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         while (drainRequested && !closed && !replacing && !options.admission?.paused) {
           drainRequested = false;
           try {
-            await transport.poll?.((message) => accept(message, message.channelId));
+            await transport.poll?.(
+              (message) => accept(message, message.channelId),
+              completePairing,
+            );
           } catch {
             pollingFailed = true;
           }
@@ -623,6 +686,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           if (result.status >= 200 && result.status < 300) {
             for (const message of result.messages ?? []) await accept(message, channelId);
             if (result.messages?.length) void drain();
+            if (result.pairing?.channelId === channelId) await completePairing(result.pairing);
           }
           if (result.contentType) reply.type(result.contentType);
           return reply.code(result.status).send(result.body);
@@ -631,5 +695,5 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     });
   }
 
-  return { registerRoutes, drain, close, replaceTransport };
+  return { registerRoutes, drain, close, replaceTransport, announcePairing };
 }

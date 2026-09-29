@@ -1,4 +1,5 @@
 import type { Message, Task } from '../../shared/contracts';
+import { isSameDay, type DateFormat } from './date-format';
 
 export function visibleConversationTurns(
   turns: Array<{ id: string; top: number }>,
@@ -18,12 +19,16 @@ export function hasVisibleChatActivity(tasks: Pick<Task, 'status' | 'showTyping'
   );
 }
 
-export function messagesAreGrouped(previous: Message | undefined, next: Message | undefined) {
+export function messagesAreGrouped(
+  previous: Message | undefined,
+  next: Message | undefined,
+  format?: DateFormat,
+) {
   if (!previous || !next || previous.role !== next.role || next.replyToMessageId) return false;
-  const before = new Date(previous.createdAt);
-  const after = new Date(next.createdAt);
-  const elapsed = after.getTime() - before.getTime();
-  return before.toDateString() === after.toDateString() && elapsed >= 0 && elapsed < 5 * 60_000;
+  const elapsed = Date.parse(next.createdAt) - Date.parse(previous.createdAt);
+  return (
+    isSameDay(previous.createdAt, next.createdAt, format) && elapsed >= 0 && elapsed < 5 * 60_000
+  );
 }
 
 export function collapseScreenshotMessages(messages: Message[]) {

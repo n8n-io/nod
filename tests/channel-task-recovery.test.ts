@@ -158,7 +158,7 @@ test(
             ])
           ).rows[0].task_id;
           await db.pool.query(
-            "UPDATE tasks SET status='failed',error='Synthetic unknown action' WHERE id=$1",
+            "UPDATE tasks SET status='failed',error='Synthetic unknown action',external_action=true WHERE id=$1",
             [originalId],
           );
           originalOutcome = (await row(originalId)).outcome_id;
@@ -250,7 +250,7 @@ test(
                 sourceId,
               });
               await client.query('UPDATE tasks SET revision=revision+1 WHERE id=$1', [originalId]);
-              throw new TaskReviewRequiredError();
+              throw new TaskReviewRequiredError(randomUUID(), 'Synthetic blocked work');
             },
           );
           await db.pool.query(
@@ -311,7 +311,7 @@ test(
           const fixture = await open(
             'fixture-owner-b',
             async () => {
-              throw new TaskReviewRequiredError();
+              throw new TaskReviewRequiredError(randomUUID(), 'Synthetic blocked work');
             },
             undefined,
             'second-owner',
@@ -427,7 +427,7 @@ test(
           const fixture = await open('fixture-closing', async () => {
             entered();
             await held;
-            throw new TaskReviewRequiredError();
+            throw new TaskReviewRequiredError(randomUUID(), 'Synthetic blocked work');
           });
           await fixture.send('close');
           await started;
@@ -456,7 +456,7 @@ test(
           );
           await fixture.app.close();
           const reopened = await open('fixture-closing', async () => {
-            throw new TaskReviewRequiredError();
+            throw new TaskReviewRequiredError(randomUUID(), 'Synthetic blocked work');
           });
           await reopened.channels.drain();
           assert.equal(sent.filter((message) => message.accountId === 'fixture-closing').length, 1);

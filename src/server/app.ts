@@ -20,8 +20,10 @@ import {
   reactToAssistantMessage,
   resetConversation,
   submitUserMessage,
+  welcomeSourceId,
 } from './tasks.ts';
 import { conversationRevision, currentConversationSql } from './conversations.ts';
+import { TaskReviewRequiredError } from './outcomes.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { registerLocalAccess } from './access.ts';
 import { registerRuntimeAccess } from './runtime-auth.ts';
@@ -29,7 +31,13 @@ import { createMultipartReader } from './multipart.ts';
 import type { SpeechService } from './speech.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
-import type { Configuration, Message, MessageReaction, Task } from '../shared/contracts.ts';
+import type {
+  Configuration,
+  Message,
+  MessageHistoryPage,
+  MessageReaction,
+  Task,
+} from '../shared/contracts.ts';
 import type { AgentToolMetadata } from '../ports/agent.ts';
 import { inspectorPayloadLimit, inspectorRetentionDays, type InspectorStore } from './inspector.ts';
 import type { createChatVerification } from './chat-verification.ts';
@@ -67,6 +75,7 @@ export interface AppDependencies {
   providerUsage?: Pick<ProviderUsageStore, 'taskCosts'>;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, conversationRevision?: number) => Promise<unknown>;
+  startOnboarding?: (name?: string) => Promise<unknown>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -108,6 +117,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
     verifiedBody: runtimeAccess?.takeBody,
   });
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof TaskReviewRequiredError)
+      return reply.code(409).send({
+        error: error.message,
+        code: error.code,
+        taskId: error.taskId,
+        summary: error.summary,
+      });
     const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
     reply.code(status).send({
@@ -128,8 +144,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
   async function messageTasks(ids: string[]): Promise<Task[]> {
     if (!ids.length) return [];
     const result = await pool.query(
-      `SELECT id,title,status,error,created_at AS "createdAt",updated_at AS "updatedAt",(source='user') AS "showTyping" FROM tasks t WHERE owner_id=$1 AND channel='web' AND ${currentConversationSql()} AND id=ANY($2::uuid[])`,
-      [ownerId, [...new Set(ids)]],
+      `SELECT id,title,status,error,created_at AS "createdAt",updated_at AS "updatedAt",(source='user' OR source_id=$3) AS "showTyping" FROM tasks t WHERE owner_id=$1 AND channel='web' AND ${currentConversationSql()} AND id=ANY($2::uuid[])`,
+      [ownerId, [...new Set(ids)], welcomeSourceId],
     );
     const costs = await dependencies.providerUsage
       ?.taskCosts(result.rows.map((task) => task.id))
@@ -140,26 +156,29 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const revision = await conversationRevision(pool, ownerId);
     const [messages, tasks, verificationRequests] = await Promise.all([
       pool.query(
-        `SELECT ${messageFields} FROM (SELECT m.* FROM messages m JOIN tasks t ON t.id=m.task_id WHERE m.owner_id=$1 AND t.owner_id=$1 AND t.channel='web' AND ${currentConversationSql()} ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 150) m
+        `SELECT ${messageFields} FROM (SELECT m.* FROM messages m JOIN tasks t ON t.id=m.task_id WHERE m.owner_id=$1 AND t.owner_id=$1 AND t.channel='web' AND ${currentConversationSql()} ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
          LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
         [ownerId],
       ),
       pool.query(
-        `SELECT id,title,status,error,created_at AS "createdAt",updated_at AS "updatedAt",(source='user') AS "showTyping" FROM tasks t WHERE owner_id=$1 AND channel='web' AND ${currentConversationSql()} ORDER BY created_at DESC LIMIT 50`,
-        [ownerId],
+        `SELECT id,title,status,error,created_at AS "createdAt",updated_at AS "updatedAt",(source='user' OR source_id=$2) AS "showTyping" FROM tasks t WHERE owner_id=$1 AND channel='web' AND ${currentConversationSql()} ORDER BY created_at DESC LIMIT 50`,
+        [ownerId, welcomeSourceId],
       ),
       dependencies.verification?.pending() ?? [],
     ]);
+    const hasEarlierMessages = messages.rows.length > 150;
+    const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
     const costs = await dependencies.providerUsage
       ?.taskCosts(tasks.rows.map((task) => task.id))
       .catch(() => undefined);
     const recentIds = new Set(tasks.rows.map((task) => task.id));
     const olderTasks = await messageTasks(
-      messages.rows.map((message) => message.taskId).filter((id) => id && !recentIds.has(id)),
+      visibleMessages.map((message) => message.taskId).filter((id) => id && !recentIds.has(id)),
     );
     return {
       conversationRevision: revision,
-      messages: messages.rows.map(messageView),
+      hasEarlierMessages,
+      messages: visibleMessages.map(messageView),
       tasks: [
         ...tasks.rows.map((task) => ({ ...task, costUsd: costs?.[task.id] ?? null })),
         ...olderTasks,
@@ -193,15 +212,19 @@ export async function createApp(dependencies: AppDependencies = {}) {
       `SELECT ${messageFields} FROM messages m JOIN tasks t ON t.id=m.task_id
       LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id
       WHERE m.owner_id=$1 AND t.owner_id=$1 AND t.channel='web' AND ${currentConversationSql()} AND ($2::timestamptz IS NULL OR date_trunc('milliseconds',m.created_at) < $2 OR (date_trunc('milliseconds',m.created_at) = $2 AND $3::uuid IS NOT NULL AND m.id < $3))
-      ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 60`,
+      ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 61`,
       [ownerId, query.before ?? null, query.beforeId ?? null],
     );
-    const tasks = await messageTasks(rows.rows.map((message) => message.taskId).filter(Boolean));
+    const page = rows.rows.slice(0, 60);
+    const tasks = await messageTasks(page.map((message) => message.taskId).filter(Boolean));
     const byId = new Map(tasks.map((task) => [task.id, task]));
-    return rows.rows.reverse().map((row) => ({
-      ...messageView(row),
-      task: byId.get(row.taskId),
-    }));
+    return {
+      messages: page.reverse().map((row) => ({
+        ...messageView(row),
+        task: byId.get(row.taskId),
+      })),
+      hasMore: rows.rows.length > 60,
+    } satisfies MessageHistoryPage;
   });
   app.post<{ Params: { id: string } }>('/api/messages/:id/reaction', async (request, reply) => {
     const { reaction } = z
@@ -238,6 +261,16 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!dependencies.onboard)
       throw Object.assign(new Error('Setup is unavailable.'), { statusCode: 503 });
     return dependencies.onboard(timeZone, conversationRevision);
+  });
+  app.post('/api/onboarding/start', async (request) => {
+    const { name } = z
+      .object({ name: z.string().trim().max(100).optional() })
+      .strict()
+      .parse(request.body ?? {});
+    if (!dependencies.startOnboarding)
+      throw Object.assign(new Error('Setup is unavailable.'), { statusCode: 503 });
+    await dependencies.startOnboarding(name);
+    return { ok: true };
   });
   app.post('/api/messages', async (request) => {
     const input = z
@@ -293,8 +326,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
   });
   app.get<{ Params: { id: string } }>('/api/tasks/:id', async (request, reply) => {
     const result = await pool.query(
-      `SELECT id,title,status,error,created_at AS "createdAt",updated_at AS "updatedAt",(channel='web' AND source='user') AS "showTyping" FROM tasks t WHERE id=$1 AND owner_id=$2 AND ${currentConversationSql()}`,
-      [z.uuid().parse(request.params.id), ownerId],
+      `SELECT id,title,status,error,created_at AS "createdAt",updated_at AS "updatedAt",(channel='web' AND (source='user' OR source_id=$3)) AS "showTyping" FROM tasks t WHERE id=$1 AND owner_id=$2 AND ${currentConversationSql()}`,
+      [z.uuid().parse(request.params.id), ownerId, welcomeSourceId],
     );
     return result.rows[0] ?? reply.code(404).send({ error: 'Task not found.' });
   });
@@ -349,7 +382,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const file = result.rows[0];
     if (!file) return reply.code(404).send({ error: 'File not found.' });
     const inline =
-      /^(image\/(png|jpeg|webp|gif|avif|bmp)|audio\/(mpeg|wav|x-wav|webm|ogg|mp4|aac|flac)|video\/(mp4|webm|ogg)|application\/pdf)$/.test(
+      /^(image\/(png|jpeg|webp|gif|avif|bmp|svg\+xml)|audio\/(mpeg|wav|x-wav|webm|ogg|mp4|aac|flac)|video\/(mp4|webm|ogg)|application\/pdf)$/.test(
         file.mime_type,
       );
     reply

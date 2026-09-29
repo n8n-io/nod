@@ -17,16 +17,17 @@ export function MessageLinkPreviews({
     const links = [...(content.current?.querySelectorAll<HTMLAnchorElement>('a[href]') ?? [])].map(
       (anchor) => safeMessageLink(anchor.getAttribute('href') ?? '', window.location.origin),
     );
-    const urls = links.some((link) => link?.kind === 'credential')
-      ? []
-      : [
-          ...new Set(
-            links.flatMap((link) => {
-              const url = link?.kind === 'external' ? previewableUrl(link.href) : null;
-              return url ? [url] : [];
-            }),
-          ),
-        ].slice(0, 2);
+    const urls =
+      links.some((link) => link?.kind === 'setup') || content.current?.querySelector('[data-setup]')
+        ? []
+        : [
+            ...new Set(
+              links.flatMap((link) => {
+                const url = link?.kind === 'external' ? previewableUrl(link.href) : null;
+                return url ? [url] : [];
+              }),
+            ),
+          ].slice(0, 2);
     setPreviews((previous) => (previous.length ? [] : previous));
     const load = () => {
       if (!current || !urls.length) return;

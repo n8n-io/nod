@@ -116,3 +116,64 @@ test('a LinkedIn task pauses for sign-in and reads 50 synthetic offers after reu
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('website account work asks for a Vault login before a browser connection', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sk-vault-first-'));
+  let supplied: { systemPrompt: string; description: string } | undefined;
+  const agent: Agent = {
+    open: async (input) => {
+      supplied = {
+        systemPrompt: input.systemPrompt,
+        description: input.tools.find((entry) => entry.name === 'browser_connection')!.description,
+      };
+      return { resumed: false, abort: () => {}, dispose: () => {}, prompt: async () => {} };
+    },
+    dispose: () => {},
+  };
+  const runtime = createAgentRuntime({
+    agent,
+    workspace: fakeWorkspace(),
+    computer: fakeComputer(),
+  });
+  try {
+    await runtime.runTask({
+      taskId: randomUUID(),
+      ownerId: 'synthetic-owner',
+      prompt: 'Sign in to the toll website and get my latest statement.',
+      history: [],
+      memories: [],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      attachments: [],
+      emit: async () => {},
+      reply: async () => {},
+      delta: () => {},
+      remember: async () => {},
+      publish: async () => {
+        throw new Error('No file is expected.');
+      },
+      requestCredential: async () => ({}),
+      integration: async () => ({}),
+      manage: async () => ({}),
+      browserConnection: async () => ({}),
+    });
+    const prompt = supplied!.systemPrompt;
+    const vault = prompt.indexOf('use inspect_login, and follow the Vault sign-in flow');
+    const fallback = prompt.indexOf(
+      'Use browser_connection connect only when fresh inspection reports browser_not_supported, a credential request returns sign_in_blocked, or the current user explicitly asks Otto to keep a website session',
+    );
+    assert.ok(vault > 0);
+    assert.ok(fallback > vault);
+    assert.match(prompt, /Add login when no login is saved/);
+    assert.doesNotMatch(prompt, /use browser_connection connect with the page/);
+    assert.match(supplied!.description, /use inspect_login, then request_credentials/);
+    assert.match(
+      supplied!.description,
+      /Use connect only when inspect_login reports browser_not_supported, request_credentials returns sign_in_blocked, or the user explicitly asks to keep a website session/,
+    );
+    assert.doesNotMatch(supplied!.description, /Use connect when account data is needed/);
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -7,7 +7,6 @@ import test from 'node:test';
 import pg from 'pg';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
-import { goalDraft, scheduleDraft } from '../src/web/lib/secondary-pages.ts';
 
 test(
   'personal proposals validate before review, preserve supported goal fields and revalidate before execution',
@@ -364,7 +363,7 @@ test(
       );
 
       await t.test(
-        'Goals pause and resume drafts preserve saved progress, next step and date',
+        'goal pause and resume requests preserve saved progress, next step and date',
         async () => {
           const goal = (await application.personal.listGoals())[0];
           await propose(
@@ -384,7 +383,7 @@ test(
               'goal_update',
               { id: goal.id, status },
               false,
-              goalDraft(current, 'status'),
+              `${current.status === 'active' ? 'Pause' : 'Resume'} the goal "${current.title}".`,
             );
             const reloaded = (await request('GET', '/api/goals')).json()[0];
             assert.equal(reloaded.status, status);
@@ -403,14 +402,14 @@ test(
       );
 
       await t.test(
-        'Goals review plus explicit completion persists without another confirmation',
+        'an explicit goal completion persists without another confirmation',
         async () => {
           const goal = (await application.personal.listGoals())[0];
           const taskId = await propose(
             'goal_update',
             { id: goal.id, status: 'completed', progress: 100 },
             false,
-            `${goalDraft(goal, 'discuss')} Mark it completed with progress 100% now.`,
+            `Mark the goal "${goal.title}" completed with progress 100% now.`,
           );
           const reloaded = (await request('GET', '/api/goals')).json()[0];
           assert.equal(reloaded.status, 'completed');
@@ -428,7 +427,7 @@ test(
       );
 
       await t.test(
-        'Schedule pause, resume and change drafts persist direct authorized changes',
+        'schedule pause, resume and change requests persist direct authorized changes',
         async () => {
           await propose(
             'schedule_create',
@@ -449,7 +448,7 @@ test(
               enabled ? 'schedule_update' : 'schedule_cancel',
               enabled ? { id: schedule.id, enabled } : { id: schedule.id },
               false,
-              scheduleDraft(current, 'status'),
+              `${current.enabled ? 'Pause' : 'Resume'} the schedule "${current.title}".`,
             );
             const reloaded = (await request('GET', '/api/schedules')).json()[0];
             assert.equal(reloaded.enabled, enabled);
@@ -466,7 +465,7 @@ test(
             'schedule_update',
             { id: schedule.id, cron: '0 10 * * 1' },
             false,
-            `${scheduleDraft(current, 'discuss')} Move it to 10:00.`,
+            `Move the schedule "${current.title}" to 10:00.`,
           );
           const reloaded = (await request('GET', '/api/schedules')).json()[0];
           assert.equal(reloaded.cron, '0 10 * * 1');

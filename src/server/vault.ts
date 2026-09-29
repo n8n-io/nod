@@ -15,6 +15,7 @@ import type {
 } from '../shared/contracts.ts';
 import type { CredentialKind, CredentialSubmission, LoginInspection } from '../ports/computer.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
+import type { SiteIcon } from '../ports/link-preview.ts';
 import type { CredentialInvitation } from '../ports/agent.ts';
 import { normalizedEmail, type EmailCodeRequest, type PrivateEmailCode } from './email-code.ts';
 import { ownerId as owner } from './config.ts';
@@ -106,6 +107,7 @@ type VaultOptions = {
   hold?(taskId: string, until: number | null): Promise<void>;
   selectMethod?(taskId: string, origin: string, methodId: string): Promise<void>;
   emailCode?(input: EmailCodeRequest, signal: AbortSignal): Promise<PrivateEmailCode | undefined>;
+  icon?(origin: string): Promise<SiteIcon | null>;
 };
 type EntryRow = {
   id: string;
@@ -185,7 +187,7 @@ export function credentialOrigin(value: string) {
   } catch {
     throw new VaultError('Enter a valid website origin.');
   }
-  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  const local = localHost(url.hostname);
   if (
     (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) ||
     url.username ||
@@ -199,9 +201,20 @@ export function credentialOrigin(value: string) {
   return url.origin;
 }
 
+function localHost(hostname: string) {
+  return ['localhost', '127.0.0.1', '[::1]'].includes(hostname);
+}
+
 function savedCredentialOrigin(value: string) {
   const trimmed = value.trim();
   return credentialOrigin(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+}
+
+function requireFullHost(raw: unknown) {
+  const { origin } = z.object({ origin: z.string().max(2048) }).parse(raw);
+  const { hostname } = new URL(savedCredentialOrigin(origin));
+  if (!localHost(hostname) && !/[^.]\.[^.]/.test(hostname))
+    throw new VaultError('Enter a full website domain, such as example.com.');
 }
 
 function binding(entry: Pick<EntryRow, 'id' | 'owner_id' | 'origin'>) {
@@ -1762,6 +1775,30 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }
   }
 
+  const icons = new Map<string, { expiresAt: number; icon: Promise<SiteIcon | null> }>();
+  function siteIcon(origin: string) {
+    const fetchIcon = options.icon;
+    if (!fetchIcon || localHost(new URL(origin).hostname)) return null;
+    const cached = icons.get(origin);
+    if (cached && cached.expiresAt > Date.now()) return cached.icon;
+    icons.delete(origin);
+    const entry = {
+      expiresAt: Date.now() + 86_400_000,
+      icon: fetchIcon(origin)
+        .catch(() => null)
+        .then((icon) => {
+          if (!icon || icon.bytes.byteLength > 128 * 1024) {
+            entry.expiresAt = Date.now() + 600_000;
+            return null;
+          }
+          return icon;
+        }),
+    };
+    icons.set(origin, entry);
+    while (icons.size > 128) icons.delete(icons.keys().next().value!);
+    return entry.icon;
+  }
+
   function registerRoutes(app: FastifyInstance) {
     app.addHook('onClose', async () => {
       closed = true;
@@ -1794,7 +1831,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         const { kind } = z
           .object({ kind: z.enum(['login', 'card']).optional() })
           .parse(request.body);
-        return kind === 'card' ? saveCard(request.body) : save(owner, request.body);
+        if (kind === 'card') return saveCard(request.body);
+        requireFullHost(request.body);
+        return save(owner, request.body);
       });
       scope.patch<{ Params: { id: string } }>(
         '/api/vault/:id',
@@ -1863,6 +1902,23 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           return { cardNumber: secret.cardNumber };
         },
       );
+      scope.get<{ Params: { id: string } }>('/api/vault/:id/icon', async (request, reply) => {
+        const id = z.uuid().safeParse(request.params.id);
+        const { rows } = id.success
+          ? await pool.query<{ origin: string }>(
+              'SELECT origin FROM vault_entries WHERE id=$1 AND owner_id=$2',
+              [id.data, owner],
+            )
+          : { rows: [] };
+        const icon = rows[0] ? await siteIcon(rows[0].origin) : null;
+        if (!icon) return reply.code(404).send({ error: 'The website icon is unavailable.' });
+        return reply
+          .header('Content-Type', icon.mimeType)
+          .header('X-Content-Type-Options', 'nosniff')
+          .header('Content-Security-Policy', "default-src 'none'; sandbox")
+          .header('Cross-Origin-Resource-Policy', 'same-origin')
+          .send(Buffer.from(icon.bytes));
+      });
       scope.delete<{ Params: { id: string } }>('/api/vault/:id', async (request) => {
         await pool.query(
           'WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2 RETURNING id) DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2',

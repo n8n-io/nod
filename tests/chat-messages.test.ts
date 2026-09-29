@@ -58,8 +58,8 @@ Object.defineProperty(globalThis, 'IntersectionObserver', {
 });
 after(() => dom.window.close());
 const { createRoot } = await import('react-dom/client');
-const { MessageBubble, MessageText, Attachment } =
-  await import('../src/web/components/message.tsx');
+const { MessageBubble, MessageText } = await import('../src/web/components/message.tsx');
+const { MessageAttachments } = await import('../src/web/components/attachment-card.tsx');
 const base: Message = {
   id: 'fixture-message',
   role: 'assistant',
@@ -499,14 +499,16 @@ test('secure links, private destinations and streaming fragments do not request 
 test('published screenshot artifacts use the ordinary local image attachment', () => {
   const url = '/api/artifacts/22222222-2222-4222-8222-222222222222';
   const html = renderToStaticMarkup(
-    createElement(Attachment, {
-      artifact: {
-        id: '22222222-2222-4222-8222-222222222222',
-        name: 'screenshot.png',
-        mimeType: 'image/png',
-        size: 1234,
-        url,
-      },
+    createElement(MessageAttachments, {
+      attachments: [
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'screenshot.png',
+          mimeType: 'image/png',
+          size: 1234,
+          url,
+        },
+      ],
     }),
   );
   assert.ok(html.includes(`src="${url}"`));
@@ -719,7 +721,28 @@ test('chat styles keep user content left aligned and remove the editor native fo
   }
 });
 
-test('touch selects one message for actions and moving focus clears the selection', async () => {
+test('message actions follow hover and keyboard focus, and narrow chat hides the turn rail', async () => {
+  const styles = [
+    await readFile(new URL('../src/web/pages/chat.css', import.meta.url), 'utf8'),
+    await readFile(new URL('../src/web/styles.css', import.meta.url), 'utf8'),
+  ].join('\n');
+  assert.doesNotMatch(styles, /\.message:focus-within/);
+  assert.doesNotMatch(styles, /pointer: coarse\)\s*\{[^}]*message-more-action/);
+  assert.match(styles, /\.chat-page \.message:has\(:focus-visible\) \.message-actions/);
+  const start = styles.indexOf('{', styles.indexOf('@container (max-width: 640px)'));
+  let end = start;
+  for (let depth = 0; end < styles.length; end++) {
+    if (styles[end] === '{') depth++;
+    if (styles[end] === '}' && --depth === 0) break;
+  }
+  assert.match(styles.slice(start, end), /\.chat-turn-rail \{\s*display: none;/);
+  assert.doesNotMatch(
+    styles.slice(0, start) + styles.slice(end),
+    /\.chat-turn-rail \{[^}]*display: none;/,
+  );
+});
+
+test('touch selects one message for actions, and moving focus or an outside press clears the selection', async () => {
   const element = document.createElement('div');
   document.body.append(element);
   const root = createRoot(element);
@@ -747,6 +770,18 @@ test('touch selects one message for actions and moving focus clears the selectio
     await act(async () => touch(articles[1]));
     assert.equal(articles[0].classList.contains('message-selected'), false);
     assert.equal(articles[1].classList.contains('message-selected'), true);
+    await act(async () => {
+      articles[1].dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    assert.equal(articles[1].classList.contains('message-selected'), true);
+    await act(async () => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    assert.equal(element.querySelector('.message-selected'), null);
+    const mouse = new Event('pointerup', { bubbles: true });
+    Object.defineProperty(mouse, 'pointerType', { value: 'mouse' });
+    await act(async () => articles[0].dispatchEvent(mouse));
+    assert.equal(element.querySelector('.message-selected'), null);
   } finally {
     await act(async () => root.unmount());
     element.remove();

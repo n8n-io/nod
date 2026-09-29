@@ -1,22 +1,169 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Clock3, LogOut, Monitor, Moon, SlidersHorizontal, Sun, UserRound } from 'lucide-react';
+import {
+  Clock3,
+  Globe,
+  MapPin,
+  LogOut,
+  Monitor,
+  Moon,
+  SlidersHorizontal,
+  Sun,
+  UserRound,
+} from 'lucide-react';
 import type { AccountPreferences, AccountTheme } from '../../shared/account';
+import type { HourCycle } from '../../shared/contracts';
 import type { AccountControls, AccountTab } from './account-menu';
 import { AccountAvatar, GoogleMark } from './account-avatar';
-import { Button, Dialog, DialogContent, DialogTitle, Field, Input, Loading, Notice } from './ui';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Field,
+  Input,
+  Loading,
+  Notice,
+  Switch,
+} from './ui';
 import { usePageData } from '../hooks/use-page-data';
-import { api, errorMessage } from '../lib/api';
-import { TimeZonePicker } from './time-zone-picker';
+import { errorMessage } from '../lib/api';
+import { SearchPicker, TimeZonePicker } from './time-zone-picker';
+import { dateFormatFrom, formatDateTime, regionLocale, regions } from '../lib/date-format';
+import { savePreferences } from '../lib/preferences';
+import { localeRegion } from '../../shared/date-locale';
 
-const editablePreferences = ['timeZone', 'quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
+const editablePreferences = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
+const regionLabels = {
+  choose: 'Choose region',
+  search: 'Search regions',
+  placeholder: 'Search country or region',
+  clear: 'Clear region search',
+  list: 'Regions',
+  empty: 'No regions found.',
+};
+const clockOptions: Array<{ value: HourCycle; label: string }> = [
+  { value: 'auto', label: 'Automatic' },
+  { value: 'h12', label: '12-hour' },
+  { value: 'h23', label: '24-hour' },
+];
+
+function regionOptions(current: string) {
+  const names = new Intl.DisplayNames(['en'], { type: 'region' });
+  return [...new Set([current, ...regions])]
+    .map((region) => ({ value: region, label: names.of(region) ?? region, keywords: region }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'en'));
+}
+
+function LanguageAndRegion({ saved }: { saved: AccountPreferences }) {
+  const heading = useId();
+  const regionLabel = useId();
+  const clockLabel = useId();
+  const timeZoneLabel = useId();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
+  const format = dateFormatFrom(saved);
+  const region = localeRegion(saved.locale) ?? localeRegion(format.locale) ?? 'GB';
+  const zones = [
+    ...new Set([
+      saved.timeZone,
+      ...(Intl.supportedValuesOf?.('timeZone') ?? [
+        'Europe/Lisbon',
+        'Europe/London',
+        'America/New_York',
+      ]),
+    ]),
+  ].sort();
+  async function save(
+    change: Partial<Pick<AccountPreferences, 'locale' | 'hourCycle' | 'timeZone'>>,
+  ) {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setSaving(true);
+    setError('');
+    try {
+      await savePreferences(change, controller.signal);
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(errorMessage(cause));
+    } finally {
+      if (request.current === controller) {
+        request.current = null;
+        if (!controller.signal.aborted) setSaving(false);
+      }
+    }
+  }
+  return (
+    <section className="account-region" aria-labelledby={heading}>
+      <h4 id={heading}>Date and time</h4>
+      <div className="account-preference-row account-picker-row">
+        <span id={regionLabel}>
+          <MapPin size={18} aria-hidden="true" />
+          Region
+        </span>
+        <SearchPicker
+          value={region}
+          options={regionOptions(region)}
+          labels={regionLabels}
+          labelledBy={regionLabel}
+          disabled={saving}
+          onChange={(next) => {
+            if (next !== region) void save({ locale: regionLocale(next) });
+          }}
+        />
+      </div>
+      <div className="account-preference-row">
+        <span id={clockLabel}>
+          <Clock3 size={18} aria-hidden="true" />
+          Clock
+        </span>
+        <div className="account-clock-options" role="group" aria-labelledby={clockLabel}>
+          {clockOptions.map((option) => (
+            <Button
+              key={option.value}
+              type="button"
+              size="sm"
+              variant={saved.hourCycle === option.value ? 'default' : 'outline'}
+              aria-pressed={saved.hourCycle === option.value}
+              disabled={saving}
+              onClick={() => {
+                if (saved.hourCycle !== option.value) void save({ hourCycle: option.value });
+              }}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <div className="account-preference-row account-picker-row account-time-zone">
+        <span id={timeZoneLabel}>
+          <Globe size={18} aria-hidden="true" />
+          Time zone
+        </span>
+        <TimeZonePicker
+          value={saved.timeZone}
+          zones={zones}
+          labelledBy={timeZoneLabel}
+          disabled={saving}
+          onChange={(timeZone) => {
+            if (timeZone !== saved.timeZone) void save({ timeZone });
+          }}
+        />
+      </div>
+      <p className="field-hint" aria-live="polite">
+        Example: {formatDateTime(new Date(), format, { weekday: true })}
+      </p>
+      {error && <Notice>{error}</Notice>}
+    </section>
+  );
+}
 
 function PreferencesForm() {
-  const timeZoneLabel = useId();
   const {
     data,
     loading,
     error: loadError,
-    update,
     refresh,
   } = usePageData<AccountPreferences>('/api/preferences');
   const [draft, setDraft] = useState<AccountPreferences | null>(null);
@@ -56,16 +203,6 @@ function PreferencesForm() {
   const current = draft;
   const saved = data;
   const dirty = editablePreferences.some((key) => current[key] !== saved[key]);
-  const zones = [
-    ...new Set([
-      current.timeZone,
-      ...(Intl.supportedValuesOf?.('timeZone') ?? [
-        'Europe/Lisbon',
-        'Europe/London',
-        'America/New_York',
-      ]),
-    ]),
-  ].sort();
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (request.current) return;
@@ -74,21 +211,15 @@ function PreferencesForm() {
     setSaving(true);
     setError('');
     try {
-      const result = await api<AccountPreferences>('/api/preferences', {
-        method: 'PATCH',
-        signal: controller.signal,
-        body: JSON.stringify(
-          Object.fromEntries(
-            editablePreferences
-              .filter((key) => current[key] !== saved[key])
-              .map((key) => [key, current[key]]),
-          ),
+      const result = await savePreferences(
+        Object.fromEntries(
+          editablePreferences
+            .filter((key) => current[key] !== saved[key])
+            .map((key) => [key, current[key]]),
         ),
-      });
-      if (!controller.signal.aborted) {
-        setDraft(result);
-        update(() => result);
-      }
+        controller.signal,
+      );
+      if (!controller.signal.aborted) setDraft(result);
     } catch (cause) {
       if (!controller.signal.aborted) setError(errorMessage(cause));
     } finally {
@@ -99,81 +230,66 @@ function PreferencesForm() {
     }
   }
   return (
-    <form onSubmit={(event) => void save(event)}>
-      <div className="account-preference-row account-time-zone-row">
-        <span id={timeZoneLabel}>
-          <Clock3 size={18} aria-hidden="true" />
-          Time zone
-        </span>
-        <TimeZonePicker
-          value={current.timeZone}
-          zones={zones}
-          labelledBy={timeZoneLabel}
-          disabled={saving}
-          onChange={(timeZone) => setDraft({ ...current, timeZone })}
-        />
-      </div>
-      <div className="account-preference-row">
-        <div className="account-preference-label">
-          <Moon size={18} aria-hidden="true" />
-          <div>
-            <strong>Quiet hours</strong>
+    <>
+      <LanguageAndRegion saved={saved} />
+      <form onSubmit={(event) => void save(event)}>
+        <div className="account-preference-row">
+          <div className="account-preference-label">
+            <Moon size={18} aria-hidden="true" />
+            <div>
+              <strong>Quiet hours</strong>
+            </div>
           </div>
-        </div>
-        <button
-          type="button"
-          className={`account-toggle${current.quietHoursEnabled ? ' on' : ''}`}
-          role="switch"
-          aria-checked={current.quietHoursEnabled}
-          aria-label="Quiet hours"
-          disabled={saving}
-          onClick={() => setDraft({ ...current, quietHoursEnabled: !current.quietHoursEnabled })}
-        >
-          <span />
-        </button>
-      </div>
-      {current.quietHoursEnabled && (
-        <div className="account-quiet-times">
-          <Field label="From">
-            <Input
-              type="time"
-              value={current.quietStart}
-              required
-              disabled={saving}
-              onChange={(event) => setDraft({ ...current, quietStart: event.target.value })}
-            />
-          </Field>
-          <Field label="Until">
-            <Input
-              type="time"
-              value={current.quietEnd}
-              required
-              disabled={saving}
-              onChange={(event) => setDraft({ ...current, quietEnd: event.target.value })}
-            />
-          </Field>
-        </div>
-      )}
-      {(error || loadError) && <Notice>{error || loadError}</Notice>}
-      {dirty && (
-        <div className="account-settings-actions">
-          <Button
-            type="button"
-            variant="outline"
+          <Switch
+            checked={current.quietHoursEnabled}
+            aria-label="Quiet hours"
             disabled={saving}
-            onClick={() => {
-              setDraft(saved);
-              setError('');
-            }}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" disabled={saving}>
-            {saving ? 'Saving…' : 'Save changes'}
-          </Button>
+            onCheckedChange={(quietHoursEnabled) => setDraft({ ...current, quietHoursEnabled })}
+          />
         </div>
-      )}
-    </form>
+        {current.quietHoursEnabled && (
+          <div className="account-quiet-times">
+            <Field label="From">
+              <Input
+                type="time"
+                value={current.quietStart}
+                required
+                disabled={saving}
+                onChange={(event) => setDraft({ ...current, quietStart: event.target.value })}
+              />
+            </Field>
+            <Field label="Until">
+              <Input
+                type="time"
+                value={current.quietEnd}
+                required
+                disabled={saving}
+                onChange={(event) => setDraft({ ...current, quietEnd: event.target.value })}
+              />
+            </Field>
+          </div>
+        )}
+        {(error || loadError) && <Notice>{error || loadError}</Notice>}
+        {dirty && (
+          <div className="account-settings-actions">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              onClick={() => {
+                setDraft(saved);
+                setError('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        )}
+      </form>
+    </>
   );
 }
 
@@ -226,6 +342,10 @@ export function AccountSettings({
       <DialogContent
         className="account-settings"
         aria-describedby={undefined}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          (event.currentTarget as HTMLElement).focus();
+        }}
         onCloseAutoFocus={(event) => {
           const target = returnFocus();
           if (target?.isConnected) {

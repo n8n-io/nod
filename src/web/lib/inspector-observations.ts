@@ -1,3 +1,4 @@
+import { formatNumber } from './date-format';
 import type { TaskEvent } from '../../shared/contracts';
 import type {
   InspectorObservationsResponse,
@@ -14,7 +15,7 @@ export function formatInspectorJson(value: unknown) {
 export function formatModelCost(value: number | null) {
   if (value === null || !Number.isFinite(value) || value < 0) return 'Price unavailable';
   if (value > 0 && value < 0.000001) return '< USD 0.000001';
-  return `USD ${value.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })}`;
+  return `USD ${formatNumber(value, { minimumFractionDigits: 4, maximumFractionDigits: 6 })}`;
 }
 
 export function formatToolDuration(value: number | null) {

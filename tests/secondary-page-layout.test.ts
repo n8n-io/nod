@@ -28,7 +28,7 @@ Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: tr
 after(() => dom.window.close());
 const { createRoot } = await import('react-dom/client');
 
-test('secondary pages share layout, have one add action, and keep plan changes as unsent drafts', async () => {
+test('secondary pages share layout, have one add action, and open new plans in place', async () => {
   const priorFetch = globalThis.fetch;
   let savedLogin = false;
   const requests: Array<{ path: string; method: string }> = [];
@@ -72,9 +72,6 @@ test('secondary pages share layout, have one add action, and keep plan changes a
   const element = document.createElement('div');
   document.body.append(element);
   const root = createRoot(element);
-  const drafts: unknown[] = [];
-  const onDraft = (event: Event) => drafts.push((event as CustomEvent).detail);
-  window.addEventListener('otto:compose', onDraft);
   try {
     await act(async () =>
       root.render(
@@ -101,16 +98,16 @@ test('secondary pages share layout, have one add action, and keep plan changes a
       assert.equal(dom.window.getComputedStyle(page.querySelector('header')!).marginBottom, '24px');
     }
     const buttons = Array.from(element.querySelectorAll('button'));
-    for (const label of ['Add goal', 'Add schedule', 'Add to Vault'])
+    for (const label of ['New goal', 'New schedule', 'New'])
       assert.equal(buttons.filter((button) => button.textContent === label).length, 1);
     assert.equal(element.querySelectorAll('.secondary-empty').length, 3);
     assert.doesNotMatch(element.textContent ?? '', /draft|awake|in chat|Talk about a goal/);
-    for (const label of ['Add goal', 'Add schedule']) {
+    for (const label of ['New goal', 'New schedule']) {
       const button = buttons.find((item) => item.textContent === label)!;
       await act(async () => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      assert.equal(button.getAttribute('aria-expanded'), 'true');
     }
-    assert.equal(drafts.length, 2);
-    assert.ok(drafts.every((draft) => (draft as { send: boolean }).send === false));
+    assert.equal(element.querySelectorAll('.new-plan-card .ask-otto-field').length, 2);
     assert.ok(requests.every((request) => request.method === 'GET'));
     assert.equal(element.querySelector('[aria-label^="Refresh"]'), null);
     savedLogin = true;
@@ -118,7 +115,6 @@ test('secondary pages share layout, have one add action, and keep plan changes a
     assert.match(element.textContent!, /Newly saved login/);
     assert.equal(requests.filter(({ path }) => path === '/api/vault').length, 2);
   } finally {
-    window.removeEventListener('otto:compose', onDraft);
     await act(async () => root.unmount());
     element.remove();
     style.remove();

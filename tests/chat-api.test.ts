@@ -43,8 +43,9 @@ test(
       for (let i = 0; i < 3; i++) {
         const response = await app.inject({ url: `/api/messages${cursor}`, headers });
         assert.equal(response.statusCode, 200);
-        const rows = response.json();
+        const { messages: rows, hasMore } = response.json();
         assert.equal(rows.length, i === 2 ? 15 : 60);
+        assert.equal(hasMore, i !== 2);
         for (const row of rows) {
           assert.ok(!seen.has(row.id));
           assert.notEqual(row.text, 'private content');
@@ -55,6 +56,24 @@ test(
         cursor = `?before=${encodeURIComponent(rows[0].createdAt)}&beforeId=${rows[0].id}`;
       }
       assert.equal(seen.size, 135);
+      await pool.query(
+        "UPDATE tasks SET source='onboarding',source_id='onboarding:welcome',status='running',created_at=now()-interval '1 day' WHERE id=$1",
+        [task],
+      );
+      for (let index = 0; index < 51; index++)
+        await pool.query(
+          "INSERT INTO tasks(id,owner_id,title,prompt) VALUES($1,$2,'Newer fixture','Fixture')",
+          [randomUUID(), ownerId],
+        );
+      const state = (await app.inject({ url: '/api/state', headers })).json();
+      assert.equal(
+        state.tasks.find((candidate: { id: string }) => candidate.id === task)?.showTyping,
+        true,
+      );
+      const olderPage = (await app.inject({ url: '/api/messages', headers })).json();
+      assert.ok(
+        olderPage.messages.every((row: { task: { showTyping: boolean } }) => row.task.showTyping),
+      );
       const message = [...seen][0];
       assert.equal(
         (

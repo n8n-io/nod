@@ -21,7 +21,7 @@ function deferred() {
 
 type BrowserTab = { tabId: string; active: boolean; url: string };
 
-async function fixture() {
+async function fixture(respectTimeouts = false) {
   const directory = await mkdtemp('/tmp/sk-transport-');
   const pages = stagedLoginBrowser();
   const actions: string[] = [];
@@ -31,6 +31,7 @@ async function fixture() {
   let failedAction: string | undefined;
   let failedMessage = 'Navigation failed: net::ERR_HTTP_RESPONSE_CODE_FAILURE PRIVATE-UPSTREAM';
   const switches: string[] = [];
+  const timeouts: { action: unknown; timeoutMs: number | undefined }[] = [];
   let tabs = (url: string): BrowserTab[] => [{ tabId: 't1', active: true, url }];
   const server = createServer((socket) => {
     sockets.add(socket);
@@ -70,7 +71,10 @@ async function fixture() {
   );
   const computer = createAgentBrowserComputer({
     dataRoot: directory,
-    daemonCommand: (path, command, signal) => existingDaemonCommand(path, command, signal, 250),
+    daemonCommand: (path, command, signal, timeoutMs) => {
+      timeouts.push({ action: command.action, timeoutMs });
+      return existingDaemonCommand(path, command, signal, respectTimeouts ? timeoutMs : 250);
+    },
     run: async (executable, args, options) => {
       if (args.includes('info')) {
         launches.push('info');
@@ -100,6 +104,7 @@ async function fixture() {
     launches,
     page: () => pages.pages.get('fixture')!,
     switches,
+    timeouts,
     tabs(value: typeof tabs) {
       tabs = value;
     },
@@ -581,5 +586,44 @@ test('daemon command deadline stays absolute when a peer drips an unfinished res
     clearInterval(timer);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a stalled tab poll uses only the remaining settle budget and honors caller cancellation', async (t) => {
+  for (const cancelled of [false, true]) {
+    const f = await fixture(true);
+    const held = deferred();
+    const controller = new AbortController();
+    try {
+      await f.computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+      let lists = 0;
+      f.tabs((url) => {
+        if (++lists === 1) return [{ tabId: 't1', active: true, url }];
+        t.mock.timers.tick(4800);
+        return [
+          { tabId: 't1', active: true, url },
+          { tabId: 't2', active: false, url: '' },
+        ];
+      });
+      f.before(async (action) => {
+        if (action === 'tab_list' && lists === 2) {
+          if (cancelled) controller.abort();
+          await held.promise;
+        }
+      });
+      await assert.rejects(
+        f.computer.act('fixture', { action: 'click', selector: '@e1' }, controller.signal),
+        cancelled ? /Browser observation cancelled/ : /previous browser is unavailable/,
+      );
+      const poll = f.timeouts.filter((entry) => entry.action === 'tab_list').at(-1)!;
+      assert.ok(poll.timeoutMs! > 0 && poll.timeoutMs! <= 200);
+      assert.ok(f.actions.includes('close'));
+    } finally {
+      f.tabs((url) => [{ tabId: 't1', active: true, url }]);
+      held.resolve();
+      await f.cleanup();
+      t.mock.timers.reset();
+    }
   }
 });

@@ -233,7 +233,10 @@ test(
         ).rows[0].text,
         'Other channel answer.',
       );
-      assert.deepEqual((await request('GET', '/api/messages')).json(), []);
+      assert.deepEqual((await request('GET', '/api/messages')).json(), {
+        messages: [],
+        hasMore: false,
+      });
       assert.equal((await request('GET', '/api/messages?conversationRevision=0')).statusCode, 409);
       assert.equal(
         (await request('POST', '/api/messages', { text: 'Stale draft', conversationRevision: 0 }))

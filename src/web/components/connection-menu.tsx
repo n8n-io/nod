@@ -114,7 +114,7 @@ export function ConnectionMenu({
         {trigger}
       </Button>
       {open && (
-        <div className="connection-menu-options" role="menu" aria-label={label} id={menuId}>
+        <div className="connection-menu-options menu" role="menu" aria-label={label} id={menuId}>
           {children(close)}
         </div>
       )}

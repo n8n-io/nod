@@ -7,6 +7,10 @@ export interface ChannelSetupSummary {
   mode?: 'polling' | 'webhook';
   webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
   webhookUrl?: string;
+  pairedUser?: string;
+  allowedUserId?: string;
+  pairingCandidate?: { id: string; name: string };
+  pairingExpiresAt?: string;
 }
 export interface ChannelSetupConfiguration {
   environment: Record<string, string>;
@@ -24,7 +28,8 @@ export class ChannelSetupFailure extends Error {
       | 'existing_webhook'
       | 'webhook_failed'
       | 'activation_pending'
-      | 'account_in_use',
+      | 'account_in_use'
+      | 'pairing_unavailable',
   ) {
     super(reason);
   }
