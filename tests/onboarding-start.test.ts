@@ -222,11 +222,15 @@ test(
         manage: async () => ({}),
       });
       const ordinary = await tasks.submitTask('Later synthetic request');
-      for (let attempt = 0; attempt < 800; attempt++) {
-        const result = await db.pool.query('SELECT status FROM tasks WHERE id=$1', [ordinary]);
-        if (result.rows[0]?.status === 'succeeded') break;
+      let ordinaryResult = { status: '', error: null };
+      for (let attempt = 0; attempt < 800 && ordinaryResult.status !== 'succeeded'; attempt++) {
+        ordinaryResult = (
+          await db.pool.query('SELECT status,error FROM tasks WHERE id=$1', [ordinary])
+        ).rows[0];
+        assert.notEqual(ordinaryResult.status, 'failed', ordinaryResult.error ?? undefined);
         await delay(25);
       }
+      assert.equal(ordinaryResult.status, 'succeeded');
       assert.ok(seen.some((context) => context.taskId === ordinary && !context.readOnly));
       await tasks.startOnboarding('Alex', ['Gmail']);
       const discovery = (
