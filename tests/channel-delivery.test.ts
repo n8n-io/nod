@@ -704,6 +704,150 @@ test(
 );
 
 test(
+  'Telegram setup retry serializes incoming Start messages with pairing link rotation',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 10000 },
+  async (t) => {
+    for (const first of ['start', 'retry'] as const)
+      await t.test(`${first} starts first`, async (t) => {
+        const db = await hostedDatabase();
+        const app = Fastify();
+        const key = randomBytes(32);
+        const ownerId = `fixture-${first}`;
+        let releaseRead: () => void = () => {};
+        const resumeRead = new Promise<void>((resolve) => {
+          releaseRead = resolve;
+        });
+        let readPaused: () => void = () => {};
+        const pausedRead = new Promise<void>((resolve) => {
+          readPaused = resolve;
+        });
+        let activated: () => void = () => {};
+        let readsBeforePause: number | undefined;
+        const query = db.pool.query.bind(db.pool);
+        t.mock.method(db.pool, 'query', async (sql: string, values?: unknown[]) => {
+          const result = await query(sql, values);
+          if (sql.startsWith('UPDATE channel_settings SET summary=jsonb_set')) activated();
+          if (
+            readsBeforePause !== undefined &&
+            sql ===
+              "SELECT * FROM channel_settings WHERE owner_id=$1 AND provider='telegram' AND enabled=true" &&
+            readsBeforePause-- === 0
+          ) {
+            readsBeforePause = undefined;
+            readPaused();
+            await resumeRead;
+          }
+          return result;
+        });
+        const settings = await createChannelSettings(db.pool, {
+          ownerId,
+          keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+          verifier: createChatSdkSetupVerifier({
+            fetch: async (url) => {
+              if (String(url).endsWith('/getMe'))
+                return Response.json({
+                  ok: true,
+                  result: {
+                    id: 987,
+                    is_bot: true,
+                    first_name: 'Fixture bot',
+                    username: 'fixture_bot',
+                  },
+                });
+              if (String(url).endsWith('/getWebhookInfo'))
+                return Response.json({ ok: true, result: { url: '' } });
+              assert.ok(String(url).endsWith('/setWebhook'));
+              return Response.json({ ok: true, result: true });
+            },
+          }),
+          apply: async () => {},
+        });
+        settings.registerRoutes(app);
+        try {
+          const saved = await app.inject({
+            method: 'PUT',
+            url: '/api/channel-settings/telegram',
+            payload: {
+              botToken: token,
+              webhookUrl: 'https://webhook.example.com/api/webhooks/telegram',
+            },
+          });
+          assert.equal(saved.statusCode, 200);
+          await query(
+            `UPDATE channel_settings SET summary=jsonb_set(summary,'{webhookStatus}','"registration_pending"') WHERE owner_id=$1 AND provider='telegram'`,
+            [ownerId],
+          );
+          const activationFinished = new Promise<void>((resolve) => {
+            activated = resolve;
+          });
+          const pair = (code: string) =>
+            settings.pair({
+              channelId: 'telegram',
+              accountId: '987',
+              senderId: '123',
+              senderName: '@fixture_owner',
+              messageId: 'fixture-concurrent-start',
+              threadId: 'telegram:123',
+              code,
+              sentAt: new Date(),
+            });
+          const retry = () =>
+            app
+              .inject({
+                method: 'POST',
+                url: '/api/channel-settings/telegram/pairing',
+                payload: {},
+              })
+              .then((response) => response);
+          const code = new URL(saved.json().pairingUrl).searchParams.get('start')!;
+          readsBeforePause = first === 'start' ? 0 : 1;
+          let pairing: Promise<boolean>;
+          let retrying: ReturnType<typeof retry>;
+          if (first === 'start') {
+            pairing = pair(code);
+            await pausedRead;
+            retrying = retry();
+            await activationFinished;
+          } else {
+            retrying = retry();
+            await pausedRead;
+            pairing = pair(code);
+          }
+          const completedWhileBlocked = await Promise.race([
+            (first === 'start' ? retrying : pairing).then(() => true),
+            sleep(250).then(() => false),
+          ]);
+          releaseRead();
+          const [accepted, retried] = await Promise.all([pairing, retrying]);
+          assert.equal(completedWhileBlocked, false);
+          assert.equal(retried.statusCode, 200);
+          assert.equal(accepted, first === 'start');
+          if (first === 'start') {
+            assert.equal(retried.json().pairingUrl, undefined);
+            assert.equal(retried.json().channel.pairingCandidate.id, '123');
+          } else {
+            const nextCode = new URL(retried.json().pairingUrl).searchParams.get('start')!;
+            assert.notEqual(nextCode, code);
+            assert.equal(await pair(nextCode), true);
+          }
+          const confirmed = await app.inject({
+            method: 'POST',
+            url: '/api/channel-settings/telegram/confirm',
+            payload: {},
+          });
+          assert.equal(confirmed.statusCode, 200);
+          assert.equal(confirmed.json().channel.allowedUserId, '123');
+          assert.equal(confirmed.json().channel.webhookStatus, 'registered');
+        } finally {
+          releaseRead();
+          await app.close();
+          await db.close();
+        }
+      });
+  },
+);
+
+test(
   'channel setup encrypts secrets, returns only metadata, preserves previous configuration on verification failure and disables without retaining ciphertext',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
