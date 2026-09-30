@@ -1680,6 +1680,50 @@ test(
               assert.equal(context.activityCheck?.connectionId, connectionId);
               entered = true;
               await checking;
+              if (recordedContexts.length === 1) {
+                const previousIntegration = dependencies.integration;
+                const previousWrite = dependencies.writeArtifact;
+                const cancelled = new AbortController();
+                const page = { data: { items: [{ id: 'stable-item-1' }], next_cursor: 'page-2' } };
+                const files = await readdir(context.workspacePath);
+                let writes = 0;
+                dependencies.integration = async (_turn, _action, args, options) => {
+                  assert.equal(options.checkConnectionId, connectionId);
+                  assert.equal(options.readOnly, true);
+                  if (args.abort) cancelled.abort(new Error('Synthetic read deadline'));
+                  return args.page_size === 1 ? page : largeAppResult;
+                };
+                dependencies.writeArtifact = async () => {
+                  writes++;
+                  throw new Error('Activity checks must not stage app results.');
+                };
+                try {
+                  await assert.rejects(
+                    context.integration('NOTION_RETRIEVE_PAGE', { connectionId }),
+                    /smaller page|narrower query/i,
+                  );
+                  await assert.rejects(
+                    context.integration(
+                      'NOTION_RETRIEVE_PAGE',
+                      { connectionId, abort: true },
+                      cancelled.signal,
+                    ),
+                    /Synthetic read deadline/,
+                  );
+                  assert.deepEqual(
+                    await context.integration('NOTION_RETRIEVE_PAGE', {
+                      connectionId,
+                      page_size: 1,
+                    }),
+                    page,
+                  );
+                  assert.equal(writes, 0);
+                  assert.deepEqual(await readdir(context.workspacePath), files);
+                } finally {
+                  dependencies.integration = previousIntegration;
+                  dependencies.writeArtifact = previousWrite;
+                }
+              }
               await context.integration('NOTION_RETRIEVE_PAGE', { connectionId });
               await context.activityCheck!.record({
                 status: 'verified',

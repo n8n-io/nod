@@ -25,7 +25,7 @@ import type { IntegrationFile } from '../ports/integrations.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
-import { inlineAppResult } from './integration-result.ts';
+import { appResultInlineChars, inlineAppResult } from './integration-result.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -1001,6 +1001,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           signal: operation,
           checkConnectionId: loaded.context.activityCheck?.connectionId,
         });
+        operation.throwIfAborted();
+        if (
+          loaded.context.activityCheck &&
+          JSON.stringify(result ?? null).length > appResultInlineChars
+        )
+          throw new Error(
+            'Activity check result is too large. Use a smaller page or narrower query.',
+          );
         return inline(action, result, operation);
       }),
       manage: fenced((action, args) =>
