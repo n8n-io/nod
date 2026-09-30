@@ -1121,70 +1121,83 @@ test(
 );
 
 test(
-  'Gmail profile reads use the selected owned account without approving unknown actions',
+  'known app reads use the selected owned account without approving unknown actions',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
-    const f = await appsFixture(t);
-    await f.connect('gmail');
-    const selected = await f.connect('gmail');
-    await assert.rejects(f.service.execute('local-development', 'GMAIL_GET_PROFILE', {}), {
-      statusCode: 409,
-    });
-    const result = await f.service.execute('local-development', 'GMAIL_GET_PROFILE', {
-      connectionId: selected.connectionId,
-      user_id: 'me',
-    });
-    assert.deepEqual(f.executed, [
+    for (const { service, action, input, guarded } of [
       {
+        service: 'gmail' as const,
         action: 'GMAIL_GET_PROFILE',
-        args: { user_id: 'me' },
-        accountId: selected.accountId,
+        input: { user_id: 'me' },
+        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_GET_AND_DELETE_MESSAGES'],
       },
-    ]);
-    assert.equal('requiresApproval' in (result as Record<string, unknown>), false);
-    for (const action of [
-      'GMAIL_SEND_EMAIL',
-      'GMAIL_CREATE_EMAIL_DRAFT',
-      'GMAIL_GET_AND_DELETE_MESSAGES',
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS',
+        input: { time_min: '2027-01-10T09:00:00Z', time_max: '2027-01-10T18:00:00Z' },
+        guarded: [
+          'GOOGLECALENDAR_CREATE_EVENT',
+          'GOOGLECALENDAR_UPDATE_EVENT',
+          'GOOGLECALENDAR_DELETE_EVENT',
+          'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE',
+        ],
+      },
     ]) {
-      const args = { connectionId: selected.connectionId };
-      assert.deepEqual(await f.service.execute('local-development', action, args), {
-        requiresApproval: true,
-        action,
-        args,
+      const f = await appsFixture(t);
+      await f.connect(service);
+      const selected = await f.connect(service);
+      await assert.rejects(f.service.execute('local-development', action, input), {
+        statusCode: 409,
       });
+      const result = await f.service.execute('local-development', action, {
+        connectionId: selected.connectionId,
+        ...input,
+      });
+      assert.deepEqual(f.executed, [{ action, args: input, accountId: selected.accountId }]);
+      assert.equal('requiresApproval' in (result as Record<string, unknown>), false);
+      for (const action of guarded) {
+        const args = { connectionId: selected.connectionId };
+        assert.deepEqual(await f.service.execute('local-development', action, args), {
+          requiresApproval: true,
+          action,
+          args,
+        });
+      }
+      const foreign = (
+        await f.pool.query<{ id: string }>(
+          "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES('another-owner',$1,'foreign-account','fixture') RETURNING id",
+          [service],
+        )
+      ).rows[0]!.id;
+      await assert.rejects(
+        f.service.execute('local-development', action, { connectionId: foreign, ...input }),
+        { statusCode: 404 },
+      );
+      await assert.rejects(
+        f.service.execute('another-owner', action, {
+          connectionId: selected.connectionId,
+          ...input,
+        }),
+        { statusCode: 403 },
+      );
+      assert.equal(
+        (
+          await f.app.inject({
+            method: 'POST',
+            url: `/api/apps/${service}/accounts/${selected.connectionId}/disconnect`,
+          })
+        ).statusCode,
+        200,
+      );
+      await assert.rejects(
+        f.service.execute('local-development', action, {
+          connectionId: selected.connectionId,
+          ...input,
+        }),
+        { statusCode: 404 },
+      );
+      assert.equal(f.executed.length, 1);
     }
-    const foreign = (
-      await f.pool.query<{ id: string }>(
-        "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES('another-owner','gmail','foreign-account','fixture') RETURNING id",
-      )
-    ).rows[0]!.id;
-    await assert.rejects(
-      f.service.execute('local-development', 'GMAIL_GET_PROFILE', { connectionId: foreign }),
-      { statusCode: 404 },
-    );
-    await assert.rejects(
-      f.service.execute('another-owner', 'GMAIL_GET_PROFILE', {
-        connectionId: selected.connectionId,
-      }),
-      { statusCode: 403 },
-    );
-    assert.equal(
-      (
-        await f.app.inject({
-          method: 'POST',
-          url: `/api/apps/gmail/accounts/${selected.connectionId}/disconnect`,
-        })
-      ).statusCode,
-      200,
-    );
-    await assert.rejects(
-      f.service.execute('local-development', 'GMAIL_GET_PROFILE', {
-        connectionId: selected.connectionId,
-      }),
-      { statusCode: 404 },
-    );
-    assert.equal(f.executed.length, 1);
   },
 );
 
