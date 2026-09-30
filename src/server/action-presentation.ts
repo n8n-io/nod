@@ -32,18 +32,9 @@ function plain(value: string) {
     .split(/(https?:\/\/[^\s<>"'\\`]+)/gi)
     .map((part, index) => {
       if (index % 2) {
-        let url = part.replace(/[.,;:!?]+$/, '');
-        for (const [open, close] of [
-          ['(', ')'],
-          ['[', ']'],
-          ['{', '}'],
-        ])
-          while (url.endsWith(close!) && url.split(close!).length > url.split(open!).length)
-            url = url.slice(0, -1);
         try {
-          const parsed = new URL(url);
-          if (!parsed.username && !parsed.password)
-            return `<${url}>${escape(part.slice(url.length))}`;
+          const parsed = new URL(part);
+          if (!parsed.username && !parsed.password) return `<${part}>`;
         } catch {}
       }
       return escape(part);

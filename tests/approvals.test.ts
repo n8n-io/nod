@@ -1089,9 +1089,12 @@ test(
             assert.equal(calls.length, before + 1);
           } finally {
             release();
-            await pending;
-            executionGate = undefined;
-            failExecution = false;
+            try {
+              await pending;
+            } finally {
+              executionGate = undefined;
+              failExecution = false;
+            }
           }
         },
       );
@@ -1468,7 +1471,7 @@ test(
       );
 
       await t.test(
-        'confirmation provenance stays with its own user message and rejects turns without one',
+        'confirmation provenance stays with its own user message while owned background proposals remain pending',
         async () => {
           const first = await newTurn('running', 'Provenance fixture');
           const second = await newTurn('running', 'Provenance fixture');

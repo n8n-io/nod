@@ -1308,9 +1308,21 @@ test(
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const f = await appsFixture(t);
-    f.provider.webhooksConfigured = false;
+    f.provider.supportsSubscriptions = [];
+    const calls: Array<{ account: string; cursor: string | null }> = [];
+    f.provider.pollInbox = async (account, cursor) => {
+      calls.push({ account, cursor });
+      return { cursor: 'baseline', hasMore: false, messages: [] };
+    };
     const selected = await f.connect('gmail');
     const other = await f.connect('gmail');
+    await f.service.syncWatches();
+    assert.deepEqual(f.subscriptions, []);
+    assert.ok(
+      (await f.pool.query('SELECT watch_attempted FROM app_connections')).rows.every(
+        (row) => !row.watch_attempted,
+      ),
+    );
     await f.pool.query('UPDATE app_connections SET watch_requested=false WHERE id=$1', [
       other.connectionId,
     ]);
@@ -1325,11 +1337,6 @@ test(
        ('local-development','gmail','other-provider-account','composio'),
        ('local-development','slack','slack-account','fixture')`,
     );
-    const calls: Array<{ account: string; cursor: string | null }> = [];
-    f.provider.pollInbox = async (account, cursor) => {
-      calls.push({ account, cursor });
-      return { cursor: 'baseline', hasMore: false, messages: [] };
-    };
     await Promise.all([f.service.pollInboxes(), f.service.pollInboxes()]);
     await f.service.drain();
     assert.deepEqual(calls, [{ account: selected.accountId, cursor: null }]);
@@ -3235,6 +3242,17 @@ test(
       let cliCalls = 0;
       let replacementCalls = 0;
       let failReplacement = false;
+      let blocked: 'http' | 'listTools' | 'callTool' | 'cli' | undefined;
+      let entered = () => {};
+      const waitForAbort = async (method: typeof blocked, signal?: AbortSignal) => {
+        if (blocked !== method) return;
+        assert.ok(signal);
+        signal.throwIfAborted();
+        entered();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      };
       await pool.query(
         'CREATE TABLE fixture_checks(owner_id text,connection_id uuid,turn_id uuid)',
       );
@@ -3245,11 +3263,13 @@ test(
         grantVault,
         transport: {
           validateEndpoint: async (endpoint) => endpoint,
-          http: async (_endpoint, _headers, method) => {
+          http: async (_endpoint, _headers, method, _body, signal) => {
+            await waitForAbort('http', signal);
             assert.equal(method, 'GET');
             return { status: 200, body: { items: [] } };
           },
-          listTools: async (endpoint) => {
+          listTools: async (endpoint, _headers, signal) => {
+            await waitForAbort('listTools', signal);
             catalogs.push(endpoint);
             return [
               {
@@ -3259,11 +3279,15 @@ test(
               },
             ];
           },
-          callTool: async () => ({ content: [{ type: 'text', text: '[]' }] }),
+          callTool: async (_endpoint, _headers, _name, _input, signal) => {
+            await waitForAbort('callTool', signal);
+            return { content: [{ type: 'text', text: '[]' }] };
+          },
         },
         oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
-        runCli: async () => {
+        runCli: async (_thread, _command, _argv, _envName, _token, _timeout, signal) => {
           cliCalls++;
+          await waitForAbort('cli', signal);
           throw new Error('The CLI must not run during setup.');
         },
         accountReplaced: async (connectionId, client) => {
@@ -3412,6 +3436,59 @@ test(
         discovered.selected({ connectionId: foreignId, pathId: mcpPath }),
         /unavailable/,
       );
+      const mcpArgs = { connectionId, pathId: mcpPath, tool: 'list_records' };
+      const cancellations: Array<
+        [NonNullable<typeof blocked>, (signal: AbortSignal) => Promise<unknown>]
+      > = [
+        ['listTools', (signal) => discovered.search('list_records', connectionId, signal)],
+        ['listTools', (signal) => discovered.isRead('CONNECTED_MCP_CALL', mcpArgs, signal)],
+        [
+          'listTools',
+          (signal) => discovered.execute('CONNECTED_MCP_CALL', mcpArgs, true, ref, signal),
+        ],
+        [
+          'callTool',
+          (signal) => discovered.execute('CONNECTED_MCP_CALL', mcpArgs, true, ref, signal),
+        ],
+        [
+          'http',
+          (signal) =>
+            discovered.execute(
+              'CONNECTED_HTTP',
+              { connectionId, pathId: httpPath, method: 'GET', path: 'records' },
+              true,
+              ref,
+              signal,
+            ),
+        ],
+        [
+          'cli',
+          (signal) =>
+            discovered.execute(
+              'CONNECTED_CLI',
+              { connectionId, pathId: cliPath, argv: ['list'], readOnly: true },
+              true,
+              ref,
+              signal,
+            ),
+        ],
+      ];
+      for (const [method, start] of cancellations) {
+        blocked = method;
+        const started = new Promise<void>((resolve) => {
+          entered = resolve;
+        });
+        const controller = new AbortController();
+        const reason = new DOMException('Synthetic cancellation', 'AbortError');
+        const outcome = assert.rejects(start(controller.signal), (error) => error === reason);
+        await Promise.race([
+          started,
+          outcome.then(() => assert.fail('The provider must start before cancellation.')),
+        ]);
+        controller.abort(reason);
+        await outcome;
+      }
+      blocked = undefined;
       const replacement = await discovered.propose({
         service: 'fixture-app',
         name: 'Fixture app',

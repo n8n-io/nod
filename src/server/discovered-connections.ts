@@ -731,6 +731,7 @@ export async function createDiscoveredConnections(
                   })),
               };
             } catch {
+              signal?.throwIfAborted();
               return { id: path.id, kind: path.kind, endpoint: path.endpoint, unavailable: true };
             }
           }),
@@ -778,6 +779,7 @@ export async function createDiscoveredConnections(
     try {
       tools = await options.transport.listTools(path.endpoint, headers(path, token), signal);
     } catch (cause) {
+      signal?.throwIfAborted();
       throw error(
         `The connected MCP tool list is unavailable: ${String(redact(cause instanceof Error ? cause.message : String(cause), token))}`,
         502,
@@ -798,11 +800,13 @@ export async function createDiscoveredConnections(
     signal?.throwIfAborted();
     const token = await tokenFor(row, path, signal);
     const safeResult = (value: unknown) => redact(value, token);
-    const failed = (message: string, cause: unknown) =>
-      error(
+    const failed = (message: string, cause: unknown) => {
+      signal?.throwIfAborted();
+      return error(
         `${message}: ${String(redact(cause instanceof Error ? cause.message : String(cause), token))}`,
         502,
       );
+    };
     if (action === 'CONNECTED_HTTP') {
       if (path.kind !== 'http') throw error('Choose an HTTP access path.');
       const method = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).parse(args.method);

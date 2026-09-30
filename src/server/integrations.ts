@@ -403,11 +403,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       `UPDATE app_connections SET watch_attempted=true,watch_attempted_at=now(),watch_revision=watch_revision+1 WHERE id=$1 AND owner_id=$2 AND provider_id=$3
        AND watch_requested AND (NOT watch_attempted OR watch_attempted_at IS NULL OR watch_attempted_at < now()-interval '5 minutes')
        AND (watch_retry_at IS NULL OR watch_retry_at<=now()) AND NOT revoked AND account_id IS NOT NULL
-       AND trigger_id IS NULL RETURNING *`,
-      [id, configuredOwner, providerId],
+       AND trigger_id IS NULL AND slug=ANY($4::text[]) RETURNING *`,
+      [id, configuredOwner, providerId, provider.supportsSubscriptions],
     );
     const row = claimed.rows[0];
-    if (!row || !supportsWatch(row.slug, providerForRow(row))) return;
+    if (!row) return;
     try {
       const trigger = await requiredProvider().subscribe(
         configuredOwner,
@@ -438,7 +438,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         .filter(
           (row) =>
             row.provider_id === providerId &&
-            supportsWatch(row.slug) &&
+            provider.supportsSubscriptions.includes(row.slug) &&
             row.watch_requested &&
             !row.revoked &&
             row.account_id &&

@@ -318,6 +318,12 @@ test('approval messages preserve source URLs and render supplied markup as text'
   const links = [
     'https://workspace.slack.com/archives/C_TEST/p123456?thread_ts=123_456&cid=C_TEST#part_one',
     'https://example.test/path_(review)?values=one&next=two#note_1',
+    'https://example.test/path_(review)',
+    ...['!', '.', ',', ';', ':', '?', ')'].flatMap((suffix) => [
+      `https://example.test/source${suffix}`,
+      `https://example.test/source?key=value${suffix}`,
+      `https://example.test/source#section${suffix}`,
+    ]),
   ];
   const unsafe = [
     '<script>alert(1)</script>',
@@ -327,7 +333,7 @@ test('approval messages preserve source URLs and render supplied markup as text'
     'https://user:password@example.test/private',
     '**keep this literal**',
   ];
-  const body = `See (${links[0]}).\n${links[1]}\n${unsafe.join('\n')}`;
+  const body = `See <${links[0]}>.\n${links.slice(1).join('\n')}\n${unsafe.join('\n')}`;
   const args = { recipient_email: 'person@example.test', message_body: body };
   const document = new JSDOM(render(actionConfirmation('GMAIL_REPLY_TO_THREAD', args))).window
     .document;
