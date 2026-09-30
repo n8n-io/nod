@@ -107,6 +107,7 @@ export function createSandbox(workspace: WorkspaceSession) {
     }).content;
     if (text) options.onData(Buffer.from(text));
     if (timedOut) throw new Error(`timeout:${seconds}`);
+    if (exitCode) throw new Error(`${text}\n\nCommand exited with code ${exitCode}`);
     return { exitCode };
   }
   const glob = async (

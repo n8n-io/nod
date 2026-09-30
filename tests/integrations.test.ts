@@ -1195,60 +1195,74 @@ test(
         ],
       },
     ]) {
-      const f = await appsFixture(t);
-      await f.connect(service);
-      const selected = await f.connect(service);
-      await assert.rejects(f.service.execute('local-development', action, input), {
-        statusCode: 409,
-      });
-      const result = await f.service.execute('local-development', action, {
-        connectionId: selected.connectionId,
-        ...input,
-      });
-      assert.deepEqual(f.executed, [{ action, args: input, accountId: selected.accountId }]);
-      assert.equal('requiresApproval' in (result as Record<string, unknown>), false);
-      for (const action of guarded) {
-        const args = { connectionId: selected.connectionId };
-        assert.deepEqual(await f.service.execute('local-development', action, args), {
-          requiresApproval: true,
-          action,
-          args,
+      await t.test(action, async (t) => {
+        const f = await appsFixture(t);
+        const client = new Composio({
+          apiKey: 'fixture-key-never-live',
+          allowTracking: false,
+          disableVersionCheck: true,
+          fileUploadDirs: false,
         });
-      }
-      const foreign = (
-        await f.pool.query<{ id: string }>(
-          "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES('another-owner',$1,'foreign-account','fixture') RETURNING id",
-          [service],
-        )
-      ).rows[0]!.id;
-      await assert.rejects(
-        f.service.execute('local-development', action, { connectionId: foreign, ...input }),
-        { statusCode: 404 },
-      );
-      await assert.rejects(
-        f.service.execute('another-owner', action, {
+        t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => ({
+          slug,
+          name: slug,
+          tags: slug === action ? ['readOnlyHint'] : [],
+        }));
+        f.provider.readOnly = createComposioProvider({ client }).readOnly;
+        await f.connect(service);
+        const selected = await f.connect(service);
+        await assert.rejects(f.service.execute('local-development', action, input), {
+          statusCode: 409,
+        });
+        const result = await f.service.execute('local-development', action, {
           connectionId: selected.connectionId,
           ...input,
-        }),
-        { statusCode: 403 },
-      );
-      assert.equal(
-        (
-          await f.app.inject({
-            method: 'POST',
-            url: `/api/apps/${service}/accounts/${selected.connectionId}/disconnect`,
-          })
-        ).statusCode,
-        200,
-      );
-      await assert.rejects(
-        f.service.execute('local-development', action, {
-          connectionId: selected.connectionId,
-          ...input,
-        }),
-        { statusCode: 404 },
-      );
-      assert.equal(f.executed.length, 1);
+        });
+        assert.deepEqual(f.executed, [{ action, args: input, accountId: selected.accountId }]);
+        assert.equal('requiresApproval' in (result as Record<string, unknown>), false);
+        for (const action of guarded) {
+          const args = { connectionId: selected.connectionId };
+          assert.deepEqual(await f.service.execute('local-development', action, args), {
+            requiresApproval: true,
+            action,
+            args,
+          });
+        }
+        const foreign = (
+          await f.pool.query<{ id: string }>(
+            "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES('another-owner',$1,'foreign-account','fixture') RETURNING id",
+            [service],
+          )
+        ).rows[0]!.id;
+        await assert.rejects(
+          f.service.execute('local-development', action, { connectionId: foreign, ...input }),
+          { statusCode: 404 },
+        );
+        await assert.rejects(
+          f.service.execute('another-owner', action, {
+            connectionId: selected.connectionId,
+            ...input,
+          }),
+          { statusCode: 403 },
+        );
+        assert.equal(
+          (
+            await f.app.inject({
+              method: 'POST',
+              url: `/api/apps/${service}/accounts/${selected.connectionId}/disconnect`,
+            })
+          ).statusCode,
+          200,
+        );
+        await assert.rejects(
+          f.service.execute('local-development', action, {
+            connectionId: selected.connectionId,
+            ...input,
+          }),
+          { statusCode: 404 },
+        );
+        assert.equal(f.executed.length, 1);
+      });
     }
   },
 );

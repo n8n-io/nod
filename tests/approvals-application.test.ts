@@ -4,8 +4,11 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
+import { Composio } from '@composio/core';
 import pg from 'pg';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
+import type { AgentToolResult } from '../src/ports/agent.ts';
+import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
 test(
@@ -33,10 +36,53 @@ test(
     const phases = new Map<string, number>();
     const plans = new Map<
       string,
-      { action: string; args: Record<string, unknown>; invalid?: boolean }
+      { action: string; args: Record<string, unknown>; invalid?: boolean; complete?: boolean }
     >();
+    const results = new Map<string, AgentToolResult>();
     const ids: string[] = [];
+    const calendar = { connectionId: randomUUID(), accountId: 'synthetic-calendar-account' };
+    const calendarResult = {
+      items: [{ id: 'synthetic-calendar-event', summary: 'Northstar review' }],
+    };
+    const calendarExecutions: Array<{
+      action: string;
+      args: Record<string, unknown>;
+      accountId?: string;
+    }> = [];
     const integrationProvider = createIntegrationFixture('http://localhost:4320').provider;
+    const client = new Composio({
+      apiKey: 'fixture-key-never-live',
+      allowTracking: false,
+      disableVersionCheck: true,
+      fileUploadDirs: false,
+    });
+    const catalog = t.mock.method(
+      client.tools,
+      'getRawComposioToolBySlug',
+      async (slug: string) => {
+        assert.equal(slug, 'GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS');
+        return { slug, name: slug, tags: ['readOnlyHint'] };
+      },
+    );
+    const composio = createComposioProvider({ client });
+    const readOnly = integrationProvider.readOnly;
+    integrationProvider.readOnly = (action) =>
+      action === 'GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS'
+        ? composio.readOnly(action)
+        : readOnly(action);
+    const createSession = integrationProvider.createSession;
+    integrationProvider.createSession = async (...args) => {
+      const session = await createSession(...args);
+      return {
+        ...session,
+        async execute(action, args, accountId) {
+          if (action !== 'GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS')
+            return session.execute(action, args, accountId);
+          calendarExecutions.push({ action, args, accountId });
+          return calendarResult;
+        },
+      };
+    };
     const application = await createApplication(
       {
         agent: {
@@ -57,12 +103,19 @@ test(
                       .find(
                         (tool) =>
                           tool.name ===
-                          (plan.action.startsWith('GMAIL_') ? 'apps' : 'manage_personal_context'),
+                          (plan.action === plan.action.toUpperCase()
+                            ? 'apps'
+                            : 'manage_personal_context'),
                       )!
                       .execute({ action: plan.action, args: plan.args });
-                  if (plan.invalid) await assert.rejects(execute, /The action failed/);
+                  if (plan.invalid) await assert.rejects(execute);
                   else {
-                    await execute();
+                    results.set(options.turnId, await execute());
+                    if (plan.complete)
+                      options.onEvent({
+                        type: 'final',
+                        text: 'Synthetic personal request handled.',
+                      });
                     return;
                   }
                 }
@@ -110,7 +163,7 @@ test(
       directText?: string,
     ) {
       const text = directText ?? `Synthetic proposal ${randomUUID()}`;
-      plans.set(text, { action, args, invalid });
+      plans.set(text, { action, args, invalid, complete: Boolean(directText) });
       const response = await request('POST', '/api/messages', { text });
       assert.equal(response.statusCode, 200);
       const id = response.json().turnId as string;
@@ -138,6 +191,36 @@ test(
       return id;
     }
     try {
+      await t.test(
+        'calendar reads finish without an approval or confirmation message',
+        async () => {
+          await pool.query(
+            `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,account_name,account_active,account_checked_at)
+           VALUES($1,$2,$3,'googlecalendar',$4,'Synthetic calendar',true,now())`,
+            [calendar.connectionId, ownerId, integrationProvider.id, calendar.accountId],
+          );
+          const action = 'GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS';
+          const args = { time_min: '2026-09-30T00:00:00Z', time_max: '2026-10-02T00:00:00Z' };
+          const turnId = await propose(
+            action,
+            { ...args, connectionId: calendar.connectionId },
+            false,
+            'Anything on my calendar for me to address?',
+          );
+          assert.equal(catalog.mock.callCount(), 1);
+          assert.deepEqual(calendarExecutions, [{ action, args, accountId: calendar.accountId }]);
+          assert.deepEqual(results.get(turnId)?.content, [
+            { type: 'text', text: JSON.stringify(calendarResult) },
+          ]);
+          assert.deepEqual(await approvalsFor(turnId), []);
+          const messages = (
+            await pool.query("SELECT text FROM messages WHERE turn_id=$1 AND role='assistant'", [
+              turnId,
+            ])
+          ).rows;
+          assert.deepEqual(messages, [{ text: 'Synthetic personal request handled.' }]);
+        },
+      );
       await t.test(
         'deleted targets and obsolete invalid payloads stay pending without an uncertain execution',
         async () => {

@@ -2462,14 +2462,13 @@ async function seedCodeTurns(pool: pg.Pool) {
   const start = async (name: string, resumeOf?: string) => {
     const turn = { threadId, turnId: randomUUID() };
     await pool.query(
-      'INSERT INTO turns(id,owner_id,thread_id,source,source_id,started_at) VALUES($1,$2,$3,$4,$5,$6)',
+      'INSERT INTO turns(id,owner_id,thread_id,source,source_id,started_at) VALUES($1,$2,$3,$4,$5,clock_timestamp())',
       [
         turn.turnId,
         owner,
         turn.threadId,
         resumeOf ? 'resume' : 'user',
         resumeOf ? `credentials:${resumeOf}` : null,
-        new Date(),
       ],
     );
     tasks.set(name, turn);
