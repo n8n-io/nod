@@ -363,6 +363,16 @@ input[type='range']:disabled {
   color: var(--success);
   background: var(--success-soft);
 }
+.notice-dismissible {
+  position: relative;
+  padding-right: 46px;
+}
+.notice-dismiss {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+}
 .notice a {
   text-decoration: underline;
   text-underline-offset: 3px;
