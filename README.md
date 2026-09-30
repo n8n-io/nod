@@ -23,6 +23,16 @@ Configuration lives in the ignored `.env` (all local settings are listed in `.en
 
 Notion and Linear connect through their hosted MCP servers without extra keys. Telegram and WhatsApp are configured from the **Channels** page.
 
+Model defaults, reviewed on 2026-09-30:
+
+| Role                   | Model                                                                               | Selection                                                           |
+| ---------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Main agent (OpenAI)    | [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)            | Capability and speed for coding, browser and general assistant work |
+| Main agent (Anthropic) | [Claude Sonnet 5.5](https://platform.claude.com/docs/en/models/sonnet-5-5/overview) | Capability and speed when `LLM_PROVIDER=anthropic`                  |
+| Event triage (OpenAI)  | [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)              | Short relevance decisions with reasoning disabled                   |
+
+Leave `LLM_MODEL` and `TRIAGE_MODEL` empty to follow these defaults. Explicit values override them. `TYPESAFE_API_KEY` selects Jev for triage instead. Main agents retain high reasoning effort. Restart after changing models; existing conversations use the selected model on their next turn. Model upgrades require a Pi SDK version whose catalog includes the selected model.
+
 Ports: 4310 local app, 4330 hosted development (`node scripts/start-hosted.mjs`, see [Cloudflare](deployment/cloudflare/README.md)), 4320 E2E harness, 4346 hosted UI fixture.
 
 Ctrl-C stops the server; `docker compose stop` stops the containers. Data stays in `.local/` and Docker volumes.
