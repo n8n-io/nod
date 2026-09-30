@@ -159,6 +159,20 @@ export function Apps() {
   const managed = groups.find((group) => group.service.slug === manageService);
   const connected = groups.filter((group) => group.accounts.length);
   const available = groups.filter((group) => !group.accounts.length);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const outcome = url.searchParams.get('connection');
+    if (!outcome) return;
+    if (outcome !== 'connected' && outcome !== 'continued')
+      setError(
+        outcome === 'cancelled'
+          ? 'Connection cancelled. Try again.'
+          : 'The app could not connect. Try again.',
+      );
+    url.searchParams.delete('connection');
+    url.searchParams.delete('service');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, []);
   useEffect(() => () => actionRequest.current?.abort(), []);
   useEffect(() => {
     if (!discoveryId) return;
@@ -381,7 +395,9 @@ export function Apps() {
           Connect website
         </Button>
       </header>
-      {(error || loadError) && <Notice>{error || loadError}</Notice>}
+      {(error || loadError) && (
+        <Notice onDismiss={error ? () => setError('') : undefined}>{error || loadError}</Notice>
+      )}
       {!connections ? (
         loading ? (
           <Loading label="Checking apps…" />
