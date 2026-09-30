@@ -235,6 +235,7 @@ test(
             connectionId: selected.id,
             recipient_email: 'fixture@example.test',
             subject: 'Synthetic review',
+            body: 'A synthetic reply for the selected account.',
           });
           const [approval] = await approvalsFor(turnId);
           const question = (

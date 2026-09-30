@@ -31,7 +31,11 @@ export interface ChatConfirmationInput {
   replyToMessageId?: string;
   clientMessageId?: string;
   sourceId?: string;
+  hasAttachments?: boolean;
 }
+
+export type ChatConfirmationResult =
+  SubmitUserMessageResult | { supersededApprovalId: string } | undefined;
 
 type TurnRow = {
   id: string;
@@ -172,11 +176,23 @@ export async function createApprovals(
           'This action needs a direct request from the user; this turn is read-only.',
         );
       const privateDraft = isPrivateDraftAction(action);
-      const backgroundDraft = privateDraft && ['event', 'schedule'].includes(origin.source);
+      const background = ['event', 'schedule'].includes(origin.source);
+      const revision =
+        origin.source === 'user' && origin.message_id
+          ? Boolean(
+              (
+                await client.query(
+                  "SELECT 1 FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND confirmation_reply_id=$3 AND status='expired' LIMIT 1",
+                  [ownerId, turn.threadId, origin.message_id],
+                )
+              ).rowCount,
+            )
+          : false;
+      const backgroundDraft = privateDraft && background;
       let authorInstruction: string;
       let authorMessageId: string | null;
-      let scheduled = false;
-      if (backgroundDraft) {
+      let scheduledAuthority = false;
+      if (backgroundDraft || origin.source === 'event') {
         authorInstruction = '';
         authorMessageId = null;
       } else if (origin.source === 'schedule') {
@@ -190,19 +206,17 @@ export async function createApprovals(
               )
             ).rows[0]
           : undefined;
-        if (
-          !grant?.authority_instruction ||
-          !grant.action_prompt ||
-          !explicitlyRequestsScheduledAction(
+        authorInstruction = grant?.authority_instruction ?? '';
+        authorMessageId = grant?.authority_source_message_id ?? null;
+        scheduledAuthority = Boolean(
+          grant?.authority_instruction &&
+          grant.action_prompt &&
+          explicitlyRequestsScheduledAction(
             action,
             grant.authority_instruction,
             grant.action_prompt,
-          )
-        )
-          throw new Error('This scheduled action needs an explicit instruction from the user.');
-        authorInstruction = grant.authority_instruction;
-        authorMessageId = grant.authority_source_message_id ?? null;
-        scheduled = true;
+          ),
+        );
       } else {
         const author =
           origin.source === 'user' && origin.message_id
@@ -217,9 +231,10 @@ export async function createApprovals(
         authorInstruction = author.text;
         authorMessageId = author.id;
       }
-      const explicit = scheduled || explicitlyRequestsAction(action, authorInstruction);
+      const review = (background && !scheduledAuthority) || revision;
+      const explicit = scheduledAuthority || explicitlyRequestsAction(action, authorInstruction);
       const currentSource = authorInstruction === current.prompt;
-      const kind = scheduled ? null : await resumeKind(client, current);
+      const kind = await resumeKind(client, current);
       const connectedScheduleSource =
         requestsConnectedSchedule(action, authorInstruction) && kind === 'connection';
       const resumedSource =
@@ -230,13 +245,46 @@ export async function createApprovals(
             privateDraft ||
             (kind === 'approval' &&
               ['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action))));
-      if (!scheduled && !backgroundDraft && !currentSource && !resumedSource)
+      if (!background && !currentSource && !resumedSource && !(revision && kind !== null))
         throw new Error('This action needs a direct request from the user.');
       if (forbidsTransmission(action, authorInstruction))
         throw new Error('The user asked for a draft or prohibited sending. Keep it unsent.');
+      if (review && /^GMAIL_(?:SEND|REPLY)(?:_|$)/.test(action)) {
+        const body = snapshot.body ?? snapshot.message_body;
+        const recipientFields = [
+          snapshot.to,
+          snapshot.recipients,
+          snapshot.recipient_email,
+          snapshot.to_email,
+        ].filter((value) => value !== undefined);
+        const recipients = recipientFields.flat();
+        if (
+          !['GMAIL_SEND_EMAIL', 'GMAIL_REPLY_TO_THREAD'].includes(action) ||
+          typeof body !== 'string' ||
+          !body.trim() ||
+          (snapshot.body !== undefined &&
+            snapshot.message_body !== undefined &&
+            snapshot.body !== snapshot.message_body) ||
+          !recipients.length ||
+          recipientFields.length !== 1 ||
+          recipients.some(
+            (value) => typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+          ) ||
+          [snapshot.cc, snapshot.bcc]
+            .filter((value) => value !== undefined)
+            .flat()
+            .some(
+              (value) => typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+            ) ||
+          ['draft_id', 'draftId'].some((key) => snapshot[key] !== undefined)
+        )
+          throw new Error(
+            'Use a send or reply action with the complete recipients and message body for review, one recipient field, and explicit email addresses for CC and BCC. A mutable draft reference cannot be approved.',
+          );
+      }
       await preflight?.(action, snapshot);
       const previous = (
-        scheduled || backgroundDraft
+        background
           ? await client.query(
               'SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb ORDER BY id LIMIT 1',
               [chain.map((item) => item.id), ownerId, action, snapshot],
@@ -251,7 +299,7 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
-      const direct = privateDraft || isReversiblePlanAction(action) || explicit;
+      const direct = privateDraft || (!review && (isReversiblePlanAction(action) || explicit));
       const id = randomUUID();
       let targetTitle: string | undefined = verifiedTarget;
       if (!direct && typeof snapshot.id === 'string') {
@@ -310,9 +358,8 @@ export async function createApprovals(
   async function acceptChat(
     client: PoolClient,
     input: ChatConfirmationInput,
-  ): Promise<SubmitUserMessageResult | undefined> {
-    const approved = confirmationAnswer(input.text);
-    if (approved === undefined) return undefined;
+  ): Promise<ChatConfirmationResult> {
+    const approved = input.hasAttachments ? undefined : confirmationAnswer(input.text);
     const target =
       input.replyToMessageId ??
       (
@@ -330,6 +377,16 @@ export async function createApprovals(
       )
     ).rows[0];
     if (!approval) return undefined;
+    if (approved === undefined) {
+      if (approval.status === 'pending') {
+        await client.query("UPDATE approvals SET status='expired' WHERE id=$1 AND owner_id=$2", [
+          approval.id,
+          ownerId,
+        ]);
+        return { supersededApprovalId: approval.id };
+      }
+      return undefined;
+    }
     if (
       approval.status !== 'pending' ||
       !['running', 'waiting'].includes(approval.turn_status) ||

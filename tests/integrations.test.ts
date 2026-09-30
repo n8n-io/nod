@@ -851,6 +851,47 @@ async function appsFixture(
 }
 
 test(
+  'calendar proposals require an observed event in the exact owned account',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const selected = await f.connect('googlecalendar');
+    const another = await f.connect('googlecalendar');
+    const args = { connectionId: selected.connectionId, event_id: 'event-1' };
+    await assert.rejects(
+      f.service.describeTarget('local-development', 'GOOGLECALENDAR_UPDATE_EVENT', args),
+      { statusCode: 409 },
+    );
+    f.session.execute = async () => ({
+      data: { id: 'event-1', summary: 'Synthetic planning meeting' },
+    });
+    await f.service.execute('local-development', 'GOOGLECALENDAR_EVENTS_GET', args);
+    assert.equal(
+      await f.service.describeTarget('local-development', 'GOOGLECALENDAR_UPDATE_EVENT', args),
+      'Synthetic planning meeting',
+    );
+    for (const changed of [
+      { ...args, connectionId: another.connectionId },
+      { ...args, event_id: 'event-2' },
+    ])
+      await assert.rejects(
+        f.service.describeTarget('local-development', 'GOOGLECALENDAR_UPDATE_EVENT', changed),
+        { statusCode: 409 },
+      );
+    await assert.rejects(
+      f.service.describeTarget('foreign-owner', 'GOOGLECALENDAR_UPDATE_EVENT', args),
+      { statusCode: 403 },
+    );
+    await f.pool.query("UPDATE app_connections SET account_id='replacement-account' WHERE id=$1", [
+      selected.connectionId,
+    ]);
+    await assert.rejects(
+      f.service.describeTarget('local-development', 'GOOGLECALENDAR_UPDATE_EVENT', args),
+    );
+  },
+);
+
+test(
   'background app inventory stays local, owned and current without authenticating saved logins',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {

@@ -240,16 +240,23 @@ test(
             body: 'Synthetic fixture',
           });
           assert.equal(executed.length, 1);
-          await assert.rejects(
-            approvals.request(await turnRef(run.turnId), 'SLACK_SEND_MESSAGE', {
-              text: 'No authority',
-            }),
+          assert.equal(
+            (
+              await approvals.request(await turnRef(run.turnId), 'SLACK_SEND_MESSAGE', {
+                text: 'No authority',
+              })
+            ).requiresConfirmation,
+            true,
           );
-          await assert.rejects(
-            approvals.request(await turnRef(run.turnId), 'GMAIL_DELETE_MESSAGE', {
-              message_id: 'fixture',
-            }),
+          assert.equal(
+            (
+              await approvals.request(await turnRef(run.turnId), 'GMAIL_DELETE_MESSAGE', {
+                message_id: 'fixture',
+              })
+            ).requiresConfirmation,
+            true,
           );
+          assert.equal(executed.length, 1);
           const edited = await create({ cron: '5 9 * * *', prompt: 'Send an email to Alex.' });
           const source = randomUUID();
           await db.pool.query(

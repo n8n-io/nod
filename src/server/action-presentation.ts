@@ -34,6 +34,26 @@ function text(value: unknown) {
   return typeof value === 'string' && value.trim() ? plain(value.trim()) : undefined;
 }
 
+function fieldLabel(key: string) {
+  const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+  return plain(words.charAt(0).toUpperCase() + words.slice(1));
+}
+
+function calendarValue(value: unknown): string {
+  if (value === null) return 'None';
+  if (Array.isArray(value))
+    return value.length
+      ? value.map((item, index) => `${index + 1}. ${calendarValue(item)}`).join('\n')
+      : 'Empty list';
+  if (typeof value === 'object' && value) {
+    const entries = Object.entries(value);
+    return entries.length
+      ? entries.map(([key, item]) => `${fieldLabel(key)}: ${calendarValue(item)}`).join('\n')
+      : 'No fields';
+  }
+  return typeof value === 'string' ? plain(value) || 'Empty text' : String(value);
+}
+
 function recipients(value: unknown) {
   const values = Array.isArray(value) ? value : [value];
   if (
@@ -96,6 +116,14 @@ export function actionConfirmation(
     details.push(`${label}: ${value}`);
   };
   add('For', text(targetTitle));
+  if (action.startsWith('GOOGLECALENDAR_')) {
+    for (const [key, value] of Object.entries(args)) {
+      if (key === 'connectionId') continue;
+      const label = fieldLabel(key);
+      seen.add(label);
+      details.push(`${label}: ${calendarValue(value)}`);
+    }
+  }
   if (action === 'CONNECTED_HTTP') {
     add('Method', connectedText(args.method));
     add('Path', connectedText(args.path));
@@ -170,6 +198,7 @@ export function actionConfirmation(
             : `Custom timing (${plain(args.cron)})`,
     );
   }
-  for (const key of ['body', 'text', 'content', 'prompt']) add('Message', text(args[key]));
-  return `${label}${using}?${details.length ? `\n\n${details.join('\n\n')}` : ''}\n\nReply yes to confirm or no to leave it unchanged.`;
+  for (const key of ['body', 'message_body', 'text', 'content', 'prompt'])
+    add('Message', text(args[key]));
+  return `${label}${using}?${details.length ? `\n\n${details.join('\n\n')}` : ''}\n\nReply yes to confirm, no to leave it unchanged, or tell me what to change.`;
 }

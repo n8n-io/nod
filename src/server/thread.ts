@@ -23,7 +23,7 @@ import { defaultPreferences } from './preferences.ts';
 import { formattingLocale, timeZoneRegion } from '../shared/date-locale.ts';
 import type { IntegrationFile } from '../ports/integrations.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
-import type { ChatConfirmationInput } from './approvals.ts';
+import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
 
 const queue = 'thread-drain';
@@ -67,7 +67,7 @@ export interface SubmitUserMessageResult {
 type ConfirmAction = (
   client: PoolClient,
   input: ChatConfirmationInput,
-) => Promise<SubmitUserMessageResult | undefined>;
+) => Promise<ChatConfirmationResult>;
 
 export interface ThreadDependencies {
   consumers?: WorkConsumers;
@@ -340,7 +340,8 @@ export async function submitUserMessage(
       if (prior) return { threadId: thread.id, turnId: prior.id, messageId: prior.message_id };
     }
     await assertReplyTarget(client, thread.id, options.replyToMessageId);
-    if (confirmAction && !attachments.length) {
+    let supersededApprovalId: string | undefined;
+    if (confirmAction) {
       const confirmed = await confirmAction(client, {
         text,
         channel,
@@ -348,8 +349,11 @@ export async function submitUserMessage(
         replyToMessageId: options.replyToMessageId,
         clientMessageId: options.clientMessageId,
         sourceId: options.sourceId,
+        hasAttachments: attachments.length > 0,
       });
-      if (confirmed) return confirmed;
+      if (confirmed && 'supersededApprovalId' in confirmed)
+        supersededApprovalId = confirmed.supersededApprovalId;
+      else if (confirmed) return confirmed;
     }
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
@@ -378,6 +382,11 @@ export async function submitUserMessage(
         options.replyToMessageId ?? null,
       ],
     );
+    if (supersededApprovalId)
+      await client.query(
+        "UPDATE approvals SET confirmation_reply_id=$1 WHERE id=$2 AND owner_id=$3 AND thread_id=$4 AND status='expired'",
+        [messageId, supersededApprovalId, ownerId, thread.id],
+      );
     await sendDrain(client, thread.id);
     return { threadId: thread.id, turnId, messageId };
   };

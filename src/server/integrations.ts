@@ -955,7 +955,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   }
 
   async function describeTarget(ownerId: string, action: string, args: Record<string, unknown>) {
-    if (!/_(?:DELETE|TRASH|REMOVE|DESTROY|PURGE)(?:_|$)/.test(action)) return undefined;
+    const deletion = /_(?:DELETE|TRASH|REMOVE|DESTROY|PURGE)(?:_|$)/.test(action);
+    const calendarEvent =
+      action.startsWith('GOOGLECALENDAR_') &&
+      (typeof args.event_id === 'string' || typeof args.eventId === 'string');
+    if (!deletion && !calendarEvent) return undefined;
     const row = await approvedConnection(ownerId, action, args);
     const id =
       args.message_id ??
@@ -974,7 +978,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       typeof id === 'string' ? targets.get(targetKey(row.account_id!, row.slug, id)) : undefined;
     if (!target || target.expires <= Date.now())
       throw new IntegrationError(
-        'Read the exact item in this account first so the confirmation can name what will be deleted.',
+        'Read the exact item in this account first so the confirmation can name what will change.',
         409,
       );
     return target.label;
