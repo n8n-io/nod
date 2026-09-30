@@ -75,7 +75,7 @@ export type ChannelSettings = { ready: boolean; channels: ChannelSetup[] };
 
 export function channelLabel(setup: ChannelSetup | undefined, configured: boolean) {
   if (!setup?.enabled) return configured ? 'Configuration present' : 'Not connected';
-  if (setup.webhookStatus === 'registration_pending') return 'Setup needs a retry';
+  if (setup.webhookStatus === 'registration_pending') return 'Connection needs a retry';
   if (setup.pairingExpiresAt) {
     if (Date.parse(setup.pairingExpiresAt) <= Date.now()) return 'Start link expired';
     return setup.pairingCandidate

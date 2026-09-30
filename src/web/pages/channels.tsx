@@ -239,10 +239,12 @@ export function ChannelAccount({
     name &&
     handle.replace(/^@/, '').toLowerCase() !== name.replace(/^@/, '').toLowerCase();
   const needsDelivery = Boolean(
-    setup?.enabled && setup.mode === 'webhook' && setup.webhookStatus !== 'registered',
+    setup?.enabled &&
+    (setup.webhookStatus === 'registration_pending' ||
+      (setup.mode === 'webhook' && setup.webhookStatus !== 'registered')),
   );
   const needsPairing = Boolean(
-    setup?.enabled && setup.pairingExpiresAt && setup.webhookStatus !== 'registration_pending',
+    setup?.enabled && provider === 'telegram' && (!setup.allowedUserId || setup.pairingExpiresAt),
   );
   const statusLabel = channelLabel(setup, configured);
   return (
@@ -263,7 +265,12 @@ export function ChannelAccount({
         </div>
       </div>
       <div className="channel-account-actions">
-        {needsDelivery ? (
+        {provider === 'telegram' && (needsDelivery || needsPairing) ? (
+          <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
+            {needsDelivery ? 'Retry connection' : 'Finish setup'}
+            <ArrowRight size={13} />
+          </Button>
+        ) : needsDelivery ? (
           <Dialog>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm" disabled={busy}>
@@ -293,11 +300,6 @@ export function ChannelAccount({
               )}
             </DialogContent>
           </Dialog>
-        ) : needsPairing ? (
-          <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
-            Finish setup
-            <ArrowRight size={13} />
-          </Button>
         ) : botUrl ? (
           <Button asChild size="sm">
             <a href={botUrl} target="_blank" rel="noopener noreferrer">
@@ -360,10 +362,12 @@ function TelegramSetup({
 }) {
   const [copied, setCopied] = useState(false);
   const saved = Boolean(setup?.enabled);
-  const paired = Boolean(saved && setup?.allowedUserId && !setup.pairingExpiresAt);
+  const needsDelivery = saved && setup?.webhookStatus === 'registration_pending';
+  const ready = saved && !needsDelivery;
+  const paired = Boolean(ready && setup?.allowedUserId && !setup.pairingExpiresAt);
   const expiry = saved && !paired ? setup?.pairingExpiresAt : undefined;
   const expired = Boolean(expiry && Date.parse(expiry) <= Date.now());
-  const candidate = !paired && !expired && !manual ? setup?.pairingCandidate : undefined;
+  const candidate = ready && !paired && !expired && !manual ? setup?.pairingCandidate : undefined;
   const botUrl = telegramBotUrl(setup?.accountHandle);
   const identity = paired
     ? setup?.pairedUser
@@ -378,7 +382,7 @@ function TelegramSetup({
           ? hosted
             ? 'Send your bot a message to start.'
             : 'Send your bot a message to start. Otto must be running to reply.'
-          : 'Two short steps. Otto checks the token before it saves anything.'}
+          : 'Add your bot, then confirm your Telegram account.'}
       </DialogDescription>
       {error && <Notice>{error}</Notice>}
       <ol className="telegram-checklist">
@@ -388,7 +392,7 @@ function TelegramSetup({
           </span>
           <div>
             <strong>
-              {saved ? `${setup?.accountHandle ?? 'Your bot'} is ready` : 'Add your bot'}
+              {saved ? `${setup?.accountHandle ?? 'Your bot'} is verified` : 'Add your bot'}
             </strong>
             {saved ? (
               <p>Otto checked the token with Telegram.</p>
@@ -404,7 +408,7 @@ function TelegramSetup({
                   hosted={hosted}
                 />
                 <Button type="submit" size="sm" disabled={busy}>
-                  {busy ? 'Checking…' : 'Check token'}
+                  {busy ? 'Connecting…' : 'Connect bot'}
                 </Button>
               </form>
             )}
@@ -414,7 +418,7 @@ function TelegramSetup({
           <span className="telegram-checklist-marker" aria-hidden="true">
             {paired ? (
               <Check size={13} />
-            ) : saved && !expired && !manual ? (
+            ) : ready && !expired && !manual ? (
               <span className="channel-pairing-signal" />
             ) : (
               '2'
@@ -424,16 +428,29 @@ function TelegramSetup({
             <strong>
               {paired
                 ? 'Only you can message Otto'
-                : manual
-                  ? 'Enter your Telegram user ID'
-                  : candidate
-                    ? 'Is this you?'
-                    : 'Press Start in Telegram'}
+                : needsDelivery
+                  ? 'Finish connecting your bot'
+                  : manual
+                    ? 'Enter your Telegram user ID'
+                    : candidate
+                      ? 'Is this you?'
+                      : 'Open Telegram and press Start'}
             </strong>
             {paired ? (
               <p>Only this Telegram account can message Otto: {identity}.</p>
             ) : !saved ? (
               <p>Then Otto finds your Telegram account, so that only you can message it.</p>
+            ) : needsDelivery ? (
+              <>
+                {!error && (
+                  <p>Otto could not start receiving messages. Retry the connection to continue.</p>
+                )}
+                <div className="telegram-checklist-actions">
+                  <Button size="sm" data-telegram-primary disabled={busy} onClick={onNewLink}>
+                    {busy ? 'Connecting…' : 'Retry connection'}
+                  </Button>
+                </div>
+              </>
             ) : manual ? (
               <form className="telegram-checklist-form" onSubmit={onSaveId}>
                 <p>
@@ -564,6 +581,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
   const [data, setData] = useState<ChannelResponse | null>(null);
   const [settings, setSettings] = useState<ChannelSettings | null>(null);
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<ChannelProvider | null>(null);
@@ -590,6 +608,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
   const telegramWaiting = Boolean(
     editing === 'telegram' &&
     telegramSetup?.enabled &&
+    telegramSetup.webhookStatus !== 'registration_pending' &&
     telegramSetup.pairingExpiresAt &&
     Date.parse(telegramSetup.pairingExpiresAt) > Date.now(),
   );
@@ -598,6 +617,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
       ? ''
       : [
           telegramSetup?.enabled,
+          telegramSetup?.webhookStatus,
           telegramSetup?.allowedUserId,
           telegramSetup?.pairingCandidate?.id,
           telegramWaiting,
@@ -619,10 +639,11 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
       if (!current.signal.aborted) {
         setData(status);
         setSettings(setup);
-        setError('');
+        setLoadError('');
+        return setup;
       }
     } catch (cause) {
-      if (!current.signal.aborted) setError(errorMessage(cause));
+      if (!current.signal.aborted) setLoadError(errorMessage(cause));
     } finally {
       if (!current.signal.aborted) setLoading(false);
     }
@@ -714,13 +735,22 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
       );
       if (current.signal.aborted) return;
       acceptedSetup(result.channel);
-      if (editing === 'telegram' && result.pairingUrl) {
+      if (editing === 'telegram') {
         setFields({});
-        setPairingUrl(result.pairingUrl);
+        setPairingUrl(result.pairingUrl ?? null);
       } else close();
       void load();
     } catch (cause) {
-      if (!current.signal.aborted) setError(errorMessage(cause));
+      if (!current.signal.aborted) {
+        if (editing === 'telegram') {
+          const latest = await load();
+          if (
+            latest?.channels.some((channel) => channel.provider === 'telegram' && channel.enabled)
+          )
+            setFields({});
+        }
+        if (!current.signal.aborted) setError(errorMessage(cause));
+      }
     } finally {
       if (actionRequest.current === current) actionRequest.current = null;
       if (!current.signal.aborted) setBusy(false);
@@ -739,24 +769,34 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
       );
       if (current.signal.aborted) return;
       acceptedSetup(result.channel);
-      if (result.pairingUrl) setPairingUrl(result.pairingUrl);
+      setPairingUrl(result.pairingUrl ?? null);
       setManualId(false);
       setFields({});
       setEditing('telegram');
     } catch (cause) {
-      if (!current.signal.aborted) setError(errorMessage(cause));
+      if (!current.signal.aborted) {
+        await load();
+        if (!current.signal.aborted) setError(errorMessage(cause));
+      }
     } finally {
       if (actionRequest.current === current) actionRequest.current = null;
       if (!current.signal.aborted) setBusy(false);
     }
   }
   function resumeTelegram() {
+    setError('');
+    setManualId(false);
+    setEditing('telegram');
     const candidate = telegramSetup?.pairingCandidate;
     const expiry = telegramSetup?.pairingExpiresAt;
-    if (candidate && expiry && Date.parse(expiry) > Date.now()) {
-      setError('');
-      setEditing('telegram');
-    } else void telegramAction('pairing');
+    if (
+      telegramSetup?.webhookStatus !== 'registration_pending' &&
+      candidate &&
+      expiry &&
+      Date.parse(expiry) > Date.now()
+    )
+      return;
+    void telegramAction('pairing');
   }
   async function disconnect() {
     const provider = removing;
@@ -845,7 +885,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
           <p>Chat with Otto in the apps you use.</p>
         </div>
       </header>
-      {error && !editing && <Notice>{error}</Notice>}
+      {(error || loadError) && !editing && <Notice>{error || loadError}</Notice>}
       {data?.error && <Notice>{data.error}</Notice>}
       {settings && !settings.ready && (
         <Notice>
@@ -942,7 +982,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
                 manual={manualId}
                 fields={fields}
                 busy={busy}
-                error={error}
+                error={error || loadError}
                 hosted={hosted}
                 onField={(name, value) => setFields((current) => ({ ...current, [name]: value }))}
                 onVerify={(event) => void submit(event)}
