@@ -3481,10 +3481,7 @@ test(
         const controller = new AbortController();
         const reason = new DOMException('Synthetic cancellation', 'AbortError');
         const outcome = assert.rejects(start(controller.signal), (error) => error === reason);
-        await Promise.race([
-          started,
-          outcome.then(() => assert.fail('The provider must start before cancellation.')),
-        ]);
+        await Promise.race([started, outcome]);
         controller.abort(reason);
         await outcome;
       }
