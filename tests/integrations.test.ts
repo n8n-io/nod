@@ -835,6 +835,263 @@ async function appsFixture(t: TestContext) {
 }
 
 test(
+  'known app reads use the selected owned account without approving unknown actions',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const { service, action, input, guarded } of [
+      {
+        service: 'gmail' as const,
+        action: 'GMAIL_GET_PROFILE',
+        input: { user_id: 'me' },
+        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_GET_AND_DELETE_MESSAGES'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS',
+        input: { time_min: '2027-01-10T09:00:00Z', time_max: '2027-01-10T18:00:00Z' },
+        guarded: [
+          'GOOGLECALENDAR_CREATE_EVENT',
+          'GOOGLECALENDAR_UPDATE_EVENT',
+          'GOOGLECALENDAR_DELETE_EVENT',
+          'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE',
+        ],
+      },
+      {
+        service: 'gmail' as const,
+        action: 'GMAIL_GET_CONTACTS',
+        input: {},
+        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
+      },
+      {
+        service: 'gmail' as const,
+        action: 'GMAIL_GET_PEOPLE',
+        input: {},
+        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
+      },
+      {
+        service: 'gmail' as const,
+        action: 'GMAIL_SEARCH_PEOPLE',
+        input: {},
+        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
+      },
+      {
+        service: 'gmail' as const,
+        action: 'GMAIL_GET_LABEL',
+        input: {},
+        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
+      },
+      {
+        service: 'gmail' as const,
+        action: 'GMAIL_LIST_HISTORY',
+        input: {},
+        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
+      },
+      {
+        service: 'gmail' as const,
+        action: 'GMAIL_WHO_AM_I',
+        input: {},
+        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_EVENTS_INSTANCES',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_FIND_EVENT',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_FREE_BUSY_QUERY',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_GET_CALENDAR',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_CALENDAR_LIST_GET',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_GET_CURRENT_USER',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_GET_CURRENT_DATE_TIME',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_SETTINGS_GET',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googlecalendar' as const,
+        action: 'GOOGLECALENDAR_SETTINGS_LIST',
+        input: {},
+        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
+      },
+      {
+        service: 'googledrive' as const,
+        action: 'GOOGLEDRIVE_GET_ABOUT',
+        input: {},
+        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
+      },
+      {
+        service: 'googledrive' as const,
+        action: 'GOOGLEDRIVE_GET_DOCUMENT',
+        input: {},
+        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
+      },
+      {
+        service: 'googledrive' as const,
+        action: 'GOOGLEDRIVE_GET_SPREADSHEET',
+        input: {},
+        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
+      },
+      {
+        service: 'googledrive' as const,
+        action: 'GOOGLEDRIVE_GET_SPREADSHEET_VALUES',
+        input: {},
+        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
+      },
+      {
+        service: 'googledrive' as const,
+        action: 'GOOGLEDRIVE_BATCH_GET_SPREADSHEET_VALUES',
+        input: {},
+        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
+      },
+      {
+        service: 'googledrive' as const,
+        action: 'GOOGLEDRIVE_READ_SPREADSHEET_VALUES',
+        input: {},
+        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
+      },
+      {
+        service: 'googledrive' as const,
+        action: 'GOOGLEDRIVE_GET_CHANGES_START_PAGE_TOKEN',
+        input: {},
+        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
+      },
+      {
+        service: 'googledrive' as const,
+        action: 'GOOGLEDRIVE_LIST_SHARED_DRIVES',
+        input: {},
+        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
+      },
+      {
+        service: 'googlesheets' as const,
+        action: 'GOOGLESHEETS_VALUES_GET',
+        input: {},
+        guarded: ['GOOGLESHEETS_FIND_REPLACE', 'GOOGLESHEETS_EXECUTE_SQL'],
+      },
+      {
+        service: 'googlesheets' as const,
+        action: 'GOOGLESHEETS_LOOKUP_SPREADSHEET_ROW',
+        input: {},
+        guarded: ['GOOGLESHEETS_FIND_REPLACE', 'GOOGLESHEETS_EXECUTE_SQL'],
+      },
+      {
+        service: 'googlesheets' as const,
+        action: 'GOOGLESHEETS_GET_SPREADSHEET_BY_DATA_FILTER',
+        input: {},
+        guarded: ['GOOGLESHEETS_FIND_REPLACE', 'GOOGLESHEETS_EXECUTE_SQL'],
+      },
+      {
+        service: 'googlesheets' as const,
+        action: 'GOOGLESHEETS_SPREADSHEETS_VALUES_BATCH_GET_BY_DATA_FILTER',
+        input: {},
+        guarded: ['GOOGLESHEETS_FIND_REPLACE', 'GOOGLESHEETS_EXECUTE_SQL'],
+      },
+      {
+        service: 'googledocs' as const,
+        action: 'GOOGLEDOCS_GET_DOCUMENT_END_INDEX',
+        input: {},
+        guarded: ['GOOGLEDOCS_INSERT_TEXT', 'GOOGLEDOCS_GET_AND_DELETE_DOCUMENT'],
+      },
+      {
+        service: 'googledocs' as const,
+        action: 'GOOGLEDOCS_LIST_SPREADSHEET_CHARTS',
+        input: {},
+        guarded: ['GOOGLEDOCS_INSERT_TEXT', 'GOOGLEDOCS_GET_AND_DELETE_DOCUMENT'],
+      },
+    ]) {
+      await t.test(action, async (t) => {
+        const f = await appsFixture(t);
+        await f.connect(service);
+        const selected = await f.connect(service);
+        await assert.rejects(f.service.execute('local-development', action, input), {
+          statusCode: 409,
+        });
+        const result = await f.service.execute('local-development', action, {
+          connectionId: selected.connectionId,
+          ...input,
+        });
+        assert.deepEqual(f.executed, [{ action, args: input, accountId: selected.accountId }]);
+        assert.equal('requiresApproval' in (result as Record<string, unknown>), false);
+        for (const action of guarded) {
+          const args = { connectionId: selected.connectionId };
+          assert.deepEqual(await f.service.execute('local-development', action, args), {
+            requiresApproval: true,
+            action,
+            args,
+          });
+        }
+        const foreign = (
+          await f.pool.query<{ id: string }>(
+            "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES('another-owner',$1,'foreign-account','fixture') RETURNING id",
+            [service],
+          )
+        ).rows[0]!.id;
+        await assert.rejects(
+          f.service.execute('local-development', action, { connectionId: foreign, ...input }),
+          { statusCode: 404 },
+        );
+        await assert.rejects(
+          f.service.execute('another-owner', action, {
+            connectionId: selected.connectionId,
+            ...input,
+          }),
+          { statusCode: 403 },
+        );
+        assert.equal(
+          (
+            await f.app.inject({
+              method: 'POST',
+              url: `/api/apps/${service}/accounts/${selected.connectionId}/disconnect`,
+            })
+          ).statusCode,
+          200,
+        );
+        await assert.rejects(
+          f.service.execute('local-development', action, {
+            connectionId: selected.connectionId,
+            ...input,
+          }),
+          { statusCode: 404 },
+        );
+        assert.equal(f.executed.length, 1);
+      });
+    }
+  },
+);
+
+test(
   'Slack and Notion preserve owned accounts, reviewed reads, exact write approvals and signed event boundaries',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
