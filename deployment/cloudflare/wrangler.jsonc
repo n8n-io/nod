@@ -191,7 +191,7 @@
           "image": "./Dockerfile",
           "image_build_context": "../..",
           "instance_type": "basic",
-          "max_instances": 8,
+          "max_instances": 100,
           "constraints": {
             "jurisdiction": "eu",
           },
@@ -208,7 +208,7 @@
           "image": "./Dockerfile.browser",
           "image_build_context": "../..",
           "instance_type": "standard-1",
-          "max_instances": 8,
+          "max_instances": 100,
           "constraints": {
             "jurisdiction": "eu",
           },
@@ -225,7 +225,7 @@
           "image": "./Dockerfile.workspace",
           "image_build_context": "../..",
           "instance_type": "basic",
-          "max_instances": 8,
+          "max_instances": 100,
           "constraints": {
             "jurisdiction": "eu",
           },

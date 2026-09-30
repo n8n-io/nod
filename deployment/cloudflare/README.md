@@ -2,14 +2,14 @@
 
 The public Worker serves `dist/web` and sends `/api/*` to one private Node gateway. The gateway authenticates Google sessions, provisions a tenant SQL role and schemas per user, and sends signed requests to that user's tenant container. Each owner also gets separate browser and workspace containers that start on first use and checkpoint to private R2 when idle. Provider keys stay in the Node runtime.
 
-| Class                        | Image tag                            | Instance type | Max |
-| ---------------------------- | ------------------------------------ | ------------- | --- |
-| `GatewayContainer`           | `otto-<environment>:<SHA>`           | `basic`       | 1   |
-| `TenantContainer`            | same runtime image                   | `basic`       | 8   |
-| `BrowserComputerContainer`   | `otto-<environment>-browser:<SHA>`   | `standard-1`  | 8   |
-| `WorkspaceComputerContainer` | `otto-<environment>-workspace:<SHA>` | `basic`       | 8   |
+| Class                        | Image tag                            | Instance type | Development max | Production max |
+| ---------------------------- | ------------------------------------ | ------------- | --------------- | -------------- |
+| `GatewayContainer`           | `otto-<environment>:<SHA>`           | `basic`       | 1               | 1              |
+| `TenantContainer`            | same runtime image                   | `basic`       | 8               | 100            |
+| `BrowserComputerContainer`   | `otto-<environment>-browser:<SHA>`   | `standard-1`  | 8               | 100            |
+| `WorkspaceComputerContainer` | `otto-<environment>-workspace:<SHA>` | `basic`       | 8               | 100            |
 
-`OTTO_MAX_USERS` (default 8, maximum 400) must match the container limits; raise them together with database connections and budget.
+Production uses `OTTO_MAX_USERS=100` in `GATEWAY_ENV`. The default remains 8 for other deployments, with a maximum of 400. Admission must match the container limits; raise them together with database connections and budget.
 
 **This release has no migration path from the task model. Every existing environment must be reset (see [Database reset](#database-reset)) before deploying it.**
 
