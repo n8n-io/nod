@@ -88,6 +88,8 @@ export interface ThreadDependencies {
   inspectPrompt?: (turnId: string, snapshot: PromptSnapshot) => Promise<void>;
   finishObservationSegment?: (turnId: string) => Promise<void>;
   accountProfile?: () => Promise<RuntimeContext['account']>;
+  connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
+  activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -98,7 +100,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { readOnly: boolean; signal: AbortSignal },
+    options: { readOnly: boolean; signal: AbortSignal; checkConnectionId?: string },
   ) => Promise<unknown>;
   connections?: (
     action: 'list' | 'connect' | 'propose',
@@ -712,7 +714,7 @@ type StoredAttachment = { id?: string; name?: string; mimeType?: string };
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
-  const [source, history, profile, goals, preferences, account] = await Promise.all([
+  const [source, history, profile, goals, preferences, account, connectedApps, activityCheck] = await Promise.all([
     sourceMessageId
       ? pool.query(
           `SELECT s.attachments,r.id,r.role,left(r.text,6000) AS text,r.attachments AS reply_attachments
@@ -735,6 +737,8 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     ),
     pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [ownerId]),
     dependencies.accountProfile?.().catch(() => undefined),
+    turn.background ? dependencies.connectedApps?.() : undefined,
+    turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
   ]);
   const message = source?.rows[0];
   const replyTo = message?.id
@@ -761,6 +765,8 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       locale: preference?.locale || formattingLocale(timeZoneRegion(timeZone)),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,
       ...(account ? { account } : {}),
+      ...(connectedApps ? { connectedApps } : {}),
+      ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 8, timeoutMs: 90_000 } } : {}),
       personalContext: {
         profile: {
           name: String(stored.name ?? ''),
@@ -922,10 +928,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       browserConnection:
         browserConnection && fenced((request) => browserConnection(request, ref, signal)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
-      integration: fenced((action, args) =>
+      integration: fenced((action, args, callSignal?: AbortSignal) =>
         dependencies.integration(ref, action, args, {
           readOnly: turn.read_only || turn.source_id?.startsWith('onboarding:') === true,
-          signal,
+          signal: callSignal ? AbortSignal.any([signal, callSignal]) : signal,
+          checkConnectionId: loaded.context.activityCheck?.connectionId,
         }),
       ),
       manage: fenced((action, args) =>

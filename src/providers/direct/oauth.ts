@@ -54,7 +54,10 @@ export function createDirectOAuth(options: {
   ownerId: string;
   request: typeof fetch;
 }) {
-  const refreshes = new Map<string, Promise<Secrets>>();
+  const refreshes = new Map<
+    string,
+    { promise: Promise<Secrets>; controller: AbortController; waiters: number; settled: boolean }
+  >();
   const ready = (async () => {
     await options.pool.query(`CREATE TABLE IF NOT EXISTS direct_oauth_accounts (
       id uuid PRIMARY KEY, owner_id text NOT NULL, service text NOT NULL,
@@ -78,42 +81,77 @@ export function createDirectOAuth(options: {
     return result.rows[0];
   }
 
-  async function access(account: AccountRow): Promise<Secrets> {
+  async function access(account: AccountRow, signal?: AbortSignal): Promise<Secrets> {
+    signal?.throwIfAborted();
     const grant = await options.grantVault.read(account.id);
+    signal?.throwIfAborted();
     const secrets = JSON.parse(grant.value) as Secrets;
     if (!secrets.accessToken) throw new Error('The connected account has no access token.');
     if (!secrets.expiresAt || secrets.expiresAt > Date.now() + 60_000) return secrets;
-    const current = refreshes.get(account.id);
-    if (current) return current;
-    const pending = (async () => {
-      if (!secrets.refreshToken || !secrets.tokenEndpoint)
-        throw new Error('Connect this account again.');
-      const body = new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: secrets.refreshToken,
-        client_id: secrets.clientId,
-      });
-      if (secrets.resource) body.set('resource', secrets.resource);
-      const refreshed = tokenSchema.parse(
-        await json(await options.request(secrets.tokenEndpoint, { method: 'POST', body })),
-      );
-      const next: Secrets = {
-        ...secrets,
-        accessToken: refreshed.access_token,
-        refreshToken: refreshed.refresh_token ?? secrets.refreshToken,
-        expiresAt:
-          refreshed.expires_in !== undefined ? Date.now() + refreshed.expires_in * 1000 : undefined,
-      };
-      return (await options.grantVault.replace(account.id, grant.version, JSON.stringify(next)))
-        ? next
-        : (JSON.parse((await options.grantVault.read(account.id)).value) as Secrets);
-    })();
-    refreshes.set(account.id, pending);
-    try {
-      return await pending;
-    } finally {
-      refreshes.delete(account.id);
+    let current = refreshes.get(account.id);
+    if (!current || current.controller.signal.aborted) {
+      const controller = new AbortController();
+      const pending = (async () => {
+        if (!secrets.refreshToken || !secrets.tokenEndpoint)
+          throw new Error('Connect this account again.');
+        const body = new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: secrets.refreshToken,
+          client_id: secrets.clientId,
+        });
+        if (secrets.resource) body.set('resource', secrets.resource);
+        const refreshed = tokenSchema.parse(
+          await json(
+            await options.request(secrets.tokenEndpoint, {
+              method: 'POST',
+              body,
+              signal: controller.signal,
+            }),
+          ),
+        );
+        const next: Secrets = {
+          ...secrets,
+          accessToken: refreshed.access_token,
+          refreshToken: refreshed.refresh_token ?? secrets.refreshToken,
+          expiresAt:
+            refreshed.expires_in !== undefined
+              ? Date.now() + refreshed.expires_in * 1000
+              : undefined,
+        };
+        return (await options.grantVault.replace(account.id, grant.version, JSON.stringify(next)))
+          ? next
+          : (JSON.parse((await options.grantVault.read(account.id)).value) as Secrets);
+      })();
+      const created = { promise: pending, controller, waiters: 0, settled: false };
+      refreshes.set(account.id, created);
+      void pending
+        .finally(() => {
+          created.settled = true;
+          if (refreshes.get(account.id) === created) refreshes.delete(account.id);
+        })
+        .catch(() => {});
+      current = created;
     }
+    const refresh = current;
+    refresh.waiters++;
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      const finish = (operation: () => void) => {
+        if (finished) return;
+        finished = true;
+        signal?.removeEventListener('abort', abort);
+        refresh.waiters--;
+        if (!refresh.waiters && !refresh.settled) refresh.controller.abort();
+        operation();
+      };
+      const abort = () => finish(() => reject(signal?.reason));
+      signal?.addEventListener('abort', abort, { once: true });
+      refresh.promise.then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+      if (signal?.aborted) abort();
+    });
   }
 
   async function authorize(ownerId: string, service: Service, callbackUrl: string) {
@@ -311,9 +349,10 @@ export function createDirectOAuth(options: {
     ready,
     authorize,
     parseCallback,
-    async access(ownerId: string, id: string) {
+    async access(ownerId: string, id: string, signal?: AbortSignal) {
+      signal?.throwIfAborted();
       const account = await row(id, ownerId);
-      const secrets = await access(account);
+      const secrets = await access(account, signal);
       return { service: account.service, accessToken: secrets.accessToken! };
     },
     async deleteAccount(id: string) {

@@ -6,15 +6,39 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { publicUrl } from '../agent-browser/network.ts';
 import type { DiscoveredTransport } from '../../ports/discovered.ts';
 
-export async function safeRemoteFetch(input: string | URL | Request, init?: RequestInit) {
+export async function safeRemoteFetch(
+  input: string | URL | Request,
+  init?: RequestInit,
+  dependencies = { validate: publicUrl, request: httpsRequest },
+) {
   const prepared = new Request(input, init);
-  const { url, address } = await publicUrl(prepared.url);
+  const signal = AbortSignal.any([prepared.signal, AbortSignal.timeout(30_000)]);
+  signal.throwIfAborted();
+  const { url, address } = await new Promise<Awaited<ReturnType<typeof publicUrl>>>(
+    (resolve, reject) => {
+      let settled = false;
+      const finish = (operation: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', abort);
+        operation();
+      };
+      const abort = () => finish(() => reject(signal.reason));
+      signal.addEventListener('abort', abort, { once: true });
+      dependencies.validate(prepared.url).then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+      if (signal.aborted) abort();
+    },
+  );
+  signal.throwIfAborted();
   if (url.protocol !== 'https:') throw new Error('The connection must use HTTPS.');
   const body = Buffer.from(await prepared.arrayBuffer());
+  signal.throwIfAborted();
   if (body.byteLength > 1024 * 1024) throw new Error('The request is too large.');
-  const signal = AbortSignal.any([prepared.signal, AbortSignal.timeout(30_000)]);
   return new Promise<Response>((resolve, reject) => {
-    const outbound = httpsRequest(
+    const outbound = dependencies.request(
       url,
       {
         method: prepared.method,
@@ -67,16 +91,31 @@ export async function withRemoteMcp<T>(
   endpoint: string,
   headers: Record<string, string>,
   operation: (client: Client) => Promise<T>,
+  signal?: AbortSignal,
 ) {
+  signal?.throwIfAborted();
   const client = new Client({ name: 'Otto', version: '0.1.0' });
   const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
     requestInit: { headers },
-    fetch: safeRemoteFetch,
+    fetch: (input, init) =>
+      safeRemoteFetch(input, {
+        ...init,
+        ...(signal
+          ? { signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }
+          : {}),
+      }),
   });
+  const abort = () => void client.close().catch(() => {});
+  signal?.addEventListener('abort', abort, { once: true });
   try {
+    signal?.throwIfAborted();
     await client.connect(transport);
-    return await operation(client);
+    signal?.throwIfAborted();
+    const result = await operation(client);
+    signal?.throwIfAborted();
+    return result;
   } finally {
+    signal?.removeEventListener('abort', abort);
     await client.close().catch(() => {});
   }
 }
@@ -89,9 +128,10 @@ export function createDiscoveredTransport(): DiscoveredTransport {
         throw new Error('Use a public HTTPS service address without a query or fragment.');
       return checked.url.href;
     },
-    async http(endpoint, headers, method, body) {
+    async http(endpoint, headers, method, body, signal) {
       const response = await safeRemoteFetch(endpoint, {
         method,
+        signal,
         headers: {
           ...headers,
           'User-Agent': 'Otto/0.1.0',
@@ -112,13 +152,18 @@ export function createDiscoveredTransport(): DiscoveredTransport {
       }
       return { status: response.status, body: parsed };
     },
-    listTools: (endpoint, headers) =>
-      withRemoteMcp(endpoint, headers, async (client) => (await client.listTools()).tools),
-    callTool: (endpoint, headers, name, input) =>
-      withRemoteMcp(endpoint, headers, async (client) => {
-        const result = await client.callTool({ name, arguments: input });
-        if (result.isError) throw new Error('The remote MCP request failed.');
-        return result;
-      }),
+    listTools: (endpoint, headers, signal) =>
+      withRemoteMcp(endpoint, headers, async (client) => (await client.listTools()).tools, signal),
+    callTool: (endpoint, headers, name, input, signal) =>
+      withRemoteMcp(
+        endpoint,
+        headers,
+        async (client) => {
+          const result = await client.callTool({ name, arguments: input });
+          if (result.isError) throw new Error('The remote MCP request failed.');
+          return result;
+        },
+        signal,
+      ),
   };
 }

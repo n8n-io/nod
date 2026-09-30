@@ -467,6 +467,7 @@ export async function createApplication(
     classifier: classify,
     getProfile: personal.getProfile,
     listGoals: personal.listGoals,
+    connectedApps: () => integrations.connectedApps(),
   });
   const grantVault = await createAppGrantVault(pool, {
     ownerId,
@@ -611,6 +612,8 @@ export async function createApplication(
       inspectPrompt: promptInspector.record,
       finishObservationSegment: inspector.finishSegment,
       accountProfile,
+      connectedApps: integrations.connectedApps,
+      activityCheck: triage.activityCheck,
       connections: integrations.manageConnections,
       browserConnection: (request, turn, signal) =>
         browserConnections.request(request, turn, signal),
@@ -661,7 +664,7 @@ export async function createApplication(
         return vault.request(turn, ownerId, input);
       },
       integration: async (turn, action, args, options) => {
-        const result = await integrations.execute(ownerId, action, args, turn, options?.signal);
+        const result = await integrations.execute(ownerId, action, args, turn, options?.signal, options?.checkConnectionId);
         if (
           result &&
           typeof result === 'object' &&

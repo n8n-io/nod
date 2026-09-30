@@ -419,3 +419,196 @@ test('a read-only turn refuses every outside action with a fixed error and still
   assert.deepEqual(result.replies, ['You have two threads to answer.']);
   assert.deepEqual(result.result, { status: 'succeeded' });
 });
+
+test('activity checks scope reads to one account, deny other tools and record exactly once without chat', async () => {
+  const connectionId = randomUUID();
+  const otherConnectionId = randomUUID();
+  const records: unknown[] = [];
+  const reads: string[] = [];
+  let forbiddenCalls = 0;
+  const result = await fixture(
+    async (tools, emit, options) => {
+      assert.deepEqual([...tools.keys()].sort(), ['apps', 'record_activity_check']);
+      for (const [name, args] of [
+        ...refused,
+        ['send_message', { text: 'Unnecessary check update' }],
+        ['web_search', { query: 'Synthetic query' }],
+        ['read', { path: '/fixture/workspace/private.txt' }],
+        ['read', { path: '.otto/skills/connected-apps/../../private.txt' }],
+        ['read', { path: '.otto/skills/unknown/SKILL.md' }],
+        ['find', { pattern: '*' }],
+        ['ls', { path: '.' }],
+      ] as Array<[string, Record<string, unknown>]>)
+        await assert.rejects(
+          options.runTool(name, args, async () => {
+            forbiddenCalls++;
+            return { content: [] };
+          }),
+          /Activity checks can only/,
+        );
+      for (const args of [
+        {},
+        { connectionId: otherConnectionId },
+        { connectionId, nested: { connectionId: otherConnectionId } },
+      ])
+        await assert.rejects(
+          call(tools, 'apps', { action: 'FIXTURE_READ', args }),
+          /selected account/,
+        );
+      await assert.rejects(
+        call(tools, 'apps', { action: 'SEARCH_TOOLS', args: { connectionId: otherConnectionId } }),
+        /selected account/,
+      );
+      await assert.rejects(
+        call(tools, 'apps', { action: 'GMAIL_GET_ATTACHMENT', args: { connectionId } }),
+        /selected account/,
+      );
+      await options.runTool(
+        'read',
+        { path: '/fixture/workspace/.otto/skills/connected-apps/SKILL.md' },
+        async () => ({ content: [{ type: 'text', text: 'Synthetic skill' }] }),
+      );
+      await call(tools, 'apps', { action: 'SEARCH_TOOLS', args: { query: 'Recent activity' } });
+      await assert.rejects(
+        call(tools, 'record_activity_check', {
+          status: 'verified',
+          value: 'none',
+          summary: 'No change',
+        }),
+        /successful app read/,
+      );
+      await call(tools, 'apps', { action: 'FIXTURE_READ', args: { connectionId } });
+      const recorded = await Promise.allSettled([
+        call(tools, 'record_activity_check', {
+          status: 'verified',
+          value: 'item-1',
+          summary: 'One new request',
+          finding: {
+            id: 'item-1',
+            url: 'https://example.test/item-1',
+            summary: 'A reply is needed',
+          },
+        }),
+        call(tools, 'record_activity_check', {
+          status: 'verified',
+          value: 'duplicate',
+          summary: 'Duplicate',
+        }),
+      ]);
+      assert.equal(recorded.filter((item) => item.status === 'fulfilled').length, 1);
+      assert.equal(options.shouldStop(), true);
+      await assert.rejects(
+        call(tools, 'apps', { action: 'FIXTURE_READ', args: { connectionId } }),
+        /stopped/,
+      );
+      emit({ type: 'text_delta', text: 'Routine check finished.' });
+      emit({ type: 'final', text: 'Routine check finished.' });
+    },
+    {
+      readOnly: true,
+      activityCheck: {
+        connectionId,
+        record: async (result) => {
+          records.push(result);
+        },
+      },
+      integration: async (action, args, signal) => {
+        assert.ok(signal);
+        assert.equal(signal.aborted, false);
+        if (action !== 'SEARCH_TOOLS') assert.equal(args.connectionId, connectionId);
+        reads.push(action);
+        return action === 'SEARCH_TOOLS'
+          ? { tools: ['FIXTURE_READ'] }
+          : { successful: true, data: { items: [{ id: 'item-1', text: 'Synthetic request' }] } };
+      },
+    },
+  );
+  assert.equal(forbiddenCalls, 0);
+  assert.deepEqual(reads, ['SEARCH_TOOLS', 'FIXTURE_READ']);
+  assert.equal(records.length, 1);
+  assert.deepEqual(result.replies, []);
+  assert.deepEqual(result.deltas, []);
+  assert.equal(result.result.status, 'succeeded');
+});
+
+test('failed, approval and omitted app results cannot verify an activity check', async () => {
+  for (const response of [
+    { successful: false, data: { items: [] } },
+    { success: false, data: { items: [] } },
+    { isError: true, content: [{ type: 'text', text: 'Unavailable' }] },
+    { error: 'Unavailable' },
+    { data: { status: 'rejected' } },
+    { requiresConfirmation: true, question: 'Allow a write?' },
+    { requiresApproval: true },
+    { truncated: true, resultOmitted: true, message: 'Response omitted' },
+    { truncated: true, message: 'Response omitted' },
+    { workspaceFile: 'download.txt', id: 'artifact' },
+    {},
+  ]) {
+    const connectionId = randomUUID();
+    const records: unknown[] = [];
+    const result = await fixture(
+      async (tools) => {
+        await call(tools, 'apps', { action: 'FIXTURE_READ', args: { connectionId } });
+        await assert.rejects(
+          call(tools, 'record_activity_check', {
+            status: 'verified',
+            value: 'none',
+            summary: 'No change',
+          }),
+          /successful app read/,
+        );
+        await call(tools, 'record_activity_check', {
+          status: 'unavailable',
+          summary: 'Could not inspect the source',
+        });
+      },
+      {
+        readOnly: true,
+        background: true,
+        activityCheck: {
+          connectionId,
+          record: async (record) => {
+            records.push(record);
+          },
+        },
+        integration: async () => response,
+      },
+    );
+    assert.deepEqual(records, [{ status: 'unavailable', summary: 'Could not inspect the source' }]);
+    assert.equal(result.aborted, false);
+    assert.deepEqual(result.replies, []);
+  }
+});
+
+test('an activity check can report unavailable without a read but cannot silently omit its record', async () => {
+  let records = 0;
+  await fixture(
+    async (tools) => {
+      await call(tools, 'record_activity_check', {
+        status: 'unavailable',
+        summary: 'No suitable read is available',
+      });
+    },
+    {
+      activityCheck: {
+        connectionId: randomUUID(),
+        record: async () => {
+          records++;
+        },
+      },
+    },
+  );
+  await assert.rejects(
+    fixture(async () => {}, {
+      activityCheck: {
+        connectionId: randomUUID(),
+        record: async () => {
+          records++;
+        },
+      },
+    }),
+    /did not record a result/,
+  );
+  assert.equal(records, 1);
+});

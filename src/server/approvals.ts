@@ -10,6 +10,7 @@ import {
   explicitlyRequestsAction,
   explicitlyRequestsScheduledAction,
   forbidsTransmission,
+  isPrivateDraftAction,
   isReversiblePlanAction,
   requestsConnectedSchedule,
 } from './action-policy.ts';
@@ -39,6 +40,7 @@ type TurnRow = {
   source_id: string | null;
   message_id: string | null;
   prompt: string;
+  read_only: boolean;
 };
 
 function conflict(message = 'This confirmation is expired, already handled, or its turn changed.') {
@@ -48,7 +50,7 @@ function conflict(message = 'This confirmation is expired, already handled, or i
 async function turnRow(client: PoolClient, turnId: string) {
   return (
     await client.query<TurnRow>(
-      'SELECT id,thread_id,source,source_id,message_id,prompt FROM turns WHERE id=$1 AND owner_id=$2',
+      'SELECT id,thread_id,source,source_id,message_id,prompt,read_only FROM turns WHERE id=$1 AND owner_id=$2',
       [turnId, ownerId],
     )
   ).rows[0];
@@ -165,10 +167,19 @@ export async function createApprovals(
       const chain = await turnChain(client, current);
       const origin = chain?.at(-1);
       if (!chain || !origin) throw new Error('This action needs a direct request from the user.');
+      if (chain.some((item) => item.read_only || item.source_id?.startsWith('onboarding:')))
+        throw new Error(
+          'This action needs a direct request from the user; this turn is read-only.',
+        );
+      const privateDraft = isPrivateDraftAction(action);
+      const backgroundDraft = privateDraft && ['event', 'schedule'].includes(origin.source);
       let authorInstruction: string;
       let authorMessageId: string | null;
       let scheduled = false;
-      if (origin.source === 'schedule') {
+      if (backgroundDraft) {
+        authorInstruction = '';
+        authorMessageId = null;
+      } else if (origin.source === 'schedule') {
         const exists = (await client.query("SELECT to_regclass('schedule_runs') AS table_name"))
           .rows[0]?.table_name;
         const grant = exists
@@ -216,15 +227,16 @@ export async function createApprovals(
         (!action.startsWith('OTTO_') &&
           kind !== null &&
           (explicit ||
+            privateDraft ||
             (kind === 'approval' &&
               ['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action))));
-      if (!scheduled && !currentSource && !resumedSource)
+      if (!scheduled && !backgroundDraft && !currentSource && !resumedSource)
         throw new Error('This action needs a direct request from the user.');
       if (forbidsTransmission(action, authorInstruction))
         throw new Error('The user asked for a draft or prohibited sending. Keep it unsent.');
       await preflight?.(action, snapshot);
       const previous = (
-        scheduled
+        scheduled || backgroundDraft
           ? await client.query(
               'SELECT * FROM approvals WHERE turn_id=ANY($1::uuid[]) AND owner_id=$2 AND action=$3 AND args=$4::jsonb ORDER BY id LIMIT 1',
               [chain.map((item) => item.id), ownerId, action, snapshot],
@@ -239,7 +251,7 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
-      const direct = isReversiblePlanAction(action) || explicit;
+      const direct = privateDraft || isReversiblePlanAction(action) || explicit;
       const id = randomUUID();
       let targetTitle: string | undefined = verifiedTarget;
       if (!direct && typeof snapshot.id === 'string') {
@@ -275,7 +287,7 @@ export async function createApprovals(
             id,
             ownerId,
             turn.threadId,
-            turn.turnId,
+            backgroundDraft ? origin.id : turn.turnId,
             action,
             snapshot,
             direct ? 'executing' : 'pending',

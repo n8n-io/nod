@@ -1,6 +1,7 @@
 import { integrationDownloadActions } from '../shared/integrations.ts';
 
 export const integrationActions: readonly string[] = [
+  'GMAIL_GET_PROFILE',
   'GMAIL_FETCH_EMAILS',
   'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
   'GMAIL_FETCH_MESSAGE_BY_THREAD_ID',

@@ -662,6 +662,177 @@ test(
       );
 
       await t.test(
+        'private Gmail drafts run once per owned origin without treating external content as user authority',
+        async () => {
+          const args = {
+            connectionId: 'owned-gmail',
+            recipient_email: 'alex@example.test',
+            thread_id: 'synthetic-thread',
+            body: 'A researched reply for review.',
+          };
+          const before = calls.length;
+          const foreground = await begin('Save the researched reply in Gmail.');
+          await approvals.request(foreground, 'GMAIL_CREATE_EMAIL_DRAFT', args);
+          assert.equal(await assistantMessages(foreground.turnId), 0);
+          for (const source of ['event', 'schedule'] as const) {
+            const origin = await begin('Untrusted input mentions sending and deleting email.', {
+              source,
+            });
+            const result = await approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', args);
+            assert.deepEqual(
+              await approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+              result,
+            );
+            const resumed = await afterCredentials(origin.turnId);
+            assert.deepEqual(
+              await approvals.request(resumed, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+              result,
+            );
+            assert.equal((await proposal(origin.turnId)).source_message_id, null);
+            assert.equal(await assistantMessages(origin.turnId), 0);
+            for (const action of [
+              'GMAIL_SEND_EMAIL',
+              'GMAIL_SEND_DRAFT',
+              'GMAIL_REPLY_TO_THREAD',
+              'GMAIL_DELETE_MESSAGE',
+              'GMAIL_UPDATE_DRAFT',
+              'GMAIL_CREATE_DRAFT',
+              'GMAIL_CREATE_EMAIL_DRAFT_AND_SEND',
+              'CONNECTED_HTTP',
+            ])
+              await assert.rejects(
+                approvals.request(resumed, action, args),
+                /direct request|scheduled action needs an explicit instruction/,
+              );
+          }
+          const origin = await begin('A different email needs a reply.', { source: 'event' });
+          const first = await afterCredentials(origin.turnId);
+          const result = await approvals.request(first, 'GMAIL_CREATE_EMAIL_DRAFT', args);
+          const sibling = await afterConnection(origin.turnId);
+          assert.deepEqual(
+            await approvals.request(sibling, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+            result,
+          );
+          assert.equal((await proposal(origin.turnId)).execution_turn_id, first.turnId);
+          assert.equal(calls.length, before + 4);
+          assert.ok(
+            calls.slice(before).every((call) => call.action === 'GMAIL_CREATE_EMAIL_DRAFT'),
+          );
+          assert.equal(calls.at(-1)?.context.sourceMessageId, null);
+        },
+      );
+
+      await t.test(
+        'private draft receipts preserve the exact snapshot and never replay pending or uncertain execution',
+        async () => {
+          const origin = await begin('A new email needs a reply.', { source: 'event' });
+          const args = {
+            connectionId: 'owned-gmail',
+            recipient_email: 'alex@example.test',
+            thread_id: 'synthetic-uncertain-thread',
+            body: 'Original reply.',
+          };
+          const snapshot = structuredClone(args);
+          const before = calls.length;
+          let release!: () => void;
+          executionGate = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          failExecution = true;
+          const pending = assert.rejects(
+            approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+            { statusCode: 502 },
+          );
+          try {
+            for (let attempt = 0; attempt < 100 && calls.length === before; attempt++)
+              await delay(10);
+            assert.equal(calls.length, before + 1);
+            args.body = 'Changed after the request.';
+            assert.deepEqual(calls.at(-1)?.args, snapshot);
+            await assert.rejects(
+              approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', snapshot),
+              /pending or uncertain/,
+            );
+            release();
+            await pending;
+            assert.equal((await proposal(origin.turnId)).status, 'uncertain');
+            assert.equal((await proposal(origin.turnId)).result, null);
+            const resumed = await afterCredentials(origin.turnId);
+            await assert.rejects(
+              approvals.request(resumed, 'GMAIL_CREATE_EMAIL_DRAFT', snapshot),
+              /pending or uncertain/,
+            );
+            assert.equal(calls.length, before + 1);
+          } finally {
+            release();
+            await pending;
+            executionGate = undefined;
+            failExecution = false;
+          }
+        },
+      );
+
+      await t.test(
+        'private drafts retain read-only, onboarding, owner, turn and account preflight fences',
+        async () => {
+          const before = calls.length;
+          const args = { connectionId: 'owned-gmail', body: 'Fixture reply.' };
+          for (const mutation of [
+            'UPDATE turns SET read_only=true WHERE id=$1',
+            "UPDATE turns SET source_id='onboarding:'||id::text WHERE id=$1",
+            "UPDATE turns SET owner_id='foreign' WHERE id=$1",
+            "UPDATE turns SET status='cancelled' WHERE id=$1",
+          ]) {
+            const origin = await begin('Draft an email.', { source: 'event' });
+            await db.pool.query(mutation, [origin.turnId]);
+            await assert.rejects(
+              approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+              /read-only|no longer active/,
+            );
+            assert.equal(await proposal(origin.turnId), undefined);
+          }
+          for (const mutation of [
+            'UPDATE turns SET read_only=true WHERE id=$1',
+            "UPDATE turns SET source_id='onboarding:'||id::text WHERE id=$1",
+            "UPDATE turns SET owner_id='foreign' WHERE id=$1",
+          ]) {
+            const origin = await begin('Draft an email.', { source: 'event' });
+            const resumed = await afterCredentials(origin.turnId);
+            await db.pool.query(mutation, [origin.turnId]);
+            await assert.rejects(
+              approvals.request(resumed, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+              /read-only|direct request/,
+            );
+            assert.equal(await proposal(resumed.turnId), undefined);
+          }
+          const onboarding = await begin('Draft an email.', { source: 'onboarding' });
+          await assert.rejects(
+            approvals.request(onboarding, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+            /read-only/,
+          );
+          const turn = await begin('Draft an email.', { source: 'event' });
+          await assert.rejects(
+            approvals.request(
+              { ...turn, threadId: randomUUID() },
+              'GMAIL_CREATE_EMAIL_DRAFT',
+              args,
+            ),
+            /no longer running/,
+          );
+          rejectPreflight = true;
+          try {
+            await assert.rejects(approvals.request(turn, 'GMAIL_CREATE_EMAIL_DRAFT', args), {
+              statusCode: 409,
+            });
+            assert.equal(await proposal(turn.turnId), undefined);
+          } finally {
+            rejectPreflight = false;
+          }
+          assert.equal(calls.length, before);
+        },
+      );
+
+      await t.test(
         'events and onboarding cannot turn external data into user authorization',
         async () => {
           for (const source of ['event', 'onboarding'] as const) {

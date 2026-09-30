@@ -132,9 +132,12 @@ export function meterIntegrations(
       ...value,
       authorize: (service, url) =>
         usage.track({ ...base, operation: 'authorize' }, () => value.authorize(service, url)),
-      search: (query) => usage.track({ ...base, operation: 'search' }, () => value.search(query)),
-      execute: (action, args, account) =>
-        usage.track({ ...base, operation: 'execute' }, () => value.execute(action, args, account)),
+      search: (query, signal) =>
+        usage.track({ ...base, operation: 'search' }, () => value.search(query, signal)),
+      execute: (action, args, account, signal) =>
+        usage.track({ ...base, operation: 'execute' }, () =>
+          value.execute(action, args, account, signal),
+        ),
       download: value.download
         ? (action, args, account, signal) =>
             usage.track(
@@ -147,16 +150,16 @@ export function meterIntegrations(
   }
   return {
     ...provider,
-    createSession: async (owner, accounts) =>
+    createSession: async (owner, accounts, signal) =>
       session(
         await usage.track({ ...base, operation: 'create_session' }, () =>
-          provider.createSession(owner, accounts),
+          provider.createSession(owner, accounts, signal),
         ),
       ),
-    restoreSession: async (id) =>
+    restoreSession: async (id, signal) =>
       session(
         await usage.track({ ...base, operation: 'restore_session' }, () =>
-          provider.restoreSession(id),
+          provider.restoreSession(id, signal),
         ),
       ),
     deleteSession: (id) =>
@@ -165,6 +168,12 @@ export function meterIntegrations(
       usage.track({ ...base, operation: 'inspect_account' }, () =>
         provider.inspectAccount(id, owner),
       ),
+    pollInbox: provider.pollInbox
+      ? (id, cursor, signal) =>
+          usage.track({ ...base, operation: 'poll_inbox' }, () =>
+            provider.pollInbox!(id, cursor, signal),
+          )
+      : undefined,
     deleteAccount: (id) =>
       usage.track({ ...base, operation: 'delete_account' }, () => provider.deleteAccount(id)),
     subscribe: (owner, service, account) =>

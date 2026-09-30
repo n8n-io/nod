@@ -23,6 +23,10 @@ const ordinaryActions: Record<string, Intent[]> = {
   OTTO_notification_preferences_update: ['update', 'remember'],
 };
 
+export function isPrivateDraftAction(action: string) {
+  return action === 'GMAIL_CREATE_EMAIL_DRAFT';
+}
+
 export function isReversiblePlanAction(action: string) {
   return [
     'OTTO_goal_create',

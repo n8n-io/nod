@@ -64,6 +64,38 @@ export const scheduleObservation = Type.Union([
   ),
 ]);
 
+const activityCheckTool = defineTool(
+  'record_activity_check',
+  'Record this read-only activity check once. verified requires a successful read from the selected account; include at most one useful finding with its stable source ID. Use unavailable when the source could not be inspected. This does not notify the user or prepare work.',
+  Type.Union([
+    Type.Object(
+      {
+        status: Type.Literal('verified'),
+        value: Type.String({ minLength: 1, maxLength: 300 }),
+        summary: Type.String({ minLength: 1, maxLength: 500 }),
+        finding: Type.Optional(
+          Type.Object(
+            {
+              id: Type.String({ minLength: 1, maxLength: 300 }),
+              url: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+              summary: Type.String({ minLength: 1, maxLength: 500 }),
+            },
+            { additionalProperties: false },
+          ),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        status: Type.Literal('unavailable'),
+        summary: Type.String({ minLength: 1, maxLength: 500 }),
+      },
+      { additionalProperties: false },
+    ),
+  ]),
+);
+
 export const toolDefinitions = {
   send_message: defineTool(
     'send_message',
@@ -359,8 +391,11 @@ export function ottoTools(turn: Turn): OttoTool[] {
       return result;
     }),
     bind(toolDefinitions.apps, async (p) => {
-      if (!(integrationDownloadActions as readonly string[]).includes(p.action))
-        return confirm(await context.integration(p.action, p.args));
+      if (!(integrationDownloadActions as readonly string[]).includes(p.action)) {
+        const result = await context.integration(p.action, p.args, signal);
+        signal.throwIfAborted();
+        return context.activityCheck ? result : confirm(result);
+      }
       if (!context.downloadIntegrationFile) throw new Error('App file delivery is unavailable.');
       return context.downloadIntegrationFile(p.action, p.args);
     }),
@@ -390,6 +425,17 @@ export function ottoTools(turn: Turn): OttoTool[] {
       return context.createAudio(p.text);
     }),
   ];
+  if (context.activityCheck) {
+    const check = context.activityCheck;
+    return [
+      ...tools.filter((tool) => tool.name === 'apps'),
+      bind(activityCheckTool, async (result) => {
+        signal.throwIfAborted();
+        await check.record(result);
+        return 'Activity check recorded.';
+      }),
+    ];
+  }
   const search = turn.webSearch;
   if (search) tools.push(bind(toolDefinitions.web_search, (p) => search(p.query, signal)));
   return tools;

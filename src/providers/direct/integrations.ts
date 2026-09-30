@@ -38,72 +38,91 @@ export function createDirectProvider(options: {
     ownerId: options.ownerId,
     request,
   });
-  const mcp = <T>(service: Service, token: string, operation: (client: Client) => Promise<T>) =>
-    withDirectMcp(service, token, request, operation);
+  const mcp = <T>(
+    service: Service,
+    token: string,
+    operation: (client: Client) => Promise<T>,
+    signal?: AbortSignal,
+  ) => withDirectMcp(service, token, request, operation, signal);
 
   async function execute(
     ownerId: string,
     action: string,
     args: Record<string, unknown>,
     id?: string,
+    signal?: AbortSignal,
   ) {
+    signal?.throwIfAborted();
     if (!id) throw new Error('Choose a connected account.');
-    const account = await oauth.access(ownerId, id);
+    const account = await oauth.access(ownerId, id, signal);
     if (account.service === 'notion') {
       const searching = action === 'NOTION_SEARCH_NOTION_PAGE';
       if (!searching && !['NOTION_RETRIEVE_PAGE', 'NOTION_GET_PAGE_MARKDOWN'].includes(action))
         throw new Error('This Notion action is unavailable.');
-      return mcp('notion', account.accessToken, async (client) => {
-        const tools = (await client.listTools()).tools;
-        let toolName = searching ? 'notion-search' : 'notion-fetch';
-        if (searching) {
-          if (!tools.some((tool) => tool.name === 'notion-get-tool-access'))
-            throw new Error('The Notion search access check is unavailable.');
-          const access = await client.callTool({ name: 'notion-get-tool-access', arguments: {} });
-          if (access.isError) throw new Error('The Notion search access check failed.');
-          const blocks = Array.isArray(access.content)
-            ? (access.content as Array<{ type: string; text?: string }>)
-            : [];
-          const content =
-            access.structuredContent ??
-            JSON.parse(blocks.find((item) => item.type === 'text')?.text ?? '{}');
-          const map =
-            content && typeof content === 'object' && 'current_tool_access' in content
-              ? content.current_tool_access
-              : undefined;
-          const ai =
-            map && typeof map === 'object' && 'ai_search' in map
-              ? (map.ai_search as { status?: string })
-              : undefined;
-          if (ai?.status === 'available' && tools.some((tool) => tool.name === 'notion-ai-search'))
-            toolName = 'notion-ai-search';
-          else if (
-            !tools.some((tool) => tool.name === toolName) &&
-            ['upgrade_required', 'plan_required'].includes(ai?.status ?? '') &&
-            tools.some((tool) => tool.name === 'notion-ai-search')
-          )
-            toolName = 'notion-ai-search';
-        }
-        const selected = tools.find((tool) => tool.name === toolName);
-        if (!selected) throw new Error('The Notion read tool is unavailable.');
-        const input = !searching
-          ? { id: args.id ?? args.page_id ?? args.pageId }
-          : { query: args.query ?? args.search_query ?? args.searchQuery };
-        const result = await client.callTool({ name: selected.name, arguments: input });
-        if (result.isError) throw new Error('The Notion read failed.');
-        return result;
-      });
+      return mcp(
+        'notion',
+        account.accessToken,
+        async (client) => {
+          const tools = (await client.listTools()).tools;
+          let toolName = searching ? 'notion-search' : 'notion-fetch';
+          if (searching) {
+            if (!tools.some((tool) => tool.name === 'notion-get-tool-access'))
+              throw new Error('The Notion search access check is unavailable.');
+            const access = await client.callTool({ name: 'notion-get-tool-access', arguments: {} });
+            if (access.isError) throw new Error('The Notion search access check failed.');
+            const blocks = Array.isArray(access.content)
+              ? (access.content as Array<{ type: string; text?: string }>)
+              : [];
+            const content =
+              access.structuredContent ??
+              JSON.parse(blocks.find((item) => item.type === 'text')?.text ?? '{}');
+            const map =
+              content && typeof content === 'object' && 'current_tool_access' in content
+                ? content.current_tool_access
+                : undefined;
+            const ai =
+              map && typeof map === 'object' && 'ai_search' in map
+                ? (map.ai_search as { status?: string })
+                : undefined;
+            if (
+              ai?.status === 'available' &&
+              tools.some((tool) => tool.name === 'notion-ai-search')
+            )
+              toolName = 'notion-ai-search';
+            else if (
+              !tools.some((tool) => tool.name === toolName) &&
+              ['upgrade_required', 'plan_required'].includes(ai?.status ?? '') &&
+              tools.some((tool) => tool.name === 'notion-ai-search')
+            )
+              toolName = 'notion-ai-search';
+          }
+          const selected = tools.find((tool) => tool.name === toolName);
+          if (!selected) throw new Error('The Notion read tool is unavailable.');
+          const input = !searching
+            ? { id: args.id ?? args.page_id ?? args.pageId }
+            : { query: args.query ?? args.search_query ?? args.searchQuery };
+          const result = await client.callTool({ name: selected.name, arguments: input });
+          if (result.isError) throw new Error('The Notion read failed.');
+          return result;
+        },
+        signal,
+      );
     }
     if (account.service === 'linear') {
       const toolName = linearTools[action as keyof typeof linearTools];
       if (!toolName) throw new Error('This Linear action is unavailable.');
-      return mcp('linear', account.accessToken, async (client) => {
-        if (!(await client.listTools()).tools.some((tool) => tool.name === toolName))
-          throw new Error('The Linear read tool is unavailable.');
-        const result = await client.callTool({ name: toolName, arguments: args });
-        if (result.isError) throw new Error('The Linear read failed.');
-        return result;
-      });
+      return mcp(
+        'linear',
+        account.accessToken,
+        async (client) => {
+          if (!(await client.listTools()).tools.some((tool) => tool.name === toolName))
+            throw new Error('The Linear read tool is unavailable.');
+          const result = await client.callTool({ name: toolName, arguments: args });
+          if (result.isError) throw new Error('The Linear read failed.');
+          return result;
+        },
+        signal,
+      );
     }
     throw new Error('This service action is unavailable.');
   }
@@ -150,12 +169,14 @@ export function createDirectProvider(options: {
     supportedServices,
     webhooksConfigured: false,
     supportsSubscriptions: [],
-    async createSession(ownerId, accounts) {
+    async createSession(ownerId, accounts, signal) {
+      signal?.throwIfAborted();
       const session: IntegrationSession = {
         id: ownerId,
         authorize: (service, callbackUrl) =>
           oauth.authorize(ownerId, service as Service, callbackUrl),
-        async search(query) {
+        async search(query, signal) {
+          signal?.throwIfAborted();
           const words = query.toLowerCase();
           const matches: Record<string, unknown> = Object.fromEntries(
             Object.entries(tools).filter(([name]) =>
@@ -175,10 +196,17 @@ export function createDirectProvider(options: {
             const ids = accounts[service];
             for (const id of typeof ids === 'string' ? [ids] : (ids ?? [])) {
               try {
-                const account = await oauth.access(ownerId, id);
-                available = await mcp(service, account.accessToken, (client) => client.listTools());
+                const account = await oauth.access(ownerId, id, signal);
+                available = await mcp(
+                  service,
+                  account.accessToken,
+                  (client) => client.listTools(),
+                  signal,
+                );
                 break;
-              } catch {}
+              } catch {
+                signal?.throwIfAborted();
+              }
             }
             if (!available) {
               for (const action of actions) delete matches[action];
@@ -213,12 +241,13 @@ export function createDirectProvider(options: {
           }
           return { tools: matches, suggestions: [] };
         },
-        execute: (action, args, accountId) => execute(ownerId, action, args, accountId),
+        execute: (action, args, accountId, signal) =>
+          execute(ownerId, action, args, accountId, signal),
       };
       return session;
     },
-    async restoreSession(id) {
-      return this.createSession(id, {});
+    async restoreSession(id, signal) {
+      return this.createSession(id, {}, signal);
     },
     async deleteSession() {},
     async inspectAccount(id, ownerId) {

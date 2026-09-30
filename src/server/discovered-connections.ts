@@ -638,10 +638,11 @@ export async function createDiscoveredConnections(
       }),
     });
   }
-  async function search(query: string) {
+  async function search(query: string, connectionId?: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const rows = (
-      await pool.query<AccountRow>('SELECT * FROM discovered_connections WHERE owner_id=$1', [
-        owner,
+      await pool.query<AccountRow>('SELECT * FROM discovered_connections WHERE owner_id=$1 AND ($2::uuid IS NULL OR id=$2)', [
+        owner, connectionId ?? null,
       ])
     ).rows;
     const accounts = await Promise.all(
@@ -660,6 +661,7 @@ export async function createDiscoveredConnections(
               const available = await options.transport.listTools(
                 path.endpoint,
                 headers(path, token),
+                signal,
               );
               return {
                 id: path.id,
@@ -712,7 +714,8 @@ export async function createDiscoveredConnections(
     if (JSON.stringify(args).length > 32_768) throw error('The app request is too large.');
     return { row, path };
   }
-  async function isRead(action: string, args: Record<string, unknown>) {
+  async function isRead(action: string, args: Record<string, unknown>, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const { row, path } = await selected(args);
     if (action === 'CONNECTED_HTTP') {
       if (path.kind !== 'http') throw error('Choose an HTTP access path.');
@@ -730,7 +733,7 @@ export async function createDiscoveredConnections(
     const token = await tokenFor(row, path);
     let tools: DiscoveredTool[];
     try {
-      tools = await options.transport.listTools(path.endpoint, headers(path, token));
+      tools = await options.transport.listTools(path.endpoint, headers(path, token), signal);
     } catch {
       throw error('The connected MCP tool list is unavailable.', 502);
     }
@@ -746,6 +749,7 @@ export async function createDiscoveredConnections(
     signal?: AbortSignal,
   ) {
     const { row, path } = await selected(args);
+    signal?.throwIfAborted();
     const token = await tokenFor(row, path);
     const safeResult = (value: unknown) => integrationResultSnapshot(redact(value, token));
     if (action === 'CONNECTED_HTTP') {
@@ -759,6 +763,7 @@ export async function createDiscoveredConnections(
             headers(path, token),
             method,
             method === 'GET' ? undefined : args.body,
+            signal,
           ),
         );
       } catch {
@@ -797,7 +802,7 @@ export async function createDiscoveredConnections(
     const input = z.record(z.string(), z.unknown()).parse(args.input ?? {});
     let selectedTool: DiscoveredTool | undefined;
     try {
-      selectedTool = (await options.transport.listTools(path.endpoint, headers(path, token))).find(
+      selectedTool = (await options.transport.listTools(path.endpoint, headers(path, token), signal)).find(
         (tool) => tool.name === name,
       );
     } catch {
@@ -808,7 +813,7 @@ export async function createDiscoveredConnections(
       throw error('This tool now needs confirmation.', 409);
     try {
       return safeResult(
-        await options.transport.callTool(path.endpoint, headers(path, token), name, input),
+        await options.transport.callTool(path.endpoint, headers(path, token), name, input, signal),
       );
     } catch {
       throw error('The connected MCP request failed. Check its tool and account access.', 502);

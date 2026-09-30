@@ -9,7 +9,9 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
     endpoint: string,
     saved: DiscoveredOAuthState,
     options: { state?: string; code?: string },
+    signal?: AbortSignal,
   ) {
+    signal?.throwIfAborted();
     let url: string | undefined;
     const provider: OAuthClientProvider = {
       redirectUrl: saved.redirectUri,
@@ -51,7 +53,15 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
       serverUrl: endpoint,
       ...(options.code ? { authorizationCode: options.code } : {}),
       ...(saved.scope ? { scope: saved.scope } : {}),
-      fetchFn,
+      fetchFn: (input, init) => {
+        signal?.throwIfAborted();
+        return fetchFn(input, {
+          ...init,
+          ...(signal
+            ? { signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }
+            : {}),
+        });
+      },
     });
     return { result, url };
   }
@@ -77,9 +87,9 @@ export function createDiscoveredOAuth(fetchFn: FetchLike = safeRemoteFetch): Dis
         throw new Error('The service did not complete sign-in.');
       return saved;
     },
-    async refresh(endpoint, saved) {
+    async refresh(endpoint, saved, signal) {
       if (!saved.tokens?.refresh_token) throw new Error('Connect this account again.');
-      const result = await run(endpoint, saved, {});
+      const result = await run(endpoint, saved, {}, signal);
       if (result.result !== 'AUTHORIZED' || !saved.tokens?.access_token)
         throw new Error('Connect this account again.');
       return saved;

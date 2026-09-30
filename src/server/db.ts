@@ -74,6 +74,14 @@ export async function initializeDatabase() {
       created_at timestamptz NOT NULL DEFAULT now(),
       kind text NOT NULL DEFAULT 'external' CHECK (kind IN ('external','review'))
     );
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS intent text NOT NULL DEFAULT 'classify'
+      CHECK (intent IN ('classify','inspect_message'));
+    CREATE TABLE IF NOT EXISTS app_activity_checks (
+      owner_id text NOT NULL,connection_id uuid NOT NULL,turn_id uuid REFERENCES turns(id),
+      attempted_at timestamptz NOT NULL,checked_at timestamptz,recorded_at timestamptz,
+      value text NOT NULL DEFAULT '',summary text NOT NULL DEFAULT '',
+      PRIMARY KEY(owner_id,connection_id)
+    );
     CREATE INDEX IF NOT EXISTS messages_owner_time ON messages(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_thread_time ON messages(thread_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_turn_time ON messages(turn_id,created_at);

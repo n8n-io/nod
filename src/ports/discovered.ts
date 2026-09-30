@@ -12,13 +12,19 @@ export interface DiscoveredTransport {
     headers: Record<string, string>,
     method: string,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<{ status: number; body: unknown }>;
-  listTools(endpoint: string, headers: Record<string, string>): Promise<DiscoveredTool[]>;
+  listTools(
+    endpoint: string,
+    headers: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<DiscoveredTool[]>;
   callTool(
     endpoint: string,
     headers: Record<string, string>,
     name: string,
     input: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<unknown>;
 }
 import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -50,5 +56,9 @@ export interface DiscoveredOAuth {
     saved: DiscoveredOAuthState,
     code: string,
   ): Promise<DiscoveredOAuthState>;
-  refresh(endpoint: string, saved: DiscoveredOAuthState): Promise<DiscoveredOAuthState>;
+  refresh(
+    endpoint: string,
+    saved: DiscoveredOAuthState,
+    signal?: AbortSignal,
+  ): Promise<DiscoveredOAuthState>;
 }

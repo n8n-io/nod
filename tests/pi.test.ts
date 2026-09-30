@@ -1199,3 +1199,125 @@ test('runtime shutdown drains tasks and releases every capability after adapter 
   assert.ok(events.indexOf('computer') < events.indexOf('workspace'));
   await assert.rejects(runtime.runTurn(context(directory)), /stopped/);
 });
+
+test('turn tool limits fence custom and native execution through the same budget', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-tool-budget-'));
+  let appCalls = 0;
+  let nativeCalls = 0;
+  let aborts = 0;
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (options) => ({
+        resumed: false,
+        prompt: async () => {
+          const apps = options.tools.find((tool) => tool.name === 'apps')!;
+          await options.runTool('read', { path: 'fixture.txt' }, async () => {
+            nativeCalls++;
+            return { content: [] };
+          });
+          await apps.execute({ action: 'FIXTURE_READ', args: {} });
+          await assert.rejects(
+            apps.execute({ action: 'FIXTURE_READ', args: {} }),
+            /tool-call limit/,
+          );
+          await assert.rejects(
+            options.runTool('bash', { command: 'unused' }, async () => {
+              nativeCalls++;
+              return { content: [] };
+            }),
+            /tool-call limit/,
+          );
+        },
+        abort: () => {
+          aborts++;
+        },
+        dispose: () => {},
+      }),
+      dispose: () => {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    await assert.rejects(
+      runtime.runTurn({
+        ...context(directory),
+        limits: { maxToolCalls: 2, timeoutMs: 1000 },
+        integration: async () => {
+          appCalls++;
+          return { items: [] };
+        },
+      }),
+      /tool-call limit/,
+    );
+    assert.equal(appCalls, 1);
+    assert.equal(nativeCalls, 1);
+    assert.equal(aborts, 1);
+    assert.equal(runtime.status().activeThreads, 0);
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('turn deadlines release stalled model, provider, native and disposal operations', async (t) => {
+  for (const stalledAt of ['model', 'provider', 'native', 'dispose'] as const) {
+    await t.test(stalledAt, { timeout: 1500 }, async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'otto-time-budget-'));
+      let aborted = false;
+      let providerSignal: AbortSignal | undefined;
+      let workspaceSignal: AbortSignal | undefined;
+      const stalled = new Promise<never>(() => {});
+      const workspace = fakeWorkspace();
+      const runtime = createAgentRuntime({
+        agent: {
+          open: async (options) => ({
+            resumed: false,
+            prompt: async () => {
+              if (stalledAt === 'model') await stalled;
+              if (stalledAt === 'provider')
+                await options.tools
+                  .find((tool) => tool.name === 'apps')!
+                  .execute({ action: 'FIXTURE_READ', args: {} });
+              if (stalledAt === 'native')
+                await options.runTool('read', { path: 'fixture.txt' }, () => stalled);
+            },
+            abort: () => {
+              aborted = true;
+            },
+            dispose: () => (stalledAt === 'dispose' ? stalled : undefined),
+          }),
+          dispose: () => {},
+        },
+        computer: fakeComputer(),
+        workspace: {
+          ...workspace,
+          open: (input) => {
+            workspaceSignal = input.signal;
+            return workspace.open(input);
+          },
+        },
+      });
+      try {
+        const running = runtime.runTurn({
+          ...context(directory),
+          limits: { maxToolCalls: 8, timeoutMs: 30 },
+          integration: async (_action, _args, signal) => {
+            providerSignal = signal;
+            return stalled;
+          },
+        });
+        if (stalledAt === 'dispose') await running;
+        else await assert.rejects(running, /time limit/);
+        assert.equal(runtime.status().activeThreads, 0);
+        assert.equal(workspaceSignal?.aborted, true);
+        if (stalledAt !== 'dispose') assert.equal(aborted, true);
+        if (stalledAt === 'provider') assert.equal(providerSignal?.aborted, true);
+        await runtime.waitForThread('fixture');
+      } finally {
+        await runtime.dispose();
+        await rm(directory, { recursive: true, force: true });
+      }
+    });
+  }
+});

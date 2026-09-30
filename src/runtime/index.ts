@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
-import { relative, resolve, sep } from 'node:path';
+import { mkdir, readdir } from 'node:fs/promises';
+import { posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Value } from '@sinclair/typebox/value';
 import type {
@@ -17,6 +17,7 @@ import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import type { WebSearch } from '../ports/web-search.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
+import { integrationDownloadActions } from '../shared/integrations.ts';
 import { requestsPrivateInput } from './communication.ts';
 import { createObservationQueue } from './observations.ts';
 import { firstInstruction, systemPrompt } from './prompt.ts';
@@ -34,6 +35,7 @@ const readOnlyTools: Record<string, true | string[]> = {
   ls: true,
   send_message: true,
   apps: true,
+  record_activity_check: true,
   web_search: true,
   browser: ['open', 'snapshot', 'scroll', 'screenshot'],
   manage_apps: ['list'],
@@ -49,6 +51,54 @@ const readOnlyRefusal =
   'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
 
 class ReadOnlyTurnError extends Error {}
+class ActivityCheckError extends Error {}
+
+function matchingConnection(value: unknown, connectionId: string): boolean {
+  if (!value || typeof value !== 'object') return true;
+  return Object.entries(value).every(([key, child]) =>
+    key === 'connectionId' ? child === connectionId : matchingConnection(child, connectionId),
+  );
+}
+
+function inspectedAppResult(value: unknown): boolean {
+  if (typeof value === 'string') {
+    if (!value.trim() || /^\s*(error|failed|unavailable)\b/i.test(value)) return false;
+    try {
+      return inspectedAppResult(JSON.parse(value));
+    } catch {
+      return true;
+    }
+  }
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.every(inspectedAppResult);
+  const result = value as Record<string, unknown>;
+  if (
+    result.successful === false ||
+    result.success === false ||
+    result.isError === true ||
+    result.resultOmitted === true ||
+    Boolean(result.error) ||
+    Boolean(result.requiresConfirmation) ||
+    Boolean(result.requiresApproval) ||
+    'workspaceFile' in result ||
+    ['rejected', 'failed', 'error', 'unavailable', 'pending', 'waiting_approval'].includes(
+      String(result.status),
+    )
+  )
+    return false;
+  if ('data' in result) return inspectedAppResult(result.data);
+  if ('content' in result) return inspectedAppResult(result.content);
+  if (result.type === 'text') return inspectedAppResult(result.text);
+  if (result.truncated === true && !['items', 'results', 'messages'].some((key) => key in result))
+    return false;
+  const entries = Object.entries(result).filter(
+    ([key]) => !['successful', 'success', 'status', 'truncated', 'isError'].includes(key),
+  );
+  if (!entries.length) return false;
+  return entries.every(([, item]) =>
+    item && typeof item === 'object' ? inspectedAppResult(item) : true,
+  );
+}
 
 function allowedReadOnly(name: string, params: unknown) {
   const rule = readOnlyTools[name];
@@ -87,6 +137,16 @@ export function createAgentRuntime(dependencies: {
     threadIdentity(input.threadId);
     if (activeThreads.has(input.threadId))
       throw new Error('This thread already has an active turn.');
+    const limits = input.limits;
+    if (
+      limits &&
+      (!Number.isSafeInteger(limits.maxToolCalls) ||
+        limits.maxToolCalls < 1 ||
+        !Number.isSafeInteger(limits.timeoutMs) ||
+        limits.timeoutMs < 1 ||
+        limits.timeoutMs > 2_147_483_647)
+    )
+      throw new Error('Turn limits must be positive integers within the timer range.');
     const lifecycle = new AbortController();
     const context = { ...input, signal: AbortSignal.any([input.signal, lifecycle.signal]) };
     const { signal, threadId } = context;
@@ -110,6 +170,11 @@ export function createAgentRuntime(dependencies: {
     let streamedText = '';
     let streamSubmitted = false;
     let streamBlocked = false;
+    let toolCalls = 0;
+    let inspectedApp = false;
+    let checkRecording = false;
+    let checkRecorded = false;
+    const skillPaths = new Set<string>();
     const activeToolCalls = new Set<Promise<unknown>>();
     const observations = createObservationQueue({
       observe: context.observe,
@@ -129,8 +194,38 @@ export function createAgentRuntime(dependencies: {
     };
     activeThreads.set(threadId, { abort, done });
     signal.addEventListener('abort', abort, { once: true });
+    const deadline = limits
+      ? setTimeout(
+          () => lifecycle.abort(new Error('The turn time limit was reached.')),
+          limits.timeoutMs,
+        )
+      : undefined;
+    const waitFor = <T>(pending: Promise<T>): Promise<T> => {
+      if (!limits) return pending;
+      return new Promise<T>((resolve, reject) => {
+        const cancel = () => {
+          signal.removeEventListener('abort', cancel);
+          reject(signal.reason);
+        };
+        pending.then(
+          (value) => {
+            signal.removeEventListener('abort', cancel);
+            resolve(value);
+          },
+          (error: unknown) => {
+            signal.removeEventListener('abort', cancel);
+            reject(error);
+          },
+        );
+        signal.addEventListener('abort', cancel, { once: true });
+        if (signal.aborted) cancel();
+      });
+    };
 
     const deliverReply = async (text: string, id?: string, replyToMessageId?: string) => {
+      signal.throwIfAborted();
+      if (context.activityCheck)
+        throw new ActivityCheckError('Activity checks cannot send messages.');
       const trimmed = text.trim();
       if (!trimmed || trimmed === lastReply) return;
       await context.reply(trimmed, id, replyToMessageId);
@@ -172,7 +267,13 @@ export function createAgentRuntime(dependencies: {
 
     const flushText = () => {
       if (bufferedText && requestsPrivateInput(streamedText + bufferedText)) streamBlocked = true;
-      if (bufferedText && !stopped && !context.background && !streamBlocked) {
+      if (
+        bufferedText &&
+        !stopped &&
+        !context.background &&
+        !context.activityCheck &&
+        !streamBlocked
+      ) {
         context.delta(bufferedText, (streamId ??= randomUUID()));
         streamedText += bufferedText;
       }
@@ -191,7 +292,7 @@ export function createAgentRuntime(dependencies: {
     };
     const completeStream = (persist = false) => {
       flushText();
-      if (streamId && !context.background) {
+      if (streamId && !context.background && !context.activityCheck) {
         if (persist && !streamSubmitted && !streamBlocked && !stopped && streamedText.trim())
           queueStreamReply(streamedText, streamId);
         if (!streamSubmitted) context.delta('', streamId, true);
@@ -209,84 +310,150 @@ export function createAgentRuntime(dependencies: {
       native = false,
     ): Promise<AgentToolResult> => {
       const label = name.replaceAll('_', ' ');
-      const pending = (async () => {
-        signal.throwIfAborted();
-        if (stopped || status !== 'succeeded')
-          throw new Error('This execution segment has stopped.');
-        const id = randomUUID();
-        const started = performance.now();
-        const end = (fields: {
-          status: 'succeeded' | 'failed' | 'cancelled';
-          output?: unknown;
-          error?: string;
-        }) =>
-          observe({
-            type: 'tool_end',
+      const pending = waitFor(
+        (async () => {
+          signal.throwIfAborted();
+          if (stopped || status !== 'succeeded' || checkRecording || checkRecorded)
+            throw new Error('This execution segment has stopped.');
+          if (limits && toolCalls >= limits.maxToolCalls) {
+            lifecycle.abort(new Error('The turn tool-call limit was reached.'));
+            signal.throwIfAborted();
+          }
+          toolCalls++;
+          const id = randomUUID();
+          const started = performance.now();
+          const end = (fields: {
+            status: 'succeeded' | 'failed' | 'cancelled';
+            output?: unknown;
+            error?: string;
+          }) =>
+            observe({
+              type: 'tool_end',
+              id,
+              name,
+              ...fields,
+              finishedAt: new Date().toISOString(),
+              durationMs: performance.now() - started,
+            });
+          await observe({
+            type: 'tool_start',
             id,
             name,
-            ...fields,
-            finishedAt: new Date().toISOString(),
-            durationMs: performance.now() - started,
+            input: params,
+            startedAt: new Date().toISOString(),
           });
-        await observe({
-          type: 'tool_start',
-          id,
-          name,
-          input: params,
-          startedAt: new Date().toISOString(),
-        });
-        let result: AgentToolResult;
-        try {
-          signal.throwIfAborted();
-          if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
-          await pendingReplies;
-          signal.throwIfAborted();
-          if (stopped || status !== 'succeeded')
-            throw new Error('This execution segment has stopped.');
-          await context.emit('tool_start', label);
-          const output = await (dependencies.withTool
-            ? dependencies.withTool(context.turnId, id, name, execute)
-            : execute());
-          signal.throwIfAborted();
-          if (!stopped) await context.emit('tool_complete', label);
-          result = isToolResult(output) ? output : textResult(output);
-          await end({ status: 'succeeded', output });
-        } catch (error) {
-          if (!stopped) await context.emit('tool_failed', label).catch(() => {});
-          const browserFailure =
-            error instanceof BrowserActionError ? browserErrorMessage(error.code) : undefined;
-          const failure = signal.aborted
-            ? 'The action was cancelled.'
-            : error instanceof ReadOnlyTurnError
-              ? readOnlyRefusal
-              : (browserFailure ??
-                (native && error instanceof Error
+          let result: AgentToolResult;
+          let reservedRecord = false;
+          try {
+            signal.throwIfAborted();
+            if (checkRecording || checkRecorded)
+              throw new Error('This execution segment has stopped.');
+            if (context.activityCheck) {
+              const args = params as {
+                action?: string;
+                args?: Record<string, unknown>;
+                path?: string;
+                status?: string;
+              };
+              if (name === 'apps') {
+                if (
+                  !args.args ||
+                  !matchingConnection(args.args, context.activityCheck.connectionId) ||
+                  (args.action !== 'SEARCH_TOOLS' &&
+                    args.args.connectionId !== context.activityCheck.connectionId) ||
+                  (integrationDownloadActions as readonly string[]).includes(args.action ?? '')
+                )
+                  throw new ActivityCheckError(
+                    'Activity checks can only read the selected account.',
+                  );
+              } else if (name === 'record_activity_check') {
+                if (args.status === 'verified' && !inspectedApp)
+                  throw new ActivityCheckError(
+                    'A verified activity check needs a successful app read first.',
+                  );
+                checkRecording = true;
+                reservedRecord = true;
+              } else if (name !== 'read' || !native || !skillPaths.has(args.path ?? ''))
+                throw new ActivityCheckError(
+                  'Activity checks can only read the selected app and bundled skills.',
+                );
+            }
+            if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
+            await waitFor(pendingReplies);
+            signal.throwIfAborted();
+            if (
+              stopped ||
+              status !== 'succeeded' ||
+              checkRecorded ||
+              (checkRecording && !reservedRecord)
+            )
+              throw new Error('This execution segment has stopped.');
+            await waitFor(context.emit('tool_start', label));
+            signal.throwIfAborted();
+            const output = await waitFor(
+              dependencies.withTool
+                ? dependencies.withTool(context.turnId, id, name, execute)
+                : execute(),
+            );
+            signal.throwIfAborted();
+            if (
+              context.activityCheck &&
+              name === 'apps' &&
+              (params as { action: string }).action !== 'SEARCH_TOOLS' &&
+              inspectedAppResult(output)
+            )
+              inspectedApp = true;
+            if (context.activityCheck && name === 'record_activity_check') checkRecorded = true;
+            if (!stopped) await waitFor(context.emit('tool_complete', label));
+            result = isToolResult(output) ? output : textResult(output);
+            await end({ status: 'succeeded', output });
+          } catch (error) {
+            if (reservedRecord) checkRecording = false;
+            if (!stopped) await waitFor(context.emit('tool_failed', label)).catch(() => {});
+            const browserFailure =
+              error instanceof BrowserActionError ? browserErrorMessage(error.code) : undefined;
+            const failure = signal.aborted
+              ? 'The action was cancelled.'
+              : error instanceof ReadOnlyTurnError
+                ? readOnlyRefusal
+                : error instanceof ActivityCheckError
                   ? error.message
-                  : 'The action failed. Check the current state before trying again.'));
-          await end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
-          if (
-            !signal.aborted &&
-            !stopped &&
-            status === 'succeeded' &&
-            name === 'browser' &&
-            (params as { action?: unknown }).action === 'click' &&
-            error instanceof BrowserActionError &&
-            error.code === 'browser_click_intercepted'
-          )
-            return textResult({ status: 'blocked', code: error.code, message: browserFailure });
-          throw new Error(failure);
-        }
-        signal.throwIfAborted();
-        return result;
-      })();
+                  : (browserFailure ??
+                    (native && error instanceof Error
+                      ? error.message
+                      : 'The action failed. Check the current state before trying again.'));
+            await end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
+            if (
+              !signal.aborted &&
+              !stopped &&
+              status === 'succeeded' &&
+              name === 'browser' &&
+              (params as { action?: unknown }).action === 'click' &&
+              error instanceof BrowserActionError &&
+              error.code === 'browser_click_intercepted'
+            )
+              return textResult({ status: 'blocked', code: error.code, message: browserFailure });
+            throw new Error(failure);
+          }
+          signal.throwIfAborted();
+          return result;
+        })(),
+      );
       activeToolCalls.add(pending);
       void pending.finally(() => activeToolCalls.delete(pending)).catch(() => {});
       return pending;
     };
     try {
       signal.throwIfAborted();
-      await mkdir(context.workspacePath, { recursive: true, mode: 0o700 });
+      await waitFor(mkdir(context.workspacePath, { recursive: true, mode: 0o700 }));
       const workspace = dependencies.workspace.open(context);
+      if (context.activityCheck)
+        for (const entry of await waitFor(readdir(skillsDir, { withFileTypes: true }))) {
+          if (!entry.isDirectory()) continue;
+          const path = `.otto/skills/${entry.name}/SKILL.md`;
+          skillPaths.add(path);
+          skillPaths.add(posix.join(workspace.path, path));
+        }
       const turn: Turn = {
         context,
         computer,
@@ -305,14 +472,16 @@ export function createAgentRuntime(dependencies: {
             signal.throwIfAborted();
             if (stopped || status !== 'succeeded')
               throw new Error('This execution segment has stopped.');
-            if (!Value.Check(parameters, params))
-              throw new Error('The tool arguments do not match its schema.');
-            return guard(name, params, () => execute(params));
+            return guard(name, params, async () => {
+              if (!Value.Check(parameters, params))
+                throw new Error('The tool arguments do not match its schema.');
+              return execute(params);
+            });
           },
         }),
       );
       const system = systemPrompt(context, workspace);
-      session = await agent.open({
+      const opening = agent.open({
         threadId,
         turnId: context.turnId,
         systemPrompt: system,
@@ -320,7 +489,7 @@ export function createAgentRuntime(dependencies: {
         workspace,
         skillsDir,
         runTool: (name, params, run) => guard(name, params, run, true),
-        shouldStop: () => stopped,
+        shouldStop: () => stopped || checkRecorded,
         onEvent: (event) => {
           if (event.type === 'model_usage') void observe(event);
           if (event.type === 'message_start') {
@@ -336,7 +505,7 @@ export function createAgentRuntime(dependencies: {
           }
           if (event.type === 'error') modelFailed = true;
           if (event.type === 'final') modelFailed = modelIncomplete = false;
-          if (stopped || context.background) return;
+          if (stopped || context.background || context.activityCheck) return;
           if (event.type === 'text_delta') {
             streamId ??= randomUUID();
             bufferedText += event.text;
@@ -345,6 +514,20 @@ export function createAgentRuntime(dependencies: {
           if (event.type === 'final') queueStreamReply(event.text, streamId ?? randomUUID());
         },
       });
+      void opening.then(
+        (opened) => {
+          if (limits && signal.aborted) {
+            void Promise.resolve()
+              .then(() => opened.abort())
+              .catch(() => {});
+            void Promise.resolve()
+              .then(() => opened.dispose())
+              .catch(() => {});
+          }
+        },
+        () => {},
+      );
+      session = await waitFor(opening);
       signal.throwIfAborted();
       const resumed = session.resumed;
       const images: AgentImage[] = [];
@@ -356,11 +539,13 @@ export function createAgentRuntime(dependencies: {
         if (!path.startsWith(root + sep) || !dependencies.workspace.readArtifact) continue;
         try {
           const bytes = Buffer.from(
-            await dependencies.workspace.readArtifact(
-              threadId,
-              relative(root, path),
-              imageBytes,
-              'attachment',
+            await waitFor(
+              dependencies.workspace.readArtifact(
+                threadId,
+                relative(root, path),
+                imageBytes,
+                'attachment',
+              ),
             ),
           );
           signal.throwIfAborted();
@@ -395,8 +580,8 @@ export function createAgentRuntime(dependencies: {
             }),
           )
           .catch(() => {});
-        await session!.prompt(currentInstruction, images);
-        await pendingReplies;
+        await waitFor(session!.prompt(currentInstruction, images));
+        await waitFor(pendingReplies);
       };
       await sendPrompt(firstInstruction(context, resumed, omittedImages), images, 'user');
       if (secureContinuation && !stopped) {
@@ -412,14 +597,19 @@ export function createAgentRuntime(dependencies: {
       if (modelIncomplete && status === 'succeeded')
         throw new Error('The model response was incomplete. Say continue to try again.');
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
+      if (context.activityCheck && !checkRecorded)
+        throw new Error('The activity check did not record a result.');
       return { status, ...(waitingFor ? { waitingFor } : {}), ...(question ? { question } : {}) };
     } finally {
       stopped = true;
       completeStream();
       signal.removeEventListener('abort', abort);
       try {
-        await session?.dispose();
+        await waitFor(Promise.resolve().then(() => session?.dispose())).catch((error: unknown) => {
+          if (!signal.aborted) throw error;
+        });
       } finally {
+        clearTimeout(deadline);
         await Promise.allSettled([...activeToolCalls]);
         await observations.flush();
         activeThreads.delete(threadId);
