@@ -110,6 +110,7 @@ test(
         restoreSession: async () => {
           throw new Error('No integration');
         },
+        readOnly: async () => false,
         deleteSession: async () => {},
         inspectAccount: async () => ({ active: false, service: 'gmail' }),
         deleteAccount: async () => {},

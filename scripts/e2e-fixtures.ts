@@ -360,11 +360,13 @@ const spendingCsv = [
 const toolDefinitions = [
   {
     name: 'GMAIL_LIST_LABELS',
+    annotations: { readOnlyHint: true },
     description: 'List labels in the selected synthetic Gmail account.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'GMAIL_FETCH_EMAILS',
+    annotations: { readOnlyHint: true },
     description: 'Read synthetic Gmail messages. Use query in:sent for sent mail, newest first.',
     parameters: {
       type: 'object',
@@ -380,6 +382,7 @@ const toolDefinitions = [
   },
   {
     name: 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+    annotations: { readOnlyHint: true },
     description: 'Read a synthetic email by its observed emailId, including attachment metadata.',
     parameters: {
       type: 'object',
@@ -389,6 +392,7 @@ const toolDefinitions = [
   },
   {
     name: 'GMAIL_GET_ATTACHMENT',
+    annotations: { readOnlyHint: true },
     description:
       'Download an observed synthetic Gmail attachment with the apps download action. This is a read and never sends email.',
     parameters: {
@@ -404,6 +408,7 @@ const toolDefinitions = [
   },
   {
     name: 'SLACK_SEARCH_MESSAGES',
+    annotations: { readOnlyHint: true },
     description: 'Search synthetic Slack messages in the selected workspace.',
     parameters: {
       type: 'object',
@@ -413,6 +418,7 @@ const toolDefinitions = [
   },
   {
     name: 'NOTION_SEARCH_NOTION_PAGE',
+    annotations: { readOnlyHint: true },
     description: 'Search synthetic Notion pages by title and read their short summaries.',
     parameters: {
       type: 'object',
@@ -421,16 +427,19 @@ const toolDefinitions = [
   },
   {
     name: 'GOOGLECALENDAR_EVENTS_LIST',
+    annotations: { readOnlyHint: true },
     description: 'Read synthetic calendar events.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'GOOGLEDRIVE_FIND_FILE',
+    annotations: { readOnlyHint: true },
     description: 'Find a synthetic CSV export by name in the selected Google Drive account.',
     parameters: { type: 'object', properties: { query: { type: 'string' } } },
   },
   {
     name: 'GOOGLEDRIVE_DOWNLOAD_FILE',
+    annotations: { readOnlyHint: true },
     description: 'Download an observed synthetic CSV file by ID for private text analysis.',
     parameters: {
       type: 'object',
@@ -440,6 +449,7 @@ const toolDefinitions = [
   },
   {
     name: 'GOOGLESHEETS_SEARCH_SPREADSHEETS',
+    annotations: { readOnlyHint: true },
     description: 'Find spreadsheets by title in the selected synthetic Google Sheets account.',
     parameters: {
       type: 'object',
@@ -448,6 +458,7 @@ const toolDefinitions = [
   },
   {
     name: 'GOOGLESHEETS_GET_SPREADSHEET_INFO',
+    annotations: { readOnlyHint: true },
     description: 'Get the title and tab names of a synthetic Google spreadsheet by ID or URL.',
     parameters: {
       type: 'object',
@@ -457,6 +468,7 @@ const toolDefinitions = [
   },
   {
     name: 'GOOGLESHEETS_BATCH_GET',
+    annotations: { readOnlyHint: true },
     description: 'Read bounded cell ranges from a synthetic Google spreadsheet.',
     parameters: {
       type: 'object',
@@ -484,6 +496,7 @@ const toolDefinitions = [
   },
   {
     name: 'GMAIL_LIST_DRAFTS',
+    annotations: { readOnlyHint: true },
     description: 'List unsent drafts in the selected synthetic Gmail account.',
     parameters: {
       type: 'object',
@@ -493,6 +506,7 @@ const toolDefinitions = [
   },
   {
     name: 'GMAIL_GET_DRAFT',
+    annotations: { readOnlyHint: true },
     description: 'Read one unsent synthetic draft using its observed draft ID.',
     parameters: {
       type: 'object',
@@ -980,6 +994,10 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
       const session = sessions.get(id);
       if (!session) throw new Error('Synthetic session expired.');
       return session;
+    },
+    async readOnly(action) {
+      const tool = toolDefinitions.find((item) => item.name === action);
+      return Boolean(tool && 'annotations' in tool && tool.annotations?.readOnlyHint);
     },
     async deleteSession(id) {
       sessions.delete(id);

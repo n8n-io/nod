@@ -2904,6 +2904,10 @@ test(
     const turns = await seedCodeTurns(pool);
     const other = await turns.start('other');
     const chat = await turns.start('chat');
+    await pool.query(
+      "UPDATE turns SET started_at=(SELECT started_at FROM turns WHERE id=$2)-interval '1 millisecond' WHERE id=$1",
+      [other.turnId, chat.turnId],
+    );
     const app = Fastify();
     t.after(async () => {
       await app.close();
@@ -3021,6 +3025,7 @@ test(
       restoreSession: async () => {
         throw new Error('Mailbox reads must not use model sessions.');
       },
+      readOnly: async () => false,
       deleteSession: async () => {},
       deleteAccount: async () => {
         assert.fail('Must not disconnect.');

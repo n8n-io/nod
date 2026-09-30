@@ -103,6 +103,7 @@ function inspectedAppResult(value: unknown): boolean {
       Boolean(result.requiresConfirmation) ||
       Boolean(result.requiresApproval) ||
       'workspaceFile' in result ||
+      ('bytes' in result && 'preview' in result) ||
       ['rejected', 'failed', 'error', 'unavailable', 'pending', 'waiting_approval'].includes(
         String(result.status),
       ) ||
@@ -146,6 +147,7 @@ export function createAgentRuntime(dependencies: {
   workspace: Workspace;
   observationTimeoutMs?: number;
   withTool?<T>(turnId: string, toolCallId: string, toolName: string, action: () => T): T;
+  redactError?(text: string): string;
 }) {
   const { agent, computer } = dependencies;
   const activeThreads = new Map<string, { abort(): void; done: Promise<void> }>();
@@ -462,12 +464,9 @@ export function createAgentRuntime(dependencies: {
               ? 'The action was cancelled.'
               : error instanceof ReadOnlyTurnError
                 ? readOnlyRefusal
-                : error instanceof ActivityCheckError
-                  ? error.message
-                  : (browserFailure ??
-                    (native && error instanceof Error
-                      ? error.message
-                      : 'The action failed. Check the current state before trying again.'));
+                : (dependencies.redactError ?? String)(
+                    browserFailure ?? (error instanceof Error ? error.message : String(error)),
+                  );
             await end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
             if (
               !signal.aborted &&

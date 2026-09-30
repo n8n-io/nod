@@ -25,6 +25,7 @@ import type { IntegrationFile } from '../ports/integrations.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
+import { inlineAppResult } from './integration-result.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -82,6 +83,7 @@ export interface ThreadDependencies {
   executeConfirmation?: (
     turnId: string,
     signal: AbortSignal,
+    present: (action: string, result: unknown) => Promise<unknown>,
   ) => Promise<{ prompt: string } | undefined>;
   recordFailure?: (turnId: string, error: unknown) => Promise<void>;
   observe?: (turnId: string, event: RuntimeObservation) => Promise<void>;
@@ -837,23 +839,39 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     refresh();
   };
   try {
-    const confirmed = await dependencies.executeConfirmation?.(turnId, signal);
-    if (confirmed) turn.prompt = confirmed.prompt;
-    await ensureCurrent();
-    const loaded = await loadTurnContext(turn, dependencies);
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
-    const stage = async (id: string, fileName: string, bytes: Uint8Array) => {
+    const stage = async (id: string, fileName: string, bytes: Uint8Array, operation = signal) => {
+      operation.throwIfAborted();
       const name = `${id}-${basename(fileName)}`;
       if (dependencies.writeArtifact)
-        await dependencies.writeArtifact(threadId, name, bytes, signal);
+        await dependencies.writeArtifact(threadId, name, bytes, operation);
       else
         await writeFile(join(workspacePath, name), bytes, {
           mode: 0o600,
           flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+          signal: operation,
         });
+      operation.throwIfAborted();
       return name;
     };
+    const inline = async (action: string, result: unknown, operation = signal) => {
+      operation.throwIfAborted();
+      const value = await inlineAppResult(result, (text) =>
+        stage(
+          randomUUID(),
+          `${action.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)}.json`,
+          Buffer.from(text),
+          operation,
+        ),
+      );
+      operation.throwIfAborted();
+      return value;
+    };
+    const confirmed = await dependencies.executeConfirmation?.(turnId, signal, inline);
+    if (confirmed) turn.prompt = confirmed.prompt;
+    await ensureCurrent();
+    const loaded = await loadTurnContext(turn, dependencies);
     const ids = loaded.uploads.map((item) => String(item?.id ?? '')).filter(Boolean);
     const uploads = ids.length
       ? (
@@ -957,13 +975,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       browserConnection:
         browserConnection && fenced((request) => browserConnection(request, ref, signal)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
-      integration: fenced((action, args, callSignal?: AbortSignal) =>
-        dependencies.integration(ref, action, args, {
+      integration: fenced(async (action, args, callSignal?: AbortSignal) => {
+        const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
+        operation.throwIfAborted();
+        const result = await dependencies.integration(ref, action, args, {
           readOnly: turn.read_only || turn.source_id?.startsWith('onboarding:') === true,
-          signal: callSignal ? AbortSignal.any([signal, callSignal]) : signal,
+          signal: operation,
           checkConnectionId: loaded.context.activityCheck?.connectionId,
-        }),
-      ),
+        });
+        return inline(action, result, operation);
+      }),
       manage: fenced((action, args) =>
         dependencies.manage(ref, action, args, { sourceMessageId: loaded.sourceMessageId }),
       ),

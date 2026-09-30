@@ -3,7 +3,6 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { getDomain } from 'tldts';
-import { integrationResultSnapshot } from './integration-result.ts';
 import type { Approval, Connection, VaultLoginEntry } from '../shared/contracts.ts';
 import {
   IntegrationInboxCursorExpired,
@@ -17,7 +16,6 @@ import {
   integrationServiceIds,
   integrationServices,
 } from '../shared/integrations.ts';
-import { integrationActions } from './integration-policy.ts';
 import {
   DiscoveredConnectionError,
   type createDiscoveredConnections,
@@ -104,6 +102,9 @@ function browserService(origin: string) {
       .slice(0, 40)}-${createHash('sha256').update(url.origin).digest('hex').slice(0, 12)}`,
     name,
   };
+}
+function failure(prefix: string, error: unknown) {
+  return `${prefix}: ${error instanceof Error ? error.message : String(error)}`;
 }
 class IntegrationError extends Error {
   constructor(
@@ -1044,14 +1045,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           return session.execute(action, providerArgs, row.account_id!, signal);
         },
       );
-      if (integrationActions.includes(action))
-        rememberTargets(row.account_id!, row.slug, result, providerArgs);
-      return integrationResultSnapshot(result);
-    } catch {
-      throw new IntegrationError(
-        'The app request failed. Check the connection and requested fields.',
-        502,
-      );
+      const read = await providerForRow(row).readOnly(action, signal);
+      signal?.throwIfAborted();
+      if (read) rememberTargets(row.account_id!, row.slug, result, providerArgs);
+      return result;
+    } catch (error) {
+      throw new IntegrationError(failure('The app request failed', error), 502);
     }
   }
 
@@ -1150,7 +1149,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           )
           .map((result) => result.value);
         if (!searches.length && !options.discovered)
-          throw new Error('No app tool catalog is available.');
+          throw new Error(
+            results
+              .map((result) =>
+                result.status === 'rejected'
+                  ? result.reason instanceof Error
+                    ? result.reason.message
+                    : String(result.reason)
+                  : '',
+              )
+              .filter(Boolean)
+              .join('; ') || 'No app tool catalog is available.',
+          );
         const tools = Object.assign({}, ...searches.map((item) => item.tools));
         const primary =
           availableProviders[0] === provider && results[0].status === 'fulfilled'
@@ -1239,8 +1249,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           });
         }
         return { ...search, accounts, discovered: discovered?.accounts ?? [] };
-      } catch {
-        throw new IntegrationError('App tool search is unavailable. Try again later.', 502);
+      } catch (error) {
+        throw new IntegrationError(failure('App tool search failed', error), 502);
       }
     }
     const slug = actionToolkit(action);
@@ -1252,8 +1262,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       z.string().uuid().optional().parse(args.connectionId),
     );
     const selectedArgs = { ...args, connectionId: row.id };
-    if (!integrationActions.includes(action))
-      return { requiresApproval: true, action, args: selectedArgs };
+    const read = await providerForRow(row).readOnly(action, signal);
+    signal?.throwIfAborted();
+    if (!read) return { requiresApproval: true, action, args: selectedArgs };
     return executeApproved(ownerId, action, selectedArgs, turn, signal, checkConnectionId);
   }
 
@@ -1384,10 +1395,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } catch (error) {
       if (signal?.aborted) throw new DOMException('File download was cancelled.', 'AbortError');
       if (error instanceof IntegrationError && error.statusCode === 503) throw error;
-      throw new IntegrationError(
-        'The file could not be downloaded. Check the account and file, then try again.',
-        502,
-      );
+      throw new IntegrationError(failure('The file could not be downloaded', error), 502);
     } finally {
       deadline.removeEventListener('abort', abort);
     }
@@ -1827,6 +1835,5 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     syncWatches,
     pollInboxes,
     ready: provider.configured,
-    integrationActions,
   };
 }

@@ -42,7 +42,7 @@ export function createInspectorRedactor(
         '$1[redacted]',
       )
       .replace(
-        /([?&#](?:access_token|refresh_token|id_token|token|code|state|key|api_key|secret|password)=)[^\s&"'<>]*/gi,
+        /([?&#](?:access_token|refresh_token|id_token|token|code|state|key|api_key|secret|password|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential)=)[^\s&"'<>]*/gi,
         '$1[redacted]',
       )
       .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
@@ -153,5 +153,13 @@ export function createInspectorRedactor(
     while (Buffer.byteLength(JSON.stringify({ preview, truncated: true })) > payloadLimit)
       preview = preview.slice(0, Math.floor(preview.length * 0.8));
     return { preview, truncated: true };
+  };
+}
+
+export function createErrorRedactor(secrets: string[]) {
+  const redact = createInspectorRedactor(secrets, { string: 4000 });
+  return (text: string) => {
+    const safe = redact(text);
+    return typeof safe === 'string' ? safe : JSON.stringify(safe);
   };
 }

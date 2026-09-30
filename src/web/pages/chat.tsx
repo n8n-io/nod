@@ -115,7 +115,10 @@ export function Chat({
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState('');
   const [reportStatus, setReportStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
-  const [connectionNotice, setConnectionNotice] = useState('');
+  const [connectionNotice, setConnectionNotice] = useState<{
+    text: string;
+    kind: 'success' | 'error';
+  } | null>(null);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ id: string; pages: number } | null>(() =>
     initialFocusMessageId ? { id: initialFocusMessageId, pages: 0 } : null,
@@ -246,6 +249,7 @@ export function Chat({
   }, []);
   useEffect(() => {
     const url = new URL(window.location.href);
+    if (url.pathname !== '/') return;
     const outcome = url.searchParams.get('connection');
     if (!outcome) return;
     const slug = url.searchParams.get('service');
@@ -255,17 +259,26 @@ export function Chat({
         : 'App';
     setConnectionNotice(
       outcome === 'continued'
-        ? ''
-        : outcome === 'connected'
-          ? `${name} connected.`
-          : outcome === 'cancelled'
-            ? `${name} connection cancelled. Try again in chat.`
-            : `${name} could not connect. Try again in chat.`,
+        ? null
+        : {
+            text:
+              outcome === 'connected'
+                ? `${name} connected.`
+                : outcome === 'cancelled'
+                  ? `${name} connection cancelled. Try again in chat.`
+                  : `${name} could not connect. Try again in chat.`,
+            kind: outcome === 'connected' ? 'success' : 'error',
+          },
     );
     url.searchParams.delete('connection');
     url.searchParams.delete('service');
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }, []);
+  useEffect(() => {
+    if (connectionNotice?.kind !== 'success') return;
+    const timer = setTimeout(() => setConnectionNotice(null), 6000);
+    return () => clearTimeout(timer);
+  }, [connectionNotice]);
   useEffect(() => {
     const focusMessage = (event: Event) => {
       const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
@@ -729,7 +742,11 @@ export function Chat({
         )}
         {away?.shown && <div className="jump-latest-fade" aria-hidden="true" />}
         {error && <Notice>{error}</Notice>}
-        {connectionNotice && <Notice kind="info">{connectionNotice}</Notice>}
+        {connectionNotice && (
+          <Notice kind={connectionNotice.kind} onDismiss={() => setConnectionNotice(null)}>
+            {connectionNotice.text}
+          </Notice>
+        )}
         {!state.configuration.llmReady && (
           <Notice kind="info">
             The assistant isn’t connected yet. Check the development setup.
