@@ -158,6 +158,7 @@ export async function createApprovals(
     action: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    options: { confirm?: boolean } = {},
   ) {
     const encoded = JSON.stringify(args);
     if (!encoded || encoded.length > 32768) throw new Error('The action is too large.');
@@ -299,7 +300,9 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
-      const direct = privateDraft || (!review && (isReversiblePlanAction(action) || explicit));
+      const direct =
+        !options.confirm &&
+        (privateDraft || (!review && (isReversiblePlanAction(action) || explicit)));
       const id = randomUUID();
       let targetTitle: string | undefined = verifiedTarget;
       if (!direct && typeof snapshot.id === 'string') {

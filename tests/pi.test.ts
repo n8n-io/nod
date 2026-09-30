@@ -21,13 +21,16 @@ import { createFilesystemObjectStore } from '../src/providers/object-storage/fil
 import {
   closeInterruptedCalls,
   createPiCheckpoint,
+  readPiSessionEntries,
   rebaseAt,
 } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import type { runProcess } from '../src/providers/process.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
+import { createBrowserFlows } from '../src/runtime/browser-flows.ts';
 import { createBrowserFixture as createAgentBrowserComputer } from './browser-fixture.ts';
+import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
 // Pi sessions: abort/drain, credential pause and resume, native tools only via the sandbox.
@@ -540,6 +543,55 @@ test('a stale Pi writer cannot overwrite a newer session checkpoint', async () =
   }
 });
 
+test('the bug report reads only the requested saved Pi session', async () => {
+  const f = await fixture();
+  try {
+    const checkpoint = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: f.directory,
+    });
+    checkpoint.manager.appendMessage({
+      role: 'user',
+      content: 'Saved fixture question',
+      timestamp: Date.now(),
+    });
+    await checkpoint.checkpoint();
+    const saved = await readPiSessionEntries({
+      threadId: f.threadId,
+      sessionRoot: f.directory,
+      objectStore: f.store,
+    });
+    assert.match(JSON.stringify(saved), /Saved fixture question/);
+    assert.equal(
+      (
+        await readPiSessionEntries({
+          threadId: randomUUID(),
+          sessionRoot: f.directory,
+          objectStore: f.store,
+        })
+      ).length,
+      0,
+    );
+    const localRoot = join(f.directory, 'local');
+    const localDirectory = join(localRoot, f.threadId);
+    await mkdir(localDirectory, { recursive: true });
+    const localManager = SessionManager.continueRecent(localDirectory, localDirectory);
+    localManager.appendMessage({
+      role: 'user',
+      content: 'Local fixture question',
+      timestamp: Date.now(),
+    });
+    dangling(localManager, []);
+    assert.equal(localManager.getSessionDir(), localDirectory);
+    assert.ok((await readdir(localDirectory)).some((name) => name.endsWith('.jsonl')));
+    const local = await readPiSessionEntries({ threadId: f.threadId, sessionRoot: localRoot });
+    assert.match(JSON.stringify(local), /Local fixture question/);
+  } finally {
+    await f.close();
+  }
+});
+
 test('real Pi awaits durable final checkpoints and restores a conversation in a fresh actor directory', async () => {
   const f = await fixture();
   const prompts: string[] = [];
@@ -879,6 +931,235 @@ test('native Pi tools run only through workspace exec on sandbox paths that do n
     ),
   );
   assert.equal(existsSync(prefix), false);
+});
+
+test('browser flows stay discoverable after a thread reset and stop when a page changes', async (t) => {
+  const { prefix, root, workspace, run: nativeRun } = await hostSandbox(t);
+  const actions: string[] = [];
+  const fills: string[] = [];
+  let page = 'Search box';
+  const computer = fakeComputer({
+    act: async (_id, action) => {
+      actions.push(action.action);
+      if (action.action === 'fill') fills.push(action.text ?? '');
+      if (action.action === 'open') page = 'Search box';
+      if (action.action === 'fill') page = 'Search results';
+      if (action.action === 'click') page = 'Result page';
+      return {
+        url: 'https://market.example.test/search',
+        text: page,
+        candidates: [],
+      };
+    },
+  });
+  const run = createBrowserFlows(workspace, computer, 'first-thread', new AbortController().signal);
+  assert.deepEqual(await run({ action: 'list' }), { flows: [], invalid: [] });
+  assert.equal(existsSync(join(root, '.otto')), false);
+  const flow = {
+    id: 'bike-watch',
+    title: 'Find used bikes',
+    description: 'Search the bike marketplace for a saved watch.',
+    origin: 'https://market.example.test/',
+    inputs: { query: 'Search words' },
+    steps: [
+      {
+        action: { action: 'open' as const, url: 'https://market.example.test/search' },
+        expectText: 'Search box',
+      },
+      {
+        action: { action: 'fill' as const, selector: '#search', text: '{{query}}' },
+        expectText: 'Expected results',
+      },
+      { action: { action: 'click' as const, selector: '#next' } },
+      { action: { action: 'snapshot' as const }, expectText: 'Result page' },
+    ],
+  };
+  const saved = await run({ action: 'save', flow });
+  assert.match(JSON.stringify(saved), /\/\.otto\/browser-flows\/bike-watch\.json/);
+  assert.equal(existsSync(prefix), false);
+  assert.equal(
+    JSON.parse(await readFile(join(root, '.otto/browser-flows/bike-watch.json'), 'utf8')).id,
+    'bike-watch',
+  );
+  assert.match(
+    await nativeRun('ls', { path: `${prefix}/.otto/browser-flows` }),
+    /bike-watch\.json/,
+  );
+  await run({
+    action: 'save',
+    flow: {
+      id: 'car-listings',
+      title: 'Find used cars',
+      description: 'Check a car listing site.',
+      origin: 'https://cars.example.test/',
+      inputs: {},
+      steps: [
+        { action: { action: 'open', url: 'https://cars.example.test/' } },
+        { action: { action: 'snapshot' }, expectText: 'Cars' },
+      ],
+    },
+  });
+  await mkdir(join(root, 'second-thread'));
+  const afterReset = createBrowserFlows(
+    { ...workspace, path: `${prefix}/second-thread` },
+    computer,
+    'second-thread',
+    new AbortController().signal,
+  );
+  const registry = await afterReset({ action: 'list', query: 'cars listings' });
+  assert.equal((registry as { flows: Array<{ id: string }> }).flows[0].id, 'car-listings');
+  assert.equal((registry as { flows: Array<{ id: string }> }).flows.length, 2);
+  const paused = await afterReset({
+    action: 'run',
+    id: 'bike-watch',
+    inputs: { query: 'restomod' },
+  });
+  assert.equal((paused as { status: string }).status, 'needs_repair');
+  assert.deepEqual(actions, ['open', 'fill']);
+  await afterReset({
+    action: 'save',
+    flow: {
+      ...flow,
+      steps: flow.steps.map((step) =>
+        step.action.action === 'fill' ? { ...step, expectText: 'Search results' } : step,
+      ),
+    },
+  });
+  const completed = await afterReset({
+    action: 'run',
+    id: 'bike-watch',
+    inputs: { query: 'restomod' },
+  });
+  assert.equal((completed as { status: string }).status, 'completed');
+  assert.deepEqual(actions, ['open', 'fill', 'open', 'fill', 'click', 'snapshot']);
+  assert.deepEqual(fills, ['restomod', 'restomod']);
+  await assert.rejects(
+    run({
+      action: 'save',
+      flow: {
+        ...flow,
+        steps: [
+          flow.steps[0],
+          { action: { action: 'fill', selector: '#password', text: 'stored-secret' } },
+          flow.steps.at(-1)!,
+        ],
+      },
+    }),
+    /named input/,
+  );
+  await assert.rejects(
+    run({
+      action: 'save',
+      flow: {
+        ...flow,
+        steps: [
+          flow.steps[0],
+          { action: { action: 'click', selector: '@e12' } },
+          flow.steps.at(-1)!,
+        ],
+      },
+    }),
+    /stable selector/,
+  );
+  await assert.rejects(
+    run({
+      action: 'save',
+      flow: {
+        ...flow,
+        steps: [
+          { action: { action: 'open', url: 'https://user:secret@market.example.test/search' } },
+          flow.steps.at(-1)!,
+        ],
+      },
+    }),
+    /URL credentials/,
+  );
+  await assert.rejects(
+    run({
+      action: 'save',
+      flow: {
+        ...flow,
+        steps: [
+          flow.steps[0],
+          {
+            action: { action: 'snapshot' },
+            expectUrl: 'https://user:secret@market.example.test/search',
+          },
+        ],
+      },
+    }),
+    /URL credentials/,
+  );
+  const library = join(root, '.otto/browser-flows');
+  for (let index = 0; index < 101; index++) {
+    const id = `old-flow-${index}`;
+    await writeFile(
+      join(library, `${id}.json`),
+      JSON.stringify({
+        ...flow,
+        id,
+        title: 'Old routine',
+        description: 'Archived site routine.',
+      }),
+    );
+  }
+  await writeFile(
+    join(library, 'z-last.json'),
+    JSON.stringify({
+      ...flow,
+      id: 'z-last',
+      title: 'Late unique listing',
+      description: 'A later site routine.',
+    }),
+  );
+  const fullRegistry = await afterReset({ action: 'list', query: 'late unique' });
+  assert.equal((fullRegistry as { flows: Array<{ id: string }> }).flows[0].id, 'z-last');
+  assert.equal((fullRegistry as { flows: Array<{ id: string }> }).flows.length, 104);
+});
+
+test('a saved flow uses the current agent-browser session on a synthetic page', async (t) => {
+  const { root, workspace } = await hostSandbox(t);
+  const fixture = stagedLoginBrowser();
+  const computer = createAgentBrowserComputer({ dataRoot: root, run: fixture.run });
+  t.after(() => computer.dispose());
+  const flows = createBrowserFlows(
+    workspace,
+    computer,
+    'flow-fixture',
+    new AbortController().signal,
+  );
+  await flows({
+    action: 'save',
+    flow: {
+      id: 'search-page',
+      title: 'Open the search page',
+      description: 'Enter a search phrase on the synthetic site.',
+      origin: 'https://1.1.1.1/',
+      inputs: { query: 'Search phrase' },
+      steps: [
+        {
+          action: { action: 'open', url: 'https://1.1.1.1/login' },
+          expectText: 'Sign in identifier',
+        },
+        { action: { action: 'fill', selector: '#search', text: '{{query}}' } },
+        { action: { action: 'snapshot' }, expectText: '{{query}}' },
+      ],
+    },
+  });
+  const result = await flows({
+    action: 'run',
+    id: 'search-page',
+    inputs: { query: 'restomod bike' },
+  });
+  assert.equal((result as { status: string }).status, 'completed');
+  assert.equal(fixture.pages.get('flow-fixture')?.search.value, 'restomod bike');
+  const second = await flows({
+    action: 'run',
+    id: 'search-page',
+    inputs: { query: 'vintage frame' },
+  });
+  assert.equal((second as { status: string }).status, 'completed');
+  assert.equal(fixture.pages.get('flow-fixture')?.search.value, 'vintage frame');
 });
 
 test('bash output larger than Pi limits stays in the sandbox and never creates host temp files', async (t) => {

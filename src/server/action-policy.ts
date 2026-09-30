@@ -1,4 +1,4 @@
-type Intent = 'send' | 'draft' | 'create' | 'update' | 'schedule' | 'remember';
+type Intent = 'send' | 'draft' | 'create' | 'update' | 'schedule' | 'remember' | 'memory';
 
 const ordinaryActions: Record<string, Intent[]> = {
   GMAIL_SEND_EMAIL: ['send'],
@@ -21,6 +21,7 @@ const ordinaryActions: Record<string, Intent[]> = {
   NOTION_APPEND_BLOCK_CHILDREN: ['create', 'draft', 'update'],
   OTTO_profile_update: ['update', 'remember'],
   OTTO_notification_preferences_update: ['update', 'remember'],
+  OTTO_memory_save: ['memory'],
 };
 
 export function isPrivateDraftAction(action: string) {
@@ -102,6 +103,9 @@ const intentWords: Record<Intent, RegExp> = {
   schedule:
     /^(?:schedule|remind\s+me|set\s+(?:up\s+)?(?:a\s+)?reminder|agenda|lembra-me|lembre-me)\b/i,
   remember: /^(?:remember|save\s+(?:my|this)|learn|memoriza|lembra-te|guarda)\b/i,
+  // Only a request to store something; not "remember when…", "learn from this" or other uses.
+  memory:
+    /^(?:remember\s+(?:that|my|i|i'm|i’m|i\s+am)|keep\s+in\s+mind\s+that|(?:save|add)\s+(?:this|that)\s+to\s+(?:your\s+)?memory|lembra-te\s+(?:de\s+)?que|memoriza\s+que)\b/i,
 };
 
 const actionScopes: Record<string, RegExp> = {

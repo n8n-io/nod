@@ -90,6 +90,8 @@ export interface ThreadDependencies {
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
   activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
+  memoryContext?: () => Promise<RuntimeContext['memory']>;
+  markUntrustedContext?: (turn: TurnRef) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -723,35 +725,43 @@ type StoredAttachment = { id?: string; name?: string; mimeType?: string };
 async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
   const threadId = turn.thread_id as string;
   const sourceMessageId: string | null = turn.message_id ?? null;
-  const [source, history, profile, goals, preferences, account, connectedApps, activityCheck] =
-    await Promise.all([
-      sourceMessageId
-        ? pool.query(
-            `SELECT s.attachments,r.id,r.role,left(r.text,6000) AS text,r.attachments AS reply_attachments
+  const [
+    source,
+    history,
+    profile,
+    goals,
+    preferences,
+    account,
+    memory,
+    connectedApps,
+    activityCheck,
+  ] = await Promise.all([
+    sourceMessageId
+      ? pool.query(
+          `SELECT s.attachments,r.id,r.role,left(r.text,6000) AS text,r.attachments AS reply_attachments
            FROM messages s LEFT JOIN messages r ON r.id=s.reply_to_message_id AND r.owner_id=s.owner_id AND r.thread_id=s.thread_id
            WHERE s.id=$1 AND s.owner_id=$2`,
-            [sourceMessageId, ownerId],
-          )
-        : undefined,
-      pool.query(
-        `SELECT role,text,created_at AS "createdAt",reaction,attachments FROM (
+          [sourceMessageId, ownerId],
+        )
+      : undefined,
+    pool.query(
+      `SELECT role,text,created_at AS "createdAt",reaction,attachments FROM (
        SELECT m.role,left(m.text,6000) AS text,m.created_at,m.id,m.reaction,m.attachments FROM messages m
        WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id IS DISTINCT FROM $3::uuid
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
-        [ownerId, threadId, sourceMessageId],
-      ),
-      pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
-      pool.query(
-        'SELECT title,description,progress,next_action AS "nextAction",target_date AS "targetDate" FROM goals WHERE owner_id=$1 AND status=\'active\' ORDER BY updated_at DESC LIMIT 10',
-        [ownerId],
-      ),
-      pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [
-        ownerId,
-      ]),
-      dependencies.accountProfile?.().catch(() => undefined),
-      turn.background ? dependencies.connectedApps?.() : undefined,
-      turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
-    ]);
+      [ownerId, threadId, sourceMessageId],
+    ),
+    pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
+    pool.query(
+      'SELECT title,description,progress,next_action AS "nextAction",target_date AS "targetDate" FROM goals WHERE owner_id=$1 AND status=\'active\' ORDER BY updated_at DESC LIMIT 10',
+      [ownerId],
+    ),
+    pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [ownerId]),
+    dependencies.accountProfile?.().catch(() => undefined),
+    dependencies.memoryContext?.().catch(() => []),
+    turn.background ? dependencies.connectedApps?.() : undefined,
+    turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
+  ]);
   const message = source?.rows[0];
   const replyTo = message?.id
     ? {
@@ -777,6 +787,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       locale: preference?.locale || formattingLocale(timeZoneRegion(timeZone)),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,
       ...(account ? { account } : {}),
+      memory: memory ?? [],
       ...(connectedApps ? { connectedApps } : {}),
       ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 8, timeoutMs: 90_000 } } : {}),
       personalContext: {
@@ -956,6 +967,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       manage: fenced((action, args) =>
         dependencies.manage(ref, action, args, { sourceMessageId: loaded.sourceMessageId }),
       ),
+      markUntrustedContext: fenced(async () => dependencies.markUntrustedContext?.(ref)),
       downloadIntegrationFile:
         downloadIntegrationFile &&
         (async (action, args) =>

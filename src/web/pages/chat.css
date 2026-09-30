@@ -337,6 +337,11 @@
   position: relative;
   container-type: inline-size;
 }
+.chat-report-action {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 32px 0;
+}
 .chat-page .conversation-scroll > .conversation-column,
 .chat-page > .chat-bottom.conversation-column {
   max-width: none;

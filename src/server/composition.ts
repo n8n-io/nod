@@ -40,6 +40,7 @@ import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createOpenAIRelevanceClassifier } from '../providers/openai/relevance.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
+import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
 import { createApp } from './app.ts';
@@ -76,13 +77,16 @@ import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
 import { createInspectorStore } from './inspector.ts';
 import { createPromptInspector } from './inspector-prompts.ts';
+import { registerBugReport } from './bug-report.ts';
 import { createPersonalService } from './personal.ts';
+import { createMemoryService } from './memory.ts';
 import { createSpeech } from './speech.ts';
 import {
   boss,
   createUserMessageService,
   enqueueTurn,
   initializeThreads,
+  reply,
   restartOnboarding,
   resumeAfterConnection,
   resumeAfterCredentials,
@@ -90,6 +94,7 @@ import {
   startOnboarding,
   startThreadWorkers,
   stopThreadWorkers,
+  withTurnLock,
 } from './thread.ts';
 import { createTriage } from './triage.ts';
 import { createVault, credentialOrigin } from './vault.ts';
@@ -445,15 +450,22 @@ export async function createApplication(
     workspace,
   });
   const speech = createSpeech(speechProvider);
+  const memory = createMemoryService({
+    pool,
+    ownerId,
+    store: adapters.objectStore ?? createFilesystemObjectStore(join(dataRoot, 'objects')),
+  });
   const personal = createPersonalService({
     pool,
     ownerId,
     scheduler: boss,
     enqueueTurn,
     refresh,
+    memory,
     consumers,
     stopConsumer: (id) => boss.offWork('scheduled-task', { id, wait: true }),
   });
+  await memory.initialize();
   await personal.initialize({ workers: options.workers });
   const triage = createTriage({
     consumers,
@@ -554,17 +566,19 @@ export async function createApplication(
   });
   const approvals = await createApprovals(
     (action, args, provenance) =>
-      action.startsWith('OTTO_')
-        ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-        : providerUsage.withTurn(provenance.turnId, () =>
-            integrations.executeApproved(
-              ownerId,
-              action,
-              args,
-              { threadId: provenance.threadId, turnId: provenance.turnId },
-              provenance.signal,
+      action === 'OTTO_memory_save'
+        ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
+        : action.startsWith('OTTO_')
+          ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+          : providerUsage.withTurn(provenance.turnId, () =>
+              integrations.executeApproved(
+                ownerId,
+                action,
+                args,
+                { threadId: provenance.threadId, turnId: provenance.turnId },
+                provenance.signal,
+              ),
             ),
-          ),
     async (action, args) => {
       if (action.startsWith('OTTO_'))
         await personal.validateReview(action.slice('OTTO_'.length), args);
@@ -609,6 +623,8 @@ export async function createApplication(
       accountProfile,
       connectedApps: integrations.connectedApps,
       activityCheck: triage.activityCheck,
+      memoryContext: memory.context,
+      markUntrustedContext: (turn) => memory.markUntrusted(turn.threadId),
       connections: integrations.manageConnections,
       browserConnection: (request, turn, signal) =>
         browserConnections.request(request, turn, signal),
@@ -630,6 +646,25 @@ export async function createApplication(
             `OTTO_${action}`,
             await personal.validateReview(action, args),
           );
+        // After outside content, an inferred note needs confirmation; an explicit "remember" request saves directly.
+        if (action === 'memory_save' && (await memory.untrusted(turn.threadId))) {
+          const input = memory.validate(args);
+          // An explicit request allows one direct note, so once any note cites this message the rest are confirmed.
+          const result = await approvals.request(turn, 'OTTO_memory_save', input, undefined, {
+            confirm: await memory.cites(provenance.sourceMessageId),
+          });
+          if (!(result && typeof result === 'object' && 'requiresConfirmation' in result))
+            await reply(turn, `Remembered: ${input.text}`);
+          return result;
+        }
+        if (action === 'memory_save' || action === 'memory_forget') {
+          const result = await withTurnLock(turn.turnId, () =>
+            personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
+          );
+          if (action === 'memory_save')
+            await reply(turn, `Remembered: ${(result as { text: string }).text}`);
+          return result;
+        }
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
       requestCredential: async (turn, input) => {
@@ -728,6 +763,20 @@ export async function createApplication(
         llmReady: adapters.model.configured,
         speechReady: adapters.speech.configured,
         integrationsReady: adapters.integrations.configured,
+      }),
+  });
+  registerBugReport(app, {
+    pool,
+    ownerId,
+    captureEnabled: () => configuration().inspectorEnabled,
+    secrets: inspectorSecrets,
+    provider: adapters.model.provider,
+    model: adapters.model.name,
+    sessionEntries: (threadId) =>
+      readPiSessionEntries({
+        threadId,
+        sessionRoot: join(dataRoot, 'sessions'),
+        objectStore: adapters.objectStore,
       }),
   });
   if (localAccounts) {

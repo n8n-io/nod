@@ -12,6 +12,7 @@ function objectKey(request: Request) {
   } catch {
     throw new RuntimeControlError();
   }
+  if (key === 'memory/MEMORY.md') return key;
   const match = /^(artifacts|sessions)\/([0-9a-f-]{36})(\.jsonl)?$/.exec(key);
   if (!match || (match[1] === 'sessions') !== (match[3] === '.jsonl'))
     throw new RuntimeControlError();

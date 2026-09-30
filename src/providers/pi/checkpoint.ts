@@ -1,6 +1,9 @@
 import { SessionManager, type FileEntry } from '@earendil-works/pi-coding-agent';
 import { randomUUID } from 'node:crypto';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { PrivateObjectStore } from '../../ports/object-storage.ts';
+import { threadIdentity } from '../../ports/thread-identity.ts';
 
 const maximum = 15 * 1024 * 1024;
 export const rebaseAt = 8 * 1024 * 1024;
@@ -42,6 +45,37 @@ function entries(bytes: Uint8Array): FileEntry[] {
   } catch {
     throw failure();
   }
+}
+
+export async function readPiSessionEntries(options: {
+  threadId: string;
+  sessionRoot: string;
+  objectStore?: PrivateObjectStore;
+}) {
+  const threadId = threadIdentity(options.threadId);
+  if (options.objectStore) {
+    const saved = await options.objectStore.read(`sessions/${threadId}.jsonl`, maximum);
+    return saved ? entries(saved.bytes).slice(1) : [];
+  }
+  const directory = join(options.sessionRoot, threadId);
+  const files = await readdir(directory, { withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    },
+  );
+  const candidates = await Promise.all(
+    files
+      .filter((file) => file.isFile() && file.name.endsWith('.jsonl'))
+      .map(async (file) => {
+        const path = join(directory, file.name);
+        return { path, info: await stat(path) };
+      }),
+  );
+  const latest = candidates.sort((a, b) => b.info.mtimeMs - a.info.mtimeMs)[0];
+  if (!latest) return [];
+  if (latest.info.size > maximum) throw failure();
+  return entries(await readFile(latest.path)).slice(1);
 }
 
 export function rebaseSession(source: SessionManager, next: SessionManager) {

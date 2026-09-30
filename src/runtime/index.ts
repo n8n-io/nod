@@ -17,6 +17,7 @@ import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { integrationDownloadActions } from '../shared/integrations.ts';
+import { createBrowserFlows } from './browser-flows.ts';
 import { requestsPrivateInput } from './communication.ts';
 import { createObservationQueue } from './observations.ts';
 import { firstInstruction, systemPrompt } from './prompt.ts';
@@ -28,6 +29,14 @@ const skillsDir = fileURLToPath(new URL('./skills', import.meta.url));
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
 const parallelTools = new Set(['share_file', 'create_audio']);
+const trustedResultTools = new Set([
+  'send_message',
+  'ask_user',
+  'react_to_message',
+  'manage_apps',
+  'share_file',
+  'create_audio',
+]);
 const readOnlyTools: Record<string, true | string[]> = {
   read: true,
   find: true,
@@ -40,11 +49,13 @@ const readOnlyTools: Record<string, true | string[]> = {
   source_check: true,
   get_search_content: true,
   browser: ['open', 'snapshot', 'scroll', 'screenshot'],
+  browser_flow: ['list', 'get'],
   manage_apps: ['list'],
   manage_personal_context: [
     'profile_get',
     'notification_preferences_get',
     'history_search',
+    'memory_list',
     'schedule_list',
     'goal_list',
   ],
@@ -318,6 +329,7 @@ export function createAgentRuntime(dependencies: {
       if (stopped || status !== 'succeeded' || checkRecorded || (checkRecording && !recording))
         throw new Error('This execution segment has stopped.');
     };
+    let untrustedMarked = false;
     const guard = (
       name: string,
       params: unknown,
@@ -348,13 +360,24 @@ export function createAgentRuntime(dependencies: {
               finishedAt: new Date().toISOString(),
               durationMs: performance.now() - started,
             });
-          const observedInput =
-            name === 'browser' &&
-            params &&
-            typeof params === 'object' &&
-            (params as { action?: unknown }).action === 'fill'
+          const personalAction = String((params as { action?: unknown })?.action);
+          const memoryAction =
+            name === 'manage_personal_context' && personalAction.startsWith('memory_');
+          const untrustedResult =
+            !trustedResultTools.has(name) &&
+            !(name === 'manage_personal_context' && personalAction !== 'history_search');
+          const observedInput = memoryAction
+            ? { action: (params as { action?: unknown }).action, args: '[private memory omitted]' }
+            : name === 'browser' &&
+                params &&
+                typeof params === 'object' &&
+                (params as { action?: unknown }).action === 'fill'
               ? { ...params, text: '[redacted]' }
-              : params;
+              : name === 'browser_flow' && params && typeof params === 'object'
+                ? (params as { action?: unknown }).action === 'save'
+                  ? { action: 'save', flow: '[redacted]' }
+                  : { ...params, query: '[redacted]', inputs: '[redacted]' }
+                : params;
           await observe({
             type: 'tool_start',
             id,
@@ -399,6 +422,10 @@ export function createAgentRuntime(dependencies: {
             if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
             await waitFor(pendingReplies);
             assertActive(reservedRecord);
+            if (untrustedResult && !untrustedMarked) {
+              await waitFor(Promise.resolve(context.markUntrustedContext?.()));
+              untrustedMarked = true;
+            }
             await waitFor(context.emit('tool_start', label));
             const executeCurrent = () => {
               assertActive(reservedRecord);
@@ -420,7 +447,12 @@ export function createAgentRuntime(dependencies: {
             if (context.activityCheck && name === 'record_activity_check') checkRecorded = true;
             if (!stopped) await waitFor(context.emit('tool_complete', label));
             result = isToolResult(output) ? output : textResult(output);
-            await end({ status: 'succeeded', ...(name === 'get_credential' ? {} : { output }) });
+            await end({
+              status: 'succeeded',
+              ...(['get_credential', 'browser_flow'].includes(name) || memoryAction
+                ? {}
+                : { output }),
+            });
           } catch (error) {
             if (reservedRecord) checkRecording = false;
             if (!stopped) await waitFor(context.emit('tool_failed', label)).catch(() => {});
@@ -475,7 +507,7 @@ export function createAgentRuntime(dependencies: {
         pause,
         confirm,
       };
-      const tools = ottoTools(turn).map(
+      const tools = ottoTools(turn, createBrowserFlows(workspace, computer, threadId, signal)).map(
         ({ name, description, parameters, execute }): AgentTool => ({
           name,
           description,
@@ -490,6 +522,7 @@ export function createAgentRuntime(dependencies: {
         }),
       );
       const system = systemPrompt(context, workspace);
+      const inspectedSystem = systemPrompt({ ...context, memory: [] }, workspace);
       const opening = agent.open({
         threadId,
         turnId: context.turnId,
@@ -539,6 +572,10 @@ export function createAgentRuntime(dependencies: {
       session = await waitFor(opening);
       signal.throwIfAborted();
       const resumed = session.resumed;
+      if (context.attachments.length) {
+        await waitFor(Promise.resolve(context.markUntrustedContext?.()));
+        untrustedMarked = true;
+      }
       const images: AgentImage[] = [];
       const omittedImages = new Set<string>();
       const root = resolve(context.workspacePath);
@@ -580,7 +617,7 @@ export function createAgentRuntime(dependencies: {
           .then(() =>
             context.inspectPrompt?.({
               id: randomUUID(),
-              system,
+              system: inspectedSystem,
               instruction: currentInstruction,
               resumed: resumed || reason === 'secure_resume',
               imageCount: images.length,

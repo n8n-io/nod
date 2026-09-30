@@ -28,6 +28,9 @@ test('explicit requests authorize only the named operation and never draft, nega
     ['GMAIL_CREATE_EMAIL_DRAFT', 'Write an email draft to Alex.'],
     ['GMAIL_SEND_EMAIL', 'Send an email to Alex saying "Do not send this to anyone else."'],
     ['SLACK_SEND_MESSAGE', 'Send a Slack message saying “Do not publish this draft.”'],
+    ['OTTO_memory_save', 'Remember that I prefer short reports.'],
+    ['OTTO_memory_save', "Please remember I'm vegetarian."],
+    ['OTTO_memory_save', 'Lembra-te que prefiro resumos curtos.'],
   ]) {
     assert.equal(explicitlyRequestsAction(action!, text!), true, `${action}: ${text}`);
     assert.equal(forbidsTransmission(action!, text!), false, `${action}: ${text}`);
@@ -45,6 +48,10 @@ test('explicit requests authorize only the named operation and never draft, nega
     ['OTTO_goal_create', 'Review my goals.'],
     ['SLACK_POST_MESSAGE', 'Resume the schedule and post the update in Slack.'],
     ['GMAIL_SEND_EMAIL', 'Set a goal to draft an email to Alex.'],
+    ['OTTO_memory_save', 'Remember when we booked the museum?'],
+    ['OTTO_memory_save', 'Learn the API from this document.'],
+    ['OTTO_memory_save', 'Guarda o ficheiro.'],
+    ['OTTO_memory_save', 'Save this page as a PDF.'],
   ])
     assert.equal(explicitlyRequestsAction(action!, text!), false, `${action}: ${text}`);
 
@@ -467,6 +474,46 @@ test(
           assert.ok(calls.slice(before).every((call) => call.context.sourceMessageId === source));
           assert.equal(await assistantMessages(turn.turnId), 0);
           assert.equal(await turnStatus(turn.turnId), 'running');
+        },
+      );
+
+      await t.test(
+        'trusted confirmation requests override explicit memory and private draft authority',
+        async () => {
+          const cases: Array<[string, string, Record<string, unknown>]> = [
+            [
+              'Remember that I prefer short reports.',
+              'OTTO_memory_save',
+              { kind: 'preference', text: 'Prefers short reports.' },
+            ],
+            [
+              'Write an email draft to Alex.',
+              'GMAIL_CREATE_EMAIL_DRAFT',
+              {
+                connectionId: 'owned-gmail',
+                recipient_email: 'alex@example.test',
+                body: 'Synthetic private draft.',
+              },
+            ],
+          ];
+          for (const [prompt, action, args] of cases) {
+            const turn = await begin(prompt);
+            const before = calls.length;
+            const result = await approvals.request(turn, action, args, undefined, {
+              confirm: true,
+            });
+            assert.equal(result.requiresConfirmation, true);
+            const pending = await proposal(turn.turnId);
+            assert.equal(pending.status, 'pending');
+            assert.deepEqual(pending.args, args);
+            assert.equal(calls.length, before);
+            await confirmTurn(turn.turnId);
+            await execute(pending.id);
+            assert.equal(calls.length, before + 1);
+            assert.equal(calls.at(-1)?.action, action);
+            assert.deepEqual(calls.at(-1)?.args, args);
+            assert.equal((await stored(pending.id)).status, 'completed');
+          }
         },
       );
 

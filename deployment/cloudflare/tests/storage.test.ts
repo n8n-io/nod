@@ -122,6 +122,22 @@ test('session checkpoints require exact etag compare-and-swap across competing w
   );
 });
 
+test('Markdown memory stays in the trusted owner prefix', async () => {
+  const { objects, bucket, identity } = fixture();
+  const url = `http://otto.storage/v1/objects/${encodeURIComponent('memory/MEMORY.md')}`;
+  const response = await storageRequest(
+    new Request(url, { method: 'PUT', body: '# Memory\n', headers: { 'if-none-match': '*' } }),
+    identity,
+    bucket,
+  );
+  assert.equal(response.status, 204);
+  assert.deepEqual([...objects.keys()], [`development/${identity.ownerId}/memory/MEMORY.md`]);
+  assert.equal(
+    (await storageRequest(new Request(url), { ...identity, ownerId: randomUUID() }, bucket)).status,
+    404,
+  );
+});
+
 test('private storage rejects arbitrary paths, invalid owners and oversized objects', async () => {
   const { objects, bucket, identity } = fixture();
   for (const key of [
@@ -130,6 +146,7 @@ test('private storage rejects arbitrary paths, invalid owners and oversized obje
     'artifacts/not-a-uuid',
     `sessions/${randomUUID()}`,
     `artifacts/${randomUUID()}.jsonl`,
+    'memory/../MEMORY.md',
   ])
     await assert.rejects(
       storageRequest(

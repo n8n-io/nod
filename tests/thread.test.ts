@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -13,6 +13,8 @@ import { createPreferencesStore } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
 import type { SubmitMessageResponse } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { createMemoryService } from '../src/server/memory.ts';
+import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 
 test(
   'one thread runs every turn in order on the same session and workspace',
@@ -42,6 +44,8 @@ test(
     const db = await import('../src/server/db.ts');
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
+    const { registerBugReport } = await import('../src/server/bug-report.ts');
+    const { createPromptInspector } = await import('../src/server/inspector-prompts.ts');
     const { configuration, dataRoot, ownerId, port } = await import('../src/server/config.ts');
     const { localArtifacts, storeArtifact } = await import('../src/server/artifacts.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
@@ -63,6 +67,13 @@ test(
       refresh() {},
     });
     await personal.initialize({ workers: false });
+    const promptInspector = createPromptInspector(db.pool, {
+      ownerId,
+      enabled: () => true,
+      provider: 'fixture',
+      model: 'fixture',
+    });
+    await promptInspector.initialize(db.pool);
     let injected = 0;
     let executed = 0;
     const fixtureKey = randomBytes(32);
@@ -86,6 +97,17 @@ test(
       configuration: () => ({ ...configuration(), llmReady: true }),
       onboard: (_timeZone, threadId) => thread.restartOnboarding(threadId),
       startOnboarding: thread.startOnboarding,
+    });
+    let savedPiEntries: unknown[] = [];
+    let reportedPiThread = '';
+    registerBugReport(app, {
+      pool: db.pool,
+      ownerId,
+      captureEnabled: () => true,
+      sessionEntries: async (threadId) => {
+        reportedPiThread = threadId;
+        return savedPiEntries;
+      },
     });
     personal.registerRoutes(app);
     vault.registerRoutes(app);
@@ -1813,6 +1835,151 @@ test(
           }
         },
       );
+      await t.test('bug report includes the active thread and masks saved secrets', async () => {
+        savedPiEntries = [
+          {
+            type: 'message',
+            id: 'pi-assistant',
+            parentId: null,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            message: {
+              role: 'assistant',
+              model: 'fixture',
+              content: [
+                {
+                  type: 'thinking',
+                  thinking:
+                    'The page gave me fixture-login-value, so I should inspect the next step.',
+                  thinkingSignature: 'opaque-fixture-signature',
+                },
+                {
+                  type: 'toolCall',
+                  id: 'credential-call',
+                  name: 'get_credential',
+                  arguments: { id: 'fixture-account', origin: 'https://example.test' },
+                },
+              ],
+            },
+          },
+          {
+            type: 'message',
+            id: 'pi-result',
+            parentId: 'pi-assistant',
+            timestamp: '2026-01-01T00:00:01.000Z',
+            message: {
+              role: 'toolResult',
+              toolCallId: 'credential-call',
+              toolName: 'get_credential',
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    username: 'fixture-login-user',
+                    password: 'fixture-login-value',
+                  }),
+                },
+              ],
+              details: { password: 'fixture-login-value' },
+            },
+          },
+          {
+            type: 'compaction',
+            id: 'pi-compaction',
+            parentId: 'pi-result',
+            timestamp: '2026-01-01T00:00:02.000Z',
+            summary: 'The assistant chose the saved account.',
+            tokensBefore: 1000,
+            systemMessage: { content: 'Saved fixture system instruction' },
+          },
+          {
+            type: 'context_edit',
+            id: 'pi-credential-edit',
+            parentId: 'pi-compaction',
+            timestamp: '2026-01-01T00:00:03.000Z',
+            targetId: 'pi-result',
+            replacement: { content: 'fixture-login-value' },
+          },
+          {
+            type: 'context_edit',
+            id: 'pi-safe-edit',
+            parentId: 'pi-credential-edit',
+            timestamp: '2026-01-01T00:00:04.000Z',
+            targetId: 'pi-assistant',
+            replacement: { content: 'Safe context update' },
+          },
+        ];
+        const turnId = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Inspect this action','succeeded')",
+          [turnId, ownerId, freshThread],
+        );
+        await db.pool.query(
+          "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'user','password=fixture-secret',$3,$4)",
+          [randomUUID(), ownerId, freshThread, turnId],
+        );
+        await db.pool.query(
+          "INSERT INTO inspector_records(id,owner_id,thread_id,turn_id,kind,name,status,input,started_at) VALUES($1,$2,$3,$4,'tool','browser','succeeded',$5,now())",
+          [randomUUID(), ownerId, freshThread, turnId, { token: 'fixture-token', step: 'read' }],
+        );
+        await db.pool.query(
+          'INSERT INTO inspector_prompts(id,owner_id,thread_id,turn_id,payload,provider,model) VALUES($1,$2,$3,$4,$5,$6,$7)',
+          [
+            randomUUID(),
+            ownerId,
+            freshThread,
+            turnId,
+            { system: 'Fixture system' },
+            'fixture',
+            'fixture',
+          ],
+        );
+        const result = await request('GET', '/api/conversation/bug-report');
+        assert.equal(result.statusCode, 200);
+        assert.equal(result.headers['cache-control'], 'no-store');
+        const report = result.json<{
+          threadId: string;
+          messages: Array<{ text: string }>;
+          turns: Array<{ id: string }>;
+          trace: Array<{ name: string; input: { token: string } }>;
+          prompts: Array<{ turn_id: string }>;
+          piSession: {
+            available: boolean;
+            entries: Array<{ type: string; message?: unknown; summaryOmitted?: boolean }>;
+          };
+        }>();
+        assert.equal(report.threadId, freshThread);
+        assert.equal(reportedPiThread, freshThread);
+        assert.equal(report.piSession.available, true);
+        assert.ok(report.piSession.entries.some((entry) => entry.summaryOmitted === true));
+        assert.match(JSON.stringify(report.piSession), /inspect the next step/);
+        assert.match(JSON.stringify(report.piSession), /credential-call/);
+        assert.ok(!JSON.stringify(report.piSession).includes('Saved fixture system instruction'));
+        assert.match(JSON.stringify(report.piSession), /Safe context update/);
+        assert.ok(report.turns.some((turn) => turn.id === turnId));
+        assert.ok(report.trace.some((record) => record.name === 'browser'));
+        assert.ok(report.prompts.some((prompt) => prompt.turn_id === turnId));
+        assert.ok(report.messages.length > 60);
+        assert.ok(!JSON.stringify(report).includes('fixture-secret'));
+        assert.ok(!JSON.stringify(report).includes('fixture-token'));
+        assert.ok(!JSON.stringify(report).includes('fixture-login-value'));
+        assert.ok(!JSON.stringify(report).includes('fixture-login-user'));
+        assert.ok(!JSON.stringify(report).includes('opaque-fixture-signature'));
+        assert.ok(!JSON.stringify(report).includes('private content'));
+        assert.ok(!JSON.stringify(report).includes('Late old answer'));
+        savedPiEntries = [
+          {
+            type: 'compaction',
+            id: 'rebased-summary',
+            parentId: null,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            summary: 'The old login was orphaned-fixture-password.',
+            details: { summary: 'orphaned-fixture-password' },
+            systemMessage: { content: 'orphaned-fixture-password' },
+          },
+        ];
+        const rebased = (await request('GET', '/api/conversation/bug-report')).json();
+        assert.ok(!JSON.stringify(rebased).includes('orphaned-fixture-password'));
+      });
     } finally {
       for (const resolve of gates.values()) resolve();
       releaseFence();
@@ -1821,8 +1988,173 @@ test(
       await readOnlyRuntime.dispose();
       await quietRuntime.dispose();
       await app.close();
+      await promptInspector.close();
       await db.pool.end();
       await admin.query(`DROP SCHEMA IF EXISTS ${bossSchema} CASCADE`);
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'owner memory keeps evidence, revisions and every note across sessions',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const schema = `test_memory_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const root = await mkdtemp(join(tmpdir(), 'memory-test-'));
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    const pool = new pg.Pool({ connectionString: url.href });
+    try {
+      await pool.query(
+        'CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid NOT NULL)',
+      );
+      const ownerId = 'memory-fixture-owner';
+      const store = createFilesystemObjectStore(root);
+      const memory = createMemoryService({ pool, ownerId, store });
+      const source = async (message: string, owner = ownerId) => {
+        const messageId = randomUUID();
+        const turnId = randomUUID();
+        await pool.query(
+          "INSERT INTO messages(id,owner_id,role,text,turn_id) VALUES($1,$2,'user',$3,$4)",
+          [messageId, owner, message, turnId],
+        );
+        return { sourceMessageId: messageId, turnId };
+      };
+      const first = await source('Keep progress reports short.');
+      const saved = await memory.save(
+        {
+          kind: 'preference',
+          text: 'Prefers short progress reports.',
+        },
+        first,
+      );
+      assert.equal(saved.status, 'stated');
+      assert.deepEqual(await memory.context(), [
+        { id: saved.id, kind: 'preference', text: saved.text, status: 'stated' },
+      ]);
+      const reopened = createMemoryService({ pool, ownerId, store });
+      assert.equal((await reopened.list())[0].text, saved.text);
+      const correction = await source('Make progress reports detailed from now on.');
+      const revised = await reopened.save(
+        {
+          id: saved.id,
+          kind: 'preference',
+          text: 'Prefers detailed progress reports.',
+          replace: true,
+        },
+        correction,
+      );
+      assert.deepEqual(revised.sources, [correction.sourceMessageId]);
+      assert.equal((await memory.context())[0].text, revised.text);
+      await assert.rejects(
+        memory.save(
+          { kind: 'fact', text: 'Prefers a private account.' },
+          { ...correction, turnId: randomUUID() },
+        ),
+        /current owned user message/,
+      );
+      const other = await source('A different owner likes long notes.', 'other-owner');
+      await assert.rejects(
+        memory.save(
+          {
+            kind: 'preference',
+            text: 'Likes long notes.',
+          },
+          other,
+        ),
+        /current owned user message/,
+      );
+      const secret = await source('I prefer email updates. Also reset my password on the store.');
+      await assert.rejects(
+        memory.save({ kind: 'fact', text: 'Store password is hunter2.' }, secret),
+        /cannot be remembered/,
+      );
+      const email = await memory.save(
+        { kind: 'preference', text: 'Prefers email updates.' },
+        secret,
+      );
+      const patternA = await source('Please show the design first.');
+      const pattern = await memory.save(
+        {
+          kind: 'pattern',
+          text: 'Often asks to see a design first.',
+        },
+        patternA,
+      );
+      assert.equal(pattern.status, 'tentative');
+      const patternB = await source('Show the design before you build it.');
+      const observed = await memory.save(
+        {
+          id: pattern.id,
+          kind: 'pattern',
+          text: pattern.text,
+        },
+        patternB,
+      );
+      assert.equal(observed.status, 'observed');
+      assert.equal(observed.sources.length, 2);
+      const factSource = await source('The museum opens on Tuesday.');
+      await memory.save(
+        {
+          kind: 'fact',
+          text: 'The museum opens on Tuesday.',
+        },
+        factSource,
+      );
+      assert.equal((await memory.context()).length, 4);
+      const approved = await memory.save(
+        { kind: 'fact', text: 'Lives in Lisbon.' },
+        { sourceMessageId: factSource.sourceMessageId, approved: true },
+      );
+      assert.deepEqual(approved.sources, [factSource.sourceMessageId]);
+      await assert.rejects(
+        memory.save(
+          { kind: 'fact', text: 'Lives in Porto.' },
+          { sourceMessageId: other.sourceMessageId, approved: true },
+        ),
+        /current owned user message/,
+      );
+      const existingThread = randomUUID();
+      await pool.query('CREATE TABLE threads (id uuid PRIMARY KEY, owner_id text NOT NULL)');
+      await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [existingThread, ownerId]);
+      await memory.initialize();
+      assert.equal(await memory.untrusted(existingThread), true);
+      await memory.initialize();
+      const threadId = randomUUID();
+      await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [threadId, ownerId]);
+      await memory.initialize();
+      assert.equal(await memory.untrusted(threadId), false);
+      await memory.markUntrusted(threadId);
+      await memory.markUntrusted(threadId);
+      assert.equal(await memory.untrusted(threadId), true);
+      assert.equal(
+        await createMemoryService({ pool, ownerId: 'other-owner', store }).untrusted(threadId),
+        false,
+      );
+      await memory.forget(saved.id);
+      const path = join(root, 'memory', 'MEMORY.md');
+      await writeFile(
+        path,
+        `${await readFile(path, 'utf8')}\n## not-an-id\nKind: fact\n\nBroken entry.\n`,
+      );
+      assert.deepEqual((await memory.context()).map((entry) => entry.id).includes(email.id), true);
+      await memory.save({ id: email.id, kind: 'preference', text: email.text }, patternB);
+      assert.equal(
+        (await reopened.list()).some((entry) => entry.id === saved.id),
+        false,
+      );
+      const file = await readFile(path, 'utf8');
+      assert.doesNotMatch(file, /Broken entry/);
+      assert.match(file, /# Memory/);
+      assert.match(file, /Often asks to see a design first/);
+      assert.doesNotMatch(file, /Keep progress reports short/);
+    } finally {
+      await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
       await rm(root, { recursive: true, force: true });

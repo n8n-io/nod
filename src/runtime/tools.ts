@@ -8,6 +8,7 @@ import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { integrationDownloadActions } from '../shared/integrations.ts';
 import { requestsPrivateInput, vaultInvitation } from './communication.ts';
+import { browserFlowParameters } from './browser-flows.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
 
 export const personalActions = [
@@ -17,6 +18,9 @@ export const personalActions = [
   'notification_preferences_get',
   'notification_preferences_update',
   'history_search',
+  'memory_list',
+  'memory_save',
+  'memory_forget',
   'schedule_list',
   'schedule_create',
   'schedule_update',
@@ -161,6 +165,11 @@ export const toolDefinitions = {
       name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     }),
   ),
+  browser_flow: defineTool(
+    'browser_flow',
+    'Reuse known website routines in the current private browser. list {query?} reads the flow registry and ranks matches. get {id} shows a flow. save {flow} stores a checked flow as a file. run {id, inputs?} replays it and checks expectText or expectUrl after each step. It stops with the current page if a check fails. Files live in the owner flow library and remain available after a conversation reset. Start with open and end with a checked snapshot. Use stable selectors and named inputs for entered text. Never store passwords or codes.',
+    browserFlowParameters,
+  ),
   get_credential: defineTool(
     'get_credential',
     'Get a saved website login from Vault by its ID and exact origin. The result includes the username and password. To fill protected browser fields, omit the ID and give field references from a fresh browser snapshot. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email. Vault can fill a saved login or open a secure form. Submit with browser and inspect the result.',
@@ -257,7 +266,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's profile, goals, schedules, notification preferences and earlier conversation. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} saves a checked value for the current scheduled run and returns the previous one; profile_learn {field, value, quote}; history_search {query}. Change only what the user asked.",
+    "The user's profile, goals, schedules, notification preferences, memory and earlier conversation. memory_list {}, memory_save {kind:'fact'|'preference'|'pattern', text, id?, replace?}, memory_forget {id}. A memory write uses the current owned user message as evidence and is shown in chat; do not repeat it. Reuse an entry ID to add evidence; use replace:true for a correction. Save lasting user facts and repeated patterns, never a guess or a website claim. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} saves a checked value for the current scheduled run and returns the previous one; profile_learn {field, value, quote}; history_search {query}.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -292,7 +301,10 @@ function bind<P extends TSchema>(
   return { ...definition, execute } as OttoTool;
 }
 
-export function ottoTools(turn: Turn): OttoTool[] {
+export function ottoTools(
+  turn: Turn,
+  browserFlows: (params: Static<typeof browserFlowParameters>) => Promise<unknown>,
+): OttoTool[] {
   const { context, computer, pause, confirm } = turn;
   const { threadId, signal } = context;
   const screenshot = async () => {
@@ -375,6 +387,7 @@ export function ottoTools(turn: Turn): OttoTool[] {
       }
       return computer.act(threadId, { action, ...rest } as BrowserAction, signal);
     }),
+    bind(toolDefinitions.browser_flow, browserFlows),
     bind(toolDefinitions.get_credential, async (input) => {
       const result = await context.requestCredential(input);
       if (result.credential) return result.credential;

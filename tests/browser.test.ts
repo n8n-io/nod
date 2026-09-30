@@ -1910,3 +1910,8 @@ test('inspector masks secure links, common token strings and secret assignments 
     'Open /vault/[redacted] for login',
   );
 });
+
+test('short secret masking does not scan replacement markers again', () => {
+  const redact = createInspectorRedactor(['a', 'red'], { minimumSecretLength: 1 });
+  assert.equal(redact('red a'), '[redacted] [redacted]');
+});
