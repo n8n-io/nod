@@ -165,7 +165,12 @@ test('real Pi sessions persist a credential pause and resume without replaying c
   };
   const factory: typeof createAgentSession = async (options) => {
     assert.deepEqual(options?.resourceLoader?.getAgentsFiles().agentsFiles, []);
-    assert.deepEqual(options?.resourceLoader?.getExtensions().extensions, []);
+    assert.deepEqual(
+      options?.resourceLoader
+        ?.getExtensions()
+        .extensions.flatMap((extension) => [...extension.tools.keys()]),
+      ['web_search', 'source_check', 'fetch_content', 'get_search_content'],
+    );
     assert.equal(
       options?.resourceLoader?.getSystemPrompt()?.includes('runtime-fixture-key'),
       false,
@@ -188,7 +193,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                 {
                   type: 'toolCall',
                   id: 'credential-call',
-                  name: 'sign_in',
+                  name: 'get_credential',
                   arguments: {
                     action: 'request',
                     origin: 'https://example.com',
@@ -323,8 +328,9 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
       turnId: randomUUID(),
       systemPrompt: 'fixture',
       workspace,
-      runTool: async (name, _params, run) => {
+      runTool: async (name, params, run) => {
         ran.push(name);
+        if (name === 'web_search') assert.equal((params as { workflow?: string }).workflow, 'none');
         return run();
       },
       tools: [
@@ -340,7 +346,13 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     });
     const names = captured!.customTools!.map((tool) => tool.name);
     assert.deepEqual(names, [...nativeNames, 'fixture_tool']);
-    assert.deepEqual(captured!.tools, names);
+    assert.deepEqual(captured!.tools, [
+      ...names,
+      'web_search',
+      'source_check',
+      'fetch_content',
+      'get_search_content',
+    ]);
     assert.equal(captured!.noTools, 'builtin');
     assert.equal(captured!.cwd, workspace.path);
     const before = scripts.length;
@@ -350,6 +362,32 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     assert.match(JSON.stringify(result.content), /empty directory/);
     assert.ok(scripts.length > before);
     assert.ok(scripts.slice(before).every((script) => script.includes(workspace.path)));
+    const extension = captured!.resourceLoader!.getExtensions().extensions[0];
+    const storedContent = extension.tools.get('get_search_content')!;
+    const missing = await storedContent.definition.execute(
+      'call',
+      { responseId: 'synthetic-missing' },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    assert.match(JSON.stringify(missing.content), /No stored results/);
+    assert.deepEqual(ran, ['ls', 'get_search_content']);
+    const webSearch = extension.tools.get('web_search')!;
+    assert.equal(
+      'workflow' in
+        (webSearch.definition.parameters as { properties: Record<string, unknown> }).properties,
+      false,
+    );
+    const direct = await webSearch.definition.execute(
+      'call',
+      { workflow: 'summary-review' },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    assert.match(JSON.stringify(direct.content), /No query provided/);
+    assert.deepEqual(ran, ['ls', 'get_search_content', 'web_search']);
     await session.dispose();
   } finally {
     await agent.dispose();

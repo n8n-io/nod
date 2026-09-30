@@ -1,22 +1,4 @@
 @import 'tailwindcss';
-@font-face {
-  font-family: Manrope;
-  src: url('/fonts/manrope-regular.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
-  font-family: Manrope;
-  src: url('/fonts/manrope-semibold.ttf') format('truetype');
-  font-weight: 600;
-  font-display: swap;
-}
-@font-face {
-  font-family: Manrope;
-  src: url('/fonts/manrope-bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
 
 @theme {
   --color-background: var(--background);
@@ -26,7 +8,9 @@
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
-  --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans:
+    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
   --radius-lg: 0.75rem;
 }
 :root {
@@ -778,7 +762,8 @@ input[type='range']:disabled {
   border-radius: 9px;
   overflow: hidden;
 }
-.message-text .setup-group a {
+.message-text .setup-group a,
+.message-text .setup-group button {
   display: inline-flex;
   flex: 1 0 auto;
   align-items: center;
@@ -793,11 +778,18 @@ input[type='range']:disabled {
     -1px 0 0 var(--border),
     0 -1px 0 var(--border);
   transition: background 140ms;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.message-text .setup-group a:hover {
+.message-text .setup-group a:hover,
+.message-text .setup-group button:hover {
   background: var(--accent-soft);
 }
-.message-text .setup-group a:focus-visible {
+.message-text .setup-group a:focus-visible,
+.message-text .setup-group button:focus-visible {
   outline-offset: -2px;
 }
 .message-text .setup-group svg {

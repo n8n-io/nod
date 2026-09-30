@@ -58,7 +58,10 @@ const starterSuggestions = ['Plan my day', 'Help me research something', 'Start 
 function Welcome({ onPick }: { onPick(label: string): void }) {
   const { data, loading } = usePageData<Connection[]>('/api/apps');
   const connected = integrationServiceIds.filter((slug) =>
-    data?.some((connection) => connection.slug === slug && connection.status === 'connected'),
+    data?.some(
+      (connection) =>
+        connection.slug === slug && connection.status === 'connected' && !connection.accessPaths,
+    ),
   );
   const labels = [...connected.map((slug) => appSuggestions[slug]), ...starterSuggestions].slice(
     0,
@@ -96,12 +99,14 @@ export function Chat({
 }) {
   const dateFormat = useDateFormat();
   const { data: connections } = usePageData<Connection[]>('/api/apps');
-  const connectedAppPaths = useMemo(
+  const connectedAppIds = useMemo(
     () =>
       new Set(
         connections
           ?.filter((connection) => connection.status === 'connected')
-          .flatMap((connection) => connection.accessPaths?.map((path) => path.id) ?? []) ?? [],
+          .flatMap(
+            (connection) => connection.accessPaths?.map((path) => path.id) ?? [connection.slug],
+          ) ?? [],
       ),
     [connections],
   );
@@ -247,11 +252,13 @@ export function Chat({
         ? integrationServices[slug as keyof typeof integrationServices].name
         : 'App';
     setConnectionNotice(
-      outcome === 'continued' || outcome === 'connected'
+      outcome === 'continued'
         ? ''
-        : outcome === 'cancelled'
-          ? `${name} connection cancelled. You can try again in chat or Apps.`
-          : `${name} could not connect. Try again in chat or Apps.`,
+        : outcome === 'connected'
+          ? `${name} connected.`
+          : outcome === 'cancelled'
+            ? `${name} connection cancelled. Try again in chat.`
+            : `${name} could not connect. Try again in chat.`,
     );
     url.searchParams.delete('connection');
     url.searchParams.delete('service');
@@ -618,14 +625,10 @@ export function Chat({
                 )}
                 <MessageBubble
                   message={message}
-                  connectedAppPaths={connectedAppPaths}
+                  connectedAppIds={connectedAppIds}
                   streaming={streamIds.has(message.streamId ?? '')}
                   inspectorEnabled={state.configuration.inspectorEnabled}
                   grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
-                  showTimestamp={
-                    !streamIds.has(message.streamId ?? '') &&
-                    !messagesAreGrouped(message, visibleMessages[index + 1], dateFormat)
-                  }
                   onReply={
                     message.turnId || persistedIds.has(message.id)
                       ? () => {

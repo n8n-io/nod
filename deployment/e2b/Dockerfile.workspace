@@ -1,6 +1,7 @@
 FROM node:24.21.0-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python-is-python3 python3-pip python3-venv python3-requests python3-bs4 pipx ffmpeg poppler-utils ca-certificates curl git unzip ripgrep && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/yt-dlp && /opt/yt-dlp/bin/pip install --no-cache-dir yt-dlp==2026.8.19 && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
+RUN python3 -m venv --system-site-packages /opt/otto-artifacts && /opt/otto-artifacts/bin/pip install --no-cache-dir reportlab==5.0.1 matplotlib==3.11.2 openpyxl==3.1.5 python-docx==1.2.0 python-pptx==1.0.2 pillow==12.3.0 pandas==3.0.6
 RUN mkdir -p /workspace /home/node/.local/bin /opt/otto && chown -R node:node /workspace /home/node
 COPY workspace-command.py /opt/otto/workspace-command.py
 RUN chmod 555 /opt/otto && chmod 444 /opt/otto/workspace-command.py
@@ -8,5 +9,5 @@ USER node
 ENV NPM_CONFIG_PREFIX=/home/node/.local
 ENV PIPX_HOME=/home/node/.local/pipx
 ENV PIPX_BIN_DIR=/home/node/.local/bin
-ENV PATH=/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/opt/otto-artifacts/bin:/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WORKDIR /workspace

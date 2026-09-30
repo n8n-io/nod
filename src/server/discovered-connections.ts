@@ -641,9 +641,10 @@ export async function createDiscoveredConnections(
   async function search(query: string, connectionId?: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
     const rows = (
-      await pool.query<AccountRow>('SELECT * FROM discovered_connections WHERE owner_id=$1 AND ($2::uuid IS NULL OR id=$2)', [
-        owner, connectionId ?? null,
-      ])
+      await pool.query<AccountRow>(
+        'SELECT * FROM discovered_connections WHERE owner_id=$1 AND ($2::uuid IS NULL OR id=$2)',
+        [owner, connectionId ?? null],
+      )
     ).rows;
     const accounts = await Promise.all(
       rows.map(async (row) => {
@@ -802,9 +803,9 @@ export async function createDiscoveredConnections(
     const input = z.record(z.string(), z.unknown()).parse(args.input ?? {});
     let selectedTool: DiscoveredTool | undefined;
     try {
-      selectedTool = (await options.transport.listTools(path.endpoint, headers(path, token), signal)).find(
-        (tool) => tool.name === name,
-      );
+      selectedTool = (
+        await options.transport.listTools(path.endpoint, headers(path, token), signal)
+      ).find((tool) => tool.name === name);
     } catch {
       throw error('The connected MCP tool list is unavailable.', 502);
     }

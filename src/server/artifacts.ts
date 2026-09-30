@@ -34,6 +34,9 @@ const mimeTypes: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.ogv': 'video/ogg',
   '.html': 'text/html',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
 export const maxFileSize = 15 * 1024 * 1024;
 export function artifactView(row: Record<string, any>): Artifact {

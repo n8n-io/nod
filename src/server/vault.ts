@@ -1906,6 +1906,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       save(owner, input),
     request,
     list,
+    readCredential,
     removeLogin,
     fillSaved,
     fillSelected,

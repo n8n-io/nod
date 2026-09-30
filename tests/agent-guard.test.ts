@@ -293,7 +293,7 @@ test('secure credential pause prevents subsequent tools in the same execution se
     let requested = false;
     const result = await fixture(
       async (tools) => {
-        await call(tools, 'sign_in', { ...input });
+        await call(tools, 'get_credential', { ...input });
         await assert.rejects(
           call(tools, 'manage_personal_context', {
             action: 'goal_create',
@@ -334,7 +334,7 @@ test('a chosen saved login reaches the credential broker without pausing the tur
   let requested = false;
   const result = await fixture(
     async (tools) => {
-      await call(tools, 'sign_in', { ...input });
+      await call(tools, 'get_credential', { ...input });
     },
     {
       requestCredential: async (request) => {
@@ -348,6 +348,38 @@ test('a chosen saved login reaches the credential broker without pausing the tur
   assert.equal(result.result.status, 'succeeded');
   assert.equal(result.aborted, false);
   assert.deepEqual(result.replies, []);
+});
+
+test('Pi can get an owned Vault login without putting its value in runtime observations', async () => {
+  const secret = 'synthetic-vault-password';
+  const observations: unknown[] = [];
+  const id = randomUUID();
+  await fixture(
+    async (tools) => {
+      assert.deepEqual(
+        await call(tools, 'get_credential', { id, origin: 'https://example.test' }),
+        {
+          content: [
+            { type: 'text', text: JSON.stringify({ username: 'fixture', password: secret }) },
+          ],
+          details: {},
+        },
+      );
+      await call(tools, 'browser', {
+        action: 'fill',
+        selector: '#search',
+        text: 'private fixture text',
+      });
+    },
+    {
+      observe: async (event) => {
+        observations.push(event);
+      },
+      requestCredential: async () => ({ credential: { username: 'fixture', password: secret } }),
+    },
+  );
+  assert.equal(JSON.stringify(observations).includes(secret), false);
+  assert.equal(JSON.stringify(observations).includes('private fixture text'), false);
 });
 
 const refusal = 'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
@@ -366,7 +398,7 @@ const refused: Array<[string, Record<string, unknown>]> = [
   ['manage_apps', { action: 'connect', service: 'gmail' }],
   ['manage_personal_context', { action: 'schedule_create', args: { title: 'Synthetic' } }],
   [
-    'sign_in',
+    'get_credential',
     { action: 'request', origin: 'https://mail.example.test', label: 'Sign in', kind: 'password' },
   ],
   ['ask_user', { question: 'Which email should I answer?' }],
@@ -388,6 +420,13 @@ test('a read-only turn refuses every outside action with a fixed error and still
           name,
         );
       await call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} });
+      await options.runTool(
+        'fetch_content',
+        { urls: ['https://example.test/source'] },
+        async () => ({
+          content: [{ type: 'text', text: 'Synthetic source' }],
+        }),
+      );
       await call(tools, 'send_message', { text: 'You have two threads to answer.' });
     },
     {

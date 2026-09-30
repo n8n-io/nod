@@ -254,16 +254,26 @@ test('setup links omit tokens and fragments and approval paths never become link
     assert.match(anchor, /\brel="opener"/);
     assert.match(anchor, /\breferrerPolicy="no-referrer"/);
   }
-  for (const href of [
-    'https://outside.example/credentials/request-id',
-    'https://outside.example/connect',
-  ]) {
-    const anchor = result.match(new RegExp(`<a\\b[^>]*href="${href}"[^>]*>`))?.[0];
-    assert.ok(anchor);
-    assert.match(anchor, /\brel="noopener noreferrer"/);
-    assert.match(anchor, /\breferrerPolicy="no-referrer"/);
-  }
+  const external = result.match(
+    /<a\b[^>]*href="https:\/\/outside\.example\/credentials\/request-id"[^>]*>/,
+  )?.[0];
+  assert.ok(external);
+  assert.match(external, /\brel="noopener noreferrer"/);
+  assert.match(external, /\breferrerPolicy="no-referrer"/);
+  assert.match(result, /<button[^>]*data-setup="app"[^>]*>.*Connect Calendar<\/button>/);
+  assert.doesNotMatch(result, /href="https:\/\/outside\.example\/connect"/);
   assert.doesNotMatch(result, /private-token|private-fragment/);
+});
+
+test('native app setup has one chat button and hides after connection', () => {
+  const text = '[Connect Slack](https://connect.example.com/fixture)';
+  const before = render(text);
+  assert.match(before, /<button[^>]*data-setup="app"[^>]*>.*Connect Slack<\/button>/);
+  assert.doesNotMatch(before, /connect\.example\.com/);
+  const after = renderToStaticMarkup(
+    createElement(MessageText, { text, connectedAppIds: new Set(['slack']) }),
+  );
+  assert.doesNotMatch(after, /data-setup="app"/);
 });
 
 test('only intended app paths and credential-free HTTP URLs become links', () => {

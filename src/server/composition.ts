@@ -41,7 +41,6 @@ import { createOpenAIRelevanceClassifier } from '../providers/openai/relevance.t
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
-import { createWebSearch } from '../providers/public-web/search.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
 import { createApp } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
@@ -93,7 +92,7 @@ import {
   stopThreadWorkers,
 } from './thread.ts';
 import { createTriage } from './triage.ts';
-import { createVault } from './vault.ts';
+import { createVault, credentialOrigin } from './vault.ts';
 import { createBrowserConnections } from './browser-connections.ts';
 import { createProviderUsageStore } from './provider-usage.ts';
 import { createLinkPreviews } from './link-previews.ts';
@@ -373,7 +372,7 @@ export async function createApplication(
         provider: 'pi-web-access',
         category: 'browser',
         status: 'recorded',
-        note: 'Public search operations and duration. Provider prices and network charges are unavailable.',
+        note: 'Public search and fetch operations and duration. Provider prices and network charges are unavailable.',
       },
       ...(adapters.linkPreviews
         ? [
@@ -439,17 +438,11 @@ export async function createApplication(
   const speechProvider = meterSpeech(adapters.speech, providerUsage);
   const integrationProvider = meterIntegrations(adapters.integrations, providerUsage);
   const classify = meterRelevance(adapters.relevance, providerUsage);
-  const webSearch = createWebSearch();
   const runtime = createAgentRuntime({
     agent: meterAgent(adapters.agent, providerUsage),
     withTool: providerUsage.withTool,
     computer,
     workspace,
-    webSearch: (query, signal) =>
-      providerUsage.track(
-        { provider: 'pi-web-access', category: 'browser', operation: 'search' },
-        () => webSearch(query, signal),
-      ),
   });
   const speech = createSpeech(speechProvider);
   const personal = createPersonalService({
@@ -637,34 +630,48 @@ export async function createApplication(
           );
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
-      requestCredential: async (turn, { savedLoginId, ...input }) => {
+      requestCredential: async (turn, input) => {
+        if (!('kind' in input)) {
+          const { entry, secret } = await vault.readCredential(input.id);
+          if (entry.origin !== credentialOrigin(input.origin))
+            throw new Error('This saved login does not match the requested website.');
+          return { credential: secret };
+        }
+        const { savedLoginId, ...request } = input;
         if (savedLoginId !== undefined) {
-          if (input.kind === 'otp')
+          if (request.kind === 'otp')
             throw new Error('Saved logins cannot supply verification codes.');
-          await vault.fillSaved(turn, ownerId, savedLoginId, input);
+          await vault.fillSaved(turn, ownerId, savedLoginId, request);
           return { filled: true };
         }
-        if (input.kind === 'otp' && (await vault.fillEmailCode(turn, ownerId, input)))
+        if (request.kind === 'otp' && (await vault.fillEmailCode(turn, ownerId, request)))
           return { filled: true };
-        if (input.kind !== 'otp') {
-          const selected = await vault.fillSelected(turn, ownerId, input);
+        if (request.kind !== 'otp') {
+          const selected = await vault.fillSelected(turn, ownerId, request);
           if (selected) return { filled: true };
           if (selected === undefined) {
             const matches = (await vault.list(ownerId)).filter(
-              (entry) => entry.origin === input.origin,
+              (entry) => entry.origin === request.origin,
             );
             if (matches.length === 1) {
               try {
-                await vault.fillSaved(turn, ownerId, matches[0].id, input);
+                await vault.fillSaved(turn, ownerId, matches[0].id, request);
                 return { filled: true };
               } catch {}
             }
           }
         }
-        return vault.request(turn, ownerId, input);
+        return vault.request(turn, ownerId, request);
       },
       integration: async (turn, action, args, options) => {
-        const result = await integrations.execute(ownerId, action, args, turn, options?.signal, options?.checkConnectionId);
+        const result = await integrations.execute(
+          ownerId,
+          action,
+          args,
+          turn,
+          options?.signal,
+          options?.checkConnectionId,
+        );
         if (
           result &&
           typeof result === 'object' &&

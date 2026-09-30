@@ -222,13 +222,6 @@
 .inspector-body details {
   border-color: var(--border);
 }
-.chat-page .message-user .message-body {
-  background: var(--surface-inset);
-}
-.chat-page .message-meta time {
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
 .chat-page .composer-shell {
   border-color: var(--border);
 }

@@ -341,7 +341,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   ) {
     if (!row) return operation(await getSession(ownerId, selected));
     signal?.throwIfAborted();
-    const session = await selected.createSession(ownerId, { [row.slug]: [row.account_id!] }, signal);
+    const session = await selected.createSession(
+      ownerId,
+      { [row.slug]: [row.account_id!] },
+      signal,
+    );
     try {
       signal?.throwIfAborted();
       return await operation(session);
@@ -489,7 +493,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       options.discovered?.list() ?? [],
       options.browserConnections?.() ?? [],
     ]);
-    if (listing.refresh !== false && providers.some((item) => item.configured) && !closed && !refreshing) {
+    if (
+      listing.refresh !== false &&
+      providers.some((item) => item.configured) &&
+      !closed &&
+      !refreshing
+    ) {
       refreshing = background(() => refreshAccounts(rows))
         ?.catch(() => {})
         .finally(() => {
@@ -986,13 +995,19 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       };
     try {
       const { connectionId: _connectionId, ...providerArgs } = args;
-      const result = await withAccountSession(ownerId, providerForRow(row), checkConnectionId ? row : undefined, signal,
+      const result = await withAccountSession(
+        ownerId,
+        providerForRow(row),
+        checkConnectionId ? row : undefined,
+        signal,
         async (session) => {
           const current = await approvedConnection(ownerId, action, args);
-          if (current.account_id !== row.account_id) throw new Error('The selected account changed.');
+          if (current.account_id !== row.account_id)
+            throw new Error('The selected account changed.');
           signal?.throwIfAborted();
           return session.execute(action, providerArgs, row.account_id!, signal);
-        });
+        },
+      );
       if (integrationActions.includes(action))
         rememberTargets(row.account_id!, row.slug, result, providerArgs);
       return integrationResultSnapshot(result);
@@ -1015,8 +1030,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     assertOwner(ownerId);
     signal?.throwIfAborted();
     if (checkConnectionId) {
-      if ((args.connectionId !== undefined && args.connectionId !== checkConnectionId) ||
-        (integrationDownloadActions as readonly string[]).includes(action))
+      if (
+        (args.connectionId !== undefined && args.connectionId !== checkConnectionId) ||
+        (integrationDownloadActions as readonly string[]).includes(action)
+      )
         throw new IntegrationError('This activity check can only read its selected account.');
       args = { ...args, connectionId: checkConnectionId };
     }
@@ -1050,18 +1067,32 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       const { query, connectionId } = input.data;
       try {
         const inventory = await connectedApps(ownerId);
-        if (connectionId && !inventory.some((connection) => connection.connectionId === connectionId))
+        if (
+          connectionId &&
+          !inventory.some((connection) => connection.connectionId === connectionId)
+        )
           throw new IntegrationError('This connected account is unavailable.', 404);
         const rows = (await connectionRows(ownerId)).filter(
-          (row) => row.account_id && !row.revoked && row.account_active &&
+          (row) =>
+            row.account_id &&
+            !row.revoked &&
+            row.account_active &&
             (!connectionId || row.id === connectionId),
         );
-        const availableProviders = providers.filter((item) => item.configured &&
-          (!connectionId || rows.some((row) => row.provider_id === item.id)));
+        const availableProviders = providers.filter(
+          (item) =>
+            item.configured && (!connectionId || rows.some((row) => row.provider_id === item.id)),
+        );
         const results = await Promise.allSettled(
-          availableProviders.map((item) => withAccountSession(ownerId, item,
-            checkConnectionId ? rows.find((row) => row.provider_id === item.id) : undefined,
-            signal, (session) => session.search(query, signal))),
+          availableProviders.map((item) =>
+            withAccountSession(
+              ownerId,
+              item,
+              checkConnectionId ? rows.find((row) => row.provider_id === item.id) : undefined,
+              signal,
+              (session) => session.search(query, signal),
+            ),
+          ),
         );
         const searches = results
           .filter(

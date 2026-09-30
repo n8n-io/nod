@@ -13,6 +13,18 @@ export function SetupActions({
     <div className="setup-group">
       {actions.map(({ href, setup, label }) => {
         const Icon = icons[setup];
+        if (setup === 'app')
+          return (
+            <button
+              key={href}
+              type="button"
+              data-setup={setup}
+              onClick={() => window.location.assign(href)}
+            >
+              <Icon size={14} aria-hidden="true" />
+              {label}
+            </button>
+          );
         return (
           <a
             key={href}

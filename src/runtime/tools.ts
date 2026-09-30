@@ -99,7 +99,7 @@ const activityCheckTool = defineTool(
 export const toolDefinitions = {
   send_message: defineTool(
     'send_message',
-    'Send a message to the user now. Do not repeat it in the final answer. In background runs, send only useful results or necessary questions.',
+    'Send a message to the user now: the acknowledgement before work, a real update, or an earlier short message of your reply. Do not repeat it in the final answer. In background runs, send only useful results or necessary questions.',
     Type.Object({
       text: Type.String(),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),
@@ -160,18 +160,24 @@ export const toolDefinitions = {
       name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     }),
   ),
-  sign_in: defineTool(
-    'sign_in',
-    'Enter website credentials privately using an applicable saved Vault login or a secure user form. Interpret the current page, choose its sign-in method with browser actions, then provide the exact current origin and needed field references from a fresh snapshot. For a uniquely applicable or user-chosen saved login, pass its manage_apps connectionId as savedLoginId. For OTP, use passwordSelector for the code field and set emailCode:true only when the page says the code was sent by email; never pass savedLoginId for OTP. Values stay out of the model. After filling, submit with browser and inspect the result.',
-    Type.Object({
-      origin: Type.String({ minLength: 1, maxLength: 2048 }),
-      label: Type.String({ minLength: 1, maxLength: 100 }),
-      kind: literals(['identifier', 'password', 'otp']),
-      usernameSelector: Type.Optional(Type.String()),
-      passwordSelector: Type.Optional(Type.String()),
-      emailCode: Type.Optional(Type.Boolean()),
-      savedLoginId: Type.Optional(uuid),
-    }),
+  get_credential: defineTool(
+    'get_credential',
+    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and password. To fill protected browser fields, omit the ID and give field references from a fresh browser snapshot. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email. Vault can fill a saved login or open a secure form. Submit with browser and inspect the result.',
+    Type.Union([
+      Type.Object({
+        id: uuid,
+        origin: Type.String({ minLength: 1, maxLength: 2048 }),
+      }),
+      Type.Object({
+        origin: Type.String({ minLength: 1, maxLength: 2048 }),
+        label: Type.String({ minLength: 1, maxLength: 100 }),
+        kind: literals(['identifier', 'password', 'otp']),
+        usernameSelector: Type.Optional(Type.String()),
+        passwordSelector: Type.Optional(Type.String()),
+        emailCode: Type.Optional(Type.Boolean()),
+        savedLoginId: Type.Optional(uuid),
+      }),
+    ]),
   ),
   browser_session: defineTool(
     'browser_session',
@@ -263,11 +269,6 @@ export const toolDefinitions = {
       path: Type.String(),
       name: Type.Optional(Type.String({ maxLength: 200 })),
     }),
-  ),
-  web_search: defineTool(
-    'web_search',
-    'Search the public web for current sources.',
-    Type.Object({ query: Type.String({ minLength: 1, maxLength: 500 }) }),
   ),
   create_audio: defineTool(
     'create_audio',
@@ -373,8 +374,10 @@ export function ottoTools(turn: Turn): OttoTool[] {
       }
       return computer.act(threadId, { action, ...rest } as BrowserAction, signal);
     }),
-    bind(toolDefinitions.sign_in, async (input) => {
+    bind(toolDefinitions.get_credential, async (input) => {
       const result = await context.requestCredential(input);
+      if (result.credential) return result.credential;
+      if (!('kind' in input)) throw new Error('This saved login is unavailable.');
       if (result.filled) return 'Saved login entered.';
       if (!result.url) throw new Error('The secure sign-in request could not be created.');
       await turn.reply(vaultInvitation(result.invitation ?? input, result.url));
@@ -436,13 +439,9 @@ export function ottoTools(turn: Turn): OttoTool[] {
       }),
     ];
   }
-  const search = turn.webSearch;
-  if (search) tools.push(bind(toolDefinitions.web_search, (p) => search(p.query, signal)));
   return tools;
 }
 
-export function inspectToolCatalog(includeWebSearch = false): AgentToolMetadata[] {
-  return Object.values(toolDefinitions)
-    .filter((tool) => includeWebSearch || tool.name !== 'web_search')
-    .map((tool) => structuredClone(tool));
+export function inspectToolCatalog(): AgentToolMetadata[] {
+  return Object.values(toolDefinitions).map((tool) => structuredClone(tool));
 }

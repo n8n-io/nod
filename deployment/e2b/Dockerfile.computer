@@ -1,6 +1,7 @@
 FROM node:24.21.0-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends chromium xvfb xauth xdotool ffmpeg poppler-utils fonts-liberation ca-certificates python3 python-is-python3 python3-pip python3-venv python3-requests python3-bs4 pipx curl git unzip ripgrep nftables iproute2 libcap2-bin util-linux && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/yt-dlp && /opt/yt-dlp/bin/pip install --no-cache-dir yt-dlp==2026.8.19 && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
+RUN python3 -m venv --system-site-packages /opt/otto-artifacts && /opt/otto-artifacts/bin/pip install --no-cache-dir reportlab==5.0.1 matplotlib==3.11.2 openpyxl==3.1.5 python-docx==1.2.0 python-pptx==1.0.2 pillow==12.3.0 pandas==3.0.6
 RUN groupadd --gid 1001 otto-browser && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin otto-browser
 RUN groupadd --gid 1002 otto-connected && useradd --uid 1002 --gid 1002 --create-home --shell /usr/sbin/nologin otto-connected && chmod 700 /home/otto-connected
 WORKDIR /app
@@ -14,6 +15,6 @@ RUN mkdir -p /data /workspace /home/node/.local/bin /run/otto && chown otto-brow
 ENV NPM_CONFIG_PREFIX=/home/node/.local
 ENV PIPX_HOME=/home/node/.local/pipx
 ENV PIPX_BIN_DIR=/home/node/.local/bin
-ENV PATH=/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/opt/otto-artifacts/bin:/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 USER root
 CMD ["python3", "/opt/otto/computer-guard.py", "start"]

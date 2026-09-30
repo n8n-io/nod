@@ -1318,8 +1318,19 @@ test(
             assert.equal(classified, 0);
             assert.equal(integrationReads.length, emptyReads);
             assert.equal((await db.pool.query('SELECT id FROM notifications')).rowCount, 0);
-            currentApps = [{ slug: 'slack', name: 'Slack', status: 'connected', connectionId: randomUUID(),
-              accountName: 'Work', access: ['api'], supportsTriggers: true, triggersEnabled: true, triggerStatus: 'active' }];
+            currentApps = [
+              {
+                slug: 'slack',
+                name: 'Slack',
+                status: 'connected',
+                connectionId: randomUUID(),
+                accountName: 'Work',
+                access: ['api'],
+                supportsTriggers: true,
+                triggersEnabled: true,
+                triggerStatus: 'active',
+              },
+            ];
             const ordinaryId = randomUUID();
             await triage.triageEvent('A synthetic calendar update', ordinaryId);
             assert.equal(classified, 1);
@@ -1391,8 +1402,19 @@ test(
               ],
             );
             await preferences.update({ ...original, quietHoursEnabled: false });
-            currentApps = [{ slug: 'notion', name: 'Notion', status: 'connected', connectionId: randomUUID(),
-              accountName: 'Research', access: ['api'], supportsTriggers: true, triggersEnabled: true, triggerStatus: 'active' }];
+            currentApps = [
+              {
+                slug: 'notion',
+                name: 'Notion',
+                status: 'connected',
+                connectionId: randomUUID(),
+                accountName: 'Research',
+                access: ['api'],
+                supportsTriggers: true,
+                triggersEnabled: true,
+                triggerStatus: 'active',
+              },
+            ];
             for (let index = 0; index < 8; index++)
               await triage.triageEvent(`Synthetic informational update ${index}`, randomUUID());
             assert.deepEqual(classifiedApps.at(-1), currentApps);
@@ -1453,106 +1475,193 @@ test(
           }
         },
       );
-      await t.test('bounded app checks claim one owned account, persist verified reads and hand off each finding once', async () => {
-        const preferences = createPreferencesStore(db.pool, ownerId);
-        const original = await preferences.get();
-        await db.pool.query('DELETE FROM notifications WHERE owner_id=$1', [ownerId]);
-        const connectionId = randomUUID();
-        const app: ConnectedApp = { slug: 'notion', name: 'Notion', status: 'connected', connectionId,
-          access: ['api'], supportsTriggers: false, triggersEnabled: false };
-        const optedOut: ConnectedApp = { ...app, connectionId: randomUUID(), supportsTriggers: true,
-          triggersEnabled: false, triggerStatus: 'disabled' };
-        const manual: ConnectedApp = { ...app, connectionId: randomUUID(), access: ['browser'] };
-        const cli: ConnectedApp = { ...app, connectionId: randomUUID(), access: ['cli'] };
-        const unavailable: ConnectedApp = { ...app, connectionId: randomUUID(), status: 'disconnected' };
-        const triage = createTriage({
-          classifier: { id: 'fixture', configured: true, async classify() { assert.fail('An empty review must not call a model.'); } },
-          getProfile: async () => ({ location: '', preferences: '' }), listGoals: async () => [],
-          connectedApps: readConnectedApps,
-        });
-        const scheduleCount = (await personal.listSchedules()).length;
-        let releaseCheck = () => {};
-        const checking = new Promise<void>((resolve) => { releaseCheck = resolve; });
-        let entered = false;
-        const receipt = async () => (await db.pool.query('SELECT * FROM app_activity_checks WHERE owner_id=$1 AND connection_id=$2', [ownerId, connectionId])).rows[0];
-        const recordedContexts: RuntimeContext[] = [];
-        try {
-          activityLookup = triage.activityCheck;
-          quietBackgroundWork = true;
-          await preferences.update({ quietHoursEnabled: false });
-          currentApps = [app, optedOut, manual, cli, unavailable];
-          activityRun = async (context) => {
-            recordedContexts.push(context);
-            assert.equal(context.readOnly, true);
-            assert.equal(context.background, true);
-            assert.equal(context.activityCheck?.connectionId, connectionId);
-            entered = true;
-            await checking;
-            await context.integration('NOTION_RETRIEVE_PAGE', { connectionId });
-            await context.activityCheck!.record({ status: 'verified', value: 'revision-1', summary: 'One recent item reviewed.',
-              finding: { id: 'stable-item-1', url: 'https://example.test/items/1', summary: 'A question needs a supported response.' } });
-            await assert.rejects(context.activityCheck!.record({ status: 'unavailable', summary: 'Duplicate report.' }), /already ended/);
+      await t.test(
+        'bounded app checks claim one owned account, persist verified reads and hand off each finding once',
+        async () => {
+          const preferences = createPreferencesStore(db.pool, ownerId);
+          const original = await preferences.get();
+          await db.pool.query('DELETE FROM notifications WHERE owner_id=$1', [ownerId]);
+          const connectionId = randomUUID();
+          const app: ConnectedApp = {
+            slug: 'notion',
+            name: 'Notion',
+            status: 'connected',
+            connectionId,
+            access: ['api'],
+            supportsTriggers: false,
+            triggersEnabled: false,
           };
-          await Promise.all([triage.reviewHeartbeat(randomUUID()), triage.reviewHeartbeat(randomUUID())]);
-          await waitFor(() => entered);
-          const first = await receipt();
-          assert.ok(first.attempted_at);
-          assert.equal(first.checked_at, null);
-          assert.equal((await db.pool.query('SELECT * FROM app_activity_checks')).rowCount, 1);
-          currentApps.push({ ...app, connectionId: randomUUID() });
-          await triage.reviewHeartbeat(randomUUID());
-          assert.equal((await db.pool.query('SELECT * FROM app_activity_checks')).rowCount, 1);
-          currentApps.pop();
-          releaseCheck();
-          await waitFor(settled(first.turn_id));
-          assert.equal(await turnStatus(first.turn_id), 'succeeded');
-          assert.equal(recordedContexts[0].activityCheck?.previous, undefined);
-          const verified = await receipt();
-          assert.ok(verified.checked_at);
-          assert.equal(verified.value, 'revision-1');
-          const finding = (await db.pool.query("SELECT n.event_id,u.* FROM notifications n JOIN turns u ON u.id=n.turn_id WHERE n.owner_id=$1 AND n.event_id LIKE 'activity:%'", [ownerId])).rows;
-          assert.equal(finding.length, 1);
-          assert.equal(finding[0].source, 'event');
-          assert.equal(finding[0].read_only, false);
-          assert.equal(finding[0].background, true);
-          await waitFor(settled(finding[0].id));
-          await assert.rejects(recordedContexts[0].activityCheck!.record({ status: 'unavailable', summary: 'Late report.' }), /no longer active/);
-          assert.equal(await triage.activityCheck({ threadId: randomUUID(), turnId: first.turn_id }), undefined);
-          await triage.reviewHeartbeat(randomUUID());
-          assert.equal((await receipt()).turn_id, first.turn_id);
-          await db.pool.query("UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1", [ownerId]);
-          await triage.reviewHeartbeat(randomUUID());
-          const second = await receipt();
-          assert.notEqual(second.turn_id, first.turn_id);
-          await waitFor(settled(second.turn_id));
-          assert.equal(recordedContexts[1].activityCheck?.previous?.value, 'revision-1');
-          assert.ok(recordedContexts[1].activityCheck?.previous?.checkedAt);
-          assert.equal((await db.pool.query("SELECT * FROM notifications WHERE event_id LIKE 'activity:%'")).rowCount, 1);
-          const previousCheck = (await receipt()).checked_at;
-          await db.pool.query("UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1", [ownerId]);
-          activityRun = async () => { throw new Error('Synthetic connection unavailable.'); };
-          await triage.reviewHeartbeat(randomUUID());
-          const failed = await receipt();
-          await waitFor(settled(failed.turn_id));
-          assert.equal(await turnStatus(failed.turn_id), 'failed');
-          assert.deepEqual((await receipt()).checked_at, previousCheck);
-          await triage.reviewHeartbeat(randomUUID());
-          assert.equal((await receipt()).turn_id, failed.turn_id);
-          assert.equal((await db.pool.query('SELECT * FROM messages WHERE turn_id=ANY($1::uuid[])', [[first.turn_id, second.turn_id, failed.turn_id]])).rowCount, 0);
-          currentApps = [optedOut, manual, cli, unavailable];
-          await db.pool.query("UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1", [ownerId]);
-          await triage.reviewHeartbeat(randomUUID());
-          assert.equal((await receipt()).turn_id, failed.turn_id);
-          assert.equal((await personal.listSchedules()).length, scheduleCount);
-        } finally {
-          releaseCheck();
-          activityRun = undefined;
-          activityLookup = undefined;
-          quietBackgroundWork = false;
-          currentApps = [];
-          await preferences.update(original);
-        }
-      });
+          const optedOut: ConnectedApp = {
+            ...app,
+            connectionId: randomUUID(),
+            supportsTriggers: true,
+            triggersEnabled: false,
+            triggerStatus: 'disabled',
+          };
+          const manual: ConnectedApp = { ...app, connectionId: randomUUID(), access: ['browser'] };
+          const cli: ConnectedApp = { ...app, connectionId: randomUUID(), access: ['cli'] };
+          const unavailable: ConnectedApp = {
+            ...app,
+            connectionId: randomUUID(),
+            status: 'disconnected',
+          };
+          const triage = createTriage({
+            classifier: {
+              id: 'fixture',
+              configured: true,
+              async classify() {
+                assert.fail('An empty review must not call a model.');
+              },
+            },
+            getProfile: async () => ({ location: '', preferences: '' }),
+            listGoals: async () => [],
+            connectedApps: readConnectedApps,
+          });
+          const scheduleCount = (await personal.listSchedules()).length;
+          let releaseCheck = () => {};
+          const checking = new Promise<void>((resolve) => {
+            releaseCheck = resolve;
+          });
+          let entered = false;
+          const receipt = async () =>
+            (
+              await db.pool.query(
+                'SELECT * FROM app_activity_checks WHERE owner_id=$1 AND connection_id=$2',
+                [ownerId, connectionId],
+              )
+            ).rows[0];
+          const recordedContexts: RuntimeContext[] = [];
+          try {
+            activityLookup = triage.activityCheck;
+            quietBackgroundWork = true;
+            await preferences.update({ quietHoursEnabled: false });
+            currentApps = [app, optedOut, manual, cli, unavailable];
+            activityRun = async (context) => {
+              recordedContexts.push(context);
+              assert.equal(context.readOnly, true);
+              assert.equal(context.background, true);
+              assert.equal(context.activityCheck?.connectionId, connectionId);
+              entered = true;
+              await checking;
+              await context.integration('NOTION_RETRIEVE_PAGE', { connectionId });
+              await context.activityCheck!.record({
+                status: 'verified',
+                value: 'revision-1',
+                summary: 'One recent item reviewed.',
+                finding: {
+                  id: 'stable-item-1',
+                  url: 'https://example.test/items/1',
+                  summary: 'A question needs a supported response.',
+                },
+              });
+              await assert.rejects(
+                context.activityCheck!.record({
+                  status: 'unavailable',
+                  summary: 'Duplicate report.',
+                }),
+                /already ended/,
+              );
+            };
+            await Promise.all([
+              triage.reviewHeartbeat(randomUUID()),
+              triage.reviewHeartbeat(randomUUID()),
+            ]);
+            await waitFor(() => entered);
+            const first = await receipt();
+            assert.ok(first.attempted_at);
+            assert.equal(first.checked_at, null);
+            assert.equal((await db.pool.query('SELECT * FROM app_activity_checks')).rowCount, 1);
+            currentApps.push({ ...app, connectionId: randomUUID() });
+            await triage.reviewHeartbeat(randomUUID());
+            assert.equal((await db.pool.query('SELECT * FROM app_activity_checks')).rowCount, 1);
+            currentApps.pop();
+            releaseCheck();
+            await waitFor(settled(first.turn_id));
+            assert.equal(await turnStatus(first.turn_id), 'succeeded');
+            assert.equal(recordedContexts[0].activityCheck?.previous, undefined);
+            const verified = await receipt();
+            assert.ok(verified.checked_at);
+            assert.equal(verified.value, 'revision-1');
+            const finding = (
+              await db.pool.query(
+                "SELECT n.event_id,u.* FROM notifications n JOIN turns u ON u.id=n.turn_id WHERE n.owner_id=$1 AND n.event_id LIKE 'activity:%'",
+                [ownerId],
+              )
+            ).rows;
+            assert.equal(finding.length, 1);
+            assert.equal(finding[0].source, 'event');
+            assert.equal(finding[0].read_only, false);
+            assert.equal(finding[0].background, true);
+            await waitFor(settled(finding[0].id));
+            await assert.rejects(
+              recordedContexts[0].activityCheck!.record({
+                status: 'unavailable',
+                summary: 'Late report.',
+              }),
+              /no longer active/,
+            );
+            assert.equal(
+              await triage.activityCheck({ threadId: randomUUID(), turnId: first.turn_id }),
+              undefined,
+            );
+            await triage.reviewHeartbeat(randomUUID());
+            assert.equal((await receipt()).turn_id, first.turn_id);
+            await db.pool.query(
+              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
+              [ownerId],
+            );
+            await triage.reviewHeartbeat(randomUUID());
+            const second = await receipt();
+            assert.notEqual(second.turn_id, first.turn_id);
+            await waitFor(settled(second.turn_id));
+            assert.equal(recordedContexts[1].activityCheck?.previous?.value, 'revision-1');
+            assert.ok(recordedContexts[1].activityCheck?.previous?.checkedAt);
+            assert.equal(
+              (await db.pool.query("SELECT * FROM notifications WHERE event_id LIKE 'activity:%'"))
+                .rowCount,
+              1,
+            );
+            const previousCheck = (await receipt()).checked_at;
+            await db.pool.query(
+              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
+              [ownerId],
+            );
+            activityRun = async () => {
+              throw new Error('Synthetic connection unavailable.');
+            };
+            await triage.reviewHeartbeat(randomUUID());
+            const failed = await receipt();
+            await waitFor(settled(failed.turn_id));
+            assert.equal(await turnStatus(failed.turn_id), 'failed');
+            assert.deepEqual((await receipt()).checked_at, previousCheck);
+            await triage.reviewHeartbeat(randomUUID());
+            assert.equal((await receipt()).turn_id, failed.turn_id);
+            assert.equal(
+              (
+                await db.pool.query('SELECT * FROM messages WHERE turn_id=ANY($1::uuid[])', [
+                  [first.turn_id, second.turn_id, failed.turn_id],
+                ])
+              ).rowCount,
+              0,
+            );
+            currentApps = [optedOut, manual, cli, unavailable];
+            await db.pool.query(
+              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
+              [ownerId],
+            );
+            await triage.reviewHeartbeat(randomUUID());
+            assert.equal((await receipt()).turn_id, failed.turn_id);
+            assert.equal((await personal.listSchedules()).length, scheduleCount);
+          } finally {
+            releaseCheck();
+            activityRun = undefined;
+            activityLookup = undefined;
+            quietBackgroundWork = false;
+            currentApps = [];
+            await preferences.update(original);
+          }
+        },
+      );
     } finally {
       for (const resolve of gates.values()) resolve();
       releaseFence();
