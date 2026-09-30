@@ -3021,6 +3021,7 @@ test(
       restoreSession: async () => {
         throw new Error('Mailbox reads must not use model sessions.');
       },
+      readOnly: async () => false,
       deleteSession: async () => {},
       deleteAccount: async () => {
         assert.fail('Must not disconnect.');

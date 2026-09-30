@@ -1,14 +1,23 @@
-export const integrationResultBytes = 18_000;
+export const appResultInlineChars = 40_000;
 
-export function integrationResultSnapshot(value: unknown) {
-  const text = JSON.stringify(value ?? null);
-  const originalBytes = Buffer.byteLength(text);
-  if (originalBytes <= integrationResultBytes) return JSON.parse(text);
-  return {
-    truncated: true,
-    resultOmitted: true,
-    originalBytes,
-    message:
-      'The app response was too large and has been omitted. This is incomplete evidence, not a not-found result. Do not repeat a completed action. If the current request permits it, use a narrower read-only query with fewer results or fields; otherwise explain that the result could not be inspected.',
-  };
+export async function inlineAppResult(result: unknown, save: (text: string) => Promise<string>) {
+  const text = JSON.stringify(result ?? null);
+  if (text.length <= appResultInlineChars) return result;
+  const bytes = Buffer.byteLength(text);
+  const preview = text.slice(0, 2000);
+  try {
+    return {
+      workspaceFile: await save(text),
+      bytes,
+      preview,
+      message:
+        'The full app result is saved in this workspace file. Inspect it with read or bash, for example jq, instead of repeating the request.',
+    };
+  } catch (error) {
+    return {
+      bytes,
+      preview,
+      message: `The full app result could not be saved to the workspace (${error instanceof Error ? error.message : String(error)}). Only this preview is available. Do not repeat a completed write to recover it.`,
+    };
+  }
 }

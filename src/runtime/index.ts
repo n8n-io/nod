@@ -88,6 +88,7 @@ export function createAgentRuntime(dependencies: {
   workspace: Workspace;
   observationTimeoutMs?: number;
   withTool?<T>(turnId: string, toolCallId: string, toolName: string, action: () => T): T;
+  redactError?(text: string): string;
 }) {
   const { agent, computer } = dependencies;
   const activeThreads = new Map<string, { abort(): void; done: Promise<void> }>();
@@ -220,7 +221,6 @@ export function createAgentRuntime(dependencies: {
       name: string,
       params: unknown,
       execute: () => Promise<unknown>,
-      native = false,
     ): Promise<AgentToolResult> => {
       const label = name.replaceAll('_', ' ');
       const pending = (async () => {
@@ -300,10 +300,9 @@ export function createAgentRuntime(dependencies: {
             ? 'The action was cancelled.'
             : error instanceof ReadOnlyTurnError
               ? readOnlyRefusal
-              : (browserFailure ??
-                (native && error instanceof Error
-                  ? error.message
-                  : 'The action failed. Check the current state before trying again.'));
+              : (dependencies.redactError ?? String)(
+                  browserFailure ?? (error instanceof Error ? error.message : String(error)),
+                );
           await end({ status: signal.aborted ? 'cancelled' : 'failed', error: failure });
           if (
             !signal.aborted &&
@@ -360,7 +359,7 @@ export function createAgentRuntime(dependencies: {
         tools,
         workspace,
         skillsDir,
-        runTool: (name, params, run) => guard(name, params, run, true),
+        runTool: (name, params, run) => guard(name, params, run),
         shouldStop: () => stopped,
         onEvent: (event) => {
           if (event.type === 'model_usage') void observe(event);

@@ -77,6 +77,7 @@ import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
 import { createInspectorStore } from './inspector.ts';
 import { createPromptInspector } from './inspector-prompts.ts';
+import { createErrorRedactor } from './inspector-redaction.ts';
 import { registerBugReport } from './bug-report.ts';
 import { createPersonalService } from './personal.ts';
 import { createMemoryService } from './memory.ts';
@@ -448,6 +449,7 @@ export async function createApplication(
     withTool: providerUsage.withTool,
     computer,
     workspace,
+    redactError: createErrorRedactor(inspectorSecrets),
   });
   const speech = createSpeech(speechProvider);
   const memory = createMemoryService({

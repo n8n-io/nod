@@ -28,7 +28,23 @@ const toolSlug = z
   .string()
   .max(200)
   .regex(/^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/);
+const writeHints = ['destructiveHint', 'createHint', 'updateHint', 'deleteHint'];
 const schemaToolkit = z.string().toLowerCase().pipe(z.enum(integrationServiceIds));
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function providerFailure(action: string, result: Record<string, unknown>) {
+  const data =
+    result.data && typeof result.data === 'object' ? (result.data as Record<string, unknown>) : {};
+  const detail = [result.error, data.error, data.message].find(
+    (value) => value != null && value !== '',
+  );
+  const text = typeof detail === 'string' ? detail : JSON.stringify(detail ?? result);
+  const log = typeof result.logId === 'string' ? ` (Composio log ${result.logId})` : '';
+  return `Composio could not complete ${action}: ${text.slice(0, 4000)}${log}`;
+}
 const schemaFields = z.record(z.string(), z.unknown());
 const toolSchemasResult = z.object({
   success: z.literal(true),
@@ -147,6 +163,7 @@ export function createComposioProvider(options: {
   const downloadFile = createIntegrationFileDownloader(options.fileDownload);
   const identities = new Map<string, AccountIdentity>();
   const pendingIdentities = new Map<string, Promise<AccountIdentity>>();
+  const readTools = new Map<string, Promise<boolean>>();
   const authConfigs = Object.fromEntries(
     Object.entries(options.authConfigs ?? {}).filter(
       ([, id]) => typeof id === 'string' && id.trim().length > 0,
@@ -352,8 +369,8 @@ export function createComposioProvider(options: {
               primaryToolSlugs: item.primaryToolSlugs,
             })),
           };
-        } catch {
-          throw new Error('The app tool schemas could not be loaded.');
+        } catch (error) {
+          throw new Error(`The app tool schemas could not be loaded: ${errorText(error)}`);
         }
       },
       async download(action, args, accountId, signal) {
@@ -372,9 +389,11 @@ export function createComposioProvider(options: {
             );
           operation.throwIfAborted();
           return await downloadFile(action, result, operation);
-        } catch {
+        } catch (error) {
           if (signal?.aborted) throw new DOMException('File download was cancelled.', 'AbortError');
-          throw new Error('The app file could not be downloaded.');
+          throw new Error(
+            `The app file could not be downloaded: ${errorText(error).replace(/https?:\/\/\S+/g, '[file URL]')}`,
+          );
         }
       },
       async execute(action, args, accountId) {
@@ -391,7 +410,7 @@ export function createComposioProvider(options: {
             'successful' in result.data &&
             result.data.successful === false)
         )
-          throw new Error('The connection provider could not complete this action.');
+          throw new Error(providerFailure(action, result as Record<string, unknown>));
         return result;
       },
     };
@@ -422,6 +441,23 @@ export function createComposioProvider(options: {
     },
     async deleteSession(id) {
       await required().sessions.delete(id, { signal: AbortSignal.timeout(5_000) });
+    },
+    async readOnly(action) {
+      if (!toolSlug.safeParse(action).success) return false;
+      let pending = readTools.get(action);
+      if (!pending) {
+        pending = required()
+          .tools.getRawComposioToolBySlug(action, undefined, {
+            signal: AbortSignal.timeout(10_000),
+          })
+          .then(
+            ({ tags = [] }) =>
+              tags.includes('readOnlyHint') && !tags.some((tag) => writeHints.includes(tag)),
+          );
+        readTools.set(action, pending);
+        pending.catch(() => readTools.delete(action));
+      }
+      return pending.catch(() => false);
     },
     async inspectAccount(id, ownerId) {
       const account = await required().connectedAccounts.get(id, {

@@ -846,7 +846,6 @@ for (const failure of ['unknown', 'forged', 'navigation', 'wrong_action', 'cance
     try {
       await assert.rejects(f.run());
       assert.equal(calls, 1);
-      assert.doesNotMatch(JSON.stringify(f.observations), /Private unknown|Private forged/);
     } finally {
       await f.close();
     }
