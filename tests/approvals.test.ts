@@ -837,7 +837,7 @@ test(
               );
               const completed = await proposal(origin.turnId);
               assert.equal(completed.status, outcome === 'cancelled' ? 'completed' : 'uncertain');
-              if (outcome === 'cancelled') assert.equal(completed.result.resultOmitted, true);
+              if (outcome === 'cancelled') assert.equal(completed.result.data.length, 18_000);
               else assert.equal(completed.result, null);
               assert.equal(
                 await approvals.executeConfirmed(turn.turnId, new AbortController().signal),
@@ -1216,7 +1216,7 @@ test(
           try {
             await assert.rejects(execute(failed), (error: unknown) => {
               assert.ok(error instanceof Error);
-              assert.doesNotMatch(error.message, /Fixture provider detail/);
+              assert.match(error.message, /outcome is uncertain: .*Fixture provider detail/);
               return (error as Error & { statusCode: number }).statusCode === 502;
             });
           } finally {

@@ -11,7 +11,6 @@ import type {
   DiscoveredTransport,
 } from '../ports/discovered.ts';
 import type { Connection } from '../shared/contracts.ts';
-import { integrationResultSnapshot } from './integration-result.ts';
 import type { createAppGrantVault } from './vault-app-grants.ts';
 import { activeThread, type TurnRef } from './thread.ts';
 
@@ -731,8 +730,11 @@ export async function createDiscoveredConnections(
     let tools: DiscoveredTool[];
     try {
       tools = await options.transport.listTools(path.endpoint, headers(path, token));
-    } catch {
-      throw error('The connected MCP tool list is unavailable.', 502);
+    } catch (cause) {
+      throw error(
+        `The connected MCP tool list is unavailable: ${String(redact(cause instanceof Error ? cause.message : String(cause), token))}`,
+        502,
+      );
     }
     const tool = tools.find((item) => item.name === name);
     if (!tool) throw error('This tool is no longer available.', 409);
@@ -747,7 +749,12 @@ export async function createDiscoveredConnections(
   ) {
     const { row, path } = await selected(args);
     const token = await tokenFor(row, path);
-    const safeResult = (value: unknown) => integrationResultSnapshot(redact(value, token));
+    const safeResult = (value: unknown) => redact(value, token);
+    const failed = (message: string, cause: unknown) =>
+      error(
+        `${message}: ${String(redact(cause instanceof Error ? cause.message : String(cause), token))}`,
+        502,
+      );
     if (action === 'CONNECTED_HTTP') {
       if (path.kind !== 'http') throw error('Choose an HTTP access path.');
       const method = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).parse(args.method);
@@ -761,8 +768,8 @@ export async function createDiscoveredConnections(
             method === 'GET' ? undefined : args.body,
           ),
         );
-      } catch {
-        throw error('The connected API request failed. Check its path and account access.', 502);
+      } catch (cause) {
+        throw failed('The connected API request failed', cause);
       }
     }
     if (action === 'CONNECTED_CLI') {
@@ -787,8 +794,8 @@ export async function createDiscoveredConnections(
           signal,
         );
         return safeResult(result);
-      } catch {
-        throw error('The connected CLI command failed. Check its account access.', 502);
+      } catch (cause) {
+        throw failed('The connected CLI command failed', cause);
       }
     }
     if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
@@ -800,8 +807,8 @@ export async function createDiscoveredConnections(
       selectedTool = (await options.transport.listTools(path.endpoint, headers(path, token))).find(
         (tool) => tool.name === name,
       );
-    } catch {
-      throw error('The connected MCP tool list is unavailable.', 502);
+    } catch (cause) {
+      throw failed('The connected MCP tool list is unavailable', cause);
     }
     if (!selectedTool) throw error('This tool is no longer available.', 409);
     if (readOnlyRequired && !readOnly(selectedTool))
@@ -810,8 +817,8 @@ export async function createDiscoveredConnections(
       return safeResult(
         await options.transport.callTool(path.endpoint, headers(path, token), name, input),
       );
-    } catch {
-      throw error('The connected MCP request failed. Check its tool and account access.', 502);
+    } catch (cause) {
+      throw failed('The connected MCP request failed', cause);
     }
   }
   async function describe(args: Record<string, unknown>) {

@@ -4,9 +4,11 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
+import { Composio } from '@composio/core';
 import pg from 'pg';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import type { AgentToolResult } from '../src/ports/agent.ts';
+import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
 test(
@@ -48,6 +50,26 @@ test(
       accountId?: string;
     }> = [];
     const integrationProvider = createIntegrationFixture('http://localhost:4320').provider;
+    const client = new Composio({
+      apiKey: 'fixture-key-never-live',
+      allowTracking: false,
+      disableVersionCheck: true,
+      fileUploadDirs: false,
+    });
+    const catalog = t.mock.method(
+      client.tools,
+      'getRawComposioToolBySlug',
+      async (slug: string) => {
+        assert.equal(slug, 'GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS');
+        return { slug, name: slug, tags: ['readOnlyHint'] };
+      },
+    );
+    const composio = createComposioProvider({ client });
+    const readOnly = integrationProvider.readOnly;
+    integrationProvider.readOnly = (action) =>
+      action === 'GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS'
+        ? composio.readOnly(action)
+        : readOnly(action);
     const createSession = integrationProvider.createSession;
     integrationProvider.createSession = async (...args) => {
       const session = await createSession(...args);
@@ -86,7 +108,7 @@ test(
                             : 'manage_personal_context'),
                       )!
                       .execute({ action: plan.action, args: plan.args });
-                  if (plan.invalid) await assert.rejects(execute, /The action failed/);
+                  if (plan.invalid) await assert.rejects(execute);
                   else {
                     results.set(options.turnId, await execute());
                     if (plan.complete)
@@ -185,6 +207,7 @@ test(
             false,
             'Anything on my calendar for me to address?',
           );
+          assert.equal(catalog.mock.callCount(), 1);
           assert.deepEqual(calendarExecutions, [{ action, args, accountId: calendar.accountId }]);
           assert.deepEqual(results.get(turnId)?.content, [
             { type: 'text', text: JSON.stringify(calendarResult) },

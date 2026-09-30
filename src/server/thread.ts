@@ -25,6 +25,7 @@ import type { IntegrationFile } from '../ports/integrations.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
+import { inlineAppResult } from './integration-result.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -82,6 +83,7 @@ export interface ThreadDependencies {
   executeConfirmation?: (
     turnId: string,
     signal: AbortSignal,
+    present: (action: string, result: unknown) => Promise<unknown>,
   ) => Promise<{ prompt: string } | undefined>;
   recordFailure?: (turnId: string, error: unknown) => Promise<void>;
   observe?: (turnId: string, event: RuntimeObservation) => Promise<void>;
@@ -812,10 +814,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     refresh();
   };
   try {
-    const confirmed = await dependencies.executeConfirmation?.(turnId, signal);
-    if (confirmed) turn.prompt = confirmed.prompt;
-    await ensureCurrent();
-    const loaded = await loadTurnContext(turn, dependencies);
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
     const stage = async (id: string, fileName: string, bytes: Uint8Array) => {
@@ -829,6 +827,18 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         });
       return name;
     };
+    const inline = (action: string, result: unknown) =>
+      inlineAppResult(result, (text) =>
+        stage(
+          randomUUID(),
+          `${action.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)}.json`,
+          Buffer.from(text),
+        ),
+      );
+    const confirmed = await dependencies.executeConfirmation?.(turnId, signal, inline);
+    if (confirmed) turn.prompt = confirmed.prompt;
+    await ensureCurrent();
+    const loaded = await loadTurnContext(turn, dependencies);
     const ids = loaded.uploads.map((item) => String(item?.id ?? '')).filter(Boolean);
     const uploads = ids.length
       ? (
@@ -926,11 +936,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       browserConnection:
         browserConnection && fenced((request) => browserConnection(request, ref, signal)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
-      integration: fenced((action, args) =>
-        dependencies.integration(ref, action, args, {
-          readOnly: turn.read_only || turn.source_id?.startsWith('onboarding:') === true,
-          signal,
-        }),
+      integration: fenced(async (action, args) =>
+        inline(
+          action,
+          await dependencies.integration(ref, action, args, {
+            readOnly: turn.read_only || turn.source_id?.startsWith('onboarding:') === true,
+            signal,
+          }),
+        ),
       ),
       manage: fenced((action, args) =>
         dependencies.manage(ref, action, args, { sourceMessageId: loaded.sourceMessageId }),

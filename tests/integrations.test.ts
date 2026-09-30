@@ -28,6 +28,7 @@ import { createDiscoveredOAuth } from '../src/providers/discovered/oauth.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
+import { createErrorRedactor } from '../src/server/inspector-redaction.ts';
 import { createProviderUsageStore } from '../src/server/provider-usage.ts';
 import {
   meterAgent,
@@ -40,7 +41,16 @@ import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
-function fakeProvider(session: IntegrationSession): IntegrationProvider {
+const readTool = { annotations: { readOnlyHint: true } };
+
+function catalogReadOnly(tools: Record<string, { annotations?: { readOnlyHint?: boolean } }>) {
+  return async (action: string) => tools[action]?.annotations?.readOnlyHint === true;
+}
+
+function fakeProvider(
+  session: IntegrationSession,
+  tools: Parameters<typeof catalogReadOnly>[0] = {},
+): IntegrationProvider {
   return {
     id: 'fixture',
     configured: true,
@@ -48,6 +58,7 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
     supportsSubscriptions: ['gmail', 'googlecalendar'],
     createSession: async () => session,
     restoreSession: async () => session,
+    readOnly: catalogReadOnly(tools),
     deleteSession: async () => {},
     inspectAccount: async () => ({ active: true, service: 'gmail' }),
     deleteAccount: async () => {},
@@ -107,7 +118,7 @@ test(
         suggestions: [{ useCase: 'Send email', primaryToolSlugs: ['GMAIL_SEND_EMAIL'] }],
       }),
     };
-    const provider = fakeProvider(session);
+    const provider = fakeProvider(session, { GMAIL_FETCH_EMAILS: readTool });
     const discoveredBrowserId = randomUUID();
     const pendingBrowserId = randomUUID();
     const savedLoginIds = [randomUUID(), randomUUID()];
@@ -280,11 +291,11 @@ test(
       );
       assert.equal(searches.mock.callCount(), 1);
       t.mock.method(session, 'search', async () => {
-        throw new Error('raw-provider-secret and internal setup details');
+        throw new Error('Fixture tool router timed out');
       });
       await assert.rejects(
         integrations.execute('local-development', 'SEARCH_TOOLS', { query: 'List Gmail labels' }),
-        { message: 'App tool search is unavailable. Try again later.', statusCode: 502 },
+        { message: 'App tool search failed: Fixture tool router timed out', statusCode: 502 },
       );
       await pool.query(
         "INSERT INTO integration_events (id,owner_id,summary,slug,account_id,trigger_id,provider_id) VALUES ('event-queued-before-disconnect','local-development','Obsolete event','gmail','ca-fixture','ti-fixture','fixture')",
@@ -507,7 +518,7 @@ test(
         return { data: { labels: [] } };
       },
     };
-    const provider = fakeProvider(session);
+    const provider = fakeProvider(session, { GMAIL_LIST_LABELS: readTool });
     provider.createSession = async (_owner, accounts) => {
       accountSets.push(accounts);
       return session;
@@ -722,6 +733,11 @@ async function appsFixture(t: TestContext) {
   const removed: string[] = [];
   const sessions: unknown[] = [];
   const wakes: string[] = [];
+  const tools = {
+    GMAIL_GET_ATTACHMENT: readTool,
+    NOTION_RETRIEVE_PAGE: readTool,
+    SLACK_SEARCH_MESSAGES: readTool,
+  };
   const session: IntegrationSession = {
     id: 'current-session',
     authorize: async (service, callback) => {
@@ -757,6 +773,7 @@ async function appsFixture(t: TestContext) {
     restoreSession: async () => {
       assert.fail('An old session must be replaced.');
     },
+    readOnly: catalogReadOnly(tools),
     deleteSession: async (id) => {
       removed.push(id);
     },
@@ -856,183 +873,21 @@ test(
           'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE',
         ],
       },
-      {
-        service: 'gmail' as const,
-        action: 'GMAIL_GET_CONTACTS',
-        input: {},
-        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
-      },
-      {
-        service: 'gmail' as const,
-        action: 'GMAIL_GET_PEOPLE',
-        input: {},
-        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
-      },
-      {
-        service: 'gmail' as const,
-        action: 'GMAIL_SEARCH_PEOPLE',
-        input: {},
-        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
-      },
-      {
-        service: 'gmail' as const,
-        action: 'GMAIL_GET_LABEL',
-        input: {},
-        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
-      },
-      {
-        service: 'gmail' as const,
-        action: 'GMAIL_LIST_HISTORY',
-        input: {},
-        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
-      },
-      {
-        service: 'gmail' as const,
-        action: 'GMAIL_WHO_AM_I',
-        input: {},
-        guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_GET_AND_DELETE_MESSAGES'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_EVENTS_INSTANCES',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_FIND_EVENT',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_FREE_BUSY_QUERY',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_GET_CALENDAR',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_CALENDAR_LIST_GET',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_GET_CURRENT_USER',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_GET_CURRENT_DATE_TIME',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_SETTINGS_GET',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googlecalendar' as const,
-        action: 'GOOGLECALENDAR_SETTINGS_LIST',
-        input: {},
-        guarded: ['GOOGLECALENDAR_UPDATE_EVENT', 'GOOGLECALENDAR_EVENTS_LIST_AND_DELETE'],
-      },
-      {
-        service: 'googledrive' as const,
-        action: 'GOOGLEDRIVE_GET_ABOUT',
-        input: {},
-        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
-      },
-      {
-        service: 'googledrive' as const,
-        action: 'GOOGLEDRIVE_GET_DOCUMENT',
-        input: {},
-        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
-      },
-      {
-        service: 'googledrive' as const,
-        action: 'GOOGLEDRIVE_GET_SPREADSHEET',
-        input: {},
-        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
-      },
-      {
-        service: 'googledrive' as const,
-        action: 'GOOGLEDRIVE_GET_SPREADSHEET_VALUES',
-        input: {},
-        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
-      },
-      {
-        service: 'googledrive' as const,
-        action: 'GOOGLEDRIVE_BATCH_GET_SPREADSHEET_VALUES',
-        input: {},
-        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
-      },
-      {
-        service: 'googledrive' as const,
-        action: 'GOOGLEDRIVE_READ_SPREADSHEET_VALUES',
-        input: {},
-        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
-      },
-      {
-        service: 'googledrive' as const,
-        action: 'GOOGLEDRIVE_GET_CHANGES_START_PAGE_TOKEN',
-        input: {},
-        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
-      },
-      {
-        service: 'googledrive' as const,
-        action: 'GOOGLEDRIVE_LIST_SHARED_DRIVES',
-        input: {},
-        guarded: ['GOOGLEDRIVE_DELETE_FILE', 'GOOGLEDRIVE_GET_AND_DELETE_FILE'],
-      },
-      {
-        service: 'googlesheets' as const,
-        action: 'GOOGLESHEETS_VALUES_GET',
-        input: {},
-        guarded: ['GOOGLESHEETS_FIND_REPLACE', 'GOOGLESHEETS_EXECUTE_SQL'],
-      },
-      {
-        service: 'googlesheets' as const,
-        action: 'GOOGLESHEETS_LOOKUP_SPREADSHEET_ROW',
-        input: {},
-        guarded: ['GOOGLESHEETS_FIND_REPLACE', 'GOOGLESHEETS_EXECUTE_SQL'],
-      },
-      {
-        service: 'googlesheets' as const,
-        action: 'GOOGLESHEETS_GET_SPREADSHEET_BY_DATA_FILTER',
-        input: {},
-        guarded: ['GOOGLESHEETS_FIND_REPLACE', 'GOOGLESHEETS_EXECUTE_SQL'],
-      },
-      {
-        service: 'googlesheets' as const,
-        action: 'GOOGLESHEETS_SPREADSHEETS_VALUES_BATCH_GET_BY_DATA_FILTER',
-        input: {},
-        guarded: ['GOOGLESHEETS_FIND_REPLACE', 'GOOGLESHEETS_EXECUTE_SQL'],
-      },
-      {
-        service: 'googledocs' as const,
-        action: 'GOOGLEDOCS_GET_DOCUMENT_END_INDEX',
-        input: {},
-        guarded: ['GOOGLEDOCS_INSERT_TEXT', 'GOOGLEDOCS_GET_AND_DELETE_DOCUMENT'],
-      },
-      {
-        service: 'googledocs' as const,
-        action: 'GOOGLEDOCS_LIST_SPREADSHEET_CHARTS',
-        input: {},
-        guarded: ['GOOGLEDOCS_INSERT_TEXT', 'GOOGLEDOCS_GET_AND_DELETE_DOCUMENT'],
-      },
     ]) {
       await t.test(action, async (t) => {
         const f = await appsFixture(t);
+        const client = new Composio({
+          apiKey: 'fixture-key-never-live',
+          allowTracking: false,
+          disableVersionCheck: true,
+          fileUploadDirs: false,
+        });
+        t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => ({
+          slug,
+          name: slug,
+          tags: slug === action ? ['readOnlyHint'] : [],
+        }));
+        f.provider.readOnly = createComposioProvider({ client }).readOnly;
         await f.connect(service);
         const selected = await f.connect(service);
         await assert.rejects(f.service.execute('local-development', action, input), {
@@ -1261,7 +1116,7 @@ test(
     });
     finish(file);
     await assert.rejects(pending, {
-      message: 'The file could not be downloaded. Check the account and file, then try again.',
+      message: 'The file could not be downloaded: This connected account is unavailable.',
       statusCode: 502,
     });
     assert.ok((await f.service.list()).some((item) => item.connectionId === second.connectionId));
@@ -1291,7 +1146,7 @@ test(
 
 const query = 'List Gmail labels';
 const searchResult = {
-  tools: { GMAIL_LIST_LABELS: { inputSchema: { type: 'object' } } },
+  tools: { GMAIL_LIST_LABELS: { inputSchema: { type: 'object' }, ...readTool } },
   suggestions: [{ useCase: query, primaryToolSlugs: ['GMAIL_LIST_LABELS'] }],
 };
 type Execute = (id: string, action: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -1382,6 +1237,7 @@ async function searchFixture(
       return session;
     },
     restoreSession: async () => session,
+    readOnly: catalogReadOnly(searchResult.tools),
     deleteSession: async () => {},
     inspectAccount: async (id) => ({
       active: true,
@@ -1437,7 +1293,12 @@ async function searchFixture(
     }),
     dispose() {},
   };
-  runtime = createAgentRuntime({ agent, computer: fakeComputer(), workspace: fakeWorkspace() });
+  runtime = createAgentRuntime({
+    agent,
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+    redactError: createErrorRedactor(['fixture-provider-key-value']),
+  });
   const context: RuntimeContext = {
     threadId,
     turnId,
@@ -1519,7 +1380,7 @@ test(
 );
 
 test(
-  'an uncertain app execution stops the turn without exposing provider details',
+  'a failed app execution stops the turn and reaches the harness with a redacted provider error',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const f = await searchFixture(
@@ -1530,14 +1391,22 @@ test(
       },
       {
         execute: async () => {
-          throw new Error('private-provider-diagnostic');
+          throw new Error(
+            'private-provider-diagnostic fixture-provider-key-value Bearer fixture.bearer-token https://files.example/f?X-Amz-Signature=fixture-signature',
+          );
         },
       },
     );
-    await assert.rejects(f.run(), /The action failed/);
+    const leaked = /fixture-provider-key-value|fixture\.bearer-token|fixture-signature/;
+    await assert.rejects(f.run(), (error: Error) => {
+      assert.match(error.message, /The app request failed: private-provider-diagnostic/);
+      assert.doesNotMatch(error.message, leaked);
+      return true;
+    });
     assert.equal(f.calls.length, 1);
     assert.deepEqual(f.modelResults, []);
-    assert.doesNotMatch(JSON.stringify(f.observations), /private-provider-diagnostic/);
+    assert.match(JSON.stringify(f.observations), /private-provider-diagnostic/);
+    assert.doesNotMatch(JSON.stringify(f.observations), leaked);
   },
 );
 
@@ -2059,6 +1928,10 @@ test(
         return session(id);
       },
       restoreSession: async () => session(id),
+      readOnly: catalogReadOnly({
+        NOTION_SEARCH_NOTION_PAGE: readTool,
+        LINEAR_LIST_PROJECTS: readTool,
+      }),
       deleteSession: async () => {},
       inspectAccount: async (accountId) => {
         if (accountId.endsWith('linear') && failInspectOnce) {
@@ -2346,7 +2219,7 @@ test(
   },
 );
 
-test('Composio execution rejects failure envelopes without exposing provider details', async (t) => {
+test('Composio failure envelopes reject with the provider error', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
     allowTracking: false,
@@ -2360,18 +2233,51 @@ test('Composio execution rejects failure envelopes without exposing provider det
   }));
   const session = await createComposioProvider({ client }).createSession('local-development', {});
   for (const failure of [
-    { data: {}, error: 'private-provider-error', logId: 'private-log' },
-    { data: {}, error: { message: 'private-provider-error' }, logId: 'private-log' },
+    { data: {}, error: 'Fixture rate limit', logId: 'log-fixture' },
     { data: {}, successful: false },
-    { data: { successful: false, error: 'private-provider-error' }, error: null },
+    { data: { successful: false, error: 'Fixture rate limit' }, error: null },
   ]) {
     result = failure;
-    await assert.rejects(session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account'), {
-      message: 'The connection provider could not complete this action.',
-    });
+    await assert.rejects(session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account'));
   }
+  result = { data: {}, error: 'Fixture rate limit', logId: 'log-fixture' };
+  await assert.rejects(session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account'), {
+    message: /Fixture rate limit \(Composio log log-fixture\)/,
+  });
   result = { data: { successful: true, id: 'fixture-message' }, error: null };
   assert.deepEqual(await session.execute('GMAIL_SEND_EMAIL', {}, 'fixture-account'), result);
+});
+
+test('Composio actions skip review only when the catalog tags them read-only', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const tags: Record<string, string[]> = {
+    GMAIL_GET_PROFILE: ['readOnlyHint', 'openWorldHint'],
+    GMAIL_SEND_EMAIL: ['openWorldHint'],
+    SLACK_GET_AND_DELETE_MESSAGES: ['readOnlyHint', 'destructiveHint'],
+    GMAIL_UNTAGGED_ACTION: [],
+    GMAIL_LIST_THREADS: ['readOnlyHint'],
+  };
+  let outage = true;
+  const lookup = t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => {
+    if (slug === 'GMAIL_LIST_THREADS' && outage) throw new Error('Fixture catalog outage');
+    return { slug, name: slug, tags: tags[slug] };
+  });
+  const provider = createComposioProvider({ client });
+  assert.equal(await provider.readOnly('GMAIL_GET_PROFILE'), true);
+  assert.equal(await provider.readOnly('GMAIL_SEND_EMAIL'), false);
+  assert.equal(await provider.readOnly('SLACK_GET_AND_DELETE_MESSAGES'), false);
+  assert.equal(await provider.readOnly('GMAIL_UNTAGGED_ACTION'), false);
+  assert.equal(await provider.readOnly('not a tool slug'), false);
+  assert.equal(await provider.readOnly('GMAIL_LIST_THREADS'), false);
+  outage = false;
+  assert.equal(await provider.readOnly('GMAIL_LIST_THREADS'), true);
+  assert.equal(await provider.readOnly('GMAIL_GET_PROFILE'), true);
+  assert.equal(lookup.mock.callCount(), 6);
 });
 
 test('Composio account identity comes from an account-bound Google response and excludes credentials', async (t) => {
@@ -2555,6 +2461,7 @@ test(
       restoreSession: async () => {
         throw new Error();
       },
+      readOnly: async () => false,
       deleteSession: async () => {},
       deleteAccount: async () => {},
       inspectAccount: async (id, owner) => {

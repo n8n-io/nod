@@ -137,13 +137,30 @@ export function Checkbox({ className, ...props }: React.InputHTMLAttributes<HTML
 export function Notice({
   children,
   kind = 'error',
+  onDismiss,
 }: {
   children: React.ReactNode;
   kind?: 'error' | 'info' | 'success';
+  onDismiss?(): void;
 }) {
   return (
-    <div className={cn('notice', `notice-${kind}`)} role={kind === 'error' ? 'alert' : 'status'}>
+    <div
+      className={cn('notice', `notice-${kind}`, onDismiss && 'notice-dismissible')}
+      role={kind === 'error' ? 'alert' : 'status'}
+    >
       {children}
+      {onDismiss && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="notice-dismiss"
+          aria-label="Dismiss notification"
+          onClick={onDismiss}
+        >
+          <X size={15} aria-hidden="true" />
+        </Button>
+      )}
     </div>
   );
 }

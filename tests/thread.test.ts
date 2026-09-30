@@ -163,6 +163,13 @@ test(
     const remoteUploads = new Map<string, Uint8Array>();
     const fileContexts = new Map<string, RuntimeContext>();
     const integrationReads: boolean[] = [];
+    const appResults = new Map<string, unknown>();
+    const largeAppResult = {
+      threads: Array.from({ length: 400 }, (_, index) => ({
+        id: `synthetic-thread-${index}`,
+        snippet: 'Synthetic inbox snippet. '.repeat(8),
+      })),
+    };
     let remoteAttachmentRead = false;
     let fenced: RuntimeContext | undefined;
     let releaseFence: () => void = () => {};
@@ -180,7 +187,8 @@ test(
       requestCredential: async () => {
         throw new Error('Unused fixture');
       },
-      integration: async (_turn, _action, _args, options) => {
+      integration: async (_turn, action, _args, options) => {
+        if (action === 'GMAIL_LIST_THREADS') return largeAppResult;
         integrationReads.push(options.readOnly);
         return { successful: true, data: { threads: 2 } };
       },
@@ -222,6 +230,10 @@ test(
             name: 'statement.pdf',
             mimeType: 'application/pdf',
           });
+          return { status: 'succeeded' };
+        }
+        if (context.prompt === 'large-app-result-fixture') {
+          appResults.set(context.prompt, await context.integration('GMAIL_LIST_THREADS', {}));
           return { status: 'succeeded' };
         }
         if (context.prompt.endsWith('-file-fixture')) {
@@ -652,6 +664,41 @@ test(
           } finally {
             dependencies.writeArtifact = undefined;
           }
+        },
+      );
+
+      await t.test(
+        'a large app result is saved in the thread workspace and returned by reference',
+        async () => {
+          const { turnId, threadId: id } = await thread.submitUserMessage(
+            'large-app-result-fixture',
+          );
+          await waitFor(settled(turnId));
+          const full = JSON.stringify(largeAppResult);
+          const result = appResults.get('large-app-result-fixture') as {
+            workspaceFile: string;
+            bytes: number;
+            preview: string;
+          };
+          assert.match(result.workspaceFile, /^[a-f0-9-]{36}-GMAIL_LIST_THREADS\.json$/);
+          assert.equal(result.bytes, Buffer.byteLength(full));
+          assert.ok(result.preview.length < full.length && full.startsWith(result.preview));
+          assert.equal(
+            await readFile(join(root, 'workspaces', id, result.workspaceFile), 'utf8'),
+            full,
+          );
+          dependencies.writeArtifact = async () => {
+            throw new Error('Fixture workspace unavailable');
+          };
+          try {
+            const unsaved = await thread.submitUserMessage('large-app-result-fixture');
+            await waitFor(settled(unsaved.turnId));
+          } finally {
+            dependencies.writeArtifact = undefined;
+          }
+          const fallback = appResults.get('large-app-result-fixture') as Record<string, unknown>;
+          assert.equal(fallback.workspaceFile, undefined);
+          assert.equal(fallback.preview, result.preview);
         },
       );
 

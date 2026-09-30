@@ -746,7 +746,7 @@ test('app downloads reject private redirects, rebinding, insecure URLs and overs
   }
 });
 
-test('Composio downloads bind the account, reject unreviewed arguments and hide upstream URLs and errors', async (t) => {
+test('Composio downloads bind the account, reject unreviewed arguments and keep upstream URLs out of errors', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-never-live',
     allowTracking: false,
@@ -774,7 +774,8 @@ test('Composio downloads bind the account, reject unreviewed arguments and hide 
         account: 'owned-account',
       });
       assert.equal(options.signal.aborted, false);
-      if (fail) throw new Error('private upstream URL and credential');
+      if (fail)
+        throw new Error('Upstream refused https://files.example/signed?X-Amz-Signature=fixture');
       return descriptor();
     },
   );
@@ -796,12 +797,12 @@ test('Composio downloads bind the account, reject unreviewed arguments and hide 
     ['GMAIL_GET_ATTACHMENT', { ...args, url: 'https://example.com/file' }],
   ] as const)
     await assert.rejects(session.download!(action, input, 'owned-account'), {
-      message: 'The app file could not be downloaded.',
+      message: /^The app file could not be downloaded: /,
     });
   assert.equal(executions, 1);
   fail = true;
   await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', args, 'owned-account'), {
-    message: 'The app file could not be downloaded.',
+    message: 'The app file could not be downloaded: Upstream refused [file URL]',
   });
   const controller = new AbortController();
   controller.abort();
