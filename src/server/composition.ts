@@ -472,6 +472,7 @@ export async function createApplication(
     keyStore: adapters.keyStore,
     grantVault,
     transport: createDiscoveredTransport(),
+    accountReplaced: triage.invalidateActivityCheck,
     oauth: createDiscoveredOAuth(),
     runCli: workspace.connectedCliAvailable
       ? async (threadId, command, args, envName, token, timeoutSeconds, signal) => {
@@ -499,6 +500,7 @@ export async function createApplication(
     admission,
     ownerId,
     provider: integrationProvider,
+    validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     ...(adapters.directIntegrations
       ? {

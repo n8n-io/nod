@@ -60,7 +60,7 @@ export type ActivityCheckResult =
       status: 'verified';
       value: string;
       summary: string;
-      finding?: { id: string; url?: string; summary: string };
+      finding?: { id: string; version?: string; url?: string; summary: string };
     }
   | { status: 'unavailable'; summary: string };
 
@@ -74,7 +74,7 @@ export interface RuntimeContext {
   activityCheck?: {
     connectionId: string;
     previous?: { checkedAt: string; value: string; summary: string };
-    record(result: ActivityCheckResult): Promise<void>;
+    record(result: ActivityCheckResult, signal?: AbortSignal): Promise<void>;
   };
   channel?: string;
   timeZone?: string;

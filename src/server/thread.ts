@@ -522,7 +522,7 @@ async function resumeTurn(turnId: string, sourceId: string, prompt: string, pend
     await lockThread(client);
     const turn = (
       await client.query(
-        `SELECT u.channel,u.status,th.archived_at IS NULL AS active FROM turns u JOIN threads th ON th.id=u.thread_id
+        `SELECT u.channel,u.status,u.background,th.archived_at IS NULL AS active FROM turns u JOIN threads th ON th.id=u.thread_id
          WHERE u.id=$1 AND u.owner_id=$2`,
         [turnId, ownerId],
       )
@@ -533,7 +533,7 @@ async function resumeTurn(turnId: string, sourceId: string, prompt: string, pend
       source: 'resume',
       sourceId,
       channel: turn?.channel ?? 'web',
-      background: false,
+      background: turn?.background ?? false,
       client,
     });
     return true;
@@ -865,7 +865,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           }
         : row;
     };
-    const attach = async (bytes: Uint8Array, name: string, mimeType: string, text = '') => {
+    const attach = async (
+      bytes: Uint8Array,
+      name: string,
+      mimeType: string,
+      text = '',
+      publish = true,
+    ) => {
       const artifact = await current(async (client) => {
         const artifact = await artifacts.storeArtifact(
           Buffer.from(bytes),
@@ -874,14 +880,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           threadId,
           client,
         );
-        await insertAssistantMessage(client, ref, text, [artifact]);
+        if (publish) await insertAssistantMessage(client, ref, text, [artifact]);
         return artifact;
       });
       refresh();
       return artifact;
     };
     const attachFile = async (file: { bytes: Uint8Array; name: string; mimeType: string }) => {
-      const artifact = await attach(file.bytes, file.name, file.mimeType);
+      const artifact = await attach(file.bytes, file.name, file.mimeType, '', !turn.background);
       return { ...artifact, workspaceFile: await stage(artifact.id, artifact.name, file.bytes) };
     };
     const emit = async (type: string, summary: string) => {
@@ -962,7 +968,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       publishScreenshot: (bytes, name) => {
         const fileName =
           name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
-        return attach(bytes, fileName, 'image/png', `Browser screenshot: ${fileName}`);
+        return turn.background
+          ? attachFile({ bytes, name: fileName, mimeType: 'image/png' })
+          : attach(bytes, fileName, 'image/png', `Browser screenshot: ${fileName}`);
       },
       publishBrowserFile: attachFile,
     });

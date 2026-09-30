@@ -78,6 +78,7 @@ type IntegrationOptions = {
   provider: IntegrationProvider;
   additionalProviders?: IntegrationProvider[];
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
+  validateActivityCheck?(turn: TurnRef, connectionId: string): Promise<void>;
   baseUrl: string;
   refresh?(): void;
   discovered?: Awaited<ReturnType<typeof createDiscoveredConnections>>;
@@ -348,6 +349,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     );
     try {
       signal?.throwIfAborted();
+      const current = (await connectionRows(ownerId)).find(
+        (connection) => connection.id === row.id,
+      );
+      if (
+        !current ||
+        current.revoked ||
+        !current.account_active ||
+        current.account_id !== row.account_id ||
+        current.provider_id !== row.provider_id ||
+        current.watch_revision !== row.watch_revision
+      )
+        throw new IntegrationError('This connected account is unavailable.', 404);
       return await operation(session);
     } finally {
       await selected.deleteSession(session.id).catch(() => {});
@@ -1001,6 +1014,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         checkConnectionId ? row : undefined,
         signal,
         async (session) => {
+          if (checkConnectionId) await options.validateActivityCheck!(turn!, checkConnectionId);
           const current = await approvedConnection(ownerId, action, args);
           if (current.account_id !== row.account_id)
             throw new Error('The selected account changed.');
@@ -1030,7 +1044,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     assertOwner(ownerId);
     signal?.throwIfAborted();
     if (checkConnectionId) {
+      if (!turn || !options.validateActivityCheck)
+        throw new IntegrationError('This activity check is unavailable.');
+      await options.validateActivityCheck(turn, checkConnectionId);
+      signal?.throwIfAborted();
       if (
+        action === 'CONNECTED_CLI' ||
         (args.connectionId !== undefined && args.connectionId !== checkConnectionId) ||
         (integrationDownloadActions as readonly string[]).includes(action)
       )
@@ -1090,7 +1109,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               item,
               checkConnectionId ? rows.find((row) => row.provider_id === item.id) : undefined,
               signal,
-              (session) => session.search(query, signal),
+              async (session) => {
+                if (checkConnectionId)
+                  await options.validateActivityCheck!(turn!, checkConnectionId);
+                signal?.throwIfAborted();
+                return session.search(query, signal);
+              },
             ),
           ),
         );

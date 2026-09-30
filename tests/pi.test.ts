@@ -14,7 +14,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
-import type { RuntimeContext } from '../src/ports/agent.ts';
+import type { AgentSession, RuntimeContext } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
 import type { PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
@@ -1357,5 +1357,137 @@ test('turn deadlines release stalled model, provider, native and disposal operat
         await rm(directory, { recursive: true, force: true });
       }
     });
+  }
+});
+
+test('a delayed instrumentation callback cannot begin a tool after its turn deadline', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-delayed-tool-'));
+  let delayed: (() => unknown) | undefined;
+  let providerCalls = 0;
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (options) => ({
+        resumed: false,
+        prompt: async () => {
+          await options.tools
+            .find((tool) => tool.name === 'apps')!
+            .execute({ action: 'FIXTURE_READ', args: {} });
+        },
+        abort: () => {},
+        dispose: () => {},
+      }),
+      dispose: () => {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+    withTool: <T>(_turnId: string, _toolCallId: string, _toolName: string, action: () => T): T => {
+      delayed = action;
+      return new Promise<never>(() => {}) as T;
+    },
+  });
+  try {
+    await assert.rejects(
+      runtime.runTurn({
+        ...context(directory),
+        limits: { maxToolCalls: 8, timeoutMs: 30 },
+        integration: async () => {
+          providerCalls++;
+          return { items: [] };
+        },
+      }),
+      /time limit/,
+    );
+    assert.ok(delayed);
+    assert.throws(delayed, /time limit/);
+    assert.equal(providerCalls, 0);
+    assert.equal(runtime.status().activeThreads, 0);
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a session that opens after its deadline is aborted and disposed without receiving a prompt', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-late-session-'));
+  let finishOpening!: (session: AgentSession) => void;
+  const opening = new Promise<AgentSession>((resolve) => {
+    finishOpening = resolve;
+  });
+  const events: string[] = [];
+  const runtime = createAgentRuntime({
+    agent: { open: () => opening, dispose: () => {} },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    await assert.rejects(
+      runtime.runTurn({ ...context(directory), limits: { maxToolCalls: 8, timeoutMs: 30 } }),
+      /time limit/,
+    );
+    assert.equal(runtime.status().activeThreads, 0);
+    finishOpening({
+      resumed: false,
+      prompt: async () => {
+        events.push('prompt');
+      },
+      abort: () => {
+        events.push('abort');
+      },
+      dispose: () => {
+        events.push('dispose');
+      },
+    });
+    await setTimeout(0);
+    assert.deepEqual(events, ['abort', 'dispose']);
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('completed and failed turns clear their deadline instead of aborting disposed sessions later', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-cleared-deadline-'));
+  const signals: AbortSignal[] = [];
+  let prompts = 0;
+  let aborts = 0;
+  const workspace = fakeWorkspace();
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async () => ({
+        resumed: false,
+        prompt: async () => {
+          if (++prompts === 2) throw new Error('Synthetic model failure');
+        },
+        abort: () => {
+          aborts++;
+        },
+        dispose: () => {},
+      }),
+      dispose: () => {},
+    },
+    computer: fakeComputer(),
+    workspace: {
+      ...workspace,
+      open: (input) => {
+        signals.push(input.signal);
+        return workspace.open(input);
+      },
+    },
+  });
+  try {
+    const input = { ...context(directory), limits: { maxToolCalls: 8, timeoutMs: 30 } };
+    await runtime.runTurn(input);
+    await assert.rejects(runtime.runTurn(input), /Synthetic model failure/);
+    await setTimeout(60);
+    assert.equal(aborts, 0);
+    assert.equal(signals.length, 2);
+    assert.equal(
+      signals.some((signal) => signal.aborted),
+      false,
+    );
+    assert.equal(runtime.status().activeThreads, 0);
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
   }
 });

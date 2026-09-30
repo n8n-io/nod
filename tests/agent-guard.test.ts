@@ -9,6 +9,7 @@ import type {
   AgentEvent,
   AgentSessionOptions,
   AgentTool,
+  ActivityCheckResult,
   RuntimeContext,
 } from '../src/ports/agent.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
@@ -472,6 +473,11 @@ test('activity checks scope reads to one account, deny other tools and record ex
         ...refused,
         ['send_message', { text: 'Unnecessary check update' }],
         ['web_search', { query: 'Synthetic query' }],
+        ['fetch_content', { urls: ['https://example.test/source'] }],
+        ['source_check', { source: 'synthetic' }],
+        ['get_search_content', { responseId: 'synthetic' }],
+        ['get_credential', { id: randomUUID(), origin: 'https://example.test' }],
+        ['browser', { action: 'open', url: 'https://example.test' }],
         ['read', { path: '/fixture/workspace/private.txt' }],
         ['read', { path: '.otto/skills/connected-apps/../../private.txt' }],
         ['read', { path: '.otto/skills/unknown/SKILL.md' }],
@@ -524,6 +530,7 @@ test('activity checks scope reads to one account, deny other tools and record ex
           summary: 'One new request',
           finding: {
             id: 'item-1',
+            version: 'revision-1',
             url: 'https://example.test/item-1',
             summary: 'A reply is needed',
           },
@@ -650,4 +657,56 @@ test('an activity check can report unavailable without a read but cannot silentl
     /did not record a result/,
   );
   assert.equal(records, 1);
+});
+
+test('activity check deadlines reach verified and unavailable record callbacks before late writes', async () => {
+  for (const result of [
+    { status: 'verified', value: 'item-1', summary: 'A request was read' },
+    { status: 'unavailable', summary: 'No supported read is available' },
+  ] satisfies ActivityCheckResult[]) {
+    const connectionId = randomUUID();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let finished!: () => void;
+    const callbackFinished = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    let recordSignal: AbortSignal | undefined;
+    let writes = 0;
+    await assert.rejects(
+      fixture(
+        async (tools) => {
+          if (result.status === 'verified')
+            await call(tools, 'apps', { action: 'FIXTURE_READ', args: { connectionId } });
+          await call(tools, 'record_activity_check', result);
+        },
+        {
+          readOnly: true,
+          background: true,
+          limits: { maxToolCalls: 8, timeoutMs: 30 },
+          integration: async () => ({ items: [] }),
+          activityCheck: {
+            connectionId,
+            record: async (_result, signal) => {
+              recordSignal = signal;
+              try {
+                await blocked;
+                signal?.throwIfAborted();
+                writes++;
+              } finally {
+                finished();
+              }
+            },
+          },
+        },
+      ),
+      /time limit/,
+    );
+    assert.equal(recordSignal?.aborted, true);
+    release();
+    await callbackFinished;
+    assert.equal(writes, 0);
+  }
 });

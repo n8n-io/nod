@@ -28,7 +28,7 @@ import { createDirectProvider } from '../src/providers/direct/integrations.ts';
 import { createDirectOAuth } from '../src/providers/direct/oauth.ts';
 import { withDirectMcp } from '../src/providers/direct/mcp.ts';
 import { createDiscoveredOAuth } from '../src/providers/discovered/oauth.ts';
-import { safeRemoteFetch } from '../src/providers/discovered/remote.ts';
+import { createDiscoveredTransport, safeRemoteFetch } from '../src/providers/discovered/remote.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
@@ -262,8 +262,8 @@ test(
         search,
       );
       assert.deepEqual(
-        searches.mock.calls.map((call) => call.arguments),
-        [['Send an email']],
+        searches.mock.calls.map((call) => call.arguments[0]),
+        ['Send an email'],
       );
       for (const args of [
         {},
@@ -714,7 +714,7 @@ async function appsFixture(
   poolOptions: { max?: number; connectionTimeoutMillis?: number } = {},
   listing: Pick<
     Parameters<typeof createIntegrations>[1],
-    'browserConnections' | 'browserAccounts'
+    'browserConnections' | 'browserAccounts' | 'validateActivityCheck'
   > = {},
 ) {
   const schema = `test_apps_${randomUUID().replaceAll('-', '')}`;
@@ -928,6 +928,103 @@ test(
     assert.equal(inspected, 0);
     await f.service.list();
     assert.ok(inspected > 0);
+  },
+);
+
+test(
+  'scoped activity discovery rechecks the account and receipt after temporary session creation',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const turn = { threadId: randomUUID(), turnId: randomUUID() };
+    let valid = true;
+    const f = await appsFixture(
+      t,
+      {},
+      {
+        validateActivityCheck: async (received) => {
+          assert.deepEqual(received, turn);
+          if (!valid) throw new Error('The activity receipt was invalidated.');
+        },
+      },
+    );
+    const selected = await f.connect('gmail');
+    await f.connect('gmail');
+    let entered = false,
+      searches = 0;
+    let release = () => {};
+    let pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    t.mock.method(
+      f.provider,
+      'createSession',
+      async (_owner: string, accounts: Parameters<IntegrationProvider['createSession']>[1]) => {
+        assert.deepEqual(accounts, { gmail: [selected.accountId] });
+        entered = true;
+        await pending;
+        return f.session;
+      },
+    );
+    t.mock.method(f.session, 'search', async () => {
+      searches++;
+      return { tools: { GMAIL_GET_PROFILE: {}, SLACK_SEARCH: {} }, suggestions: [] };
+    });
+    const search = () =>
+      f.service.execute(
+        'local-development',
+        'SEARCH_TOOLS',
+        { query: 'recent activity' },
+        turn,
+        undefined,
+        selected.connectionId,
+      );
+    const waitForSession = async () => {
+      for (let attempt = 0; attempt < 100 && !entered; attempt++) await delay(5);
+      assert.equal(entered, true);
+    };
+    const revoked = search();
+    await waitForSession();
+    await f.pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    release();
+    await assert.rejects(revoked);
+    assert.equal(searches, 0);
+    await f.pool.query('UPDATE app_connections SET revoked=false WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    entered = false;
+    pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const replaced = search();
+    await waitForSession();
+    valid = false;
+    release();
+    await assert.rejects(replaced);
+    assert.equal(searches, 0);
+    valid = true;
+    const result = (await search()) as {
+      tools: Record<string, unknown>;
+      accounts: Array<{ connectionId: string }>;
+    };
+    assert.equal(searches, 1);
+    assert.deepEqual(Object.keys(result.tools), ['GMAIL_GET_PROFILE']);
+    assert.deepEqual(
+      result.accounts.map((account) => account.connectionId),
+      [selected.connectionId],
+    );
+    await assert.rejects(
+      f.service.execute(
+        'local-development',
+        'GMAIL_GET_PROFILE',
+        { connectionId: randomUUID() },
+        turn,
+        undefined,
+        selected.connectionId,
+      ),
+    );
+    assert.equal(f.executed.length, 0);
   },
 );
 
@@ -2077,38 +2174,21 @@ async function searchFixture(
 }
 
 test(
-  'a foreign account hint cannot select another owner or narrow discovery',
+  'a foreign account hint rejects discovery before any provider call',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
-    const f = await searchFixture(t, async (execute, connectionId) => {
-      const result = await execute('search', 'SEARCH_TOOLS', {
+    const f = await searchFixture(t, async (execute) => {
+      await execute('search', 'SEARCH_TOOLS', {
         query,
         connectionId: f.foreignId,
       });
-      assert.deepEqual(
-        (result as { accounts: Array<{ connectionId: string }> }).accounts
-          .map((item) => item.connectionId)
-          .sort(),
-        [f.connectionId, f.calendarId].sort(),
-      );
-      assert.doesNotMatch(JSON.stringify(result), /fixture-foreign/);
-      await execute('labels', 'GMAIL_LIST_LABELS', { connectionId, user_id: 'me' });
+      assert.fail('A foreign connection cannot start provider discovery.');
     });
-    assert.deepEqual(await f.run(), { status: 'succeeded' });
-    assert.deepEqual(f.searches, [query]);
-    assert.deepEqual(f.sessions, [
-      {
-        owner: f.owner,
-        accounts: { gmail: ['fixture-gmail'], googlecalendar: ['fixture-calendar'] },
-      },
-    ]);
-    assert.deepEqual(f.calls, [
-      {
-        action: 'GMAIL_LIST_LABELS',
-        args: { user_id: 'me' },
-        accountId: 'fixture-gmail',
-      },
-    ]);
+    await assert.rejects(f.run(), /The action failed/);
+    assert.deepEqual(f.searches, []);
+    assert.deepEqual(f.sessions, []);
+    assert.deepEqual(f.calls, []);
+    assert.doesNotMatch(JSON.stringify(f.observations), /fixture-foreign/);
   },
 );
 
@@ -2897,7 +2977,7 @@ test('a discovered MCP server can register, sign in and refresh without service 
 });
 
 test(
-  'a discovered setup link identifies the saved access path',
+  'discovered setup preserves owned paths, scoped checks, and atomic replacement invalidation',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `test_discovery_${randomUUID().replaceAll('-', '')}`;
@@ -2907,18 +2987,56 @@ test(
       connectionString: process.env.TEST_DATABASE_URL,
       options: `-c search_path=${schema}`,
     });
+    const app = Fastify();
     try {
+      const owner = 'fixture-owner';
+      const key = randomBytes(32);
+      const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+      const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
+      const catalogs: string[] = [];
+      let cliCalls = 0;
+      let replacementCalls = 0;
+      let failReplacement = false;
+      await pool.query(
+        'CREATE TABLE fixture_checks(owner_id text,connection_id uuid,turn_id uuid)',
+      );
       const discovered = await createDiscoveredConnections(pool, {
-        ownerId: 'fixture-owner',
+        ownerId: owner,
         baseUrl: 'http://localhost:4310',
-        keyStore: {},
-        grantVault: {},
-        transport: {},
-        oauth: {},
+        keyStore,
+        grantVault,
+        transport: {
+          validateEndpoint: async (endpoint) => endpoint,
+          http: async (_endpoint, _headers, method) => {
+            assert.equal(method, 'GET');
+            return { status: 200, body: { items: [] } };
+          },
+          listTools: async (endpoint) => {
+            catalogs.push(endpoint);
+            return [
+              {
+                name: 'list_records',
+                inputSchema: { type: 'object' },
+                annotations: { readOnlyHint: true },
+              },
+            ];
+          },
+          callTool: async () => ({ content: [{ type: 'text', text: '[]' }] }),
+        },
+        oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
         runCli: async () => {
+          cliCalls++;
           throw new Error('The CLI must not run during setup.');
         },
-      } as unknown as Parameters<typeof createDiscoveredConnections>[1]);
+        accountReplaced: async (connectionId, client) => {
+          replacementCalls++;
+          await client.query('DELETE FROM fixture_checks WHERE owner_id=$1 AND connection_id=$2', [
+            owner,
+            connectionId,
+          ]);
+          if (failReplacement) throw new Error('Synthetic replacement failure.');
+        },
+      });
       const result = await discovered.propose({
         service: 'fixture-app',
         name: 'Fixture app',
@@ -2932,7 +3050,177 @@ test(
         [id],
       );
       assert.equal(saved.rows[0].paths[0].id, id);
+      const connectionId = randomUUID();
+      const otherId = randomUUID();
+      const foreignId = randomUUID();
+      const httpPath = randomUUID();
+      const mcpPath = randomUUID();
+      const cliPath = randomUUID();
+      const paths = [
+        {
+          id: httpPath,
+          kind: 'http',
+          endpoint: 'https://fixture.example/api',
+          auth: 'bearer',
+          testPath: 'records',
+        },
+        { id: mcpPath, kind: 'mcp', endpoint: 'https://fixture.example/mcp', auth: 'bearer' },
+        {
+          id: cliPath,
+          kind: 'cli',
+          command: 'fixturecli',
+          auth: 'env',
+          envName: 'FIXTURE_API_KEY',
+          testArgs: ['list'],
+        },
+      ];
+      for (const [accountId, accountOwner, accountPaths] of [
+        [connectionId, owner, paths],
+        [
+          otherId,
+          owner,
+          [{ ...paths[1], id: randomUUID(), endpoint: 'https://other.example/mcp' }],
+        ],
+        [
+          foreignId,
+          'other-owner',
+          [{ ...paths[1], id: randomUUID(), endpoint: 'https://foreign.example/mcp' }],
+        ],
+      ] as const) {
+        await pool.query(
+          'INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths) VALUES($1,$2,$3,$4,$5,$6)',
+          [
+            accountId,
+            accountOwner,
+            'fixture-app',
+            'Fixture app',
+            'Synthetic account',
+            JSON.stringify(accountPaths),
+          ],
+        );
+        if (accountOwner === owner) await grantVault.put(accountId, `synthetic-token-${accountId}`);
+      }
+      const ref = { threadId: randomUUID(), turnId: randomUUID() };
+      await pool.query('INSERT INTO fixture_checks VALUES($1,$2,$3)', [
+        owner,
+        connectionId,
+        ref.turnId,
+      ]);
+      const provider = fakeProvider({
+        id: 'unused',
+        authorize: async () => {
+          throw new Error('No provider account may be opened.');
+        },
+        search: async () => {
+          throw new Error('No native provider may be searched.');
+        },
+        execute: async () => {
+          throw new Error('No native provider may be read.');
+        },
+      });
+      provider.configured = false;
+      const integrations = await createIntegrations(pool, {
+        ownerId: owner,
+        provider,
+        discovered,
+        baseUrl: 'http://localhost:4310',
+        wake: async () => {},
+        validateActivityCheck: async (turn, selectedId) => {
+          const receipt = await pool.query(
+            'SELECT 1 FROM fixture_checks WHERE owner_id=$1 AND connection_id=$2 AND turn_id=$3',
+            [owner, selectedId, turn.turnId],
+          );
+          if (!receipt.rowCount) throw new Error('This activity check is unavailable.');
+        },
+      });
+      integrations.registerRoutes(app);
+      const inventory = await integrations.connectedApps();
+      assert.deepEqual(
+        new Set(inventory.map((item) => item.connectionId)),
+        new Set([connectionId, otherId]),
+      );
+      assert.deepEqual(inventory.find((item) => item.connectionId === connectionId)?.access, [
+        'http',
+        'mcp',
+        'cli',
+      ]);
+      assert.deepEqual(catalogs, []);
+      const search = (await integrations.execute(
+        owner,
+        'SEARCH_TOOLS',
+        { query: 'list_records' },
+        ref,
+        new AbortController().signal,
+        connectionId,
+      )) as { accounts: Array<{ connectionId: string }> };
+      assert.deepEqual(
+        search.accounts.map((item) => item.connectionId),
+        [connectionId],
+      );
+      assert.deepEqual(catalogs, ['https://fixture.example/mcp']);
+      await assert.rejects(
+        integrations.execute(
+          owner,
+          'CONNECTED_CLI',
+          { connectionId, pathId: cliPath, argv: ['list'], readOnly: true },
+          ref,
+          new AbortController().signal,
+          connectionId,
+        ),
+        /only read its selected account/,
+      );
+      assert.equal(cliCalls, 0);
+      await assert.rejects(
+        discovered.selected({ connectionId: foreignId, pathId: mcpPath }),
+        /unavailable/,
+      );
+      const replacement = await discovered.propose({
+        service: 'fixture-app',
+        name: 'Fixture app',
+        connectionId,
+        paths: [{ kind: 'http', endpoint: 'https://fixture.example/new-api', testPath: 'records' }],
+      });
+      const proposalId = new URL(replacement.url, 'http://localhost:4310').searchParams.get(
+        'connect',
+      );
+      const complete = () =>
+        app.inject({
+          method: 'POST',
+          url: `/api/apps/discovery/${proposalId}/complete`,
+          payload: { token: 'synthetic-new-token', accountName: 'Replacement account' },
+        });
+      failReplacement = true;
+      assert.equal((await complete()).statusCode, 502);
+      assert.equal((await pool.query('SELECT 1 FROM fixture_checks')).rowCount, 1);
+      assert.equal(
+        (
+          await pool.query('SELECT account_name FROM discovered_connections WHERE id=$1', [
+            connectionId,
+          ])
+        ).rows[0].account_name,
+        'Synthetic account',
+      );
+      assert.equal((await grantVault.read(connectionId)).value, `synthetic-token-${connectionId}`);
+      failReplacement = false;
+      assert.equal((await complete()).statusCode, 200);
+      assert.equal(replacementCalls, 2);
+      assert.equal((await pool.query('SELECT 1 FROM fixture_checks')).rowCount, 0);
+      assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');
+      const count = catalogs.length;
+      await assert.rejects(
+        integrations.execute(
+          owner,
+          'SEARCH_TOOLS',
+          { query: 'list_records' },
+          ref,
+          new AbortController().signal,
+          connectionId,
+        ),
+        /unavailable/,
+      );
+      assert.equal(catalogs.length, count);
     } finally {
+      await app.close();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
@@ -4196,3 +4484,141 @@ test(
     }
   },
 );
+
+test('discovered transports cancel HTTP, MCP discovery, and MCP reads in flight', async () => {
+  for (const blockedMethod of ['http', 'initialize', 'tools/list', 'tools/call']) {
+    const controller = new AbortController();
+    let started = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let pendingSignal: AbortSignal | null | undefined;
+    let requests = 0;
+    const transport = createDiscoveredTransport(async (_input, init) => {
+      requests++;
+      if (blockedMethod !== 'http' && init?.method === 'GET')
+        return new Response(null, { status: 405 });
+      const message =
+        blockedMethod === 'http' ? { method: 'http' } : JSON.parse(String(init?.body));
+      if (message.method === blockedMethod) {
+        pendingSignal = init?.signal;
+        assert.ok(pendingSignal);
+        return new Promise<Response>((_resolve, reject) => {
+          pendingSignal!.addEventListener('abort', () => reject(pendingSignal!.reason), {
+            once: true,
+          });
+          started();
+        });
+      }
+      if (message.id === undefined) return new Response(null, { status: 202 });
+      return Response.json({
+        jsonrpc: '2.0',
+        id: message.id,
+        result:
+          message.method === 'initialize'
+            ? {
+                protocolVersion: message.params.protocolVersion,
+                capabilities: { tools: {} },
+                serverInfo: { name: 'fixture', version: '1' },
+              }
+            : {
+                tools: [
+                  {
+                    name: 'list_records',
+                    inputSchema: { type: 'object' },
+                    annotations: { readOnlyHint: true },
+                  },
+                ],
+              },
+      });
+    });
+    const run = () =>
+      blockedMethod === 'http'
+        ? transport.http('https://fixture.example/api', {}, 'GET', undefined, controller.signal)
+        : blockedMethod === 'tools/call'
+          ? transport.callTool(
+              'https://fixture.example/mcp',
+              {},
+              'list_records',
+              {},
+              controller.signal,
+            )
+          : transport.listTools('https://fixture.example/mcp', {}, controller.signal);
+    const result = assert.rejects(run());
+    await waiting;
+    controller.abort();
+    await result;
+    assert.equal(pendingSignal?.aborted, true);
+    const count = requests;
+    if (blockedMethod !== 'http') {
+      await assert.rejects(run(), { name: 'AbortError' });
+      assert.equal(requests, count);
+    }
+  }
+});
+
+test('discovered OAuth cancellation stops discovery and token refresh without saving tokens', async () => {
+  for (const cached of [false, true]) {
+    const controller = new AbortController();
+    let started = () => {};
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let pendingSignal: AbortSignal | null | undefined;
+    let requests = 0;
+    const oauth = createDiscoveredOAuth(async (input, init) => {
+      requests++;
+      const value = new Request(input, init);
+      if (cached) assert.equal(value.url, 'https://fixture.example/token');
+      pendingSignal = value.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        pendingSignal!.addEventListener('abort', () => reject(pendingSignal!.reason), {
+          once: true,
+        });
+        started();
+      });
+    });
+    const saved: Parameters<typeof oauth.refresh>[1] = {
+      redirectUri: 'http://127.0.0.1:4310/api/apps/callback',
+      clientInformation: { client_id: 'fixture-client' },
+      tokens: {
+        access_token: 'synthetic-old-token',
+        refresh_token: 'synthetic-refresh',
+        token_type: 'Bearer',
+        expires_in: 0,
+      },
+      ...(cached
+        ? {
+            discovery: {
+              authorizationServerUrl: 'https://fixture.example',
+              resourceMetadata: {
+                resource: 'https://fixture.example/mcp',
+                authorization_servers: ['https://fixture.example'],
+              },
+              authorizationServerMetadata: {
+                issuer: 'https://fixture.example',
+                authorization_endpoint: 'https://fixture.example/authorize',
+                token_endpoint: 'https://fixture.example/token',
+                response_types_supported: ['code'],
+                grant_types_supported: ['authorization_code', 'refresh_token'],
+                token_endpoint_auth_methods_supported: ['none'],
+              },
+            },
+          }
+        : {}),
+    };
+    const result = assert.rejects(
+      oauth.refresh('https://fixture.example/mcp', saved, controller.signal),
+    );
+    await waiting;
+    controller.abort();
+    await result;
+    assert.equal(pendingSignal?.aborted, true);
+    assert.equal(requests, 1);
+    assert.equal(saved.tokens?.access_token, 'synthetic-old-token');
+    await assert.rejects(oauth.refresh('https://fixture.example/mcp', saved, controller.signal), {
+      name: 'AbortError',
+    });
+    assert.equal(requests, 1);
+  }
+});

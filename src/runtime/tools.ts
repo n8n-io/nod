@@ -77,6 +77,7 @@ const activityCheckTool = defineTool(
           Type.Object(
             {
               id: Type.String({ minLength: 1, maxLength: 300 }),
+              version: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
               url: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
               summary: Type.String({ minLength: 1, maxLength: 500 }),
             },
@@ -434,7 +435,7 @@ export function ottoTools(turn: Turn): OttoTool[] {
       ...tools.filter((tool) => tool.name === 'apps'),
       bind(activityCheckTool, async (result) => {
         signal.throwIfAborted();
-        await check.record(result);
+        await check.record(result, signal);
         return 'Activity check recorded.';
       }),
     ];

@@ -304,6 +304,11 @@ export function createAgentRuntime(dependencies: {
       streamBlocked = false;
     };
 
+    const assertActive = (recording = false) => {
+      signal.throwIfAborted();
+      if (stopped || status !== 'succeeded' || checkRecorded || (checkRecording && !recording))
+        throw new Error('This execution segment has stopped.');
+    };
     const guard = (
       name: string,
       params: unknown,
@@ -313,9 +318,7 @@ export function createAgentRuntime(dependencies: {
       const label = name.replaceAll('_', ' ');
       const pending = waitFor(
         (async () => {
-          signal.throwIfAborted();
-          if (stopped || status !== 'succeeded' || checkRecording || checkRecorded)
-            throw new Error('This execution segment has stopped.');
+          assertActive();
           if (limits && toolCalls >= limits.maxToolCalls) {
             lifecycle.abort(new Error('The turn tool-call limit was reached.'));
             signal.throwIfAborted();
@@ -353,9 +356,7 @@ export function createAgentRuntime(dependencies: {
           let result: AgentToolResult;
           let reservedRecord = false;
           try {
-            signal.throwIfAborted();
-            if (checkRecording || checkRecorded)
-              throw new Error('This execution segment has stopped.');
+            assertActive();
             if (context.activityCheck) {
               const args = params as {
                 action?: string;
@@ -388,20 +389,16 @@ export function createAgentRuntime(dependencies: {
             }
             if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
             await waitFor(pendingReplies);
-            signal.throwIfAborted();
-            if (
-              stopped ||
-              status !== 'succeeded' ||
-              checkRecorded ||
-              (checkRecording && !reservedRecord)
-            )
-              throw new Error('This execution segment has stopped.');
+            assertActive(reservedRecord);
             await waitFor(context.emit('tool_start', label));
-            signal.throwIfAborted();
+            const executeCurrent = () => {
+              assertActive(reservedRecord);
+              return execute();
+            };
             const output = await waitFor(
               dependencies.withTool
-                ? dependencies.withTool(context.turnId, id, name, execute)
-                : execute(),
+                ? dependencies.withTool(context.turnId, id, name, executeCurrent)
+                : executeCurrent(),
             );
             signal.throwIfAborted();
             if (
@@ -475,16 +472,12 @@ export function createAgentRuntime(dependencies: {
           description,
           parameters,
           parallel: parallelTools.has(name),
-          execute: async (params) => {
-            signal.throwIfAborted();
-            if (stopped || status !== 'succeeded')
-              throw new Error('This execution segment has stopped.');
-            return guard(name, params, async () => {
+          execute: (params) =>
+            guard(name, params, async () => {
               if (!Value.Check(parameters, params))
                 throw new Error('The tool arguments do not match its schema.');
               return execute(params);
-            });
-          },
+            }),
         }),
       );
       const system = systemPrompt(context, workspace);

@@ -153,7 +153,13 @@ test(
     });
     let quietBackgroundWork = false;
     let currentApps: ConnectedApp[] = [];
+    let inventoryGate: Promise<void> | undefined;
+    let inventoryWaiting = false;
     const readConnectedApps = async () => {
+      if (inventoryGate) {
+        inventoryWaiting = true;
+        await inventoryGate;
+      }
       return structuredClone(currentApps);
     };
     let activityLookup: ThreadDependencies['activityCheck'];
@@ -211,6 +217,26 @@ test(
       },
       runTurn: async (context) => {
         runs.push(context);
+        if (context.prompt === 'background-research-fixture') {
+          const file = await context.publishBrowserFile!({
+            bytes: Buffer.from('synthetic research'),
+            name: 'research.txt',
+            mimeType: 'text/plain',
+          });
+          await context.publishScreenshot!(Buffer.from('synthetic image'), 'research.png');
+          await context.downloadIntegrationFile!('GMAIL_GET_ATTACHMENT', {});
+          assert.equal(
+            (await db.pool.query('SELECT id FROM messages WHERE turn_id=$1', [context.turnId]))
+              .rowCount,
+            0,
+          );
+          assert.equal(
+            (await readFile(join(context.workspacePath, file.workspaceFile))).toString(),
+            'synthetic research',
+          );
+          await context.publish(file.workspaceFile, 'finished.txt');
+          return { status: 'succeeded' };
+        }
         if (context.activityCheck) {
           await activityRun?.(context);
           return { status: 'succeeded' };
@@ -1531,6 +1557,7 @@ test(
               )
             ).rows[0];
           const recordedContexts: RuntimeContext[] = [];
+          let findingVersion = 'version-1';
           try {
             activityLookup = triage.activityCheck;
             quietBackgroundWork = true;
@@ -1550,6 +1577,7 @@ test(
                 summary: 'One recent item reviewed.',
                 finding: {
                   id: 'stable-item-1',
+                  version: findingVersion,
                   url: 'https://example.test/items/1',
                   summary: 'A question needs a supported response.',
                 },
@@ -1621,6 +1649,20 @@ test(
                 .rowCount,
               1,
             );
+            findingVersion = 'version-2';
+            await db.pool.query(
+              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
+              [ownerId],
+            );
+            await triage.reviewHeartbeat(randomUUID());
+            await waitFor(settled((await receipt()).turn_id));
+            const versioned = (
+              await db.pool.query(
+                "SELECT turn_id FROM notifications WHERE event_id LIKE 'activity:%' ORDER BY created_at",
+              )
+            ).rows;
+            assert.equal(versioned.length, 2);
+            await waitFor(settled(versioned[1].turn_id));
             const previousCheck = (await receipt()).checked_at;
             await db.pool.query(
               "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
@@ -1636,6 +1678,42 @@ test(
             assert.deepEqual((await receipt()).checked_at, previousCheck);
             await triage.reviewHeartbeat(randomUUID());
             assert.equal((await receipt()).turn_id, failed.turn_id);
+            activityRun = async (context) => {
+              const controller = new AbortController();
+              let releaseInventory = () => {};
+              inventoryGate = new Promise<void>((resolve) => {
+                releaseInventory = resolve;
+              });
+              inventoryWaiting = false;
+              const recording = context.activityCheck!.record(
+                {
+                  status: 'verified',
+                  value: 'must-not-save',
+                  summary: 'Late observation.',
+                  finding: { id: 'must-not-notify', summary: 'Late finding.' },
+                },
+                controller.signal,
+              );
+              await waitFor(() => inventoryWaiting);
+              controller.abort(new Error('Synthetic deadline'));
+              inventoryGate = undefined;
+              releaseInventory();
+              await assert.rejects(recording, /Synthetic deadline/);
+            };
+            await db.pool.query(
+              "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
+              [ownerId],
+            );
+            await triage.reviewHeartbeat(randomUUID());
+            const aborted = await receipt();
+            await waitFor(settled(aborted.turn_id));
+            assert.equal((await receipt()).recorded_at, null);
+            assert.deepEqual((await receipt()).checked_at, previousCheck);
+            assert.equal(
+              (await db.pool.query("SELECT * FROM notifications WHERE event_id LIKE 'activity:%'"))
+                .rowCount,
+              2,
+            );
             assert.equal(
               (
                 await db.pool.query('SELECT * FROM messages WHERE turn_id=ANY($1::uuid[])', [
@@ -1650,7 +1728,33 @@ test(
               [ownerId],
             );
             await triage.reviewHeartbeat(randomUUID());
-            assert.equal((await receipt()).turn_id, failed.turn_id);
+            assert.equal((await receipt()).turn_id, aborted.turn_id);
+            for (const change of ['revoked', 'disabled', 'replaced']) {
+              currentApps = [app];
+              await preferences.update({ ...original, quietHoursEnabled: false });
+              await db.pool.query(
+                "UPDATE app_activity_checks SET attempted_at=now()-interval '31 minutes' WHERE owner_id=$1",
+                [ownerId],
+              );
+              const prompt = `Hold queued check ${change}`;
+              block(prompt);
+              const held = await thread.submitUserMessage(prompt);
+              await waitFor(() => Boolean(ran(held.turnId)));
+              await triage.reviewHeartbeat(randomUUID());
+              const queued = await receipt();
+              const reads = integrationReads.length;
+              if (change === 'revoked') currentApps = [];
+              if (change === 'disabled') await preferences.update({ notificationRule: '' });
+              if (change === 'replaced')
+                await db.transaction((client) =>
+                  triage.invalidateActivityCheck(connectionId, client),
+                );
+              release(prompt);
+              await waitFor(settled(queued.turn_id));
+              assert.equal(await turnStatus(queued.turn_id), 'failed');
+              assert.equal(ran(queued.turn_id), undefined);
+              assert.equal(integrationReads.length, reads);
+            }
             assert.equal((await personal.listSchedules()).length, scheduleCount);
           } finally {
             releaseCheck();
@@ -1658,7 +1762,54 @@ test(
             activityLookup = undefined;
             quietBackgroundWork = false;
             currentApps = [];
+            inventoryGate = undefined;
             await preferences.update(original);
+          }
+        },
+      );
+      await t.test(
+        'background research stages private artifacts and resumed preparation stays quiet',
+        async () => {
+          const previousRead = dependencies.readArtifact;
+          const previousDownload = dependencies.downloadIntegrationFile;
+          try {
+            dependencies.readArtifact = async (threadId, path) =>
+              readFile(join(root, 'workspaces', threadId, path));
+            dependencies.downloadIntegrationFile = async () => ({
+              name: 'source.txt',
+              mimeType: 'text/plain',
+              bytes: Buffer.from('synthetic source'),
+            });
+            const research = await thread.enqueueTurn('background-research-fixture', {
+              source: 'event',
+              background: true,
+            });
+            await waitFor(settled(research));
+            assert.equal(await turnStatus(research), 'succeeded');
+            const messages = (
+              await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [research])
+            ).rows;
+            assert.equal(messages.length, 1);
+            assert.equal(messages[0].attachments[0].name, 'finished.txt');
+            quietBackgroundWork = true;
+            await thread.resumeAfterCredentials(research);
+            const resumed = (
+              await db.pool.query('SELECT id,background FROM turns WHERE source_id=$1', [
+                `credentials:${research}`,
+              ])
+            ).rows[0];
+            assert.equal(resumed.background, true);
+            await waitFor(settled(resumed.id));
+            assert.equal(
+              (await db.pool.query('SELECT id FROM messages WHERE turn_id=$1', [resumed.id]))
+                .rowCount,
+              0,
+            );
+            assert.equal(deltas.filter((event) => event.turnId === resumed.id).length, 0);
+          } finally {
+            quietBackgroundWork = false;
+            dependencies.readArtifact = previousRead;
+            dependencies.downloadIntegrationFile = previousDownload;
           }
         },
       );

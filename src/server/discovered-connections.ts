@@ -1,7 +1,7 @@
 import { createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type {
@@ -193,6 +193,7 @@ export async function createDiscoveredConnections(
       signal?: AbortSignal,
     ) => Promise<{ exitCode: number; output: string }>;
     resumeConnection?: (turnId: string, service: string) => Promise<boolean>;
+    accountReplaced?: (connectionId: string, client: PoolClient) => Promise<void>;
     refresh?: () => void;
   },
 ) {
@@ -362,6 +363,7 @@ export async function createDiscoveredConnections(
         );
       }
       await options.grantVault.put(idToSave, secret, client);
+      if (pending.connection_id) await options.accountReplaced?.(idToSave, client);
       if (pending.oauth_state_hash) await options.grantVault.remove(pending.id, client);
       await client.query('COMMIT');
     } catch (cause) {
@@ -555,38 +557,79 @@ export async function createDiscoveredConnections(
       };
     }
   }
-  const refreshes = new Map<string, Promise<string>>();
-  async function tokenFor(row: AccountRow, path: AccessPath): Promise<string> {
+  const refreshes = new Map<
+    string,
+    {
+      promise: Promise<string>;
+      controller: AbortController;
+      waiters: number;
+      settled: boolean;
+    }
+  >();
+  async function tokenFor(
+    row: AccountRow,
+    path: AccessPath,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    signal?.throwIfAborted();
     const grant = await options.grantVault.read(row.id);
+    signal?.throwIfAborted();
     const secret = grant.value;
     if (path.auth !== 'oauth') return secret;
     const saved = JSON.parse(secret) as DiscoveredOAuthState;
     if (!saved.tokens?.access_token) throw error('Connect this account again.', 409);
     if (!saved.expiresAt || saved.expiresAt > Date.now() + 60_000) return saved.tokens.access_token;
-    const active = refreshes.get(row.id);
-    if (active) return active;
-    const pending = (async () => {
-      const next = await options.oauth.refresh(path.endpoint, saved);
-      if (!next.tokens?.access_token) throw new Error();
-      const changed = await options.grantVault.replace(row.id, grant.version, JSON.stringify(next));
-      if (!changed) {
-        const latest = JSON.parse(
-          (await options.grantVault.read(row.id)).value,
-        ) as DiscoveredOAuthState;
-        if (!latest.tokens?.access_token || (latest.expiresAt ?? 0) <= Date.now())
-          throw new Error();
-        return latest.tokens.access_token;
-      }
-      return next.tokens.access_token;
-    })();
-    refreshes.set(row.id, pending);
-    try {
-      return await pending;
-    } catch {
-      throw error('Connect this account again.', 409);
-    } finally {
-      refreshes.delete(row.id);
+    let current = refreshes.get(row.id);
+    if (!current || current.controller.signal.aborted) {
+      const controller = new AbortController();
+      const pending = (async () => {
+        const next = await options.oauth.refresh(path.endpoint, saved, controller.signal);
+        if (!next.tokens?.access_token) throw new Error();
+        const changed = await options.grantVault.replace(
+          row.id,
+          grant.version,
+          JSON.stringify(next),
+        );
+        if (!changed) {
+          const latest = JSON.parse(
+            (await options.grantVault.read(row.id)).value,
+          ) as DiscoveredOAuthState;
+          if (!latest.tokens?.access_token || (latest.expiresAt ?? 0) <= Date.now())
+            throw new Error();
+          return latest.tokens.access_token;
+        }
+        return next.tokens.access_token;
+      })();
+      const created = { promise: pending, controller, waiters: 0, settled: false };
+      refreshes.set(row.id, created);
+      void pending
+        .finally(() => {
+          created.settled = true;
+          if (refreshes.get(row.id) === created) refreshes.delete(row.id);
+        })
+        .catch(() => {});
+      current = created;
     }
+    const refresh = current;
+    refresh.waiters++;
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      const finish = (operation: () => void) => {
+        if (finished) return;
+        finished = true;
+        signal?.removeEventListener('abort', abort);
+        refresh.waiters--;
+        if (!refresh.waiters && !refresh.settled) refresh.controller.abort();
+        operation();
+      };
+      const abort = () => finish(() => reject(signal?.reason));
+      signal?.addEventListener('abort', abort, { once: true });
+      refresh.promise.then(
+        (value) => finish(() => resolve(value)),
+        () => finish(() => reject(error('Connect this account again.', 409))),
+      );
+      if (signal?.aborted) abort();
+    });
   }
   async function disconnect(connectionId: string, service: string) {
     const client = await pool.connect();
@@ -658,7 +701,7 @@ export async function createDiscoveredConnections(
                 ...(path.kind === 'cli' ? { testArgs: path.testArgs } : {}),
               };
             try {
-              const token = await tokenFor(row, path);
+              const token = await tokenFor(row, path, signal);
               const available = await options.transport.listTools(
                 path.endpoint,
                 headers(path, token),
@@ -731,7 +774,7 @@ export async function createDiscoveredConnections(
     if (action !== 'CONNECTED_MCP_CALL' || path.kind !== 'mcp')
       throw error('Choose an MCP access path.');
     const name = z.string().min(1).max(150).parse(args.tool);
-    const token = await tokenFor(row, path);
+    const token = await tokenFor(row, path, signal);
     let tools: DiscoveredTool[];
     try {
       tools = await options.transport.listTools(path.endpoint, headers(path, token), signal);
@@ -751,7 +794,7 @@ export async function createDiscoveredConnections(
   ) {
     const { row, path } = await selected(args);
     signal?.throwIfAborted();
-    const token = await tokenFor(row, path);
+    const token = await tokenFor(row, path, signal);
     const safeResult = (value: unknown) => integrationResultSnapshot(redact(value, token));
     if (action === 'CONNECTED_HTTP') {
       if (path.kind !== 'http') throw error('Choose an HTTP access path.');

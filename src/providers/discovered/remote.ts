@@ -92,13 +92,14 @@ export async function withRemoteMcp<T>(
   headers: Record<string, string>,
   operation: (client: Client) => Promise<T>,
   signal?: AbortSignal,
+  request: typeof safeRemoteFetch = safeRemoteFetch,
 ) {
   signal?.throwIfAborted();
   const client = new Client({ name: 'Otto', version: '0.1.0' });
   const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
     requestInit: { headers },
     fetch: (input, init) =>
-      safeRemoteFetch(input, {
+      request(input, {
         ...init,
         ...(signal
           ? { signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal }
@@ -120,7 +121,9 @@ export async function withRemoteMcp<T>(
   }
 }
 
-export function createDiscoveredTransport(): DiscoveredTransport {
+export function createDiscoveredTransport(
+  request: typeof safeRemoteFetch = safeRemoteFetch,
+): DiscoveredTransport {
   return {
     async validateEndpoint(endpoint) {
       const checked = await publicUrl(endpoint);
@@ -129,7 +132,7 @@ export function createDiscoveredTransport(): DiscoveredTransport {
       return checked.url.href;
     },
     async http(endpoint, headers, method, body, signal) {
-      const response = await safeRemoteFetch(endpoint, {
+      const response = await request(endpoint, {
         method,
         signal,
         headers: {
@@ -153,7 +156,13 @@ export function createDiscoveredTransport(): DiscoveredTransport {
       return { status: response.status, body: parsed };
     },
     listTools: (endpoint, headers, signal) =>
-      withRemoteMcp(endpoint, headers, async (client) => (await client.listTools()).tools, signal),
+      withRemoteMcp(
+        endpoint,
+        headers,
+        async (client) => (await client.listTools()).tools,
+        signal,
+        request,
+      ),
     callTool: (endpoint, headers, name, input, signal) =>
       withRemoteMcp(
         endpoint,
@@ -164,6 +173,7 @@ export function createDiscoveredTransport(): DiscoveredTransport {
           return result;
         },
         signal,
+        request,
       ),
   };
 }
