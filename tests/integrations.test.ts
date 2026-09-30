@@ -892,6 +892,57 @@ test(
 );
 
 test(
+  'Gmail reply proposals require a fresh observed thread in the exact owned account',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const selected = await f.connect('gmail');
+    const another = await f.connect('gmail');
+    const args = { connectionId: selected.connectionId, thread_id: 'thread-1' };
+    const describe = (input = args, owner = 'local-development') =>
+      f.service.describeTarget(owner, 'GMAIL_REPLY_TO_THREAD', input);
+    await assert.rejects(describe(), { statusCode: 409 });
+    f.session.execute = async () => ({
+      successful: true,
+      data: {
+        id: 'message-1',
+        threadId: 'thread-1',
+        payload: { headers: [{ name: 'Subject', value: 'Synthetic reply subject' }] },
+      },
+    });
+    await f.service.execute('local-development', 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID', {
+      connectionId: selected.connectionId,
+      message_id: 'message-1',
+    });
+    assert.equal(await describe(), 'Synthetic reply subject');
+    for (const changed of [
+      { ...args, connectionId: another.connectionId },
+      { ...args, thread_id: 'thread-2' },
+      { ...args, thread_id: 'message-1' },
+    ])
+      await assert.rejects(describe(changed), { statusCode: 409 });
+    await assert.rejects(describe(args, 'foreign-owner'), { statusCode: 403 });
+    const now = Date.now();
+    const clock = t.mock.method(Date, 'now', () => now + 10 * 60_000 + 1);
+    await assert.rejects(describe(), { statusCode: 409 });
+    f.session.execute = async () => ({
+      successful: true,
+      data: {
+        messages: [{ message_id: 'message-2', thread_id: 'thread-2', subject: 'Another subject' }],
+      },
+    });
+    await f.service.execute('local-development', 'GMAIL_FETCH_MESSAGE_BY_THREAD_ID', args);
+    await assert.rejects(describe(), { statusCode: 409 });
+    assert.equal(await describe({ ...args, thread_id: 'thread-2' }), 'Another subject');
+    clock.mock.restore();
+    await f.pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
+      selected.connectionId,
+    ]);
+    await assert.rejects(describe({ ...args, thread_id: 'thread-2' }));
+  },
+);
+
+test(
   'background app inventory stays local, owned and current without authenticating saved logins',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {

@@ -25,9 +25,29 @@ const labels: Record<string, string> = {
 };
 
 function plain(value: string) {
+  const escape = (text: string) => text.replace(/[\\`*_{}\[\]<>()#!|]/g, '\\$&');
   return value
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
-    .replace(/[\\`*_{}\[\]<>()#!|]/g, '\\$&');
+    .split(/(https?:\/\/[^\s<>"'\\`]+)/gi)
+    .map((part, index) => {
+      if (index % 2) {
+        let url = part.replace(/[.,;:!?]+$/, '');
+        for (const [open, close] of [
+          ['(', ')'],
+          ['[', ']'],
+          ['{', '}'],
+        ])
+          while (url.endsWith(close!) && url.split(close!).length > url.split(open!).length)
+            url = url.slice(0, -1);
+        try {
+          const parsed = new URL(url);
+          if (!parsed.username && !parsed.password)
+            return `<${url}>${escape(part.slice(url.length))}`;
+        } catch {}
+      }
+      return escape(part);
+    })
+    .join('');
 }
 
 function text(value: unknown) {
@@ -115,7 +135,7 @@ export function actionConfirmation(
     seen.add(label);
     details.push(`${label}: ${value}`);
   };
-  add('For', text(targetTitle));
+  add(action === 'GMAIL_REPLY_TO_THREAD' ? 'Subject' : 'For', text(targetTitle));
   if (action.startsWith('GOOGLECALENDAR_')) {
     for (const [key, value] of Object.entries(args)) {
       if (key === 'connectionId') continue;

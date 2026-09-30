@@ -934,7 +934,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         (slug === 'slack' && typeof row.ts === 'string'
           ? `${String(row.channel ?? args.channel ?? '')}:${row.ts}`
           : undefined);
-      if (typeof id === 'string' && id.length < 500 && typeof label === 'string' && label.trim()) {
+      const ids = [id];
+      if (slug === 'gmail')
+        for (const threadId of [row.threadId, row.thread_id])
+          if (typeof threadId === 'string') ids.push(`thread:${threadId}`);
+      for (const id of ids) {
+        if (
+          typeof id !== 'string' ||
+          id.length >= 500 ||
+          typeof label !== 'string' ||
+          !label.trim()
+        )
+          continue;
         const key = targetKey(accountId, slug, id);
         targets.delete(key);
         targets.set(key, {
@@ -959,21 +970,23 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const calendarEvent =
       action.startsWith('GOOGLECALENDAR_') &&
       (typeof args.event_id === 'string' || typeof args.eventId === 'string');
-    if (!deletion && !calendarEvent) return undefined;
+    const gmailReply = action === 'GMAIL_REPLY_TO_THREAD';
+    if (!deletion && !calendarEvent && !gmailReply) return undefined;
     const row = await approvedConnection(ownerId, action, args);
-    const id =
-      args.message_id ??
-      args.messageId ??
-      args.file_id ??
-      args.fileId ??
-      args.event_id ??
-      args.eventId ??
-      args.block_id ??
-      args.page_id ??
-      args.id ??
-      (row.slug === 'slack' && typeof args.ts === 'string'
-        ? `${String(args.channel ?? '')}:${args.ts}`
-        : undefined);
+    const id = gmailReply
+      ? `thread:${args.thread_id ?? args.threadId}`
+      : (args.message_id ??
+        args.messageId ??
+        args.file_id ??
+        args.fileId ??
+        args.event_id ??
+        args.eventId ??
+        args.block_id ??
+        args.page_id ??
+        args.id ??
+        (row.slug === 'slack' && typeof args.ts === 'string'
+          ? `${String(args.channel ?? '')}:${args.ts}`
+          : undefined));
     const target =
       typeof id === 'string' ? targets.get(targetKey(row.account_id!, row.slug, id)) : undefined;
     if (!target || target.expires <= Date.now())
