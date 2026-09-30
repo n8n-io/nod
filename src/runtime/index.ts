@@ -63,43 +63,52 @@ function matchingConnection(value: unknown, connectionId: string): boolean {
 }
 
 function inspectedAppResult(value: unknown): boolean {
-  if (typeof value === 'string') {
-    if (!value.trim() || /^\s*(error|failed|unavailable)\b/i.test(value)) return false;
-    try {
-      return inspectedAppResult(JSON.parse(value));
-    } catch {
-      return true;
+  const envelopes: unknown[] = [value];
+  let inspected = false;
+  while (envelopes.length) {
+    let envelope = envelopes.pop();
+    if (typeof envelope === 'string') {
+      const text = envelope;
+      try {
+        envelope = JSON.parse(text);
+      } catch {
+        inspected ||= Boolean(text.trim());
+        continue;
+      }
     }
-  }
-  if (!value || typeof value !== 'object') return false;
-  if (Array.isArray(value)) return value.every(inspectedAppResult);
-  const result = value as Record<string, unknown>;
-  if (
-    result.successful === false ||
-    result.success === false ||
-    result.isError === true ||
-    result.resultOmitted === true ||
-    Boolean(result.error) ||
-    Boolean(result.requiresConfirmation) ||
-    Boolean(result.requiresApproval) ||
-    'workspaceFile' in result ||
-    ['rejected', 'failed', 'error', 'unavailable', 'pending', 'waiting_approval'].includes(
-      String(result.status),
+    if (Array.isArray(envelope)) {
+      inspected = true;
+      continue;
+    }
+    if (!envelope || typeof envelope !== 'object') continue;
+    const result = envelope as Record<string, unknown>;
+    if (
+      result.successful === false ||
+      result.success === false ||
+      result.isError === true ||
+      result.resultOmitted === true ||
+      result.downloadRequired === true ||
+      Boolean(result.error) ||
+      Boolean(result.requiresConfirmation) ||
+      Boolean(result.requiresApproval) ||
+      'workspaceFile' in result ||
+      ['rejected', 'failed', 'error', 'unavailable', 'pending', 'waiting_approval'].includes(
+        String(result.status),
+      ) ||
+      (result.truncated === true &&
+        !['data', 'content', 'items', 'results', 'messages'].some((key) => key in result))
     )
-  )
-    return false;
-  if ('data' in result) return inspectedAppResult(result.data);
-  if ('content' in result) return inspectedAppResult(result.content);
-  if (result.type === 'text') return inspectedAppResult(result.text);
-  if (result.truncated === true && !['items', 'results', 'messages'].some((key) => key in result))
-    return false;
-  const entries = Object.entries(result).filter(
-    ([key]) => !['successful', 'success', 'status', 'truncated', 'isError'].includes(key),
-  );
-  if (!entries.length) return false;
-  return entries.every(([, item]) =>
-    item && typeof item === 'object' ? inspectedAppResult(item) : true,
-  );
+      return false;
+    if ('data' in result) envelopes.push(result.data);
+    if ('content' in result)
+      envelopes.push(...(Array.isArray(result.content) ? result.content : [result.content]));
+    if (result.type === 'text') envelopes.push(result.text);
+    if (!('data' in result) && !('content' in result) && result.type !== 'text')
+      inspected ||= Object.keys(result).some(
+        (key) => !['successful', 'success', 'status', 'isError', 'truncated'].includes(key),
+      );
+  }
+  return inspected;
 }
 
 function allowedReadOnly(name: string, params: unknown) {

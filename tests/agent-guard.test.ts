@@ -584,12 +584,24 @@ test('failed, approval and omitted app results cannot verify an activity check',
     { isError: true, content: [{ type: 'text', text: 'Unavailable' }] },
     { error: 'Unavailable' },
     { data: { status: 'rejected' } },
+    { successful: true, data: { data: { successful: false } } },
+    { content: [{ type: 'text', text: JSON.stringify({ data: { isError: true } }) }] },
     { requiresConfirmation: true, question: 'Allow a write?' },
     { requiresApproval: true },
     { truncated: true, resultOmitted: true, message: 'Response omitted' },
     { truncated: true, message: 'Response omitted' },
     { workspaceFile: 'download.txt', id: 'artifact' },
+    { downloadRequired: true, action: 'FIXTURE_DOWNLOAD' },
+    { data: { resultOmitted: true, message: 'Response omitted' } },
+    { data: null },
+    { data: {} },
+    { successful: true },
+    { successful: true, data: null },
+    { content: [{ type: 'text', text: '' }] },
+    { content: [{ type: 'text', text: 'null' }] },
     {},
+    '{}',
+    'null',
   ]) {
     const connectionId = randomUUID();
     const records: unknown[] = [];
@@ -623,6 +635,73 @@ test('failed, approval and omitted app results cannot verify an activity check',
     );
     assert.deepEqual(records, [{ status: 'unavailable', summary: 'Could not inspect the source' }]);
     assert.equal(result.aborted, false);
+    assert.deepEqual(result.replies, []);
+  }
+});
+
+test('successful app reads accept empty optional content without treating source words as failures', async () => {
+  const payload = {
+    messages: {
+      items: [
+        {
+          id: 'item-1',
+          metadata: {},
+          text: 'Failed build needs a review',
+          blocks: [{ type: 'section', elements: [{ type: 'text', text: '' }] }],
+        },
+      ],
+    },
+  };
+  for (const response of [
+    { successful: true, data: payload },
+    {
+      content: [
+        { type: 'text', text: '' },
+        { type: 'text', text: JSON.stringify(payload) },
+      ],
+    },
+    { successful: true, data: { items: [], metadata: {} } },
+    { successful: true, data: [] },
+    { data: { items: [{ id: 'item-2', status: 'failed', error: 'Synthetic source content' }] } },
+  ]) {
+    const connectionId = randomUUID();
+    const records: ActivityCheckResult[] = [];
+    let reads = 0;
+    const result = await fixture(
+      async (tools) => {
+        await assert.rejects(
+          call(tools, 'record_activity_check', {
+            status: 'verified',
+            value: 'before-read',
+            summary: 'No read yet',
+          }),
+          /successful app read/,
+        );
+        await call(tools, 'apps', { action: 'FIXTURE_READ', args: { connectionId } });
+        await call(tools, 'record_activity_check', {
+          status: 'verified',
+          value: 'revision-1',
+          summary: 'A bounded read completed',
+        });
+      },
+      {
+        readOnly: true,
+        background: true,
+        integration: async () => {
+          reads++;
+          return response;
+        },
+        activityCheck: {
+          connectionId,
+          record: async (record) => {
+            records.push(record);
+          },
+        },
+      },
+    );
+    assert.equal(reads, 1);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].status, 'verified');
     assert.deepEqual(result.replies, []);
   }
 });
