@@ -125,7 +125,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (text, controls, scrollable areas; selector/offset/controlOffset page through more); click {selector}; fill {selector, text} (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector, targetSelector}; upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}; scroll {direction, selector?}; screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (send a file to the user and copy it into the workspace; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (text, controls, scrollable areas; selector/offset/controlOffset page through more); click {selector}; fill {selector, text} (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector, targetSelector}; upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}; scroll {direction, selector?}; screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
     Type.Object({
       action: literals([
         'open',
@@ -213,7 +213,7 @@ export const toolDefinitions = {
   ),
   apps: defineTool(
     'apps',
-    "Use the user's connected accounts. SEARCH_TOOLS {query} returns exact actions, schemas, account and path IDs. Other actions run with args; download actions send the file to the user and copy it into the workspace. Writes may pause for confirmation.",
+    "Use the user's connected accounts. SEARCH_TOOLS {query} returns exact actions, schemas, account and path IDs. Other actions run with args; download actions copy files into the workspace. Foreground downloads also deliver them; background downloads stay private until share_file. Writes may pause for confirmation.",
     Type.Object({
       action: Type.String({ maxLength: 150 }),
       args: Type.Record(Type.String(), Type.Unknown()),

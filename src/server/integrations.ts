@@ -74,7 +74,12 @@ type ConnectionRow = {
 type IntegrationOptions = {
   admission?: WorkAdmission;
   ownerId: string;
-  wake(prompt: string, eventId: string, intent?: TriageIntent): Promise<void>;
+  wake(
+    prompt: string,
+    eventId: string,
+    intent?: TriageIntent,
+    current?: (client: PoolClient) => Promise<boolean>,
+  ): Promise<void>;
   provider: IntegrationProvider;
   additionalProviders?: IntegrationProvider[];
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
@@ -1124,7 +1129,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             withAccountSession(
               ownerId,
               item,
-              checkConnectionId ? rows.find((row) => row.provider_id === item.id) : undefined,
+              connectionId ? rows.find((row) => row.provider_id === item.id) : undefined,
               signal,
               async (session) => {
                 if (checkConnectionId)
@@ -1495,10 +1500,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   async function drain() {
     if (draining) return;
     draining = true;
-    const currentConnection = `SELECT 1 FROM app_connections c WHERE c.owner_id=e.owner_id AND c.slug=e.slug
+    const matchingConnection = `c.owner_id=e.owner_id AND c.slug=e.slug
       AND c.account_id=e.account_id AND c.provider_id=e.provider_id AND NOT c.revoked AND (
         (e.poll_connection_id IS NULL AND c.trigger_id=e.trigger_id AND c.triggers_enabled) OR
         (e.poll_connection_id=c.id AND c.watch_requested AND c.account_active))`;
+    const currentConnection = `SELECT 1 FROM app_connections c WHERE ${matchingConnection}`;
     try {
       await pool.query(
         `UPDATE integration_events e SET state = 'discarded' WHERE provider_id=$1 AND e.owner_id=$2
@@ -1506,24 +1512,45 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         [providerId, configuredOwner],
       );
       for (let count = 0; count < 20; count++) {
-        const { rows } = await pool.query<{ id: string; summary: string; intent: TriageIntent }>(
+        const { rows } = await pool.query<{
+          id: string;
+          summary: string;
+          intent: TriageIntent;
+          claim: string;
+        }>(
           `WITH next AS (SELECT e.id FROM integration_events e WHERE e.provider_id=$1 AND e.owner_id=$2 AND (e.state = 'queued' OR
            (e.state = 'processing' AND e.claimed_at < now() - interval '5 minutes')) AND EXISTS (${currentConnection})
            ORDER BY e.created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-           UPDATE integration_events e SET state = 'processing', claimed_at = now() FROM next WHERE e.id = next.id RETURNING e.id,e.summary,e.intent`,
+           UPDATE integration_events e SET state = 'processing', claimed_at = now() FROM next WHERE e.id = next.id
+           RETURNING e.id,e.summary,e.intent,e.claimed_at::text AS claim`,
           [providerId, configuredOwner],
         );
-        if (!rows[0]) break;
+        const event = rows[0];
+        if (!event) break;
+        const current = async (client?: PoolClient) =>
+          Boolean(
+            (
+              await (client ?? pool).query(
+                `SELECT e.id FROM integration_events e JOIN app_connections c ON ${matchingConnection}
+                 WHERE e.id=$1 AND e.owner_id=$2 AND e.state='processing' AND e.claimed_at=$3::timestamptz
+                 ${client ? 'FOR SHARE OF c,e' : ''}`,
+                [event.id, configuredOwner, event.claim],
+              )
+            ).rowCount,
+          );
         try {
-          await options.wake(rows[0].summary, rows[0].id, rows[0].intent);
+          if (!(await current())) continue;
+          await options.wake(event.summary, event.id, event.intent, current);
           await pool.query(
-            "UPDATE integration_events SET state = 'delivered' WHERE id = $1 AND owner_id=$2",
-            [rows[0].id, configuredOwner],
+            `UPDATE integration_events e SET state='delivered' WHERE e.id=$1 AND e.owner_id=$2
+             AND e.state='processing' AND e.claimed_at=$3::timestamptz AND EXISTS (${currentConnection})`,
+            [event.id, configuredOwner, event.claim],
           );
         } catch {
           await pool.query(
-            "UPDATE integration_events SET state = 'queued' WHERE id = $1 AND owner_id=$2",
-            [rows[0].id, configuredOwner],
+            `UPDATE integration_events e SET state='queued' WHERE e.id=$1 AND e.owner_id=$2
+             AND e.state='processing' AND e.claimed_at=$3::timestamptz AND EXISTS (${currentConnection})`,
+            [event.id, configuredOwner, event.claim],
           );
           break;
         }

@@ -1383,6 +1383,47 @@ test(
             await triage.triageEvent('A synthetic calendar update', ordinaryId);
             assert.equal(classified, 1);
             assert.deepEqual(classifiedApps.at(-1), currentApps);
+            let currentSource = true;
+            let enterSourceCheck = () => {};
+            let releaseSourceCheck = () => {};
+            const sourceCheckEntered = new Promise<void>((resolve) => {
+              enterSourceCheck = resolve;
+            });
+            const sourceCheckReleased = new Promise<void>((resolve) => {
+              releaseSourceCheck = resolve;
+            });
+            const guardedTriage = createTriage({
+              classifier: { id: 'fixture', configured: true, classify: async () => 'wake' },
+              getProfile: async () => {
+                enterSourceCheck();
+                await sourceCheckReleased;
+                return { location: '', preferences: '' };
+              },
+              listGoals: async () => [],
+              connectedApps: readConnectedApps,
+            });
+            const revokedEvent = randomUUID();
+            const revokedTriage = guardedTriage.triageEvent(
+              'Synthetic event disconnected during triage',
+              revokedEvent,
+              'inspect_message',
+              async () => currentSource,
+            );
+            try {
+              await sourceCheckEntered;
+              currentSource = false;
+            } finally {
+              releaseSourceCheck();
+            }
+            await revokedTriage;
+            assert.equal(
+              (
+                await db.pool.query('SELECT id FROM notifications WHERE event_id=$1', [
+                  revokedEvent,
+                ])
+              ).rowCount,
+              0,
+            );
             block('Hold for app inventory change');
             const held = await thread.submitUserMessage('Hold for app inventory change');
             await waitFor(() => Boolean(ran(held.turnId)));

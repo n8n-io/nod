@@ -1726,49 +1726,58 @@ test('a session that opens after its deadline is aborted and disposed without re
   }
 });
 
-test('completed and failed turns clear their deadline instead of aborting disposed sessions later', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-cleared-deadline-'));
-  const signals: AbortSignal[] = [];
-  let prompts = 0;
-  let aborts = 0;
-  const workspace = fakeWorkspace();
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async () => ({
-        resumed: false,
-        prompt: async () => {
-          if (++prompts === 2) throw new Error('Synthetic model failure');
-        },
-        abort: () => {
-          aborts++;
-        },
+test(
+  'completed and failed turns clear their deadline instead of aborting disposed sessions later',
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const directory = await mkdtemp(join(tmpdir(), 'otto-cleared-deadline-'));
+    const signals: AbortSignal[] = [];
+    let prompts = 0;
+    let aborts = 0;
+    const workspace = fakeWorkspace();
+    const runtime = createAgentRuntime({
+      agent: {
+        open: async () => ({
+          resumed: false,
+          prompt: async () => {
+            if (++prompts === 2) throw new Error('Synthetic model failure');
+          },
+          abort: () => {
+            aborts++;
+          },
+          dispose: () => {},
+        }),
         dispose: () => {},
-      }),
-      dispose: () => {},
-    },
-    computer: fakeComputer(),
-    workspace: {
-      ...workspace,
-      open: (input) => {
-        signals.push(input.signal);
-        return workspace.open(input);
       },
-    },
-  });
-  try {
-    const input = { ...context(directory), limits: { maxToolCalls: 8, timeoutMs: 30 } };
-    await runtime.runTurn(input);
-    await assert.rejects(runtime.runTurn(input), /Synthetic model failure/);
-    await setTimeout(60);
-    assert.equal(aborts, 0);
-    assert.equal(signals.length, 2);
-    assert.equal(
-      signals.some((signal) => signal.aborted),
-      false,
-    );
-    assert.equal(runtime.status().activeThreads, 0);
-  } finally {
-    await runtime.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+      computer: fakeComputer(),
+      workspace: {
+        ...workspace,
+        open: (input) => {
+          signals.push(input.signal);
+          return workspace.open(input);
+        },
+      },
+    });
+    try {
+      const input = {
+        ...context(directory),
+        signal: t.signal,
+        limits: { maxToolCalls: 8, timeoutMs: 30 },
+      };
+      await runtime.runTurn(input);
+      await assert.rejects(runtime.runTurn(input), /Synthetic model failure/);
+      t.mock.timers.tick(60);
+      assert.equal(aborts, 0);
+      assert.equal(signals.length, 2);
+      assert.equal(
+        signals.some((signal) => signal.aborted),
+        false,
+      );
+      assert.equal(runtime.status().activeThreads, 0);
+    } finally {
+      await runtime.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

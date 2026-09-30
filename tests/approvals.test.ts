@@ -443,6 +443,8 @@ test(
             throw Object.assign(new Error('Fixture account disconnected.'), { statusCode: 409 });
         },
         async () => ({ name: 'Fixture app', accountEmail: 'fixture@example.com' }),
+        async (action) =>
+          action === 'GMAIL_REPLY_TO_THREAD' ? 'Original thread subject' : undefined,
       );
       messages = thread.createUserMessageService({ confirmAction: approvals.acceptChat });
       personal.registerRoutes(app);
@@ -858,16 +860,18 @@ test(
           const args = {
             connectionId: 'owned-gmail',
             recipient_email: 'alex@example.test',
+            thread_id: 'synthetic-subject-thread',
+            subject: 'Updated review subject',
             message_body: 'An exact reply body.',
           };
           const id = await propose(origin, 'GMAIL_REPLY_TO_THREAD', args);
-          assert.ok(
-            (
-              await db.pool.query('SELECT text FROM messages WHERE id=$1', [
-                (await stored(id)).confirmation_message_id,
-              ])
-            ).rows[0].text.includes(args.message_body),
-          );
+          const visible = (
+            await db.pool.query('SELECT text FROM messages WHERE id=$1', [
+              (await stored(id)).confirmation_message_id,
+            ])
+          ).rows[0].text;
+          for (const value of ['Original thread subject', args.subject, args.message_body])
+            assert.ok(visible.includes(value), value);
           await confirm(id, true);
           failExecution = true;
           try {
@@ -881,6 +885,7 @@ test(
             statusCode: 409,
           });
           assert.equal(calls.length, before + 1);
+          assert.deepEqual(calls.at(-1)?.args, args);
           await finish(continuation.turnId, 'failed');
         },
       );

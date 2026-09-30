@@ -136,7 +136,7 @@ export function actionConfirmation(
     seen.add(label);
     details.push(`${label}: ${value}`);
   };
-  add(action === 'GMAIL_REPLY_TO_THREAD' ? 'Subject' : 'For', text(targetTitle));
+  add(action === 'GMAIL_REPLY_TO_THREAD' ? 'Thread subject' : 'For', text(targetTitle));
   if (action.startsWith('GOOGLECALENDAR_')) {
     for (const [key, value] of Object.entries(args)) {
       if (key === 'connectionId') continue;

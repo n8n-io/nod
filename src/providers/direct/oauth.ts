@@ -9,6 +9,7 @@ export type Service = 'notion' | 'linear';
 type Secrets = {
   accessToken?: string;
   refreshToken?: string;
+  refreshUncertain?: boolean;
   expiresAt?: number;
   clientId: string;
   verifier?: string;
@@ -87,9 +88,10 @@ export function createDirectOAuth(options: {
     signal?.throwIfAborted();
     const secrets = JSON.parse(grant.value) as Secrets;
     if (!secrets.accessToken) throw new Error('The connected account has no access token.');
+    if (secrets.refreshUncertain) throw new Error('Connect this account again.');
     if (!secrets.expiresAt || secrets.expiresAt > Date.now() + 60_000) return secrets;
     let current = refreshes.get(account.id);
-    if (!current || current.controller.signal.aborted) {
+    if (!current) {
       const controller = new AbortController();
       const pending = (async () => {
         if (!secrets.refreshToken || !secrets.tokenEndpoint)
@@ -100,15 +102,26 @@ export function createDirectOAuth(options: {
           client_id: secrets.clientId,
         });
         if (secrets.resource) body.set('resource', secrets.resource);
-        const refreshed = tokenSchema.parse(
-          await json(
-            await options.request(secrets.tokenEndpoint, {
-              method: 'POST',
-              body,
-              signal: controller.signal,
-            }),
-          ),
-        );
+        let refreshed;
+        try {
+          refreshed = tokenSchema.parse(
+            await json(
+              await options.request(secrets.tokenEndpoint, {
+                method: 'POST',
+                body,
+                signal: controller.signal,
+              }),
+            ),
+          );
+        } catch (error) {
+          if (controller.signal.aborted)
+            await options.grantVault.replace(
+              account.id,
+              grant.version,
+              JSON.stringify({ ...secrets, refreshUncertain: true }),
+            );
+          throw error;
+        }
         const next: Secrets = {
           ...secrets,
           accessToken: refreshed.access_token,

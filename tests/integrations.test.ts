@@ -712,9 +712,11 @@ test(
 async function appsFixture(
   t: TestContext,
   poolOptions: { max?: number; connectionTimeoutMillis?: number } = {},
-  listing: Pick<
-    Parameters<typeof createIntegrations>[1],
-    'browserConnections' | 'browserAccounts' | 'validateActivityCheck'
+  listing: Partial<
+    Pick<
+      Parameters<typeof createIntegrations>[1],
+      'browserConnections' | 'browserAccounts' | 'validateActivityCheck' | 'wake'
+    >
   > = {},
 ) {
   const schema = `test_apps_${randomUUID().replaceAll('-', '')}`;
@@ -804,10 +806,12 @@ async function appsFixture(
     ownerId: 'local-development',
     provider,
     baseUrl: 'http://localhost:4310',
-    wake: async (_prompt, id, intent) => {
-      wakes.push(id);
-      wakeIntents.push(intent);
-    },
+    wake:
+      listing.wake ??
+      (async (_prompt, id, intent) => {
+        wakes.push(id);
+        wakeIntents.push(intent);
+      }),
   });
   service.registerRoutes(app);
   t.after(async () => {
@@ -1020,6 +1024,32 @@ test(
     assert.equal(inspected, 0);
     await f.service.list();
     assert.ok(inspected > 0);
+  },
+);
+
+test(
+  'ordinary account-scoped discovery excludes other accounts from the provider session',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const selected = await f.connect('gmail');
+    await f.connect('gmail');
+    await f.connect('slack');
+    f.sessions.length = 0;
+    t.mock.method(f.session, 'search', async () => ({
+      tools: { GMAIL_GET_PROFILE: {}, SLACK_SEARCH: {} },
+      suggestions: [],
+    }));
+    const result = (await f.service.execute('local-development', 'SEARCH_TOOLS', {
+      query: 'recent email',
+      connectionId: selected.connectionId,
+    })) as { tools: Record<string, unknown>; accounts: Array<{ connectionId: string }> };
+    assert.deepEqual(f.sessions, [{ gmail: [selected.accountId] }]);
+    assert.deepEqual(Object.keys(result.tools), ['GMAIL_GET_PROFILE']);
+    assert.deepEqual(
+      result.accounts.map((account) => account.connectionId),
+      [selected.connectionId],
+    );
   },
 );
 
@@ -1577,6 +1607,69 @@ test(
       assert.equal(cursors.length, 2);
     } finally {
       await app.close();
+    }
+  },
+);
+
+test(
+  'disconnect during a claimed event prevents admission and cannot revive discarded delivery',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 15_000 },
+  async (t) => {
+    for (const fail of [false, true]) {
+      let enter = () => {};
+      let release = () => {};
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let admitted = 0;
+      const f = await appsFixture(
+        t,
+        {},
+        {
+          wake: async (_summary, _id, _intent, current) => {
+            enter();
+            await released;
+            const client = await f.pool.connect();
+            try {
+              await client.query('BEGIN');
+              assert.ok(current);
+              if (await current(client)) admitted++;
+              await client.query('COMMIT');
+            } finally {
+              client.release();
+            }
+            if (fail) throw new Error('Synthetic wake failure after disconnect.');
+          },
+        },
+      );
+      const selected = await f.connect('gmail');
+      const eventId = randomUUID();
+      await f.pool.query(
+        `INSERT INTO integration_events(id,owner_id,summary,slug,account_id,provider_id,poll_connection_id)
+         VALUES($1,'local-development','Synthetic pending update','gmail',$2,'fixture',$3)`,
+        [eventId, selected.accountId, selected.connectionId],
+      );
+      const draining = f.service.drain();
+      try {
+        await entered;
+        const response = await f.app.inject({
+          method: 'POST',
+          url: `/api/apps/gmail/accounts/${selected.connectionId}/disconnect`,
+        });
+        assert.equal(response.statusCode, 200);
+      } finally {
+        release();
+      }
+      await draining;
+      assert.equal(admitted, 0);
+      assert.equal(
+        (await f.pool.query('SELECT state FROM integration_events WHERE id=$1', [eventId])).rows[0]
+          .state,
+        'discarded',
+      );
     }
   },
 );
@@ -4204,15 +4297,6 @@ test('Composio inbox polling rejects malformed or expired history instead of res
       status: 200,
       data: { historyId: '200', history: [{ messagesAdded: [{ message: { id: '../escape' } }] }] },
     },
-    {
-      status: 200,
-      data: {
-        historyId: '200',
-        history: [
-          { messagesAdded: Array.from({ length: 1001 }, (_, i) => ({ message: { id: `m${i}` } })) },
-        ],
-      },
-    },
     new Error('private-provider-error'),
   ]) {
     response = failure;
@@ -4223,7 +4307,37 @@ test('Composio inbox polling rejects malformed or expired history instead of res
         : { message: 'The Gmail inbox could not be checked.' },
     );
   }
-  assert.equal(paths.length, 5);
+  assert.equal(paths.length, 4);
+  assert.ok(paths.every((path) => path.endsWith('/history')));
+});
+
+test('Composio inbox history overflow requires reconnection without advancing or dropping mail', async (t) => {
+  const additions = Array.from({ length: 1001 }, (_, i) => ({ message: { id: `m${i}` } }));
+  let history: unknown;
+  const paths: string[] = [];
+  const poll = inboxPollFixture(t, (input) => {
+    paths.push(input.endpoint);
+    return { status: 200, data: history };
+  });
+  const cursor = JSON.stringify({ accountId: 'inbox-account', historyId: '100' });
+  for (const page of [
+    { historyId: '200', history: [{ messagesAdded: additions }] },
+    {
+      historyId: '200',
+      history: [
+        { messagesAdded: additions.slice(0, 500) },
+        { messagesAdded: additions.slice(500) },
+      ],
+    },
+    { historyId: '200', history: [], padding: 'x'.repeat(1_000_001) },
+  ]) {
+    history = page;
+    await assert.rejects(
+      poll('inbox-account', cursor, new AbortController().signal),
+      IntegrationInboxCursorExpired,
+    );
+  }
+  assert.equal(paths.length, 3);
   assert.ok(paths.every((path) => path.endsWith('/history')));
 });
 
@@ -4594,7 +4708,7 @@ test('discovered validation cancellation never starts HTTP after a late DNS sett
 });
 
 test(
-  'direct OAuth refresh cancellation preserves live waiters and evicts settled requests',
+  'direct OAuth refresh cancellation serializes settlement and fences uncertain rotating tokens',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `direct_cancel_${randomUUID().replaceAll('-', '')}`;
@@ -4611,7 +4725,11 @@ test(
     try {
       const vault = await createAppGrantVault(pool, { ownerId, keyStore });
       let reads = 0;
-      const requests: Array<{ signal: AbortSignal; resolve: (response: Response) => void }> = [];
+      const requests: Array<{
+        signal: AbortSignal;
+        resolve: (response: Response) => void;
+        reject: (error: unknown) => void;
+      }> = [];
       const oauth = createDirectOAuth({
         pool,
         ownerId,
@@ -4628,8 +4746,7 @@ test(
           const signal = init?.signal;
           assert.ok(signal);
           return new Promise<Response>((resolve, reject) => {
-            requests.push({ signal, resolve });
-            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            requests.push({ signal, resolve, reject });
           });
         },
       });
@@ -4683,14 +4800,65 @@ test(
         JSON.parse((await vault.read(accountId)).value).accessToken,
         'synthetic-old-token',
       );
-      const recovered = oauth.access(ownerId, accountId);
+      let completed = false;
+      const before = reads;
+      const late = oauth.access(ownerId, accountId).finally(() => {
+        completed = true;
+      });
+      await wait(() => reads > before);
+      assert.equal(requests.length, 2);
+      assert.equal(completed, false);
+      requests[1].resolve(
+        Response.json({
+          access_token: 'synthetic-late-token',
+          refresh_token: 'synthetic-rotated-token',
+          expires_in: 3600,
+        }),
+      );
+      assert.equal((await late).accessToken, 'synthetic-late-token');
+      assert.equal(
+        JSON.parse((await vault.read(accountId)).value).refreshToken,
+        'synthetic-rotated-token',
+      );
+      await expire();
+      const uncertain = new AbortController();
+      const fourth = assert.rejects(oauth.access(ownerId, accountId, uncertain.signal), {
+        name: 'AbortError',
+      });
       await wait(() => requests.length === 3);
-      requests[2].resolve(
+      uncertain.abort();
+      await fourth;
+      const beforeJoining = reads;
+      const joining = assert.rejects(oauth.access(ownerId, accountId), { name: 'AbortError' });
+      await wait(() => reads > beforeJoining);
+      assert.equal(requests.length, 3);
+      requests[2].reject(requests[2].signal.reason);
+      await joining;
+      await assert.rejects(oauth.access(ownerId, accountId), {
+        message: 'Connect this account again.',
+      });
+      const restarted = createDirectOAuth({
+        pool,
+        ownerId,
+        keyStore,
+        grantVault: vault,
+        request: async () => {
+          throw new Error('An uncertain refresh must not be retried.');
+        },
+      });
+      await assert.rejects(restarted.access(ownerId, accountId), {
+        message: 'Connect this account again.',
+      });
+      assert.equal(requests.length, 3);
+      await expire();
+      const recovered = oauth.access(ownerId, accountId);
+      await wait(() => requests.length === 4);
+      requests[3].resolve(
         Response.json({ access_token: 'synthetic-recovered-token', expires_in: 3600 }),
       );
       assert.equal((await recovered).accessToken, 'synthetic-recovered-token');
       await oauth.access(ownerId, accountId);
-      assert.equal(requests.length, 3);
+      assert.equal(requests.length, 4);
     } finally {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);

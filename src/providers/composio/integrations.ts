@@ -453,7 +453,10 @@ export function createComposioProvider(options: {
         category = 'http';
         if (response.status !== 200) throw new Error();
         category = 'response_size';
-        if (JSON.stringify(response.data).length > 1_000_000) throw new Error();
+        if (JSON.stringify(response.data).length > 1_000_000) {
+          if (path === 'history') throw new IntegrationInboxCursorExpired();
+          throw new Error();
+        }
         category = 'response';
         return response.data;
       }
@@ -479,7 +482,7 @@ export function createComposioProvider(options: {
               history: z
                 .array(
                   z.object({
-                    messagesAdded: z.array(addedMessage).max(1000).optional(),
+                    messagesAdded: z.array(addedMessage).optional(),
                   }),
                 )
                 .max(20)
@@ -495,13 +498,15 @@ export function createComposioProvider(options: {
                 ...(state.pageToken ? [['pageToken', state.pageToken] as [string, string]] : []),
               ]),
             );
-          state.pending = stateSchema.shape.pending.parse([
+          const pending = stateSchema.shape.pending.safeParse([
             ...new Set(
               page.history?.flatMap(
                 (entry) => entry.messagesAdded?.map(({ message }) => message.id) ?? [],
               ),
             ),
           ]);
+          if (!pending.success) throw new IntegrationInboxCursorExpired();
+          state.pending = pending.data;
           state.pageToken = page.nextPageToken;
           state.finalHistoryId = page.nextPageToken ? undefined : page.historyId;
         }

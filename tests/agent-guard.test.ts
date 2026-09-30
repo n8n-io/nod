@@ -855,30 +855,39 @@ test('an activity check can report unavailable without a read but cannot silentl
   assert.equal(records, 1);
 });
 
-test('activity check deadlines reach verified and unavailable record callbacks before late writes', async () => {
-  for (const result of [
-    { status: 'verified', value: 'item-1', summary: 'A request was read' },
-    { status: 'unavailable', summary: 'No supported read is available' },
-  ] satisfies ActivityCheckResult[]) {
-    const connectionId = randomUUID();
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let finished!: () => void;
-    const callbackFinished = new Promise<void>((resolve) => {
-      finished = resolve;
-    });
-    let recordSignal: AbortSignal | undefined;
-    let writes = 0;
-    await assert.rejects(
-      fixture(
+test(
+  'activity check deadlines reach verified and unavailable record callbacks before late writes',
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    for (const result of [
+      { status: 'verified', value: 'item-1', summary: 'A request was read' },
+      { status: 'unavailable', summary: 'No supported read is available' },
+    ] satisfies ActivityCheckResult[]) {
+      const connectionId = randomUUID();
+      const controller = new AbortController();
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered!: () => void;
+      const callbackEntered = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let finished!: () => void;
+      const callbackFinished = new Promise<void>((resolve) => {
+        finished = resolve;
+      });
+      let recordSignal: AbortSignal | undefined;
+      let writes = 0;
+      const running = fixture(
         async (tools) => {
           if (result.status === 'verified')
             await call(tools, 'apps', { action: 'FIXTURE_READ', args: { connectionId } });
           await call(tools, 'record_activity_check', result);
         },
         {
+          signal: AbortSignal.any([controller.signal, t.signal]),
           readOnly: true,
           background: true,
           limits: { maxToolCalls: 8, timeoutMs: 30 },
@@ -887,6 +896,7 @@ test('activity check deadlines reach verified and unavailable record callbacks b
             connectionId,
             record: async (_result, signal) => {
               recordSignal = signal;
+              entered();
               try {
                 await blocked;
                 signal?.throwIfAborted();
@@ -897,12 +907,22 @@ test('activity check deadlines reach verified and unavailable record callbacks b
             },
           },
         },
-      ),
-      /time limit/,
-    );
-    assert.equal(recordSignal?.aborted, true);
-    release();
-    await callbackFinished;
-    assert.equal(writes, 0);
-  }
-});
+      );
+      try {
+        await Promise.race([
+          callbackEntered,
+          running.then(() => assert.fail('The turn finished before recording.')),
+        ]);
+        t.mock.timers.tick(30);
+        await assert.rejects(running, /time limit/);
+        assert.equal(recordSignal?.aborted, true);
+      } finally {
+        controller.abort();
+        release();
+        await Promise.allSettled([running]);
+        if (recordSignal) await callbackFinished;
+      }
+      assert.equal(writes, 0);
+    }
+  },
+);

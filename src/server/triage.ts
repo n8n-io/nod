@@ -100,8 +100,13 @@ export function createTriage(options: {
   listGoals(): Promise<GoalContext[]>;
   connectedApps(): Promise<ConnectedApp[]>;
 }) {
-  async function triageEvent(summary: string, eventId: string, intent: TriageIntent = 'classify') {
-    return triageNotification(summary, eventId, 'external', intent);
+  async function triageEvent(
+    summary: string,
+    eventId: string,
+    intent: TriageIntent = 'classify',
+    current?: (client: PoolClient) => Promise<boolean>,
+  ) {
+    return triageNotification(summary, eventId, 'external', intent, current);
   }
   async function reviewHeartbeat(jobId: string) {
     await triageNotification(
@@ -302,6 +307,7 @@ export function createTriage(options: {
     eventId: string,
     kind: NotificationKind,
     intent: TriageIntent = 'classify',
+    current?: (client: PoolClient) => Promise<boolean>,
   ) {
     const existing = await pool.query(
       'SELECT id FROM notifications WHERE event_id=$1 AND owner_id=$2',
@@ -309,6 +315,7 @@ export function createTriage(options: {
     );
     if (existing.rowCount) {
       await transaction(async (client) => {
+        if (current && !(await current(client))) return;
         const found = await client.query(
           'SELECT * FROM notifications WHERE event_id=$1 AND owner_id=$2 FOR UPDATE',
           [eventId, ownerId],
@@ -391,6 +398,7 @@ export function createTriage(options: {
       reason = 'Saved for quiet hours.';
     }
     await transaction(async (client) => {
+      if (current && !(await current(client))) return;
       await client.query(
         'INSERT INTO notifications(id,event_id,owner_id,summary,decision,reason,kind,intent) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(event_id) DO NOTHING',
         [randomUUID(), eventId, ownerId, summary.slice(0, 6000), decision, reason, kind, intent],
