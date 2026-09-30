@@ -841,8 +841,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   try {
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
-    const stage = async (id: string, fileName: string, bytes: Uint8Array, operation = signal) => {
-      operation.throwIfAborted();
+    const stage = async (
+      id: string,
+      fileName: string,
+      bytes: Uint8Array,
+      operation?: AbortSignal,
+    ) => {
+      operation?.throwIfAborted();
       const name = `${id}-${basename(fileName)}`;
       if (dependencies.writeArtifact)
         await dependencies.writeArtifact(threadId, name, bytes, operation);
@@ -852,7 +857,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
           signal: operation,
         });
-      operation.throwIfAborted();
+      operation?.throwIfAborted();
       return name;
     };
     const inline = async (action: string, result: unknown, operation = signal) => {
@@ -884,7 +889,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     const stagedFiles = new Map<string, string>();
     const attachments: RuntimeContext['attachments'] = [];
     for (const upload of uploads) {
-      const name = await stage(upload.id, upload.name, await artifacts.readArtifact(upload.id));
+      const name = await stage(
+        upload.id,
+        upload.name,
+        await artifacts.readArtifact(upload.id),
+        signal,
+      );
       stagedFiles.set(upload.id, name);
       attachments.push({ path: join(workspacePath, name), mimeType: upload.mime_type });
     }
@@ -926,7 +936,15 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     };
     const attachFile = async (file: { bytes: Uint8Array; name: string; mimeType: string }) => {
       const artifact = await attach(file.bytes, file.name, file.mimeType, '', !turn.background);
-      return { ...artifact, workspaceFile: await stage(artifact.id, artifact.name, file.bytes) };
+      return {
+        ...artifact,
+        workspaceFile: await stage(
+          artifact.id,
+          artifact.name,
+          file.bytes,
+          turn.background ? signal : undefined,
+        ),
+      };
     };
     const emit = async (type: string, summary: string) => {
       await current((client) => insertEvent(client, turnId, type, summary));

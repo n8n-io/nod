@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -82,6 +82,7 @@ test(
       { stored: (artifact: Artifact) => void; resume: Promise<void> }
     >();
     const publicationStarts = new Map<string, { enter: () => void; resume: Promise<void> }>();
+    let stagingCompletion: Promise<unknown> | undefined;
     cleanup.push(async () => {
       const results = await Promise.allSettled(
         [...runtimes.values()].map((runtime) => runtime.dispose()),
@@ -174,6 +175,11 @@ test(
       cleanup.push(() => channels!.close());
       channels.registerRoutes(app);
       await threads.startThreadWorkers({
+        writeArtifact: async (threadId, path, bytes, signal) => {
+          await stagingCompletion;
+          signal?.throwIfAborted();
+          await writeFile(join(dataRoot, 'workspaces', threadId, path), bytes);
+        },
         artifacts: {
           ...localArtifacts,
           async storeArtifact(...args) {
@@ -526,6 +532,7 @@ test(
             );
             const artifact = await stored;
             const cancelling = action === 'stop' ? threads.stopThread() : threads.resetThread();
+            stagingCompletion = cancelling;
             try {
               assert.equal(
                 (await admin.query(`SELECT id FROM ${schema}.artifacts WHERE id=$1`, [artifact.id]))
@@ -561,10 +568,17 @@ test(
                 'cancelled',
               );
               assert.deepEqual(await localArtifacts.readArtifact(artifact.id), browserDownloadPdf);
+              assert.deepEqual(
+                await readFile(
+                  join(dataRoot, 'workspaces', threadId, `${artifact.id}-invoice.pdf`),
+                ),
+                browserDownloadPdf,
+              );
             } finally {
               resume();
               await publishing;
               await cancelling;
+              stagingCompletion = undefined;
               publications.delete(threadId);
               release.get(turnId)!();
             }
