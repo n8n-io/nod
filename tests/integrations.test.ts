@@ -4079,6 +4079,115 @@ test('Composio inbox polling retains page continuations and limits metadata with
   );
 });
 
+test('Composio inbox polling preserves completed metadata reads across repeated deadlines', async (t) => {
+  let deadline = new AbortController();
+  t.mock.method(AbortSignal, 'timeout', () => {
+    deadline = new AbortController();
+    return deadline.signal;
+  });
+  const ids = Array.from({ length: 20 }, (_, index) => `m${index}`);
+  const completed: string[] = [];
+  let historyReads = 0;
+  let metadataReads = 0;
+  const poll = inboxPollFixture(t, (input, signal) => {
+    if (input.endpoint.endsWith('/history')) {
+      historyReads++;
+      return {
+        status: 200,
+        data: {
+          historyId: '200',
+          history: [{ messagesAdded: ids.map((id) => ({ message: { id } })) }],
+        },
+      };
+    }
+    if (++metadataReads === 3) {
+      deadline.abort(new DOMException('Fixture deadline', 'TimeoutError'));
+      signal.throwIfAborted();
+    }
+    const id = input.endpoint.split('/').at(-1)!;
+    completed.push(id);
+    return {
+      status: 200,
+      data: {
+        id,
+        threadId: `thread-${id}`,
+        internalDate: '1790769600000',
+        labelIds: ['INBOX'],
+        payload: { headers: [] },
+      },
+    };
+  });
+  let cursor = JSON.stringify({ accountId: 'inbox-account', historyId: '100' });
+  const delivered: string[] = [];
+  for (let attempt = 0; attempt < ids.length; attempt++) {
+    metadataReads = 0;
+    const result = await poll('inbox-account', cursor, new AbortController().signal);
+    delivered.push(...result.messages.map(({ id }) => id));
+    cursor = result.cursor;
+    const state = JSON.parse(cursor);
+    assert.deepEqual(state.pending, ids.slice(delivered.length));
+    assert.equal(state.historyId, result.hasMore ? '100' : '200');
+    if (!result.hasMore) break;
+  }
+  assert.deepEqual(delivered, ids);
+  assert.deepEqual(completed, ids);
+  assert.equal(historyReads, 1);
+  assert.equal(JSON.parse(cursor).historyId, '200');
+});
+
+test('Composio inbox polling rejects cancellation and invalid metadata after partial progress', async (t) => {
+  let deadline = new AbortController();
+  t.mock.method(AbortSignal, 'timeout', () => {
+    deadline = new AbortController();
+    return deadline.signal;
+  });
+  let external = new AbortController();
+  let failure: 'cancel' | 'invalid' | 'identity' | 'none' = 'cancel';
+  const poll = inboxPollFixture(t, (input, signal) => {
+    if (input.endpoint.endsWith('/history'))
+      return {
+        status: 200,
+        data: {
+          historyId: '200',
+          history: [{ messagesAdded: ['m0', 'm1'].map((id) => ({ message: { id } })) }],
+        },
+      };
+    const id = input.endpoint.split('/').at(-1)!;
+    if (id === 'm1' && failure === 'cancel') {
+      deadline.abort(new DOMException('Fixture deadline', 'TimeoutError'));
+      external.abort();
+      signal.throwIfAborted();
+    }
+    return {
+      status: 200,
+      data: {
+        id: id === 'm1' && failure === 'identity' ? 'other-message' : id,
+        threadId: `thread-${id}`,
+        internalDate: id === 'm1' && failure === 'invalid' ? 'invalid' : '1790769600000',
+        labelIds: ['INBOX'],
+        payload: { headers: [] },
+      },
+    };
+  });
+  const cursor = JSON.stringify({ accountId: 'inbox-account', historyId: '100' });
+  await assert.rejects(poll('inbox-account', cursor, external.signal), { name: 'AbortError' });
+  external = new AbortController();
+  for (const invalid of ['invalid', 'identity'] as const) {
+    failure = invalid;
+    await assert.rejects(poll('inbox-account', cursor, external.signal), {
+      message: 'The Gmail inbox could not be checked.',
+    });
+  }
+  failure = 'none';
+  const recovered = await poll('inbox-account', cursor, external.signal);
+  assert.deepEqual(
+    recovered.messages.map(({ id }) => id),
+    ['m0', 'm1'],
+  );
+  assert.equal(recovered.hasMore, false);
+  assert.equal(JSON.parse(recovered.cursor).historyId, '200');
+});
+
 test('Composio inbox polling rejects malformed or expired history instead of resetting the baseline', async (t) => {
   let response: unknown;
   const paths: string[] = [];

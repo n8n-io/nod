@@ -415,7 +415,8 @@ export function createComposioProvider(options: {
     verificationEmails: (accountId, query, signal) =>
       readVerificationEmails(required().tools, accountId, query, signal),
     async pollInbox(accountId, cursor, signal) {
-      const operation = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+      const deadline = AbortSignal.timeout(25_000);
+      const operation = AbortSignal.any([signal, deadline]);
       let phase = 'cursor';
       let category = 'cursor';
       let status: number | undefined;
@@ -505,12 +506,22 @@ export function createComposioProvider(options: {
           state.finalHistoryId = page.nextPageToken ? undefined : page.historyId;
         }
         const messages = [];
+        let consumed = 0;
         for (const pendingId of state.pending.slice(0, 20)) {
-          const response = await get(`messages/${pendingId}`, [
-            ['format', 'metadata'],
-            ['fields', 'id,threadId,internalDate,labelIds,payload/headers'],
-          ]);
-          if (response === null) continue;
+          let response;
+          try {
+            response = await get(`messages/${pendingId}`, [
+              ['format', 'metadata'],
+              ['fields', 'id,threadId,internalDate,labelIds,payload/headers'],
+            ]);
+          } catch (error) {
+            if (!signal.aborted && deadline.aborted && consumed) break;
+            throw error;
+          }
+          if (response === null) {
+            consumed++;
+            continue;
+          }
           const message = z
             .object({
               id,
@@ -526,6 +537,7 @@ export function createComposioProvider(options: {
             category = 'identity';
             throw new Error();
           }
+          consumed++;
           if (!message.labelIds.includes('INBOX')) continue;
           const header = (name: string) =>
             message.payload.headers
@@ -540,7 +552,8 @@ export function createComposioProvider(options: {
             receivedAt: new Date(Number(message.internalDate)).toISOString(),
           });
         }
-        state.pending = state.pending.slice(20);
+        signal.throwIfAborted();
+        state.pending = state.pending.slice(consumed);
         if (!state.pending.length && state.finalHistoryId) {
           state.historyId = state.finalHistoryId;
           delete state.finalHistoryId;
