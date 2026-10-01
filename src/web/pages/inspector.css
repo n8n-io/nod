@@ -4,23 +4,6 @@
   height: 52px;
   min-height: 52px;
 }
-.workspace-frame {
-  background: var(--canvas);
-}
-.sidebar {
-  background: var(--sidebar);
-}
-.nav-link {
-  font-size: 14px;
-  color: var(--text-secondary);
-}
-.nav-link-active {
-  color: var(--foreground);
-  background: var(--accent-soft);
-}
-.sidebar-bottom .nav-link {
-  font-size: 13px;
-}
 .inspector-panel {
   container-type: inline-size;
   position: relative;
@@ -29,7 +12,7 @@
   max-width: calc(100% - 320px);
   min-width: 330px;
   border-left: 1px solid var(--border);
-  background: var(--sidebar);
+  background: var(--surface-subtle);
   font-size: 13px;
 }
 .inspector-resizer {
@@ -48,7 +31,8 @@
   outline: none;
 }
 .inspector-heading {
-  padding: 14px 18px;
+  min-height: 60px;
+  padding: 12px 18px;
 }
 .inspector-heading h2 {
   color: var(--foreground);
@@ -76,7 +60,7 @@
   color: var(--muted-foreground);
 }
 .inspector-tabs button[aria-selected='true'] {
-  color: var(--accent);
+  color: var(--foreground);
   border-color: var(--accent);
 }
 .inspector-body {

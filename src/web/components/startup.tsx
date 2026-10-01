@@ -32,6 +32,9 @@ export function ChatSkeleton({
   const conversation = readUiPreference('otto.chat-layout') === 'conversation';
   return (
     <div className="chat-page chat-skeleton" aria-busy="true">
+      <div className="chat-report-action" aria-hidden="true">
+        <span className="chat-title">Chat</span>
+      </div>
       <div className="conversation-scroll">
         <div className="conversation-column" aria-hidden="true">
           {conversation ? (
@@ -96,7 +99,7 @@ export function ChatSkeleton({
 function StartupShell({ children }: { children: ReactNode }) {
   return (
     <div
-      className={`app-shell startup-shell ${readUiPreference('otto.sidebar') === 'collapsed' ? 'sidebar-collapsed' : ''}`}
+      className={`app-shell startup-shell ${readUiPreference('otto.sidebar') !== 'expanded' ? 'sidebar-collapsed' : ''}`}
     >
       <aside className="sidebar" aria-hidden="true" inert>
         <span className="brand">

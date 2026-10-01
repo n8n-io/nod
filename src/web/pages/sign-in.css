@@ -70,6 +70,7 @@
   margin: 20px 20px 20px 0;
   padding: 50px;
   border-radius: 18px;
+  border: 1px solid var(--border);
   background: var(--sidebar);
 }
 .sign-in-note {
@@ -77,10 +78,9 @@
   max-width: 410px;
   padding: 34px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--card-radius);
   background: var(--surface);
-  box-shadow: 0 18px 70px -40px #5c365544;
-  transform: rotate(-2deg);
+  box-shadow: var(--shadow-dialog);
 }
 .sign-in-note-time {
   color: var(--muted-foreground);

@@ -24,7 +24,7 @@
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: var(--card-radius);
   background: var(--surface);
 }
 .apps-page .app-card-summary {
@@ -66,9 +66,9 @@
 }
 .apps-page .app-connect,
 .apps-page .app-manage {
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -97,7 +97,7 @@
 .app-manage-dialog .compact-account {
   align-items: center;
   gap: 12px;
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 2px 0;
 }
 .app-manage-dialog .compact-account + .compact-account {

@@ -18,7 +18,7 @@
   max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--surface);
   color: var(--foreground);
 }

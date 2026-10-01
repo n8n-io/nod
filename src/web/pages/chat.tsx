@@ -601,7 +601,8 @@ export function Chat({
   }
   return (
     <div className="chat-page">
-      <div className="chat-report-action">
+      <header className="chat-report-action">
+        <h1 className="chat-title">Chat</h1>
         <Button
           type="button"
           variant="ghost"
@@ -618,7 +619,7 @@ export function Chat({
               ? 'Copied'
               : 'Copy bug report'}
         </Button>
-      </div>
+      </header>
       <ChatTurnRail
         messages={allMessages}
         activeId={activeTurn}

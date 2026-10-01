@@ -28,7 +28,7 @@
   overflow: hidden;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: var(--card-radius);
   background: var(--surface);
 }
 
@@ -75,9 +75,9 @@
 }
 
 .channels-page .channel-connect {
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -139,9 +139,9 @@
 }
 
 .channels-page .channel-account-actions > .button:not(.channel-remove) {
-  min-height: 34px;
+  min-height: var(--control-height);
   padding-inline: 12px;
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   font-size: 12px;
 }
 

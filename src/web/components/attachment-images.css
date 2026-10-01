@@ -91,8 +91,8 @@
 .attachment-media-label {
   position: absolute;
   inset: 0;
-  background: #20192750;
-  color: #fff;
+  background: var(--image-overlay);
+  color: var(--image-foreground);
   pointer-events: none;
 }
 
@@ -105,8 +105,8 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background: #20192770;
-  color: #fff;
+  background: var(--image-overlay);
+  color: var(--image-foreground);
   font-size: 26px;
   font-weight: 600;
 }

@@ -25,7 +25,7 @@
 }
 .vault-item-text {
   display: grid;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 .vault-item-text > * {
@@ -248,7 +248,7 @@
   min-height: calc(100dvh - 190px);
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--card-radius);
   background: var(--surface);
 }
 .vault-page.is-split .vault-browser {

@@ -170,19 +170,37 @@ export function Sidebar({
   }, [mac]);
   return (
     <aside className={`sidebar ${hints ? 'show-shortcuts' : ''}`} aria-label="Sidebar">
-      <a
-        href="/"
-        className="brand"
-        aria-label="Otto"
-        onClick={(event) => {
-          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-          event.preventDefault();
-          onNavigate('/');
-        }}
-      >
-        <BrandMark />
-        <span>otto</span>
-      </a>
+      <div className="sidebar-header">
+        <a
+          href="/"
+          className="brand"
+          aria-label="Otto"
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            onNavigate('/');
+          }}
+        >
+          <BrandMark />
+          <span>otto</span>
+        </a>
+        <button
+          type="button"
+          className="button button-ghost button-icon sidebar-toggle"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!collapsed}
+          aria-controls="sidebar-navigation"
+          aria-keyshortcuts="Meta+B Control+B"
+          title={`${collapsed ? 'Expand sidebar' : 'Collapse sidebar'} (${shortcutLabel('b', mac)})`}
+          onClick={onToggle}
+        >
+          {collapsed ? (
+            <PanelLeftOpen size={18} aria-hidden="true" />
+          ) : (
+            <PanelLeftClose size={18} aria-hidden="true" />
+          )}
+        </button>
+      </div>
       <nav className="main-nav" aria-label="Main navigation" id="sidebar-navigation">
         <ul
           onKeyDown={(event) => {
@@ -434,26 +452,6 @@ export function Sidebar({
             </div>
           )
         )}
-        <button
-          type="button"
-          className="nav-link sidebar-toggle"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-expanded={!collapsed}
-          aria-controls="sidebar-navigation"
-          aria-keyshortcuts="Meta+B Control+B"
-          title={`${collapsed ? 'Expand sidebar' : 'Collapse sidebar'} (${shortcutLabel('b', mac)})`}
-          onClick={onToggle}
-        >
-          {collapsed ? (
-            <PanelLeftOpen size={22} aria-hidden="true" />
-          ) : (
-            <PanelLeftClose size={22} aria-hidden="true" />
-          )}
-          <span className="nav-label">Collapse</span>
-          <kbd className="nav-shortcut" aria-hidden="true">
-            B
-          </kbd>
-        </button>
         {account && <AccountMenu account={account} />}
       </div>
     </aside>

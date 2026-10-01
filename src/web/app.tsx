@@ -82,9 +82,7 @@ function Workspace({
     () =>
       path === '/dev' || (window.innerWidth > 720 && readUiPreference('otto.inspector') === 'open'),
   );
-  const [collapsed, setCollapsed] = useState(
-    () => readUiPreference('otto.sidebar') === 'collapsed',
-  );
+  const [collapsed, setCollapsed] = useState(() => readUiPreference('otto.sidebar') !== 'expanded');
   const [pendingMessageFocus, setPendingMessageFocus] = useState<string>();
   const [inspectionFocus, setInspectionFocus] = useState<{ messageId: string; turnId: string }>();
   const [settingsOpen, setSettingsOpen] = useState(false);

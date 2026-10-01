@@ -1090,6 +1090,38 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
   }
 });
 
+test('a sign-in approval can be observed after a wait, and Stop cancels the wait', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-login-approval-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  try {
+    await computer.act('login', { action: 'open', url: 'https://1.1.1.1/login' });
+    const page = fixture.pages.get('login')!;
+    page.dom.window.document.querySelector('h1')!.textContent = 'Approve sign-in on your device';
+    const pending = await computer.act('login', { action: 'snapshot' });
+    assert.match(pending.text, /Approve sign-in on your device/);
+    const approved = computer.act('login', { action: 'snapshot', waitMs: 100 });
+    await delay(25);
+    page.stage = 'complete';
+    page.render();
+    assert.match((await approved).text, /Sign in complete/);
+    assert.deepEqual(page.entered, []);
+
+    const controller = new AbortController();
+    const cancelled = assert.rejects(
+      computer.act('login', { action: 'snapshot', waitMs: 15000 }, controller.signal),
+      { name: 'AbortError' },
+    );
+    await delay(25);
+    controller.abort();
+    await cancelled;
+    assert.match((await computer.act('login', { action: 'snapshot' })).text, /Sign in complete/);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('the user can click, type and scroll in the handed-off browser at page coordinates', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-'));
   const fixture = stagedLoginBrowser();
