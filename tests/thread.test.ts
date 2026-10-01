@@ -2728,6 +2728,21 @@ test(
       );
       assert.equal(await learning.consolidate(), 0);
       assert.equal(calls.length, 2);
+
+      const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+      await memory.edit((tree) => {
+        tree.consolidated.routines = hoursAgo(12);
+      });
+      assert.equal(await learning.consolidate(), 0);
+      assert.equal(calls.length, 2);
+      await memory.edit((tree) => {
+        tree.consolidated.routines = hoursAgo(48);
+      });
+      await learning.consolidate();
+      assert.deepEqual(
+        calls.map((entry) => entry.input.area),
+        ['routines', 'lessons', 'routines'],
+      );
     } finally {
       await close();
     }

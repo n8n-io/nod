@@ -96,14 +96,13 @@ export const locate = (tree: Tree, target: string) =>
 export const fold = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
 const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const tokens = (value: string) =>
+  [...segmenter.segment(fold(value))].filter((part) => part.isWordLike).map((part) => part.segment);
 export const words = (value: string) =>
-  [...segmenter.segment(fold(value))]
-    .filter((part) => part.isWordLike)
-    .map((part) => part.segment)
-    .filter((word) => word.length > 1 || /\p{N}/u.test(word) || cjk.test(word));
+  tokens(value).filter((word) => word.length > 1 || /\p{N}/u.test(word) || cjk.test(word));
 export const same = (a: string, b: string) => {
-  const left = words(a).join(' ');
-  return !!left && left === words(b).join(' ');
+  const left = tokens(a).join(' ');
+  return !!left && left === tokens(b).join(' ');
 };
 
 const numbers = (set: Set<string>) =>
