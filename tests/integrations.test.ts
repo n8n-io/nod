@@ -2976,6 +2976,22 @@ test(
       const linear = (await integrations.list()).find((item) => item.slug === 'linear');
       assert.equal(linear?.status, 'connected');
       assert.deepEqual(
+        await integrations.manageConnections('connect', 'linear', {
+          threadId: randomUUID(),
+          turnId: randomUUID(),
+        }),
+        {
+          name: linear?.name,
+          accounts: [
+            {
+              connectionId: linear?.connectionId,
+              accountName: linear?.accountName,
+              accountEmail: linear?.accountEmail,
+            },
+          ],
+        },
+      );
+      assert.deepEqual(
         await integrations.execute('local-development', 'LINEAR_LIST_PROJECTS', {
           connectionId: linear?.connectionId,
         }),

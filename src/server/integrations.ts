@@ -1706,6 +1706,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         return options.discovered.propose(proposal, turn);
       }
       const slug = slugSchema.parse(service);
+      const accounts = (await connectedApps())
+        .filter((app) => app.slug === slug)
+        .map(({ connectionId, accountName, accountEmail }) => ({
+          connectionId,
+          accountName,
+          accountEmail,
+        }));
+      if (accounts.length) return { name: catalogs[slug].name, accounts };
       return { name: catalogs[slug].name, ...(await connect(slug, turn ? 'chat' : 'apps', turn)) };
     },
     status: list,

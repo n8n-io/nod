@@ -199,6 +199,7 @@ export function actionConfirmation(
   if (typeof args.cron === 'string') {
     const everyMinute = /^\*\/([1-9]\d*) \* \* \* \*$/.exec(args.cron);
     const daily = /^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(args.cron);
+    const hours = /^\*\/([1-9]\d*) (\d{1,2})-(\d{1,2}) \* \* \*$/.exec(args.cron);
     add(
       'Repeats',
       args.cron === '* * * * *'
@@ -207,10 +208,19 @@ export function actionConfirmation(
           ? `Every ${everyMinute[1]} minutes`
           : daily
             ? `Daily at ${daily[2]!.padStart(2, '0')}:${daily[1]!.padStart(2, '0')}`
-            : `Custom timing (${plain(args.cron)})`,
+            : hours
+              ? `Every ${hours[1]} minutes from ${hours[2]!.padStart(2, '0')}:00 to ${hours[3]!.padStart(2, '0')}:59`
+              : `Custom timing (${plain(args.cron)})`,
     );
   }
   for (const key of ['body', 'message_body', 'text', 'content', 'prompt'])
-    add(action === 'OTTO_memory_save' ? 'Note' : 'Message', text(args[key]));
+    add(
+      action === 'OTTO_memory_save'
+        ? 'Note'
+        : action.startsWith('OTTO_schedule_')
+          ? 'Instructions'
+          : 'Message',
+      text(args[key]),
+    );
   return `${label}${using}?${details.length ? `\n\n${details.join('\n\n')}` : ''}\n\nReply yes to confirm, no to leave it unchanged, or tell me what to change.`;
 }
