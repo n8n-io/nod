@@ -42,7 +42,7 @@ Pi-native tools (read, bash, edit, write, find, ls) are built in `providers/pi/s
 
 Otto tools: `send_message`, `ask_user`, `react_to_message`, `browser`, `browser_flow`, `get_credential`, `browser_session`, `apps`, `manage_apps`, `manage_personal_context`, `share_file` and `create_audio`. Pi loads `web_search`, `source_check`, `fetch_content` and `get_search_content` from `pi-web-access`. `web_search` returns direct source results without a curator or a separate summary. Each model tool call goes through the turn guard, which checks cancellation, restricts non-app tools in read-only turns and records observations. Pi follows read-only instructions for app actions; the server does not classify them. Extension event handlers run in the Pi process.
 
-Workflow guides in `src/runtime/skills` (connected-apps, schedules-and-watches, artifacts) are part of the static system prompt. Per-turn values (time, channel, message ID, reply target, background or activity-check rules) go in the turn message. Owner context (account, profile, goals, memory) is a separate system prompt section, so Pi sends the static prompt once per session and re-sends the owner context only when it changes.
+Workflow guides in `src/runtime/skills` (connected-apps, schedules-and-watches, artifacts) are part of the static system prompt. The rules for background runs and activity checks are in the static prompt, keyed by the turn mode. Per-turn values (mode, time, channel, message ID, reply target, activity-check limits and observation) go in the turn message. Owner context (account, profile, goals, memory) is a separate system prompt section, so Pi sends the static prompt once per session and re-sends the owner context only when it changes.
 
 ## Sandbox and browser
 
