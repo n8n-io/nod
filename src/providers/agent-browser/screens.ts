@@ -84,6 +84,26 @@ export class DaemonCommandError extends Error {
   }
 }
 
+export class DaemonTransportError extends Error {
+  constructor(
+    readonly kind:
+      | 'timeout'
+      | 'aborted'
+      | 'socket_error'
+      | 'socket_closed'
+      | 'response_limit'
+      | 'invalid_response',
+  ) {
+    super(
+      kind === 'aborted'
+        ? 'Browser observation cancelled.'
+        : kind === 'response_limit'
+          ? 'Browser observation exceeded its limit.'
+          : 'The previous browser is unavailable.',
+    );
+  }
+}
+
 function interceptedClick(command: Record<string, unknown>, error: unknown): boolean {
   if (
     command.action !== 'click' ||
@@ -123,18 +143,18 @@ export function existingDaemonCommand(
       if (error) reject(error);
       else resolve(data ?? {});
     };
-    const abort = () => stop(new Error('Browser observation cancelled.'));
+    const abort = () => stop(new DaemonTransportError('aborted'));
     signal?.addEventListener('abort', abort, { once: true });
-    deadline = setTimeout(() => stop(new Error('The previous browser is unavailable.')), timeoutMs);
-    socket.once('error', () => stop(new Error('The previous browser is unavailable.')));
-    socket.once('end', () => stop(new Error('The previous browser is unavailable.')));
+    deadline = setTimeout(() => stop(new DaemonTransportError('timeout')), timeoutMs);
+    socket.once('error', () => stop(new DaemonTransportError('socket_error')));
+    socket.once('end', () => stop(new DaemonTransportError('socket_closed')));
     socket.once('connect', () =>
       socket.write(JSON.stringify({ id: randomUUID(), ...command }) + '\n'),
     );
     socket.on('data', (chunk: string) => {
       received += chunk;
       if (Buffer.byteLength(received) > maxBytes)
-        return stop(new Error('Browser observation exceeded its limit.'));
+        return stop(new DaemonTransportError('response_limit'));
       const end = received.indexOf('\n');
       if (end < 0) return;
       try {
@@ -153,7 +173,7 @@ export function existingDaemonCommand(
         if (response.success !== true) throw new Error();
         stop(undefined, response.data ?? {});
       } catch {
-        stop(new Error('The previous browser is unavailable.'));
+        stop(new DaemonTransportError('invalid_response'));
       }
     });
   });

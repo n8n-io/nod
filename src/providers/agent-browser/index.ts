@@ -23,6 +23,7 @@ import {
   createScreenStore,
   existingDaemonCommand,
   DaemonCommandError,
+  DaemonTransportError,
   type StoredScreen,
 } from './screens.ts';
 import {
@@ -53,6 +54,14 @@ interface BrowserState {
   saved: StoredScreen;
   browserExecutable?: string;
 }
+export interface BrowserDiagnostic {
+  at: string;
+  phase: 'url' | 'screenshot' | 'snapshot' | 'cleanup' | 'command';
+  outcome:
+    'completed' | 'daemon_rejected' | 'action_rejected' | 'failed' | DaemonTransportError['kind'];
+  elapsedMs: number;
+}
+
 class BrowserLockedError extends Error {
   statusCode = 423;
   constructor() {
@@ -142,6 +151,7 @@ export function createAgentBrowserComputer(options: {
   maxLiveSessions?: number;
   run?: typeof runProcess;
   daemonCommand?: typeof existingDaemonCommand;
+  onDiagnostic?(event: BrowserDiagnostic): void;
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
   let lastSession: { threadId: string; lastActivityAt: string } | undefined;
@@ -158,7 +168,15 @@ export function createAgentBrowserComputer(options: {
   const executable =
     options.executable ?? resolve(process.cwd(), 'node_modules/.bin/agent-browser');
   const run = options.run ?? runProcess;
-  const requestDaemon = options.daemonCommand ?? existingDaemonCommand;
+  const requestDaemon = (...args: Parameters<typeof existingDaemonCommand>) =>
+    diagnose(
+      args[1].action === 'url' || args[1].action === 'screenshot' || args[1].action === 'snapshot'
+        ? args[1].action
+        : args[1].action === 'close'
+          ? 'cleanup'
+          : 'command',
+      () => (options.daemonCommand ?? existingDaemonCommand)(...args),
+    );
   const sandbox = options.sandbox !== false;
   const platform = options.platform ?? process.platform;
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
@@ -168,6 +186,37 @@ export function createAgentBrowserComputer(options: {
   let disposed = false;
   let activeCalls = 0;
   let allocationQueue: Promise<void> = Promise.resolve();
+  async function diagnose<T>(phase: BrowserDiagnostic['phase'], operation: () => Promise<T>) {
+    const started = performance.now();
+    const record = (outcome: BrowserDiagnostic['outcome']) => {
+      const event: BrowserDiagnostic = {
+        at: new Date().toISOString(),
+        phase,
+        outcome,
+        elapsedMs: Math.round(performance.now() - started),
+      };
+      try {
+        if (options.onDiagnostic) options.onDiagnostic(event);
+        else console.warn(JSON.stringify({ event: 'browser_command', ...event }));
+      } catch {}
+    };
+    try {
+      const result = await operation();
+      if (phase === 'cleanup') record('completed');
+      return result;
+    } catch (error) {
+      record(
+        error instanceof DaemonTransportError
+          ? error.kind
+          : error instanceof DaemonCommandError
+            ? 'daemon_rejected'
+            : error instanceof BrowserActionError
+              ? 'action_rejected'
+              : 'failed',
+      );
+      throw error;
+    }
+  }
   function allocate<T>(operation: () => Promise<T>): Promise<T> {
     const pending = allocationQueue.then(operation);
     allocationQueue = pending.then(
@@ -472,8 +521,22 @@ export function createAgentBrowserComputer(options: {
     return (await command(state, ['eval', '--stdin'], { input: script, signal })).result;
   }
 
+  async function observationCommand(
+    state: BrowserState,
+    args: string[],
+    options: Parameters<typeof command>[2],
+  ) {
+    try {
+      return await command(state, args, options);
+    } catch (error) {
+      if (error instanceof DaemonCommandError)
+        throw new BrowserActionError('browser_observation_failed');
+      throw error;
+    }
+  }
+
   async function currentUrl(state: BrowserState, signal?: AbortSignal): Promise<string> {
-    const data = await command(state, ['get', 'url'], { signal });
+    const data = await observationCommand(state, ['get', 'url'], { signal });
     const url = String(data.url ?? data.value ?? '');
     if (url === 'about:blank') return url;
     browserUrl(url);
@@ -644,18 +707,11 @@ export function createAgentBrowserComputer(options: {
     const offset = input?.action === 'snapshot' ? (input.offset ?? 0) : 0;
     if (!Number.isInteger(offset) || offset < 0 || offset > 100_000)
       throw new Error('Choose a page offset of at most 100000 characters.');
-    const snapshot = async () => {
-      try {
-        return await command(state, scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'], {
-          signal,
-          maxBytes: 1024 * 1024,
-        });
-      } catch (error) {
-        if (error instanceof DaemonCommandError)
-          throw new BrowserActionError('browser_observation_failed');
-        throw error;
-      }
-    };
+    const snapshot = () =>
+      observationCommand(state, scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'], {
+        signal,
+        maxBytes: 1024 * 1024,
+      });
     let data = await snapshot();
     for (let attempt = 0; attempt < 4 && !String(data.snapshot ?? '').trim(); attempt++) {
       await delay(750, undefined, { signal });
@@ -1180,7 +1236,7 @@ export function createAgentBrowserComputer(options: {
       throw new Error('Reopen the login page before continuing this browser session.');
     const url = await currentUrl(state, signal);
     const path = resolve(runtimeRoot, `screen-${state.id}.capture.png`);
-    await command(state, ['screenshot', path], { signal });
+    await observationCommand(state, ['screenshot', path], { signal });
     const buffer = await screens.accept(state.id, path);
     state.saved.capturedAt = new Date().toISOString();
     await saveState(state);

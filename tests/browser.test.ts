@@ -31,6 +31,7 @@ import {
   createAgentBrowserComputer,
   redactBrowserText,
   redactBrowserUrl,
+  type BrowserDiagnostic,
 } from '../src/providers/agent-browser/index.ts';
 import {
   DaemonCommandError,
@@ -443,6 +444,7 @@ async function transportFixture(respectTimeouts = false) {
   const pages = stagedLoginBrowser();
   const actions: string[] = [];
   const launches: string[] = [];
+  const diagnostics: BrowserDiagnostic[] = [];
   const sockets = new Set<Socket>();
   let before = async (_action: string, _command: Record<string, unknown>) => {};
   let after = async (_action: string, _command: Record<string, unknown>, _socket: Socket) => {};
@@ -490,6 +492,7 @@ async function transportFixture(respectTimeouts = false) {
   );
   const computer = createAgentBrowserComputer({
     dataRoot: directory,
+    onDiagnostic: (event) => diagnostics.push(event),
     daemonCommand: (path, command, signal, timeoutMs) => {
       timeouts.push({ action: command.action, timeoutMs });
       return existingDaemonCommand(path, command, signal, respectTimeouts ? timeoutMs : 250);
@@ -521,6 +524,7 @@ async function transportFixture(respectTimeouts = false) {
     computer,
     actions,
     launches,
+    diagnostics,
     page: () => pages.pages.get('fixture')!,
     switches,
     timeouts,
@@ -578,12 +582,79 @@ test('a timed out snapshot is not resent and its queue remains fenced until clos
     assert.equal(f.actions.slice(before).filter((action) => action === 'snapshot').length, 1);
     assert.equal(f.actions.slice(before).filter((action) => action === 'close').length, 1);
     assert.deepEqual(f.launches, ['open', 'info']);
+    assert.deepEqual(
+      f.diagnostics.map(({ phase, outcome }) => ({ phase, outcome })),
+      [
+        { phase: 'snapshot', outcome: 'timeout' },
+        { phase: 'cleanup', outcome: 'completed' },
+      ],
+    );
   } finally {
     releaseSnapshot.resolve();
     releaseClose.resolve();
     await f.cleanup();
   }
 });
+
+for (const [method, phase] of [
+  ['screenshot', 'screenshot'],
+  ['screenshot', 'url'],
+  ['currentPage', 'url'],
+  ['snapshot', 'url'],
+] as const)
+  test(`an acknowledged ${phase} failure during ${method} preserves the page and emits private-safe diagnostics`, async () => {
+    const browser = await transportFixture();
+    const bridge = await harness({ computer: browser.computer });
+    const computer = bridge.client('/synthetic/capture-failure');
+    const upstreamError = 'Synthetic private upstream detail https://example.test/?token=private';
+    const identifier = 'synthetic-private@example.test';
+    try {
+      await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+      const page = browser.page();
+      page.input.value = identifier;
+      page.next.disabled = false;
+      browser.fail(phase, upstreamError);
+      const before = browser.actions.length;
+      await assert.rejects(
+        method === 'snapshot'
+          ? computer.act('fixture', { action: 'snapshot' })
+          : computer[method]('fixture'),
+        (error: unknown) => {
+          assert.ok(error instanceof BrowserActionError);
+          assert.equal(error.code, 'browser_observation_failed');
+          assert.equal(error.message.includes(upstreamError), false);
+          return true;
+        },
+      );
+      assert.equal(page.stage, 'identifier');
+      assert.equal(page.input.value, identifier);
+      assert.deepEqual(page.entered, []);
+      assert.deepEqual(
+        browser.actions.slice(before),
+        phase === 'screenshot' ? ['url', phase] : [phase],
+      );
+      assert.equal(browser.diagnostics.length, 1);
+      const diagnostic = browser.diagnostics[0];
+      assert.deepEqual(Object.keys(diagnostic).sort(), ['at', 'elapsedMs', 'outcome', 'phase']);
+      assert.equal(diagnostic.phase, phase);
+      assert.equal(diagnostic.outcome, 'daemon_rejected');
+      assert.ok(Number.isFinite(Date.parse(diagnostic.at)));
+      assert.ok(Number.isFinite(diagnostic.elapsedMs) && diagnostic.elapsedMs >= 0);
+      const recorded = JSON.stringify(browser.diagnostics);
+      for (const secret of [upstreamError, identifier, 'https://', 'private'])
+        assert.equal(recorded.includes(secret), false);
+      browser.fail();
+      const screen = await computer.screenshot('fixture');
+      assert.equal(screen?.toString(), page.screen());
+      assert.equal(computer.screenStatus!('fixture').state, 'live');
+      assert.equal(browser.actions.includes('close'), false);
+      assert.deepEqual(browser.launches, ['open', 'info']);
+    } finally {
+      browser.fail();
+      await bridge.close();
+      await browser.cleanup();
+    }
+  });
 
 for (const action of ['snapshot', 'click'] as const)
   test(`an acknowledged ${action} observation failure preserves the page through the browser bridge`, async () => {
