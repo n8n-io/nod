@@ -29,17 +29,6 @@ import {
   redactBrowserText,
   redactBrowserUrl,
 } from '../src/providers/agent-browser/index.ts';
-import {
-  loginInspectionSchema,
-  loginInspectionScript,
-  loginReferenceScript,
-  loginReferencesStableScript,
-} from '../src/providers/agent-browser/login.ts';
-import {
-  credentialFields,
-  credentialEntryScript,
-} from '../src/providers/agent-browser/credentials.ts';
-import { maskPageScript } from '../src/providers/agent-browser/redaction.ts';
 import { existingDaemonCommand } from '../src/providers/agent-browser/screens.ts';
 import { runProcess } from '../src/providers/process.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
@@ -238,12 +227,7 @@ function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
     act: async () => ({ text: 'Synthetic page', url: 'https://example.test/', candidates: [] }),
     screenshot: async () => null,
     injectCredentials: async () => ({ status: 'submitted' }),
-    inspectLogin: async () => ({
-      origin: 'https://example.test',
-      url: 'https://example.test/',
-      fields: [],
-      methods: [],
-    }),
+    currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
     hold: async () => {},
     close: async () => {},
     dispose: async () => {},
@@ -373,9 +357,9 @@ test('checkpoint status blocks credential injection until the private call finis
   const release = deferred();
   try {
     await f.open();
-    const selector = (await f.computer.inspectLogin('task')).fields[0].selector;
+    const selector = '#account';
     f.before(async (command) => {
-      if (command[0] === 'eval') {
+      if (command[0] === 'fill') {
         entered.resolve();
         await release.promise;
       }
@@ -512,164 +496,6 @@ async function transportFixture(respectTimeouts = false) {
     },
   };
 }
-
-test('failed private entry clears its actual writes even when the response is lost', async () => {
-  for (const behavior of ['lost', 'replacement', 'delayed']) {
-    const f = await transportFixture();
-    const release = deferred();
-    const executed = deferred();
-    let entries = 0;
-    const followups: string[] = [];
-    try {
-      await f.computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
-      const field = (await f.computer.inspectLogin('fixture')).fields[0];
-      const original = f.page().input;
-      const replacement = original.cloneNode() as HTMLInputElement;
-      replacement.value = 'replacement-user-value';
-      const state = { input: '', change: '' };
-      original.addEventListener('input', () => {
-        state.input = original.value;
-      });
-      original.addEventListener('change', () => {
-        state.change = original.value;
-      });
-      const isEntry = (command: Record<string, unknown>) =>
-        command.action === 'evaluate' && String(command.script).includes('const origin=');
-      f.before(async (_action, command) => {
-        if (isEntry(command)) {
-          entries++;
-          if (behavior === 'delayed') await release.promise;
-        } else if (entries && command.action === 'evaluate') {
-          followups.push(String(command.script));
-        }
-      });
-      f.after(async (_action, command, socket) => {
-        if (!isEntry(command)) return;
-        if (behavior === 'replacement') original.replaceWith(replacement);
-        socket.destroy();
-        executed.resolve();
-      });
-      await assert.rejects(
-        f.computer.injectCredentials({
-          threadId: 'fixture',
-          origin: 'https://1.1.1.1',
-          kind: 'identifier',
-          username: 'synthetic-lost-response',
-          usernameSelector: field.selector,
-        }),
-        /Secure entry could not be confirmed/,
-      );
-      release.resolve();
-      await executed.promise;
-      assert.equal(original.value, '', behavior);
-      assert.deepEqual(state, { input: '', change: '' }, behavior);
-      assert.equal(replacement.value, 'replacement-user-value', behavior);
-      assert.equal(f.page().search.value, '', behavior);
-      assert.equal(entries, 1, behavior);
-      assert.ok(followups.length, behavior);
-      assert.equal(
-        followups.some((script) => script.includes('synthetic-lost-response')),
-        false,
-      );
-    } finally {
-      release.resolve();
-      await f.cleanup();
-    }
-  }
-});
-
-test('confirmed private entry stays successful when finalization loses its response', async () => {
-  const f = await transportFixture();
-  let entered = false;
-  let followups = 0;
-  try {
-    await f.computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
-    const field = (await f.computer.inspectLogin('fixture')).fields[0];
-    f.after(async (action, command, socket) => {
-      if (action !== 'evaluate') return;
-      if (String(command.script).includes('const origin=')) entered = true;
-      else if (entered) {
-        followups++;
-        assert.equal(String(command.script).includes('synthetic-confirmed'), false);
-        socket.destroy();
-      }
-    });
-    assert.deepEqual(
-      await f.computer.injectCredentials({
-        threadId: 'fixture',
-        origin: 'https://1.1.1.1',
-        kind: 'identifier',
-        username: 'synthetic-confirmed',
-        usernameSelector: field.selector,
-      }),
-      { status: 'submitted' },
-    );
-    assert.equal(f.page().input.value, 'synthetic-confirmed');
-    assert.equal(followups, 1);
-  } finally {
-    await f.cleanup();
-  }
-});
-
-test('unacknowledged credential cleanup fences later actions until browser close succeeds', async () => {
-  for (const delayedEntry of [false, true]) {
-    const f = await transportFixture();
-    const releaseEntry = deferred();
-    const releaseCleanup = deferred();
-    const cleanupFinished = deferred();
-    const entryFinished = deferred();
-    let entered = false;
-    const isEntry = (command: Record<string, unknown>) =>
-      command.action === 'evaluate' && String(command.script).includes('const origin=');
-    try {
-      await f.computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
-      const field = (await f.computer.inspectLogin('fixture')).fields[0];
-      const input = {
-        threadId: 'fixture',
-        origin: 'https://1.1.1.1',
-        kind: 'identifier' as const,
-        username: 'synthetic-delayed-entry',
-        usernameSelector: field.selector,
-      };
-      f.before(async (action, command) => {
-        if (isEntry(command)) {
-          entered = true;
-          if (delayedEntry) await releaseEntry.promise;
-        } else if (entered && action === 'evaluate') await releaseCleanup.promise;
-      });
-      f.after(async (action, command, socket) => {
-        if (isEntry(command)) {
-          socket.destroy();
-          entryFinished.resolve();
-        } else if (entered && action === 'evaluate') cleanupFinished.resolve();
-      });
-      f.fail('close');
-      await assert.rejects(
-        f.computer.injectCredentials(input),
-        /Secure entry could not be confirmed/,
-      );
-      const count = f.actions.length;
-      assert.equal(f.actions.filter((action) => action === 'close').length, 1);
-      await assert.rejects(f.computer.injectCredentials(input), /expired/);
-      await assert.rejects(f.computer.act('fixture', { action: 'snapshot' }), /expired/);
-      assert.equal(f.actions.length, count);
-      releaseCleanup.resolve();
-      await cleanupFinished.promise;
-      releaseEntry.resolve();
-      await entryFinished.promise;
-      assert.equal(f.page().input.value, '');
-      f.before(async () => {});
-      f.after(async () => {});
-      f.fail();
-      await f.computer.close('fixture');
-      assert.equal(f.actions.filter((action) => action === 'close').length, 2);
-    } finally {
-      releaseCleanup.resolve();
-      releaseEntry.resolve();
-      await f.cleanup();
-    }
-  }
-});
 
 test('a timed out snapshot is not resent and its queue remains fenced until close is acknowledged', async () => {
   const f = await transportFixture();
@@ -877,14 +703,9 @@ function workerComputer() {
       calls.push({ method: 'injectCredentials', input });
       return { status: 'submitted' };
     },
-    inspectLogin: async (_id, target) => {
-      calls.push({ method: 'inspectLogin', input: target });
-      return {
-        origin: 'https://example.com',
-        url: 'https://example.com/login',
-        fields: [],
-        methods: [],
-      };
+    currentPage: async () => {
+      calls.push({ method: 'currentPage' });
+      return { origin: 'https://example.com', url: 'https://example.com/login' };
     },
     hold: async () => {},
     close: async () => {
@@ -1000,22 +821,13 @@ test('Vault broker metadata stays local while identifier, password and OTP input
   ];
   try {
     const computer = fixture.client(dataRoot);
-    const target = {
+    assert.deepEqual(await computer.currentPage('task'), {
       origin: 'https://example.com',
-      kind: 'otp' as const,
-      passwordSelector: '@e7',
-      emailCode: true,
-    };
-    await computer.inspectLogin('task', target);
+      url: 'https://example.com/login',
+    });
     assert.deepEqual(
-      fixture.instance(dataRoot).calls.filter((call) => call.method === 'inspectLogin'),
-      [{ method: 'inspectLogin', input: target }],
-    );
-    const withSecret = { ...target, username: 'private-inspection-value' };
-    await assert.rejects(computer.inspectLogin('task', withSecret));
-    assert.equal(
-      fixture.instance(dataRoot).calls.filter((call) => call.method === 'inspectLogin').length,
-      1,
+      fixture.instance(dataRoot).calls.filter((call) => call.method === 'currentPage'),
+      [{ method: 'currentPage' }],
     );
     for (const input of inputs)
       assert.deepEqual(await computer.injectCredentials(input), { status: 'submitted' });
@@ -1130,129 +942,6 @@ test('an unacknowledged cancellation fences new actions until namespace cleanup 
 
 // Login inspection and observation redaction
 
-test('selected unfamiliar fields bind their actual nodes independently of labels and extra fields', () => {
-  const dom = new JSDOM(
-    '<form><label>アクセス番号<input id="account" autocomplete="one-time-code" readonly></label><label>秘密<input id="secret" type="password"></label><input type="password"><input type="email"><input id="code" maxlength="6" aria-label="Συνθηματικό"></form>',
-    { url: 'https://identity.example.test/login', runScripts: 'outside-only' },
-  );
-  dom.window.HTMLElement.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
-  try {
-    const account = dom.window.document.querySelector<HTMLInputElement>('#account')!;
-    const secret = dom.window.document.querySelector<HTMLInputElement>('#secret')!;
-    account.addEventListener('focus', () => {
-      account.readOnly = false;
-    });
-    const inspection = loginInspectionSchema.parse(
-      dom.window.eval(
-        loginInspectionScript({
-          origin: dom.window.location.origin,
-          kind: 'password',
-          usernameSelector: '#account',
-          passwordSelector: '#secret',
-        }),
-      ),
-    );
-    assert.deepEqual(
-      inspection.fields.map((field) => field.kind),
-      ['identifier', 'password'],
-    );
-    assert.equal(dom.window.document.querySelector(inspection.fields[0].selector), account);
-    assert.equal(dom.window.document.querySelector(inspection.fields[1].selector), secret);
-    assert.equal(account.readOnly, true);
-    const fields = credentialFields({
-      threadId: 'fixture',
-      origin: dom.window.location.origin,
-      kind: 'password',
-      username: 'synthetic-account',
-      password: 'synthetic-password',
-      usernameSelector: inspection.fields[0].selector,
-      passwordSelector: inspection.fields[1].selector,
-    });
-    assert.equal(
-      (
-        dom.window.eval(
-          credentialEntryScript(dom.window.location.origin, fields, 'fixture-attempt'),
-        ) as {
-          ok: boolean;
-        }
-      ).ok,
-      true,
-    );
-    assert.equal(account.readOnly, false);
-    secret.replaceWith(secret.cloneNode());
-    const stale = loginInspectionSchema.parse(
-      dom.window.eval(
-        loginInspectionScript({
-          origin: dom.window.location.origin,
-          kind: 'password',
-          usernameSelector: inspection.fields[0].selector,
-          passwordSelector: inspection.fields[1].selector,
-        }),
-      ),
-    );
-    assert.deepEqual(stale.fields, []);
-    const otp = loginInspectionSchema.parse(
-      dom.window.eval(
-        loginInspectionScript({
-          origin: dom.window.location.origin,
-          kind: 'otp',
-          passwordSelector: '#code',
-        }),
-      ),
-    );
-    assert.equal(otp.fields.length, 1);
-    assert.equal(otp.fields[0].kind, 'otp');
-  } finally {
-    dom.window.close();
-  }
-});
-
-test('snapshot field references tolerate unrelated animation and reject relevant page changes', () => {
-  for (const mutation of [
-    'spinner-style',
-    'spinner-aria',
-    'field',
-    'ancestor',
-    'label',
-    'aria-source',
-    'aria-text',
-    'hidden-field',
-    'structure',
-  ]) {
-    const dom = new JSDOM(
-      '<form><label for="account">Account <span id="label-text">number</span></label><input id="account" aria-labelledby="name" aria-describedby="detail"><input id="hidden" hidden><span id="name">Account name</span><span id="detail">Use your saved account</span></form><span id="spinner">Loading</span>',
-      { url: 'https://example.test/login', runScripts: 'outside-only' },
-    );
-    dom.window.HTMLElement.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
-    try {
-      const document = dom.window.document;
-      dom.window.eval(loginReferenceScript('snapshot'));
-      if (mutation === 'spinner-style')
-        document.querySelector<HTMLElement>('#spinner')!.style.opacity = '0.5';
-      if (mutation === 'spinner-aria')
-        document.querySelector('#spinner')!.setAttribute('aria-busy', 'true');
-      if (mutation === 'field')
-        document.querySelector('#account')!.setAttribute('aria-label', 'Changed');
-      if (mutation === 'ancestor') document.querySelector('form')!.setAttribute('hidden', '');
-      if (mutation === 'label')
-        document.querySelector('#label-text')!.setAttribute('class', 'changed');
-      if (mutation === 'aria-source') document.querySelector('#name')!.setAttribute('hidden', '');
-      if (mutation === 'aria-text')
-        document.querySelector('#detail')!.firstChild!.nodeValue = 'Changed';
-      if (mutation === 'hidden-field') document.querySelector('#hidden')!.removeAttribute('hidden');
-      if (mutation === 'structure')
-        document.querySelector('#spinner')!.append(document.createElement('span'));
-      assert.equal(
-        dom.window.eval(loginReferencesStableScript),
-        mutation === 'spinner-style' || mutation === 'spinner-aria',
-        mutation,
-      );
-    } finally {
-      dom.window.close();
-    }
-  }
-});
-
 test('browser observations redact OAuth callback values, API credentials and signed URL query values', () => {
   const url = redactBrowserUrl(
     'https://example.com/callback?code=private-code&email=private-email&state=private-state&view=account#access_token=private-token',
@@ -1309,113 +998,49 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
   const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
   try {
     await computer.act('login', { action: 'open', url: 'https://1.1.1.1/login' });
-    const first = await computer.inspectLogin('login');
-    assert.deepEqual(
-      first.fields.map((field) => field.kind),
-      ['identifier'],
-    );
+    const origin = 'https://1.1.1.1';
     await assert.rejects(
-      computer.act('login', {
-        action: 'fill',
-        selector: first.fields[0].selector,
-        text: 'not-through-chat',
-      }),
+      computer.act('login', { action: 'fill', selector: '#account', text: 'not-through-chat' }),
       /secure credential/,
     );
     const identifier = computer.injectCredentials({
       threadId: 'login',
-      origin: first.origin,
+      origin,
       kind: 'identifier',
       username: 'synthetic-account@example.test',
-      usernameSelector: first.fields[0].selector,
+      usernameSelector: '#account',
     });
     await assert.rejects(computer.screenshot('login'), /paused/);
     await identifier;
     await computer.act('login', { action: 'click', selector: 'button' });
-    const password = await computer.inspectLogin('login');
-    assert.deepEqual(
-      password.fields.map((field) => field.kind),
-      ['password'],
-    );
     await computer.injectCredentials({
       threadId: 'login',
-      origin: password.origin,
+      origin,
       kind: 'password',
       password: 'synthetic-password',
-      passwordSelector: password.fields[0].selector,
+      passwordSelector: '#account',
     });
     await computer.act('login', { action: 'click', selector: 'button' });
     const challenge = fixture.pages.get('login')?.input;
     assert.ok(challenge);
     assert.equal(fixture.pages.get('login')?.stage, 'otp');
-    const otp = await computer.inspectLogin('login');
-    assert.deepEqual(
-      otp.fields.map((field) => field.kind),
-      ['otp'],
-    );
     await computer.injectCredentials({
       threadId: 'login',
-      origin: otp.origin,
+      origin,
       kind: 'otp',
       code: '739204',
-      passwordSelector: otp.fields[0].selector,
+      passwordSelector: '#account',
     });
+    assert.deepEqual(fixture.pages.get('login')?.entered, [
+      'synthetic-account@example.test',
+      'synthetic-password',
+    ]);
     await computer.act('login', { action: 'click', selector: 'button' });
     assert.equal(fixture.pages.get('login')?.stage, 'complete');
+    assert.equal(fixture.pages.get('login')?.entered.at(-1), '739204');
     const observation = await computer.act('login', { action: 'snapshot' });
-    const screen = await computer.screenshot('login');
-    for (const secret of ['synthetic-account@example.test', 'synthetic-password', '739204']) {
+    for (const secret of ['synthetic-account@example.test', 'synthetic-password', '739204'])
       assert.equal(JSON.stringify(observation).includes(secret), false);
-      assert.equal(screen?.includes(Buffer.from(secret)), false);
-    }
-  } finally {
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('browser references bind selected nodes and reject later replacement without native fallback', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-login-ref-'));
-  const fixture = stagedLoginBrowser();
-  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
-  try {
-    await computer.act('login', { action: 'open', url: 'https://1.1.1.1/login' });
-    const page = fixture.pages.get('login')!;
-    const ref = [...page.refs].find(([, node]) => node === page.input)![0];
-    const chosen = await computer.inspectLogin('login', {
-      origin: page.location.origin,
-      kind: 'identifier',
-      usernameSelector: ref,
-    });
-    const original = page.input;
-    const replacement = original.cloneNode() as HTMLInputElement;
-    replacement.value = 'unrelated-user-value';
-    original.replaceWith(replacement);
-    page.refs.set(ref, replacement);
-    for (const selector of [ref, chosen.fields[0].selector]) {
-      await assert.rejects(
-        computer.injectCredentials({
-          threadId: 'login',
-          origin: page.location.origin,
-          kind: 'identifier',
-          username: 'synthetic-account',
-          usernameSelector: selector,
-        }),
-        /Secure entry could not be confirmed/,
-      );
-      assert.equal(replacement.value, 'unrelated-user-value');
-      assert.equal(original.value, '');
-    }
-    await computer.act('login', { action: 'snapshot' });
-    const fresh = [...page.refs].find(([, node]) => node === replacement)![0];
-    await computer.injectCredentials({
-      threadId: 'login',
-      origin: page.location.origin,
-      kind: 'identifier',
-      username: 'synthetic-account',
-      usernameSelector: fresh,
-    });
-    assert.equal(replacement.value, 'synthetic-account');
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -1427,7 +1052,6 @@ test('profile origin remains authoritative when the page navigates after its ini
   const fixture = stagedLoginBrowser();
   const profileId = randomUUID();
   let race = false;
-  let foreignReads = 0;
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: async (executable, args, options) => {
@@ -1445,12 +1069,6 @@ test('profile origin remains authoritative when the page navigates after its ini
     await computer.bindProfile!('fixture', profileId, 'https://1.1.1.1');
     await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
     const page = fixture.pages.get(profileId)!;
-    Object.defineProperty(page.input, 'value', {
-      get: () => {
-        if (page.location.origin === 'https://8.8.8.8') foreignReads++;
-        return 'synthetic-foreign-value';
-      },
-    });
     for (const action of ['snapshot', 'screenshot'] as const) {
       page.location = { origin: 'https://1.1.1.1', href: 'https://1.1.1.1/login' };
       race = true;
@@ -1460,7 +1078,6 @@ test('profile origin remains authoritative when the page navigates after its ini
           : computer.screenshot('fixture'),
         (error) => error instanceof BrowserActionError && error.code === 'browser_origin_changed',
       );
-      assert.equal(foreignReads, 0);
     }
   } finally {
     await computer.dispose();
@@ -1468,13 +1085,11 @@ test('profile origin remains authoritative when the page navigates after its ini
   }
 });
 
-test('origin changes never send fresh or previous credentials through page masking', async () => {
+test('secure entry never sends a credential to a page on another origin', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-login-origin-'));
   const fixture = stagedLoginBrowser();
   const secret = 'synthetic-origin-secret';
   let exposed = 0;
-  let race = false;
-  let foreignReads = 0;
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: fixture.run,
@@ -1484,394 +1099,91 @@ test('origin changes never send fresh or previous credentials through page maski
         JSON.stringify(command).includes(secret)
       )
         exposed++;
-      if (
-        race &&
-        command.action === 'evaluate' &&
-        String(command.script).includes('const selectors=')
-      ) {
-        race = false;
-        const page = fixture.pages.get('fixture')!;
-        page.location = { origin: 'https://8.8.8.8', href: 'https://8.8.8.8/login' };
-        Object.defineProperty(page.input, 'value', {
-          get: () => {
-            foreignReads++;
-            return '';
-          },
-        });
-      }
     },
   });
   try {
     await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
-    const inspection = await computer.inspectLogin('fixture');
     const page = fixture.pages.get('fixture')!;
     const input = {
       threadId: 'fixture',
-      origin: inspection.origin,
+      origin: 'https://1.1.1.1',
       kind: 'identifier' as const,
       username: secret,
-      usernameSelector: inspection.fields[0].selector,
+      usernameSelector: '#account',
     };
     page.location = { origin: 'https://8.8.8.8', href: 'https://8.8.8.8/login' };
-    await assert.rejects(computer.injectCredentials(input), /Secure entry could not be confirmed/);
+    await assert.rejects(computer.injectCredentials(input), /not on the website for this login/);
     assert.equal(exposed, 0);
     assert.equal(page.input.value, '');
-    page.location = { origin: inspection.origin, href: inspection.url };
+    page.location = { origin: 'https://1.1.1.1', href: 'https://1.1.1.1/login' };
     await computer.injectCredentials(input);
+    assert.equal(page.input.value, secret);
     page.render();
     page.location = { origin: 'https://8.8.8.8', href: 'https://8.8.8.8/login' };
     await computer.act('fixture', { action: 'snapshot' });
     assert.equal(exposed, 0);
-    page.location = { origin: inspection.origin, href: inspection.url };
-    race = true;
-    await assert.rejects(computer.act('fixture', { action: 'snapshot' }));
-    assert.equal(foreignReads, 0);
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test(
-  'native secure entry binds refs and rejects replacement before the private socket write',
-  {
-    skip: !process.env.OTTO_TEST_BROWSER_EXECUTABLE,
-    timeout: 60_000,
-  },
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'otto-native-login-'));
-    const server = createHttpServer((_request, response) => {
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(
-        '<html><title>Synthetic login</title><body><form><label>利用者<input id="account" readonly autocomplete="one-time-code"></label><label>暗証<input id="password" type="password"></label><input id="unrelated" value="existing-user-value"><button type="button" id="replace">Replace</button></form><script>document.querySelector("#account").addEventListener("focus",event=>{event.target.readOnly=false});document.querySelector("#replace").addEventListener("click",()=>{const e=document.querySelector("#password");const clone=e.cloneNode();clone.value="replacement-user-value";e.replaceWith(clone)});</script></body></html>',
-      );
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    assert.ok(address && typeof address !== 'string');
-    const origin = `http://127.0.0.1:${address.port}`;
-    const secret = 'synthetic-native-password';
-    let socket: string | undefined;
-    let replaceAtEntry = false;
-    let privateWrites = 0;
-    let shellLeak = false;
-    let responseLeak = false;
-    const computer = createAgentBrowserComputer({
-      dataRoot: directory,
-      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
-      headless: true,
-      run: async (executable, args, options) => {
-        shellLeak ||= JSON.stringify({ args, input: options?.input }).includes(secret);
-        const result = await runProcess(executable, args, options);
-        responseLeak ||= JSON.stringify(result).includes(secret);
-        return result;
-      },
-      daemonCommand: async (path, command, ...args) => {
-        socket = path;
-        const privateEntry =
-          command.action === 'evaluate' &&
-          typeof command.script === 'string' &&
-          command.script.includes('const origin=') &&
-          command.script.includes(secret);
-        if (privateEntry) {
-          assert.equal(command.action, 'evaluate');
-          privateWrites++;
-          if (replaceAtEntry)
-            await existingDaemonCommand(path, {
-              action: 'evaluate',
-              script: 'document.querySelector("#replace").click()',
-            });
-        }
-        const result = await existingDaemonCommand(path, command, ...args);
-        if (privateEntry) responseLeak ||= JSON.stringify(result).includes(secret);
-        return result;
-      },
-    });
-    try {
-      const opened = await computer.act('fixture', { action: 'open', url: origin + '/login' });
-      const ref = /textbox "利用者" \[ref=(e\d+)\]/.exec(opened.text)?.[1];
-      assert.ok(ref);
-      const target = {
-        origin,
-        kind: 'password' as const,
-        usernameSelector: `@${ref}`,
-        passwordSelector: '#password',
-      };
-      const inspection = await computer.inspectLogin('fixture', target);
-      assert.equal(inspection.fields.length, 2);
-      const input = {
-        threadId: 'fixture',
-        origin,
-        kind: 'password' as const,
-        username: 'synthetic-native-account',
-        password: secret,
-        usernameSelector: inspection.fields[0].selector,
-        passwordSelector: inspection.fields[1].selector,
-      };
-      await computer.injectCredentials(input);
-      assert.ok(socket);
-      const entered = await existingDaemonCommand(socket, {
-        action: 'evaluate',
-        script: `({valid:document.querySelector('#account').value==='synthetic-native-account'&&document.querySelector('#password').value===${JSON.stringify(secret)}&&document.querySelector('#unrelated').value==='existing-user-value'})`,
-      });
-      assert.deepEqual(entered.result, { valid: true });
-      await computer.act('fixture', { action: 'open', url: origin + '/login' });
-      const fresh = await computer.inspectLogin('fixture', {
-        ...target,
-        usernameSelector: '#account',
-      });
-      replaceAtEntry = true;
-      await assert.rejects(
-        computer.injectCredentials({
-          ...input,
-          usernameSelector: fresh.fields[0].selector,
-          passwordSelector: fresh.fields[1].selector,
-        }),
-        /Secure entry could not be confirmed/,
-      );
-      const untouched = await existingDaemonCommand(socket, {
-        action: 'evaluate',
-        script:
-          "({valid:document.querySelector('#account').value===''&&document.querySelector('#password').value==='replacement-user-value'&&document.querySelector('#unrelated').value==='existing-user-value'})",
-      });
-      assert.deepEqual(untouched.result, { valid: true });
-      assert.equal(privateWrites, 2);
-      assert.equal(shellLeak, false);
-      assert.equal(responseLeak, false);
-    } finally {
-      await computer.dispose();
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-test('a signed-in job search box is not a sign-in field', () => {
-  const dom = new JSDOM(
-    '<main><h1>Jobs</h1><input aria-label="Search" placeholder="Search jobs"></main><footer>Sign in</footer>',
-    { url: 'https://www.example.com/company/jobs/', runScripts: 'outside-only' },
-  );
-  dom.window.HTMLElement.prototype.getClientRects = function () {
-    const rect = new dom.window.DOMRect(0, 0, 30, 30);
-    return Object.assign([rect], { item: (index: number) => (index === 0 ? rect : null) });
-  };
-  Object.defineProperty(dom.window.HTMLElement.prototype, 'innerText', {
-    get() {
-      return this.textContent;
-    },
-  });
-  try {
-    const inspection = loginInspectionSchema.parse(dom.window.eval(loginInspectionScript()));
-    assert.equal(inspection.fields.length, 0);
-    assert.equal(inspection.methods.length, 0);
-  } finally {
-    dom.window.close();
-  }
-});
-
-test('split-code observations hide each private input value and retain unrelated numbers and refs', async () => {
-  const directory = await mkdtemp('/tmp/otto-private-values-');
-  const dom = new JSDOM(
-    '<form class="otp"><h1>Verification</h1>' +
-      Array.from(
-        { length: 6 },
-        (_, index) => `<input class="otp-input" aria-label="Digit ${index + 1}" maxlength="1">`,
-      ).join('') +
-      '<button type="button">Verify</button></form><p>Invoice 2026, 18 items</p><form><input aria-label="Seats" value="18"></form>',
-    { url: 'https://1.1.1.1/login', runScripts: 'outside-only' },
-  );
-  dom.window.HTMLElement.prototype.getClientRects = function () {
-    const rect = new dom.window.DOMRect(0, 0, 30, 30);
-    return Object.assign([rect], { item: (index: number) => (index === 0 ? rect : null) });
-  };
-  Object.defineProperty(dom.window.HTMLElement.prototype, 'innerText', {
-    get() {
-      return this.textContent;
-    },
-  });
-  const inputs = [...dom.window.document.querySelectorAll('input')];
-  inputs[0].focus();
-  const snapshots: string[] = [];
+test('secure entry types a code into the referenced field and keeps it out of observations', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-login-code-'));
+  const fixture = stagedLoginBrowser();
+  const commands: Record<string, unknown>[] = [];
   const computer = createBrowserFixture({
     dataRoot: directory,
-    run: async (_executable, args, options) => {
-      const command = args.slice(args.indexOf('--idle-timeout') + 2);
-      let data: Record<string, unknown> = {};
-      if (command[0] === 'get' && command[1] === 'url') data = { url: dom.window.location.href };
-      if (command[0] === 'get' && command[1] === 'attr')
-        data = { value: inputs[Number(command[2].slice(2)) - 1]?.getAttribute(command[3]) ?? null };
-      if (command[0] === 'eval') data = { result: await dom.window.eval(options?.input ?? '') };
-      if (command[0] === 'fill') {
-        const target = dom.window.document.querySelector<HTMLInputElement>(command[1]);
-        if (target) target.value = command[2];
-      }
-      if (command[0] === 'snapshot') {
-        const snapshot = [
-          ...inputs.map(
-            (input, index) =>
-              `- textbox "${input.getAttribute('aria-label')}" [ref=e${index + 1}]: ${input.value}`,
-          ),
-          '- button "Verify" [ref=e8]',
-        ].join('\n');
-        snapshots.push(snapshot);
-        data = {
-          snapshot,
-          refs: {
-            ...Object.fromEntries(
-              inputs.map((input, index) => [
-                `e${index + 1}`,
-                { role: 'textbox', name: input.getAttribute('aria-label') },
-              ]),
-            ),
-            e8: { role: 'button', name: 'Verify' },
-          },
-        };
-      }
-      if (command[0] === 'screenshot') await writeFile(command[1], 'synthetic masked frame');
-      return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
+    run: fixture.run,
+    onDaemonCommand: (command) => {
+      if (['fill', 'press'].includes(String(command.action))) commands.push(command);
     },
   });
   try {
-    await computer.act('fixture', { action: 'open', url: dom.window.location.href });
-    const inspection = await computer.inspectLogin('fixture', {
-      origin: dom.window.location.origin,
-      kind: 'otp',
-      passwordSelector: '.otp-input',
-    });
-    const otp = inspection.fields.find((field) => field.kind === 'otp')!;
-    assert.ok(otp);
-    for (const [index, digit] of [...'137924'].entries()) inputs[index].value = digit;
-    const beforeEntry = await computer.act('fixture', { action: 'snapshot' });
-    assert.equal(beforeEntry.text.includes('137924'), false);
-    for (let index = 0; index < 6; index++)
-      assert.ok(
-        beforeEntry.text.includes(`textbox "Digit ${index + 1}" [ref=e${index + 1}]: [redacted]`),
-      );
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    const page = fixture.pages.get('fixture')!;
+    const ref = [...page.refs].find(([, node]) => node === page.input)![0];
     await computer.injectCredentials({
       threadId: 'fixture',
-      origin: dom.window.location.origin,
+      origin: 'https://1.1.1.1',
       kind: 'otp',
       code: '483729',
-      passwordSelector: '@e1',
+      passwordSelector: ref,
     });
+    assert.equal(page.input.value, '483729');
+    assert.deepEqual(commands, [
+      { action: 'fill', selector: ref, value: '' },
+      ...[...'483729'].map((key) => ({ action: 'press', key })),
+    ]);
     const observation = await computer.act('fixture', { action: 'snapshot' });
-    assert.match(snapshots.at(-1)!, /textbox "Digit 1" \[ref=e1\]: 4/);
-    assert.match(observation.text, /Invoice 2026, 18 items/);
-    assert.match(observation.text, /textbox "Seats" \[ref=e7\]: 18/);
-    for (let index = 0; index < 6; index++) {
-      assert.ok(
-        observation.text.includes(`textbox "Digit ${index + 1}" [ref=e${index + 1}]: [redacted]`),
-      );
-      assert.equal(inputs[index].style.color, 'transparent');
-    }
-    assert.deepEqual(observation.candidates, [{ id: '@e8', label: '- button "Verify" [ref=e8]' }]);
-    assert.equal(observation.text.includes('483729'), false);
+    assert.equal(JSON.stringify(observation).includes('483729'), false);
   } finally {
     await computer.dispose();
-    dom.window.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test('a required code field reused by a hidden challenge section binds by id and by snapshot ref', async () => {
-  const directory = await mkdtemp('/tmp/otto-required-code-');
-  const dom = new JSDOM(
-    '<form id="two-step-challenge"><div id="auth-app-div"><h1>Enter the code you see on your authenticator app</h1></div>' +
-      '<input id="input__phone_verification_pin" name="pin" maxlength="6" aria-label="Please enter the code here" required>' +
-      '<div id="sms-div" style="display:none"><input id="input__phone_verification_pin" name="pin" maxlength="6"></div>' +
-      '<button id="two-step-submit-button">Submit</button></form>',
-    { url: 'https://1.1.1.1/checkpoint/challenge', runScripts: 'outside-only' },
-  );
-  dom.window.HTMLElement.prototype.getClientRects = function () {
-    for (let node: Element | null = this; node; node = node.parentElement)
-      if (dom.window.getComputedStyle(node).display === 'none')
-        return Object.assign([], { item: () => null });
-    const rect = new dom.window.DOMRect(0, 0, 30, 30);
-    return Object.assign([rect], { item: (index: number) => (index === 0 ? rect : null) });
-  };
-  Object.defineProperty(dom.window.HTMLElement.prototype, 'innerText', {
-    get() {
-      return this.textContent;
-    },
-  });
-  const code = dom.window.document.querySelector<HTMLInputElement>('input[required]')!;
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: async (_executable, args, options) => {
-      const command = args.slice(args.indexOf('--idle-timeout') + 2);
-      let data: Record<string, unknown> = {};
-      if (command[0] === 'get' && command[1] === 'url') data = { url: dom.window.location.href };
-      if (command[0] === 'get' && command[1] === 'attr')
-        data = { value: command[2] === '@e1' ? code.getAttribute(command[3]) : null };
-      if (command[0] === 'eval') data = { result: await dom.window.eval(options?.input ?? '') };
-      if (command[0] === 'snapshot')
-        data = {
-          snapshot:
-            '- textbox "Please enter the code here" [required, ref=e1]\n- button "Submit code" [ref=e2]',
-          refs: {
-            e1: { role: 'textbox', name: 'Please enter the code here' },
-            e2: { role: 'button', name: 'Submit code' },
-          },
-        };
-      return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
-    },
-  });
-  try {
-    await computer.act('fixture', { action: 'open', url: dom.window.location.href });
-    for (const passwordSelector of ['#input__phone_verification_pin', '@e1']) {
-      if (passwordSelector.startsWith('@')) await computer.act('fixture', { action: 'snapshot' });
-      const inspection = await computer.inspectLogin('fixture', {
-        origin: dom.window.location.origin,
-        kind: 'otp',
-        passwordSelector,
-      });
-      assert.deepEqual(
-        inspection.fields.map((field) => field.kind),
-        ['otp'],
-        passwordSelector,
-      );
-      assert.equal(dom.window.document.querySelector(inspection.fields[0].selector), code);
-    }
-  } finally {
-    await computer.dispose();
-    dom.window.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('closing and reopening a browser creates a usable page without reviving old field bindings', async () => {
+test('closing and reopening a browser fills only the new page', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-login-reopen-'));
   const fixture = stagedLoginBrowser();
   const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
   try {
     await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
     const first = fixture.pages.get('fixture')!;
-    const selected = await computer.inspectLogin('fixture');
     await computer.close('fixture');
     assert.equal(first.closed, true);
     await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
     const next = fixture.pages.get('fixture')!;
     assert.equal(next === first, false);
-    await assert.rejects(
-      computer.injectCredentials({
-        threadId: 'fixture',
-        origin: selected.origin,
-        kind: 'identifier',
-        username: 'synthetic-reopened-account',
-        usernameSelector: selected.fields[0].selector,
-      }),
-      /Secure entry could not be confirmed/,
-    );
-    const fresh = await computer.inspectLogin('fixture');
     await computer.injectCredentials({
       threadId: 'fixture',
-      origin: fresh.origin,
+      origin: 'https://1.1.1.1',
       kind: 'identifier',
       username: 'synthetic-reopened-account',
-      usernameSelector: fresh.fields[0].selector,
+      usernameSelector: '#account',
     });
     assert.equal(next.input.value, 'synthetic-reopened-account');
+    assert.equal(first.input.value, '');
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -1892,20 +1204,19 @@ test('a restarted credential session serves only its cached masked image without
   });
   try {
     await original.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
-    const inspection = await original.inspectLogin('fixture');
     await original.injectCredentials({
       threadId: 'fixture',
-      origin: inspection.origin,
+      origin: 'https://1.1.1.1',
       kind: 'identifier',
       username: 'synthetic-secret@example.test',
-      usernameSelector: inspection.fields[0].selector,
+      usernameSelector: '#account',
     });
     const masked = await original.screenshot('fixture');
     assert.equal(masked?.includes(Buffer.from('synthetic-secret@example.test')), false);
     assert.deepEqual(await restored.screenshot('fixture'), masked);
     assert.equal(restored.screenStatus?.('fixture').state, 'last_known');
     assert.equal(commands, 0);
-    await assert.rejects(restored.inspectLogin('fixture'), /Open the login page/);
+    await assert.rejects(restored.currentPage('fixture'), /Open the login page/);
     const metadata = await readFile(join(directory, 'runtime/screen-fixture.json'), 'utf8');
     assert.equal(metadata.includes('synthetic-secret'), false);
   } finally {

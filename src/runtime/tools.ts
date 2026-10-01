@@ -125,7 +125,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (text, controls, scrollable areas; selector/offset/controlOffset page through more); click {selector}; fill {selector, text} (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector, targetSelector}; upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}; scroll {direction, selector?}; screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs; selector scopes it and offset pages through more); click {selector}; fill {selector, text} (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector, targetSelector}; upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}; scroll {direction, selector?}; evaluate {script} (run JavaScript in the current page and get its JSON result; saved secrets are redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
     Type.Object({
       action: literals([
         'open',
@@ -148,8 +148,10 @@ export const toolDefinitions = {
         'screenshot',
         'share_screenshot',
         'download',
+        'evaluate',
       ]),
       url: Type.Optional(Type.String({ maxLength: 8192 })),
+      script: Type.Optional(Type.String({ maxLength: 20000 })),
       tabId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
       selector: Type.Optional(Type.String()),
       targetSelector: Type.Optional(Type.String()),
@@ -161,7 +163,6 @@ export const toolDefinitions = {
       direction: Type.Optional(literals(['up', 'down'])),
       waitMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 15000 })),
       offset: Type.Optional(Type.Integer({ minimum: 0, maximum: 100000 })),
-      controlOffset: Type.Optional(Type.Integer({ minimum: 0, maximum: 100000 })),
       name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     }),
   ),
@@ -172,7 +173,7 @@ export const toolDefinitions = {
   ),
   get_credential: defineTool(
     'get_credential',
-    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and password. To fill protected browser fields, omit the ID and give field references from a fresh browser snapshot. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email. Vault can fill a saved login or open a secure form. Submit with browser and inspect the result.',
+    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault can fill a saved login or open a secure form. Submit with browser and inspect the result.',
     Type.Union([
       Type.Object({
         id: uuid,
@@ -185,6 +186,7 @@ export const toolDefinitions = {
         usernameSelector: Type.Optional(Type.String()),
         passwordSelector: Type.Optional(Type.String()),
         emailCode: Type.Optional(Type.Boolean()),
+        emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
         savedLoginId: Type.Optional(uuid),
       }),
     ]),

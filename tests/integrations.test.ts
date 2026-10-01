@@ -4002,28 +4002,16 @@ test('metering covers capabilities without recording prompts, arguments, output 
     null,
     new AbortController().signal,
   );
-  const target = {
-    origin: 'https://private.example',
-    kind: 'otp' as const,
-    passwordSelector: '@e19',
-    emailCode: true,
-  };
   await meterComputer(
     {
       ...fakeComputer(),
-      inspectLogin: async (threadId, selected) => {
+      currentPage: async (threadId) => {
         assert.equal(threadId, 'private-thread');
-        assert.deepEqual(selected, target);
-        return {
-          origin: 'https://private.example',
-          url: 'https://private.example/verification',
-          fields: [],
-          methods: [],
-        };
+        return { origin: 'https://private.example', url: 'https://private.example/verification' };
       },
     },
     usage,
-  ).inspectLogin('private-thread', target);
+  ).currentPage('private-thread');
   await usage.flush();
   assert.deepEqual(
     rows.map((row) => row[5]).sort(),
@@ -4036,7 +4024,7 @@ test('metering covers capabilities without recording prompts, arguments, output 
       'restore_session',
       'execute',
       'poll_inbox',
-      'inspect_login',
+      'current_page',
     ].sort(),
   );
   assert.doesNotMatch(JSON.stringify(rows), /private|secret\.example/);

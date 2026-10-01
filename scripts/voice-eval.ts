@@ -136,12 +136,7 @@ const computer: Computer = {
   },
   screenshot: async () => null,
   injectCredentials: async () => {},
-  inspectLogin: async () => ({
-    origin: 'https://example.com',
-    url: 'https://example.com',
-    fields: [],
-    methods: [],
-  }),
+  currentPage: async () => ({ origin: 'https://example.com', url: 'https://example.com' }),
   hold: async () => {},
   close: async () => {},
   dispose: async () => {},

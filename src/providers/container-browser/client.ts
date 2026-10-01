@@ -8,7 +8,6 @@ import {
 } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
-import { loginInspectionSchema } from '../agent-browser/login.ts';
 import {
   browserRequest,
   browserResponse,
@@ -280,14 +279,11 @@ export function createBridgeComputer(options: {
         throw new Error('The browser file is unavailable.');
       return { bytes, name: result.name, mimeType: result.mimeType };
     },
-    inspectLogin: async (id, target) =>
-      loginInspectionSchema.parse(
-        await call({
-          method: 'inspectLogin',
-          threadId: threadIdentity(id),
-          ...(target ? { target } : {}),
-        }),
-      ),
+    currentPage: async (id) =>
+      z
+        .object({ origin: z.string().max(2048), url: z.string().max(8192) })
+        .strict()
+        .parse(await call({ method: 'currentPage', threadId: threadIdentity(id) })),
     injectCredentials: async (input) => {
       const {
         threadId: id,

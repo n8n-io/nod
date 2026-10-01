@@ -44,8 +44,10 @@ const browserAction = z
       'reload',
       'tab_list',
       'tab_switch',
+      'evaluate',
     ]),
     url: z.string().max(8192).optional(),
+    script: z.string().max(20_000).optional(),
     tabId: z.string().min(1).max(200).optional(),
     selector: selector.optional(),
     targetSelector: selector.optional(),
@@ -56,7 +58,6 @@ const browserAction = z
     direction: z.enum(['up', 'down']).optional(),
     waitMs: z.number().int().min(0).max(15_000).optional(),
     offset: z.number().int().min(0).max(100_000).optional(),
-    controlOffset: z.number().int().min(0).max(100_000).optional(),
   })
   .strict();
 const credential = z
@@ -116,23 +117,7 @@ export const browserRequest = z.discriminatedUnion('method', [
     })
     .strict(),
   z.object({ ...identity, method: z.literal('screenshot'), threadId: thread }).strict(),
-  z
-    .object({
-      ...identity,
-      method: z.literal('inspectLogin'),
-      threadId: thread,
-      target: z
-        .object({
-          origin: z.string().min(1).max(2048),
-          kind: z.enum(['identifier', 'password', 'otp']),
-          usernameSelector: selector.optional(),
-          passwordSelector: selector.optional(),
-          emailCode: z.boolean().optional(),
-        })
-        .strict()
-        .optional(),
-    })
-    .strict(),
+  z.object({ ...identity, method: z.literal('currentPage'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('injectCredentials'), input: credential }).strict(),
   z
     .object({

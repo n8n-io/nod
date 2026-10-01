@@ -13,12 +13,7 @@ import type {
   VaultCardNumber,
   VaultCardSecurityCode,
 } from '../shared/contracts.ts';
-import type {
-  CredentialKind,
-  CredentialSubmission,
-  LoginInspection,
-  LoginTarget,
-} from '../ports/computer.ts';
+import type { BrowserPage, CredentialKind, CredentialSubmission } from '../ports/computer.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
 import type { CredentialInvitation } from '../ports/agent.ts';
@@ -99,9 +94,14 @@ const requestInput = z
     usernameSelector: z.string().min(1).max(2048).optional(),
     passwordSelector: z.string().min(1).max(2048).optional(),
     emailCode: z.boolean().optional(),
+    emailRecipient: z.string().trim().min(3).max(320).optional(),
   })
   .strict();
 type CredentialInput = z.infer<typeof requestInput>;
+type StoredInspection = Required<Pick<CredentialRequest, 'fields' | 'methods'>> & {
+  origin: string;
+  url: string;
+};
 export type CredentialInjection = CredentialInput & {
   threadId: string;
   username?: string;
@@ -114,7 +114,7 @@ type VaultOptions = {
   retry(turnId: string): Promise<void>;
   inject(input: CredentialInjection): Promise<CredentialSubmission | void>;
   keyStore: CredentialKeyStore;
-  inspect?(threadId: string, target?: LoginTarget): Promise<LoginInspection>;
+  page?(threadId: string): Promise<BrowserPage>;
   hold?(threadId: string, until: number | null): Promise<void>;
   emailCode?(input: EmailCodeRequest, signal: AbortSignal): Promise<PrivateEmailCode | undefined>;
   icon?(origin: string): Promise<SiteIcon | null>;
@@ -151,7 +151,7 @@ type RequestRow = {
   kind: CredentialKind;
   status: 'pending' | 'filled' | 'superseded' | 'retried';
   selectors: CredentialInput;
-  inspection: LoginInspection;
+  inspection: StoredInspection;
   expires_at: Date;
 };
 type SelectionRow = {
@@ -183,17 +183,8 @@ class VaultError extends Error {
   }
 }
 
-function assertSupportedBrowser(inspection: LoginInspection) {
-  if (inspection.issue === 'browser_not_supported')
-    throw new VaultError(
-      'This website blocked sign-in in the browser. Try again after the website allows access.',
-      409,
-    );
-}
-
-function storedInspection(inspection: LoginInspection) {
-  const { emailCode: _emailCode, ...stored } = inspection;
-  return stored;
+function storedSelectors({ emailRecipient: _emailRecipient, ...input }: CredentialInput) {
+  return JSON.stringify(input);
 }
 
 export function credentialOrigin(value: string) {
@@ -281,11 +272,6 @@ function safeIdentifierLabel(value: string | undefined) {
 
 function inferredIdentifierLabel(username: string) {
   return z.email().safeParse(username).success ? 'Email' : 'Username';
-}
-
-function observedIdentifierLabel(inspection: LoginInspection) {
-  const fields = inspection.fields.filter((field) => field.kind === 'identifier');
-  return fields.length === 1 ? safeIdentifierLabel(fields[0].label) : undefined;
 }
 
 function metadata(entry: EntryRow, username?: string): VaultLoginEntry {
@@ -805,85 +791,46 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   async function inspectRequest(threadId: string, raw: CredentialInput) {
     const input = requestInput.parse(raw);
     const origin = credentialOrigin(input.origin);
-    const observed = await options.inspect?.(threadId, {
-      origin,
-      kind: input.kind,
-      usernameSelector: input.usernameSelector,
-      passwordSelector: input.passwordSelector,
-      emailCode: input.emailCode,
-    });
-    if (observed && observed.origin !== origin)
+    const page = await options.page?.(threadId);
+    if (page && page.origin !== origin)
       throw new VaultError(
         'The login page origin changed. Request a new secure sign-in step.',
         409,
       );
-    if (observed) assertSupportedBrowser(observed);
     const kind = input.kind;
-    const selected = observed?.fields.filter((field) => field.kind === kind) ?? [];
-    const identifiers = observed?.fields.filter((field) => field.kind === 'identifier') ?? [];
-    if (
-      observed &&
-      (selected.length !== 1 ||
-        (kind === 'password' && input.usernameSelector && identifiers.length !== 1))
-    )
-      throw new VaultError('The login field changed. Request a fresh secure form.', 409);
-    const target = observed
-      ? selected[0].selector
-      : kind === 'identifier'
-        ? input.usernameSelector
-        : input.passwordSelector;
-    const usernameSelector =
-      kind === 'password' && input.usernameSelector
-        ? observed
-          ? identifiers[0].selector
-          : input.usernameSelector
-        : undefined;
+    const target = kind === 'identifier' ? input.usernameSelector : input.passwordSelector;
+    const usernameSelector = kind === 'password' ? input.usernameSelector : undefined;
     if (!target)
       throw new VaultError('Choose a visible sign-in field from the current browser page.', 409);
-    if (usernameSelector && usernameSelector === target)
-      throw new VaultError('The login field changed. Request a fresh secure form.', 409);
+    if (usernameSelector === target)
+      throw new VaultError('Choose different fields for the username and password.', 409);
     const resolved: CredentialInput = {
       origin,
       label: input.label,
       kind,
       ...(kind === 'identifier'
         ? { usernameSelector: target }
-        : {
-            passwordSelector: target,
-            ...(usernameSelector ? { usernameSelector } : {}),
-          }),
+        : { passwordSelector: target, ...(usernameSelector ? { usernameSelector } : {}) }),
       ...(kind === 'otp' && input.emailCode !== undefined ? { emailCode: input.emailCode } : {}),
+      ...(kind === 'otp' && input.emailRecipient ? { emailRecipient: input.emailRecipient } : {}),
     };
-    const fields: LoginInspection['fields'] = [
-      ...(usernameSelector
-        ? [{ kind: 'identifier' as const, selector: usernameSelector, label: 'Username' }]
-        : []),
-      {
-        kind,
-        selector: target,
-        label:
-          kind === 'identifier' ? 'Username' : kind === 'otp' ? 'Verification code' : 'Password',
-      },
-    ];
-    return {
-      input: resolved,
-      inspection: {
-        origin,
-        url: observed?.url ?? origin,
-        fields,
-        methods: [
-          {
-            id: 'credentials',
-            kind: 'credentials' as const,
-            label: 'Secure entry',
-            supported: true,
-          },
-        ],
-        ...(kind === 'otp' && input.emailCode && observed?.emailCode
-          ? { emailCode: observed.emailCode }
-          : {}),
-      },
+    const inspection: StoredInspection = {
+      origin,
+      url: page?.url ?? origin,
+      fields: [
+        ...(usernameSelector
+          ? [{ kind: 'identifier' as const, selector: usernameSelector, label: 'Username' }]
+          : []),
+        {
+          kind,
+          selector: target,
+          label:
+            kind === 'identifier' ? 'Username' : kind === 'otp' ? 'Verification code' : 'Password',
+        },
+      ],
+      methods: [{ id: 'credentials', kind: 'credentials', label: 'Secure entry', supported: true }],
     };
+    return { input: resolved, inspection };
   }
 
   async function request(
@@ -925,9 +872,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           input.origin,
           input.label,
           input.kind,
-          JSON.stringify(input),
+          storedSelectors(input),
           new Date(expiresAt),
-          JSON.stringify(storedInspection(inspection)),
+          JSON.stringify(inspection),
         ],
       );
       await client.query('COMMIT');
@@ -1025,7 +972,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       label: row.label,
       kind: row.kind,
       fields: row.inspection.fields,
-      methods: row.inspection.methods.map(({ selector: _selector, ...method }) => method),
+      methods: row.inspection.methods,
       status: row.status === 'filled' ? 'filled' : pending ? 'pending' : 'expired',
       expiresAt: new Date(row.expires_at).toISOString(),
       ...(savedEntries ? { savedEntries } : {}),
@@ -1043,12 +990,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const fresh = await inspectRequest(row.thread_id, row.selectors);
       await client.query(
         'UPDATE credential_requests SET kind=$2,selectors=$3,inspection=$4 WHERE id=$1',
-        [
-          row.id,
-          fresh.input.kind,
-          JSON.stringify(fresh.input),
-          JSON.stringify(storedInspection(fresh.inspection)),
-        ],
+        [row.id, fresh.input.kind, storedSelectors(fresh.input), JSON.stringify(fresh.inspection)],
       );
       await client.query('COMMIT');
     } catch (error) {
@@ -1108,9 +1050,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             row.origin,
             row.label,
             input.kind,
-            JSON.stringify(input),
+            storedSelectors(input),
             row.expires_at,
-            JSON.stringify(storedInspection(inspection)),
+            JSON.stringify(inspection),
           ],
         );
         retryUrl = `/vault/${freshToken}`;
@@ -1167,7 +1109,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           staged ||
           (savedIdentifier && savedIdentifier.expiresAt > Date.now() ? savedIdentifier.value : '');
         const identifierLabel =
-          (options.inspect && observedIdentifierLabel(inspection)) ||
           (staged !== undefined && safeIdentifierLabel(selected?.identifier_label)) ||
           (savedIdentifier &&
             savedIdentifier.expiresAt > Date.now() &&
@@ -1185,12 +1126,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           throw new VaultError('Enter the email, phone number or username.');
         if (row.kind === 'otp' && !values.code)
           throw new VaultError('Enter the verification code.');
-        if (
-          row.kind === 'otp' &&
-          inspection.emailCode?.length !== undefined &&
-          values.code?.length !== inspection.emailCode.length
-        )
-          throw new VaultError('Enter the complete verification code.');
         if (row.kind === 'password' || (row.kind === 'identifier' && values.password)) await key();
         const submission = await options.inject({
           ...input,
@@ -1310,7 +1245,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         entryId: entry.id,
         username: secret.username,
         identifierLabel:
-          (options.inspect && observedIdentifierLabel(fresh.inspection)) ||
           (staged !== undefined && selected?.identifier_label) ||
           entry.identifier_label ||
           inferredIdentifierLabel(secret.username),
@@ -1424,7 +1358,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         password: input.kind === 'password' ? secret.password : undefined,
       });
       const identifierLabel =
-        (options.inspect && observedIdentifierLabel(inspection)) ||
         (staged !== undefined && selected?.identifier_label) ||
         entries.rows[0].identifier_label ||
         inferredIdentifierLabel(secret.username);
@@ -1463,7 +1396,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function fillStagedPassword(turn: TurnRef, ownerId: string, raw: CredentialInput) {
-    if (!options.inspect) return false;
+    if (!options.page) return false;
     const origin = credentialOrigin(raw.origin);
     const client = await pool.connect();
     try {
@@ -1583,7 +1516,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   async function fillEmailCode(turn: TurnRef, ownerId: string, raw: CredentialInput) {
     if (
       ownerId !== owner ||
-      !options.inspect ||
+      !options.page ||
       !options.emailCode ||
       raw.kind !== 'otp' ||
       raw.emailCode !== true
@@ -1610,9 +1543,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         ? normalizedEmail(openCredential(await key(), selected).username)
         : undefined;
       const fresh = await inspectRequest(turn.threadId, raw);
-      const email = fresh.inspection.emailCode;
-      const username = email ? verificationRecipient(email, selectedUsername) : undefined;
-      if (!username || !email || fresh.input.kind !== 'otp' || fresh.inspection.origin !== origin)
+      const shown = fresh.input.emailRecipient?.toLowerCase();
+      const delivery = shown
+        ? /[*•]/.test(shown)
+          ? { recipientHint: shown }
+          : { recipient: shown }
+        : {};
+      const username = verificationRecipient(delivery, selectedUsername);
+      if (!username || fresh.input.kind !== 'otp' || fresh.inspection.origin !== origin)
         return false;
       const attempt = await pool.query(
         `INSERT INTO credential_autofill_attempts(root_turn_id,owner_id,origin,entry_id,kind)
@@ -1632,7 +1570,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             origin,
             after: enteredAt - 30_000,
             before: Date.now(),
-            length: email.length,
           },
           signal,
         ),
@@ -1642,13 +1579,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         }),
       ]).finally(() => signal.removeEventListener('abort', abort));
       const code = found?.code;
-      if (
-        signal.aborted ||
-        !code ||
-        !/^\d{4,8}$/.test(code) ||
-        (email.length !== undefined && code.length !== email.length)
-      )
-        return false;
+      if (signal.aborted || !code || !/^\d{4,8}$/.test(code)) return false;
       client = await pool.connect();
       await client.query('BEGIN');
       const current = await currentTurn(client, turn, ownerId, ' FOR UPDATE OF u NOWAIT');
@@ -1675,15 +1606,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       )
         throw new VaultError('This saved login is no longer available.', 409);
       const verified = await inspectRequest(turn.threadId, fresh.input);
-      if (
-        verified.input.kind !== 'otp' ||
-        verified.inspection.origin !== origin ||
-        !verified.inspection.emailCode ||
-        verificationRecipient(verified.inspection.emailCode, selectedUsername) !== username ||
-        verified.inspection.emailCode.recipient !== email.recipient ||
-        verified.inspection.emailCode.recipientHint !== email.recipientHint ||
-        verified.inspection.emailCode?.length !== email.length
-      )
+      if (verified.input.kind !== 'otp' || verified.inspection.origin !== origin)
         throw new VaultError('This verification step changed.', 409);
       if (!(await found.current(client)))
         throw new VaultError('This connected mailbox is no longer available.', 409);

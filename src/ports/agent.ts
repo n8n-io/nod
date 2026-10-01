@@ -142,6 +142,7 @@ export interface RuntimeContext {
           usernameSelector?: string;
           passwordSelector?: string;
           emailCode?: boolean;
+          emailRecipient?: string;
           savedLoginId?: string;
         },
   ): Promise<{

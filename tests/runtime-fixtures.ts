@@ -5,12 +5,7 @@ export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
     act: async () => ({ text: 'Fixture page', url: 'https://example.com', candidates: [] }),
     screenshot: async () => null,
     injectCredentials: async () => {},
-    inspectLogin: async () => ({
-      origin: 'https://example.com',
-      url: 'https://example.com',
-      fields: [],
-      methods: [],
-    }),
+    currentPage: async () => ({ origin: 'https://example.com', url: 'https://example.com' }),
     hold: async () => {},
     close: async () => {},
     dispose: async () => {},

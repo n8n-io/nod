@@ -11,28 +11,19 @@ import type {
   Computer,
   CredentialInput,
   CredentialSubmission,
-  LoginInspection,
-  LoginTarget,
+  BrowserPage,
 } from '../../ports/computer.ts';
 import { BrowserActionError, browserUploadBytes } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { runProcess, serviceEnvironment } from '../process.ts';
 import { createBrowserProxy, browserUrl } from './network.ts';
-import { credentialFields, credentialEntryScript, credentialAttemptScript } from './credentials.ts';
-import {
-  loginInspectionSchema,
-  loginInspectionScript,
-  loginReferenceScript,
-  loginReferencesStableScript,
-} from './login.ts';
-import { maskPageScript, maskSnapshotInputValues } from './redaction.ts';
+import { credentialFields } from './credentials.ts';
 import {
   createScreenStore,
   existingDaemonCommand,
   DaemonCommandError,
   type StoredScreen,
 } from './screens.ts';
-import { browserViewScript } from './view.ts';
 import {
   createDownloadCapture,
   decodeDownload,
@@ -49,7 +40,6 @@ interface BrowserState {
   secrets: Set<string>;
   secretsByOrigin: Map<string, Set<string>>;
   protectedSelectors: Set<string>;
-  loginRefs: Map<string, string>;
   uploads: Set<string>;
   started: boolean;
   lastUsed: number;
@@ -112,20 +102,6 @@ export function redactBrowserUrl(
       url.searchParams.set(name, '[redacted]');
   if (url.hash.includes('=')) url.hash = '[redacted]';
   return redactBrowserText(url.href, secrets);
-}
-
-export function browserCandidates(snapshot: string): Array<{ id: string; label: string }> {
-  const candidates: Array<{ id: string; label: string }> = [];
-  for (const line of snapshot.split('\n')) {
-    const match = line.match(/\[ref=(e\d+)\]/);
-    if (
-      match &&
-      /\b(button|link|checkbox|radio|tab|menuitem|option)\b/.test(line) &&
-      !/disabled/i.test(line)
-    )
-      candidates.push({ id: '@' + match[1], label: line.trim().slice(0, 350) });
-  }
-  return candidates.slice(0, 100);
 }
 
 export function createAgentBrowserComputer(options: {
@@ -195,7 +171,6 @@ export function createAgentBrowserComputer(options: {
         secrets: new Set(),
         secretsByOrigin: new Map(),
         protectedSelectors: new Set(),
-        loginRefs: new Map(),
         uploads: new Set(),
         started: false,
         lastUsed: Date.now(),
@@ -617,42 +592,12 @@ export function createAgentBrowserComputer(options: {
     return state.socket;
   }
 
-  async function maskFields(state: BrowserState, signal?: AbortSignal): Promise<string[]> {
-    const origin = state.saved.allowedOrigin ?? new URL(await currentUrl(state, signal)).origin;
-    const secrets = state.secretsByOrigin.get(origin) ?? new Set<string>();
-    const result = await evaluate(
-      state,
-      `(() => { if(location.origin!==${JSON.stringify(origin)}) return {originChanged:true}; return ${maskPageScript([...state.protectedSelectors], [...secrets])}; })()`,
-      signal,
-    );
-    if (result && typeof result === 'object' && 'originChanged' in result)
-      throw new BrowserActionError('browser_origin_changed');
+  async function stayOnSavedOrigin(state: BrowserState, signal?: AbortSignal) {
     if (
-      result &&
-      typeof result === 'object' &&
-      'values' in result &&
-      Array.isArray(result.values)
-    ) {
-      for (const value of result.values) {
-        if (typeof value !== 'string' || value.length > 8192)
-          throw new Error('This protected field cannot be observed.');
-        if (value) {
-          state.secrets.add(value);
-          secrets.add(value);
-        }
-      }
-    }
-    state.secretsByOrigin.set(origin, secrets);
-    const inputValues =
-      result && typeof result === 'object' && 'inputValues' in result ? result.inputValues : [];
-    if (
-      !Array.isArray(inputValues) ||
-      inputValues.length > 40 ||
-      inputValues.some((value) => typeof value !== 'string' || value.length > 8192)
+      state.saved.allowedOrigin &&
+      new URL(await currentUrl(state, signal)).origin !== state.saved.allowedOrigin
     )
-      throw new Error('These protected fields cannot be observed.');
-    await saveState(state);
-    return inputValues;
+      throw new BrowserActionError('browser_origin_changed');
   }
 
   async function observe(
@@ -670,88 +615,43 @@ export function createAgentBrowserComputer(options: {
       };
     if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
       throw new BrowserActionError('browser_origin_changed');
-    let inputValues = await maskFields(state, signal);
     const scope =
       input?.action === 'snapshot' && input.selector ? selector(input.selector) : undefined;
     const offset = input?.action === 'snapshot' ? (input.offset ?? 0) : 0;
-    const controlOffset = input?.action === 'snapshot' ? (input.controlOffset ?? 0) : 0;
     if (!Number.isInteger(offset) || offset < 0 || offset > 100_000)
       throw new Error('Choose a page offset of at most 100000 characters.');
-    if (!Number.isInteger(controlOffset) || controlOffset < 0 || controlOffset > 100_000)
-      throw new Error('Choose a control offset of at most 100000.');
-    let visible = (await evaluate(
-      state,
-      browserViewScript(scope, offset, controlOffset),
-      signal,
-    )) as {
-      missing?: boolean;
-      text?: string;
-      total?: number;
-      controls?: Array<{ selector: string; label: string }>;
-      controlsTotal?: number;
-      scrollAreas?: Array<{ selector: string; height: number; viewport: number }>;
-      scrollAreasTotal?: number;
-    };
-    for (
-      let attempt = 0;
-      attempt < 4 && !visible?.missing && !String(visible?.text ?? '').trim();
-      attempt++
-    ) {
-      await delay(750, undefined, { signal });
-      inputValues = await maskFields(state, signal);
-      visible = (await evaluate(
-        state,
-        browserViewScript(scope, offset, controlOffset),
+    const snapshot = () =>
+      command(state, scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'], {
         signal,
-      )) as typeof visible;
+        maxBytes: 1024 * 1024,
+      });
+    let data = await snapshot();
+    for (let attempt = 0; attempt < 4 && !String(data.snapshot ?? '').trim(); attempt++) {
+      await delay(750, undefined, { signal });
+      data = await snapshot();
     }
-    if (visible?.missing)
-      return {
-        text: 'The selected page area is no longer available. Take a full snapshot.',
-        url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.allowedOrigin)),
-        candidates: [],
-      };
-    state.loginRefs.clear();
-    await evaluate(state, loginReferenceScript(randomUUID()), signal);
-    const data = await command(
-      state,
-      scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'],
-      { signal, maxBytes: 1024 * 1024 },
+    await stayOnSavedOrigin(state, signal);
+    const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
+    const refs = Object.entries(
+      (data.refs ?? {}) as Record<string, { role?: unknown; name?: unknown }>,
     );
-    const references = Object.entries((data.refs ?? {}) as Record<string, { role?: unknown }>)
-      .filter(([, ref]) =>
-        ['textbox', 'searchbox', 'spinbutton', 'combobox'].includes(String(ref?.role)),
-      )
-      .map(([ref]) => `@${ref}`);
-    if (references.length <= 80) {
-      for (const ref of references) {
-        const attribute = await command(state, ['get', 'attr', ref, 'data-otto-login-node'], {
-          signal,
-        }).catch(() => null);
-        if (typeof attribute?.value === 'string' && /^[a-zA-Z0-9_-]+$/.test(attribute.value))
-          state.loginRefs.set(ref, `input[data-otto-login-node="${attribute.value}"]`);
-      }
-    }
-    if (!(await evaluate(state, loginReferencesStableScript, signal))) state.loginRefs.clear();
-    const fullStructure = maskSnapshotInputValues(
-      redactBrowserText(String(data.snapshot ?? data.text ?? JSON.stringify(data)), state.secrets),
-      inputValues,
-    );
-    const structure = fullStructure.slice(offset, offset + 16_000);
-    const body = redactBrowserText(String(visible?.text ?? ''), state.secrets);
-    const controls = (visible?.controls ?? [])
-      .filter((item) => typeof item.selector === 'string' && typeof item.label === 'string')
-      .slice(0, 80)
-      .map((item) => ({ id: item.selector, label: redactBrowserText(item.label, state.secrets) }));
-    const scrollAreas = (visible?.scrollAreas ?? [])
-      .filter((item) => typeof item.selector === 'string')
-      .slice(0, 20)
-      .map((item) => `${item.selector} (${item.viewport} of ${item.height} pixels)`);
-    const text = `Page text (${offset}-${Math.min(offset + 16_000, visible?.total ?? 0)} of ${visible?.total ?? 0} characters):\n${body}\n\nPage structure (${offset}-${Math.min(offset + 16_000, fullStructure.length)} of ${fullStructure.length} characters):\n${structure}\n\nControls (${controlOffset}-${Math.min(controlOffset + 80, visible?.controlsTotal ?? 0)} of ${visible?.controlsTotal ?? 0}):\n${controls.map((item) => `${item.label}: ${item.id}`).join('\n') || 'None'}\n\nScrollable areas (${controlOffset}-${Math.min(controlOffset + 20, visible?.scrollAreasTotal ?? 0)} of ${visible?.scrollAreasTotal ?? 0}):\n${scrollAreas.join('\n') || 'None'}`;
     return {
-      text,
+      text: `Page (${offset}-${Math.min(offset + 16_000, page.length)} of ${page.length} characters):\n${page.slice(offset, offset + 16_000)}`,
       url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.allowedOrigin)),
-      candidates: [...browserCandidates(structure), ...controls].slice(0, 100),
+      candidates: refs
+        .filter(([, ref]) =>
+          ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option'].includes(
+            String(ref?.role),
+          ),
+        )
+        .slice(0, 100)
+        .map(([id, ref]) => ({
+          id: `@${id}`,
+          label: redactBrowserText(
+            `${String(ref.role)} "${String(ref.name ?? '')}"`,
+            state.secrets,
+          ).slice(0, 350),
+        })),
     };
   }
 
@@ -813,11 +713,7 @@ export function createAgentBrowserComputer(options: {
                 loaded.search === url.search
               ) {
                 const observation = await observe(state, signal);
-                const pageText = observation.text
-                  .split('\n\nPage structure (', 1)[0]
-                  .replace(/^Page text [^\n]*\n/, '')
-                  .trim();
-                if (pageText) {
+                if (observation.text.slice(observation.text.indexOf('\n') + 1).trim()) {
                   state.saved.navigationFailed = false;
                   return observation;
                 }
@@ -939,6 +835,23 @@ export function createAgentBrowserComputer(options: {
           });
         if (['back', 'forward', 'reload'].includes(input.action))
           await command(state, [input.action], { signal });
+        if (input.action === 'evaluate') {
+          const script = input.script ?? '';
+          if (!script.trim() || script.length > 20_000)
+            throw new Error('Provide a script of at most 20,000 characters.');
+          const url = await currentUrl(state, signal);
+          if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
+            throw new BrowserActionError('browser_origin_changed');
+          const result = redactBrowserText(
+            JSON.stringify((await evaluate(state, script, signal)) ?? null) ?? 'null',
+            state.secrets,
+          );
+          return {
+            text: `Script result (JSON${result.length > 20_000 ? ', first 20,000 characters' : ''}):\n${result.slice(0, 20_000)}`,
+            url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.allowedOrigin)),
+            candidates: [],
+          };
+        }
       }
       if (input.waitMs !== undefined) {
         if (!Number.isInteger(input.waitMs) || input.waitMs < 0 || input.waitMs > 15_000)
@@ -1110,139 +1023,65 @@ export function createAgentBrowserComputer(options: {
     const state = browsers.get(threadIdentity(input.threadId));
     if (!state?.started) throw new Error('The browser session has expired. Reopen the login page.');
     if (state.injecting) throw new BrowserLockedError();
-    const url = browserUrl(input.origin);
-    if (url.origin !== input.origin) throw new Error('An exact login origin is required.');
+    if (browserUrl(input.origin).origin !== input.origin)
+      throw new Error('An exact login origin is required.');
     const fields = credentialFields(input);
     state.injecting = true;
     markActivity(input.threadId);
     try {
       return await serialize(state, async () => {
-        const attemptId = randomUUID();
-        let socket: string | undefined;
-        try {
-          await saveState(state);
-          const kind = input.kind ?? 'password';
-          const inspection = await inspectPage(state, {
-            origin: input.origin,
-            kind,
-            usernameSelector: input.usernameSelector,
-            passwordSelector: input.passwordSelector,
-          });
-          if (inspection.fields.length !== fields.length)
-            throw new Error('The login fields changed.');
-          for (const field of fields) {
-            const match = inspection.fields.find(
-              (candidate) =>
-                candidate.kind ===
-                (field.password ? 'password' : field.code ? 'otp' : 'identifier'),
+        const onOrigin = async () => {
+          if (new URL(await currentUrl(state)).origin !== input.origin)
+            throw new Error(
+              'The page is not on the website for this login. Inspect the page and request the credential again.',
             );
-            if (!match) throw new Error('The login field changed.');
-            field.selector = match.selector;
-            state.protectedSelectors.add(match.selector);
-          }
-          socket = await daemonSocket(state);
-          const secrets = state.secretsByOrigin.get(input.origin) ?? new Set<string>();
-          for (const field of fields) {
-            state.secrets.add(field.value);
-            secrets.add(field.value);
-          }
-          state.secretsByOrigin.set(input.origin, secrets);
-          await saveState(state);
-          const response = await requestDaemon(socket, {
-            action: 'evaluate',
-            script: credentialEntryScript(input.origin, fields, attemptId),
-          });
-          const result = response.result;
-          if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true)
-            throw new Error('The login fields changed.');
-          if (!state.started || state.closed || state.closing)
-            throw new Error('The browser session is unavailable.');
-          try {
-            await requestDaemon(
-              socket,
-              {
-                action: 'evaluate',
-                script: credentialAttemptScript(input.origin, attemptId, 'finish'),
-              },
-              undefined,
-              5_000,
-            );
-          } catch {}
-          return { status: 'submitted' as const };
-        } catch {
-          if (socket) {
-            try {
-              const cleanup = await requestDaemon(
-                socket,
-                {
-                  action: 'evaluate',
-                  script: credentialAttemptScript(input.origin, attemptId, 'clear'),
-                },
-                undefined,
-                5_000,
-              );
-              if (cleanup.result !== true) throw new Error('Secure entry cleanup failed.');
-            } catch {
-              await drainInterruptedCommand(state, 'credentials', async () => {
-                throw new Error('Secure entry cleanup could not be confirmed.');
-              }).catch(() => {});
-            }
-          }
-          throw new Error(
-            'Secure entry could not be confirmed. Check the login page before continuing.',
-          );
+        };
+        await onOrigin();
+        const socket = await daemonSocket(state);
+        const secrets = state.secretsByOrigin.get(input.origin) ?? new Set<string>();
+        for (const field of fields) {
+          state.secrets.add(field.value);
+          secrets.add(field.value);
         }
+        state.secretsByOrigin.set(input.origin, secrets);
+        await saveState(state);
+        for (const field of fields) {
+          await onOrigin();
+          await requestDaemon(socket, {
+            action: 'fill',
+            selector: field.selector,
+            value: field.code ? '' : field.value,
+          });
+          if (field.code)
+            for (const key of field.value) {
+              await onOrigin();
+              await requestDaemon(socket, { action: 'press', key });
+            }
+          if (!field.selector.startsWith('@')) state.protectedSelectors.add(field.selector);
+        }
+        await onOrigin();
+        return { status: 'submitted' as const };
       });
     } finally {
       state.injecting = false;
     }
   }
 
-  async function inspectPage(state: BrowserState, target?: LoginTarget): Promise<LoginInspection> {
-    const url = await currentUrl(state);
-    if (
-      (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin) ||
-      (target && new URL(url).origin !== target.origin)
-    )
-      throw new BrowserActionError('browser_origin_changed');
-    await maskFields(state);
-    let selected = target;
-    if (target) {
-      const resolve = (selector?: string) => {
-        if (!selector || !selector.startsWith('@')) return selector;
-        const bound = state.loginRefs.get(selector);
-        if (!bound) throw new Error('The browser reference changed. Take a new snapshot.');
-        return bound;
-      };
-      selected = {
-        ...target,
-        usernameSelector: resolve(target.usernameSelector),
-        passwordSelector: resolve(target.passwordSelector),
-      };
-    }
-    const inspection = loginInspectionSchema.parse(
-      await evaluate(state, loginInspectionScript(selected)),
-    );
-    for (const field of inspection.fields) state.protectedSelectors.add(field.selector);
-    await maskFields(state);
-    if (inspection.origin !== new URL(url).origin)
-      throw new Error('The login page changed. Inspect it again.');
-    browserUrl(inspection.url);
-    return {
-      ...inspection,
-      url: redactBrowserUrl(inspection.url, state.secrets, Boolean(state.saved.allowedOrigin)),
-    };
-  }
-
-  async function inspectLogin(id: string, target?: LoginTarget): Promise<LoginInspection> {
+  async function currentPage(id: string): Promise<BrowserPage> {
     const state = await recoverBrowser(id);
     if (state?.saved.navigationFailed || (!state && (await screens.load(id))?.navigationFailed))
       throw new BrowserActionError('browser_navigation_failed');
     if (!state?.started) throw new Error('Open the login page in this task browser first.');
     if (state.injecting) throw new BrowserLockedError();
-    return serialize(state, () => {
+    return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
-      return inspectPage(state, target);
+      const url = await currentUrl(state);
+      if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
+        throw new BrowserActionError('browser_origin_changed');
+      return {
+        origin: browserUrl(url).origin,
+        url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.allowedOrigin)),
+      };
     });
   }
 
@@ -1265,9 +1104,12 @@ export function createAgentBrowserComputer(options: {
     const url = await currentUrl(state, signal);
     if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
       throw new BrowserActionError('browser_origin_changed');
-    await maskFields(state, signal);
     const path = resolve(runtimeRoot, `screen-${state.id}.capture.png`);
     await command(state, ['screenshot', path], { signal });
+    await stayOnSavedOrigin(state, signal).catch(async (error: unknown) => {
+      await rm(path, { force: true });
+      throw error;
+    });
     const buffer = await screens.accept(state.id, path);
     state.saved.capturedAt = new Date().toISOString();
     await saveState(state);
@@ -1455,7 +1297,7 @@ export function createAgentBrowserComputer(options: {
     screenshot: tracked(getScreenshot),
     screenStatus: (id) => screenStatuses.get(threadIdentity(id)) ?? { state: 'unavailable' },
     injectCredentials: tracked(injectCredentials),
-    inspectLogin: tracked(inspectLogin),
+    currentPage: tracked(currentPage),
     hold: tracked(hold),
     close: tracked(closeBrowser),
     status: browserStatus,

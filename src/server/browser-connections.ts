@@ -197,13 +197,8 @@ export async function createBrowserConnections(
         )
           return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
         const observation = await browser.act(turn.threadId, { action: 'snapshot' }, signal);
-        const inspection = await browser.inspectLogin(turn.threadId);
-        if (
-          new URL(observation.url).origin !== row.origin ||
-          inspection.origin !== row.origin ||
-          inspection.fields.length ||
-          inspection.methods.length
-        )
+        const page = await browser.currentPage(turn.threadId);
+        if (new URL(observation.url).origin !== row.origin || page.origin !== row.origin)
           return { status: 'needs_sign_in' as const, connectionId: row.id, observation };
         signal?.throwIfAborted();
         const saved = await pool.query(
@@ -230,12 +225,9 @@ export async function createBrowserConnections(
         { action: 'open', url: address.href },
         signal,
       );
-      const inspection = await browser.inspectLogin(turn.threadId);
+      const page = await browser.currentPage(turn.threadId);
       const needsSignIn =
-        new URL(observation.url).origin !== row.origin ||
-        inspection.origin !== row.origin ||
-        inspection.fields.length > 0 ||
-        inspection.methods.length > 0;
+        new URL(observation.url).origin !== row.origin || page.origin !== row.origin;
       signal?.throwIfAborted();
       const updated = await pool.query(
         `UPDATE browser_connections SET state=CASE WHEN $3 THEN 'needs_sign_in' ELSE state END,thread_id=$4,updated_at=now()

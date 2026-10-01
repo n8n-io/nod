@@ -101,8 +101,8 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       if (image && image.length > imageBytes) throw new Error();
       return image?.toString('base64') ?? null;
     }
-    case 'inspectLogin':
-      return computer.inspectLogin(request.threadId, request.target);
+    case 'currentPage':
+      return computer.currentPage(request.threadId);
     case 'injectCredentials':
       return computer.injectCredentials(request.input);
     case 'hold':

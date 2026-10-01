@@ -82,11 +82,9 @@ async function fixture(
   const runtime = createAgentRuntime({
     agent,
     computer: fakeComputer({
-      inspectLogin: async () => ({
+      currentPage: async () => ({
         origin: 'https://example.com',
         url: 'https://example.com/login',
-        fields: [{ kind: 'password', selector: '#password', label: 'Password' }],
-        methods: [{ id: 'credentials', kind: 'credentials', label: 'Password', supported: true }],
       }),
     }),
     workspace: fakeWorkspace(),
@@ -288,7 +286,7 @@ test('chat login solicitations are withheld without inspecting or opening Vault'
       },
       {
         computer: fakeComputer({
-          inspectLogin: async () => {
+          currentPage: async () => {
             inspections++;
             throw new Error('Unused fixture inspection.');
           },

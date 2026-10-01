@@ -215,14 +215,7 @@ test(
     let injections = 0;
     const vault = await createVault(pool, {
       keyStore,
-      inspect: async () => ({
-        url: 'https://1.1.1.1/login',
-        origin: 'https://1.1.1.1',
-        fields: [{ kind: 'otp', selector: '#code', label: 'Verification code' }],
-        methods: [
-          { id: 'credentials', kind: 'credentials', label: 'Verification code', supported: true },
-        ],
-      }),
+      page: async () => ({ url: 'https://1.1.1.1/login', origin: 'https://1.1.1.1' }),
       inject: async (input) => {
         assert.equal(input.code, '481927');
         injections++;

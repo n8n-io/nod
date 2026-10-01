@@ -12,6 +12,7 @@ export class LoginPage {
   next!: HTMLButtonElement;
   entered: string[] = [];
   closed = false;
+  focused?: HTMLInputElement;
   refs = new Map<string, Element>();
   constructor() {
     this.dom.window.HTMLElement.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
@@ -106,9 +107,14 @@ export function stagedLoginBrowser() {
     if (command[0] === 'fill') {
       const node = page.nodes(command[1])[0] as HTMLInputElement | undefined;
       if (node) {
+        page.focused = node;
         node.value = command[2];
         node.dispatchEvent(new page.dom.window.Event('input', { bubbles: true }));
       }
+    }
+    if (command[0] === 'press' && page.focused && command[1].length === 1) {
+      page.focused.value += command[1];
+      page.focused.dispatchEvent(new page.dom.window.Event('input', { bubbles: true }));
     }
     if (command[0] === 'snapshot') data = page.snapshot();
     if (command[0] === 'screenshot') await writeFile(command[1], page.screen());

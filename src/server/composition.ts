@@ -541,7 +541,7 @@ export async function createApplication(
     resume: resumeAfterCredentials,
     retry: retryCredentials,
     inject: computer.injectCredentials,
-    inspect: computer.inspectLogin,
+    page: computer.currentPage,
     hold: computer.hold,
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     ...(adapters.linkPreviews?.icon

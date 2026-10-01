@@ -55,8 +55,8 @@ export function meterComputer(computer: Computer, usage: ProviderUsageStore): Co
         () => computer.screenshot(id, signal),
         (value) => ({ bytes: value?.byteLength ?? 0 }),
       ),
-    inspectLogin: (id, target) =>
-      usage.track({ ...base, operation: 'inspect_login' }, () => computer.inspectLogin(id, target)),
+    currentPage: (id) =>
+      usage.track({ ...base, operation: 'current_page' }, () => computer.currentPage(id)),
     injectCredentials: (input) =>
       usage.track({ ...base, operation: 'secure_entry' }, () => computer.injectCredentials(input)),
   };

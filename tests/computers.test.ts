@@ -400,11 +400,9 @@ async function e2bFixture() {
           calls.push({ method: 'credentials', input });
           return { status: 'submitted' };
         },
-        inspectLogin: async () => ({
+        currentPage: async () => ({
           origin: 'https://example.test',
           url: 'https://example.test/login',
-          fields: [],
-          methods: [],
         }),
         hold: async () => {},
         close: async () => {},
@@ -960,12 +958,7 @@ async function cloudflareFixture() {
           calls.push({ namespace: selected, method: 'credentials', input });
           return { status: 'submitted' };
         },
-        inspectLogin: async () => ({
-          origin: 'https://example.test',
-          url: 'https://example.test/',
-          fields: [],
-          methods: [],
-        }),
+        currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
         hold: async () => {},
         close: async () => {},
         dispose: async () => {

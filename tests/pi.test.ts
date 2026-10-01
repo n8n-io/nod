@@ -243,14 +243,9 @@ test('real Pi sessions persist a credential pause and resume without replaying c
       createSession: factory,
     }),
     computer: fakeComputer({
-      inspectLogin: async () => ({
+      currentPage: async () => ({
         origin: 'https://example.com',
         url: phase === 0 ? 'https://example.com/login' : 'https://example.com/account',
-        fields: phase === 0 ? [{ kind: 'password', selector: '#password', label: 'Password' }] : [],
-        methods:
-          phase === 0
-            ? [{ id: 'credentials', kind: 'credentials', label: 'Password', supported: true }]
-            : [],
       }),
     }),
     workspace: fakeWorkspace(),
@@ -1358,22 +1353,19 @@ function browserFixture() {
               value:
                 dom.window.document.querySelector(command[2])?.getAttribute(command[3]) ?? null,
             };
-    if (command[0] === 'eval')
-      data = {
-        result: options?.input?.includes('const root =')
-          ? {
-              text: 'Readable article body. fixture-secret',
-              total: 37,
-              controls: [],
-              controlsTotal: 0,
-              scrollAreas: [],
-              scrollAreasTotal: 0,
-            }
-          : dom.window.eval(options?.input ?? ''),
-      };
+    if (command[0] === 'eval') data = { result: dom.window.eval(options?.input ?? '') };
+    if (command[0] === 'fill') {
+      const node = dom.window.document.querySelector<HTMLInputElement>(command[1]);
+      if (node) node.value = command[2];
+    }
     if (command[0] === 'snapshot')
       data = {
-        snapshot: '- paragraph\n- textbox "Password": fixture-secret\n- button "Continue" [ref=e2]',
+        snapshot:
+          '- paragraph: Readable article body. fixture-secret\n- textbox "Password" [ref=e1]: fixture-secret\n- button "Continue" [ref=e2]',
+        refs: {
+          e1: { role: 'textbox', name: 'Password' },
+          e2: { role: 'button', name: 'Continue' },
+        },
       };
     if (command[0] === 'screenshot') await writeFile(command[1], png);
     return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
@@ -1393,7 +1385,7 @@ test('computer observations retain body text, normalize controls, protect creden
   try {
     const page = await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/' });
     assert.match(page.text, /Readable article body/);
-    assert.deepEqual(page.candidates, [{ id: '@e2', label: '- button "Continue" [ref=e2]' }]);
+    assert.deepEqual(page.candidates, [{ id: '@e2', label: 'button "Continue"' }]);
     assert.deepEqual(
       protocol.filter((command) => command.action === 'snapshot'),
       [{ action: 'snapshot', compact: true }],

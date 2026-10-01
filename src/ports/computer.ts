@@ -24,8 +24,10 @@ export interface BrowserAction {
     | 'forward'
     | 'reload'
     | 'tab_list'
-    | 'tab_switch';
+    | 'tab_switch'
+    | 'evaluate';
   url?: string;
+  script?: string;
   tabId?: string;
   selector?: string;
   targetSelector?: string;
@@ -34,7 +36,6 @@ export interface BrowserAction {
   direction?: 'up' | 'down';
   waitMs?: number;
   offset?: number;
-  controlOffset?: number;
 }
 export interface BrowserCandidate {
   id: string;
@@ -63,35 +64,9 @@ export interface BrowserUploadInput {
   bytes: Uint8Array;
 }
 export type CredentialKind = 'identifier' | 'password' | 'otp';
-export interface LoginTarget {
-  origin: string;
-  kind: CredentialKind;
-  usernameSelector?: string;
-  passwordSelector?: string;
-  emailCode?: boolean;
-}
-export interface LoginField {
-  kind: CredentialKind;
-  selector: string;
-  label: string;
-}
-export interface LoginMethod {
-  id: string;
-  label: string;
-  kind: 'credentials' | 'oauth' | 'passkey' | 'manual';
-  supported: boolean;
-  reason?: string;
-  selector?: string;
-  group?: string;
-  selected?: boolean;
-}
-export interface LoginInspection {
+export interface BrowserPage {
   origin: string;
   url: string;
-  issue?: 'browser_not_supported';
-  fields: LoginField[];
-  methods: LoginMethod[];
-  emailCode?: { recipient?: string; recipientHint?: string; length?: number };
 }
 export interface CredentialInput {
   threadId: string;
@@ -127,7 +102,7 @@ export interface Computer {
     capturedAt?: string;
   };
   injectCredentials(input: CredentialInput): Promise<CredentialSubmission | void>;
-  inspectLogin(threadId: string, target?: LoginTarget): Promise<LoginInspection>;
+  currentPage(threadId: string): Promise<BrowserPage>;
   hold(threadId: string, until: number | null): Promise<void>;
   close(threadId: string): Promise<void>;
   dispose(): Promise<void>;
