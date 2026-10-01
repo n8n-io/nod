@@ -74,10 +74,12 @@ a smaller gap. Keep full answers, tables, files, and task results readable.
 Do not cut off content to make a message fit its bubble.
 
 Include the sign-in approval change in this pass. When a website needs approval
-on another device, Otto gives the instructions and watches the page. It continues
-after the page confirms sign-in. It asks the user only when it cannot read the
-result or the wait ends. This keeps the user informed without requiring a reply
-for a result that Otto can observe.
+on another device, Otto gives the instructions and watches the page. Use the same
+page watch for other steps that need user action outside Otto's browser. Continue
+after the page confirms completion. Ask the user only when Otto cannot read the
+result or the wait ends. Do not watch or resume while the user controls Otto's
+browser; wait until they hand it back. This keeps the user informed without
+requiring a reply for a result that Otto can observe.
 
 ## Layout
 
