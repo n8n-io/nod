@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
+import type { Static } from '@sinclair/typebox';
 import { JSDOM } from 'jsdom';
 import pg from 'pg';
 import type {
@@ -47,6 +48,7 @@ import {
 } from '../src/providers/container-browser/protocol.ts';
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
+import { toolDefinitions } from '../src/runtime/tools.ts';
 import { createInspectorRedactor } from '../src/server/inspector-redaction.ts';
 import type { CredentialInjection } from '../src/server/vault.ts';
 import { createBrowserFixture } from './browser-fixture.ts';
@@ -622,7 +624,10 @@ test('failed interruption cleanup blocks later actions until an explicit close s
   }
 });
 
-type Execute = (id: string, input: BrowserAction) => Promise<AgentToolResult>;
+type Execute = (
+  id: string,
+  input: Static<typeof toolDefinitions.browser.parameters>,
+) => Promise<AgentToolResult>;
 
 async function runtimeFixture(
   computer: Computer,
@@ -682,6 +687,41 @@ async function runtimeFixture(
     },
   };
 }
+
+test('a cancelled browser action cannot feed its cached screenshot back to the model', async () => {
+  const browser = await transportFixture();
+  const releaseClick = deferred();
+  const runtime = await runtimeFixture(
+    {
+      ...browser.computer,
+      screenshot: (_id, signal) => browser.computer.screenshot('fixture', signal),
+      screenStatus: () => browser.computer.screenStatus!('fixture'),
+    },
+    async (execute) => {
+      await execute('fixture', { action: 'screenshot' });
+    },
+  );
+  try {
+    await browser.computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    const captured = await browser.computer.screenshot('fixture');
+    assert.ok(captured);
+    assert.equal(browser.computer.screenStatus!('fixture').state, 'live');
+    browser.before(async (action) => {
+      if (action === 'click') await releaseClick.promise;
+    });
+    await assert.rejects(
+      browser.computer.act('fixture', { action: 'click', selector: '@e1' }),
+      /unavailable/,
+    );
+    assert.deepEqual(await browser.computer.screenshot('fixture'), captured);
+    assert.equal(browser.computer.screenStatus!('fixture').state, 'last_known');
+    await assert.rejects(runtime.run(), /live browser screenshot.*reopen/i);
+  } finally {
+    releaseClick.resolve();
+    await runtime.close();
+    await browser.cleanup();
+  }
+});
 
 for (const failure of ['unknown', 'forged', 'navigation', 'wrong_action', 'cancelled_observation'])
   test(`${failure} browser failure stops the turn without a blocked result`, async () => {

@@ -536,13 +536,38 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     database: Pick<PoolClient, 'query'> = pool,
     identifierLabel?: string,
   ) {
-    const input = passwordInput.parse(raw);
+    const input = passwordInput.extend({ password: z.string().max(8192) }).parse(raw);
+    const origin = savedCredentialOrigin(input.origin);
+    const credentialKey = await key();
+    const existing = await database.query<EntryRow>(
+      'SELECT * FROM vault_entries WHERE owner_id=$1 AND origin=$2 FOR UPDATE',
+      [ownerId, origin],
+    );
+    const matching = existing.rows.filter((candidate) => {
+      const secret = openCredential(credentialKey, candidate);
+      return secret.username === input.username && (!input.password || !secret.password);
+    });
+    if (matching.length === 1) {
+      const entry = matching[0];
+      if (!input.password) return metadata(entry);
+      const { rows } = await database.query<EntryRow>(
+        'UPDATE vault_entries SET label=$3,ciphertext=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 AND ciphertext=$5 RETURNING *',
+        [
+          entry.id,
+          ownerId,
+          input.label,
+          sealCredential(credentialKey, entry, input),
+          entry.ciphertext,
+        ],
+      );
+      if (rows[0]) return metadata(rows[0]);
+    }
     const entry = {
       id: randomUUID(),
       owner_id: ownerId,
-      origin: savedCredentialOrigin(input.origin),
+      origin,
     };
-    const ciphertext = sealCredential(await key(), entry, input);
+    const ciphertext = sealCredential(credentialKey, entry, input);
     const hint = input.username ? `${input.username.slice(0, 2)}…` : '';
     const { rows } = await database.query<EntryRow>(
       'INSERT INTO vault_entries (id, owner_id, label, origin, username_hint, ciphertext, identifier_label) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',
@@ -941,12 +966,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         row.kind === 'password' && selected && username === undefined ? [] : entries.rows;
       savedEntries = [];
       for (const entry of matches) {
-        if (
-          row.kind === 'password' &&
-          username !== undefined &&
-          openCredential(await key(), entry).username !== username
-        )
-          continue;
+        if (row.kind === 'password') {
+          const secret = openCredential(await key(), entry);
+          if (!secret.password || (username !== undefined && secret.username !== username))
+            continue;
+        }
         savedEntries.push(metadata(entry));
       }
       if (
@@ -1130,20 +1154,28 @@ export async function createVault(pool: Pool, options: VaultOptions) {
                   password: values.password,
                 }),
         });
+        const entry =
+          row.kind === 'identifier' && !values.password && submission?.status !== 'rejected'
+            ? await save(
+                row.owner_id,
+                { label: row.label, origin: row.origin, username, password: '' },
+                client,
+                identifierLabel,
+              )
+            : undefined;
         if (row.kind !== 'otp')
           await rememberSelection(client, {
             rootTurnId: row.root_turn_id,
             ownerId: row.owner_id,
             origin: row.origin,
-            entryId: null,
+            entryId: entry?.id ?? null,
             username,
             ...(row.kind === 'identifier' && values.password && submission?.status !== 'rejected'
               ? { password: values.password, loginLabel: values.label }
               : {}),
             identifierLabel,
             expiresAt: row.expires_at,
-            blocked:
-              row.kind !== 'identifier' || !values.password || submission?.status === 'rejected',
+            blocked: row.kind !== 'identifier' || submission?.status === 'rejected',
             enteredAt: submission?.status === 'rejected' ? undefined : Date.now(),
           });
         if (submission?.status === 'rejected')
@@ -1217,6 +1249,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         );
       if (row.kind === 'identifier' && !secret.username)
         throw new VaultError('This login has no username. Enter it in the form.', 409);
+      if (row.kind === 'password' && !secret.password)
+        throw new VaultError('Enter the password in the secure form.', 409);
       await client.query(
         `INSERT INTO credential_autofill_attempts(root_turn_id,owner_id,origin,entry_id,kind) VALUES($1,$2,$3,$4,$5)
          ON CONFLICT(root_turn_id,owner_id,origin,kind) DO UPDATE SET entry_id=excluded.entry_id,attempted_at=now()`,
@@ -1291,6 +1325,16 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function fillSaved(turn: TurnRef, ownerId: string, id: string, raw: CredentialInput) {
+    if (raw.kind === 'identifier') {
+      const root = await rootTurn(pool, turn, ownerId);
+      const selected = root
+        ? await selection(root, ownerId, credentialOrigin(raw.origin))
+        : undefined;
+      if (selected?.entry_id === id) {
+        if (await fillSelectedIdentifier(turn, ownerId, raw)) return true;
+        throw new VaultError('Enter fresh credentials to retry this website.', 409);
+      }
+    }
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -1340,6 +1384,29 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           'Choose the saved login that matches the account already entered.',
           409,
         );
+      const identifierLabel =
+        (staged !== undefined && selected?.identifier_label) ||
+        entries.rows[0].identifier_label ||
+        inferredIdentifierLabel(secret.username);
+      if (input.kind === 'password' && !secret.password) {
+        await rememberSelection(client, {
+          rootTurnId: root,
+          ownerId,
+          origin,
+          entryId: id,
+          username: secret.username,
+          identifierLabel,
+          expiresAt: selected?.expires_at ?? new Date(Date.now() + 10 * 60_000),
+          blocked: false,
+          enteredAt: selected?.credential_entered_at?.getTime(),
+        });
+        await client.query(
+          "DELETE FROM credential_autofill_attempts WHERE root_turn_id=$1 AND owner_id=$2 AND origin=$3 AND entry_id=$4 AND kind='password'",
+          [root, ownerId, origin, id],
+        );
+        await client.query('COMMIT');
+        return false;
+      }
       const submission = await options.inject({
         ...input,
         threadId: turn.threadId,
@@ -1348,10 +1415,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           input.kind === 'identifier' || input.usernameSelector ? secret.username : undefined,
         password: input.kind === 'password' ? secret.password : undefined,
       });
-      const identifierLabel =
-        (staged !== undefined && selected?.identifier_label) ||
-        entries.rows[0].identifier_label ||
-        inferredIdentifierLabel(secret.username);
       await rememberSelection(client, {
         rootTurnId: root,
         ownerId,
@@ -1378,6 +1441,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           identifierLabel,
           expiresAt: Date.now() + 10 * 60_000,
         });
+      return true;
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -1484,6 +1548,81 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }
   }
 
+  async function fillSelectedIdentifier(turn: TurnRef, ownerId: string, raw: CredentialInput) {
+    if (!options.page) return false;
+    const origin = credentialOrigin(raw.origin);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const root = (await currentTurn(client, turn, ownerId, ' FOR UPDATE OF u NOWAIT'))
+        ? await rootTurn(client, turn, ownerId)
+        : undefined;
+      const selected = root ? await selection(root, ownerId, origin, client) : undefined;
+      if (
+        !root ||
+        !selected ||
+        selected.blocked ||
+        !selected.credential_entered_at ||
+        new Date(selected.expires_at).getTime() <= Date.now()
+      )
+        throw new VaultError('This saved sign-in step is no longer available.', 409);
+      const credentialKey = await key();
+      const secret = openCredential(credentialKey, selected);
+      if (!secret.username) throw new VaultError('Enter a username in the secure form.', 409);
+      const fresh = await inspectRequest(turn.threadId, raw);
+      if (fresh.input.kind !== 'identifier')
+        throw new VaultError('The identifier step is not ready.', 409);
+      await client.query(
+        'UPDATE credential_account_selections SET blocked=true,credential_entered_at=NULL WHERE id=$1',
+        [selected.id],
+      );
+      await client.query('COMMIT');
+      await client.query('BEGIN');
+      const current = await currentTurn(client, turn, ownerId, ' FOR UPDATE OF u NOWAIT');
+      const retained = await selection(root, ownerId, origin, client);
+      if (
+        !current ||
+        !retained ||
+        retained.id !== selected.id ||
+        !retained.blocked ||
+        new Date(retained.expires_at).getTime() <= Date.now()
+      )
+        throw new VaultError('This task step is no longer active.', 409);
+      if (selected.entry_id) {
+        const entries = await client.query<EntryRow>(
+          'SELECT * FROM vault_entries WHERE id=$1 AND owner_id=$2 AND origin=$3 FOR SHARE',
+          [selected.entry_id, ownerId, origin],
+        );
+        if (
+          !entries.rows[0] ||
+          openCredential(credentialKey, entries.rows[0]).username !== secret.username
+        )
+          throw new VaultError('This saved login is no longer available.', 409);
+      }
+      const verified = await inspectRequest(turn.threadId, fresh.input);
+      const submission = await options.inject({
+        ...verified.input,
+        threadId: turn.threadId,
+        username: secret.username,
+      });
+      if (submission?.status === 'rejected') {
+        await client.query('COMMIT');
+        return false;
+      }
+      await client.query(
+        'UPDATE credential_account_selections SET blocked=false,credential_entered_at=now() WHERE id=$1',
+        [selected.id],
+      );
+      await client.query('COMMIT');
+      return true;
+    } catch {
+      await client.query('ROLLBACK');
+      return false;
+    } finally {
+      client.release();
+    }
+  }
+
   async function fillSelected(turn: TurnRef, ownerId: string, raw: CredentialInput) {
     const origin = credentialOrigin(raw.origin);
     const root = await rootTurn(pool, turn, ownerId);
@@ -1495,10 +1634,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       new Date(selected.expires_at).getTime() <= Date.now()
     )
       return false;
+    if (raw.kind === 'identifier') return fillSelectedIdentifier(turn, ownerId, raw);
     if (!selected.entry_id) return fillStagedPassword(turn, ownerId, raw);
     try {
-      await fillSaved(turn, ownerId, selected.entry_id, raw);
-      return true;
+      return await fillSaved(turn, ownerId, selected.entry_id, raw);
     } catch {
       return false;
     }
@@ -1698,7 +1837,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           .parse(request.body);
         if (kind === 'card') return saveCard(request.body);
         requireFullHost(request.body);
-        return save(owner, request.body);
+        return save(owner, passwordInput.parse(request.body));
       });
       scope.patch<{ Params: { id: string } }>(
         '/api/vault/:id',
@@ -1817,7 +1956,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   return {
     registerRoutes,
     saveLogin: (input: { origin: string; label: string; username: string; password: string }) =>
-      save(owner, input),
+      save(owner, passwordInput.parse(input)),
     request,
     list,
     readCredential,

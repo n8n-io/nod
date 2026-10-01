@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir } from 'node:fs/promises';
+import { access, mkdir, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
 import {
   localDatabaseEnvironment,
   rotateLocalDatabase,
@@ -25,9 +27,13 @@ try {
   } catch {
     await run('npm', ['ci']);
   }
-  await mkdir('.local/workspaces', { recursive: true });
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
-    const environment = localDatabaseEnvironment(database);
+    const settings = parseEnv(await readFile('.env', 'utf8'));
+    const environment = {
+      ...localDatabaseEnvironment(database),
+      OTTO_DATA_ROOT: resolve(process.env.OTTO_DATA_ROOT || settings.OTTO_DATA_ROOT || '.local'),
+    };
+    await mkdir(resolve(environment.OTTO_DATA_ROOT, 'workspaces'), { recursive: true });
     await run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], environment);
     await rotateLocalDatabase(database, { environment });
     await verifyLocalDatabase(database);

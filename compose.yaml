@@ -57,7 +57,7 @@ services:
     mem_limit: 8g
     cpus: 4
     volumes:
-      - ./.local/workspaces:/workspace
+      - ${OTTO_DATA_ROOT:-./.local}/workspaces:/workspace
       - workspace-tools:/home/node
     tmpfs:
       - /tmp:size=256m

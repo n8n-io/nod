@@ -1123,6 +1123,46 @@ test(
       );
 
       await t.test(
+        'combined sign-in pages allow a different account after saved details are rejected',
+        async () => {
+          await addTask('combined-rejected');
+          const turn = task('combined-rejected');
+          await vault.fillSaved(turn, 'local-development', first.id, input());
+          const combined = { ...input('password'), usernameSelector: '#account' };
+          reject = true;
+          await assert.rejects(vault.fillSaved(turn, 'local-development', first.id, combined));
+          reject = false;
+          const request = await vault.request(turn, 'local-development', combined);
+          await pool.query(
+            "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
+            [turn.turnId],
+          );
+          const url = request.url.replace('/vault/', '/api/credential-requests/');
+          assert.deepEqual(
+            (await describe(url)).fields?.map((field) => field.kind),
+            ['identifier', 'password'],
+          );
+          const response = await app.inject({
+            method: 'POST',
+            url,
+            payload: {
+              label: 'Different account',
+              username: 'different-member@example.test',
+              password: 'different-synthetic-password',
+            },
+          });
+          assert.equal(response.statusCode, 200);
+          assert.equal(response.json().ok, true);
+          assert.equal(injections.at(-1)?.username, 'different-member@example.test');
+          assert.equal(injections.at(-1)?.password, 'different-synthetic-password');
+          assert.deepEqual((await vault.readCredential(first.id)).secret, {
+            username: 'same-first@example.test',
+            password: 'first-password',
+          });
+        },
+      );
+
+      await t.test(
         'deleted chosen entry cannot switch automatically to the sole remaining account',
         async () => {
           const disposable = await save(
@@ -1742,11 +1782,17 @@ test(
       let observedOrigin = origin;
       let rejected = false;
       let unavailable = false;
+      let rejectIdentifier = false;
+      let unavailableIdentifier = false;
       const options = {
         keyStore: { id: 'fixture', configured: true, getKey: async () => key },
         page: async () => ({ origin: observedOrigin, url: observedOrigin + '/login' }),
         inject: async (input: CredentialInjection) => {
           injections.push(input);
+          if (unavailableIdentifier && input.kind === 'identifier')
+            throw new Error('Synthetic identifier unavailable');
+          if (rejectIdentifier && input.kind === 'identifier')
+            return { status: 'rejected' as const };
           if (unavailable && input.kind === 'password') throw new Error('Synthetic unavailable');
           if (rejected && input.kind === 'password') return { status: 'rejected' as const };
           stages.set(input.threadId, input.kind === 'identifier' ? 'password' : 'otp');
@@ -1778,7 +1824,14 @@ test(
         pool.query("UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1", [
           turn.turnId,
         ]);
-      const begin = async (id: string) => {
+      const begin = async (
+        id: string,
+        credentials = {
+          label: 'My Google account',
+          username: 'synthetic@example.test',
+          password: 'one-form-synthetic-password',
+        } as { label?: string; username: string; password?: string },
+      ) => {
         if (!tasks.has(id)) {
           const turn = await startTurn();
           tasks.set(id, turn);
@@ -1795,11 +1848,7 @@ test(
         const submitted = await app.inject({
           method: 'POST',
           url,
-          payload: {
-            label: 'My Google account',
-            username: 'synthetic@example.test',
-            password: 'one-form-synthetic-password',
-          },
+          payload: credentials,
         });
         assert.equal(submitted.statusCode, 200);
         assert.equal(submitted.json().ok, true);
@@ -1943,6 +1992,184 @@ test(
           ).rows[0];
           assert.equal(expired.ciphertext, '');
           assert.equal(expired.blocked, true);
+        },
+      );
+
+      await t.test(
+        'passwordless identifiers survive recovery, restart and a later login without filling an empty password',
+        async () => {
+          const username = 'passwordless-member@example.test';
+          await begin('identifier-reuse', { username });
+          await app.close();
+          app = Fastify();
+          vault = await createVault(pool, options);
+          vault.registerRoutes(app);
+          const resetInput = { ...requestInput('identifier'), usernameSelector: '#fresh-account' };
+          assert.equal(
+            await vault.fillSelected(task('identifier-reuse'), 'local-development', resetInput),
+            true,
+          );
+          assert.equal(injections.at(-1)?.username, username);
+          assert.equal(injections.at(-1)?.usernameSelector, '#fresh-account');
+          assert.equal(injections.at(-1)?.password, undefined);
+          assert.equal(injections.at(-1)?.code, undefined);
+          const entries = await vault.list();
+          const entry = (
+            await Promise.all(entries.map((candidate) => vault.readCredential(candidate.id)))
+          ).find((candidate) => candidate.secret.username === username);
+          assert.ok(entry);
+          assert.equal(entry.secret.password, '');
+          await vault.fillSaved(
+            task('identifier-reuse'),
+            'local-development',
+            entry.entry.id,
+            resetInput,
+          );
+          assert.equal(injections.at(-1)?.username, username);
+          await begin('identifier-reuse', { username });
+          assert.equal((await vault.list()).length, entries.length);
+          const later = await startTurn();
+          tasks.set('identifier-later', later);
+          await vault.fillSaved(later, 'local-development', entry.entry.id, resetInput);
+          const before = injections.length;
+          const passwordInput = { ...requestInput('password'), usernameSelector: '#fresh-account' };
+          assert.equal(await vault.fillSelected(later, 'local-development', passwordInput), false);
+          assert.equal(
+            await vault.fillSaved(later, 'local-development', entry.entry.id, passwordInput),
+            false,
+          );
+          assert.equal(injections.length, before);
+          const request = await vault.request(later, 'local-development', passwordInput);
+          await wait(later);
+          const url = request.url.replace('/vault/', '/api/credential-requests/');
+          const description = await app.inject({ url });
+          assert.deepEqual(description.json().savedEntries, []);
+          assert.deepEqual(
+            description.json().fields.map((field: { kind: string }) => field.kind),
+            ['identifier', 'password'],
+          );
+          const rejected = await app.inject({
+            method: 'POST',
+            url: `${url}/saved`,
+            payload: { entryId: entry.entry.id },
+          });
+          assert.equal(rejected.statusCode, 409);
+          assert.equal(injections.length, before);
+          const response = await app.inject({
+            method: 'POST',
+            url,
+            payload: { label: 'Passwordless member', password: 'new-synthetic-password' },
+          });
+          assert.equal(response.statusCode, 200);
+          assert.equal(response.json().ok, true);
+          assert.equal(injections.at(-1)?.username, username);
+          const upgraded = await vault.readCredential(entry.entry.id);
+          assert.equal(upgraded.secret.username, username);
+          assert.equal(upgraded.secret.password, 'new-synthetic-password');
+          assert.equal((await vault.list()).length, entries.length);
+        },
+      );
+
+      await t.test('identifier recovery never fills or replays a held password', async () => {
+        await begin('held-password-recovery');
+        const turn = task('held-password-recovery');
+        assert.equal(
+          await vault.fillSelected(turn, 'local-development', requestInput('identifier')),
+          true,
+        );
+        assert.equal(injections.at(-1)?.username, 'synthetic@example.test');
+        assert.equal(injections.at(-1)?.password, undefined);
+        assert.equal(
+          await vault.fillSelected(turn, 'local-development', requestInput('password')),
+          true,
+        );
+        assert.equal(injections.at(-1)?.password, 'one-form-synthetic-password');
+        const before = injections.length;
+        assert.equal(
+          await vault.fillSelected(turn, 'local-development', requestInput('password')),
+          false,
+        );
+        assert.equal(injections.length, before);
+      });
+
+      await t.test(
+        'identifier recovery preserves account, origin, owner and turn fences',
+        async () => {
+          await begin('identifier-fences', { username: 'fenced-member@example.test' });
+          const turn = task('identifier-fences');
+          const input = requestInput('identifier');
+          const before = injections.length;
+          assert.equal(await vault.fillSelected(turn, 'other-owner', input), undefined);
+          assert.equal(
+            await vault.fillSelected(turn, 'local-development', {
+              ...input,
+              origin: 'https://other.example.test',
+            }),
+            undefined,
+          );
+          observedOrigin = 'https://other.example.test';
+          assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
+          observedOrigin = origin;
+          await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turn.turnId]);
+          assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
+          await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turn.turnId]);
+          assert.equal(
+            await vault.fillSelected(turn, 'local-development', requestInput('otp')),
+            false,
+          );
+          await pool.query(
+            "UPDATE credential_account_selections SET expires_at=now()-interval '1 second' WHERE root_turn_id=$1",
+            [roots.get('identifier-fences')],
+          );
+          assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
+          assert.equal(injections.length, before);
+          const later = await startTurn();
+          assert.equal(await vault.fillSelected(later, 'local-development', input), undefined);
+          const request = await vault.request(later, 'local-development', input);
+          await wait(later);
+          const response = await app.inject({
+            url: request.url.replace('/vault/', '/api/credential-requests/'),
+          });
+          assert.ok(response.json().savedEntries.length > 1);
+          assert.equal(response.json().selectedEntryId, undefined);
+          assert.equal(injections.length, before);
+        },
+      );
+
+      await t.test(
+        'failed identifier recovery is fenced without replaying credentials',
+        async () => {
+          for (const failure of ['rejected', 'uncertain']) {
+            const name = `identifier-${failure}`;
+            await begin(name, { username: `${name}@example.test` });
+            const turn = task(name);
+            const before = injections.length;
+            rejectIdentifier = failure === 'rejected';
+            unavailableIdentifier = failure === 'uncertain';
+            assert.equal(
+              await vault.fillSelected(turn, 'local-development', requestInput('identifier')),
+              false,
+            );
+            rejectIdentifier = false;
+            unavailableIdentifier = false;
+            assert.equal(injections.length, before + 1);
+            assert.equal(
+              await vault.fillSelected(turn, 'local-development', requestInput('identifier')),
+              false,
+            );
+            assert.equal(
+              await vault.fillSelected(turn, 'local-development', requestInput('password')),
+              false,
+            );
+            assert.equal(injections.length, before + 1);
+            const rows = await pool.query(
+              'SELECT * FROM credential_account_selections WHERE root_turn_id=$1',
+              [roots.get(name)],
+            );
+            assert.equal(rows.rows[0].blocked, true);
+            assert.equal(rows.rows[0].credential_entered_at, null);
+            assert.equal(openCredential(key, rows.rows[0]).password, '');
+          }
         },
       );
     } finally {

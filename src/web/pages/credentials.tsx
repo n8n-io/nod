@@ -322,8 +322,15 @@ function CredentialForm({ id }: { id: string }) {
                     )}
                   </>
                 )}
+                {request.kind === 'identifier' && (
+                  <p>Your username or email will be saved in Vault for this website.</p>
+                )}
                 <Button className="credential-submit" type="submit" disabled={saving}>
-                  {saving ? 'Continuing…' : password ? 'Save and continue' : 'Continue'}
+                  {saving
+                    ? 'Continuing…'
+                    : request.kind === 'otp'
+                      ? 'Continue'
+                      : 'Save and continue'}
                 </Button>
                 {savedEntries.length > 0 && (
                   <Button

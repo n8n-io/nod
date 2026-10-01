@@ -197,7 +197,7 @@ export const toolDefinitions = {
   ),
   get_credential: defineTool(
     'get_credential',
-    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault can fill a saved login or open a secure form. For the form, message is one sentence for the user about this step in their language, and action is the 2-5 word button text, such as "Add authenticator code"; never ask for the value in chat. Submit with browser and inspect the result.',
+    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and any saved password; a passwordless login has an empty password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault can fill a saved login or open a secure form. For the form, message is one sentence for the user about this step in their language, and action is the 2-5 word button text, such as "Add authenticator code"; never ask for the value in chat. Submit with browser and inspect the result.',
     Type.Union([
       Type.Object({
         id: uuid,
@@ -334,6 +334,10 @@ export function ottoTools(
   const screenshot = async () => {
     const bytes = await computer.screenshot(threadId, signal);
     signal.throwIfAborted();
+    if (bytes && computer.screenStatus && computer.screenStatus(threadId).state !== 'live')
+      throw new Error(
+        'A live browser screenshot is unavailable. Reopen the page and take a fresh screenshot before continuing. Do not repeat an action whose result is uncertain.',
+      );
     return bytes;
   };
   const link = async (url: unknown, text: (url: string) => string) => {

@@ -697,8 +697,9 @@ export async function createApplication(
         if (savedLoginId !== undefined) {
           if (request.kind === 'otp')
             throw new Error('Saved logins cannot supply verification codes.');
-          await vault.fillSaved(turn, ownerId, savedLoginId, request);
-          return { filled: true };
+          return (await vault.fillSaved(turn, ownerId, savedLoginId, request))
+            ? { filled: true }
+            : vault.request(turn, ownerId, request);
         }
         if (request.kind === 'otp' && (await vault.fillEmailCode(turn, ownerId, request)))
           return { filled: true };
@@ -711,8 +712,8 @@ export async function createApplication(
             );
             if (matches.length === 1) {
               try {
-                await vault.fillSaved(turn, ownerId, matches[0].id, request);
-                return { filled: true };
+                if (await vault.fillSaved(turn, ownerId, matches[0].id, request))
+                  return { filled: true };
               } catch {}
             }
           }
