@@ -2237,25 +2237,15 @@ test('email verification binds authenticated messages to a recent exact recipien
   );
 });
 
-test('verification mail for a separate signup domain must link the exact HTTPS form origin', () => {
+test('verification links do not grant unrelated senders authority over the signup site', () => {
   const signup = { ...request, origin: 'https://app.example.net' };
   const email = {
     ...message,
     sender: 'login@transactional.example.com',
     authenticatedDomain: 'example.com',
-    verificationOrigins: [signup.origin],
+    text: `Your verification code is 123456. Verify email: ${signup.origin}/verify?token=abcdefghijklmnop`,
   };
-  assert.equal(verificationCode([email], signup), '381742');
-  for (const verificationOrigins of [
-    [],
-    ['http://app.example.net'],
-    ['https://example.net'],
-    ['https://app.example.net.evil.com'],
-    ['https://app.example.net:8443'],
-    ['https://evil.com/?next=https://app.example.net'],
-    [signup.origin, 'https://another.example.net'],
-  ])
-    assert.equal(verificationCode([{ ...email, verificationOrigins }], signup), undefined);
+  assert.equal(verificationCode([email], signup), undefined);
   assert.equal(
     verificationCode([{ ...email, authenticatedDomain: 'unrelated.com' }], signup),
     undefined,
@@ -2364,7 +2354,7 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
         );
         assert.match(
           String(input.parameters.find((item) => item.name === 'q')?.value),
-          /^to:owner@example.com after:\d+ before:\d+$/,
+          /^to:owner@example.com from:toconline.pt after:\d+ before:\d+$/,
         );
         return { status: 200, headers: {}, data: { messages: [{ id: 'mail1' }], nextPageToken } };
       }
@@ -2398,6 +2388,7 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       'owned-account',
       {
         recipient: request.recipient,
+        senderDomain: 'toconline.pt',
         after: request.after,
         before: request.before,
       },
@@ -2405,13 +2396,34 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
     );
   assert.equal(verificationCode((await read())!, request), '381742');
   assert.equal(calls.length, 2);
+  sender = 'Attacker <sender@unrelated.example.org>';
+  auth = 'mx.google.com; dmarc=pass header.from=unrelated.example.org';
+  for (const [type, content] of [
+    [
+      'text/plain',
+      `Your verification code is 123456.\nVerify email (${request.origin}/verify?token=abcdefghijklmnop)`,
+    ],
+    [
+      'text/html',
+      `<p>Your verification code is 123456.</p><a href="${request.origin}/verify?token=abcdefghijklmnop">Verify email</a>`,
+    ],
+  ]) {
+    mimeType = type;
+    body = content;
+    const unrelated = await read();
+    assert.equal(unrelated?.length, 1);
+    assert.equal(verificationCode(unrelated!, request), undefined);
+  }
+  sender = 'TOConline <login@toconline.pt>';
+  auth = 'mx.google.com; dmarc=pass (p=REJECT) header.from=toconline.pt; dkim=pass';
+  body = 'O seu código de autenticação é 381742.';
   mimeType = 'multipart/alternative';
   parts = [
     {
       mimeType: 'text/plain',
       body: {
         data: Buffer.from(
-          'Your verification code is 381742.\nVerify my email ( https://app.example.cloud/register?emailToken=synthetic-verification-token )\nSign in (https://login.example.com/finish?code=1234)\nHelp (https://help.example.com/docs?token=synthetic-verification-token)\nVerify email (https://tracker.example.com/?next=https://nested.example.com&token=synthetic-verification-token)\n> Verify email (https://quoted.example.com/finish?token=synthetic-verification-token)\n> Your verification code is 999999.',
+          'Your verification code is 381742.\n> Your verification code is 999999.',
         ).toString('base64url'),
       },
     },
@@ -2419,7 +2431,7 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       mimeType: 'text/html',
       body: {
         data: Buffer.from(
-          '<a href="https://html.example.cloud/start?token=synthetic-verification-token"><span>Verify</span> my email</a><a href="https://homepage.example.com">Verify email</a><a href="https://social.example.com/?token=synthetic-verification-token">Follow us</a><a href="https://footer.example.com/?token=synthetic-verification-token">Help</a><a href="https://tracker.example.com/?next=https://nested.example.com&token=synthetic-verification-token">Verify email</a><a href="https://user:secret@credentials.example.com/?token=synthetic-verification-token">Verify email</a><script><a href="https://script.example.com/?token=synthetic-verification-token">Verify email</a></script><template><a href="https://template.example.com/?token=synthetic-verification-token">Verify email</a></template><blockquote><a href="https://quote.example.com/?token=synthetic-verification-token">Verify email</a></blockquote><div class="gmail_quote"><a href="https://gmailquote.example.com/?token=synthetic-verification-token">Verify email</a></div>',
+          '<p>Your verification code is 381742.</p><blockquote>Your verification code is 999999.</blockquote>',
         ).toString('base64url'),
       },
     },
@@ -2427,20 +2439,13 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       mimeType: 'text/html',
       headers: [{ name: 'Content-Disposition', value: 'attachment' }],
       body: {
-        data: Buffer.from(
-          '<a href="https://attachment.example.com/?token=synthetic-verification-token">Verify email</a>',
-        ).toString('base64url'),
+        data: Buffer.from('<p>Your verification code is 999998.</p>').toString('base64url'),
       },
     },
   ];
-  const linked = (await read())![0];
-  assert.deepEqual(linked.verificationOrigins?.sort(), [
-    'https://app.example.cloud',
-    'https://html.example.cloud',
-    'https://login.example.com',
-  ]);
-  assert.match(linked.text, /Your verification code is 381742/);
-  assert.doesNotMatch(linked.text, /999999|quoted\.example\.com/);
+  const unquoted = (await read())![0];
+  assert.equal(verificationCode([unquoted], request), '381742');
+  assert.doesNotMatch(unquoted.text, /999999|999998/);
   parts = undefined;
   mimeType = 'text/plain';
   sender = 'login@transactional.toconline.pt';
@@ -2531,6 +2536,7 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       'owned-account',
       {
         recipient: request.recipient,
+        senderDomain: 'toconline.pt',
         after: request.after,
         before: request.before,
       },
@@ -2810,6 +2816,28 @@ test(
     });
     assert.equal(await fill('current-challenge-email'), true);
     assert.equal(injected.at(-1)?.code, currentCode);
+    const unrelatedTurn = await begin('unrelated-sender');
+    emails = [
+      {
+        ...message,
+        receivedAt: Date.now() - 1000,
+        sender: 'sender@unrelated.example.org',
+        authenticatedDomain: 'unrelated.example.org',
+        text: `Your verification code is 123456. Verify email: ${origin}/verify?token=abcdefghijklmnop`,
+      },
+    ];
+    const beforeUnrelated = injected.length;
+    assert.equal(await fill('unrelated-sender'), false);
+    assert.equal(injected.length, beforeUnrelated);
+    const manualCode = await vault.request(unrelatedTurn, owner, otpInput);
+    await turns.wait(unrelatedTurn);
+    const manualForm = await app.inject({
+      url: manualCode.url.replace('/vault/', '/api/credential-requests/'),
+    });
+    assert.equal(manualForm.statusCode, 200);
+    assert.equal(manualForm.json().kind, 'otp');
+    assert.equal(manualForm.json().status, 'pending');
+    assert.equal(manualForm.body.includes('123456'), false);
     emails = undefined;
     const nonEmailLogin = (
       await app.inject({
@@ -3148,6 +3176,7 @@ test(
       verificationEmails: async (id, query, signal) => {
         reads.push(id);
         assert.equal(query.recipient, requestedRecipient);
+        assert.equal(query.senderDomain, 'toconline.pt');
         assert.equal(signal.aborted, false);
         if (fail) throw new Error('private-message-body 381742');
         await duringRead?.();

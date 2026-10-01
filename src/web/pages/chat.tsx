@@ -76,6 +76,7 @@ export function Chat({
   );
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [returningHandoff, setReturningHandoff] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState('');
   const [reportStatus, setReportStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
@@ -205,6 +206,7 @@ export function Chat({
     retry.current = null;
     setText('');
     setSending(false);
+    setReturningHandoff(null);
     setError('');
     setReportStatus('idle');
     setStopping(false);
@@ -421,6 +423,16 @@ export function Chat({
         sendQueue.current = Promise.resolve(true);
         setSending(false);
       }
+    }
+  }
+  async function finishHandoff(messageId: string) {
+    const sentThread = threadId;
+    setReturningHandoff(messageId);
+    try {
+      const result = await send('Done, I finished in the browser.', []);
+      if (!result.sent) throw new Error('Could not hand control back. Try Done again.');
+    } finally {
+      if (threadRef.current === sentThread) setReturningHandoff(null);
     }
   }
   async function history() {
@@ -667,11 +679,12 @@ export function Chat({
                   inspectorEnabled={state.configuration.inspectorEnabled}
                   grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
                   onHandoffDone={
-                    index === visibleMessages.length - 1 &&
-                    message.role === 'assistant' &&
-                    !working &&
-                    !sending
-                      ? () => void send('Done, I finished in the browser.', [])
+                    message.id === returningHandoff ||
+                    (index === visibleMessages.length - 1 &&
+                      message.role === 'assistant' &&
+                      !working &&
+                      !sending)
+                      ? () => finishHandoff(message.id)
                       : undefined
                   }
                   onReply={

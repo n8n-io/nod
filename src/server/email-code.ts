@@ -68,9 +68,7 @@ export function verificationCode(messages: VerificationEmail[], input: EmailCode
       message.receivedAt > input.before ||
       !authenticatedDomain ||
       authenticatedDomain !== senderDomain ||
-      (authenticatedDomain !== domain &&
-        (message.verificationOrigins?.length !== 1 ||
-          message.verificationOrigins[0] !== input.origin)) ||
+      authenticatedDomain !== domain ||
       !message.recipients.includes(input.recipient) ||
       message.text.length > 64_000
     )

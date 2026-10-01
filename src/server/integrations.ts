@@ -1251,7 +1251,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       if (!(await current())) return;
       const messages = await provider.verificationEmails(
         row.account_id!,
-        { recipient, after: input.after, before: input.before },
+        { recipient, senderDomain, after: input.after, before: input.before },
         signal,
       );
       signal.throwIfAborted();

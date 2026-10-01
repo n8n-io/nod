@@ -36,7 +36,7 @@ export const MessageText = memo(function MessageText({
   text: string;
   previews?: boolean;
   connectedAppIds?: ReadonlySet<string>;
-  onHandoffDone?: () => void;
+  onHandoffDone?: () => Promise<void>;
 }) {
   const content = useRef<HTMLDivElement>(null);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
@@ -133,7 +133,7 @@ export function MessageBubble({
   grouped?: boolean;
   streaming?: boolean;
   onReply?(): void;
-  onHandoffDone?(): void;
+  onHandoffDone?(): Promise<void>;
 }) {
   const dateFormat = useDateFormat();
   const [error, setError] = useState('');

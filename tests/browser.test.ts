@@ -61,6 +61,8 @@ import { createBrowserFixture } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
+import { Chat } from '../src/web/pages/chat.tsx';
+import type { AppState } from '../src/shared/contracts.ts';
 
 // Shared helpers
 
@@ -2140,7 +2142,10 @@ function handoffScreen(state = 'live', text = 'Synthetic screen') {
   });
 }
 
-async function handoffView(request: (path: string, options?: RequestInit) => Promise<Response>) {
+async function handoffView(
+  request: (path: string, options?: RequestInit) => Promise<Response>,
+  content?: React.ReactNode,
+) {
   const dom = new JSDOM('<div id="root"></div>', {
     url: 'http://localhost',
     pretendToBeVisual: true,
@@ -2148,6 +2153,14 @@ async function handoffView(request: (path: string, options?: RequestInit) => Pro
   const replacements = {
     window: dom.window,
     document: dom.window.document,
+    Node: dom.window.Node,
+    Element: dom.window.Element,
+    HTMLElement: dom.window.HTMLElement,
+    DOMParser: dom.window.DOMParser,
+    MutationObserver: dom.window.MutationObserver,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     IS_REACT_ACT_ENVIRONMENT: true,
     fetch: (input: string | URL | Request, options?: RequestInit) =>
       request(String(input), options),
@@ -2156,6 +2169,7 @@ async function handoffView(request: (path: string, options?: RequestInit) => Pro
     Object.keys(replacements).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
   );
   Object.assign(globalThis, replacements);
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   const createUrl = URL.createObjectURL;
   const revokeUrl = URL.revokeObjectURL;
   const images = new Map<string, Blob>();
@@ -2180,7 +2194,14 @@ async function handoffView(request: (path: string, options?: RequestInit) => Pro
   let unmounted = false;
   const root = createRoot(dom.window.document.querySelector('#root')!);
   await act(async () => {
-    root.render(createElement(BrowserHandoff, { onDone: () => completions++ }));
+    root.render(
+      content ??
+        createElement(BrowserHandoff, {
+          onDone: async () => {
+            completions++;
+          },
+        }),
+    );
   });
   const element = <T extends Element>(selector: string) => {
     const value = dom.window.document.querySelector<T>(selector);
@@ -2229,6 +2250,104 @@ async function handoffView(request: (path: string, options?: RequestInit) => Pro
     },
   };
 }
+
+for (const failure of ['rejected', 'disconnected'] as const)
+  test(`chat preserves a ${failure} browser continuation until an acknowledged retry`, async () => {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    const submissions: Array<{ clientMessageId: string; threadId: string }> = [];
+    let controls = 0;
+    const state: AppState = {
+      threadId: randomUUID(),
+      threadStatus: 'idle',
+      messages: [
+        {
+          id: randomUUID(),
+          role: 'assistant',
+          turnId: randomUUID(),
+          text: 'Complete this step in [Open browser](/browser).',
+          attachments: [],
+          createdAt: '2026-10-01T12:00:00.000Z',
+        },
+      ],
+      turns: [],
+      configuration: {
+        provider: 'fixture',
+        model: 'none',
+        llmReady: true,
+        speechReady: false,
+        integrationsReady: false,
+        inspectorEnabled: false,
+        localOnly: true,
+      },
+    };
+    const view = await handoffView(
+      async (path, options) => {
+        if (path === '/api/apps') return Response.json([]);
+        if (path === '/api/browser-handoff/screen') return handoffScreen();
+        if (path === '/api/browser-handoff') {
+          controls++;
+          return Response.json({ ok: true });
+        }
+        assert.equal(path, '/api/messages');
+        const attempt = submissions.length;
+        submissions.push(JSON.parse(String(options?.body)));
+        const result = await (attempt ? second.promise : first.promise);
+        if (!attempt && failure === 'disconnected') throw new Error('Synthetic connection lost');
+        return result;
+      },
+      createElement(Chat, {
+        state,
+        streams: {},
+        refresh: async () => {},
+        resetConversation: async () => state.threadId,
+      }),
+    );
+    try {
+      const original = view.element('.browser-handoff');
+      await view.clickImage();
+      await act(async () => delay(350));
+      await view.button('Done');
+      assert.equal(submissions.length, 1);
+      assert.equal(view.element('.browser-handoff'), original);
+      assert.equal(view.element<HTMLButtonElement>('.browser-handoff-bar button').disabled, true);
+      assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 1);
+      await view.clickImage();
+      await view.poll();
+      assert.equal(submissions.length, 1);
+      assert.equal(controls, 1);
+      await act(async () =>
+        first.resolve(Response.json({ error: 'Synthetic request rejected' }, { status: 503 })),
+      );
+      assert.equal(view.element('.browser-handoff'), original);
+      assert.equal(view.element<HTMLButtonElement>('.browser-handoff-bar button').disabled, false);
+      assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 0);
+      const failureStatus = view.element('.browser-handoff [role="status"]').textContent;
+      await view.poll();
+      assert.equal(view.element('.browser-handoff [role="status"]').textContent, failureStatus);
+      await view.button('Done');
+      assert.equal(submissions.length, 2);
+      assert.equal(submissions[1].clientMessageId, submissions[0].clientMessageId);
+      assert.equal(view.element('.browser-handoff'), original);
+      assert.equal(controls, 1);
+      await act(async () =>
+        second.resolve(
+          Response.json({
+            messageId: submissions[1].clientMessageId,
+            threadId: state.threadId,
+            turnId: randomUUID(),
+          }),
+        ),
+      );
+      assert.equal(view.dom.window.document.querySelector('.browser-handoff'), null);
+      assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 1);
+      assert.equal(controls, 1);
+    } finally {
+      first.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+      second.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+      await view.close();
+    }
+  });
 
 for (const failure of ['rejected', 'disconnected'] as const)
   test(`browser handoff preserves a ${failure} input failure through Done and polling without replay`, async () => {

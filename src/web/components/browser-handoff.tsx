@@ -6,7 +6,7 @@ import { Button, Loading } from './ui';
 
 const specialKeys = new Set<string>(browserHandoffKeys);
 
-export function BrowserHandoff({ onDone }: { onDone: () => void }) {
+export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   const screen = useRef<HTMLDivElement>(null);
   const queue = useRef(Promise.resolve());
   const pending = useRef(0);
@@ -23,6 +23,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => void }) {
   const [image, setImage] = useState<string>();
   const [error, setError] = useState('');
   const [inputError, setInputError] = useState('');
+  const [completionError, setCompletionError] = useState('');
   const [interactive, setInteractive] = useState(false);
   const [returning, setReturning] = useState(false);
   const [closed, setClosed] = useState(false);
@@ -204,13 +205,14 @@ export function BrowserHandoff({ onDone }: { onDone: () => void }) {
     flushScroll();
     finishing.current = true;
     setReturning(true);
+    setCompletionError('');
     try {
       await queue.current;
       if (!active.current || failedInput.current || !(await refresh())) return;
-      onDone();
-      setClosed(true);
+      await onDone();
+      if (active.current) setClosed(true);
     } catch (reason) {
-      if (active.current) setError(errorMessage(reason));
+      if (active.current) setCompletionError(errorMessage(reason));
     } finally {
       finishing.current = false;
       if (active.current) setReturning(false);
@@ -237,7 +239,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => void }) {
       </div>
       <div className="browser-handoff-bar">
         <span role="status">
-          {inputError || error || 'Click and type here, then hand it back.'}
+          {inputError || error || completionError || 'Click and type here, then hand it back.'}
         </span>
         {(inputError || error) && (
           <Button variant="ghost" onClick={() => refreshView(true)} disabled={returning}>
