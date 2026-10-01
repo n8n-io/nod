@@ -71,6 +71,7 @@ export type Archived = z.infer<typeof archivedSchema>;
 export type Reason = Archived['reason'];
 export interface Tree {
   reflected: string | null;
+  retries: number;
   entries: Entry[];
   overviews: Partial<Record<Area, z.infer<typeof overviewSchema>>>;
   consolidated: Partial<Record<Area, string>>;
@@ -79,6 +80,7 @@ export interface Tree {
 
 export const emptyTree = (): Tree => ({
   reflected: null,
+  retries: 0,
   entries: [],
   overviews: {},
   consolidated: {},
@@ -92,10 +94,14 @@ export const bySlug = (a: Entry, b: Entry) => a.slug.localeCompare(b.slug);
 export const locate = (tree: Tree, target: string) =>
   tree.entries.find((entry) => pathOf(entry) === target);
 export const fold = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 export const words = (value: string) =>
-  fold(value)
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((word) => word.length > 1 || /\p{N}/u.test(word));
+  [...segmenter.segment(fold(value))]
+    .filter((part) => part.isWordLike)
+    .map((part) => part.segment)
+    .filter((word) => word.length > 1 || /\p{N}/u.test(word) || cjk.test(word));
+export const same = (a: string, b: string) => words(a).join(' ') === words(b).join(' ');
 
 const numbers = (set: Set<string>) =>
   [...set]
@@ -128,7 +134,13 @@ export const slugFor = (tree: Tree, target: Area, text: string) =>
   freeSlug(
     tree,
     target,
-    words(text).slice(0, 6).join('-').slice(0, 44).replace(/-+$/, '') || 'note',
+    fold(text)
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length > 1 || /\d/.test(word))
+      .slice(0, 6)
+      .join('-')
+      .slice(0, 44)
+      .replace(/-+$/, '') || 'note',
   );
 
 export function digest(entries: Entry[]) {
@@ -189,6 +201,7 @@ export function parse(bytes?: Uint8Array): Tree {
   }
   tree.reflected =
     typeof doc.reflected === 'string' && watermark.test(doc.reflected) ? doc.reflected : null;
+  tree.retries = z.number().int().min(0).max(9).catch(0).parse(doc.retries);
   for (const raw of Array.isArray(doc.entries) ? doc.entries : []) {
     const entry = entrySchema.safeParse(raw);
     if (entry.success) keep(entry.data);
@@ -214,10 +227,18 @@ export function render(tree: Tree) {
         {
           version: 2,
           reflected: tree.reflected,
+          retries: tree.retries,
           entries: tree.entries.toSorted(
             (a, b) => areas.indexOf(a.area) - areas.indexOf(b.area) || bySlug(a, b),
           ),
-          overviews: tree.overviews,
+          overviews: Object.fromEntries(
+            areas.flatMap((target) => {
+              const overview = tree.overviews[target];
+              return overview?.digest === digest(areaEntries(tree, target))
+                ? [[target, overview]]
+                : [];
+            }),
+          ),
           consolidated: tree.consolidated,
           archive: archived,
         },
@@ -272,7 +293,9 @@ export function indexLayout(tree: Tree, options: { tentative?: boolean; budget?:
 }
 
 const matches = (tokens: string[], term: string) =>
-  tokens.some((token) => token === term || (term.length > 2 && token.startsWith(term)));
+  tokens.some(
+    (token) => token === term || ((term.length > 2 || cjk.test(term)) && token.startsWith(term)),
+  );
 
 export const brief = (entry: Entry) => ({
   path: pathOf(entry),

@@ -179,7 +179,6 @@ export function createMemoryService(options: {
       if (!entry && tree.archive.length === archived)
         throw new Error('The memory entry was not found.');
       tree.entries = tree.entries.filter((item) => item !== entry);
-      delete tree.overviews[target.split('/')[0] as keyof Tree['overviews']];
       return { ok: true };
     });
   }

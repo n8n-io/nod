@@ -25,12 +25,12 @@ Notion and Linear connect through their hosted MCP servers without extra keys. T
 
 Model defaults, reviewed on 2026-09-30:
 
-| Role                   | Model                                                                                                           | Selection                                                             |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Main agent (OpenAI)    | [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)                                        | Capability and speed for coding, browser and general assistant work   |
-| Main agent (Anthropic) | [Claude Sonnet 5.5](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)                             | Capability and speed when `LLM_PROVIDER=anthropic`                    |
-| Event triage (OpenAI)  | [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)                                          | Short relevance decisions with reasoning disabled                     |
-| Memory (main provider) | [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) on OpenAI, Claude Haiku 4.5 on Anthropic | Hourly learning, weekly consolidation and meaning-based `memory_find` |
+| Role                   | Model                                                                                                           | Selection                                                            |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Main agent (OpenAI)    | [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)                                        | Capability and speed for coding, browser and general assistant work  |
+| Main agent (Anthropic) | [Claude Sonnet 5.5](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)                             | Capability and speed when `LLM_PROVIDER=anthropic`                   |
+| Event triage (OpenAI)  | [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)                                          | Short relevance decisions with reasoning disabled                    |
+| Memory (main provider) | [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) on OpenAI, Claude Haiku 4.5 on Anthropic | Hourly learning, daily consolidation and meaning-based `memory_find` |
 
 Leave `LLM_MODEL`, `TRIAGE_MODEL` and `MEMORY_MODEL` empty to follow these defaults. Memory learning and meaning-based search use the main agent's provider and key, so an OpenAI or an Anthropic key both work; `MEMORY_MODEL` picks another model from that provider. Without a key memory still saves, lints and searches by words. Explicit values override them. `TYPESAFE_API_KEY` selects Jev for triage instead. Main agents retain high reasoning effort. Restart after changing models; existing conversations use the selected model on their next turn. Model upgrades require a Pi SDK version whose catalog includes the selected model.
 

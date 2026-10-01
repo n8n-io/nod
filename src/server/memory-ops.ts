@@ -10,7 +10,7 @@ import {
   locate,
   maxEntries,
   path,
-  similar,
+  same,
   slug,
   unsafe,
   type Area,
@@ -71,16 +71,16 @@ export function applyReflect(
     if (!parsed.success) continue;
     const op = parsed.data;
     const cited = op.m.flatMap((n) => messages[n - 1] ?? []);
-    if (cited.length !== op.m.length || !cited.some((m) => fold(m.text).includes(fold(op.quote))))
-      continue;
-    const sources = union(cited.map((m) => m.id));
+    const quoted = cited.filter((m) => fold(m.text).includes(fold(op.quote)));
+    if (cited.length !== op.m.length || !quoted.length) continue;
+    const sources = union(quoted.map((m) => m.id));
     if (op.op === 'archive') {
       const entry = locate(tree, op.path);
       if (!entry || entry.origin !== 'inferred') continue;
       archive(tree, entry, op.reason, now);
     } else {
       if (unsafe(op.text, op.abstract)) continue;
-      const match = areaEntries(tree, op.area).find((entry) => similar(entry.text, op.text, 0.6));
+      const match = areaEntries(tree, op.area).find((entry) => same(entry.text, op.text));
       if (match) {
         if (match.origin !== 'inferred') continue;
         match.sources = union(match.sources, sources);
@@ -121,11 +121,10 @@ export function applyConsolidate(tree: Tree, target: Area, raw: unknown[], now: 
       if (
         group.length !== op.drop.length + 1 ||
         new Set(group).size !== group.length ||
-        group.some((entry) => entry.area !== target)
+        group.some((entry) => entry.area !== target || rank(entry) > rank(keep!))
       )
         continue;
       keep!.sources = union(...group.map((entry) => entry.sources));
-      keep!.origin = group.some((entry) => entry.origin === 'stated') ? 'stated' : 'inferred';
       keep!.updated = group
         .map((entry) => entry.updated)
         .sort()

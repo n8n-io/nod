@@ -12,6 +12,7 @@ import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { repair } from '../src/server/memory-lint.ts';
 import { applyConsolidate, applyReflect } from '../src/server/memory-ops.ts';
 import {
+  archive,
   areaEntries,
   digest,
   emptyTree,
@@ -20,6 +21,7 @@ import {
   open,
   parse,
   render,
+  slugFor,
   type Entry,
   type Tree,
 } from '../src/server/memory-tree.ts';
@@ -280,6 +282,43 @@ test('the memory file round-trips, skips unsafe or invalid entries and converts 
     ],
   );
   assert.deepEqual(parse(encode('{ not json')), emptyTree());
+
+  const drinks = treeOf(coffee, entry({ slug: 'tea', text: 'Drinks green tea.' }));
+  drinks.overviews.about = { text: 'Drinks.', digest: digest(areaEntries(drinks, 'about')) };
+  assert.equal(parse(render(drinks)).overviews.about?.text, 'Drinks.');
+  drinks.entries[0].text = 'Likes weak coffee.';
+  assert.deepEqual(parse(render(drinks)).overviews, {});
+  drinks.overviews.about = { text: 'Drinks.', digest: digest(areaEntries(drinks, 'about')) };
+  archive(drinks, drinks.entries[1], 'expired', when);
+  assert.deepEqual(parse(render(drinks)).overviews, {});
+});
+
+test('text in any script gets a valid path and is found by interior words', () => {
+  const tree = emptyTree();
+  for (const text of ['我住在东京', 'Люблю кофе по утрам', 'Café com leite'])
+    tree.entries.push(entry({ slug: slugFor(tree, 'about', text), text }));
+  assert.deepEqual(
+    tree.entries.map((item) => item.slug),
+    ['note', 'note-2', 'cafe-com-leite'],
+  );
+  assert.deepEqual(
+    parse(render(tree))
+      .entries.map((item) => item.slug)
+      .sort(),
+    ['cafe-com-leite', 'note', 'note-2'],
+  );
+  assert.deepEqual(
+    find(tree, '东京').map((hit) => hit.path),
+    ['about/note'],
+  );
+  assert.deepEqual(
+    find(tree, 'КОФЕ').map((hit) => hit.path),
+    ['about/note-2'],
+  );
+  assert.deepEqual(
+    find(tree, 'CAFÉ').map((hit) => hit.path),
+    ['about/cafe-com-leite'],
+  );
 });
 
 test('the prompt index is stable JSON data, hides tentative entries and degrades under budget', () => {
@@ -360,6 +399,14 @@ test('repair archives expired, stale and duplicate entries, keeps distinct numbe
       updated: '2026-03-01T00:00:00.000Z',
       sources: [ids[0], ids[1]],
     }),
+    entry({
+      slug: 'send-summary',
+      text: 'Send the weekly project status summary to the finance team by email before ten on Monday mornings so everyone has it',
+    }),
+    entry({
+      slug: 'never-send-summary',
+      text: 'Never send the weekly project status summary to the finance team by email before ten on Monday mornings so everyone has it',
+    }),
     entry({ slug: 'room-1', text: 'Meeting room 1 is the big one.' }),
     entry({ slug: 'room-2', text: 'Meeting room 2 is the big one.' }),
     entry({ slug: 'tea', text: 'Drinks green tea every morning.', sources: [ids[0]] }),
@@ -378,9 +425,11 @@ test('repair archives expired, stale and duplicate entries, keeps distinct numbe
   );
   assert.equal(repair(tree, now), 4);
   assert.deepEqual(tree.entries.map((item) => item.slug).sort(), [
+    'never-send-summary',
     'room-1',
     'room-2',
     'seen-twice',
+    'send-summary',
     'tea-again',
   ]);
   assert.deepEqual(
@@ -433,7 +482,7 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
   const additions = applyReflect(
     tree,
     [
-      add('people', 'ana-city', 'Ana lives in Porto.', [2], 'sister Ana lives in Porto'),
+      add('people', 'ana-city', 'Ana lives in Porto.', [1, 2], 'sister Ana lives in Porto'),
       add('lessons', 'invented', 'Never call.', [1], 'never call me'),
       add('lessons', 'unknown-message', 'Likes tea.', [3], 'tea'),
       add('about', 'card', 'Card number 4111 1111 1111 1111.', [1], 'bullet points'),
@@ -455,16 +504,24 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
         m: [1],
         quote: 'bullet points',
       },
+      add(
+        'preferences',
+        'no-bullets',
+        'Does not want notes as bullet points.',
+        [1],
+        'bullet points',
+      ),
       { op: 'rewrite', path: 'people/ana', text: 'Changed.' },
       'junk',
     ],
     messages,
     when,
   );
-  assert.deepEqual([additions, removals], [2, 1]);
+  assert.deepEqual([additions, removals], [2, 2]);
   assert.deepEqual(tree.entries.map((item) => [item.slug, item.origin, item.sources]).sort(), [
     ['ana', 'stated', [ids[0]]],
     ['ana-city', 'inferred', [ids[1]]],
+    ['no-bullets', 'inferred', [ids[0]]],
     ['notes', 'inferred', [ids[5], ids[0]]],
   ]);
   assert.deepEqual(
@@ -504,6 +561,7 @@ test('consolidation keeps entry text and provenance and only archives with a new
     tree,
     'lessons',
     [
+      { op: 'merge', keep: 'lessons/b', drop: ['lessons/a'] },
       { op: 'merge', keep: 'lessons/a', drop: ['lessons/b'] },
       { op: 'archive', path: 'lessons/old', by: 'lessons/new', reason: 'superseded' },
       { op: 'archive', path: 'lessons/new', by: 'lessons/guess', reason: 'superseded' },

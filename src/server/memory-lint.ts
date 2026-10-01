@@ -1,12 +1,4 @@
-import {
-  archive,
-  areaEntries,
-  areas,
-  pathOf,
-  similar,
-  type Entry,
-  type Tree,
-} from './memory-tree.ts';
+import { archive, areaEntries, areas, pathOf, same, type Entry, type Tree } from './memory-tree.ts';
 
 const staleMs = 60 * 86_400_000;
 const rank = (entry: Entry) => (entry.origin === 'stated' ? 2 : 1);
@@ -32,7 +24,7 @@ export function repair(tree: Tree, now: Date) {
     for (const [index, first] of group.entries()) {
       for (const second of group.slice(index + 1)) {
         if (!tree.entries.includes(first)) break;
-        if (!tree.entries.includes(second) || !similar(first.text, second.text, 0.8)) continue;
+        if (!tree.entries.includes(second) || !same(first.text, second.text)) continue;
         const [keep, drop] = better(first, second) >= 0 ? [first, second] : [second, first];
         keep.sources = [...new Set([...keep.sources, ...drop.sources])].slice(-5);
         keep.expires =

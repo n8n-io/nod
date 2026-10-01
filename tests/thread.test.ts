@@ -17,6 +17,7 @@ import type { SubmitMessageResponse } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
+import { areaEntries, digest } from '../src/server/memory-tree.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 
 test(
@@ -2318,6 +2319,19 @@ test(
         { sourceMessageId: first.sourceMessageId, approved: true },
       );
       assert.equal(approved.path, 'about/lives-in-lisbon');
+      const tokyo = await memory.save(
+        { area: 'about', text: '我住在东京' },
+        await post('我住在东京'),
+      );
+      assert.equal(tokyo.path, 'about/note');
+      assert.equal(
+        ((await reopened.read({ path: tokyo.path })) as { text: string }).text,
+        '我住在东京',
+      );
+      assert.deepEqual(
+        (await memory.find({ query: '东京' })).map((hit) => hit.path),
+        [tokyo.path],
+      );
       await assert.rejects(
         memory.save(
           { area: 'about', text: 'Lives in Porto.' },
@@ -2370,8 +2384,15 @@ test(
       );
 
       await memory.edit((tree) => {
-        tree.overviews.preferences = { text: 'Reports.', digest: '0'.repeat(12) };
+        tree.overviews.preferences = {
+          text: 'Reports.',
+          digest: digest(areaEntries(tree, 'preferences')),
+        };
       });
+      assert.equal(
+        ((await memory.read({ path: 'preferences' })) as { overview?: string }).overview,
+        'Reports.',
+      );
       await memory.forget(saved.path);
       const view = await memory.view();
       assert.equal(
@@ -2473,18 +2494,26 @@ test(
       });
       await post('filler '.repeat(200), { at: '2026-01-01T10:03:00Z' });
       await post('My password is hunter2 and I like jazz.', { at: '2026-01-01T10:04:00Z' });
-      const declined = await post('Remember that refunds go to account 1.', {
-        at: '2026-01-01T10:04:30Z',
-      });
-      await pool.query(
-        "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'OTTO_memory_save','declined')",
-        [ownerId, declined.id],
-      );
+      for (const [status, text] of [
+        ['declined', 'Remember that refunds go to account 1.'],
+        ['pending', 'Remember that I prefer window seats.'],
+        ['completed', 'Remember that my dentist is on Elm Street.'],
+      ] as const) {
+        const asked = await post(text, { at: '2026-01-01T10:04:30Z' });
+        await pool.query(
+          "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'OTTO_memory_save',$3)",
+          [ownerId, asked.id, status],
+        );
+      }
       await post('Other owner message that must not leak.', {
         owner: 'other-owner',
         at: '2026-01-01T10:04:45Z',
       });
       const call = await post(sister, { at: '2026-01-01T10:05:00Z' });
+      await pool.query(
+        "INSERT INTO approvals(owner_id,source_message_id,action,status) VALUES($1,$2,'GMAIL_SEND_EMAIL','declined')",
+        [ownerId, call.id],
+      );
       await post('I am working on the budget today.');
 
       state.answer = () => ({
@@ -2576,9 +2605,46 @@ test(
       await assert.rejects(learning.reflect(), /offline/);
       assert.equal((await memory.load()).reflected, before);
       state.answer = () => 'not an object';
+      for (const retries of [1, 2]) {
+        assert.equal(await learning.reflect(), 0);
+        const waiting = await memory.load();
+        assert.equal(waiting.reflected, before);
+        assert.equal(waiting.retries, retries);
+      }
       assert.equal(await learning.reflect(), 0);
-      assert.notEqual((await memory.load()).reflected, before);
-      assert.equal(calls.length, 4);
+      const skipped = await memory.load();
+      assert.notEqual(skipped.reflected, before);
+      assert.equal(skipped.retries, 0);
+      assert.equal(calls.length, 6);
+
+      await post('I only drink oat milk in coffee.', { at: '2026-01-01T13:00:00Z' });
+      let release!: (value: unknown) => void;
+      state.answer = () => new Promise((resolve) => (release = resolve));
+      const slow = learning.reflect();
+      while (calls.length < 7) await delay(5);
+      const newer = `2026-01-01T13:30:00.000000Z/${randomUUID()}`;
+      await memory.edit((tree) => {
+        tree.reflected = newer;
+      });
+      release({
+        ops: [
+          {
+            op: 'add',
+            area: 'preferences',
+            slug: 'oat-milk',
+            text: 'Drinks oat milk in coffee.',
+            m: [1],
+            quote: 'oat milk',
+          },
+        ],
+      });
+      assert.equal(await slow, 0);
+      const raced = await memory.load();
+      assert.equal(raced.reflected, newer);
+      assert.equal(
+        raced.entries.some((entry) => entry.slug === 'oat-milk'),
+        false,
+      );
 
       const unconfigured = scriptedCurator(false);
       await createMemoryLearning({
@@ -2597,7 +2663,7 @@ test(
 );
 
 test(
-  'consolidation tidies one area without touching entry text and runs at most weekly',
+  'consolidation tidies one area without touching entry text and runs at most daily',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
     const { pool, ownerId, memory, close } = await memoryFixture();
