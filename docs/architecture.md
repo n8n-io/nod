@@ -21,9 +21,10 @@ Code layout: `src/ports` defines capabilities without vendor types, `src/provide
 
 Each owner has one active `threads` row (`idle` or `running`), shared by every channel. Its ID keys one persistent Pi session, one workspace and one browser computer.
 
-Every user message, schedule fire, event wake, reaction and resume inserts a `turns` row (`source`: `user`, `schedule`, `event`, `resume`) and a `thread-drain` job in one transaction. The worker locks the thread and, while it is idle, claims the oldest queued turn. Turn status moves `queued` → `running` → `succeeded`, `waiting`, `failed` or `cancelled`. Each turn records its reply channel, so a Telegram message is answered on Telegram.
+Every user message, schedule fire, event wake, reaction and resume inserts a `turns` row (`source`: `user`, `schedule`, `event`, `resume`) and a `thread-drain` job in one transaction. A user message sent while the thread is running adds no job; releasing the thread queues the next one. The worker locks the thread and, while it is idle, claims the oldest queued turn. Turn status moves `queued` → `running` → `succeeded`, `waiting`, `failed` or `cancelled`. Each turn records its reply channel, so a Telegram message is answered on Telegram.
 
 - `withTurnLock(turnId, op)` fences every write: the turn must be `running` on the active thread.
+- The composer never blocks. After each Pi turn, a running foreground turn takes the oldest queued plain user messages from its channel and steers them into Pi (`session.steer`, all at once) before the next model request. Their messages move to the running turn and their turns close. The first message with attachments, a reply target or another channel, and anything sent during background, read-only or waiting turns, stays queued for its own turn.
 - A question, approval or credential request ends the turn `waiting`. The next user message is simply the next turn in the same Pi session. Completed forms, app connections and approvals queue a `resume` turn.
 - Stop aborts the running turn and cancels queued ones. There is no turn timeout.
 - Nothing is retried. An error or restart ends the turn `failed` with one fixed message asking the user to check outside effects or say continue.

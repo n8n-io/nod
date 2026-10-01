@@ -8,6 +8,7 @@ import type {
   AgentSession,
   AgentTool,
   AgentToolResult,
+  PromptSnapshot,
   RuntimeContext,
   RuntimeResult,
 } from '../ports/agent.ts';
@@ -19,7 +20,7 @@ import { integrationDownloadActions } from '../shared/integrations.ts';
 import { createBrowserFlows } from './browser-flows.ts';
 import { requestsPrivateInput } from './communication.ts';
 import { createObservationQueue } from './observations.ts';
-import { firstInstruction, systemContext, systemPrompt } from './prompt.ts';
+import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
 import { inspectToolCatalog, ottoTools } from './tools.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
@@ -508,6 +509,29 @@ export function createAgentRuntime(dependencies: {
       );
       const system = systemPrompt(workspace);
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: [] })}`;
+      const instruct = (
+        instruction: string,
+        imageCount: number,
+        reason: PromptSnapshot['reason'],
+        resumed: boolean,
+      ) => {
+        const currentInstruction = `${currentUserTime(context.timeZone || 'Europe/Lisbon')}\n${instruction}`;
+        void Promise.resolve()
+          .then(() =>
+            context.inspectPrompt?.({
+              id: randomUUID(),
+              system: inspectedSystem,
+              instruction: currentInstruction,
+              resumed,
+              imageCount,
+              reason,
+              createdAt: new Date().toISOString(),
+            }),
+          )
+          .catch(() => {});
+        return currentInstruction;
+      };
+      const { takeMessages } = context;
       const opening = agent.open({
         threadId,
         turnId: context.turnId,
@@ -517,6 +541,12 @@ export function createAgentRuntime(dependencies: {
         workspace,
         runTool: guard,
         shouldStop: () => stopped || checkRecorded,
+        nextMessages:
+          takeMessages &&
+          (async () =>
+            (await takeMessages()).map((message) =>
+              instruct(steeredInstruction(message), 0, 'steer', true),
+            )),
         onEvent: (event) => {
           if (event.type === 'model_usage') void observe(event);
           if (event.type === 'message_start') {
@@ -597,20 +627,12 @@ export function createAgentRuntime(dependencies: {
         images: AgentImage[],
         reason: 'user' | 'secure_resume',
       ) => {
-        const currentInstruction = `${currentUserTime(context.timeZone || 'Europe/Lisbon')}\n${instruction}`;
-        void Promise.resolve()
-          .then(() =>
-            context.inspectPrompt?.({
-              id: randomUUID(),
-              system: inspectedSystem,
-              instruction: currentInstruction,
-              resumed: resumed || reason === 'secure_resume',
-              imageCount: images.length,
-              reason,
-              createdAt: new Date().toISOString(),
-            }),
-          )
-          .catch(() => {});
+        const currentInstruction = instruct(
+          instruction,
+          images.length,
+          reason,
+          resumed || reason === 'secure_resume',
+        );
         await waitFor(session!.prompt(currentInstruction, images));
         await waitFor(pendingReplies);
       };

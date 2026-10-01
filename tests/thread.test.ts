@@ -188,6 +188,7 @@ test(
     let activityRun: ((context: RuntimeContext) => Promise<void>) | undefined;
 
     const runs: RuntimeContext[] = [];
+    const taken = new Map<string, Array<{ id: string; text: string }>>();
     const gates = new Map<string, () => void>();
     const hold = (prompt: string) =>
       new Promise<void>((resolve) => {
@@ -328,6 +329,11 @@ test(
             abortedPrompts.add(context.prompt);
             throw new Error('Aborted fixture');
           }
+        }
+        if (context.prompt.startsWith('steer-')) {
+          const messages = await context.takeMessages!();
+          taken.set(context.turnId, messages);
+          if (messages.length) await context.manage('provenance_fixture', {});
         }
         if (context.attachments.length)
           stagedReads.set(context.prompt, await readFile(context.attachments[0].path, 'utf8'));
@@ -645,38 +651,77 @@ test(
         }
       });
 
-      await t.test('a message sent during a running turn queues and runs after it', async () => {
-        block('slow first');
-        const first = await thread.submitUserMessage('slow first', [], { channel: 'web' });
-        await waitFor(() => Boolean(ran(first.turnId)));
-        const second = await thread.submitUserMessage('queued second', [], { channel: 'web' });
-        const third = await thread.submitUserMessage('queued third', [], { channel: 'web' });
-        await delay(700);
-        assert.equal(await turnStatus(first.turnId), 'running');
-        assert.equal(await turnStatus(second.turnId), 'queued');
-        assert.equal(await turnStatus(third.turnId), 'queued');
-        assert.equal(ran(second.turnId), undefined);
-        release('slow first');
-        await waitFor(settled(third.turnId));
-        const order = runs.map((context) => context.turnId);
-        const positions = [first.turnId, second.turnId, third.turnId].map((id) =>
-          order.indexOf(id),
-        );
-        assert.ok(positions[0] >= 0 && positions[0] < positions[1] && positions[1] < positions[2]);
-        const timing = (
-          await db.pool.query(
-            'SELECT id,status,started_at,finished_at FROM turns WHERE id=ANY($1::uuid[])',
-            [[first.turnId, second.turnId, third.turnId]],
-          )
-        ).rows;
-        const byId = new Map(timing.map((row) => [row.id, row]));
-        assert.ok(byId.get(second.turnId).started_at >= byId.get(first.turnId).finished_at);
-        assert.ok(byId.get(third.turnId).started_at >= byId.get(second.turnId).finished_at);
-        assert.ok(timing.every((row) => row.status === 'succeeded'));
-        assert.ok(
-          [first, second, third].every((turn) => ran(turn.turnId)?.threadId === firstThreadId),
-        );
-      });
+      await t.test(
+        'messages sent during a running turn join it in order until one needs its own turn',
+        async () => {
+          const provenance: Array<string | null> = [];
+          const manage = dependencies.manage;
+          dependencies.manage = async (_turn, _action, _args, source) => {
+            provenance.push(source.sourceMessageId);
+            return {};
+          };
+          try {
+            block('steer-first');
+            const first = await thread.submitUserMessage('steer-first', [], { channel: 'web' });
+            await waitFor(() => Boolean(ran(first.turnId)));
+            const jobs = await drainJobs(first.threadId);
+            const second = await thread.submitUserMessage('joined second', [], { channel: 'web' });
+            const third = await thread.submitUserMessage('joined third', [], { channel: 'web' });
+            const artifact = await storeArtifact(
+              Buffer.from('synthetic later bytes'),
+              'later.txt',
+              'text/plain',
+            );
+            const fourth = await thread.submitUserMessage('attached fourth', [artifact], {
+              channel: 'web',
+            });
+            const fifth = await thread.submitUserMessage('queued fifth', [], { channel: 'web' });
+            assert.equal(await drainJobs(first.threadId), jobs);
+            release('steer-first');
+            await waitFor(settled(fifth.turnId));
+            assert.deepEqual(taken.get(first.turnId), [
+              { id: second.messageId, text: 'joined second' },
+              { id: third.messageId, text: 'joined third' },
+            ]);
+            assert.deepEqual(provenance, [third.messageId]);
+            const owners = (
+              await db.pool.query('SELECT id,turn_id FROM messages WHERE id=ANY($1::uuid[])', [
+                [second.messageId, third.messageId, fourth.messageId, fifth.messageId],
+              ])
+            ).rows;
+            assert.deepEqual(Object.fromEntries(owners.map((row) => [row.id, row.turn_id])), {
+              [second.messageId]: first.turnId,
+              [third.messageId]: first.turnId,
+              [fourth.messageId]: fourth.turnId,
+              [fifth.messageId]: fifth.turnId,
+            });
+            assert.equal(ran(second.turnId), undefined);
+            assert.equal(ran(third.turnId), undefined);
+            const order = runs.map((context) => context.turnId);
+            assert.ok(order.indexOf(first.turnId) < order.indexOf(fourth.turnId));
+            assert.ok(order.indexOf(fourth.turnId) < order.indexOf(fifth.turnId));
+            for (const turn of [first, second, third, fourth, fifth])
+              assert.equal(await turnStatus(turn.turnId), 'succeeded');
+
+            block('steer-other');
+            const current = await thread.submitUserMessage('steer-other', [], { channel: 'web' });
+            await waitFor(() => Boolean(ran(current.turnId)));
+            const remote = await thread.submitUserMessage('remote message', [], {
+              channel: 'telegram:fixture',
+            });
+            const later = await thread.submitUserMessage('later web message', [], {
+              channel: 'web',
+            });
+            release('steer-other');
+            await waitFor(settled(later.turnId));
+            assert.deepEqual(taken.get(current.turnId), []);
+            assert.equal(ran(remote.turnId)?.channel, 'telegram');
+            assert.equal(ran(later.turnId)?.threadId, current.threadId);
+          } finally {
+            dependencies.manage = manage;
+          }
+        },
+      );
 
       await t.test(
         'an uploaded attachment stays in the thread workspace for later turns',
@@ -1940,6 +1985,7 @@ test(
             });
             await waitFor(settled(research));
             assert.equal(await turnStatus(research), 'succeeded');
+            assert.equal(ran(research)?.takeMessages, undefined);
             const messages = (
               await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [research])
             ).rows;

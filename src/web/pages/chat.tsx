@@ -126,7 +126,9 @@ export function Chat({
   const [optimistic, setOptimistic] = useState<Array<{ threadId: string; message: Message }>>([]);
   const [stopping, setStopping] = useState(false);
   const composer = useRef<ComposerHandle>(null);
-  const sendLock = useRef<{ id: string; threadId: string } | null>(null);
+  const sendQueue = useRef(Promise.resolve(true));
+  const sendCount = useRef(0);
+  const pendingSends = useRef(0);
   const retry = useRef<{ id: string; threadId: string; signature: string } | null>(null);
   const historyVersion = useRef(0);
   const threadId = state.threadId;
@@ -233,7 +235,8 @@ export function Chat({
     setAway(null);
     setReplyTo(null);
     setOptimistic([]);
-    sendLock.current = null;
+    sendQueue.current = Promise.resolve(true);
+    pendingSends.current = 0;
     retry.current = null;
     setText('');
     setSending(false);
@@ -316,8 +319,7 @@ export function Chat({
     setError('Could not find that message in this chat.');
   }, [focusTarget, loadingHistory, historyPage, hasEarlier, error]);
   async function send(value: string, attachments: Artifact[]): Promise<ComposerSendResult> {
-    if (sendLock.current || resetLock.current || welcoming)
-      return { sent: false, restoreText: true };
+    if (resetLock.current || welcoming) return { sent: false, restoreText: true };
     const sentThread = threadId;
     const reply = replyTo;
     const verificationRequests = (state.verificationRequests ?? []).filter(
@@ -340,7 +342,15 @@ export function Chat({
       retry.current.signature === signature
         ? retry.current.id
         : crypto.randomUUID();
-    sendLock.current = { id, threadId: sentThread };
+    const previous = sendQueue.current;
+    let finished!: (sent: boolean) => void;
+    sendQueue.current = new Promise<boolean>((resolve) => {
+      finished = resolve;
+    });
+    const sequence = ++sendCount.current;
+    pendingSends.current++;
+    let failed = false;
+    if (reply) setReplyTo(null);
     const message: Message = {
       id,
       role: 'user',
@@ -366,6 +376,11 @@ export function Chat({
     stickToBottom.current = true;
     const replyId = reply?.id;
     try {
+      if (!(await previous)) {
+        failed = true;
+        setOptimistic((current) => current.filter((item) => item.message.id !== id));
+        return { sent: false, restoreText: !privateVerification };
+      }
       const response = await apiResponse('/api/messages', {
         method: 'POST',
         credentials: 'same-origin',
@@ -413,16 +428,15 @@ export function Chat({
             : item,
         ),
       );
-      setReplyTo((current) => (current?.id === replyId ? null : current));
       void refresh().catch(() => {});
       return { sent: true };
     } catch (cause) {
       if (threadRef.current !== sentThread) return { sent: true };
       if (acknowledgedIds.current.has(id)) {
         retry.current = null;
-        setReplyTo((current) => (current?.id === replyId ? null : current));
         return { sent: true };
       }
+      failed = true;
       retry.current =
         !privateVerification && signature !== null ? { id, threadId: sentThread, signature } : null;
       setOptimistic((current) => current.filter((item) => item.message.id !== id));
@@ -435,9 +449,12 @@ export function Chat({
       );
       return { sent: false, restoreText: !privateVerification };
     } finally {
-      if (sendLock.current?.id === id && sendLock.current.threadId === sentThread) {
-        sendLock.current = null;
-        if (threadRef.current === sentThread) setSending(false);
+      finished(!failed);
+      if (failed && reply && sequence === sendCount.current)
+        setReplyTo((current) => current ?? reply);
+      if (threadRef.current === sentThread && --pendingSends.current === 0) {
+        sendQueue.current = Promise.resolve(true);
+        setSending(false);
       }
     }
   }
@@ -756,7 +773,6 @@ export function Chat({
           key={threadId}
           ref={composer}
           ready={state.configuration.llmReady && !resetting && !welcoming}
-          sending={sending || resetting}
           text={text}
           setText={setText}
           replyTo={replyTo}

@@ -19,12 +19,19 @@ function subjectPrefix(subject: Subject) {
 
 function useAskOtto(conversation: AppState | null) {
   const [ask, setAsk] = useState<Ask | null>(null);
-  const answer = ask?.turnId
+  const asked = conversation?.messages.find((message) => message.id === ask?.messageId);
+  const turnId = ask?.turnId ? (asked?.turnId ?? ask.turnId) : undefined;
+  const answer = turnId
     ? conversation?.messages
-        .filter((message) => message.turnId === ask.turnId && message.role === 'assistant')
+        .filter(
+          (message) =>
+            message.turnId === turnId &&
+            message.role === 'assistant' &&
+            (!asked || Date.parse(message.createdAt) > Date.parse(asked.createdAt)),
+        )
         .at(-1)
     : undefined;
-  const turn = conversation?.turns.find((item) => item.id === ask?.turnId);
+  const turn = conversation?.turns.find((item) => item.id === turnId);
   const status: 'idle' | 'working' | 'waiting' | 'done' | 'failed' = !ask
     ? 'idle'
     : ask.error || turn?.status === 'failed' || turn?.status === 'cancelled'

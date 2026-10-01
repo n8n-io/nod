@@ -161,6 +161,7 @@ export interface RuntimeContext {
     args: Record<string, unknown>,
   ): Promise<Artifact & { workspaceFile: string }>;
   manage(action: string, args: Record<string, unknown>): Promise<unknown>;
+  takeMessages?(): Promise<Array<{ id: string; text: string }>>;
 }
 export interface PromptSnapshot {
   id: string;
@@ -168,7 +169,7 @@ export interface PromptSnapshot {
   instruction: string;
   resumed: boolean;
   imageCount: number;
-  reason: 'user' | 'secure_resume';
+  reason: 'user' | 'secure_resume' | 'steer';
   createdAt: string;
 }
 export interface RuntimeResult {
@@ -217,6 +218,7 @@ export interface AgentSessionOptions {
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
   shouldStop(): boolean;
+  nextMessages?(): Promise<string[]>;
 }
 export interface AgentSession {
   resumed: boolean;

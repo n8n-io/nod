@@ -122,3 +122,7 @@ export function firstInstruction(
     },
   )}`;
 }
+
+export function steeredInstruction(message: { id: string; text: string }) {
+  return `The user sent currentInstruction while you were working. It may add to, change or replace the request in progress; continue accordingly.\nRequest data (JSON):\n${JSON.stringify({ messageId: message.id, currentInstruction: message.text })}`;
+}
