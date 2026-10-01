@@ -221,13 +221,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
     } finally {
-      if (result.sent) for (const item of sentAttachments) releasePreview(item);
+      if (result.sent || !result.restoreText)
+        for (const item of sentAttachments) releasePreview(item);
       else {
-        unsent.current.push({
-          sequence,
-          text: result.restoreText ? sentText : '',
-          attachments: sentAttachments,
-        });
+        unsent.current.push({ sequence, text: sentText, attachments: sentAttachments });
         setTimeout(restoreUnsent);
       }
       if (mounted.current && !editor.isDestroyed) restoreFocus();
