@@ -20,7 +20,6 @@ export function BrowserHandoff({ onDone }: { onDone: () => void }) {
     const response = await apiResponse('/api/browser-handoff/screen', { cache: 'no-store' });
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      if (response.status === 423) setClosed(true);
       setError(body?.error ?? 'The browser view is unavailable.');
       return;
     }
@@ -53,11 +52,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => void }) {
       event.preventDefault();
       scrolled.current += event.deltaY;
       window.clearTimeout(timers.current.scroll);
-      timers.current.scroll = window.setTimeout(() => {
-        const deltaY = Math.max(-2000, Math.min(2000, Math.round(scrolled.current)));
-        scrolled.current = 0;
-        if (deltaY) send({ type: 'scroll', deltaY });
-      }, 150);
+      timers.current.scroll = window.setTimeout(flushScroll, 150);
     };
     element.addEventListener('wheel', wheel, { passive: false });
     return () => element.removeEventListener('wheel', wheel);
@@ -93,6 +88,13 @@ export function BrowserHandoff({ onDone }: { onDone: () => void }) {
     timers.current.type = window.setTimeout(flushTyped, 250);
   }
 
+  function flushScroll() {
+    window.clearTimeout(timers.current.scroll);
+    const deltaY = Math.max(-2000, Math.min(2000, Math.round(scrolled.current)));
+    scrolled.current = 0;
+    if (deltaY) send({ type: 'scroll', deltaY });
+  }
+
   function flushTyped() {
     window.clearTimeout(timers.current.type);
     const text = typed.current.slice(0, 200);
@@ -122,6 +124,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => void }) {
         <Button
           onClick={() => {
             flushTyped();
+            flushScroll();
             setClosed(true);
             void queue.current.then(onDone);
           }}

@@ -494,7 +494,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   }
   async function handoffOpen(threadId: string) {
     const latest = await pool.query(
-      "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
+      'SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND NOT background ORDER BY created_at DESC,id DESC LIMIT 1',
       [ownerId, threadId],
     );
     if (latest.rows[0]?.status !== 'waiting' || latest.rows[0].waiting_reason !== 'question')

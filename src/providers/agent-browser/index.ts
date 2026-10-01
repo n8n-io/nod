@@ -107,8 +107,8 @@ export function redactBrowserUrl(
 }
 
 function savedSite(url: string) {
-  const { protocol, hostname } = new URL(url);
-  return `${protocol}//${getDomain(hostname, { allowPrivateDomains: true }) ?? hostname}`;
+  const { protocol, hostname, port } = new URL(url);
+  return `${protocol}//${getDomain(hostname, { allowPrivateDomains: true }) ?? hostname}:${port}`;
 }
 
 function outsideSavedSite(allowedOrigin: string | undefined, url: string) {
@@ -1165,12 +1165,26 @@ export function createAgentBrowserComputer(options: {
       }
       if (input.type === 'scroll')
         await requestDaemon(socket, { action: 'wheel', deltaX: 0, deltaY: input.deltaY }, signal);
-      if (input.type === 'type')
+      if (input.type === 'type') {
         await requestDaemon(
           socket,
           { action: 'keyboard', subaction: 'type', text: input.text },
           signal,
         );
+        const secret = await evaluate(
+          state,
+          "(() => { const field = document.activeElement; return field instanceof HTMLInputElement && field.type === 'password' ? field.value : null; })()",
+          signal,
+        );
+        if (typeof secret === 'string' && secret) {
+          const origin = new URL(await currentUrl(state, signal)).origin;
+          const secrets = state.secretsByOrigin.get(origin) ?? new Set<string>();
+          state.secrets.add(secret);
+          secrets.add(secret);
+          state.secretsByOrigin.set(origin, secrets);
+          await saveState(state);
+        }
+      }
       if (input.type === 'key')
         await requestDaemon(socket, { action: 'press', key: input.key }, signal);
       await stayOnSavedOrigin(state, signal);

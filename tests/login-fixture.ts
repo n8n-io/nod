@@ -103,7 +103,18 @@ export function stagedLoginBrowser() {
           ? { url: page.location.href }
           : { value: page.nodes(command[2])[0]?.getAttribute(command[3]) ?? null };
     if (command[0] === 'eval') data = { result: await page.evaluate(options?.input ?? '') };
-    if (command[0] === 'click') (page.nodes(command[1])[0] as HTMLElement)?.click();
+    if (command[0] === 'click') {
+      const node = page.nodes(command[1])[0] as HTMLElement | undefined;
+      node?.focus();
+      node?.click();
+    }
+    if (command[0] === 'keyboard' && command[1] === 'type') {
+      const node = page.dom.window.document.activeElement;
+      if (node instanceof page.dom.window.HTMLInputElement) {
+        node.value += command[2];
+        node.dispatchEvent(new page.dom.window.Event('input', { bubbles: true }));
+      }
+    }
     if (command[0] === 'fill') {
       const node = page.nodes(command[1])[0] as HTMLInputElement | undefined;
       if (node) {

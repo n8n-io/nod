@@ -248,6 +248,12 @@ test(
       await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [check]);
       assert.deepEqual(await handoff(), [200, 200]);
       assert.equal(controls.length, 2);
+      await db.pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Done','queued')",
+        [randomUUID(), ownerId, next.id],
+      );
+      assert.deepEqual(await handoff(), [423, 423]);
+      assert.equal(controls.length, 2);
     } finally {
       await app.close();
       await db.pool.end();
@@ -1157,6 +1163,32 @@ test('the user can click, type and scroll in the handed-off browser at page coor
   }
 });
 
+test('a password typed through the handoff stays out of browser observations', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-secret-'));
+  const fixture = stagedLoginBrowser();
+  const secret = 'synthetic-handoff-password';
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    fixture.pages.get('fixture')!.stage = 'password';
+    fixture.pages.get('fixture')!.render();
+    await computer.act('fixture', { action: 'click', selector: '#account' });
+    await computer.control!('fixture', { type: 'type', text: secret });
+    assert.equal(fixture.pages.get('fixture')!.input.value, secret);
+    for (const observation of [
+      await computer.act('fixture', { action: 'snapshot' }),
+      await computer.act('fixture', {
+        action: 'evaluate',
+        script: "document.querySelector('#account').value",
+      }),
+    ])
+      assert.equal(JSON.stringify(observation).includes(secret), false);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('a saved session can move within its site but not to another site', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-profile-site-'));
   const fixture = stagedLoginBrowser();
@@ -1175,11 +1207,13 @@ test('a saved session can move within its site but not to another site', async (
     await computer.act('fixture', { action: 'open', url: href });
     href = 'https://account.example.com/sign-in';
     await computer.act('fixture', { action: 'snapshot' });
-    href = 'https://example.net/sign-in';
-    await assert.rejects(
-      computer.act('fixture', { action: 'snapshot' }),
-      (error) => error instanceof BrowserActionError && error.code === 'browser_origin_changed',
-    );
+    for (const other of ['https://example.net/sign-in', 'https://www.example.com:8443/']) {
+      href = other;
+      await assert.rejects(
+        computer.act('fixture', { action: 'snapshot' }),
+        (error) => error instanceof BrowserActionError && error.code === 'browser_origin_changed',
+      );
+    }
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });
