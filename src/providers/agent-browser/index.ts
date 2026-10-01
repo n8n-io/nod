@@ -644,11 +644,18 @@ export function createAgentBrowserComputer(options: {
     const offset = input?.action === 'snapshot' ? (input.offset ?? 0) : 0;
     if (!Number.isInteger(offset) || offset < 0 || offset > 100_000)
       throw new Error('Choose a page offset of at most 100000 characters.');
-    const snapshot = () =>
-      command(state, scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'], {
-        signal,
-        maxBytes: 1024 * 1024,
-      });
+    const snapshot = async () => {
+      try {
+        return await command(state, scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'], {
+          signal,
+          maxBytes: 1024 * 1024,
+        });
+      } catch (error) {
+        if (error instanceof DaemonCommandError)
+          throw new BrowserActionError('browser_observation_failed');
+        throw error;
+      }
+    };
     let data = await snapshot();
     for (let attempt = 0; attempt < 4 && !String(data.snapshot ?? '').trim(); attempt++) {
       await delay(750, undefined, { signal });

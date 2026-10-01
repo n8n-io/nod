@@ -999,12 +999,9 @@ input[type='range']:disabled {
   margin: 8px 0;
 }
 .day-divider {
-  position: sticky;
-  top: 8px;
-  z-index: 4;
   display: flex;
   justify-content: center;
-  margin: 12px 0 -12px;
+  margin: 12px 0;
 }
 .day-divider:first-child {
   margin-top: 0;

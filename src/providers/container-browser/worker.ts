@@ -276,9 +276,12 @@ export async function startContainerBrowserWorker(
                 ? 'navigation'
                 : error instanceof BrowserActionError && error.code === 'browser_action_failed'
                   ? 'action'
-                  : error instanceof Error && 'statusCode' in error && error.statusCode === 423
-                    ? 'locked'
-                    : 'unavailable',
+                  : error instanceof BrowserActionError &&
+                      error.code === 'browser_observation_failed'
+                    ? 'observation'
+                    : error instanceof Error && 'statusCode' in error && error.statusCode === 423
+                      ? 'locked'
+                      : 'unavailable',
           metadata: metadata(await entry?.computer.catch(() => undefined), input),
         };
       } finally {

@@ -199,6 +199,7 @@ export const browserResponse = z.discriminatedUnion('ok', [
         'navigation',
         'click_intercepted',
         'action',
+        'observation',
         'unavailable',
       ]),
       metadata: browserMetadata,

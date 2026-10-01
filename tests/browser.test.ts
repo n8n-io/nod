@@ -582,6 +582,56 @@ test('a timed out snapshot is not resent and its queue remains fenced until clos
   }
 });
 
+for (const action of ['snapshot', 'click'] as const)
+  test(`an acknowledged ${action} observation failure preserves the page through the browser bridge`, async () => {
+    const browser = await transportFixture();
+    const bridge = await harness({ computer: browser.computer });
+    const computer = bridge.client('/synthetic/observation-failure');
+    const upstreamError = 'Snapshot timeout with synthetic-private-upstream-value';
+    try {
+      await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+      const page = browser.page();
+      page.input.value = 'synthetic@example.test';
+      page.next.disabled = false;
+      browser.after(async (current) => {
+        if (current === 'click') page.next.click();
+      });
+      browser.fail('snapshot', upstreamError);
+      const before = browser.actions.length;
+      await assert.rejects(
+        computer.act('fixture', { action, ...(action === 'click' ? { selector: 'button' } : {}) }),
+        (error: unknown) => {
+          assert.ok(error instanceof BrowserActionError);
+          assert.equal(error.code, 'browser_observation_failed');
+          assert.equal(error.message.includes(upstreamError), false);
+          return true;
+        },
+      );
+      assert.equal(page.stage, action === 'click' ? 'password' : 'identifier');
+      assert.equal(page.entered.length, action === 'click' ? 1 : 0);
+      const screen = await computer.screenshot('fixture');
+      assert.ok(screen);
+      assert.equal(computer.screenStatus!('fixture').state, 'live');
+      assert.equal(screen.toString(), page.screen());
+      browser.fail();
+      assert.match(
+        (await computer.act('fixture', { action: 'snapshot' })).text,
+        new RegExp(page.stage),
+      );
+      assert.deepEqual(
+        browser.actions
+          .slice(before)
+          .filter((current) => ['click', 'navigate', 'close'].includes(current)),
+        action === 'click' ? ['click'] : [],
+      );
+      assert.deepEqual(browser.launches, ['open', 'info']);
+    } finally {
+      browser.fail();
+      await bridge.close();
+      await browser.cleanup();
+    }
+  });
+
 test('failed interruption cleanup blocks later actions until an explicit close succeeds', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-drain-failure-'));
   const fixture = stagedLoginBrowser();
@@ -810,7 +860,7 @@ function workerComputer() {
   };
 }
 
-async function harness(control: { beforeFirstBridge?: Promise<void> } = {}) {
+async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: Computer } = {}) {
   const root = await mkdtemp('/tmp/sk-browser-');
   const socketPath = join(root, 'control.sock');
   const instances = new Map<string, ReturnType<typeof workerComputer>>();
@@ -818,6 +868,7 @@ async function harness(control: { beforeFirstBridge?: Promise<void> } = {}) {
     socketPath,
     dataRoot: root,
     createComputer: async (path) => {
+      if (control.computer) return control.computer;
       const value = workerComputer();
       instances.set(path, value);
       return value.computer;
