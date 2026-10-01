@@ -1179,8 +1179,8 @@ test(
     for (const { service, action, input, guarded } of [
       {
         service: 'gmail' as const,
-        action: 'GMAIL_GET_PROFILE',
-        input: { user_id: 'me' },
+        action: 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+        input: { user_id: 'me', message_id: 'fixture-message', format: 'full' },
         guarded: ['GMAIL_SEND_EMAIL', 'GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_GET_AND_DELETE_MESSAGES'],
       },
       {
@@ -1203,17 +1203,36 @@ test(
           disableVersionCheck: true,
           fileUploadDirs: false,
         });
-        t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => ({
-          slug,
-          name: slug,
-          tags: slug === action ? ['readOnlyHint'] : [],
-        }));
+        let catalogFailure: Error | undefined;
+        t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => {
+          if (catalogFailure) throw catalogFailure;
+          return { slug, name: slug, tags: slug === action ? ['readOnlyHint'] : [] };
+        });
         f.provider.readOnly = createComposioProvider({ client }).readOnly;
         await f.connect(service);
         const selected = await f.connect(service);
         await assert.rejects(f.service.execute('local-development', action, input), {
           statusCode: 409,
         });
+        for (const failure of [
+          Object.assign(new Error('synthetic-private-catalog-denial'), { status: 403 }),
+          new Error('synthetic-private-catalog-outage'),
+          new DOMException('synthetic-private-catalog-timeout', 'TimeoutError'),
+        ]) {
+          catalogFailure = failure;
+          await assert.rejects(
+            f.service.execute('local-development', action, {
+              connectionId: selected.connectionId,
+              ...input,
+            }),
+            {
+              message:
+                'The app action could not be verified because the tool catalog is unavailable.',
+            },
+          );
+          assert.equal(f.executed.length, 0);
+        }
+        catalogFailure = undefined;
         const result = await f.service.execute('local-development', action, {
           connectionId: selected.connectionId,
           ...input,
@@ -1264,6 +1283,37 @@ test(
         assert.equal(f.executed.length, 1);
       });
     }
+  },
+);
+
+test(
+  'catalog failures do not undo a completed approved app action',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const client = new Composio({
+      apiKey: 'fixture-key-never-live',
+      allowTracking: false,
+      disableVersionCheck: true,
+      fileUploadDirs: false,
+    });
+    const lookup = t.mock.method(client.tools, 'getRawComposioToolBySlug', async () => {
+      throw Object.assign(new Error('synthetic-private-catalog-denial'), { status: 403 });
+    });
+    f.provider.readOnly = createComposioProvider({ client }).readOnly;
+    const selected = await f.connect('gmail');
+    const action = 'GMAIL_SEND_EMAIL';
+    const input = { recipient_email: 'recipient@example.com', body: 'Synthetic approved reply' };
+    const args = { ...input, connectionId: selected.connectionId };
+    await assert.rejects(f.service.execute('local-development', action, args), {
+      message: 'The app action could not be verified because the tool catalog is unavailable.',
+    });
+    assert.equal(f.executed.length, 0);
+    assert.deepEqual(await f.service.executeApproved('local-development', action, args), {
+      ok: true,
+    });
+    assert.deepEqual(f.executed, [{ action, args: input, accountId: selected.accountId }]);
+    assert.equal(lookup.mock.callCount(), 2);
   },
 );
 
@@ -2588,11 +2638,19 @@ test(
     t.mock.method(client.connectedAccounts, 'delete', async () => {
       assert.fail('Consent must not remove an existing account.');
     });
-    t.mock.method(transport, 'execute', async (id: string, input: Record<string, unknown>) => {
-      assert.equal(id, 'execution-session');
-      assert.equal(input.account, 'existing-account');
-      return { data: { labels: [] }, error: null, log_id: 'synthetic-log' };
+    t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => {
+      assert.equal(slug, 'GMAIL_LIST_LABELS');
+      return { slug, name: slug, tags: ['readOnlyHint'] };
     });
+    const execution = t.mock.method(
+      transport,
+      'execute',
+      async (id: string, input: Record<string, unknown>) => {
+        assert.equal(id, 'execution-session');
+        assert.equal(input.account, 'existing-account');
+        return { data: { labels: [] }, error: null, log_id: 'synthetic-log' };
+      },
+    );
     const provider = createComposioProvider({
       client,
       authConfigs: { gmail: 'custom-gmail-auth' },
@@ -2652,6 +2710,7 @@ test(
       connectionId: account.rows[0].id,
       user_id: 'me',
     });
+    assert.equal(execution.mock.callCount(), 1);
     for (const kind of ['provider', 'url'] as const) {
       failure = kind;
       const rejected = await connect();
@@ -3608,7 +3667,9 @@ test('Composio actions skip review only when the catalog tags them read-only', a
   assert.equal(await provider.readOnly('SLACK_GET_AND_DELETE_MESSAGES'), false);
   assert.equal(await provider.readOnly('GMAIL_UNTAGGED_ACTION'), false);
   assert.equal(await provider.readOnly('not a tool slug'), false);
-  assert.equal(await provider.readOnly('GMAIL_LIST_THREADS'), false);
+  await assert.rejects(provider.readOnly('GMAIL_LIST_THREADS'), {
+    message: 'The app action could not be verified because the tool catalog is unavailable.',
+  });
   outage = false;
   assert.equal(await provider.readOnly('GMAIL_LIST_THREADS'), true);
   assert.equal(await provider.readOnly('GMAIL_GET_PROFILE'), true);

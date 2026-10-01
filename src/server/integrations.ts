@@ -1045,7 +1045,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           return session.execute(action, providerArgs, row.account_id!, signal);
         },
       );
-      const read = await providerForRow(row).readOnly(action, signal);
+      const read = await providerForRow(row)
+        .readOnly(action, signal)
+        .catch(() => false);
       signal?.throwIfAborted();
       if (read) rememberTargets(row.account_id!, row.slug, result, providerArgs);
       return result;

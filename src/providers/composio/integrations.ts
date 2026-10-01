@@ -769,7 +769,14 @@ export function createComposioProvider(options: {
         signal?.addEventListener('abort', abort, { once: true });
         lookup.promise.then(
           (value) => finish(() => resolve(value)),
-          () => finish(() => resolve(false)),
+          () =>
+            finish(() =>
+              reject(
+                new Error(
+                  'The app action could not be verified because the tool catalog is unavailable.',
+                ),
+              ),
+            ),
         );
         if (signal?.aborted) abort();
       });
