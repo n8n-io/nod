@@ -206,6 +206,7 @@ export function createPiAgent(options: {
           compaction: { enabled: true },
           retry: { enabled: true, maxRetries: 5 },
           transport: 'sse',
+          steeringMode: 'all',
         }),
       });
       if (disposed) {
@@ -214,10 +215,17 @@ export function createPiAgent(options: {
       }
 
       const finishTurn = session.agent.finishTurn;
-      session.agent.finishTurn = async (...args) => {
-        const result = await finishTurn?.(...args);
+      session.agent.finishTurn = async (turn, signal) => {
+        const result = await finishTurn?.(turn, signal);
         await checkpoint();
-        return input.shouldStop() ? { action: 'end' as const } : (result ?? undefined);
+        if (input.shouldStop()) return { action: 'end' as const };
+        if (
+          input.nextMessages &&
+          result?.action !== 'end' &&
+          ['stop', 'toolUse'].includes(turn.message.stopReason)
+        )
+          for (const text of await input.nextMessages()) await session.steer(text);
+        return result ?? undefined;
       };
       if (durable) {
         const prepareNextTurn = session.agent.prepareNextTurnWithContext;

@@ -556,8 +556,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         sender_id: string;
       }>(
         `SELECT i.source_id,i.provider,i.account_id,i.sender_id FROM channel_inbox i
-         WHERE i.state='submitted' AND i.owner_id=$2 AND i.turn_id=$1 AND i.message_id=$3`,
-        [turnId, ownerId, sourceMessageId],
+         WHERE i.state='submitted' AND i.owner_id=$1 AND i.message_id=$2`,
+        [ownerId, sourceMessageId],
       )
     ).rows[0];
     if (!route) throw unavailable();

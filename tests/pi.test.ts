@@ -290,6 +290,122 @@ test('real Pi sessions persist a credential pause and resume without replaying c
   }
 });
 
+test('messages taken after a Pi turn reach the next request together and not after a question', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-pi-steer-'));
+  const requests: string[] = [];
+  const replies: string[] = [];
+  const batches = [
+    [
+      { id: randomUUID(), text: 'Also check the second fixture' },
+      { id: randomUUID(), text: 'And the third fixture' },
+    ],
+  ];
+  let takes = 0;
+  let question = false;
+  const factory: typeof createAgentSession = async (options) => {
+    const result = await createAgentSession(options);
+    result.session.agent.streamFunction = (model, request) => {
+      requests.push(JSON.stringify(request.messages));
+      const output: AssistantMessage = {
+        role: 'assistant',
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        timestamp: Date.now(),
+        responseId: `fixture-${requests.length}`,
+        stopReason: question ? 'toolUse' : 'stop',
+        content: question
+          ? [
+              {
+                type: 'toolCall',
+                id: 'question-call',
+                name: 'ask_user',
+                arguments: { question: 'Which fixture?' },
+              },
+            ]
+          : [{ type: 'text', text: `Answer ${requests.length}.` }],
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      };
+      const stream = createAssistantMessageEventStream();
+      stream.push({ type: 'start', partial: output });
+      stream.push({ type: 'done', reason: question ? 'toolUse' : 'stop', message: output });
+      return stream;
+    };
+    return result;
+  };
+  const context: RuntimeContext = {
+    threadId: 'test-' + randomUUID(),
+    turnId: randomUUID(),
+    prompt: 'Check the first fixture',
+    history: [],
+    workspacePath: directory,
+    signal: new AbortController().signal,
+    attachments: [],
+    emit: async () => {},
+    reply: async (text) => {
+      replies.push(text);
+    },
+    waitForUser: async (text) => {
+      replies.push(text);
+    },
+    delta: () => {},
+    publish: async () => {
+      throw new Error('Not used');
+    },
+    requestCredential: async () => {
+      throw new Error('Not used');
+    },
+    integration: async () => ({}),
+    manage: async () => ({}),
+    takeMessages: async () => {
+      takes += 1;
+      return batches.shift() ?? [];
+    },
+  };
+  const runtime = createAgentRuntime({
+    agent: createPiAgent({
+      provider: 'openai',
+      apiKey: 'fixture-key',
+      sessionRoot: join(directory, 'sessions'),
+      createSession: factory,
+    }),
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    assert.equal((await runtime.runTurn(context)).status, 'succeeded');
+    assert.equal(requests.length, 2);
+    assert.equal(takes, 2);
+    assert.equal(requests[0].includes('second fixture'), false);
+    const later = requests[1];
+    assert.ok(later.indexOf('Answer 1.') < later.indexOf('Also check the second fixture'));
+    assert.ok(
+      later.indexOf('Also check the second fixture') < later.indexOf('And the third fixture'),
+    );
+    assert.deepEqual(replies, ['Answer 1.', 'Answer 2.']);
+
+    question = true;
+    batches.push([{ id: randomUUID(), text: 'Sent while asking' }]);
+    assert.equal(
+      (await runtime.runTurn({ ...context, turnId: randomUUID(), prompt: 'Ask me' })).status,
+      'waiting_user',
+    );
+    assert.equal(takes, 2);
+    assert.equal(batches.length, 1);
+    assert.equal(replies.at(-1), 'Which fixture?');
+  } finally {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 const nativeNames = ['read', 'bash', 'edit', 'write', 'find', 'ls'];
 
 function recordingWorkspace() {

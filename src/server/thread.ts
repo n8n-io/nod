@@ -391,7 +391,7 @@ export async function submitUserMessage(
         "UPDATE approvals SET confirmation_reply_id=$1 WHERE id=$2 AND owner_id=$3 AND thread_id=$4 AND status='expired'",
         [messageId, supersededApprovalId, ownerId, thread.id],
       );
-    await sendDrain(client, thread.id);
+    if (thread.status !== 'running') await sendDrain(client, thread.id);
     return { threadId: thread.id, turnId, messageId };
   };
   let result: SubmitUserMessageResult;
@@ -692,6 +692,41 @@ async function claimNextTurn(threadId: string) {
   });
 }
 
+async function takeQueuedMessages(turnId: string, channel: string) {
+  return transaction(async (client) => {
+    const thread = await lockThread(client);
+    const { rows } = await client.query(
+      `SELECT u.id,u.status,u.source,u.channel,u.message_id,u.prompt,m.attachments,m.reply_to_message_id
+       FROM turns u LEFT JOIN messages m ON m.id=u.message_id AND m.owner_id=u.owner_id
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status IN ('running','queued')
+       ORDER BY u.created_at,u.id FOR UPDATE OF u`,
+      [thread.id, ownerId],
+    );
+    if (!rows.some((row) => row.id === turnId && row.status === 'running')) throw turnStopped();
+    const queued = rows.filter((row) => row.status === 'queued');
+    const end = queued.findIndex(
+      (row) =>
+        row.source !== 'user' ||
+        row.channel !== channel ||
+        !row.message_id ||
+        row.attachments.length ||
+        row.reply_to_message_id,
+    );
+    const taken = end < 0 ? queued : queued.slice(0, end);
+    if (!taken.length) return [];
+    const ids = taken.map((row) => row.id);
+    await client.query(
+      'UPDATE messages SET turn_id=$1 WHERE turn_id=ANY($2::uuid[]) AND owner_id=$3',
+      [turnId, ids, ownerId],
+    );
+    await client.query(
+      "UPDATE turns SET status='succeeded',finished_at=now() WHERE id=ANY($1::uuid[])",
+      [ids],
+    );
+    return taken.map((row) => ({ id: row.message_id as string, text: row.prompt as string }));
+  });
+}
+
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping || running.has(threadId)) return;
   const turn = await claimNextTurn(threadId);
@@ -877,6 +912,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     if (confirmed) turn.prompt = confirmed.prompt;
     await ensureCurrent();
     const loaded = await loadTurnContext(turn, dependencies);
+    let sourceMessageId = loaded.sourceMessageId;
     const ids = loaded.uploads.map((item) => String(item?.id ?? '')).filter(Boolean);
     const uploads = ids.length
       ? (
@@ -1011,9 +1047,19 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           );
         return inline(action, result, operation);
       }),
-      manage: fenced((action, args) =>
-        dependencies.manage(ref, action, args, { sourceMessageId: loaded.sourceMessageId }),
-      ),
+      manage: fenced((action, args) => dependencies.manage(ref, action, args, { sourceMessageId })),
+      takeMessages:
+        turn.background || turn.read_only
+          ? undefined
+          : async () => {
+              if (signal.aborted) throw turnStopped();
+              const taken = await takeQueuedMessages(turnId, turn.channel);
+              if (taken.length) {
+                sourceMessageId = taken.at(-1)!.id;
+                refresh();
+              }
+              return taken;
+            },
       markUntrustedContext: fenced(async () => dependencies.markUntrustedContext?.(ref)),
       downloadIntegrationFile:
         downloadIntegrationFile &&

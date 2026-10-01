@@ -6,7 +6,7 @@ export interface InspectorPrompt {
   instruction: string;
   resumed: boolean;
   imageCount: number;
-  reason: 'user' | 'secure_resume';
+  reason: 'user' | 'secure_resume' | 'steer';
   provider: string;
   model: string;
   createdAt: string;

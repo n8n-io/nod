@@ -33,7 +33,6 @@ export type ComposerSendResult = { sent: true } | { sent: false; restoreText: bo
 
 interface ComposerProps {
   ready: boolean;
-  sending: boolean;
   text: string;
   setText(value: string): void;
   replyTo: Pick<Message, 'id' | 'role' | 'text'> | null;
@@ -44,7 +43,7 @@ interface ComposerProps {
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { ready, sending, text, setText, replyTo, clearReply, onSend, onStop, stopping = false },
+  { ready, text, setText, replyTo, clearReply, onSend, onStop, stopping = false },
   ref,
 ) {
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
@@ -57,7 +56,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const uploads = useRef(new Set<AbortController>());
   const previewUrls = useRef(new Set<string>());
   const previewTrigger = useRef<HTMLButtonElement | null>(null);
-  const sendLock = useRef(false);
   const lastText = useRef(text);
   const actions = useRef({ submit: () => {}, upload: (_files: File[]) => {} });
   const extensions = useMemo(
@@ -191,18 +189,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }
   async function submit() {
-    if (
-      !editor ||
-      !ready ||
-      sending ||
-      sendLock.current ||
-      attachmentValues.current.some((item) => !item.artifact)
-    )
-      return;
+    if (!editor || !ready || attachmentValues.current.some((item) => !item.artifact)) return;
     const sentText = editor.getMarkdown().trim();
     const sentAttachments = attachmentValues.current;
     if (!sentText && !sentAttachments.length) return;
-    sendLock.current = true;
     setError('');
     editor.commands.clearContent();
     updateAttachments([]);
@@ -216,7 +206,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     } catch (cause) {
       if (mounted.current) setError(errorMessage(cause));
     } finally {
-      sendLock.current = false;
       if (result.sent) for (const item of sentAttachments) releasePreview(item);
       if (mounted.current && !editor.isDestroyed) {
         if (!result.sent) {
@@ -393,11 +382,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               size="icon"
               className="send-button"
               aria-label="Send message"
-              disabled={
-                !ready || sending || pendingUploads > 0 || (!text.trim() && !attachments.length)
-              }
+              disabled={!ready || pendingUploads > 0 || (!text.trim() && !attachments.length)}
             >
-              {sending ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={19} />}
+              <ArrowUp size={19} />
             </Button>
           </div>
         </div>

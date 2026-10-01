@@ -12,7 +12,7 @@ const snapshotSchema = z.object({
   instruction: z.string().max(256_000),
   resumed: z.boolean(),
   imageCount: z.number().int().min(0).max(10),
-  reason: z.enum(['user', 'secure_resume']),
+  reason: z.enum(['user', 'secure_resume', 'steer']),
   createdAt: z.iso.datetime({ offset: true }),
 });
 const querySchema = z
