@@ -842,10 +842,14 @@ export function createAgentBrowserComputer(options: {
           const url = await currentUrl(state, signal);
           if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
             throw new BrowserActionError('browser_origin_changed');
-          const result = redactBrowserText(
-            JSON.stringify((await evaluate(state, script, signal)) ?? null) ?? 'null',
-            state.secrets,
+          const value = await evaluate(
+            state,
+            `Promise.race([Promise.resolve().then(() => (${script})), new Promise((resolve) => setTimeout(() => resolve({ __ottoTimedOut: true }), 5000))])`,
+            signal,
           );
+          if (value && typeof value === 'object' && '__ottoTimedOut' in value)
+            throw new Error('The script did not finish within 5 seconds.');
+          const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {
             text: `Script result (JSON${result.length > 20_000 ? ', first 20,000 characters' : ''}):\n${result.slice(0, 20_000)}`,
             url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.allowedOrigin)),
