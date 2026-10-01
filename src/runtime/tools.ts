@@ -104,7 +104,7 @@ const activityCheckTool = defineTool(
 export const toolDefinitions = {
   send_message: defineTool(
     'send_message',
-    'Send a message to the user now: the acknowledgement before work, a real update, or an earlier short message of your reply. Do not repeat it in the final answer. In background runs, send only useful results or necessary questions.',
+    'Send a message to the user now. In a conversation, text in your response already reaches the user, so use this only to reply to a specific earlier message. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
     Type.Object({
       text: Type.String(),
       replyToMessageId: Type.Optional(Type.String({ pattern: '^[0-9a-fA-F-]{36}$' })),

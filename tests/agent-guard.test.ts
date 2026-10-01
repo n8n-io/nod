@@ -163,7 +163,7 @@ test('saved memory reaches Pi but stays out of inspector records', async () => {
       },
     },
   );
-  assert.match(result.supplied.systemPrompt, /short synthetic reports/);
+  assert.match(result.supplied.systemContext ?? '', /short synthetic reports/);
   assert.ok(observations.length > 0);
   assert.ok(snapshots.length > 0);
   assert.doesNotMatch(JSON.stringify(observations), /short synthetic reports/);
@@ -624,11 +624,6 @@ test('activity checks scope reads to one account, deny other tools and record ex
       await assert.rejects(
         call(tools, 'apps', { action: 'GMAIL_GET_ATTACHMENT', args: { connectionId } }),
         /selected account/,
-      );
-      await options.runTool(
-        'read',
-        { path: '/fixture/workspace/.otto/skills/connected-apps/SKILL.md' },
-        async () => ({ content: [{ type: 'text', text: 'Synthetic skill' }] }),
       );
       await call(tools, 'apps', { action: 'SEARCH_TOOLS', args: { query: 'Recent activity' } });
       await assert.rejects(

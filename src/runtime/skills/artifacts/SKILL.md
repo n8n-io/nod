@@ -1,8 +1,3 @@
----
-name: artifacts
-description: Create or edit a PDF, spreadsheet, Word document, slide deck, chart, or other file for the user.
----
-
 # Create files
 
 Use the task workspace to create files. `python3` has ReportLab, Matplotlib, pandas, Pillow, openpyxl, python-docx and python-pptx. Use `csv` from the Python standard library for a simple table. Use Node or plain text when that is simpler.

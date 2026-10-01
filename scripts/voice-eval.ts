@@ -14,7 +14,6 @@ import { scenarios as voiceScenarios, type VoiceScenario } from './voice-scenari
 import { taskScenarios } from './voice-tasks.ts';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const skillsDir = join(repository, 'src/runtime/skills');
 const outputDir = join(repository, '.local/voice-evals');
 const environment = {
   ...parse(await readFile(join(repository, '.env'), 'utf8').catch(() => '')),
@@ -153,17 +152,7 @@ const workspace: Workspace = {
   open: () => ({
     path: '/workspace/eval',
     instructions: 'Evaluation workspace: commands run but return no output.',
-    exec: async (script, options) => {
-      const skill = /^cat -- '\/workspace\/eval\/\.otto\/skills\/([\w-]+)\/SKILL\.md'$/.exec(
-        script,
-      );
-      if (skill) {
-        const content = await readFile(join(skillsDir, skill[1], 'SKILL.md')).catch(() => null);
-        if (!content) return { exitCode: 1 };
-        options?.onData?.(content);
-      }
-      return { exitCode: 0 };
-    },
+    exec: async () => ({ exitCode: 0 }),
   }),
   status: () => 'eval workspace',
   dispose: () => {},

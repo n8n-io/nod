@@ -1,8 +1,3 @@
----
-name: connected-apps
-description: Read and act in the user's connected accounts (email, calendar, files, chat, notes) and discovered API, MCP or CLI paths. Use for any task involving the user's own accounts.
----
-
 # Connected apps
 
 1. Use an action name, schema, connectionId and pathId already known in this thread. Call apps SEARCH_TOOLS {query} with a narrow task query when any of these are missing. For an incoming event, use its owned account and item identity. If several accounts match and the intended account remains unclear, ask which account to use.

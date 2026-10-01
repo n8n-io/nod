@@ -12,7 +12,6 @@ import {
   SessionManager,
   SettingsManager,
   type ResourceLoader,
-  type Skill,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { Agent, AgentEvent } from '../../ports/agent.ts';
@@ -26,7 +25,7 @@ import {
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
-import { createSandbox, stageResources } from './sandbox.ts';
+import { createSandbox } from './sandbox.ts';
 
 function isFinalAnswer(signature: string | undefined) {
   if (!signature?.startsWith('{')) return false;
@@ -40,18 +39,18 @@ function isFinalAnswer(signature: string | undefined) {
 
 function resources(
   systemPrompt: string,
-  skills: Skill[],
+  systemContext: string | undefined,
   extensions: ReturnType<ResourceLoader['getExtensions']>,
 ): ResourceLoader {
   return {
     getExtensions: () => extensions,
-    getSkills: () => ({ skills, diagnostics: [] }),
+    getSkills: () => ({ skills: [], diagnostics: [] }),
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
     getSystemPrompt: () => systemPrompt,
     getSystemPromptSource: () => undefined,
-    getAppendSystemPrompt: () => [],
+    getAppendSystemPrompt: () => (systemContext ? [systemContext] : []),
     getAppendSystemPromptSources: () => [],
     extendResources: () => {},
     reload: async () => {},
@@ -142,7 +141,6 @@ export function createPiAgent(options: {
           },
         })),
       ];
-      const skills = await stageResources(input.workspace, input.skillsDir);
       const extensionLoader = new DefaultResourceLoader({
         cwd: input.workspace.path,
         agentDir: directory,
@@ -200,7 +198,7 @@ export function createPiAgent(options: {
         ],
         customTools: tools,
         noTools: 'builtin',
-        resourceLoader: resources(input.systemPrompt, skills, extensions),
+        resourceLoader: resources(input.systemPrompt, input.systemContext, extensions),
         sessionManager: manager,
         settingsManager: SettingsManager.inMemory({
           compaction: { enabled: true },

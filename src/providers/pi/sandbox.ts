@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { posix } from 'node:path';
 import {
   createBashToolDefinition,
@@ -8,9 +7,7 @@ import {
   createLsToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
-  loadSkillsFromDir,
   truncateTail,
-  type Skill,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { WorkspaceSession } from '../../ports/computer.ts';
@@ -194,23 +191,4 @@ export function createSandbox(workspace: WorkspaceSession) {
       },
     }),
   ] as ToolDefinition[];
-}
-
-export async function stageResources(workspace: WorkspaceSession, skillsDir: string | undefined) {
-  const loaded = skillsDir ? loadSkillsFromDir({ dir: skillsDir, source: 'otto' }).skills : [];
-  const root = `${workspace.path}/.otto/skills`;
-  const skills: Skill[] = [];
-  const lines = ['set -e'];
-  for (const skill of loaded) {
-    const baseDir = `${root}/${skill.name}`;
-    const content = await readFile(skill.filePath);
-    lines.push(
-      `mkdir -p ${quote(baseDir)}`,
-      `printf %s ${quote(content.toString('base64'))} | base64 -d > ${quote(`${baseDir}/SKILL.md`)}`,
-    );
-    skills.push({ ...skill, baseDir, filePath: `${baseDir}/SKILL.md` });
-  }
-  const { exitCode } = await workspace.exec(lines.join('\n'));
-  if (exitCode) throw new Error('The workspace could not prepare the assistant skills.');
-  return skills;
 }

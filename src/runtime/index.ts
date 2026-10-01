@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir } from 'node:fs/promises';
-import { posix, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdir } from 'node:fs/promises';
+import { relative, resolve, sep } from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import type {
   Agent,
@@ -20,12 +19,11 @@ import { integrationDownloadActions } from '../shared/integrations.ts';
 import { createBrowserFlows } from './browser-flows.ts';
 import { requestsPrivateInput } from './communication.ts';
 import { createObservationQueue } from './observations.ts';
-import { firstInstruction, systemPrompt } from './prompt.ts';
+import { firstInstruction, systemContext, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
 import { inspectToolCatalog, ottoTools } from './tools.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
 
-const skillsDir = fileURLToPath(new URL('./skills', import.meta.url));
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
 const parallelTools = new Set(['share_file', 'create_audio']);
@@ -197,7 +195,6 @@ export function createAgentRuntime(dependencies: {
     let inspectedApp = false;
     let checkRecording = false;
     let checkRecorded = false;
-    const skillPaths = new Set<string>();
     const activeToolCalls = new Set<Promise<unknown>>();
     const observations = createObservationQueue({
       observe: context.observe,
@@ -336,7 +333,6 @@ export function createAgentRuntime(dependencies: {
       name: string,
       params: unknown,
       execute: () => Promise<unknown>,
-      native = false,
     ): Promise<AgentToolResult> => {
       const label = name.replaceAll('_', ' ');
       const pending = waitFor(
@@ -395,7 +391,6 @@ export function createAgentRuntime(dependencies: {
               const args = params as {
                 action?: string;
                 args?: Record<string, unknown>;
-                path?: string;
                 status?: string;
               };
               if (name === 'apps') {
@@ -416,10 +411,8 @@ export function createAgentRuntime(dependencies: {
                   );
                 checkRecording = true;
                 reservedRecord = true;
-              } else if (name !== 'read' || !native || !skillPaths.has(args.path ?? ''))
-                throw new ActivityCheckError(
-                  'Activity checks can only read the selected app and bundled skills.',
-                );
+              } else
+                throw new ActivityCheckError('Activity checks can only read the selected app.');
             }
             if (context.readOnly && !allowedReadOnly(name, params)) throw new ReadOnlyTurnError();
             await waitFor(pendingReplies);
@@ -492,13 +485,6 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       await waitFor(mkdir(context.workspacePath, { recursive: true, mode: 0o700 }));
       const workspace = dependencies.workspace.open(context);
-      if (context.activityCheck)
-        for (const entry of await waitFor(readdir(skillsDir, { withFileTypes: true }))) {
-          if (!entry.isDirectory()) continue;
-          const path = `.otto/skills/${entry.name}/SKILL.md`;
-          skillPaths.add(path);
-          skillPaths.add(posix.join(workspace.path, path));
-        }
       const turn: Turn = {
         context,
         computer,
@@ -520,16 +506,16 @@ export function createAgentRuntime(dependencies: {
             }),
         }),
       );
-      const system = systemPrompt(context, workspace);
-      const inspectedSystem = systemPrompt({ ...context, memory: [] }, workspace);
+      const system = systemPrompt(workspace);
+      const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: [] })}`;
       const opening = agent.open({
         threadId,
         turnId: context.turnId,
         systemPrompt: system,
+        systemContext: systemContext(context),
         tools,
         workspace,
-        skillsDir,
-        runTool: (name, params, run) => guard(name, params, run, true),
+        runTool: guard,
         shouldStop: () => stopped || checkRecorded,
         onEvent: (event) => {
           if (event.type === 'model_usage') void observe(event);
