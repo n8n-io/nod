@@ -14,6 +14,7 @@ import type {
   IntegrationProvider,
   IntegrationService,
   IntegrationSession,
+  VerificationEmail,
 } from '../src/ports/integrations.ts';
 import { runProcess } from '../src/providers/process.ts';
 import { fixtureChannelCredentials } from './e2e-channels.ts';
@@ -28,6 +29,11 @@ export const fixtureCredentials = {
   password: 'Synthetic-only-pass-47!',
   code: '482619',
 };
+export const fixtureSignup = {
+  base: { recipient: 'tester+trial@example.test', code: '731408' },
+  alternate: { recipient: 'tester+trial-two@example.test', code: '529163' },
+};
+type SignupVariant = keyof typeof fixtureSignup;
 export type Audit = (
   kind: string,
   fields?: Record<string, string | number | boolean | null>,
@@ -48,7 +54,145 @@ async function form(request: IncomingMessage) {
   return new URLSearchParams(Buffer.concat(parts).toString('utf8'));
 }
 
-export function createAuthFixture(audit: Audit = () => {}, pricesPath?: string) {
+function createSignupFixture(audit: Audit, operatorPath?: string) {
+  const sessions = new Map<
+    string,
+    { variant: SignupVariant; emailVerified: boolean; humanVerified: boolean; created: boolean }
+  >();
+  const counts = {
+    base: { submissions: 0, created: 0 },
+    alternate: { submissions: 0, created: 0 },
+  };
+  const path = fixturePrefix + 'signup';
+  const event = (kind: string, variant: SignupVariant, fields: Record<string, boolean | number>) =>
+    audit(kind, { alternate: variant === 'alternate', ...fields });
+  const start = (variant: SignupVariant, error = '') =>
+    html(
+      'Start your Northstar trial',
+      `${error}<form method="post" action="${path}?variant=${variant}"><label for="trial-email">Work email</label><input id="trial-email" name="email" type="email" autocomplete="username" required><button type="submit">Start free trial</button></form>`,
+    );
+  const codePage = (error = '') =>
+    html(
+      'Verify your email',
+      `${error}<p>We sent a six-digit verification code to your email.</p><form method="post" action="${path}/email"><label for="email-code">Verification code</label><input id="email-code" name="code" inputmode="numeric" autocomplete="one-time-code" required><button type="submit">Verify email</button></form>`,
+    );
+  const details = (variant: SignupVariant, error = '') => {
+    const name =
+      '<label for="display-name">Your name</label><input id="display-name" name="name" value="Trial user" required>';
+    const instance =
+      '<label for="instance-name">Instance name</label><input id="instance-name" name="instance" value="My trial" required>';
+    const challenge = `<iframe title="Human verification" src="${path}/challenge" style="width:100%;height:245px;border:1px solid #aaa"></iframe>`;
+    return html(
+      'Set up your trial',
+      `${error}<p>Your email is verified. Review your trial details and complete the human verification.</p>${variant === 'alternate' ? challenge : ''}<form method="post" action="${path}/create">${variant === 'alternate' ? instance + name : name + instance}${variant === 'base' ? challenge : ''}<button type="submit">Create trial instance</button></form>`,
+    );
+  };
+  const challengePage = (verified: boolean, failed = false) =>
+    html(
+      'Security verification',
+      '<style>body{margin:0;padding:12px}h1{font-size:18px}</style>' +
+        (verified
+          ? '<p role="status">Verification complete.</p>'
+          : `${failed ? '<p role="alert">Automatic verification was unsuccessful. Complete this check manually to continue.</p>' : ''}<form method="post"><button type="submit">Verify I am human</button></form>`),
+    );
+  return async (request: IncomingMessage, response: ServerResponse, url: URL) => {
+    if (url.pathname !== path && !url.pathname.startsWith(path + '/')) return false;
+    const variant: SignupVariant =
+      url.searchParams.get('variant') === 'alternate' ? 'alternate' : 'base';
+    const token = /(?:^|;\s*)e2e_signup=([a-f0-9]{48})(?:;|$)/.exec(
+      request.headers.cookie || '',
+    )?.[1];
+    const session = token ? sessions.get(token) : undefined;
+    if (url.pathname === path && request.method === 'GET') response.end(start(variant));
+    else if (url.pathname === path && request.method === 'POST') {
+      const input = await form(request);
+      const accepted = input.get('email') === fixtureSignup[variant].recipient;
+      event('fixture_signup_identifier', variant, { accepted });
+      if (!accepted)
+        response.end(start(variant, '<p role="alert">Use the email selected for this trial.</p>'));
+      else {
+        if (sessions.size >= 100) sessions.delete(sessions.keys().next().value!);
+        const id = randomBytes(24).toString('hex');
+        sessions.set(id, { variant, emailVerified: false, humanVerified: false, created: false });
+        response.setHeader(
+          'Set-Cookie',
+          `e2e_signup=${id}; HttpOnly; Secure; SameSite=Lax; Path=${path}`,
+        );
+        event('fixture_signup_code_sent', variant, { sent: true });
+        response.end(codePage());
+      }
+    } else if (!session) response.writeHead(303, { Location: path }).end();
+    else if (url.pathname === path + '/email' && request.method === 'POST') {
+      const input = await form(request);
+      const accepted =
+        !session.emailVerified && input.get('code') === fixtureSignup[session.variant].code;
+      event('fixture_signup_email', session.variant, { accepted });
+      if (!accepted)
+        response.end(codePage('<p role="alert">The verification code was not accepted.</p>'));
+      else {
+        session.emailVerified = true;
+        response.end(details(session.variant));
+      }
+    } else if (!session.emailVerified) response.end(codePage());
+    else if (url.pathname === path + '/challenge' && request.method === 'GET')
+      response.end(challengePage(session.humanVerified));
+    else if (url.pathname === path + '/challenge' && request.method === 'POST') {
+      const released = operatorPath
+        ? await readFile(operatorPath, 'utf8')
+            .then((value) => JSON.parse(value)[session.variant] === true)
+            .catch(() => false)
+        : false;
+      session.humanVerified ||= released;
+      event('fixture_signup_human', session.variant, { accepted: session.humanVerified });
+      response.end(challengePage(session.humanVerified, !session.humanVerified));
+    } else if (url.pathname === path + '/create' && request.method === 'POST') {
+      const input = await form(request);
+      const current = counts[session.variant];
+      current.submissions += 1;
+      const accepted =
+        session.humanVerified &&
+        !session.created &&
+        Boolean(input.get('name')?.trim()) &&
+        Boolean(input.get('instance')?.trim());
+      if (accepted) {
+        session.created = true;
+        current.created += 1;
+      }
+      event('fixture_signup_submit', session.variant, {
+        accepted,
+        submissions: current.submissions,
+        created: current.created,
+      });
+      if (session.created) response.writeHead(303, { Location: path + '/account' }).end();
+      else
+        response.end(
+          details(
+            session.variant,
+            '<p role="alert">Complete the details and human verification before creating the trial.</p>',
+          ),
+        );
+    } else if (url.pathname === path + '/account' && request.method === 'GET' && session.created) {
+      event('fixture_signup_account', session.variant, {
+        authenticated: true,
+        created: counts[session.variant].created,
+      });
+      response.end(
+        html(
+          'Your Northstar trial',
+          `<p role="status">Your trial instance is ready.</p><p>Signed in as ${fixtureSignup[session.variant].recipient}.</p><p>The trial workspace is active.</p>`,
+        ),
+      );
+    } else response.writeHead(404).end('Trial page unavailable.');
+    return true;
+  };
+}
+
+export function createAuthFixture(
+  audit: Audit = () => {},
+  pricesPath?: string,
+  operatorPath?: string,
+) {
+  const signup = createSignupFixture(audit, operatorPath);
   const sessions = new Map<string, { stage: 'password' | 'otp' | 'portal'; expires: number }>();
   const login = (error = '') =>
     html(
@@ -84,6 +228,7 @@ export function createAuthFixture(audit: Audit = () => {}, pricesPath?: string) 
     const session = cookie ? sessions.get(cookie) : undefined;
     const active = session && session.expires > Date.now() ? session : undefined;
     try {
+      if (await signup(request, response, url)) return;
       if (
         request.method === 'GET' &&
         [fixturePrefix + 'hotel', fixturePrefix + 'flight'].includes(url.pathname)
@@ -206,6 +351,7 @@ export async function createFixtureProxy(
   directory: string,
   audit: Audit = () => {},
   execute: typeof runProcess = runProcess,
+  operatorPath?: string,
 ) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await writeFile(join(directory, 'prices.json'), '{"hotel":180,"flight":240}', { mode: 0o600 });
@@ -235,7 +381,7 @@ export async function createFixtureProxy(
     .digest('base64');
   const https = createHttpsServer(
     { key: await readFile(key), cert: certificate },
-    createAuthFixture(audit, join(directory, 'prices.json')),
+    createAuthFixture(audit, join(directory, 'prices.json'), operatorPath),
   );
   const sockets = new Set<Socket>();
   const track = (socket: Socket) => {
@@ -528,7 +674,11 @@ const toolDefinitions = [
   },
 ];
 
-export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {}) {
+export function createIntegrationFixture(
+  baseUrl: string,
+  audit: Audit = () => {},
+  options: { signup?: boolean } = {},
+) {
   const accounts = new Map<
     string,
     {
@@ -540,6 +690,11 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
     }
   >();
   const sessions = new Map<string, IntegrationSession>();
+  const verificationMail = new Map<SignupVariant, VerificationEmail>();
+  const accountEmail = (account: { service: IntegrationService; number: number }) =>
+    options.signup && account.service === 'gmail'
+      ? fixtureCredentials.username
+      : `tester${account.number}@example.test`;
   const writes: Array<{ id: string; accountId: string; action: string }> = [];
   const drafts = new Map<
     string,
@@ -991,9 +1146,22 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
             active: account.active,
             service: account.service,
             accountName: `Synthetic account ${account.number}`,
-            accountEmail: `tester${account.number}@example.test`,
+            accountEmail: accountEmail(account),
           }
         : { active: false, service: 'unknown' };
+    },
+    async verificationEmails(accountId, query, signal) {
+      signal.throwIfAborted();
+      const account = accounts.get(accountId);
+      if (!options.signup || !account?.active || account.service !== 'gmail') return;
+      const messages = [...verificationMail.values()].filter(
+        (message) =>
+          message.recipients.includes(query.recipient) &&
+          message.receivedAt >= query.after &&
+          message.receivedAt <= query.before,
+      );
+      audit('fixture_signup_mailbox_read', { matched: messages.length === 1 });
+      return messages;
     },
     async deleteAccount(id) {
       accounts.delete(id);
@@ -1020,6 +1188,19 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
   return {
     provider,
     writes,
+    signupCodeSent(alternate: boolean) {
+      if (!options.signup) return;
+      const variant = alternate ? 'alternate' : 'base';
+      const input = fixtureSignup[variant];
+      verificationMail.set(variant, {
+        id: randomUUID(),
+        receivedAt: Date.now(),
+        sender: 'verify@transactional.example.com',
+        recipients: [input.recipient],
+        authenticatedDomain: 'example.com',
+        text: `Your email verification code is ${input.code}.`,
+      });
+    },
     register(app: FastifyInstance) {
       app.addHook('onSend', async (_request, _reply, payload) => {
         if (typeof payload !== 'string' || !payload.includes(prefix)) return payload;
@@ -1031,7 +1212,7 @@ export function createIntegrationFixture(baseUrl: string, audit: Audit = () => {
         return reply.type('text/html').send(
           html(
             `Connect synthetic ${names[account.service]}`,
-            `<p>This is synthetic app consent, not a real provider sign-in. It exposes only synthetic records to this isolated Otto instance.</p><p>Account: tester${account.number}@example.test</p><form id="fixture-consent" method="post"><input type="hidden" name="consent" value="connect"><button type="submit">Connect synthetic account</button></form><p id="consent-error" role="alert" hidden>Could not connect the synthetic account. Try again.</p><script>
+            `<p>This is synthetic app consent, not a real provider sign-in. It exposes only synthetic records to this isolated Otto instance.</p><p>Account: ${accountEmail(account)}</p><form id="fixture-consent" method="post"><input type="hidden" name="consent" value="connect"><button type="submit">Connect synthetic account</button></form><p id="consent-error" role="alert" hidden>Could not connect the synthetic account. Try again.</p><script>
 const consentForm = document.getElementById('fixture-consent');
 const consentButton = consentForm.querySelector('button');
 const consentError = document.getElementById('consent-error');
@@ -1082,8 +1263,10 @@ consentForm.addEventListener('submit', async (event) => {
 }
 
 export function operatorPage() {
+  const signupOperator = `<h2>Trial signup evaluation</h2><p>Connect synthetic Gmail as ${fixtureCredentials.username} before starting. Each attempt needs a fresh acceptance harness. The trial details have editable defaults.</p><p>Base recipient: ${fixtureSignup.base.recipient}. Holdout recipient: ${fixtureSignup.alternate.recipient}.</p><p>After Otto asks you to complete human verification, release the matching case here. Then click Verify I am human in Otto's handed-off browser and click Done to return control.</p><p>Operator requests require the private bearer token stored in the harness manifest. Release the base or alternate case with an authenticated POST to its operator endpoint.</p>`;
   return html(
     'Otto isolated acceptance environment',
-    `<p><a href="/">Open Otto</a> · <a href="/e2e/status">Timing events</a></p><p>The assistant and browser are real. Google, Slack and Notion accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
+    signupOperator +
+      `<p><a href="/">Open Otto</a> · <a href="/e2e/status">Timing events</a></p><p>The assistant and browser are real. Google, Slack and Notion accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
   );
 }

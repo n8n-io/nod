@@ -46,6 +46,7 @@ const apiKey =
 if (!apiKey)
   throw new Error('Configure the selected real model key before starting the acceptance harness.');
 const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
+const operatorToken = randomBytes(32).toString('base64url');
 const schema = `e2e_${suffix}`;
 const bossSchema = `e2e_boss_${suffix}`;
 const container = `otto-workspace-e2e-${suffix}`;
@@ -67,6 +68,9 @@ database.searchParams.set('options', `-c search_path=${schema}`);
 process.env.DATABASE_URL = database.href;
 process.env.PGBOSS_SCHEMA = bossSchema;
 process.env.PORT = String(port);
+process.env.OTTO_MODE = 'local';
+process.env.OTTO_DATA_ROOT = join(directory, '.local');
+process.env.OTTO_PUBLIC_URL = baseUrl;
 process.env.NODE_ENV = 'production';
 process.env.DEV_INSPECTOR = 'true';
 if (provider === 'anthropic') process.env.ANTHROPIC_API_KEY = apiKey;
@@ -82,6 +86,9 @@ const audit: Audit = (kind, fields = {}) => {
   if (timeline.length > 10_000) timeline.shift();
   logQueue = logQueue.then(() => appendFile(logPath, JSON.stringify(event) + '\n')).catch(() => {});
 };
+const integration = createIntegrationFixture(baseUrl, audit, { signup: true });
+const signupAttempted = { base: false, alternate: false };
+const signupReleased = { base: false, alternate: false };
 let application:
   | Awaited<ReturnType<(typeof import('../src/server/composition.ts'))['createApplication']>>
   | undefined;
@@ -170,6 +177,8 @@ try {
   if (browserImage.exitCode) throw new Error('Start the Otto browser container first.');
   const fixtureScripts = join(directory, 'browser-fixtures');
   await mkdir(fixtureScripts);
+  const signupOperatorPath = join(fixtureScripts, 'signup-operator.json');
+  await writeFile(signupOperatorPath, JSON.stringify(signupReleased), { mode: 0o644 });
   for (const name of ['e2e-browser.ts', 'e2e-fixtures.ts', 'e2e-channels.ts'])
     await copyFile(join(repository, 'scripts', name), join(fixtureScripts, name));
   const browserStarted = await runProcess('docker', [
@@ -248,7 +257,13 @@ try {
           accepted?: boolean;
           offer?: string;
           price?: number;
+          alternate?: boolean;
+          sent?: boolean;
         };
+        if (event.kind === 'fixture_signup_code_sent' && event.sent === true)
+          integration.signupCodeSent(event.alternate === true);
+        if (event.kind === 'fixture_signup_human')
+          signupAttempted[event.alternate === true ? 'alternate' : 'base'] = true;
         if (
           [
             'fixture_manual_submit',
@@ -257,6 +272,12 @@ try {
             'fixture_otp_submit',
             'fixture_portal_view',
             'fixture_price_view',
+            'fixture_signup_identifier',
+            'fixture_signup_code_sent',
+            'fixture_signup_email',
+            'fixture_signup_human',
+            'fixture_signup_submit',
+            'fixture_signup_account',
           ].includes(event.kind)
         )
           audit(
@@ -289,7 +310,6 @@ try {
     import('../src/server/events.ts'),
   ]);
   databasePool = pool;
-  const integration = createIntegrationFixture(baseUrl, audit);
   const vaultKey = randomBytes(32);
   const unavailable = async () => {
     throw new Error('Speech is disabled in this acceptance harness.');
@@ -320,6 +340,15 @@ try {
     model: { provider, name: model, configured: true },
   });
   const { app } = application;
+  app.addHook('onRequest', async (request, reply) => {
+    const path = request.url.split('?')[0];
+    if (
+      (['/e2e', '/e2e/status', '/e2e/expected-run'].includes(path) ||
+        path.startsWith('/e2e/signup/')) &&
+      request.headers.authorization !== `Bearer ${operatorToken}`
+    )
+      return reply.code(401).send({ error: 'Operator authorization required.' });
+  });
   integration.register(app);
   app.addContentTypeParser(
     'application/x-www-form-urlencoded',
@@ -336,6 +365,37 @@ try {
     timeline,
     writes: integration.writes,
   }));
+  app.post<{ Params: { variant: string } }>('/e2e/signup/:variant', async (request, reply) => {
+    const variant = request.params.variant;
+    if (variant !== 'base' && variant !== 'alternate')
+      return reply.code(400).send({ error: 'Choose a signup case.' });
+    const { activeThread } = await import('../src/server/thread.ts');
+    const thread = await activeThread(pool);
+    const latest = await pool.query(
+      "SELECT status,waiting_reason FROM turns WHERE owner_id='local-development' AND thread_id=$1 AND NOT background ORDER BY created_at DESC,id DESC LIMIT 1",
+      [thread.id],
+    );
+    const running = await pool.query(
+      "SELECT 1 FROM turns WHERE owner_id='local-development' AND thread_id=$1 AND status='running' LIMIT 1",
+      [thread.id],
+    );
+    if (
+      !signupAttempted[variant] ||
+      latest.rows[0]?.status !== 'waiting' ||
+      latest.rows[0]?.waiting_reason !== 'question' ||
+      running.rowCount
+    )
+      return reply
+        .code(409)
+        .send({ error: 'Wait for the agent to hand over the verification step.' });
+    signupReleased[variant] = true;
+    await writeFile(signupOperatorPath, JSON.stringify(signupReleased), { mode: 0o644 });
+    audit('fixture_signup_operator_release', {
+      alternate: variant === 'alternate',
+      released: true,
+    });
+    return reply.redirect('/e2e');
+  });
   const expected = new Map<string, string>();
   app.post('/e2e/expected-run', async (request, reply) => {
     const value = request.body as { scheduleId?: string; dueAt?: string };
@@ -357,6 +417,16 @@ try {
       audit('chat_request_received', { requestId: request.id });
   });
   app.addHook('onSend', async (request, _reply, payload) => {
+    if (request.method === 'POST' && request.url.split('?')[0] === '/api/browser-handoff') {
+      const input = request.body as { type?: unknown } | undefined;
+      audit('fixture_browser_handoff', {
+        accepted: _reply.statusCode === 200,
+        clicked: input?.type === 'click',
+        typed: input?.type === 'type',
+        scrolled: input?.type === 'scroll',
+        key: input?.type === 'key',
+      });
+    }
     if (
       request.method === 'POST' &&
       request.url.split('?')[0] === '/api/messages' &&
@@ -492,9 +562,13 @@ try {
     evidence:
       'Real app, Pi model, Chrome, Vault and thread workspace; synthetic connected apps, sign-in website and channel setup. Speech and channel delivery disabled.',
   };
-  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2), {
-    mode: 0o600,
-  });
+  await writeFile(
+    join(directory, 'manifest.json'),
+    JSON.stringify({ ...manifest, operatorToken }, null, 2),
+    {
+      mode: 0o600,
+    },
+  );
   audit('harness_ready');
   process.stdout.write(JSON.stringify(manifest, null, 2) + '\n');
 } catch (error) {
