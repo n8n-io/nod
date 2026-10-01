@@ -1247,7 +1247,7 @@ input[type='range']:disabled {
   width: 48px;
   height: 48px;
 }
-.welcome h1 {
+.welcome h2 {
   font-size: clamp(24px, 2.4vw, 34px);
   font-weight: 600;
   letter-spacing: -1.2px;
@@ -2524,7 +2524,7 @@ input[type='range']:disabled {
   .row-actions {
     flex-direction: column;
   }
-  .welcome h1 {
+  .welcome h2 {
     font-size: 23px;
   }
   .starter-actions {
@@ -2841,6 +2841,7 @@ input[type='range']:disabled {
     border-right: 0;
   }
   .app-shell .sidebar > .sidebar-header,
+  .startup-shell .sidebar > .brand,
   .app-shell .main-nav,
   .app-shell .sidebar-bottom,
   .app-shell .sidebar .nav-shortcut {
@@ -3194,7 +3195,7 @@ input[type='range']:disabled {
   height: 44px;
   border-radius: 16px 16px 4px 16px;
 }
-.ghost-welcome h1 {
+.ghost-welcome h2 {
   opacity: 0.4;
 }
 .ghost-chip {

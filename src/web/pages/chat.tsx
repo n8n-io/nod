@@ -70,7 +70,7 @@ function Welcome({ onPick }: { onPick(label: string): void }) {
   return (
     <div className="welcome">
       <BrandMark />
-      <h1>What’s on your mind?</h1>
+      <h2>What’s on your mind?</h2>
       {!loading && (
         <div className="starter-actions">
           {labels.map((label) => (
