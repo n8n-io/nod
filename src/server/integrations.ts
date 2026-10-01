@@ -1147,16 +1147,27 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return executeApproved(ownerId, action, selectedArgs, turn, signal, checkConnectionId);
   }
 
+  function gmailMailbox(value: string) {
+    const email = normalizedEmail(value);
+    if (!email) return;
+    const [local, domain] = email.split('@');
+    const name = local.split('+')[0];
+    if (!name) return;
+    return `${domain === 'gmail.com' ? name.replaceAll('.', '') : name}@${domain}`;
+  }
+
   async function emailCode(ownerId: string, input: EmailCodeRequest, signal: AbortSignal) {
     try {
       assertOwner(ownerId);
       signal.throwIfAborted();
       const recipient = normalizedEmail(input.recipient);
+      const mailbox = recipient && gmailMailbox(recipient);
       const senderDomain = verificationSenderDomain(input.origin);
       const now = Date.now();
       if (
         !provider.verificationEmails ||
         !recipient ||
+        !mailbox ||
         !senderDomain ||
         !Number.isFinite(input.after) ||
         !Number.isFinite(input.before) ||
@@ -1174,29 +1185,30 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           row.account_id &&
           row.account_active &&
           !row.revoked &&
-          normalizedEmail(row.account_email ?? '') === recipient,
+          gmailMailbox(row.account_email ?? '') === mailbox,
       );
       if (matches.length !== 1) return;
       const row = matches[0];
+      const primaryEmail = normalizedEmail(row.account_email ?? '');
       const remote = await provider.inspectAccount(row.account_id!, ownerId);
       signal.throwIfAborted();
       if (
         !remote.active ||
         remote.service !== 'gmail' ||
-        normalizedEmail(remote.accountEmail ?? '') !== recipient
+        normalizedEmail(remote.accountEmail ?? '') !== primaryEmail
       )
         return;
       const current = async (database: Pick<PoolClient, 'query'> = pool) =>
         (
           await database.query(
             `SELECT id FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND account_active AND NOT revoked AND lower(trim(account_email))=$5 FOR SHARE NOWAIT`,
-            [row.id, ownerId, providerId, row.account_id, recipient],
+            [row.id, ownerId, providerId, row.account_id, primaryEmail],
           )
         ).rowCount === 1;
       if (!(await current())) return;
       const messages = await provider.verificationEmails(
         row.account_id!,
-        { recipient, senderDomain, after: input.after, before: input.before },
+        { recipient, after: input.after, before: input.before },
         signal,
       );
       signal.throwIfAborted();

@@ -197,7 +197,7 @@ export const toolDefinitions = {
   ),
   get_credential: defineTool(
     'get_credential',
-    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and any saved password; a passwordless login has an empty password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault can fill a saved login or open a secure form. For the form, message is one sentence for the user about this step in their language, and action is the 2-5 word button text, such as "Add authenticator code"; never ask for the value in chat. Submit with browser and inspect the result.',
+    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and any saved password; a passwordless login has an empty password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault first tries to retrieve email codes privately from a matching connected mailbox, including supported aliases. If it opens a secure form, that form requires the user to enter the value; it does not retrieve mail. Never read verification codes through apps or ask for them in chat. For the form, message is one sentence for the user about this step in their language, and action is the 2-5 word button text, such as "Add authenticator code"; never ask for the value in chat. Submit with browser and inspect the result.',
     Type.Union([
       Type.Object({
         id: uuid,
@@ -424,7 +424,10 @@ export function ottoTools(
       }
       const { message, action, ...request } = input;
       const result = await context.requestCredential(request);
-      if (result.filled) return 'Saved login entered.';
+      if (result.filled)
+        return request.kind === 'otp'
+          ? 'Verification code entered privately.'
+          : 'Saved login entered.';
       if (!result.url) throw new Error('The secure sign-in request could not be created.');
       await turn.invite(vaultInvitation(request.origin, result.url, message, action));
       await pause('credentials', undefined, { post: false });

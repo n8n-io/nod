@@ -2233,6 +2233,42 @@ test('email verification binds authenticated messages to a recent exact recipien
   );
 });
 
+test('verification mail for a separate signup domain must link the exact HTTPS form origin', () => {
+  const signup = { ...request, origin: 'https://app.example.net' };
+  const email = {
+    ...message,
+    sender: 'login@transactional.example.com',
+    authenticatedDomain: 'example.com',
+    verificationOrigins: [signup.origin],
+  };
+  assert.equal(verificationCode([email], signup), '381742');
+  for (const verificationOrigins of [
+    [],
+    ['http://app.example.net'],
+    ['https://example.net'],
+    ['https://app.example.net.evil.com'],
+    ['https://app.example.net:8443'],
+    ['https://evil.com/?next=https://app.example.net'],
+    [signup.origin, 'https://another.example.net'],
+  ])
+    assert.equal(verificationCode([{ ...email, verificationOrigins }], signup), undefined);
+  assert.equal(
+    verificationCode([{ ...email, authenticatedDomain: 'unrelated.com' }], signup),
+    undefined,
+  );
+  assert.equal(
+    verificationCode(
+      [{ ...email, sender: 'login@evil.github.io', authenticatedDomain: 'trusted.github.io' }],
+      signup,
+    ),
+    undefined,
+  );
+  assert.equal(
+    verificationCode([{ ...email, sender: 'login@co.uk', authenticatedDomain: 'co.uk' }], signup),
+    undefined,
+  );
+});
+
 test('site matching uses public suffix boundaries and separates hosted tenants', () => {
   for (const [origin, domain] of [
     ['https://app20.toconline.pt', 'toconline.pt'],
@@ -2324,7 +2360,7 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
         );
         assert.match(
           String(input.parameters.find((item) => item.name === 'q')?.value),
-          /^to:owner@example.com from:toconline.pt after:\d+ before:\d+$/,
+          /^to:owner@example.com after:\d+ before:\d+$/,
         );
         return { status: 200, headers: {}, data: { messages: [{ id: 'mail1' }], nextPageToken } };
       }
@@ -2358,7 +2394,6 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       'owned-account',
       {
         recipient: request.recipient,
-        senderDomain: 'toconline.pt',
         after: request.after,
         before: request.before,
       },
@@ -2366,6 +2401,61 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
     );
   assert.equal(verificationCode((await read())!, request), '381742');
   assert.equal(calls.length, 2);
+  mimeType = 'multipart/alternative';
+  parts = [
+    {
+      mimeType: 'text/plain',
+      body: {
+        data: Buffer.from(
+          'Your verification code is 381742.\nVerify my email ( https://app.example.cloud/register?emailToken=synthetic-verification-token )\nSign in (https://login.example.com/finish?code=1234)\nHelp (https://help.example.com/docs?token=synthetic-verification-token)\nVerify email (https://tracker.example.com/?next=https://nested.example.com&token=synthetic-verification-token)\n> Verify email (https://quoted.example.com/finish?token=synthetic-verification-token)\n> Your verification code is 999999.',
+        ).toString('base64url'),
+      },
+    },
+    {
+      mimeType: 'text/html',
+      body: {
+        data: Buffer.from(
+          '<a href="https://html.example.cloud/start?token=synthetic-verification-token"><span>Verify</span> my email</a><a href="https://homepage.example.com">Verify email</a><a href="https://social.example.com/?token=synthetic-verification-token">Follow us</a><a href="https://footer.example.com/?token=synthetic-verification-token">Help</a><a href="https://tracker.example.com/?next=https://nested.example.com&token=synthetic-verification-token">Verify email</a><a href="https://user:secret@credentials.example.com/?token=synthetic-verification-token">Verify email</a><script><a href="https://script.example.com/?token=synthetic-verification-token">Verify email</a></script><template><a href="https://template.example.com/?token=synthetic-verification-token">Verify email</a></template><blockquote><a href="https://quote.example.com/?token=synthetic-verification-token">Verify email</a></blockquote><div class="gmail_quote"><a href="https://gmailquote.example.com/?token=synthetic-verification-token">Verify email</a></div>',
+        ).toString('base64url'),
+      },
+    },
+    {
+      mimeType: 'text/html',
+      headers: [{ name: 'Content-Disposition', value: 'attachment' }],
+      body: {
+        data: Buffer.from(
+          '<a href="https://attachment.example.com/?token=synthetic-verification-token">Verify email</a>',
+        ).toString('base64url'),
+      },
+    },
+  ];
+  const linked = (await read())![0];
+  assert.deepEqual(linked.verificationOrigins?.sort(), [
+    'https://app.example.cloud',
+    'https://html.example.cloud',
+    'https://login.example.com',
+  ]);
+  assert.match(linked.text, /Your verification code is 381742/);
+  assert.doesNotMatch(linked.text, /999999|quoted\.example\.com/);
+  parts = undefined;
+  mimeType = 'text/plain';
+  sender = 'login@transactional.toconline.pt';
+  assert.equal((await read())?.length, 1);
+  for (const [authenticated, from] of [
+    ['attacker.pt', 'login@transactional.toconline.pt'],
+    ['co.uk', 'login@co.uk'],
+    ['github.io', 'login@tenant.github.io'],
+    ['other.github.io', 'login@tenant.github.io'],
+  ]) {
+    auth = `mx.google.com; dmarc=pass header.from=${authenticated}`;
+    sender = from;
+    assert.deepEqual(await read(), []);
+  }
+  auth = 'mx.google.com; dmarc=pass header.from=tenant.github.io';
+  sender = 'login@mail.tenant.github.io';
+  assert.equal((await read())?.length, 1);
+  auth = 'mx.google.com; dmarc=pass header.from=toconline.pt';
+  sender = 'login@toconline.pt';
   auth = 'mx.google.com; dmarc=fail header.from=toconline.pt';
   assert.deepEqual(await read(), []);
   auth = 'untrusted.example; dmarc=pass header.from=toconline.pt';
@@ -2388,7 +2478,8 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
   assert.deepEqual(await read(), []);
   labels = ['INBOX'];
   mimeType = 'text/html';
-  body = '<p>Your verification code is <b>381742</b>.</p><script>security code 930184</script>';
+  body =
+    '<p>Your verification code is <b>381742</b>.</p><script>security code 930184</script><blockquote>Your verification code is 999999.</blockquote><div class="gmail_quote">Your verification code is 999998.</div>';
   assert.equal(verificationCode((await read())!, request), '381742');
   mimeType = 'multipart/mixed';
   for (const attachment of [
@@ -2436,7 +2527,6 @@ test('Gmail verification uses fixed account-bound read endpoints and validates r
       'owned-account',
       {
         recipient: request.recipient,
-        senderDomain: 'toconline.pt',
         after: request.after,
         before: request.before,
       },
@@ -2845,6 +2935,8 @@ test(
     resultCode = undefined;
     assert.equal(await fill('missing'), false);
     resultCode = code;
+    assert.equal(await fill('missing'), true);
+    assert.equal(await fill('missing'), false);
     await start('rejected');
     reject = true;
     assert.equal(await fill('rejected'), false);
@@ -2885,6 +2977,7 @@ test(
     };
     assert.equal(await fill('provider-error'), false);
     lookup = undefined;
+    assert.equal(await fill('provider-error'), true);
     await start('entry-removed');
     lookup = async () => {
       await pool.query('DELETE FROM vault_entries WHERE id=$1', [saved.id]);
@@ -3024,6 +3117,7 @@ test(
     let reads: string[] = [];
     let active = true;
     let remoteEmail = recipient;
+    let requestedRecipient = recipient;
     let fail = false;
     let duringRead: (() => Promise<void>) | undefined;
     let messages: VerificationEmail[] = [];
@@ -3049,8 +3143,7 @@ test(
       },
       verificationEmails: async (id, query, signal) => {
         reads.push(id);
-        assert.equal(query.recipient, recipient);
-        assert.equal(query.senderDomain, 'toconline.pt');
+        assert.equal(query.recipient, requestedRecipient);
         assert.equal(signal.aborted, false);
         if (fail) throw new Error('private-message-body 381742');
         await duringRead?.();
@@ -3102,6 +3195,54 @@ test(
     assert.equal(await result?.current(), true);
     assert.deepEqual(inspected, ['owned-mailbox']);
     assert.deepEqual(reads, ['owned-mailbox']);
+    requestedRecipient = 'owner+trial@example.com';
+    messages = [{ ...mail, recipients: [requestedRecipient] }];
+    const alias = await read({ recipient: requestedRecipient });
+    assert.equal(alias?.code, '381742');
+    assert.equal(await alias?.current(), true);
+    messages = [mail];
+    assert.equal(await read({ recipient: requestedRecipient }), undefined);
+    messages = [{ ...mail, recipients: [requestedRecipient] }];
+    remoteEmail = requestedRecipient;
+    assert.equal(await read({ recipient: requestedRecipient }), undefined);
+    remoteEmail = recipient;
+    await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+      connection,
+      requestedRecipient,
+    ]);
+    assert.equal(await alias?.current(), false);
+    await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+      connection,
+      recipient,
+    ]);
+    const aliasedDuplicate = randomUUID();
+    await pool.query(
+      "INSERT INTO app_connections(id,owner_id,slug,account_id,provider_id,account_email) VALUES($1,$2,'gmail','aliased-mailbox','mail-fixture','owner+other@example.com')",
+      [aliasedDuplicate, owner],
+    );
+    assert.equal(await read({ recipient: requestedRecipient }), undefined);
+    await pool.query('DELETE FROM app_connections WHERE id=$1', [aliasedDuplicate]);
+    for (const [primary, aliasRecipient, expected] of [
+      ['first.last@example.com', 'firstlast+trial@example.com', false],
+      ['first.last@example.com', 'first.last+trial@example.com', true],
+      ['first.last@gmail.com', 'firstlast+trial@gmail.com', true],
+    ] as const) {
+      await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+        connection,
+        primary,
+      ]);
+      remoteEmail = primary;
+      requestedRecipient = aliasRecipient;
+      messages = [{ ...mail, recipients: [aliasRecipient] }];
+      assert.equal(Boolean(await read({ recipient: aliasRecipient })), expected);
+    }
+    await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+      connection,
+      recipient,
+    ]);
+    remoteEmail = recipient;
+    requestedRecipient = recipient;
+    messages = [mail];
     await pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [connection]);
     assert.equal(await result?.current(), false);
     inspected = [];

@@ -1694,22 +1694,30 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const signal = AbortSignal.timeout(8000);
       let abort = () => {};
       const found = await Promise.race([
-        options.emailCode(
-          {
-            recipient: username,
-            origin,
-            after: enteredAt - 30_000,
-            before: Date.now(),
-          },
-          signal,
-        ),
+        options
+          .emailCode(
+            {
+              recipient: username,
+              origin,
+              after: enteredAt - 30_000,
+              before: Date.now(),
+            },
+            signal,
+          )
+          .catch(() => undefined),
         new Promise<undefined>((resolve) => {
           abort = () => resolve(undefined);
           signal.addEventListener('abort', abort, { once: true });
         }),
       ]).finally(() => signal.removeEventListener('abort', abort));
       const code = found?.code;
-      if (signal.aborted || !code || !/^\d{4,8}$/.test(code)) return false;
+      if (signal.aborted || !code || !/^\d{4,8}$/.test(code)) {
+        await pool.query(
+          "DELETE FROM credential_autofill_attempts WHERE root_turn_id=$1 AND owner_id=$2 AND origin=$3 AND entry_id=$4 AND kind='otp'",
+          [root, ownerId, origin, selected?.id ?? root],
+        );
+        return false;
+      }
       client = await pool.connect();
       await client.query('BEGIN');
       const current = await currentTurn(client, turn, ownerId, ' FOR UPDATE OF u NOWAIT');

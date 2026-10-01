@@ -67,7 +67,6 @@ export interface IntegrationInboxPoll {
 export class IntegrationInboxCursorExpired extends Error {}
 export interface VerificationEmailQuery {
   recipient: string;
-  senderDomain: string;
   after: number;
   before: number;
 }
@@ -77,6 +76,7 @@ export interface VerificationEmail {
   sender: string;
   recipients: string[];
   authenticatedDomain: string;
+  verificationOrigins?: string[];
   text: string;
 }
 export interface IntegrationProvider {

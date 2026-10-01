@@ -11,8 +11,10 @@ import type {
   AgentTool,
   ActivityCheckResult,
   RuntimeContext,
+  RuntimeObservation,
 } from '../src/ports/agent.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
+import { inlineAppResult } from '../src/server/integration-result.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import type { Computer, Workspace } from '../src/ports/computer.ts';
 
@@ -109,6 +111,116 @@ async function fixture(
 async function call(tools: Map<string, AgentTool>, name: string, args: Record<string, unknown>) {
   return tools.get(name)!.execute(args);
 }
+
+test('verification email codes stay out of app tool results, observations and workspace files', async () => {
+  const privateCodes = ['318742', '640193', '729461', '803527', '516294'];
+  const encodedBody = Buffer.from(
+    `<p>Your sign-in code is <b>${privateCodes[2]}</b>.</p>`,
+  ).toString('base64url');
+  const ordinary = {
+    messageId: 'receipt',
+    sender: 'receipts@shop.example',
+    to: 'owner@example.test',
+    subject: 'Order 452619 has shipped',
+    preview: 'Your tracking reference is 852741.',
+  };
+  const mails = [
+    {
+      messageId: 'subject-code',
+      sender: 'login@example.test',
+      to: 'owner+trial@example.test',
+      subject: `${privateCodes[0]} is your verification code`,
+      preview: 'Use this code to finish signing in.',
+      messageText: `Enter ${privateCodes[0]}.`,
+      payload: {
+        headers: [{ name: 'Authentication-Results', value: `private=${privateCodes[0]}` }],
+      },
+    },
+    {
+      messageId: 'split-fields',
+      sender: 'login@example.test',
+      to: 'owner@example.test',
+      subject: privateCodes[1],
+      preview: 'Confirm your email with this verification code.',
+      html: `<p>${privateCodes[1]}</p>`,
+    },
+    {
+      id: 'mime-code',
+      threadId: 'mime-thread',
+      payload: {
+        mimeType: 'multipart/alternative',
+        headers: [
+          { name: 'From', value: 'security@example.test' },
+          { name: 'To', value: 'owner@example.test' },
+          { name: 'Subject', value: 'Your sign-in code' },
+        ],
+        parts: [
+          {
+            mimeType: 'text/html',
+            body: { data: encodedBody },
+          },
+        ],
+      },
+    },
+    JSON.stringify({
+      messageId: 'encoded-record',
+      from: 'login@example.test',
+      subject: 'Your one-time code',
+      body: privateCodes[3],
+    }),
+    {
+      messageId: 'preview-code',
+      sender: 'login@example.test',
+      subject: 'Sign in to Example',
+      preview: `Your authentication code is ${privateCodes[4]}.`,
+    },
+    {
+      messageId: 'verify-email',
+      sender: 'signup@example.test',
+      subject: `${privateCodes[0]} · Verify your email address`,
+    },
+    ordinary,
+  ];
+  const results = [
+    { data: { messages: mails }, error: null },
+    { data: { messages: mails, unrelated: 'ordinary '.repeat(6000) }, error: null },
+  ];
+  const returned: unknown[] = [];
+  const observed: RuntimeObservation[] = [];
+  const saved: string[] = [];
+  await fixture(
+    async (tools) => {
+      for (const action of ['GMAIL_FETCH_EMAILS', 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID'])
+        returned.push(await call(tools, 'apps', { action, args: {} }));
+    },
+    {
+      integration: async () =>
+        inlineAppResult(results.shift(), async (text) => {
+          saved.push(text);
+          return 'private-result.json';
+        }),
+      observe: async (entry) => {
+        observed.push(entry);
+      },
+    },
+  );
+  assert.equal(saved.length, 1);
+  assert.equal(observed.filter((entry) => entry.type === 'tool_end').length, 2);
+  for (const record of [...returned, ...observed, ...saved])
+    for (const code of [...privateCodes, encodedBody])
+      assert.ok(!JSON.stringify(record).includes(code));
+  const full = JSON.parse(saved[0]);
+  assert.deepEqual(full.data.messages.at(-1), ordinary);
+  assert.equal(full.data.messages[0].sender, 'login@example.test');
+  assert.equal(full.data.messages[0].to, 'owner+trial@example.test');
+  assert.equal(full.data.messages[0].messageId, 'subject-code');
+  assert.match(full.data.messages[0].message, /get_credential/);
+  assert.equal(full.data.messages[0].payload, undefined);
+  assert.deepEqual(full.data.messages[2].headers, [
+    { name: 'From', value: 'security@example.test' },
+    { name: 'To', value: 'owner@example.test' },
+  ]);
+});
 
 test('long foreground work keeps both useful progress messages', async () => {
   const originalNow = Date.now;

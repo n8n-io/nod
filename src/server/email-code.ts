@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
-import { getDomain, parse } from 'tldts';
+import { parse } from 'tldts';
 import type { VerificationEmail } from '../ports/integrations.ts';
 
 export interface EmailCodeRequest {
@@ -61,11 +61,16 @@ export function verificationCode(messages: VerificationEmail[], input: EmailCode
   if (!domain || messages.length > 5) return;
   const matches: string[] = [];
   for (const message of messages) {
+    const authenticatedDomain = verificationSenderDomain(`https://${message.authenticatedDomain}`);
+    const senderDomain = verificationSenderDomain(`https://${message.sender.split('@')[1]}`);
     if (
       message.receivedAt < input.after ||
       message.receivedAt > input.before ||
-      message.authenticatedDomain !== message.sender.split('@')[1] ||
-      getDomain(message.authenticatedDomain, { allowPrivateDomains: true }) !== domain ||
+      !authenticatedDomain ||
+      authenticatedDomain !== senderDomain ||
+      (authenticatedDomain !== domain &&
+        (message.verificationOrigins?.length !== 1 ||
+          message.verificationOrigins[0] !== input.origin)) ||
       !message.recipients.includes(input.recipient) ||
       message.text.length > 64_000
     )

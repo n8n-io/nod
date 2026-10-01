@@ -1532,6 +1532,91 @@ test('secure entry types a code into the referenced field and keeps it out of ob
   }
 });
 
+test(
+  'native secure entry completes single and split OTP controls without maxlength hints',
+  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-code-native-'));
+    const code = '072846';
+    const server = createHttpServer((request, response) => {
+      const split = request.url === '/split';
+      response.setHeader('content-type', 'text/html');
+      response.end(`<form>
+        ${Array.from({ length: split ? code.length : 1 }, (_, index) => `<input autocomplete="one-time-code" inputmode="numeric" aria-label="Code ${index + 1}">`).join('')}
+        <button type="submit" disabled>Verify</button><output></output>
+        </form><script>
+        const fields = [...document.querySelectorAll('input')];
+        const button = document.querySelector('button');
+        for (const [index, field] of fields.entries()) field.addEventListener('input', event => {
+          if (!event.isTrusted) return;
+          if (fields.length > 1 && field.value) {
+            field.value = field.value.slice(-1);
+            fields[index + 1]?.focus();
+          }
+          button.disabled = fields.map(field => field.value).join('') !== ${JSON.stringify(code)};
+        });
+        document.querySelector('form').onsubmit = event => {
+          event.preventDefault();
+          if (!button.disabled) document.querySelector('output').textContent = 'Verified';
+        };
+        </script>`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      headless: true,
+    });
+    const worker = await workerFixture(() => computer, 30_000);
+    const act = async (input: BrowserAction) =>
+      result(await worker.request({ method: 'act', threadId: 'fixture', input })) as {
+        text: string;
+      };
+    try {
+      for (const path of ['/single', '/split']) {
+        await act({ action: 'open', url: origin + path });
+        const shape = await act({
+          action: 'evaluate',
+          script:
+            '[...document.querySelectorAll(\'input[autocomplete="one-time-code"]\')].map(field => field.maxLength)',
+        });
+        assert.deepEqual(
+          JSON.parse(shape.text.slice(shape.text.indexOf('\n') + 1)),
+          Array(path === '/split' ? 6 : 1).fill(-1),
+        );
+        const injected = result(
+          await worker.request({
+            method: 'injectCredentials',
+            input: {
+              threadId: 'fixture',
+              origin,
+              kind: 'otp',
+              code,
+              passwordSelector: 'input[autocomplete="one-time-code"]',
+            },
+          }),
+        );
+        assert.deepEqual(injected, { status: 'submitted' });
+        await act({ action: 'click', selector: 'button' });
+        const accepted = await act({
+          action: 'evaluate',
+          script: "document.querySelector('output').textContent === 'Verified'",
+        });
+        assert.equal(JSON.parse(accepted.text.slice(accepted.text.indexOf('\n') + 1)), true);
+        assert.equal((await act({ action: 'snapshot' })).text.includes(code), false);
+      }
+    } finally {
+      await worker.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test('closing and reopening a browser fills only the new page', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-login-reopen-'));
   const fixture = stagedLoginBrowser();
