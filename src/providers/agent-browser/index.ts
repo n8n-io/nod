@@ -89,6 +89,32 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
 const browserTabList = z
   .array(z.object({ tabId: z.string(), active: z.boolean(), url: z.string() }))
   .max(64);
+const browserPoint = z
+  .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+  .strict();
+
+function visualGesture(input: BrowserAction) {
+  if (input.x === undefined && input.y === undefined && input.points === undefined) {
+    if (input.durationMs !== undefined) throw new Error('A pointer duration needs coordinates.');
+    return;
+  }
+  if (input.selector !== undefined || input.targetSelector !== undefined)
+    throw new Error('Choose either a selector or screenshot coordinates.');
+  const points =
+    input.action === 'click' && input.points === undefined
+      ? [browserPoint.parse({ x: input.x, y: input.y })]
+      : input.action === 'drag' && input.x === undefined && input.y === undefined
+        ? z.array(browserPoint).min(2).max(100).parse(input.points)
+        : undefined;
+  if (!points) throw new Error('Use screenshot coordinates with click or drag.');
+  const durationMs = z
+    .number()
+    .int()
+    .min(0)
+    .max(15_000)
+    .parse(input.durationMs ?? (input.action === 'click' ? 0 : 500));
+  return { points, durationMs };
+}
 
 export function redactBrowserUrl(
   value: string,
@@ -249,6 +275,18 @@ export function createAgentBrowserComputer(options: {
     return value;
   }
 
+  async function closeInterruptedBrowser(state: BrowserState) {
+    state.closing = true;
+    try {
+      await command(state, ['close']);
+      state.started = false;
+      state.closed = true;
+      await saveState(state);
+    } catch {
+      throw new Error('The browser could not stop safely. Close it before continuing.');
+    }
+  }
+
   async function drainInterruptedCommand<T>(
     state: BrowserState,
     action: string,
@@ -263,16 +301,7 @@ export function createAgentBrowserComputer(options: {
         error instanceof BrowserActionError
       )
         throw error;
-      state.closing = true;
-      try {
-        await command(state, ['close']);
-        state.started = false;
-        state.closed = true;
-        await saveState(state);
-      } catch {
-        state.closing = true;
-        throw new Error('The browser could not stop safely. Close it before continuing.');
-      }
+      await closeInterruptedBrowser(state);
       throw error;
     }
   }
@@ -310,37 +339,41 @@ export function createAgentBrowserComputer(options: {
                   ? { action: 'click', selector: args[1] }
                   : args[0] === 'fill'
                     ? { action: 'fill', selector: args[1], value: args[2] }
-                    : args[0] === 'press'
-                      ? { action: 'press', key: args[1] }
-                      : args[0] === 'scroll'
-                        ? {
-                            action: 'scroll',
-                            direction: args[1],
-                            amount: Number(args[2]),
-                            ...(args[4] ? { selector: args[4] } : {}),
-                          }
-                        : args[0] === 'screenshot'
+                    : args[0] === 'mouse'
+                      ? args[1] === 'move'
+                        ? { action: 'mousemove', x: Number(args[2]), y: Number(args[3]) }
+                        : { action: `mouse${args[1]}`, button: 'left' }
+                      : args[0] === 'press'
+                        ? { action: 'press', key: args[1] }
+                        : args[0] === 'scroll'
                           ? {
-                              action: 'screenshot',
-                              path: args[1],
-                              fullPage: false,
-                              annotate: false,
+                              action: 'scroll',
+                              direction: args[1],
+                              amount: Number(args[2]),
+                              ...(args[4] ? { selector: args[4] } : {}),
                             }
-                          : args[0] === 'download'
-                            ? { action: 'download', selector: args[1], path: args[2] }
-                            : args[0] === 'snapshot'
-                              ? {
-                                  action: 'snapshot',
-                                  compact: true,
-                                  ...(args[3] ? { selector: args[3] } : {}),
-                                }
-                              : args[0] === 'close'
-                                ? { action: 'close' }
-                                : args[0] === 'tab' && args[1] === 'list'
-                                  ? { action: 'tab_list' }
-                                  : args[0] === 'tab' && args[1] === 'switch'
-                                    ? { action: 'tab_switch', tabId: args[2] }
-                                    : null;
+                          : args[0] === 'screenshot'
+                            ? {
+                                action: 'screenshot',
+                                path: args[1],
+                                fullPage: false,
+                                annotate: false,
+                              }
+                            : args[0] === 'download'
+                              ? { action: 'download', selector: args[1], path: args[2] }
+                              : args[0] === 'snapshot'
+                                ? {
+                                    action: 'snapshot',
+                                    compact: true,
+                                    ...(args[3] ? { selector: args[3] } : {}),
+                                  }
+                                : args[0] === 'close'
+                                  ? { action: 'close' }
+                                  : args[0] === 'tab' && args[1] === 'list'
+                                    ? { action: 'tab_list' }
+                                    : args[0] === 'tab' && args[1] === 'switch'
+                                      ? { action: 'tab_switch', tabId: args[2] }
+                                      : null;
       if (!request) throw new Error('Reopen this page before continuing browser actions.');
       const result = await drainInterruptedCommand(state, args[0], () =>
         requestDaemon(
@@ -645,12 +678,54 @@ export function createAgentBrowserComputer(options: {
     };
   }
 
+  async function movePointer(
+    state: BrowserState,
+    gesture: NonNullable<ReturnType<typeof visualGesture>>,
+    signal?: AbortSignal,
+  ) {
+    const [width, height] = z
+      .tuple([z.number().positive(), z.number().positive()])
+      .parse(await evaluate(state, '[innerWidth, innerHeight]', signal));
+    const move = (point: { x: number; y: number }) =>
+      command(
+        state,
+        [
+          'mouse',
+          'move',
+          String(Math.min(Math.ceil(width) - 1, Math.round(point.x * width))),
+          String(Math.min(Math.ceil(height) - 1, Math.round(point.y * height))),
+        ],
+        { signal },
+      );
+    await move(gesture.points[0]);
+    try {
+      await command(state, ['mouse', 'down', 'left'], { signal });
+      if (gesture.points.length === 1 && gesture.durationMs)
+        await delay(gesture.durationMs, undefined, { signal });
+      for (const point of gesture.points.slice(1)) {
+        if (gesture.durationMs)
+          await delay(gesture.durationMs / (gesture.points.length - 1), undefined, { signal });
+        await move(point);
+      }
+    } finally {
+      if (state.started && !state.closed && !state.closing) {
+        try {
+          await command(state, ['mouse', 'up', 'left'], { timeoutMs: 5000 });
+        } catch (error) {
+          if (!state.closing) await closeInterruptedBrowser(state);
+          throw error;
+        }
+      }
+    }
+  }
+
   async function browserAction(
     id: string,
     input: BrowserAction,
     signal?: AbortSignal,
   ): Promise<BrowserObservation> {
     if (disposed) throw new Error('The browser service has stopped.');
+    const gesture = visualGesture(input);
     const savedProfile = input.action === 'open' ? await screens.load(id) : null;
     if (input.action === 'open' && !browsers.has(id)) await recoverBrowser(id, true);
     if (input.action === 'open' && browsers.get(id)?.recovered) await closeBrowser(id);
@@ -754,9 +829,9 @@ export function createAgentBrowserComputer(options: {
           await command(state, ['tab', 'switch', input.tabId!], { signal });
         }
         if (input.action === 'click') {
-          const target = selector(input.selector);
           const tabs = await browserTabs(state, signal);
-          await command(state, ['click', target], { signal });
+          if (gesture) await movePointer(state, gesture, signal);
+          else await command(state, ['click', selector(input.selector)], { signal });
           await settleTabs(state, tabs, signal);
         }
         if (input.action === 'fill') {
@@ -795,9 +870,18 @@ export function createAgentBrowserComputer(options: {
         if (input.action === 'press') {
           if (
             !input.key ||
-            !['Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp'].includes(
-              input.key,
-            )
+            ![
+              'Enter',
+              'Escape',
+              'Tab',
+              'Space',
+              'ArrowDown',
+              'ArrowUp',
+              'ArrowLeft',
+              'ArrowRight',
+              'PageDown',
+              'PageUp',
+            ].includes(input.key)
           )
             throw new Error('Choose a supported browser key.');
           const tabs = await browserTabs(state, signal);
@@ -816,10 +900,15 @@ export function createAgentBrowserComputer(options: {
         }
         if (['check', 'uncheck', 'hover'].includes(input.action))
           await command(state, [input.action, selector(input.selector)], { signal });
-        if (input.action === 'drag')
-          await command(state, ['drag', selector(input.selector), selector(input.targetSelector)], {
-            signal,
-          });
+        if (input.action === 'drag') {
+          if (gesture) await movePointer(state, gesture, signal);
+          else
+            await command(
+              state,
+              ['drag', selector(input.selector), selector(input.targetSelector)],
+              { signal },
+            );
+        }
         if (['back', 'forward', 'reload'].includes(input.action))
           await command(state, [input.action], { signal });
         if (input.action === 'evaluate') {

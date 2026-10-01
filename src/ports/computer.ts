@@ -32,8 +32,22 @@ export interface BrowserAction {
   tabId?: string;
   selector?: string;
   targetSelector?: string;
+  x?: number;
+  y?: number;
+  points?: Array<{ x: number; y: number }>;
+  durationMs?: number;
   text?: string;
-  key?: 'Enter' | 'Escape' | 'Tab' | 'ArrowDown' | 'ArrowUp' | 'PageDown' | 'PageUp';
+  key?:
+    | 'Enter'
+    | 'Escape'
+    | 'Tab'
+    | 'Space'
+    | 'ArrowDown'
+    | 'ArrowUp'
+    | 'ArrowLeft'
+    | 'ArrowRight'
+    | 'PageDown'
+    | 'PageUp';
   direction?: 'up' | 'down';
   waitMs?: number;
   offset?: number;

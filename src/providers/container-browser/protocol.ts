@@ -13,6 +13,7 @@ const identity = {
 };
 const thread = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
 const selector = z.string().min(1).max(500);
+const point = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict();
 export const browserDownloadInput = z
   .object({
     selector: selector.optional(),
@@ -52,9 +53,24 @@ const browserAction = z
     tabId: z.string().min(1).max(200).optional(),
     selector: selector.optional(),
     targetSelector: selector.optional(),
+    x: z.number().min(0).max(1).optional(),
+    y: z.number().min(0).max(1).optional(),
+    points: z.array(point).min(2).max(100).optional(),
+    durationMs: z.number().int().min(0).max(15_000).optional(),
     text: z.string().max(20_000).optional(),
     key: z
-      .enum(['Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp'])
+      .enum([
+        'Enter',
+        'Escape',
+        'Tab',
+        'Space',
+        'ArrowDown',
+        'ArrowUp',
+        'ArrowLeft',
+        'ArrowRight',
+        'PageDown',
+        'PageUp',
+      ])
       .optional(),
     direction: z.enum(['up', 'down']).optional(),
     waitMs: z.number().int().min(0).max(15_000).optional(),

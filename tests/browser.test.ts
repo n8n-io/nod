@@ -29,7 +29,10 @@ import {
   redactBrowserText,
   redactBrowserUrl,
 } from '../src/providers/agent-browser/index.ts';
-import { existingDaemonCommand } from '../src/providers/agent-browser/screens.ts';
+import {
+  DaemonCommandError,
+  existingDaemonCommand,
+} from '../src/providers/agent-browser/screens.ts';
 import { runProcess } from '../src/providers/process.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
 import {
@@ -279,7 +282,7 @@ function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
   };
 }
 
-async function workerFixture(createComputer: () => Computer | Promise<Computer>) {
+async function workerFixture(createComputer: () => Computer | Promise<Computer>, timeoutMs = 5000) {
   const directory = await mkdtemp('/tmp/sk-quiesce-');
   const socketPath = join(directory, 'control.sock');
   const worker = await startContainerBrowserWorker({
@@ -293,7 +296,7 @@ async function workerFixture(createComputer: () => Computer | Promise<Computer>)
       const socket = connect(socketPath);
       let output = '';
       socket.setEncoding('utf8');
-      socket.setTimeout(5000, () => socket.destroy(new Error('Synthetic request timed out.')));
+      socket.setTimeout(timeoutMs, () => socket.destroy(new Error('Synthetic request timed out.')));
       socket.once('error', reject);
       socket.once('connect', () => {
         socket.write(
@@ -1156,6 +1159,234 @@ test('the user can click, type and scroll in the handed-off browser at page coor
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('visual browser actions use screenshot coordinates and reject invalid gestures before input', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-visual-'));
+  const fixture = stagedLoginBrowser();
+  const commands: Record<string, unknown>[] = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    onDaemonCommand: (command) => commands.push(command),
+  });
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    commands.length = 0;
+    await computer.act('fixture', { action: 'click', x: 0.5, y: 0.25 });
+    assert.deepEqual(
+      commands.filter((command) => String(command.action).startsWith('mouse')),
+      [
+        { action: 'mousemove', x: 512, y: 192 },
+        { action: 'mousedown', button: 'left' },
+        { action: 'mouseup', button: 'left' },
+      ],
+    );
+    for (const input of [
+      { action: 'click', x: -0.1, y: 0.5 },
+      { action: 'click', x: 0.5, y: 1.1 },
+      { action: 'click', x: 0.5 },
+      { action: 'click', x: Number.NaN, y: 0.5 },
+      { action: 'click', x: 0.5, y: 0.5, durationMs: 15_001 },
+      { action: 'click', selector: '#account', x: 0.5, y: 0.5 },
+      { action: 'drag', points: [{ x: 0.5, y: 0.5 }] },
+      {
+        action: 'drag',
+        points: [
+          { x: 0.2, y: 0.5 },
+          { x: 1.1, y: 0.5 },
+        ],
+      },
+      { action: 'drag', points: Array.from({ length: 101 }, () => ({ x: 0.5, y: 0.5 })) },
+    ]) {
+      commands.length = 0;
+      await assert.rejects(computer.act('fixture', input as BrowserAction));
+      assert.equal(
+        commands.some((command) => String(command.action).startsWith('mouse')),
+        false,
+      );
+    }
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+for (const failure of ['cancelled hold', 'cancelled drag', 'failed drag'])
+  test(`visual browser actions release the pointer after a ${failure}`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-visual-stop-'));
+    const fixture = stagedLoginBrowser();
+    const controller = new AbortController();
+    const pressed = deferred();
+    const commands: string[] = [];
+    const computer = createBrowserFixture({
+      dataRoot: directory,
+      run: fixture.run,
+      onDaemonCommand: (command) => {
+        const action = String(command.action);
+        commands.push(action);
+        if (action === 'mousedown') pressed.resolve();
+        if (failure === 'failed drag' && action === 'mousemove' && commands.includes('mousedown'))
+          throw new DaemonCommandError();
+      },
+    });
+    try {
+      await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+      const input: BrowserAction =
+        failure === 'cancelled hold'
+          ? { action: 'click', x: 0.5, y: 0.25, durationMs: 1000 }
+          : {
+              action: 'drag',
+              points: [
+                { x: 0.2, y: 0.5 },
+                { x: 0.8, y: 0.5 },
+              ],
+              durationMs: 1000,
+            };
+      const pending = computer.act('fixture', input, controller.signal);
+      await Promise.race([
+        pressed.promise,
+        pending.then(() => assert.fail('The pointer action did not hold the mouse button.')),
+      ]);
+      if (failure.startsWith('cancelled')) controller.abort(new Error('Synthetic stop.'));
+      await assert.rejects(pending);
+      assert.equal(commands.filter((action) => action === 'mousedown').length, 1);
+      assert.equal(commands.filter((action) => action === 'mouseup').length, 1);
+    } finally {
+      await computer.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+test('visual browser actions fence the session when releasing the pointer fails', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-visual-release-'));
+  const fixture = stagedLoginBrowser();
+  const commands: string[] = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    onDaemonCommand: (command) => {
+      commands.push(String(command.action));
+      if (command.action === 'mouseup') throw new DaemonCommandError();
+    },
+  });
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    await assert.rejects(computer.act('fixture', { action: 'click', x: 0.5, y: 0.25 }));
+    assert.equal(commands.filter((action) => action === 'mousedown').length, 1);
+    await assert.rejects(computer.act('fixture', { action: 'click', selector: '#account' }));
+    assert.equal(commands.includes('click'), false);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test(
+  'native visual browser actions solve a canvas interaction inside nested cross-origin frames',
+  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 60_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-visual-native-'));
+    let frameOrigin = '';
+    const server = createHttpServer((request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        request.url === '/inner'
+          ? `<body style="margin:0"><canvas width="300" height="180" tabindex="0"></canvas><script>
+          const canvas = document.querySelector('canvas');
+          const context = canvas.getContext('2d');
+          context.fillStyle = '#2475cc'; context.fillRect(0, 0, 80, 80);
+          context.fillStyle = '#e04a4a'; context.fillRect(200, 0, 80, 80);
+          context.fillStyle = '#35a763'; context.fillRect(0, 100, 280, 60);
+          const state = { selected: false, dragged: false, held: false, keys: [] };
+          let start, moved;
+          const send = () => top.postMessage(state, '*');
+          canvas.onpointerdown = event => {
+            if (!event.isTrusted) return;
+            canvas.focus(); canvas.setPointerCapture(event.pointerId);
+            start = { x: event.offsetX, y: event.offsetY, time: performance.now() }; moved = false;
+          };
+          canvas.onpointermove = event => {
+            if (event.isTrusted && event.buttons === 1 && event.offsetX > 200) moved = true;
+          };
+          canvas.onpointerup = event => {
+            if (!event.isTrusted || !start) return;
+            if (start.x < 80 && start.y < 80 && event.offsetX < 80) state.selected = true;
+            if (start.x < 80 && start.y > 100 && moved && event.offsetX > 200) state.dragged = true;
+            if (start.x > 200 && start.y < 80 && performance.now() - start.time >= 80) state.held = true;
+            start = null; send();
+          };
+          canvas.onkeydown = event => { if (event.isTrusted) { state.keys.push(event.key); send(); } };
+          </script>`
+          : request.url === '/outer'
+            ? '<body style="margin:0"><iframe src="/inner" style="position:absolute;left:20px;top:30px;width:300px;height:180px;border:0"></iframe>'
+            : `<body><p>Select blue, drag across green, hold red, then use the arrow keys and space.</p>
+            <output id="result"></output>
+            <iframe src="${frameOrigin}/outer" style="position:absolute;left:30px;top:60px;width:360px;height:240px;border:0"></iframe>
+            <script>addEventListener('message', event => { document.querySelector('output').textContent = JSON.stringify(event.data); });</script>`,
+      );
+    });
+    const frames = createHttpServer(
+      server.listeners('request')[0] as Parameters<typeof createHttpServer>[0],
+    );
+    const origin = async (value: typeof server) => {
+      await new Promise<void>((resolve) => value.listen(0, '127.0.0.1', resolve));
+      const address = value.address();
+      assert.ok(address && typeof address !== 'string');
+      return `http://127.0.0.1:${address.port}`;
+    };
+    frameOrigin = await origin(frames);
+    const pageOrigin = await origin(server);
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      headless: true,
+    });
+    const worker = await workerFixture(() => computer, 30_000);
+    const act = async (input: BrowserAction) =>
+      result(await worker.request({ method: 'act', threadId: 'fixture', input })) as {
+        text: string;
+      };
+    try {
+      await act({ action: 'open', url: pageOrigin, waitMs: 100 });
+      const screen = result(await worker.request({ method: 'screenshot', threadId: 'fixture' }));
+      assert.equal(typeof screen, 'string');
+      const png = Buffer.from(screen as string, 'base64');
+      assert.equal(png.toString('hex', 0, 8), '89504e470d0a1a0a');
+      const point = (x: number, y: number) => ({
+        x: x / png.readUInt32BE(16),
+        y: y / png.readUInt32BE(20),
+      });
+      await act({ action: 'click', ...point(90, 130) });
+      await act({
+        action: 'drag',
+        points: [point(90, 220), point(190, 220), point(300, 220)],
+        durationMs: 100,
+      });
+      await act({ action: 'click', ...point(300, 130), durationMs: 120 });
+      for (const key of ['ArrowLeft', 'ArrowRight', 'Space'] as const)
+        await act({ action: 'press', key });
+      const observation = await act({
+        action: 'evaluate',
+        script: "JSON.parse(document.querySelector('#result').textContent)",
+      });
+      assert.deepEqual(JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1)), {
+        selected: true,
+        dragged: true,
+        held: true,
+        keys: ['ArrowLeft', 'ArrowRight', ' '],
+      });
+    } finally {
+      await worker.close();
+      await Promise.all(
+        [server, frames].map(async (value) => {
+          value.closeAllConnections();
+          await new Promise<void>((resolve) => value.close(() => resolve()));
+        }),
+      );
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test('a password typed through the handoff stays out of browser observations', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-secret-'));

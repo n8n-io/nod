@@ -126,7 +126,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs; selector scopes it and offset pages through more); click {selector}; fill {selector, text} (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector, targetSelector}; upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result within 5 seconds, with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs; selector scopes it and offset pages through more); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. durationMs is at most 15000. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result within 5 seconds, with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
     Type.Object({
       action: literals([
         'open',
@@ -156,10 +156,33 @@ export const toolDefinitions = {
       tabId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
       selector: Type.Optional(Type.String()),
       targetSelector: Type.Optional(Type.String()),
+      x: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+      y: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
+      points: Type.Optional(
+        Type.Array(
+          Type.Object({
+            x: Type.Number({ minimum: 0, maximum: 1 }),
+            y: Type.Number({ minimum: 0, maximum: 1 }),
+          }),
+          { minItems: 2, maxItems: 100 },
+        ),
+      ),
+      durationMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 15000 })),
       path: Type.Optional(Type.String()),
       text: Type.Optional(Type.String({ maxLength: 8000 })),
       key: Type.Optional(
-        literals(['Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp']),
+        literals([
+          'Enter',
+          'Escape',
+          'Tab',
+          'Space',
+          'ArrowDown',
+          'ArrowUp',
+          'ArrowLeft',
+          'ArrowRight',
+          'PageDown',
+          'PageUp',
+        ]),
       ),
       direction: Type.Optional(literals(['up', 'down'])),
       waitMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 15000 })),
