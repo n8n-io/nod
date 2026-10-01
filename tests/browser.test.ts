@@ -1090,44 +1090,6 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
   }
 });
 
-test('profile origin remains authoritative when the page navigates after its initial check', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-profile-origin-'));
-  const fixture = stagedLoginBrowser();
-  const profileId = randomUUID();
-  let race = false;
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: async (executable, args, options) => {
-      const result = await fixture.run(executable, args, options);
-      const command = args.slice(args.indexOf('--idle-timeout') + 2);
-      if (race && command[0] === 'get' && command[1] === 'url') {
-        race = false;
-        const page = fixture.pages.get(profileId)!;
-        page.location = { origin: 'https://8.8.8.8', href: 'https://8.8.8.8/login' };
-      }
-      return result;
-    },
-  });
-  try {
-    await computer.bindProfile!('fixture', profileId, 'https://1.1.1.1');
-    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
-    const page = fixture.pages.get(profileId)!;
-    for (const action of ['snapshot', 'screenshot'] as const) {
-      page.location = { origin: 'https://1.1.1.1', href: 'https://1.1.1.1/login' };
-      race = true;
-      await assert.rejects(
-        action === 'snapshot'
-          ? computer.act('fixture', { action })
-          : computer.screenshot('fixture'),
-        (error) => error instanceof BrowserActionError && error.code === 'browser_origin_changed',
-      );
-    }
-  } finally {
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test('the user can click, type and scroll in the handed-off browser at page coordinates', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-'));
   const fixture = stagedLoginBrowser();
@@ -1183,37 +1145,6 @@ test('a password typed through the handoff stays out of browser observations', a
       }),
     ])
       assert.equal(JSON.stringify(observation).includes(secret), false);
-  } finally {
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test('a saved session can move within its site but not to another site', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-profile-site-'));
-  const fixture = stagedLoginBrowser();
-  const profileId = randomUUID();
-  let href = 'https://www.example.com/';
-  const computer = createBrowserFixture({
-    dataRoot: directory,
-    run: (executable, args, options) => {
-      const page = fixture.pages.get(profileId);
-      if (page) page.location = { origin: new URL(href).origin, href };
-      return fixture.run(executable, args, options);
-    },
-  });
-  try {
-    await computer.bindProfile!('fixture', profileId, 'https://www.example.com');
-    await computer.act('fixture', { action: 'open', url: href });
-    href = 'https://account.example.com/sign-in';
-    await computer.act('fixture', { action: 'snapshot' });
-    for (const other of ['https://example.net/sign-in', 'https://www.example.com:8443/']) {
-      href = other;
-      await assert.rejects(
-        computer.act('fixture', { action: 'snapshot' }),
-        (error) => error instanceof BrowserActionError && error.code === 'browser_origin_changed',
-      );
-    }
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });

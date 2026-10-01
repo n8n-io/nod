@@ -219,7 +219,7 @@ export async function createBrowserConnections(
       }
       if (!['saved', 'needs_sign_in', 'pending'].includes(row.state) || !browser.bindProfile)
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
-      await browser.bindProfile(turn.threadId, row.profile_id, row.origin);
+      await browser.bindProfile(turn.threadId, row.profile_id);
       const observation = await browser.act(
         turn.threadId,
         { action: 'open', url: address.href },

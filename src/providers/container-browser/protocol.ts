@@ -84,7 +84,6 @@ export const browserRequest = z.discriminatedUnion('method', [
       method: z.literal('bindProfile'),
       threadId: thread,
       profileId: z.uuid(),
-      allowedOrigin: z.url().max(2048).optional(),
     })
     .strict(),
   z.object({ ...identity, method: z.literal('deleteProfile'), profileId: z.uuid() }).strict(),
@@ -183,7 +182,6 @@ export const browserResponse = z.discriminatedUnion('ok', [
         'locked',
         'navigation',
         'click_intercepted',
-        'origin_changed',
         'action',
         'unavailable',
       ]),

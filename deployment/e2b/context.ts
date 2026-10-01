@@ -76,10 +76,7 @@ export async function prepareE2BContext(options: { role: E2BTemplateRole; root?:
         for (const imported of imports) {
           if (imported.fileName.startsWith('.')) {
             queued.push(relative(root, resolve(root, dirname(name), imported.fileName)));
-          } else if (
-            !imported.fileName.startsWith('node:') &&
-            !['zod', 'tldts'].includes(imported.fileName)
-          ) {
+          } else if (!imported.fileName.startsWith('node:') && imported.fileName !== 'zod') {
             throw new Error('The browser template imports an unapproved package.');
           }
         }

@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { getDomain } from 'tldts';
 import { z } from 'zod';
 import type {
   BrowserAction,
@@ -104,15 +103,6 @@ export function redactBrowserUrl(
       url.searchParams.set(name, '[redacted]');
   if (url.hash.includes('=')) url.hash = '[redacted]';
   return redactBrowserText(url.href, secrets);
-}
-
-function savedSite(url: string) {
-  const { protocol, hostname, port } = new URL(url);
-  return `${protocol}//${getDomain(hostname, { allowPrivateDomains: true }) ?? hostname}:${port}`;
-}
-
-function outsideSavedSite(allowedOrigin: string | undefined, url: string) {
-  return allowedOrigin !== undefined && savedSite(url) !== savedSite(allowedOrigin);
 }
 
 export function createAgentBrowserComputer(options: {
@@ -603,11 +593,6 @@ export function createAgentBrowserComputer(options: {
     return state.socket;
   }
 
-  async function stayOnSavedOrigin(state: BrowserState, signal?: AbortSignal) {
-    if (outsideSavedSite(state.saved.allowedOrigin, await currentUrl(state, signal)))
-      throw new BrowserActionError('browser_origin_changed');
-  }
-
   async function observe(
     state: BrowserState,
     signal?: AbortSignal,
@@ -621,8 +606,6 @@ export function createAgentBrowserComputer(options: {
         url,
         candidates: [],
       };
-    if (outsideSavedSite(state.saved.allowedOrigin, url))
-      throw new BrowserActionError('browser_origin_changed');
     const scope =
       input?.action === 'snapshot' && input.selector ? selector(input.selector) : undefined;
     const offset = input?.action === 'snapshot' ? (input.offset ?? 0) : 0;
@@ -638,14 +621,13 @@ export function createAgentBrowserComputer(options: {
       await delay(750, undefined, { signal });
       data = await snapshot();
     }
-    await stayOnSavedOrigin(state, signal);
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
     const refs = Object.entries(
       (data.refs ?? {}) as Record<string, { role?: unknown; name?: unknown }>,
     );
     return {
       text: `Page (${offset}-${Math.min(offset + 16_000, page.length)} of ${page.length} characters):\n${page.slice(offset, offset + 16_000)}`,
-      url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.allowedOrigin)),
+      url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
       candidates: refs
         .filter(([, ref]) =>
           ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option'].includes(
@@ -677,7 +659,6 @@ export function createAgentBrowserComputer(options: {
     const state = stateFor(id);
     if (input.action === 'open' && savedProfile?.profileId && !state.saved.profileId) {
       state.saved.profileId = savedProfile.profileId;
-      state.saved.allowedOrigin = savedProfile.allowedOrigin;
       state.saved.restoreSession = savedProfile.restoreSession;
       state.saved.sensitive = savedProfile.sensitive;
     }
@@ -691,8 +672,6 @@ export function createAgentBrowserComputer(options: {
       signal?.throwIfAborted();
       if (input.action === 'open') {
         const url = browserUrl(input.url ?? '');
-        if (outsideSavedSite(state.saved.allowedOrigin, url.href))
-          throw new BrowserActionError('browser_origin_changed');
         const previous = state.saved.restoreSession ? state.saved : await screens.load(id);
         if (previous?.restoreSession) {
           state.saved.restoreSession = true;
@@ -848,8 +827,6 @@ export function createAgentBrowserComputer(options: {
           if (!script.trim() || script.length > 20_000)
             throw new Error('Provide a script of at most 20,000 characters.');
           const url = await currentUrl(state, signal);
-          if (outsideSavedSite(state.saved.allowedOrigin, url))
-            throw new BrowserActionError('browser_origin_changed');
           const value = await evaluate(
             state,
             `Promise.race([Promise.resolve().then(() => (${script})), new Promise((resolve) => setTimeout(() => resolve({ __ottoTimedOut: true }), 5000))])`,
@@ -860,7 +837,7 @@ export function createAgentBrowserComputer(options: {
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {
             text: `Script result (JSON${result.length > 20_000 ? ', first 20,000 characters' : ''}):\n${result.slice(0, 20_000)}`,
-            url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.allowedOrigin)),
+            url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
             candidates: [],
           };
         }
@@ -895,8 +872,6 @@ export function createAgentBrowserComputer(options: {
         throw new Error('Close this browser before uploading more files.');
       markActivity(id);
       const current = await currentUrl(state, signal);
-      if (outsideSavedSite(state.saved.allowedOrigin, current))
-        throw new BrowserActionError('browser_origin_changed');
       const directory = resolve(uploadRoot, randomUUID());
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const file = resolve(directory, input.name);
@@ -923,8 +898,6 @@ export function createAgentBrowserComputer(options: {
       signal?.throwIfAborted();
       markActivity(id);
       const current = await currentUrl(state, signal);
-      if (outsideSavedSite(state.saved.allowedOrigin, current))
-        throw new BrowserActionError('browser_origin_changed');
       const directory = resolve(runtimeRoot, 'downloads', state.id);
       let target = input.selector ? selector(input.selector) : undefined;
       let url = input.url;
@@ -954,8 +927,6 @@ export function createAgentBrowserComputer(options: {
         }
       }
       const crossOrigin = url && new URL(url).origin !== new URL(current).origin;
-      if (url && outsideSavedSite(state.saved.allowedOrigin, url))
-        throw new BrowserActionError('browser_origin_changed');
       if (url) {
         if (!url.startsWith(`blob:${new URL(current).origin}/`)) browserUrl(url);
       }
@@ -1088,11 +1059,9 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       const url = await currentUrl(state);
-      if (outsideSavedSite(state.saved.allowedOrigin, url))
-        throw new BrowserActionError('browser_origin_changed');
       return {
         origin: browserUrl(url).origin,
-        url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.allowedOrigin)),
+        url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
       };
     });
   }
@@ -1114,14 +1083,8 @@ export function createAgentBrowserComputer(options: {
     if (state.recovered && state.saved.sensitive && !state.secrets.size)
       throw new Error('Reopen the login page before continuing this browser session.');
     const url = await currentUrl(state, signal);
-    if (outsideSavedSite(state.saved.allowedOrigin, url))
-      throw new BrowserActionError('browser_origin_changed');
     const path = resolve(runtimeRoot, `screen-${state.id}.capture.png`);
     await command(state, ['screenshot', path], { signal });
-    await stayOnSavedOrigin(state, signal).catch(async (error: unknown) => {
-      await rm(path, { force: true });
-      throw error;
-    });
     const buffer = await screens.accept(state.id, path);
     state.saved.capturedAt = new Date().toISOString();
     await saveState(state);
@@ -1132,8 +1095,6 @@ export function createAgentBrowserComputer(options: {
   async function lastKnownScreen(id: string): Promise<Buffer | null> {
     const saved = await screens.load(id);
     if (saved?.navigationFailed) throw new BrowserActionError('browser_navigation_failed');
-    if (saved?.url && outsideSavedSite(saved.allowedOrigin, saved.url))
-      throw new BrowserActionError('browser_origin_changed');
     const buffer = saved?.capturedAt ? await screens.read(id) : null;
     screenStatuses.set(
       id,
@@ -1149,7 +1110,6 @@ export function createAgentBrowserComputer(options: {
     markActivity(id);
     await serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
-      await stayOnSavedOrigin(state, signal);
       const socket = await daemonSocket(state, signal);
       if (input.type === 'click') {
         const [width, height] = z
@@ -1187,7 +1147,6 @@ export function createAgentBrowserComputer(options: {
       }
       if (input.type === 'key')
         await requestDaemon(socket, { action: 'press', key: input.key }, signal);
-      await stayOnSavedOrigin(state, signal);
     });
   }
 
@@ -1247,21 +1206,13 @@ export function createAgentBrowserComputer(options: {
     await pending;
   }
 
-  async function bindProfile(
-    id: string,
-    rawProfileId: string,
-    rawAllowedOrigin?: string,
-  ): Promise<void> {
+  async function bindProfile(id: string, rawProfileId: string): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
-    const allowedOrigin = rawAllowedOrigin ? browserUrl(rawAllowedOrigin).origin : undefined;
-    if (rawAllowedOrigin && allowedOrigin !== rawAllowedOrigin)
-      throw new Error('An exact website origin is required.');
     threadIdentity(id);
     await allocate(async () => {
       const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
       if (previous?.saved.profileId === profileId) {
-        if (previous.saved.allowedOrigin !== allowedOrigin || !previous.saved.restoreSession) {
-          previous.saved.allowedOrigin = allowedOrigin;
+        if (!previous.saved.restoreSession) {
           previous.saved.restoreSession = true;
           previous.saved.sensitive = true;
           previous.saved.capturedAt = undefined;
@@ -1288,7 +1239,6 @@ export function createAgentBrowserComputer(options: {
         sensitive: true,
         active: false,
         profileId,
-        allowedOrigin,
         restoreSession: true,
       };
       await screens.clearImage(id);

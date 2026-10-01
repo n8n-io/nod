@@ -84,7 +84,7 @@ export interface CredentialSubmission {
 }
 export interface Computer {
   currentSession?(): { threadId: string; lastActivityAt: string } | undefined;
-  bindProfile?(threadId: string, profileId: string, allowedOrigin?: string): Promise<void>;
+  bindProfile?(threadId: string, profileId: string): Promise<void>;
   deleteProfile?(profileId: string): Promise<void>;
   act(threadId: string, input: BrowserAction, signal?: AbortSignal): Promise<BrowserObservation>;
   download?(

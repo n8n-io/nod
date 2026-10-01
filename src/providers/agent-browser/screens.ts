@@ -14,7 +14,6 @@ const storedScreen = z.object({
   navigationFailed: z.boolean().optional(),
   restoreSession: z.boolean().optional(),
   profileId: z.uuid().optional(),
-  allowedOrigin: z.url().max(2048).optional(),
   resumeUrl: z.string().max(8192).optional(),
   capturedAt: z.iso.datetime().optional(),
 });

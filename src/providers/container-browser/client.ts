@@ -179,8 +179,6 @@ export function createBridgeComputer(options: {
           return reject(new BrowserActionError('browser_click_intercepted'));
         if (response.error === 'action')
           return reject(new BrowserActionError('browser_action_failed'));
-        if (response.error === 'origin_changed')
-          return reject(new BrowserActionError('browser_origin_changed'));
         if (response.error === 'locked') {
           const error = new Error('Browser observations are paused during credential entry.');
           return reject(Object.assign(error, { statusCode: 423 }));
@@ -219,8 +217,8 @@ export function createBridgeComputer(options: {
       return result;
     },
     currentSession: () => currentSession,
-    bindProfile: async (id, profileId, allowedOrigin) => {
-      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId, allowedOrigin });
+    bindProfile: async (id, profileId) => {
+      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId });
       screens.delete(threadIdentity(id));
     },
     deleteProfile: async (profileId) => {
