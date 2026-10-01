@@ -30,10 +30,14 @@ export function createPiMemoryCurator(options: {
         allowModelNetwork: false,
       }));
     await runtime.setRuntimeApiKey(options.provider, options.apiKey!);
-    const model = [
-      options.model || memoryModels[options.provider as keyof typeof memoryModels],
-      agentModels[options.provider as keyof typeof agentModels],
-    ].flatMap((id) => (id ? (runtime.getModel(options.provider, id) ?? []) : []))[0];
+    const model = (
+      options.model
+        ? [options.model]
+        : [
+            memoryModels[options.provider as keyof typeof memoryModels],
+            agentModels[options.provider as keyof typeof agentModels],
+          ]
+    ).flatMap((id) => (id ? (runtime.getModel(options.provider, id) ?? []) : []))[0];
     if (!model) throw new Error('The memory model is not present in the installed Pi catalog.');
     return { runtime, model };
   }

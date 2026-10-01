@@ -101,7 +101,10 @@ export const words = (value: string) =>
     .filter((part) => part.isWordLike)
     .map((part) => part.segment)
     .filter((word) => word.length > 1 || /\p{N}/u.test(word) || cjk.test(word));
-export const same = (a: string, b: string) => words(a).join(' ') === words(b).join(' ');
+export const same = (a: string, b: string) => {
+  const left = words(a).join(' ');
+  return !!left && left === words(b).join(' ');
+};
 
 const numbers = (set: Set<string>) =>
   [...set]

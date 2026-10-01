@@ -407,6 +407,8 @@ test('repair archives expired, stale and duplicate entries, keeps distinct numbe
       slug: 'never-send-summary',
       text: 'Never send the weekly project status summary to the finance team by email before ten on Monday mornings so everyone has it',
     }),
+    entry({ slug: 'home', text: '🏠' }),
+    entry({ slug: 'party', text: '🎉' }),
     entry({ slug: 'room-1', text: 'Meeting room 1 is the big one.' }),
     entry({ slug: 'room-2', text: 'Meeting room 2 is the big one.' }),
     entry({ slug: 'tea', text: 'Drinks green tea every morning.', sources: [ids[0]] }),
@@ -425,7 +427,9 @@ test('repair archives expired, stale and duplicate entries, keeps distinct numbe
   );
   assert.equal(repair(tree, now), 4);
   assert.deepEqual(tree.entries.map((item) => item.slug).sort(), [
+    'home',
     'never-send-summary',
+    'party',
     'room-1',
     'room-2',
     'seen-twice',

@@ -1937,4 +1937,22 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
     }),
     /catalog/,
   );
+  const real = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    refreshOnCreate: false,
+    allowModelNetwork: false,
+  });
+  real.completeSimple = async () => {
+    throw new Error('unexpected model call');
+  };
+  await assert.rejects(
+    createPiMemoryCurator({
+      provider: 'openai',
+      apiKey: 'fixture-key',
+      model: 'no-such-model',
+      runtime: real,
+    }).curate({ task: 'search', instructions: 'Return JSON.', input: {} }),
+    /catalog/,
+  );
 });
