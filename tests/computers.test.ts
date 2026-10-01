@@ -1156,6 +1156,37 @@ test('browser disposal drains cancelled work and failed cleanup remains retryabl
   }
 });
 
+test('Cloudflare browser status follows an acknowledged explicit recovery', async () => {
+  const f = await cloudflareFixture();
+  const adapters = createCloudflareAdapters(f.options(ownerA));
+  try {
+    await adapters.computer.act('task', { action: 'snapshot' });
+    const ready = adapters.computer.status();
+    f.breakRole('browser');
+    await assert.rejects(
+      adapters.computer.act('task', { action: 'click', selector: '#submit' }),
+      /did not finish safely/,
+    );
+    f.breakRole();
+    const launches = f.launches.length;
+    await assert.rejects(adapters.computer.act('task', { action: 'snapshot' }), /unavailable/);
+    assert.equal(f.launches.length, launches);
+    assert.equal(
+      (await adapters.computer.act('task', { action: 'open', url: 'https://example.test/' })).text,
+      namespace(ownerA),
+    );
+    assert.deepEqual(
+      f.calls.map(({ method }) => method),
+      ['act', 'dispose', 'act'],
+    );
+    assert.equal(adapters.computer.status(), ready);
+  } finally {
+    f.breakRole();
+    await Promise.all([adapters.computer.dispose(), adapters.workspace.dispose()]);
+    await f.close();
+  }
+});
+
 test(
   'Cloudflare command transport preserves bytes and serializes input across delayed creation',
   { timeout: 5000 },

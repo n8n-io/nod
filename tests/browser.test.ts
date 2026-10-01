@@ -17,6 +17,8 @@ import test from 'node:test';
 import type { Static } from '@sinclair/typebox';
 import { JSDOM } from 'jsdom';
 import pg from 'pg';
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import type {
   Agent,
   AgentToolResult,
@@ -54,6 +56,7 @@ import type { CredentialInjection } from '../src/server/vault.ts';
 import { createBrowserFixture } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
 
 // Shared helpers
 
@@ -843,6 +846,9 @@ function workerComputer() {
       calls.push({ method: 'currentPage' });
       return { origin: 'https://example.com', url: 'https://example.com/login' };
     },
+    bindProfile: async (_id, profileId) => {
+      calls.push({ method: 'bindProfile', input: profileId });
+    },
     hold: async () => {},
     close: async () => {
       calls.push({ method: 'close' });
@@ -1003,6 +1009,12 @@ test('each application namespace retains its own worker and disposal drains only
       false,
     );
     await assert.rejects(first.act('same-task', { action: 'snapshot' }), /unavailable/);
+    await assert.rejects(
+      first.act('same-task', { action: 'open', url: 'https://example.com' }),
+      /unavailable/,
+    );
+    await assert.rejects(first.bindProfile!('same-task', randomUUID()), /unavailable/);
+    assert.equal(one.calls.filter((call) => call.method === 'dispose').length, 1);
     await second.act('same-task', { action: 'snapshot' });
   } finally {
     await fixture.close();
@@ -1068,11 +1080,173 @@ test('an unacknowledged cancellation fences new actions until namespace cleanup 
     controller.abort();
     await cancelled;
     await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
-    assert.match(computer.status(), /needs a restart/);
+    assert.match(computer.status(), /reopen/i);
     drain.resolve();
     await computer.dispose();
   } finally {
     drain.resolve();
+    await fixture.close();
+  }
+});
+
+async function interruptedBrowser(fixture: Awaited<ReturnType<typeof harness>>, dataRoot: string) {
+  const computer = fixture.client(dataRoot, { timeoutMs: 200, drainTimeoutMs: 20 });
+  await computer.act('task', { action: 'snapshot' });
+  const instance = fixture.instance(dataRoot);
+  const entered = deferred();
+  const release = deferred();
+  instance.setAct(async () => {
+    entered.resolve();
+    await release.promise;
+    return { text: 'Late', url: 'https://example.com', candidates: [] };
+  });
+  const controller = new AbortController();
+  const cancelled = assert.rejects(
+    computer.act('task', { action: 'click', selector: '#submit' }, controller.signal),
+    /did not finish safely/,
+  );
+  await entered.promise;
+  controller.abort();
+  await cancelled;
+  return { computer, instance, release };
+}
+
+for (const method of ['open', 'bindProfile'] as const)
+  test(`an explicit ${method} drains an uncertain namespace before opening a new session`, async () => {
+    const fixture = await harness();
+    const dataRoot = `/synthetic/recover-${method}`;
+    const interrupted = await interruptedBrowser(fixture, dataRoot);
+    try {
+      const other = fixture.client('/synthetic/other-session');
+      await other.act('task', { action: 'snapshot' });
+      const otherInstance = fixture.instance('/synthetic/other-session');
+      const { computer, instance, release } = interrupted;
+      const launches = fixture.launches.length;
+      await assert.rejects(computer.act('task', { action: 'open', url: 'x'.repeat(8193) }));
+      for (const url of ['not-a-url', 'javascript:alert(1)', 'https://user:pass@example.com'])
+        await assert.rejects(computer.act('task', { action: 'open', url }));
+      await assert.rejects(computer.bindProfile!('task', 'invalid-profile'));
+      await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
+      await assert.rejects(
+        computer.act('task', { action: 'click', selector: '#submit' }),
+        /unavailable/,
+      );
+      assert.equal(fixture.launches.length, launches);
+      let settled = false;
+      const recovery = (
+        method === 'open'
+          ? computer.act('task', { action: 'open', url: 'https://example.com/reopened' })
+          : computer.bindProfile!('task', randomUUID())
+      ).then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+      await delay(10);
+      assert.equal(settled, false);
+      release.resolve();
+      assert.equal(await recovery, undefined);
+      const restored = fixture.instance(dataRoot);
+      assert.notEqual(restored, instance);
+      assert.deepEqual(
+        instance.calls.map(({ method }) => method),
+        ['act', 'act', 'dispose'],
+      );
+      assert.equal(restored.calls.length, 1);
+      if (method === 'open')
+        assert.deepEqual(restored.calls[0], {
+          method: 'act',
+          input: { action: 'open', url: 'https://example.com/reopened' },
+        });
+      else assert.equal(restored.calls[0].method, 'bindProfile');
+      await computer.act('task', { action: 'snapshot' });
+      await other.act('task', { action: 'snapshot' });
+      assert.equal(fixture.instance('/synthetic/other-session'), otherInstance);
+      assert.equal(
+        otherInstance.calls.some(({ method }) => method === 'dispose'),
+        false,
+      );
+    } finally {
+      interrupted.release.resolve();
+      await fixture.close();
+    }
+  });
+
+for (const failure of ['failed', 'unacknowledged'] as const)
+  test(`a ${failure} namespace cleanup leaves explicit browser recovery fenced`, async () => {
+    const fixture = await harness();
+    const dataRoot = `/synthetic/recover-${failure}`;
+    const interrupted = await interruptedBrowser(fixture, dataRoot);
+    const finishClose = deferred();
+    let blocked = true;
+    try {
+      const { computer, instance, release } = interrupted;
+      const close = instance.computer.dispose;
+      const closeStarted = deferred();
+      instance.computer.dispose = async () => {
+        if (blocked) {
+          closeStarted.resolve();
+          if (failure === 'failed') throw new Error('Synthetic cleanup failed');
+          await finishClose.promise;
+        }
+        await close();
+      };
+      const failed = assert.rejects(
+        computer.act('task', { action: 'open', url: 'https://example.com/reopened' }),
+      );
+      release.resolve();
+      await closeStarted.promise;
+      await failed;
+      assert.equal(fixture.instance(dataRoot), instance);
+      const calls = fixture.launches.length;
+      await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
+      await assert.rejects(
+        computer.act('task', { action: 'click', selector: '#submit' }),
+        /unavailable/,
+      );
+      assert.equal(fixture.launches.length, calls);
+      assert.equal(instance.calls.filter(({ method }) => method === 'act').length, 2);
+      blocked = false;
+      finishClose.resolve();
+      await computer.act('task', { action: 'open', url: 'https://example.com/reopened' });
+      assert.notEqual(fixture.instance(dataRoot), instance);
+      assert.equal(fixture.instance(dataRoot).calls.length, 1);
+    } finally {
+      blocked = false;
+      finishClose.resolve();
+      interrupted.release.resolve();
+      await fixture.close();
+    }
+  });
+
+test('disposal during explicit browser recovery cannot revive the client', async () => {
+  const fixture = await harness();
+  const dataRoot = '/synthetic/recovery-disposal';
+  const { computer, instance, release } = await interruptedBrowser(fixture, dataRoot);
+  try {
+    const recovery = assert.rejects(
+      computer.act('task', { action: 'open', url: 'https://example.com/reopened' }),
+      /unavailable/,
+    );
+    const disposal = computer.dispose();
+    release.resolve();
+    await Promise.all([recovery, disposal]);
+    await assert.rejects(
+      computer.act('task', { action: 'open', url: 'https://example.com/reopened' }),
+      /unavailable/,
+    );
+    assert.equal(fixture.instance(dataRoot), instance);
+    assert.deepEqual(
+      instance.calls.map(({ method }) => method),
+      ['act', 'act', 'dispose'],
+    );
+  } finally {
+    release.resolve();
     await fixture.close();
   }
 });
@@ -1806,4 +1980,307 @@ test('inspector masks secure links, common token strings and secret assignments 
 test('short secret masking does not scan replacement markers again', () => {
   const redact = createInspectorRedactor(['a', 'red'], { minimumSecretLength: 1 });
   assert.equal(redact('red a'), '[redacted] [redacted]');
+});
+
+function handoffScreen(state = 'live', text = 'Synthetic screen') {
+  return new Response(text, {
+    headers: { 'Content-Type': 'image/png', 'X-Screen-State': state },
+  });
+}
+
+async function handoffView(request: (path: string, options?: RequestInit) => Promise<Response>) {
+  const dom = new JSDOM('<div id="root"></div>', {
+    url: 'http://localhost',
+    pretendToBeVisual: true,
+  });
+  const replacements = {
+    window: dom.window,
+    document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: (input: string | URL | Request, options?: RequestInit) =>
+      request(String(input), options),
+  };
+  const previous = new Map(
+    Object.keys(replacements).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  Object.assign(globalThis, replacements);
+  const createUrl = URL.createObjectURL;
+  const revokeUrl = URL.revokeObjectURL;
+  const images = new Map<string, Blob>();
+  let serial = 0;
+  URL.createObjectURL = (blob) => {
+    assert.ok(blob instanceof Blob);
+    const url = `blob:handoff-${++serial}`;
+    images.set(url, blob);
+    return url;
+  };
+  URL.revokeObjectURL = (url) => images.delete(url);
+  let poll: () => void = () => {};
+  dom.window.setInterval = (handler) => {
+    assert.equal(typeof handler, 'function');
+    poll = handler as () => void;
+    return 1;
+  };
+  dom.window.clearInterval = () => {
+    poll = () => {};
+  };
+  let completions = 0;
+  let unmounted = false;
+  const root = createRoot(dom.window.document.querySelector('#root')!);
+  await act(async () => {
+    root.render(createElement(BrowserHandoff, { onDone: () => completions++ }));
+  });
+  const element = <T extends Element>(selector: string) => {
+    const value = dom.window.document.querySelector<T>(selector);
+    assert.ok(value, selector);
+    return value;
+  };
+  return {
+    dom,
+    images,
+    element,
+    completions: () => completions,
+    async poll() {
+      await act(async () => poll());
+    },
+    async clickImage() {
+      const image = element<HTMLImageElement>('img');
+      image.getBoundingClientRect = () =>
+        ({ left: 10, top: 20, width: 200, height: 100 }) as DOMRect;
+      await act(async () => {
+        image.dispatchEvent(
+          new dom.window.MouseEvent('click', { bubbles: true, clientX: 110, clientY: 70 }),
+        );
+      });
+    },
+    async button(label: string) {
+      const button = [...dom.window.document.querySelectorAll('button')].find(
+        (candidate) => candidate.textContent === label,
+      );
+      assert.ok(button, label);
+      await act(async () => button.click());
+    },
+    async unmount() {
+      if (unmounted) return;
+      unmounted = true;
+      await act(async () => root.unmount());
+    },
+    async close() {
+      if (!unmounted) await act(async () => root.unmount());
+      dom.window.close();
+      URL.createObjectURL = createUrl;
+      URL.revokeObjectURL = revokeUrl;
+      for (const [key, descriptor] of previous) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+    },
+  };
+}
+
+for (const failure of ['rejected', 'disconnected'] as const)
+  test(`browser handoff preserves a ${failure} input failure through Done and polling without replay`, async () => {
+    const input = deferred<Response>();
+    let inputs = 0;
+    const view = await handoffView(async (_path, options) => {
+      if (options?.method !== 'POST') return handoffScreen();
+      inputs++;
+      const response = await input.promise;
+      if (failure === 'disconnected') throw new Error('Synthetic connection lost');
+      return response;
+    });
+    try {
+      await view.clickImage();
+      await view.button('Done');
+      assert.ok(view.element('.browser-handoff'));
+      assert.equal(view.completions(), 0);
+      assert.equal(view.element<HTMLButtonElement>('button').disabled, true);
+      await act(async () => {
+        input.resolve(
+          new Response(JSON.stringify({ error: 'Synthetic input rejected' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      });
+      await view.poll();
+      assert.equal(view.completions(), 0);
+      assert.match(view.element('[role="status"]').textContent!, /Refresh the view/);
+      await view.clickImage();
+      assert.equal(inputs, 1);
+      await view.button('Refresh view');
+      await view.button('Done');
+      assert.equal(inputs, 1);
+      assert.equal(view.completions(), 1);
+      assert.equal(view.dom.window.document.querySelector('.browser-handoff'), null);
+    } finally {
+      await view.close();
+    }
+  });
+
+test('browser handoff prevents input on saved frames and recovers an observation failure without replay', async () => {
+  let state = 'last_known';
+  let failScreen = false;
+  let inputs = 0;
+  const view = await handoffView(async (_path, options) => {
+    if (options?.method === 'POST') {
+      inputs++;
+      failScreen = true;
+      return Response.json({ ok: true });
+    }
+    return failScreen
+      ? Response.json({ error: 'Synthetic capture failed' }, { status: 500 })
+      : handoffScreen(state);
+  });
+  try {
+    await view.clickImage();
+    await view.button('Done');
+    assert.equal(inputs, 0);
+    assert.equal(view.completions(), 0);
+    assert.equal(view.element('[role="application"]').getAttribute('aria-disabled'), 'true');
+    state = 'live';
+    await view.poll();
+    await view.clickImage();
+    await act(async () => delay(350));
+    assert.equal(inputs, 1);
+    assert.match(view.element('[role="status"]').textContent!, /capture failed/);
+    await view.clickImage();
+    assert.equal(inputs, 1);
+    failScreen = false;
+    await view.poll();
+    await view.button('Done');
+    assert.equal(view.completions(), 1);
+    assert.equal(inputs, 1);
+  } finally {
+    await view.close();
+  }
+});
+
+test('browser handoff serializes capture polling with controls and completion', async () => {
+  const first = deferred<Response>();
+  const second = deferred<Response>();
+  const input = deferred<Response>();
+  const requests: string[] = [];
+  let captures = 0;
+  let inFlight = 0;
+  let maximum = 0;
+  const view = await handoffView(async (_path, options) => {
+    inFlight++;
+    maximum = Math.max(maximum, inFlight);
+    const control = options?.method === 'POST';
+    requests.push(control ? 'control' : 'screen');
+    try {
+      if (control) return await input.promise;
+      captures++;
+      return await (captures === 1
+        ? first.promise
+        : captures === 2
+          ? second.promise
+          : handoffScreen());
+    } finally {
+      inFlight--;
+    }
+  });
+  try {
+    await view.poll();
+    await view.poll();
+    assert.deepEqual(requests, ['screen']);
+    await act(async () => first.resolve(handoffScreen()));
+    await view.clickImage();
+    await view.poll();
+    assert.deepEqual(requests, ['screen', 'control']);
+    await view.button('Done');
+    assert.equal(view.completions(), 0);
+    await act(async () => {
+      input.resolve(Response.json({ ok: true }));
+      await delay(350);
+    });
+    await view.poll();
+    assert.deepEqual(requests, ['screen', 'control', 'screen']);
+    assert.equal(view.completions(), 0);
+    await act(async () => second.resolve(handoffScreen()));
+    assert.deepEqual(requests, ['screen', 'control', 'screen', 'screen']);
+    assert.equal(view.completions(), 1);
+    assert.equal(maximum, 1);
+  } finally {
+    first.resolve(handoffScreen());
+    second.resolve(handoffScreen());
+    input.resolve(Response.json({ ok: true }));
+    await view.close();
+  }
+});
+
+test('browser handoff cancels queued controls when the preceding view cannot be observed', async () => {
+  const first = deferred<Response>();
+  const inputs: unknown[] = [];
+  let failScreen = false;
+  const view = await handoffView(async (_path, options) => {
+    if (options?.method === 'POST') {
+      inputs.push(JSON.parse(String(options.body)));
+      failScreen = true;
+      return first.promise;
+    }
+    return failScreen
+      ? Response.json({ error: 'Synthetic capture failed' }, { status: 500 })
+      : handoffScreen();
+  });
+  try {
+    await view.clickImage();
+    await view.clickImage();
+    await view.button('Done');
+    await act(async () => {
+      first.resolve(Response.json({ ok: true }));
+      await delay(350);
+    });
+    assert.equal(inputs.length, 1);
+    assert.equal(view.completions(), 0);
+    assert.match(view.element('[role="status"]').textContent!, /pending action was not sent/);
+    failScreen = false;
+    await view.poll();
+    await view.button('Done');
+    assert.equal(view.completions(), 0);
+    await view.button('Refresh view');
+    assert.equal(inputs.length, 1);
+    await view.button('Done');
+    assert.equal(view.completions(), 1);
+  } finally {
+    await view.close();
+  }
+});
+
+test('browser handoff flushes typing before changing focus and drops buffered input on unmount', async () => {
+  const inputs: unknown[] = [];
+  const view = await handoffView(async (_path, options) => {
+    if (options?.method === 'POST') {
+      inputs.push(JSON.parse(String(options.body)));
+      return Response.json({ ok: true });
+    }
+    return handoffScreen();
+  });
+  try {
+    const screen = view.element('[role="application"]');
+    await act(async () => {
+      screen.dispatchEvent(
+        new view.dom.window.KeyboardEvent('keydown', { key: 'a', bubbles: true }),
+      );
+    });
+    await view.clickImage();
+    await act(async () => delay(700));
+    assert.deepEqual(inputs, [
+      { type: 'type', text: 'a' },
+      { type: 'click', x: 0.5, y: 0.5 },
+    ]);
+    await act(async () => {
+      screen.dispatchEvent(
+        new view.dom.window.KeyboardEvent('keydown', { key: 'b', bubbles: true }),
+      );
+      screen.dispatchEvent(new view.dom.window.WheelEvent('wheel', { deltaY: 100, bubbles: true }));
+    });
+    await view.unmount();
+    await delay(350);
+    assert.equal(inputs.length, 2);
+    assert.equal(view.images.size, 0);
+  } finally {
+    await view.close();
+  }
 });

@@ -8,6 +8,7 @@ import {
 } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
+import { browserUrl } from '../agent-browser/network.ts';
 import {
   browserRequest,
   browserResponse,
@@ -51,6 +52,24 @@ export function createBridgeComputer(options: {
   const pending = new Set<Promise<unknown>>();
   const cancellations = new Set<() => void>();
   let disposing: Promise<void> | undefined;
+  let recovering: Promise<void> | undefined;
+  const reopenNotice =
+    'Explicitly reopen the website or saved browser session to start a new page. The previous action may have completed; do not repeat it.';
+
+  function recover() {
+    recovering ??= (async () => {
+      for (const cancel of cancellations) cancel();
+      await Promise.allSettled([...pending]);
+      await call({ method: 'dispose' });
+      if (disposed) return;
+      uncertain = false;
+      currentSession = undefined;
+      screens.clear();
+    })().finally(() => {
+      recovering = undefined;
+    });
+    return recovering;
+  }
 
   function updateMetadata(value: BrowserMetadata, order: number, input: BrowserCall) {
     if (
@@ -78,13 +97,6 @@ export function createBridgeComputer(options: {
 
   function call(input: BrowserCall, signal?: AbortSignal): Promise<unknown> {
     signal?.throwIfAborted();
-    if (
-      input.method !== 'dispose' &&
-      (disposed || uncertain || options.available?.(input) === false)
-    )
-      return Promise.reject(
-        new Error('The workspace browser is unavailable. Restart Otto before continuing.'),
-      );
     const request = browserRequest.parse({
       ...input,
       id: randomUUID(),
@@ -93,6 +105,26 @@ export function createBridgeComputer(options: {
     const encoded = JSON.stringify({ type: 'request', request }) + '\n';
     if (Buffer.byteLength(encoded) > requestBytes)
       return Promise.reject(new Error('The browser request is too large.'));
+    const available = options.available?.(input) !== false;
+    if (input.method !== 'dispose' && (disposed || uncertain || !available)) {
+      if (
+        !disposed &&
+        uncertain &&
+        available &&
+        (input.method === 'bindProfile' ||
+          (input.method === 'act' && input.input.action === 'open'))
+      ) {
+        if (input.method === 'act') browserUrl(input.input.url ?? '');
+        return recover().then(() => call(input, signal));
+      }
+      return Promise.reject(
+        new Error(
+          uncertain && !disposed && available
+            ? `The workspace browser is unavailable. ${reopenNotice}`
+            : 'The workspace browser is unavailable. Restart Otto before continuing.',
+        ),
+      );
+    }
     const order = ++sequence;
     const result = new Promise<unknown>((resolve, reject) => {
       let child: CommandProcess;
@@ -101,7 +133,7 @@ export function createBridgeComputer(options: {
       } catch {
         uncertain = true;
         return reject(
-          new Error('The workspace browser is unavailable. Start its container and try again.'),
+          new Error(`The workspace browser is unavailable. Start its container. ${reopenNotice}`),
         );
       }
       if (input.method === 'act' || input.method === 'download' || input.method === 'upload') {
@@ -132,9 +164,7 @@ export function createBridgeComputer(options: {
         cleanup();
         child.stdin.destroy();
         child.kill('SIGKILL');
-        reject(
-          new Error('The workspace browser did not finish safely. Restart Otto before continuing.'),
-        );
+        reject(new Error(`The workspace browser did not finish safely. ${reopenNotice}`));
       };
       function cancel() {
         if (settled || cancelling) return;
@@ -227,7 +257,7 @@ export function createBridgeComputer(options: {
       await call({ method: 'deleteProfile', profileId });
     },
     screenStatus: (id) => screens.get(threadIdentity(id))?.value ?? { state: 'unavailable' },
-    status: () => (uncertain ? 'Workspace browser needs a restart.' : status),
+    status: () => (uncertain && !disposed ? reopenNotice : status),
     act: async (id, input, signal) =>
       observationSchema.parse(
         await call({ method: 'act', threadId: threadIdentity(id), input }, signal),

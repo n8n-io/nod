@@ -30,7 +30,6 @@ export function createCloudflareAdapters(options: {
     throw new Error('The remote computer configuration is invalid.');
   let browserUsed = false;
   let browserDisposed = false;
-  let browserUnavailable = false;
   let workspaceUnavailable = false;
   const computer = createBridgeComputer({
     namespace: `sk-${createHash('sha256').update(ownerId.toLowerCase()).digest('hex').slice(0, 24)}`,
@@ -43,9 +42,7 @@ export function createCloudflareAdapters(options: {
         role: 'browser',
         generation,
         fetch: requestFetch,
-        onUncertain: () => {
-          browserUnavailable = true;
-        },
+        onUncertain() {},
       });
     },
   });
@@ -81,12 +78,7 @@ export function createCloudflareAdapters(options: {
   return {
     computer: {
       ...computer,
-      status: () =>
-        browserDisposed
-          ? 'Workspace browser is stopped.'
-          : browserUnavailable
-            ? 'Workspace browser needs a restart.'
-            : computer.status(),
+      status: () => (browserDisposed ? 'Workspace browser is stopped.' : computer.status()),
       async dispose() {
         if (browserUsed) await computer.dispose();
         browserDisposed = true;
