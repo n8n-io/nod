@@ -80,6 +80,7 @@ jobs:
           --volume "$PWD/src:/app/src:ro"
           --volume "$PWD/tests:/app/tests:ro"
           --volume "$PWD/scripts:/app/scripts:ro"
+          --volume "$PWD/tsconfig.json:/app/tsconfig.json:ro"
           --volume "$PWD/dist/web:/app/dist/web:ro"
           --entrypoint /usr/bin/tini otto-ci-browser
           -- node --import tsx --test tests/browser.test.ts tests/downloads.test.ts tests/download-delivery.test.ts
