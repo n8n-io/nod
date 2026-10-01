@@ -137,6 +137,7 @@ export async function acceptanceSourceHash(sourceRoot = root) {
     'deployment/e2b/computer-guard.py',
     'src/providers/container-browser/worker.ts',
     'src/providers/container-browser/bridge.ts',
+    'src/providers/container-browser/chromium.sh',
     'package.json',
     'package-lock.json',
   ];

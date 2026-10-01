@@ -3,7 +3,17 @@ import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -14,6 +24,7 @@ import { parseEnv } from 'node:util';
 import { Sandbox } from 'e2b';
 import pg from 'pg';
 import { prepareE2BContext } from '../deployment/e2b/context.ts';
+import { acceptanceSourceHash } from '../deployment/e2b/acceptance.ts';
 import type { Computer, WorkspaceSession } from '../src/ports/computer.ts';
 import type {
   ComputerAllocation,
@@ -249,6 +260,20 @@ test('template contexts reject symlinked source and do not copy unrelated local 
     join(root, 'src/providers/container-browser/chromium.sh'),
   );
   await assert.rejects(prepareE2BContext({ role: 'browser', root }), /approved context/);
+});
+
+test('computer acceptance fingerprints launch assets and rejects substituted files', async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-acceptance-source-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const path of ['src', 'deployment/e2b', 'package.json', 'package-lock.json'])
+    await cp(new URL(`../${path}`, import.meta.url), join(root, path), { recursive: true });
+  const before = await acceptanceSourceHash(root);
+  const launcher = join(root, 'src/providers/container-browser/chromium.sh');
+  await writeFile(launcher, (await readFile(launcher, 'utf8')) + '\n');
+  assert.notEqual(await acceptanceSourceHash(root), before);
+  await rm(launcher);
+  await symlink(join(root, 'package.json'), launcher);
+  await assert.rejects(acceptanceSourceHash(root));
 });
 
 function initial(ownerId: string): ComputerAllocation {
