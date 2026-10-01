@@ -205,6 +205,7 @@ export interface AgentSessionOptions {
   systemContext?: string;
   tools: AgentTool[];
   workspace: WorkspaceSession;
+  timeZone?: string;
   runTool(
     name: string,
     params: unknown,

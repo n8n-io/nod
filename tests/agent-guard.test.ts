@@ -168,6 +168,20 @@ test('saved memory reaches Pi but stays out of inspector records', async () => {
   assert.doesNotMatch(JSON.stringify(snapshots), /short synthetic reports/);
 });
 
+test('Pi gets the owner time zone in its turn message and sandbox, and an unset one is never guessed', async () => {
+  const zoned = await fixture(async () => {}, { timeZone: 'Asia/Kolkata' });
+  assert.equal(zoned.supplied.timeZone, 'Asia/Kolkata');
+  assert.match(
+    zoned.userPrompt,
+    /Current local time: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+05:30\. User time zone: Asia\/Kolkata\./,
+  );
+  const unset = await fixture(async () => {});
+  assert.equal(unset.supplied.timeZone, undefined);
+  assert.match(unset.userPrompt, /User time zone: unknown/);
+  assert.doesNotMatch(unset.userPrompt, /Current local time|Lisbon/);
+  assert.match(unset.supplied.systemContext ?? '', /"timeZone":null/);
+});
+
 test('the thread is marked once, before Pi first receives outside content', async () => {
   const events: string[] = [];
   await fixture(

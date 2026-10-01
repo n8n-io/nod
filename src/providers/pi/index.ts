@@ -119,7 +119,7 @@ export function createPiAgent(options: {
         else input.onEvent(event);
       };
       const tools: ToolDefinition[] = [
-        ...createSandbox(input.workspace).map((definition): ToolDefinition => ({
+        ...createSandbox(input.workspace, input.timeZone).map((definition): ToolDefinition => ({
           ...definition,
           execute: async (id, params, signal, onUpdate, context) => {
             await checkpoint();

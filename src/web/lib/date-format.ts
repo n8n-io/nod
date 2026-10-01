@@ -70,7 +70,7 @@ function savedFormattingLocale(saved: string | null | undefined) {
   return formattingLocale(localeRegion(saved) ?? browserRegion());
 }
 
-function validTimeZone(value: string | undefined) {
+function validTimeZone(value: string | null | undefined) {
   if (!value) return null;
   try {
     return new Intl.DateTimeFormat('en', { timeZone: value }).resolvedOptions().timeZone;

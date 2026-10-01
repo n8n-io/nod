@@ -25,6 +25,7 @@ import { AccountSettings } from './components/account-settings';
 import type { AccountControls, AccountTab } from './components/account-menu';
 import { usePageData } from './hooks/use-page-data';
 import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
+import { savePreferences } from './lib/preferences';
 
 function navigate(path: string) {
   window.history.pushState(null, '', path);
@@ -32,6 +33,13 @@ function navigate(path: string) {
 }
 function useSavedDateFormat() {
   const { data } = usePageData<AccountPreferences>('/api/preferences');
+  const unsetTimeZone = data?.timeZone === null;
+  useEffect(() => {
+    if (unsetTimeZone)
+      void savePreferences({ timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(
+        () => {},
+      );
+  }, [unsetTimeZone]);
   useEffect(() => {
     if (!data) return;
     let cancel = () => {};

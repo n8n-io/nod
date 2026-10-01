@@ -216,7 +216,7 @@ export interface Approval {
 export type HourCycle = 'auto' | 'h12' | 'h23';
 export interface Preferences {
   notificationRule: string;
-  timeZone: string;
+  timeZone: string | null;
   locale: string | null;
   hourCycle: HourCycle;
   quietHoursEnabled: boolean;

@@ -29,7 +29,7 @@ function quote(value: string) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-export function createSandbox(workspace: WorkspaceSession) {
+export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
   async function run(script: string, options: { input?: string; signal?: AbortSignal } = {}) {
     const chunks: Buffer[] = [];
     const { exitCode } = await workspace.exec(script, {
@@ -79,6 +79,7 @@ export function createSandbox(workspace: WorkspaceSession) {
     const script = [
       `cd -- ${quote(cwd)} || exit 1`,
       `mkdir -p ${quote(posix.dirname(file))}`,
+      ...(timeZone ? [`export TZ=${quote(timeZone)}`] : []),
       'start=$(date +%s)',
       `timeout -k 5 ${seconds} bash -c ${quote(command)} > ${quote(file)} 2>&1 < /dev/null`,
       'code=$?',

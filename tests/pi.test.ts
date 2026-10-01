@@ -1328,6 +1328,23 @@ test('find honors exclusions and a failed chunked write leaves the existing file
   );
 });
 
+test('bash runs in the owner time zone and receives nothing else from the host', async (t) => {
+  process.env.OTTO_TEST_PROVIDER_KEY = 'sk-test-secret';
+  t.after(() => delete process.env.OTTO_TEST_PROVIDER_KEY);
+  const { workspace, run } = await hostSandbox(t);
+  const bash = createSandbox(workspace, 'Asia/Kolkata').find(({ name }) => name === 'bash')!;
+  const result = await bash.execute(
+    randomUUID(),
+    { command: 'date +%z; echo "[$OTTO_TEST_PROVIDER_KEY]"' },
+    undefined,
+    undefined,
+    undefined as never,
+  );
+  const text = result.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+  assert.equal(text.trim(), '+0530\n[]');
+  assert.equal((await run('bash', { command: 'echo "[$TZ]"' })).trim(), '[]');
+});
+
 test('bash receives no host environment and small outputs leave no saved file', async (t) => {
   process.env.OTTO_TEST_PROVIDER_KEY = 'sk-test-secret';
   t.after(() => delete process.env.OTTO_TEST_PROVIDER_KEY);
