@@ -56,8 +56,9 @@ export const loginTargetScript = `
     if(token) {
       const captured=registry.get(token);
       if(!captured||nodes.length!==captured.length||nodes.some((e,i)=>e!==captured[i])) return [];
+      return nodes;
     }
-    return nodes;
+    return nodes.length>1?nodes.filter(available):nodes;
   };
   const split=nodes=>nodes.length>=4&&nodes.length<=8&&nodes.every(e=>input(e)&&available(e)&&e.maxLength===1&&['text','tel','number'].includes(e.type)&&e.parentElement===nodes[0].parentElement)&&[...nodes[0].parentElement.querySelectorAll('input')].filter(available).length===nodes.length;
   const valid=(nodes,kind)=>nodes.length>0&&(nodes.length===1||(kind==='otp'&&split(nodes)))&&nodes.every(e=>input(e)&&available(e)&&(kind==='password'?e.type==='password':e.type!=='password'))&&sameForm(nodes);

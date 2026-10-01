@@ -1715,7 +1715,18 @@ test('split-code observations hide each private input value and retain unrelated
           '- button "Verify" [ref=e8]',
         ].join('\n');
         snapshots.push(snapshot);
-        data = { snapshot };
+        data = {
+          snapshot,
+          refs: {
+            ...Object.fromEntries(
+              inputs.map((input, index) => [
+                `e${index + 1}`,
+                { role: 'textbox', name: input.getAttribute('aria-label') },
+              ]),
+            ),
+            e8: { role: 'button', name: 'Verify' },
+          },
+        };
       }
       if (command[0] === 'screenshot') await writeFile(command[1], 'synthetic masked frame');
       return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
@@ -1756,6 +1767,72 @@ test('split-code observations hide each private input value and retain unrelated
     }
     assert.deepEqual(observation.candidates, [{ id: '@e8', label: '- button "Verify" [ref=e8]' }]);
     assert.equal(observation.text.includes('483729'), false);
+  } finally {
+    await computer.dispose();
+    dom.window.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a required code field reused by a hidden challenge section binds by id and by snapshot ref', async () => {
+  const directory = await mkdtemp('/tmp/otto-required-code-');
+  const dom = new JSDOM(
+    '<form id="two-step-challenge"><div id="auth-app-div"><h1>Enter the code you see on your authenticator app</h1></div>' +
+      '<input id="input__phone_verification_pin" name="pin" maxlength="6" aria-label="Please enter the code here" required>' +
+      '<div id="sms-div" style="display:none"><input id="input__phone_verification_pin" name="pin" maxlength="6"></div>' +
+      '<button id="two-step-submit-button">Submit</button></form>',
+    { url: 'https://1.1.1.1/checkpoint/challenge', runScripts: 'outside-only' },
+  );
+  dom.window.HTMLElement.prototype.getClientRects = function () {
+    for (let node: Element | null = this; node; node = node.parentElement)
+      if (dom.window.getComputedStyle(node).display === 'none')
+        return Object.assign([], { item: () => null });
+    const rect = new dom.window.DOMRect(0, 0, 30, 30);
+    return Object.assign([rect], { item: (index: number) => (index === 0 ? rect : null) });
+  };
+  Object.defineProperty(dom.window.HTMLElement.prototype, 'innerText', {
+    get() {
+      return this.textContent;
+    },
+  });
+  const code = dom.window.document.querySelector<HTMLInputElement>('input[required]')!;
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (_executable, args, options) => {
+      const command = args.slice(args.indexOf('--idle-timeout') + 2);
+      let data: Record<string, unknown> = {};
+      if (command[0] === 'get' && command[1] === 'url') data = { url: dom.window.location.href };
+      if (command[0] === 'get' && command[1] === 'attr')
+        data = { value: command[2] === '@e1' ? code.getAttribute(command[3]) : null };
+      if (command[0] === 'eval') data = { result: await dom.window.eval(options?.input ?? '') };
+      if (command[0] === 'snapshot')
+        data = {
+          snapshot:
+            '- textbox "Please enter the code here" [required, ref=e1]\n- button "Submit code" [ref=e2]',
+          refs: {
+            e1: { role: 'textbox', name: 'Please enter the code here' },
+            e2: { role: 'button', name: 'Submit code' },
+          },
+        };
+      return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
+    },
+  });
+  try {
+    await computer.act('fixture', { action: 'open', url: dom.window.location.href });
+    for (const passwordSelector of ['#input__phone_verification_pin', '@e1']) {
+      if (passwordSelector.startsWith('@')) await computer.act('fixture', { action: 'snapshot' });
+      const inspection = await computer.inspectLogin('fixture', {
+        origin: dom.window.location.origin,
+        kind: 'otp',
+        passwordSelector,
+      });
+      assert.deepEqual(
+        inspection.fields.map((field) => field.kind),
+        ['otp'],
+        passwordSelector,
+      );
+      assert.equal(dom.window.document.querySelector(inspection.fields[0].selector), code);
+    }
   } finally {
     await computer.dispose();
     dom.window.close();

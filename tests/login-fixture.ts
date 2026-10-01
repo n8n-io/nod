@@ -56,17 +56,21 @@ export class LoginPage {
   }
   snapshot() {
     const lines = [this.text()];
+    const refs: Record<string, { role: string; name: string }> = {};
     for (const node of this.dom.window.document.querySelectorAll('input,button')) {
       let ref = [...this.refs].find(([, element]) => element === node)?.[0];
       if (!ref) {
         ref = `@e${this.refs.size + 1}`;
         this.refs.set(ref, node);
       }
+      const role = node.tagName === 'INPUT' ? 'textbox' : 'button';
+      const name = node.getAttribute('aria-label') ?? node.id ?? 'Next';
+      refs[ref.slice(1)] = { role, name };
       lines.push(
-        `- ${node.tagName === 'INPUT' ? 'textbox' : 'button'} "${node.getAttribute('aria-label') ?? node.id ?? 'Next'}" [ref=${ref.slice(1)}]${node.tagName === 'INPUT' ? `: ${(node as HTMLInputElement).value}` : ''}`,
+        `- ${role} "${name}" [ref=${ref.slice(1)}]${node.tagName === 'INPUT' ? `: ${(node as HTMLInputElement).value}` : ''}`,
       );
     }
-    return lines.join('\n');
+    return { snapshot: lines.join('\n'), refs };
   }
   text() {
     return this.dom.window.document.body.textContent ?? '';
@@ -106,7 +110,7 @@ export function stagedLoginBrowser() {
         node.dispatchEvent(new page.dom.window.Event('input', { bubbles: true }));
       }
     }
-    if (command[0] === 'snapshot') data = { snapshot: page.snapshot() };
+    if (command[0] === 'snapshot') data = page.snapshot();
     if (command[0] === 'screenshot') await writeFile(command[1], page.screen());
     if (command[0] === 'close') {
       page.closed = true;

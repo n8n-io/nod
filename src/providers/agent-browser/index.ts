@@ -718,10 +718,11 @@ export function createAgentBrowserComputer(options: {
       scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'],
       { signal, maxBytes: 1024 * 1024 },
     );
-    const snapshot = String(data.snapshot ?? data.text ?? JSON.stringify(data));
-    const references = [
-      ...snapshot.matchAll(/(?:textbox|searchbox|spinbutton|combobox)[^\n]*?\[ref=(e\d+)\]/g),
-    ].map((match) => `@${match[1]}`);
+    const references = Object.entries((data.refs ?? {}) as Record<string, { role?: unknown }>)
+      .filter(([, ref]) =>
+        ['textbox', 'searchbox', 'spinbutton', 'combobox'].includes(String(ref?.role)),
+      )
+      .map(([ref]) => `@${ref}`);
     if (references.length <= 80) {
       for (const ref of references) {
         const attribute = await command(state, ['get', 'attr', ref, 'data-otto-login-node'], {
