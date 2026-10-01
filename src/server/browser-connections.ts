@@ -187,10 +187,10 @@ export async function createBrowserConnections(
     const connectionId = parsed.data.connectionId;
     return exclusive(connectionId, async () => {
       const row = await owned(connectionId);
-      if (row.origin !== address.origin)
-        return { status: 'rejected' as const, code: 'browser_connection_origin_mismatch' };
       signal?.throwIfAborted();
       if (parsed.data.action === 'save') {
+        if (row.origin !== address.origin)
+          return { status: 'rejected' as const, code: 'browser_connection_origin_mismatch' };
         if (
           !['pending', 'needs_sign_in', 'saved'].includes(row.state) ||
           row.thread_id !== turn.threadId
@@ -227,7 +227,8 @@ export async function createBrowserConnections(
       );
       const page = await browser.currentPage(turn.threadId);
       const needsSignIn =
-        new URL(observation.url).origin !== row.origin || page.origin !== row.origin;
+        address.origin === row.origin &&
+        (new URL(observation.url).origin !== row.origin || page.origin !== row.origin);
       signal?.throwIfAborted();
       const updated = await pool.query(
         `UPDATE browser_connections SET state=CASE WHEN $3 THEN 'needs_sign_in' ELSE state END,thread_id=$4,updated_at=now()

@@ -173,12 +173,18 @@ test(
       assert.equal((await service.list())[0].browserState, 'needs_sign_in');
       assert.equal((await service.list())[0].checkedAt, recheckedAt);
       changeOrigin = false;
-      page();
+      location = 'https://other.test/';
       assert.equal(
         (await service.request({ action: 'use', url: 'https://other.test/', connectionId }, second))
           .status,
+        'session_opened',
+      );
+      assert.equal((await service.list())[0].browserState, 'needs_sign_in');
+      assert.equal(
+        (await service.request({ ...save, url: 'https://other.test/' }, second)).status,
         'rejected',
       );
+      page();
       const other = await createBrowserConnections(pool, { ownerId: 'owner-b', computer });
       const foreign = { threadId: randomUUID(), turnId: randomUUID() };
       await pool.query("INSERT INTO threads(id,owner_id,status) VALUES($1,'owner-b','running')", [
