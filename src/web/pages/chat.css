@@ -700,7 +700,30 @@
   }
 }
 @container (max-width: 640px) {
+  .chat-page .message {
+    min-height: 58px;
+  }
   .chat-page .message .message-content {
-    max-width: 84%;
+    max-width: calc(100% - 96px);
+    align-self: center;
+  }
+  .chat-page .message-user .message-content {
+    max-width: calc(100% - 60px);
+  }
+  .chat-page .message-tools {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    min-height: 0;
+    transform: translateY(-50%);
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+  }
+  .chat-page .message-user .message-tools {
+    left: 0;
+    right: auto;
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

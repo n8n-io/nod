@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
+import Fastify from 'fastify';
 import type { Static } from '@sinclair/typebox';
 import { JSDOM } from 'jsdom';
 import pg from 'pg';
@@ -63,6 +64,108 @@ import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
 import type { AppState } from '../src/shared/contracts.ts';
+import {
+  fixtureCredentials,
+  fixtureSignup,
+  operatorAccess,
+  registerOperatorPage,
+} from '../scripts/e2e-fixtures.ts';
+
+test('acceptance operator controls unlock in the browser without exposing tokens or unauthenticated state', async () => {
+  const app = Fastify();
+  const token = randomUUID();
+  const authorized = operatorAccess(token);
+  const releases: string[] = [];
+  registerOperatorPage(app, token);
+  app.get('/e2e/status', authorized, async () => ({ privateState: 'synthetic-operator-state' }));
+  app.post<{ Params: { variant: string } }>('/e2e/signup/:variant', authorized, async (request) => {
+    releases.push(request.params.variant);
+    return { ok: true };
+  });
+  app.post('/e2e/expected-run', authorized, async () => ({ ok: true }));
+  let dom: JSDOM | undefined;
+  try {
+    const publicPage = await app.inject({ url: '/e2e' });
+    assert.equal(publicPage.statusCode, 200);
+    assert.equal(publicPage.headers['cache-control'], 'no-store');
+    for (const value of [
+      token,
+      ...Object.values(fixtureCredentials),
+      fixtureSignup.base.code,
+      fixtureSignup.alternate.code,
+    ])
+      assert.equal(publicPage.body.includes(value), false);
+    for (const [method, path] of [
+      ['GET', '/e2e/operator'],
+      ['GET', '/e2e/status'],
+      ['POST', '/e2e/signup/base'],
+      ['POST', '/e2e/expected-run'],
+    ] as const) {
+      for (const url of [path, '/e2e/%' + path.charCodeAt(5).toString(16) + path.slice(6)]) {
+        for (const headers of [{}, { authorization: 'Bearer incorrect' }]) {
+          const response = await app.inject({ method, url, headers });
+          assert.equal(response.statusCode, 401);
+          assert.equal(response.body.includes(fixtureCredentials.password), false);
+          assert.equal(response.body.includes('synthetic-operator-state'), false);
+        }
+      }
+    }
+    assert.equal(releases.length, 0);
+    const requests: Array<{ path: string; authorization: string | null }> = [];
+    dom = new JSDOM(publicPage.body, {
+      url: 'http://localhost/e2e',
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        window.fetch = async (input, options) => {
+          const path = String(input);
+          const headers = new Headers(options?.headers);
+          requests.push({ path, authorization: headers.get('authorization') });
+          const response = await app.inject({
+            method: options?.method === 'POST' ? 'POST' : 'GET',
+            url: path,
+            headers: Object.fromEntries(headers),
+          });
+          return new Response(response.body, { status: response.statusCode });
+        };
+      },
+    });
+    const document = dom.window.document;
+    const input = document.querySelector<HTMLInputElement>('#operator-token')!;
+    const access = document.querySelector<HTMLFormElement>('#operator-access')!;
+    const settle = async (done: () => boolean) => {
+      for (let attempt = 0; !done() && attempt < 100; attempt++) await delay(5);
+      assert.equal(done(), true);
+    };
+    input.value = 'incorrect';
+    access.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await settle(() => Boolean(document.querySelector('#operator-result')!.textContent));
+    assert.equal(document.body.textContent?.includes(fixtureCredentials.password), false);
+    assert.equal(input.value, '');
+    input.value = token;
+    access.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await settle(() => access.hidden);
+    assert.equal(document.body.textContent?.includes(fixtureCredentials.password), true);
+    assert.equal(input.value, '');
+    for (const variant of ['base', 'alternate']) {
+      document.querySelector<HTMLButtonElement>(`[data-operator="${variant}"]`)!.click();
+      await settle(() => releases.includes(variant));
+    }
+    document.querySelector<HTMLButtonElement>('[data-operator="status"]')!.click();
+    await settle(() =>
+      document.querySelector('#operator-events')!.textContent!.includes('synthetic-operator-state'),
+    );
+    assert.deepEqual(releases, ['base', 'alternate']);
+    assert.ok(requests.slice(1).every((request) => request.authorization === `Bearer ${token}`));
+    assert.ok(requests.every((request) => !request.path.includes(token)));
+    assert.equal(dom.window.location.href, 'http://localhost/e2e');
+    assert.equal(dom.window.localStorage.length, 0);
+    assert.equal(dom.window.sessionStorage.length, 0);
+    assert.equal(document.documentElement.outerHTML.includes(token), false);
+  } finally {
+    dom?.window.close();
+    await app.close();
+  }
+});
 
 // Shared helpers
 

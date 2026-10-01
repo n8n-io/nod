@@ -155,7 +155,12 @@ function CredentialForm({ id }: { id: string }) {
         : {
             ...(password
               ? {
-                  label: String(data.get('label') || '').trim() || suggestLoginName(request.origin),
+                  label:
+                    String(data.get('label') || '').trim() ||
+                    suggestLoginName(
+                      request.origin,
+                      savedEntries.map((entry) => entry.label),
+                    ),
                   password: data.get('password'),
                 }
               : {}),

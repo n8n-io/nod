@@ -87,9 +87,12 @@ function privateEmailResult(value: unknown): unknown {
   const text = isMail ? emailText(record).replace(/<[^>]*>/g, ' ') : '';
   if (
     /\b\d{4,8}\b/.test(text) &&
-    /\b(?:(?:verification|security|authentication|login|sign[ -]?in|one[ -]?time)\s+(?:code|passcode|password)|(?:verify|confirm)\s+(?:(?:your|the)\s+)?(?:email|account|identity)|otp|c[oó]digo\s+de\s+(?:verifica[çc][aã]o|seguran[çc]a|autentica[çc][aã]o))\b/i.test(
+    (/\b(?:(?:verification|security|authentication|login|sign[ -]?in|one[ -]?time)\s+(?:code|passcode|password)|(?:verify|confirm)\s+(?:(?:your|the)\s+)?(?:email|account|identity)|otp|c[oó]digo\s+de\s+(?:verifica[çc][aã]o|seguran[çc]a|autentica[çc][aã]o))\b/i.test(
       text,
-    )
+    ) ||
+      /(?:\b(?:your|the)\s+(?:code|passcode)|\b(?:o\s+)?seu\s+c[oó]digo|(?:^|[\n.!?])\s*(?:code|passcode|c[oó]digo))\s*(?:(?:is|[eé])\s*)?[:=]?\s*\d{4,8}\b|\b\d{4,8}\s+(?:is\s+(?:your|the)\s+(?:code|passcode)|[eé]\s+(?:o\s+)?seu\s+c[oó]digo)\b/i.test(
+        text,
+      ))
   ) {
     const safe = Object.fromEntries(
       Object.entries(record).filter(

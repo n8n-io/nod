@@ -20,7 +20,7 @@ import {
   fixtureLogin,
   fixtureHotel,
   fixtureFlight,
-  operatorPage,
+  registerOperatorPage,
   operatorAccess,
   type Audit,
 } from './e2e-fixtures.ts';
@@ -348,9 +348,7 @@ try {
     { parseAs: 'string', bodyLimit: 8192 },
     (_request, _body, done) => done(null, {}),
   );
-  app.get('/e2e', operator, async (_request, reply) =>
-    reply.type('text/html').send(operatorPage()),
-  );
+  registerOperatorPage(app, operatorToken);
   app.get('/e2e/status', operator, async () => ({
     fixture: true,
     model: { provider, name: model },
@@ -392,7 +390,7 @@ try {
         alternate: variant === 'alternate',
         released: true,
       });
-      return reply.redirect('/e2e');
+      return { ok: true };
     },
   );
   const expected = new Map<string, string>();

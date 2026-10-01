@@ -123,6 +123,7 @@ test('verification email codes stay out of app tool results, observations and wo
     to: 'owner@example.test',
     subject: 'Order 452619 has shipped',
     preview: 'Your tracking reference is 852741.',
+    body: 'Your product code is 762150. Discount code: 246810. Please review the code in this example.',
   };
   const mails = [
     {
@@ -179,6 +180,18 @@ test('verification email codes stay out of app tool results, observations and wo
       sender: 'signup@example.test',
       subject: `${privateCodes[0]} · Verify your email address`,
     },
+    ...[
+      `Your code is ${privateCodes[0]}`,
+      `Here is your code: ${privateCodes[1]}.`,
+      `Code: ${privateCodes[2]}`,
+      `${privateCodes[3]} is your code.`,
+      `O seu código é ${privateCodes[4]}.`,
+      `Código: ${privateCodes[0]}`,
+    ].map((subject, index) => ({
+      messageId: `generic-code-${index}`,
+      sender: 'login@example.test',
+      subject,
+    })),
     ordinary,
   ];
   const results = [

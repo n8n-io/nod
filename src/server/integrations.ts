@@ -1196,7 +1196,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const [local, domain] = email.split('@');
     const name = local.split('+')[0];
     if (!name) return;
-    return `${domain === 'gmail.com' ? name.replaceAll('.', '') : name}@${domain}`;
+    const canonicalDomain = domain === 'googlemail.com' ? 'gmail.com' : domain;
+    return `${canonicalDomain === 'gmail.com' ? name.replaceAll('.', '') : name}@${canonicalDomain}`;
   }
 
   async function emailCode(ownerId: string, input: EmailCodeRequest, signal: AbortSignal) {

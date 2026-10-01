@@ -32,9 +32,8 @@ function hasChanges(form: HTMLFormElement, details: VaultEntryDetails) {
   const data = new FormData(form);
   if (String(data.get('label') ?? '') !== details.label) return true;
   if (
-    ['password', 'cardNumber', 'securityCode', 'removeSecurityCode'].some((name) =>
-      Boolean(data.get(name)),
-    )
+    String(data.get('cardNumber') ?? '').trim() ||
+    ['password', 'securityCode', 'removeSecurityCode'].some((name) => Boolean(data.get(name)))
   )
     return true;
   if (details.kind === 'login') return String(data.get('username') ?? '') !== details.username;
@@ -118,6 +117,9 @@ export function VaultDetails({
     if (details && editForm.current && !saving) setDirty(hasChanges(editForm.current, details));
   }
 
+  const hideSecretsRef = useRef(hideSecrets);
+  hideSecretsRef.current = hideSecrets;
+
   async function loadDetails() {
     detailsRequest.current?.abort();
     const request = new AbortController();
@@ -140,10 +142,11 @@ export function VaultDetails({
   useEffect(() => {
     active.current = true;
     void loadDetails();
+    const clear = () => hideSecretsRef.current();
     const hidden = () => {
-      if (document.hidden) hideSecrets();
+      if (document.hidden) clear();
     };
-    window.addEventListener('blur', hideSecrets);
+    window.addEventListener('blur', clear);
     document.addEventListener('visibilitychange', hidden);
     return () => {
       active.current = false;
@@ -151,7 +154,7 @@ export function VaultDetails({
       saveRequest.current?.abort();
       cancelAction();
       clearVaultSecret(editForm.current);
-      window.removeEventListener('blur', hideSecrets);
+      window.removeEventListener('blur', clear);
       document.removeEventListener('visibilitychange', hidden);
     };
   }, [entry.id]);
@@ -202,6 +205,7 @@ export function VaultDetails({
     const username = String(data.get('username') ?? '');
     const cardholder = String(data.get('cardholder') ?? '');
     let replacement = String(data.get(isCard ? 'cardNumber' : 'password') ?? '');
+    if (isCard && !replacement.trim()) replacement = '';
     const hasPassword =
       details.kind === 'login' && (Boolean(replacement) || details.hasPassword !== false);
     let securityCode = data.has('removeSecurityCode')

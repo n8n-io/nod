@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir, readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 import {
   localDatabaseEnvironment,
+  prepareLocalDirectories,
   rotateLocalDatabase,
   verifyLocalDatabase,
   withLocalDatabase,
@@ -33,7 +34,7 @@ try {
       ...localDatabaseEnvironment(database),
       OTTO_DATA_ROOT: resolve(process.env.OTTO_DATA_ROOT || settings.OTTO_DATA_ROOT || '.local'),
     };
-    await mkdir(resolve(environment.OTTO_DATA_ROOT, 'workspaces'), { recursive: true });
+    await prepareLocalDirectories(environment.OTTO_DATA_ROOT);
     await run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], environment);
     await rotateLocalDatabase(database, { environment });
     await verifyLocalDatabase(database);

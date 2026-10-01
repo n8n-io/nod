@@ -3259,6 +3259,10 @@ test(
       ['first.last@example.com', 'firstlast+trial@example.com', false],
       ['first.last@example.com', 'first.last+trial@example.com', true],
       ['first.last@gmail.com', 'firstlast+trial@gmail.com', true],
+      ['first.last@gmail.com', 'first.last+trial@googlemail.com', true],
+      ['first.last@googlemail.com', 'firstlast+trial@gmail.com', true],
+      ['first.last@googlemail.com', 'firstlast+trial@googlemail.com', true],
+      ['first.last@example.com', 'firstlast+trial@googlemail.com', false],
     ] as const) {
       await pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
         connection,
@@ -3577,6 +3581,31 @@ test('Vault Escape cancels edits and clears replacement secrets without disablin
         .click(),
     );
     const secret = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+    const save = () => page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    for (const event of ['blur', 'visibilitychange']) {
+      secret.value = 'synthetic replacement';
+      await act(async () =>
+        secret.dispatchEvent(new page.window.Event('input', { bubbles: true })),
+      );
+      assert.equal(save().disabled, false);
+      await act(async () => {
+        if (event === 'blur') page.window.dispatchEvent(new page.window.Event(event));
+        else {
+          Object.defineProperty(page.document, 'hidden', { configurable: true, value: true });
+          page.document.dispatchEvent(new page.window.Event(event));
+        }
+      });
+      assert.equal(secret.value, '');
+      assert.equal(save().disabled, true);
+      Object.defineProperty(page.document, 'hidden', { configurable: true, value: false });
+    }
+    const label = page.document.querySelector<HTMLInputElement>('input[name="label"]')!;
+    label.value = 'Renamed fixture account';
+    await act(async () => label.dispatchEvent(new page.window.Event('input', { bubbles: true })));
+    secret.value = 'synthetic replacement';
+    await act(async () => page.window.dispatchEvent(new page.window.Event('blur')));
+    assert.equal(secret.value, '');
+    assert.equal(save().disabled, false);
     secret.value = 'synthetic replacement';
     await act(async () => secret.dispatchEvent(new page.window.Event('input', { bubbles: true })));
     await act(async () =>
@@ -3607,6 +3636,158 @@ test('Vault Escape cancels edits and clears replacement secrets without disablin
     );
     assert.equal(detailsReads, 1);
     assert.equal(writes, 0);
+  } finally {
+    await page.close();
+  }
+});
+
+test('Vault preserves the saved card when a replacement contains only whitespace', async () => {
+  const entry: VaultCardEntry = {
+    kind: 'card',
+    id: randomUUID(),
+    label: 'Fixture card',
+    brand: 'Visa',
+    last4: '4242',
+    expiryMonth: 12,
+    expiryYear: 2028,
+    updatedAt: new Date().toISOString(),
+  };
+  const updates: Record<string, unknown>[] = [];
+  let saved = 0;
+  const page = await vaultPage(
+    createElement(VaultDetails, {
+      entry,
+      onClose() {},
+      onSaved() {
+        saved++;
+      },
+      onDeleted() {},
+    }),
+    async (path, init) => {
+      if (path.endsWith('/details'))
+        return Response.json({ ...entry, cardholder: 'Alex Tester', hasSecurityCode: false });
+      assert.equal(init.method, 'PATCH');
+      const update = JSON.parse(String(init.body));
+      updates.push(update);
+      if ('cardNumber' in update)
+        return Response.json({ error: 'Invalid replacement card number' }, { status: 400 });
+      return Response.json({ ...entry, label: update.label });
+    },
+  );
+  try {
+    await act(async () =>
+      page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
+    );
+    const card = page.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!;
+    card.value = '   ';
+    await act(async () => card.dispatchEvent(new page.window.Event('input', { bubbles: true })));
+    const save = page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    assert.equal(save.disabled, true);
+    const label = page.document.querySelector<HTMLInputElement>('input[name="label"]')!;
+    label.value = 'Renamed fixture card';
+    await act(async () => label.dispatchEvent(new page.window.Event('input', { bubbles: true })));
+    assert.equal(save.disabled, false);
+    await act(async () => save.click());
+    assert.equal(updates.length, 1);
+    assert.equal(Object.hasOwn(updates[0], 'cardNumber'), false);
+    assert.equal(updates[0].label, label.value);
+    assert.equal(saved, 1);
+    assert.equal(page.document.querySelector('form'), null);
+  } finally {
+    await page.close();
+  }
+});
+
+test('Vault keeps intentional whitespace in replacement passwords', async () => {
+  const entry = {
+    kind: 'login' as const,
+    id: randomUUID(),
+    label: 'Fixture account',
+    origin: 'https://example.test',
+    usernameHint: 'te…',
+    updatedAt: new Date().toISOString(),
+  };
+  const passwords: string[] = [];
+  const page = await vaultPage(
+    createElement(VaultDetails, { entry, onClose() {}, onSaved() {}, onDeleted() {} }),
+    async (path, init) => {
+      if (path.endsWith('/details'))
+        return Response.json({ ...entry, username: 'tester@example.test', hasPassword: true });
+      if (path.endsWith('/icon')) return new Response(null, { status: 204 });
+      assert.equal(init.method, 'PATCH');
+      passwords.push(JSON.parse(String(init.body)).password);
+      return Response.json(entry);
+    },
+  );
+  try {
+    for (const value of ['   ', '  synthetic password  ']) {
+      await act(async () =>
+        page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
+      );
+      const password = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+      password.value = value;
+      await act(async () =>
+        password.dispatchEvent(new page.window.Event('input', { bubbles: true })),
+      );
+      const save = page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      assert.equal(save.disabled, false);
+      await act(async () => save.click());
+      assert.equal(passwords.at(-1), value);
+    }
+    assert.equal(passwords.length, 2);
+  } finally {
+    await page.close();
+  }
+});
+
+test('secure sign-in derives an unused login name when the optional name is cleared', async () => {
+  const request = {
+    id: 'synthetic_credential_request',
+    turnId: randomUUID(),
+    origin: 'https://example.test',
+    label: 'Fixture sign-in',
+    kind: 'password',
+    status: 'pending',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    fields: [{ kind: 'password', selector: '#password', label: 'Password' }],
+    savedEntries: ['Example.test', 'Example.test 2'].map((label) => ({
+      kind: 'login',
+      id: randomUUID(),
+      label,
+      origin: 'https://example.test',
+      usernameHint: 'te…',
+      updatedAt: new Date().toISOString(),
+    })),
+  };
+  const submitted: Record<string, unknown>[] = [];
+  const page = await vaultPage(
+    createElement(Credentials, { id: request.id }),
+    async (_path, init) => {
+      if (init.method !== 'POST') return Response.json(request);
+      submitted.push(JSON.parse(String(init.body)));
+      return Response.json({ error: 'Synthetic paused sign-in' }, { status: 503 });
+    },
+  );
+  try {
+    await act(async () =>
+      [...page.document.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Use another login')!
+        .click(),
+    );
+    page.document.querySelector<HTMLInputElement>('input[name="label"]')!.value = '  ';
+    page.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
+      'synthetic password';
+    await act(async () =>
+      page.document
+        .querySelector('form')!
+        .dispatchEvent(new page.window.Event('submit', { bubbles: true, cancelable: true })),
+    );
+    assert.equal(submitted.length, 1);
+    assert.equal(submitted[0].label, 'Example.test 3');
+    assert.equal(
+      request.savedEntries.some((entry) => entry.label === submitted[0].label),
+      false,
+    );
   } finally {
     await page.close();
   }

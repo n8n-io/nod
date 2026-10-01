@@ -39,6 +39,38 @@ import {
 } from '../src/providers/docker/index.ts';
 import { runProcess, serviceEnvironment } from '../src/providers/process.ts';
 import { workspaceNetwork } from '../scripts/e2e-workspace.ts';
+import { prepareLocalDirectories } from '../scripts/local-database.ts';
+
+test('local startup protects data through its private root and preserves workspace mount traversal', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'otto-local-directories-'));
+  const root = join(parent, 'data');
+  const workspace = join(root, 'workspaces');
+  const unrelated = join(parent, 'unrelated');
+  try {
+    await chmod(parent, 0o755);
+    await prepareLocalDirectories(root);
+    assert.equal((await lstat(root)).mode & 0o777, 0o700);
+    assert.equal((await lstat(workspace)).mode & 0o777, 0o755);
+    assert.equal((await lstat(parent)).mode & 0o777, 0o755);
+    await writeFile(join(workspace, 'retained.txt'), 'synthetic retained workspace');
+    await chmod(root, 0o755);
+    await chmod(workspace, 0o755);
+    await prepareLocalDirectories(root);
+    assert.equal((await lstat(root)).mode & 0o777, 0o700);
+    assert.equal((await lstat(workspace)).mode & 0o777, 0o755);
+    assert.equal(
+      await readFile(join(workspace, 'retained.txt'), 'utf8'),
+      'synthetic retained workspace',
+    );
+    assert.equal((await lstat(parent)).mode & 0o777, 0o755);
+    await mkdir(unrelated, { mode: 0o755 });
+    await symlink(unrelated, join(parent, 'linked-data'));
+    await assert.rejects(prepareLocalDirectories(join(parent, 'linked-data')));
+    assert.equal((await lstat(unrelated)).mode & 0o777, 0o755);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
 
 // Workspace containment, host isolation and subprocess environment.
 

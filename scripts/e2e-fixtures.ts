@@ -1271,11 +1271,83 @@ export function operatorAccess(token: string): { preValidation: preValidationHoo
   };
 }
 
+export function registerOperatorPage(app: FastifyInstance, token: string) {
+  app.get('/e2e', async (_request, reply) =>
+    reply
+      .header('Cache-Control', 'no-store')
+      .header('Referrer-Policy', 'no-referrer')
+      .type('text/html')
+      .send(
+        html(
+          'Otto acceptance controls',
+          `<form id="operator-access"><label for="operator-token">Operator token</label><input id="operator-token" type="password" autocomplete="off" required><button type="submit">Open controls</button></form><p id="operator-result" role="status"></p><div id="operator-controls"></div><pre id="operator-events" hidden></pre><script>
+      (() => {
+        const access = document.getElementById('operator-access');
+        const input = document.getElementById('operator-token');
+        const controls = document.getElementById('operator-controls');
+        const result = document.getElementById('operator-result');
+        const events = document.getElementById('operator-events');
+        let token = '';
+        async function request(path, method = 'GET') {
+          const response = await fetch(path, { method, headers: { Authorization: 'Bearer ' + token }, cache: 'no-store', redirect: 'error' });
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.error || 'The operator request failed.');
+          }
+          return response;
+        }
+        access.addEventListener('submit', async event => {
+          event.preventDefault();
+          const button = access.querySelector('button');
+          if (button.disabled) return;
+          button.disabled = true;
+          token = input.value;
+          input.value = '';
+          result.textContent = '';
+          try {
+            const response = await request('/e2e/operator');
+            controls.innerHTML = new DOMParser().parseFromString(await response.text(), 'text/html').body.innerHTML;
+            access.hidden = true;
+          } catch (error) {
+            token = '';
+            result.textContent = error.message;
+          } finally { button.disabled = false; }
+        });
+        controls.addEventListener('click', async event => {
+          const button = event.target.closest('button[data-operator]');
+          if (!button || button.disabled) return;
+          const action = button.dataset.operator;
+          if (!['base', 'alternate', 'status'].includes(action)) return;
+          button.disabled = true;
+          result.textContent = '';
+          try {
+            const response = await request(action === 'status' ? '/e2e/status' : '/e2e/signup/' + action, action === 'status' ? 'GET' : 'POST');
+            if (action === 'status') {
+              events.textContent = JSON.stringify(await response.json(), null, 2);
+              events.hidden = false;
+            } else result.textContent = 'Case released. Complete verification in the handed-off browser, then click Done.';
+          } catch (error) { result.textContent = error.message; }
+          finally { button.disabled = false; }
+        });
+      })();
+      </script>`,
+        ),
+      ),
+  );
+  app.get('/e2e/operator', operatorAccess(token), async (_request, reply) =>
+    reply
+      .header('Cache-Control', 'no-store')
+      .header('Referrer-Policy', 'no-referrer')
+      .type('text/html')
+      .send(operatorPage()),
+  );
+}
+
 export function operatorPage() {
-  const signupOperator = `<h2>Trial signup evaluation</h2><p>Connect synthetic Gmail as ${fixtureCredentials.username} before starting. Each attempt needs a fresh acceptance harness. The trial details have editable defaults.</p><p>Base recipient: ${fixtureSignup.base.recipient}. Holdout recipient: ${fixtureSignup.alternate.recipient}.</p><p>After Otto asks you to complete human verification, release the matching case here. Then click Verify I am human in Otto's handed-off browser and click Done to return control.</p><p>Operator requests require the private bearer token stored in the harness manifest. Release the base or alternate case with an authenticated POST to its operator endpoint.</p>`;
+  const signupOperator = `<h2>Trial signup evaluation</h2><p>Connect synthetic Gmail as ${fixtureCredentials.username} before starting. Each attempt needs a fresh acceptance harness. The trial details have editable defaults.</p><p>Base recipient: ${fixtureSignup.base.recipient}. Holdout recipient: ${fixtureSignup.alternate.recipient}.</p><p>After Otto asks you to complete human verification, release the matching case here. Then click Verify I am human in Otto's handed-off browser and click Done to return control.</p><button type="button" data-operator="base">Release base case</button><button type="button" data-operator="alternate">Release holdout case</button>`;
   return html(
     'Otto isolated acceptance environment',
     signupOperator +
-      `<p><a href="/">Open Otto</a> · <a href="/e2e/status">Timing events</a></p><p>The assistant and browser are real. Google, Slack and Notion accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
+      `<p><a href="/">Open Otto</a></p><button type="button" data-operator="status">Timing events</button><p>The assistant and browser are real. Google, Slack and Notion accounts, files, channel setup and the Northstar site are synthetic. No external messages are delivered.</p><h2>Secure sign-in fixture</h2><p>Give the assistant this URL: <code>${fixtureLogin}</code></p><p>Enter these synthetic values only in the Vault form, never in chat:</p><dl><dt>Email</dt><dd>${fixtureCredentials.username}</dd><dt>Password</dt><dd>${fixtureCredentials.password}</dd><dt>One-time code</dt><dd>${fixtureCredentials.code}</dd></dl><p>Slow page for acknowledgement checks: <code>${fixtureOrigin + fixturePrefix}slow</code></p><p>The fixture URL works only in the assistant's isolated browser. The user's normal browser should use this localhost page and the Vault.</p><h2>Channels UI fixture</h2><p>Open <a href="/channels">Channels</a> and enter these fixed synthetic values in its setup forms. Both channels start disconnected. No provider is contacted and incoming or outgoing messages are disabled, including after setup.</p><h3>Telegram</h3><dl><dt>Bot token</dt><dd>${fixtureChannelCredentials.telegram.botToken}</dd></dl><p>Leave the callback blank. The saved account is labelled Synthetic Telegram bot (UI only). It stays at Waiting for Start because incoming messages are disabled.</p><h3>WhatsApp</h3><dl><dt>Business phone number ID</dt><dd>${fixtureChannelCredentials.whatsapp.phoneNumberId}</dd><dt>Your WhatsApp number</dt><dd>${fixtureChannelCredentials.whatsapp.allowedNumber}</dd><dt>Business access token</dt><dd>${fixtureChannelCredentials.whatsapp.accessToken}</dd><dt>Meta app secret</dt><dd>${fixtureChannelCredentials.whatsapp.appSecret}</dd><dt>Webhook verification token</dt><dd>${fixtureChannelCredentials.whatsapp.verifyToken}</dd></dl><p>Check the policy box for this synthetic setup and leave the callback blank. The saved account remains at Finish delivery setup; no callback is registered.</p>`,
   );
 }

@@ -22,6 +22,18 @@ export type LocalDatabase = {
   serverDatabaseUrl: string;
 };
 
+export async function prepareLocalDirectories(dataRoot: string) {
+  for (const [directory, mode] of [
+    [dataRoot, 0o700],
+    [join(dataRoot, 'workspaces'), 0o755],
+  ] as const) {
+    await mkdir(directory, { recursive: true, mode });
+    if (!(await lstat(directory)).isDirectory())
+      throw new Error('Local data paths must be directories, not symbolic links.');
+    await chmod(directory, mode);
+  }
+}
+
 function localDatabaseUrl(value: string) {
   try {
     const url = new URL(value);
