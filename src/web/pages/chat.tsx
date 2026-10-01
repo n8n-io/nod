@@ -126,7 +126,8 @@ export function Chat({
   const [optimistic, setOptimistic] = useState<Array<{ threadId: string; message: Message }>>([]);
   const [stopping, setStopping] = useState(false);
   const composer = useRef<ComposerHandle>(null);
-  const sendQueue = useRef(Promise.resolve());
+  const sendQueue = useRef(Promise.resolve(true));
+  const sendCount = useRef(0);
   const pendingSends = useRef(0);
   const retry = useRef<{ id: string; threadId: string; signature: string } | null>(null);
   const historyVersion = useRef(0);
@@ -234,7 +235,7 @@ export function Chat({
     setAway(null);
     setReplyTo(null);
     setOptimistic([]);
-    sendQueue.current = Promise.resolve();
+    sendQueue.current = Promise.resolve(true);
     pendingSends.current = 0;
     retry.current = null;
     setText('');
@@ -342,11 +343,13 @@ export function Chat({
         ? retry.current.id
         : crypto.randomUUID();
     const previous = sendQueue.current;
-    let finished!: () => void;
-    sendQueue.current = new Promise<void>((resolve) => {
+    let finished!: (sent: boolean) => void;
+    sendQueue.current = new Promise<boolean>((resolve) => {
       finished = resolve;
     });
+    const sequence = ++sendCount.current;
     pendingSends.current++;
+    let failed = false;
     if (reply) setReplyTo(null);
     const message: Message = {
       id,
@@ -373,7 +376,11 @@ export function Chat({
     stickToBottom.current = true;
     const replyId = reply?.id;
     try {
-      await previous;
+      if (!(await previous)) {
+        failed = true;
+        setOptimistic((current) => current.filter((item) => item.message.id !== id));
+        return { sent: false, restoreText: !privateVerification };
+      }
       const response = await apiResponse('/api/messages', {
         method: 'POST',
         credentials: 'same-origin',
@@ -429,7 +436,7 @@ export function Chat({
         retry.current = null;
         return { sent: true };
       }
-      if (reply) setReplyTo((current) => current ?? reply);
+      failed = true;
       retry.current =
         !privateVerification && signature !== null ? { id, threadId: sentThread, signature } : null;
       setOptimistic((current) => current.filter((item) => item.message.id !== id));
@@ -442,8 +449,13 @@ export function Chat({
       );
       return { sent: false, restoreText: !privateVerification };
     } finally {
-      finished();
-      if (threadRef.current === sentThread && --pendingSends.current === 0) setSending(false);
+      finished(!failed);
+      if (failed && reply && sequence === sendCount.current)
+        setReplyTo((current) => current ?? reply);
+      if (threadRef.current === sentThread && --pendingSends.current === 0) {
+        sendQueue.current = Promise.resolve(true);
+        setSending(false);
+      }
     }
   }
   async function history() {

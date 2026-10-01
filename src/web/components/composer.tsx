@@ -57,6 +57,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const previewUrls = useRef(new Set<string>());
   const previewTrigger = useRef<HTMLButtonElement | null>(null);
   const lastText = useRef(text);
+  const sends = useRef(0);
+  const unsent = useRef<Array<{ sequence: number; text: string; attachments: DraftAttachment[] }>>(
+    [],
+  );
   const actions = useRef({ submit: () => {}, upload: (_files: File[]) => {} });
   const extensions = useMemo(
     () =>
@@ -188,11 +192,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       restoreFocus();
     }
   }
+  function restoreUnsent() {
+    const items = unsent.current.splice(0).sort((a, b) => a.sequence - b.sequence);
+    if (!items.length || !editor || editor.isDestroyed || !mounted.current) return;
+    editor.commands.setContent(
+      [...items.map((item) => item.text), editor.getMarkdown()].filter(Boolean).join('\n\n'),
+      { contentType: 'markdown' },
+    );
+    updateAttachments([...items.flatMap((item) => item.attachments), ...attachmentValues.current]);
+    restoreFocus();
+  }
   async function submit() {
     if (!editor || !ready || attachmentValues.current.some((item) => !item.artifact)) return;
     const sentText = editor.getMarkdown().trim();
     const sentAttachments = attachmentValues.current;
     if (!sentText && !sentAttachments.length) return;
+    const sequence = ++sends.current;
     setError('');
     editor.commands.clearContent();
     updateAttachments([]);
@@ -207,18 +222,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (mounted.current) setError(errorMessage(cause));
     } finally {
       if (result.sent) for (const item of sentAttachments) releasePreview(item);
-      if (mounted.current && !editor.isDestroyed) {
-        if (!result.sent) {
-          if (result.restoreText) {
-            const draft = editor.getMarkdown();
-            editor.commands.setContent([sentText, draft].filter(Boolean).join('\n\n'), {
-              contentType: 'markdown',
-            });
-          }
-          updateAttachments([...sentAttachments, ...attachmentValues.current]);
-        }
-        restoreFocus();
+      else {
+        unsent.current.push({
+          sequence,
+          text: result.restoreText ? sentText : '',
+          attachments: sentAttachments,
+        });
+        setTimeout(restoreUnsent);
       }
+      if (mounted.current && !editor.isDestroyed) restoreFocus();
     }
   }
   actions.current = { submit: () => void submit(), upload: (files) => void upload(files) };
