@@ -810,7 +810,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     : undefined;
   const stored = profile.rows[0]?.data ?? {};
   const preference = preferences.rows[0];
-  const timeZone = preference?.time_zone || defaultPreferences.timeZone;
+  const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
     uploads: [
@@ -821,7 +821,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     history: history.rows,
     context: {
       timeZone,
-      locale: preference?.locale || formattingLocale(timeZoneRegion(timeZone)),
+      locale: preference?.locale || formattingLocale(timeZone ? timeZoneRegion(timeZone) : null),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,
       ...(account ? { account } : {}),
       memory: memory ?? '',

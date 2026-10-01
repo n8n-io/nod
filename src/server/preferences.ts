@@ -5,7 +5,7 @@ const hourCycles = ['auto', 'h12', 'h23'] as const;
 export const preferencesSchema = z
   .object({
     notificationRule: z.string().max(4000),
-    timeZone: z.string().max(100),
+    timeZone: z.string().max(100).nullable(),
     locale: z.string().trim().min(2).max(35).nullable(),
     hourCycle: z.enum(hourCycles),
     quietHoursEnabled: z.boolean(),
@@ -17,7 +17,7 @@ export type Preferences = z.infer<typeof preferencesSchema>;
 export const defaultPreferences: Preferences = {
   notificationRule:
     'Only interrupt me for a time-sensitive message that needs my reply, a meaningful calendar change affecting me, or a concrete next step for an active goal. Keep newsletters, routine updates, uncertain relevance and repeated reminders quiet.',
-  timeZone: 'Europe/Lisbon',
+  timeZone: null,
   locale: null,
   hourCycle: 'auto',
   quietHoursEnabled: true,
@@ -33,16 +33,19 @@ function canonicalLocale(value: string) {
 }
 const columns =
   'notification_rule AS "notificationRule",time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd"';
+function ianaTimeZone(value: string) {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value });
+    return !/^[+-]/.test(value);
+  } catch {
+    return false;
+  }
+}
 export function createPreferencesStore(pool: Pool, ownerId: string) {
   function validate(raw: unknown) {
     const patch = preferencesSchema.partial().parse(raw);
-    if (patch.timeZone !== undefined) {
-      try {
-        new Intl.DateTimeFormat('en', { timeZone: patch.timeZone });
-      } catch {
-        throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
-      }
-    }
+    if (typeof patch.timeZone === 'string' && !ianaTimeZone(patch.timeZone))
+      throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
     if (patch.locale !== undefined && patch.locale !== null) {
       const locale = canonicalLocale(patch.locale);
       if (!locale) throw Object.assign(new Error('Choose a valid region.'), { statusCode: 400 });
@@ -62,11 +65,11 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
       const patch = validate(raw);
       const result = await pool.query(
         `INSERT INTO preferences(owner_id,notification_rule,time_zone,quiet_start,quiet_end,quiet_hours_enabled,locale,hour_cycle)
-        VALUES($1,COALESCE($2,$7),COALESCE($3,$8),COALESCE($4,$9),COALESCE($5,$10),COALESCE($6::boolean,$11::boolean),$12,COALESCE($13,$14))
+        VALUES($1,COALESCE($2,$7),$3,COALESCE($4,$8),COALESCE($5,$9),COALESCE($6::boolean,$10::boolean),$11,COALESCE($12,$13))
         ON CONFLICT(owner_id) DO UPDATE SET notification_rule=COALESCE($2,preferences.notification_rule),
-        time_zone=COALESCE($3,preferences.time_zone),quiet_start=COALESCE($4,preferences.quiet_start),quiet_end=COALESCE($5,preferences.quiet_end),
-        quiet_hours_enabled=COALESCE($6,preferences.quiet_hours_enabled),locale=CASE WHEN $15 THEN $12 ELSE preferences.locale END,
-        hour_cycle=COALESCE($13,preferences.hour_cycle)
+        time_zone=CASE WHEN $15 THEN $3 ELSE preferences.time_zone END,quiet_start=COALESCE($4,preferences.quiet_start),quiet_end=COALESCE($5,preferences.quiet_end),
+        quiet_hours_enabled=COALESCE($6,preferences.quiet_hours_enabled),locale=CASE WHEN $14 THEN $11 ELSE preferences.locale END,
+        hour_cycle=COALESCE($12,preferences.hour_cycle)
         RETURNING ${columns}`,
         [
           ownerId,
@@ -76,7 +79,6 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
           patch.quietEnd ?? null,
           patch.quietHoursEnabled ?? null,
           defaultPreferences.notificationRule,
-          defaultPreferences.timeZone,
           defaultPreferences.quietStart,
           defaultPreferences.quietEnd,
           defaultPreferences.quietHoursEnabled,
@@ -84,6 +86,7 @@ export function createPreferencesStore(pool: Pool, ownerId: string) {
           patch.hourCycle ?? null,
           defaultPreferences.hourCycle,
           patch.locale !== undefined,
+          patch.timeZone !== undefined,
         ],
       );
       return result.rows[0];

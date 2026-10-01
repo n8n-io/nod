@@ -48,7 +48,7 @@ const relevancePolicy: RelevancePolicy = {
 export function isQuietTime(preferences: Preferences, now = new Date()) {
   if (!preferences.quietHoursEnabled) return false;
   const current = new Intl.DateTimeFormat('en-GB', {
-    timeZone: preferences.timeZone,
+    timeZone: preferences.timeZone ?? 'UTC',
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',

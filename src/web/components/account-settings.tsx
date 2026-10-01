@@ -82,7 +82,7 @@ function LanguageAndRegion({ saved }: { saved: AccountPreferences }) {
   const detected = useBrowserRegion();
   const zones = [
     ...new Set([
-      saved.timeZone,
+      format.timeZone,
       ...(Intl.supportedValuesOf?.('timeZone') ?? [
         'Europe/Lisbon',
         'Europe/London',
@@ -157,7 +157,7 @@ function LanguageAndRegion({ saved }: { saved: AccountPreferences }) {
           Time zone
         </span>
         <TimeZonePicker
-          value={saved.timeZone}
+          value={format.timeZone}
           zones={zones}
           labelledBy={timeZoneLabel}
           disabled={saving}

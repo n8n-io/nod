@@ -10,6 +10,7 @@ import {
 import { AccountAvatar } from '../components/account-avatar';
 import { BrandMark } from '../components/brand';
 import { Button, Notice } from '../components/ui';
+import { useBrowserTimeZone } from '../hooks/use-browser-time-zone';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
@@ -33,6 +34,7 @@ export function Onboarding({
   onLogout(): void;
   canLogout: boolean;
 }) {
+  useBrowserTimeZone();
   const { data, error: loadError, loading, refresh } = usePageData<Connection[]>('/api/apps');
   const [pending, setPending] = useState<Partial<Record<IntegrationService, Pending>>>({});
   const [error, setError] = useState('');

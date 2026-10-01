@@ -517,7 +517,7 @@ export function createAgentRuntime(dependencies: {
         reason: PromptSnapshot['reason'],
         resumed: boolean,
       ) => {
-        const currentInstruction = `${currentUserTime(context.timeZone || 'Europe/Lisbon')}\n${instruction}`;
+        const currentInstruction = `${currentUserTime(context.timeZone)}\n${instruction}`;
         void Promise.resolve()
           .then(() =>
             context.inspectPrompt?.({
@@ -541,6 +541,7 @@ export function createAgentRuntime(dependencies: {
         systemContext: systemContext(context),
         tools,
         workspace,
+        timeZone: context.timeZone,
         runTool: guard,
         shouldStop: () => stopped || checkRecorded,
         nextMessages:

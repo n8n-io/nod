@@ -25,6 +25,7 @@ import { AccountSettings } from './components/account-settings';
 import type { AccountControls, AccountTab } from './components/account-menu';
 import { usePageData } from './hooks/use-page-data';
 import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
+import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
 
 function navigate(path: string) {
   window.history.pushState(null, '', path);
@@ -78,6 +79,7 @@ function Workspace({
     session.user!.id,
   );
   useSavedDateFormat();
+  useBrowserTimeZone();
   const [inspector, setInspector] = useState(
     () =>
       path === '/dev' || (window.innerWidth > 720 && readUiPreference('otto.inspector') === 'open'),

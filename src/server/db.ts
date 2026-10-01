@@ -64,11 +64,17 @@ export async function initializeDatabase() {
       created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS preferences (
-      owner_id text PRIMARY KEY, notification_rule text NOT NULL DEFAULT '', time_zone text NOT NULL DEFAULT 'Europe/Lisbon',
+      owner_id text PRIMARY KEY, notification_rule text NOT NULL DEFAULT '', time_zone text,
       quiet_start text NOT NULL DEFAULT '22:00', quiet_end text NOT NULL DEFAULT '08:00',
       quiet_hours_enabled boolean NOT NULL DEFAULT true, locale text,
       hour_cycle text NOT NULL DEFAULT 'auto' CHECK (hour_cycle IN ('auto','h12','h23'))
     );
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='preferences'::regclass AND attname='time_zone' AND attnotnull) THEN
+        ALTER TABLE preferences ALTER COLUMN time_zone DROP NOT NULL, ALTER COLUMN time_zone DROP DEFAULT;
+        UPDATE preferences SET time_zone=NULL WHERE time_zone='Europe/Lisbon';
+      END IF;
+    END $$;
     CREATE TABLE IF NOT EXISTS notifications (
       id uuid PRIMARY KEY, event_id text UNIQUE NOT NULL, owner_id text NOT NULL, summary text NOT NULL,
       decision text NOT NULL, reason text NOT NULL, feedback text, turn_id uuid REFERENCES turns(id),
