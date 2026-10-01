@@ -26,6 +26,16 @@ test(
     const root = await mkdtemp(join(tmpdir(), 'thread-test-'));
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
+    await admin.query(
+      `CREATE TABLE ${schema}.turns (
+        id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL,
+        source text NOT NULL, source_id text, message_id uuid, prompt text NOT NULL,
+        channel text NOT NULL DEFAULT 'web', status text NOT NULL DEFAULT 'queued', waiting_reason text,
+        background boolean NOT NULL DEFAULT false, read_only boolean NOT NULL DEFAULT false,
+        error text,
+        created_at timestamptz NOT NULL DEFAULT now(), started_at timestamptz, finished_at timestamptz
+      )`,
+    );
     const environment = {
       DATABASE_URL: process.env.DATABASE_URL,
       PGBOSS_SCHEMA: process.env.PGBOSS_SCHEMA,
