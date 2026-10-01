@@ -665,7 +665,11 @@ test(
           assert.equal((await otherPreferences.get()).timeZone, 'America/Toronto');
           const unset = await thread.submitUserMessage('Unset time zone fixture');
           await waitFor(settled(unset.turnId));
+          assert.ok(ran(unset.turnId));
           assert.equal(ran(unset.turnId)?.timeZone, undefined);
+          for (const timeZone of ['', '+05:30', 'Mars/Olympus'])
+            await assert.rejects(preferences.update({ timeZone }), /valid time zone/);
+          assert.equal((await preferences.get()).timeZone, null);
         } finally {
           await preferences.update(original);
           await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [otherOwner]);

@@ -810,7 +810,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     : undefined;
   const stored = profile.rows[0]?.data ?? {};
   const preference = preferences.rows[0];
-  const timeZone: string | undefined = preference?.time_zone ?? undefined;
+  const timeZone: string | undefined = preference?.time_zone || undefined;
   return {
     sourceMessageId,
     uploads: [

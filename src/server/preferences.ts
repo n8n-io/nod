@@ -33,16 +33,19 @@ function canonicalLocale(value: string) {
 }
 const columns =
   'notification_rule AS "notificationRule",time_zone AS "timeZone",locale,hour_cycle AS "hourCycle",quiet_hours_enabled AS "quietHoursEnabled",quiet_start AS "quietStart",quiet_end AS "quietEnd"';
+function ianaTimeZone(value: string) {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value });
+    return !/^[+-]/.test(value);
+  } catch {
+    return false;
+  }
+}
 export function createPreferencesStore(pool: Pool, ownerId: string) {
   function validate(raw: unknown) {
     const patch = preferencesSchema.partial().parse(raw);
-    if (patch.timeZone) {
-      try {
-        new Intl.DateTimeFormat('en', { timeZone: patch.timeZone });
-      } catch {
-        throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
-      }
-    }
+    if (typeof patch.timeZone === 'string' && !ianaTimeZone(patch.timeZone))
+      throw Object.assign(new Error('Choose a valid time zone.'), { statusCode: 400 });
     if (patch.locale !== undefined && patch.locale !== null) {
       const locale = canonicalLocale(patch.locale);
       if (!locale) throw Object.assign(new Error('Choose a valid region.'), { statusCode: 400 });

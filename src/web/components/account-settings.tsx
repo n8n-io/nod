@@ -162,7 +162,7 @@ function LanguageAndRegion({ saved }: { saved: AccountPreferences }) {
           labelledBy={timeZoneLabel}
           disabled={saving}
           onChange={(timeZone) => {
-            if (timeZone !== format.timeZone) void save({ timeZone });
+            if (timeZone !== saved.timeZone) void save({ timeZone });
           }}
         />
       </div>
