@@ -280,7 +280,7 @@ export function MessageBubble({
     const bounds = trigger.closest('.messages')?.getBoundingClientRect();
     const content = trigger
       .closest('.message')
-      ?.querySelector('.message-content')
+      ?.querySelector('.message-body')
       ?.getBoundingClientRect();
     const minLeft = Math.max(8, (bounds?.left ?? 0) + 8);
     const maxRight = Math.min(window.innerWidth - 8, bounds?.right || window.innerWidth - 8);
@@ -357,25 +357,99 @@ export function MessageBubble({
         </div>
       )}
       <div className="message-content">
-        <div className="message-body">
-          {message.replyTo && (
-            <blockquote className="message-reply-quote">
-              <strong>{message.replyTo.role === 'assistant' ? 'Otto' : 'You'}</strong>
-              <span>{message.replyTo.text || 'Attachment'}</span>
-            </blockquote>
+        <div className="message-row">
+          <div className="message-body">
+            {message.replyTo && (
+              <blockquote className="message-reply-quote">
+                <strong>{message.replyTo.role === 'assistant' ? 'Otto' : 'You'}</strong>
+                <span>{message.replyTo.text || 'Attachment'}</span>
+              </blockquote>
+            )}
+            {message.attachments.length > 0 && (
+              <MessageAttachments attachments={message.attachments} />
+            )}
+            {message.text && (
+              <MessageText
+                text={message.text}
+                previews={!streaming}
+                connectedAppIds={connectedAppIds}
+                onHandoffDone={streaming ? undefined : onHandoffDone}
+              />
+            )}
+            {streaming && <span className="stream-cursor" />}
+          </div>
+          {!streaming && (
+            <div className="message-tools">
+              <time
+                className="message-time"
+                dateTime={message.createdAt}
+                title={formatFullDateTime(message.createdAt, dateFormat)}
+              >
+                {formatTime(message.createdAt, dateFormat)}
+              </time>
+              <div className="message-actions" aria-label="Message actions">
+                {onReply && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="Reply to message"
+                    title="Reply"
+                    onClick={reply}
+                  >
+                    <CornerUpLeft size={14} />
+                  </Button>
+                )}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={copied ? 'Message copied' : 'Copy message'}
+                  title="Copy"
+                  onClick={() => void copy()}
+                >
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                </Button>
+                {message.role === 'assistant' && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="React to message"
+                    title="React"
+                    aria-haspopup="dialog"
+                    aria-expanded={pickingReaction}
+                    onClick={(event) =>
+                      pickingReaction ? closePicker() : openPicker(event.currentTarget)
+                    }
+                  >
+                    <SmilePlus size={14} />
+                  </Button>
+                )}
+                {canInspect && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="Inspect message"
+                    title="Inspect"
+                    onClick={inspect}
+                  >
+                    <ScanSearch size={14} />
+                  </Button>
+                )}
+              </div>
+              <Button
+                className="message-more-action"
+                size="icon"
+                variant="ghost"
+                aria-label="Message options"
+                aria-haspopup="menu"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  openMenu(rect.right - 192, rect.bottom + 6, event.currentTarget);
+                }}
+              >
+                <MoreHorizontal size={17} />
+              </Button>
+            </div>
           )}
-          {message.attachments.length > 0 && (
-            <MessageAttachments attachments={message.attachments} />
-          )}
-          {message.text && (
-            <MessageText
-              text={message.text}
-              previews={!streaming}
-              connectedAppIds={connectedAppIds}
-              onHandoffDone={streaming ? undefined : onHandoffDone}
-            />
-          )}
-          {streaming && <span className="stream-cursor" />}
         </div>
         {(reaction || agentReaction) && (
           <div className="message-footer">
@@ -406,78 +480,6 @@ export function MessageBubble({
         )}
         {error && <Notice>{error}</Notice>}
       </div>
-      {!streaming && (
-        <div className="message-tools">
-          <time
-            className="message-time"
-            dateTime={message.createdAt}
-            title={formatFullDateTime(message.createdAt, dateFormat)}
-          >
-            {formatTime(message.createdAt, dateFormat)}
-          </time>
-          <div className="message-actions" aria-label="Message actions">
-            {onReply && (
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="Reply to message"
-                title="Reply"
-                onClick={reply}
-              >
-                <CornerUpLeft size={14} />
-              </Button>
-            )}
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label={copied ? 'Message copied' : 'Copy message'}
-              title="Copy"
-              onClick={() => void copy()}
-            >
-              {copied ? <Check size={14} /> : <Copy size={14} />}
-            </Button>
-            {message.role === 'assistant' && (
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="React to message"
-                title="React"
-                aria-haspopup="dialog"
-                aria-expanded={pickingReaction}
-                onClick={(event) =>
-                  pickingReaction ? closePicker() : openPicker(event.currentTarget)
-                }
-              >
-                <SmilePlus size={14} />
-              </Button>
-            )}
-            {canInspect && (
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label="Inspect message"
-                title="Inspect"
-                onClick={inspect}
-              >
-                <ScanSearch size={14} />
-              </Button>
-            )}
-          </div>
-          <Button
-            className="message-more-action"
-            size="icon"
-            variant="ghost"
-            aria-label="Message options"
-            aria-haspopup="menu"
-            onClick={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect();
-              openMenu(rect.right - 192, rect.bottom + 6, event.currentTarget);
-            }}
-          >
-            <MoreHorizontal size={17} />
-          </Button>
-        </div>
-      )}
       {menu &&
         createPortal(
           <div

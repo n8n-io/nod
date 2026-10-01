@@ -1774,12 +1774,22 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         return options.discovered.propose(proposal, turn);
       }
       const slug = slugSchema.parse(service);
-      const accounts = (await connectedApps())
-        .filter((app) => app.slug === slug)
-        .map(({ connectionId, accountName, accountEmail }) => ({
-          connectionId,
-          accountName,
-          accountEmail,
+      requireService(slug);
+      const selected = providerFor(slug);
+      const accounts = (await connectionRows(configuredOwner))
+        .filter(
+          (row) =>
+            selected.configured &&
+            row.slug === slug &&
+            row.provider_id === selected.id &&
+            row.account_id &&
+            !row.revoked &&
+            row.account_active,
+        )
+        .map((row) => ({
+          connectionId: row.id,
+          accountName: row.account_name ?? undefined,
+          accountEmail: row.account_email ?? undefined,
         }));
       if (accounts.length) return { name: catalogs[slug].name, accounts };
       return { name: catalogs[slug].name, ...(await connect(slug, turn ? 'chat' : 'apps', turn)) };

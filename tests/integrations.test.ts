@@ -2813,7 +2813,7 @@ test(
 );
 
 test(
-  'direct Notion and Linear accounts work beside an existing Composio Notion account',
+  'direct Notion and Linear accounts preserve native setup beside existing HTTP and Composio accounts',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
     const schema = `direct_routes_${randomUUID().replaceAll('-', '')}`;
@@ -2825,6 +2825,7 @@ test(
     });
     const app = Fastify();
     const calls: string[] = [];
+    const authorizations: string[] = [];
     const resumes: string[] = [];
     const directAccounts: Array<Record<string, unknown>> = [];
     let composioSearchFails = false;
@@ -2834,6 +2835,7 @@ test(
     const session = (id: string): IntegrationSession => ({
       id,
       authorize: async (service, callback) => {
+        authorizations.push(`${id}:${service}`);
         if (id === 'direct') {
           state = new URL(callback).searchParams.get('state')!;
           lastService = service;
@@ -2892,10 +2894,48 @@ test(
       matchesSubscription: () => false,
     });
     try {
+      const key = randomBytes(32);
+      const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+      const grantVault = await createAppGrantVault(pool, {
+        ownerId: 'local-development',
+        keyStore,
+      });
+      const unavailableFetch = async () => {
+        throw new Error('Native setup must not contact a discovered connection.');
+      };
+      const discovered = await createDiscoveredConnections(pool, {
+        ownerId: 'local-development',
+        baseUrl: 'http://localhost:4310',
+        keyStore,
+        grantVault,
+        transport: createDiscoveredTransport(unavailableFetch),
+        oauth: createDiscoveredOAuth(unavailableFetch),
+      });
+      const httpId = randomUUID();
+      const foreignHttpId = randomUUID();
+      const httpPaths = [
+        {
+          id: randomUUID(),
+          kind: 'http',
+          endpoint: 'https://example.test/notion/api',
+          auth: 'bearer',
+          testPath: 'me',
+        },
+      ];
+      for (const [id, owner] of [
+        [httpId, 'local-development'],
+        [foreignHttpId, 'another-owner'],
+      ])
+        await pool.query(
+          `INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths)
+           VALUES($1,$2,'notion','Notion','HTTP account',$3)`,
+          [id, owner, JSON.stringify(httpPaths)],
+        );
       const integrations = await createIntegrations(pool, {
         ownerId: 'local-development',
         provider: provider('composio', ['notion']),
         additionalProviders: [provider('direct', ['notion', 'linear'])],
+        discovered,
         resumeConnection: async (turnId, service) => {
           resumes.push(`${turnId}:${service}`);
           return true;
@@ -2908,19 +2948,48 @@ test(
         `INSERT INTO app_connections(owner_id,slug,account_id,provider_id)
          VALUES('local-development','notion','composio-notion','composio') RETURNING id`,
       );
+      const foreignNative = await pool.query<{ id: string }>(
+        `INSERT INTO app_connections(owner_id,slug,account_id,provider_id)
+         VALUES('another-owner','notion','foreign-notion','direct') RETURNING id`,
+      );
+      const inventory = await integrations.manageConnections('list');
+      assert.ok(Array.isArray(inventory));
+      assert.deepEqual(inventory.find((item) => item.connectionId === httpId)?.accessPaths, [
+        { id: httpPaths[0].id, kind: 'http', endpoint: httpPaths[0].endpoint },
+      ]);
+      assert.equal(
+        inventory.some((item) =>
+          [foreignHttpId, foreignNative.rows[0].id].includes(item.connectionId ?? ''),
+        ),
+        false,
+      );
       const legacy = await integrations.execute('local-development', 'SEARCH_TOOLS', {
         query: 'notion',
       });
       assert.ok((legacy as { tools: Record<string, unknown> }).tools.NOTION_FETCH_DATABASE);
-      const connect = await app.inject({ method: 'POST', url: '/api/apps/notion/connect' });
-      assert.equal(connect.statusCode, 200);
+      const connect = await integrations.manageConnections('connect', 'notion');
+      assert.equal('accounts' in connect, false);
+      assert.equal('url' in connect && connect.url, 'https://example.test/authorize');
       const callback = await app.inject({ url: `/api/apps/callback?state=${state}&code=fixture` });
       assert.equal(callback.headers.location, 'http://localhost:4310/apps?connection=connected');
       const rows = (await integrations.list()).filter((item) => item.slug === 'notion');
-      assert.equal(rows.length, 2);
-      const direct = rows.find((item) => item.connectionId !== existing.rows[0].id)!;
+      assert.equal(rows.length, 3);
+      const direct = rows.find(
+        (item) => item.connectionId !== existing.rows[0].id && item.connectionId !== httpId,
+      )!;
       assert.equal(direct.status, 'connected');
       assert.equal(rows[0]?.connectionId, direct.connectionId);
+      assert.deepEqual(await integrations.manageConnections('connect', 'notion'), {
+        name: direct.name,
+        accounts: [
+          {
+            connectionId: direct.connectionId,
+            accountName: direct.accountName,
+            accountEmail: direct.accountEmail,
+          },
+        ],
+      });
+      assert.deepEqual(authorizations, ['direct:notion']);
       assert.deepEqual(
         await integrations.execute('local-development', 'NOTION_SEARCH_NOTION_PAGE', {}),
         { id: 'direct' },
@@ -2949,6 +3018,9 @@ test(
         'composio_tool',
         'NOTION_RETRIEVE_PAGE',
         'direct_tool',
+        'CONNECTED_HTTP',
+        'CONNECTED_MCP_CALL',
+        'CONNECTED_CLI',
       ]);
       assert.deepEqual((search as { tools: Record<string, unknown> }).tools.NOTION_RETRIEVE_PAGE, {
         provider: 'direct',
@@ -2985,6 +3057,9 @@ test(
       assert.deepEqual(Object.keys((partial as { tools: object }).tools), [
         'direct_tool',
         'NOTION_RETRIEVE_PAGE',
+        'CONNECTED_HTTP',
+        'CONNECTED_MCP_CALL',
+        'CONNECTED_CLI',
       ]);
       composioSearchFails = false;
       await pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
