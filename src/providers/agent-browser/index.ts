@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { getDomain } from 'tldts';
 import { z } from 'zod';
 import type {
   BrowserAction,
@@ -14,6 +15,7 @@ import type {
   BrowserPage,
 } from '../../ports/computer.ts';
 import { BrowserActionError, browserUploadBytes } from '../../ports/computer.ts';
+import type { BrowserHandoffInput } from '../../shared/browser-handoff.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { runProcess, serviceEnvironment } from '../process.ts';
 import { createBrowserProxy, browserUrl } from './network.ts';
@@ -102,6 +104,15 @@ export function redactBrowserUrl(
       url.searchParams.set(name, '[redacted]');
   if (url.hash.includes('=')) url.hash = '[redacted]';
   return redactBrowserText(url.href, secrets);
+}
+
+function savedSite(url: string) {
+  const { protocol, hostname } = new URL(url);
+  return `${protocol}//${getDomain(hostname, { allowPrivateDomains: true }) ?? hostname}`;
+}
+
+function outsideSavedSite(allowedOrigin: string | undefined, url: string) {
+  return allowedOrigin !== undefined && savedSite(url) !== savedSite(allowedOrigin);
 }
 
 export function createAgentBrowserComputer(options: {
@@ -377,7 +388,7 @@ export function createAgentBrowserComputer(options: {
           '--proxy-bypass',
           '<-loopback>',
           '--args',
-          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking' +
+          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization' +
             (sandbox ? '' : ',--no-sandbox') +
             (headed && platform === 'darwin' ? ',--start-minimized' : '') +
             (state.saved.restoreSession ? ',--restore-last-session' : ''),
@@ -593,10 +604,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   async function stayOnSavedOrigin(state: BrowserState, signal?: AbortSignal) {
-    if (
-      state.saved.allowedOrigin &&
-      new URL(await currentUrl(state, signal)).origin !== state.saved.allowedOrigin
-    )
+    if (outsideSavedSite(state.saved.allowedOrigin, await currentUrl(state, signal)))
       throw new BrowserActionError('browser_origin_changed');
   }
 
@@ -613,7 +621,7 @@ export function createAgentBrowserComputer(options: {
         url,
         candidates: [],
       };
-    if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
+    if (outsideSavedSite(state.saved.allowedOrigin, url))
       throw new BrowserActionError('browser_origin_changed');
     const scope =
       input?.action === 'snapshot' && input.selector ? selector(input.selector) : undefined;
@@ -683,7 +691,7 @@ export function createAgentBrowserComputer(options: {
       signal?.throwIfAborted();
       if (input.action === 'open') {
         const url = browserUrl(input.url ?? '');
-        if (state.saved.allowedOrigin && url.origin !== state.saved.allowedOrigin)
+        if (outsideSavedSite(state.saved.allowedOrigin, url.href))
           throw new BrowserActionError('browser_origin_changed');
         const previous = state.saved.restoreSession ? state.saved : await screens.load(id);
         if (previous?.restoreSession) {
@@ -840,7 +848,7 @@ export function createAgentBrowserComputer(options: {
           if (!script.trim() || script.length > 20_000)
             throw new Error('Provide a script of at most 20,000 characters.');
           const url = await currentUrl(state, signal);
-          if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
+          if (outsideSavedSite(state.saved.allowedOrigin, url))
             throw new BrowserActionError('browser_origin_changed');
           const value = await evaluate(
             state,
@@ -887,7 +895,7 @@ export function createAgentBrowserComputer(options: {
         throw new Error('Close this browser before uploading more files.');
       markActivity(id);
       const current = await currentUrl(state, signal);
-      if (state.saved.allowedOrigin && new URL(current).origin !== state.saved.allowedOrigin)
+      if (outsideSavedSite(state.saved.allowedOrigin, current))
         throw new BrowserActionError('browser_origin_changed');
       const directory = resolve(uploadRoot, randomUUID());
       await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -915,7 +923,7 @@ export function createAgentBrowserComputer(options: {
       signal?.throwIfAborted();
       markActivity(id);
       const current = await currentUrl(state, signal);
-      if (state.saved.allowedOrigin && new URL(current).origin !== state.saved.allowedOrigin)
+      if (outsideSavedSite(state.saved.allowedOrigin, current))
         throw new BrowserActionError('browser_origin_changed');
       const directory = resolve(runtimeRoot, 'downloads', state.id);
       let target = input.selector ? selector(input.selector) : undefined;
@@ -946,7 +954,7 @@ export function createAgentBrowserComputer(options: {
         }
       }
       const crossOrigin = url && new URL(url).origin !== new URL(current).origin;
-      if (state.saved.allowedOrigin && url && new URL(url).origin !== state.saved.allowedOrigin)
+      if (url && outsideSavedSite(state.saved.allowedOrigin, url))
         throw new BrowserActionError('browser_origin_changed');
       if (url) {
         if (!url.startsWith(`blob:${new URL(current).origin}/`)) browserUrl(url);
@@ -1080,7 +1088,7 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       const url = await currentUrl(state);
-      if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
+      if (outsideSavedSite(state.saved.allowedOrigin, url))
         throw new BrowserActionError('browser_origin_changed');
       return {
         origin: browserUrl(url).origin,
@@ -1106,7 +1114,7 @@ export function createAgentBrowserComputer(options: {
     if (state.recovered && state.saved.sensitive && !state.secrets.size)
       throw new Error('Reopen the login page before continuing this browser session.');
     const url = await currentUrl(state, signal);
-    if (state.saved.allowedOrigin && new URL(url).origin !== state.saved.allowedOrigin)
+    if (outsideSavedSite(state.saved.allowedOrigin, url))
       throw new BrowserActionError('browser_origin_changed');
     const path = resolve(runtimeRoot, `screen-${state.id}.capture.png`);
     await command(state, ['screenshot', path], { signal });
@@ -1124,7 +1132,7 @@ export function createAgentBrowserComputer(options: {
   async function lastKnownScreen(id: string): Promise<Buffer | null> {
     const saved = await screens.load(id);
     if (saved?.navigationFailed) throw new BrowserActionError('browser_navigation_failed');
-    if (saved?.allowedOrigin && saved.url && new URL(saved.url).origin !== saved.allowedOrigin)
+    if (saved?.url && outsideSavedSite(saved.allowedOrigin, saved.url))
       throw new BrowserActionError('browser_origin_changed');
     const buffer = saved?.capturedAt ? await screens.read(id) : null;
     screenStatuses.set(
@@ -1132,6 +1140,41 @@ export function createAgentBrowserComputer(options: {
       buffer ? { state: 'last_known', capturedAt: saved?.capturedAt } : { state: 'unavailable' },
     );
     return buffer;
+  }
+
+  async function control(id: string, input: BrowserHandoffInput, signal?: AbortSignal) {
+    const state = await recoverBrowser(id);
+    if (!state?.started) throw new Error('Open a page in this task browser first.');
+    if (state.injecting) throw new BrowserLockedError();
+    markActivity(id);
+    await serialize(state, async () => {
+      if (state.injecting) throw new BrowserLockedError();
+      await stayOnSavedOrigin(state, signal);
+      const socket = await daemonSocket(state, signal);
+      if (input.type === 'click') {
+        const [width, height] = z
+          .tuple([z.number().positive(), z.number().positive()])
+          .parse(await evaluate(state, '[innerWidth, innerHeight]', signal));
+        await requestDaemon(
+          socket,
+          { action: 'mousemove', x: Math.round(input.x * width), y: Math.round(input.y * height) },
+          signal,
+        );
+        await requestDaemon(socket, { action: 'mousedown', button: 'left' }, signal);
+        await requestDaemon(socket, { action: 'mouseup', button: 'left' }, signal);
+      }
+      if (input.type === 'scroll')
+        await requestDaemon(socket, { action: 'wheel', deltaX: 0, deltaY: input.deltaY }, signal);
+      if (input.type === 'type')
+        await requestDaemon(
+          socket,
+          { action: 'keyboard', subaction: 'type', text: input.text },
+          signal,
+        );
+      if (input.type === 'key')
+        await requestDaemon(socket, { action: 'press', key: input.key }, signal);
+      await stayOnSavedOrigin(state, signal);
+    });
   }
 
   async function getScreenshot(id: string, signal?: AbortSignal): Promise<Buffer | null> {
@@ -1299,6 +1342,7 @@ export function createAgentBrowserComputer(options: {
     upload: tracked(upload),
     download: tracked(download),
     screenshot: tracked(getScreenshot),
+    control: tracked(control),
     screenStatus: (id) => screenStatuses.get(threadIdentity(id)) ?? { state: 'unavailable' },
     injectCredentials: tracked(injectCredentials),
     currentPage: tracked(currentPage),

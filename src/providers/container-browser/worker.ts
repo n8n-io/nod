@@ -96,6 +96,9 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
         throw new Error();
       return computer.upload(request.threadId, { ...input, bytes }, signal);
     }
+    case 'control':
+      if (!computer.control) throw new Error();
+      return computer.control(request.threadId, request.input, signal);
     case 'screenshot': {
       const image = await computer.screenshot(request.threadId, signal);
       if (image && image.length > imageBytes) throw new Error();
@@ -273,9 +276,11 @@ export async function startContainerBrowserWorker(
                 ? 'navigation'
                 : error instanceof BrowserActionError && error.code === 'browser_action_failed'
                   ? 'action'
-                  : error instanceof Error && 'statusCode' in error && error.statusCode === 423
-                    ? 'locked'
-                    : 'unavailable',
+                  : error instanceof BrowserActionError && error.code === 'browser_origin_changed'
+                    ? 'origin_changed'
+                    : error instanceof Error && 'statusCode' in error && error.statusCode === 423
+                      ? 'locked'
+                      : 'unavailable',
           metadata: metadata(await entry?.computer.catch(() => undefined), input),
         };
       } finally {

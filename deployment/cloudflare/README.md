@@ -6,7 +6,7 @@ The public Worker serves `dist/web` and sends `/api/*` to one private Node gatew
 | ---------------------------- | ------------------------------------ | ------------- | --------------- | -------------- |
 | `GatewayContainer`           | `otto-<environment>:<SHA>`           | `basic`       | 1               | 1              |
 | `TenantContainer`            | same runtime image                   | `basic`       | 8               | 100            |
-| `BrowserComputerContainer`   | `otto-<environment>-browser:<SHA>`   | `standard-1`  | 8               | 100            |
+| `BrowserComputerContainer`   | `otto-<environment>-browser:<SHA>`   | `standard-4`  | 8               | 100            |
 | `WorkspaceComputerContainer` | `otto-<environment>-workspace:<SHA>` | `basic`       | 8               | 100            |
 
 Production uses `OTTO_MAX_USERS=100` in `GATEWAY_ENV`. The default remains 8 for other deployments, with a maximum of 400. Admission must match the container limits; raise them together with database connections and budget.

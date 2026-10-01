@@ -700,6 +700,14 @@ export function Chat({
                   streaming={streamIds.has(message.streamId ?? '')}
                   inspectorEnabled={state.configuration.inspectorEnabled}
                   grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
+                  onHandoffDone={
+                    index === visibleMessages.length - 1 &&
+                    message.role === 'assistant' &&
+                    !working &&
+                    !sending
+                      ? () => void send('Done, I finished in the browser.', [])
+                      : undefined
+                  }
                   onReply={
                     message.turnId || persistedIds.has(message.id)
                       ? () => {

@@ -54,7 +54,7 @@ function CredentialForm({ id }: { id: string }) {
   const fields = request?.fields ?? [];
   const username =
     request?.kind === 'identifier' || fields.some((field) => field.kind === 'identifier');
-  const password = request?.kind === 'password' || request?.kind === 'identifier';
+  const password = request?.kind === 'password';
   const credentialMethod = request?.methods?.find((method) => method.id === 'credentials');
   const canFill = credentialMethod?.supported !== false;
   const savedEntries = request?.kind === 'otp' ? [] : (request?.savedEntries ?? []);
@@ -152,9 +152,8 @@ function CredentialForm({ id }: { id: string }) {
       request.kind === 'otp'
         ? { code: data.get('code') }
         : {
-            label: data.get('label'),
+            ...(password ? { label: data.get('label'), password: data.get('password') } : {}),
             ...(username ? { username: data.get('username') } : {}),
-            password: data.get('password'),
           };
     form.reset();
     return perform(

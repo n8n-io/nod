@@ -1,4 +1,5 @@
 import { browserErrorMessage, type BrowserErrorCode } from '../shared/browser-errors.ts';
+import type { BrowserHandoffInput } from '../shared/browser-handoff.ts';
 
 export class BrowserActionError extends Error {
   constructor(readonly code: BrowserErrorCode) {
@@ -97,6 +98,7 @@ export interface Computer {
     signal?: AbortSignal,
   ): Promise<BrowserObservation>;
   screenshot(threadId: string, signal?: AbortSignal): Promise<Buffer | null>;
+  control?(threadId: string, input: BrowserHandoffInput, signal?: AbortSignal): Promise<void>;
   screenStatus?(threadId: string): {
     state: 'live' | 'last_known' | 'unavailable';
     capturedAt?: string;

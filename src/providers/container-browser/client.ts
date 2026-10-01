@@ -179,6 +179,8 @@ export function createBridgeComputer(options: {
           return reject(new BrowserActionError('browser_click_intercepted'));
         if (response.error === 'action')
           return reject(new BrowserActionError('browser_action_failed'));
+        if (response.error === 'origin_changed')
+          return reject(new BrowserActionError('browser_origin_changed'));
         if (response.error === 'locked') {
           const error = new Error('Browser observations are paused during credential entry.');
           return reject(Object.assign(error, { statusCode: 423 }));
@@ -231,6 +233,9 @@ export function createBridgeComputer(options: {
         await call({ method: 'act', threadId: threadIdentity(id), input }, signal),
       ),
     screenshot: image,
+    control: async (id, input, signal) => {
+      await call({ method: 'control', threadId: threadIdentity(id), input }, signal);
+    },
     upload: async (id, input, signal) => {
       if (!input.bytes.length || input.bytes.length > browserUploadBytes)
         throw new Error('The browser file is too large.');

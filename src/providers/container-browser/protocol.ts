@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { browserUploadBytes } from '../../ports/computer.ts';
+import { browserHandoffInput } from '../../shared/browser-handoff.ts';
 
 export const browserSocketPath = '/data/control.sock';
 export const requestBytes = Math.ceil(browserUploadBytes / 3) * 4 + 8192;
@@ -117,6 +118,14 @@ export const browserRequest = z.discriminatedUnion('method', [
     })
     .strict(),
   z.object({ ...identity, method: z.literal('screenshot'), threadId: thread }).strict(),
+  z
+    .object({
+      ...identity,
+      method: z.literal('control'),
+      threadId: thread,
+      input: browserHandoffInput,
+    })
+    .strict(),
   z.object({ ...identity, method: z.literal('currentPage'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('injectCredentials'), input: credential }).strict(),
   z
@@ -174,6 +183,7 @@ export const browserResponse = z.discriminatedUnion('ok', [
         'locked',
         'navigation',
         'click_intercepted',
+        'origin_changed',
         'action',
         'unavailable',
       ]),

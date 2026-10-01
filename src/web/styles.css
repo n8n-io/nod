@@ -682,6 +682,43 @@ input[type='range']:disabled {
 .message-assistant .message-content {
   max-width: min(90%, 86ch);
 }
+.message-assistant .message-content:has(.browser-handoff) {
+  flex: 1;
+  max-width: 100%;
+}
+.browser-handoff {
+  margin: 10px 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--background);
+}
+.browser-handoff-screen {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  background: #111;
+  outline: none;
+}
+.browser-handoff-screen:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.browser-handoff-screen img {
+  display: block;
+  width: 100%;
+  height: auto;
+  cursor: pointer;
+  user-select: none;
+}
+.browser-handoff-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
 .message-user {
   justify-content: flex-end;
 }
@@ -797,6 +834,11 @@ input[type='range']:disabled {
 .message-text .setup-group a:hover,
 .message-text .setup-group button:hover {
   background: var(--accent-soft);
+}
+.message-text .setup-group button:disabled {
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: default;
 }
 .message-text .setup-group a:focus-visible,
 .message-text .setup-group button:focus-visible {

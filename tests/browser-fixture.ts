@@ -121,9 +121,17 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
                                   ? ['-s', command.selector]
                                   : []),
                               ]
-                            : command.action === 'close'
-                              ? ['close']
-                              : null;
+                            : command.action === 'mousemove'
+                              ? ['mouse', 'move', String(command.x), String(command.y)]
+                              : command.action === 'mousedown' || command.action === 'mouseup'
+                                ? ['mouse', command.action.slice(5)]
+                                : command.action === 'wheel'
+                                  ? ['mouse', 'wheel', String(command.deltaY)]
+                                  : command.action === 'keyboard'
+                                    ? ['keyboard', 'type', String(command.text)]
+                                    : command.action === 'close'
+                                      ? ['close']
+                                      : null;
       if (!args) throw new Error('Unsupported synthetic browser action.');
       const result = await run(session.executable, [...session.args, ...args], {
         ...session.options,

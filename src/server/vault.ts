@@ -170,7 +170,7 @@ type SelectionRow = {
 export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question') {
   return `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}
     AND EXISTS(SELECT 1 FROM threads wt WHERE wt.id=${alias}.thread_id AND wt.owner_id=${alias}.owner_id AND wt.archived_at IS NULL)
-    AND NOT EXISTS(SELECT 1 FROM turns wn WHERE wn.thread_id=${alias}.thread_id AND wn.id<>${alias}.id AND wn.started_at>=${alias}.started_at)`;
+    AND NOT EXISTS(SELECT 1 FROM turns wn WHERE wn.thread_id=${alias}.thread_id AND wn.id<>${alias}.id AND NOT wn.background AND wn.started_at>=${alias}.started_at)`;
 }
 
 class VaultError extends Error {
@@ -818,13 +818,23 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       url: page?.url ?? origin,
       fields: [
         ...(usernameSelector
-          ? [{ kind: 'identifier' as const, selector: usernameSelector, label: 'Username' }]
+          ? [
+              {
+                kind: 'identifier' as const,
+                selector: usernameSelector,
+                label: 'Email, phone or username',
+              },
+            ]
           : []),
         {
           kind,
           selector: target,
           label:
-            kind === 'identifier' ? 'Username' : kind === 'otp' ? 'Verification code' : 'Password',
+            kind === 'identifier'
+              ? 'Email, phone or username'
+              : kind === 'otp'
+                ? 'Verification code'
+                : 'Password',
         },
       ],
       methods: [{ id: 'credentials', kind: 'credentials', label: 'Secure entry', supported: true }],

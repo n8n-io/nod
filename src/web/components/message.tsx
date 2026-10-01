@@ -20,6 +20,7 @@ import { rehypeLocalLinks } from '../lib/markdown';
 import { nextReaction, reactionName } from '../lib/reactions';
 import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
+import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 import { integrationServiceIds, integrationServices } from '../../shared/integrations';
@@ -30,10 +31,12 @@ export const MessageText = memo(function MessageText({
   text,
   previews = false,
   connectedAppIds,
+  onHandoffDone,
 }: {
   text: string;
   previews?: boolean;
   connectedAppIds?: ReadonlySet<string>;
+  onHandoffDone?: () => void;
 }) {
   const content = useRef<HTMLDivElement>(null);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
@@ -93,7 +96,14 @@ export const MessageText = memo(function MessageText({
         >
           {text}
         </Markdown>
-        <SetupActions actions={actions.filter((action) => !connected(action.href, action.label))} />
+        <SetupActions
+          actions={actions.filter(
+            (action) => action.setup !== 'browser' && !connected(action.href, action.label),
+          )}
+        />
+        {onHandoffDone && actions.some((action) => action.setup === 'browser') && (
+          <BrowserHandoff onDone={onHandoffDone} />
+        )}
       </div>
       {previews && <MessageLinkPreviews content={content} text={text} />}
     </>
@@ -115,6 +125,7 @@ export function MessageBubble({
   grouped = false,
   streaming = false,
   onReply,
+  onHandoffDone,
 }: {
   message: Message;
   connectedAppIds?: ReadonlySet<string>;
@@ -122,6 +133,7 @@ export function MessageBubble({
   grouped?: boolean;
   streaming?: boolean;
   onReply?(): void;
+  onHandoffDone?(): void;
 }) {
   const dateFormat = useDateFormat();
   const [error, setError] = useState('');
@@ -360,6 +372,7 @@ export function MessageBubble({
               text={message.text}
               previews={!streaming}
               connectedAppIds={connectedAppIds}
+              onHandoffDone={streaming ? undefined : onHandoffDone}
             />
           )}
           {streaming && <span className="stream-cursor" />}

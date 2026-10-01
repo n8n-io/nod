@@ -83,6 +83,7 @@ test(
     let inspectorEnabled = false;
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
+    const controls: unknown[] = [];
     const app = await createApp({
       configuration: () => configuration({ inspectorEnabled }),
       computer: {
@@ -97,6 +98,9 @@ test(
           if (fail) throw new Error('synthetic-private-provider-detail');
           await onCapture?.();
           return Buffer.from('synthetic-public-browser-frame');
+        },
+        control: async (id, input) => {
+          controls.push([id, input]);
         },
       },
     });
@@ -211,6 +215,39 @@ test(
       assert.deepEqual(Object.keys(fallback), ['currentBrowser']);
       currentId = thread.id;
       assert.deepEqual((await request('/api/browser')).json(), { currentBrowser: null });
+
+      fail = false;
+      const click = { type: 'click', x: 0.5, y: 0.25 };
+      const handoff = async (input: unknown = click) => [
+        (await request('/api/browser-handoff/screen')).statusCode,
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/api/browser-handoff',
+            payload: input as object,
+            headers: { host: `localhost:${port}` },
+          })
+        ).statusCode,
+      ];
+      assert.deepEqual(await handoff(), [423, 423]);
+      await db.pool.query(
+        "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
+        [nextTurnId],
+      );
+      assert.deepEqual(await handoff(), [423, 423]);
+      await db.pool.query("UPDATE turns SET waiting_reason='question' WHERE id=$1", [nextTurnId]);
+      assert.deepEqual(await handoff(), [200, 200]);
+      assert.deepEqual(controls, [[next.id, click]]);
+      assert.deepEqual(await handoff({ type: 'click', x: 2, y: 0 }), [200, 400]);
+      const check = randomUUID();
+      await db.pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Check','running',true)",
+        [check, ownerId, next.id],
+      );
+      assert.deepEqual(await handoff(), [423, 423]);
+      await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [check]);
+      assert.deepEqual(await handoff(), [200, 200]);
+      assert.equal(controls.length, 2);
     } finally {
       await app.close();
       await db.pool.end();
@@ -1079,6 +1116,70 @@ test('profile origin remains authoritative when the page navigates after its ini
         (error) => error instanceof BrowserActionError && error.code === 'browser_origin_changed',
       );
     }
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the user can click, type and scroll in the handed-off browser at page coordinates', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-'));
+  const fixture = stagedLoginBrowser();
+  const commands: Record<string, unknown>[] = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: fixture.run,
+    onDaemonCommand: (command) => commands.push(command),
+  });
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    commands.length = 0;
+    await computer.control!('fixture', { type: 'click', x: 0.5, y: 0.25 });
+    await computer.control!('fixture', { type: 'type', text: 'ab' });
+    await computer.control!('fixture', { type: 'key', key: 'Enter' });
+    await computer.control!('fixture', { type: 'scroll', deltaY: 300 });
+    assert.deepEqual(
+      commands
+        .filter((command) => !['url', 'evaluate'].includes(String(command.action)))
+        .map(({ id: _id, plugins: _plugins, ...command }) => command),
+      [
+        { action: 'mousemove', x: 512, y: 192 },
+        { action: 'mousedown', button: 'left' },
+        { action: 'mouseup', button: 'left' },
+        { action: 'keyboard', subaction: 'type', text: 'ab' },
+        { action: 'press', key: 'Enter' },
+        { action: 'wheel', deltaX: 0, deltaY: 300 },
+      ],
+    );
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a saved session can move within its site but not to another site', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-profile-site-'));
+  const fixture = stagedLoginBrowser();
+  const profileId = randomUUID();
+  let href = 'https://www.example.com/';
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: (executable, args, options) => {
+      const page = fixture.pages.get(profileId);
+      if (page) page.location = { origin: new URL(href).origin, href };
+      return fixture.run(executable, args, options);
+    },
+  });
+  try {
+    await computer.bindProfile!('fixture', profileId, 'https://www.example.com');
+    await computer.act('fixture', { action: 'open', url: href });
+    href = 'https://account.example.com/sign-in';
+    await computer.act('fixture', { action: 'snapshot' });
+    href = 'https://example.net/sign-in';
+    await assert.rejects(
+      computer.act('fixture', { action: 'snapshot' }),
+      (error) => error instanceof BrowserActionError && error.code === 'browser_origin_changed',
+    );
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });

@@ -32,6 +32,7 @@ import { createMultipartReader } from './multipart.ts';
 import type { SpeechService } from './speech.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
+import { browserHandoffInput } from '../shared/browser-handoff.ts';
 import type {
   Configuration,
   Message,
@@ -64,7 +65,10 @@ export interface AppDependencies {
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   speech?: SpeechService;
-  computer?: Pick<Computer, 'screenshot' | 'status' | 'screenStatus' | 'currentSession'>;
+  computer?: Pick<
+    Computer,
+    'screenshot' | 'control' | 'status' | 'screenStatus' | 'currentSession'
+  >;
   runtime?: {
     status(): { browser: string; workspace: string; activeThreads?: number };
     inspectTools?(): AgentToolMetadata[];
@@ -488,12 +492,28 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     return latest.rows[0]?.status === 'waiting' && latest.rows[0].waiting_reason === 'credentials';
   }
-  async function readBrowserScreen(_request: FastifyRequest, reply: FastifyReply) {
+  async function handoffOpen(threadId: string) {
+    const latest = await pool.query(
+      "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
+      [ownerId, threadId],
+    );
+    if (latest.rows[0]?.status !== 'waiting' || latest.rows[0].waiting_reason !== 'question')
+      return false;
+    const running = await pool.query(
+      "SELECT 1 FROM turns WHERE owner_id=$1 AND thread_id=$2 AND status='running' LIMIT 1",
+      [ownerId, threadId],
+    );
+    return !running.rowCount;
+  }
+  const handoffClosed = 'The browser opens here only while Otto is waiting for you.';
+  async function readBrowserScreen(reply: FastifyReply, handoff = false) {
     const thread = await activeThread(pool);
-    if (await credentialEntryOpen(thread.id))
-      return reply
-        .code(423)
-        .send({ error: 'Browser observations are paused during credential entry.' });
+    const blocked = async () =>
+      handoff ? !(await handoffOpen(thread.id)) : await credentialEntryOpen(thread.id);
+    if (await blocked())
+      return reply.code(423).send({
+        error: handoff ? handoffClosed : 'Browser observations are paused during credential entry.',
+      });
     let screen: Buffer | null | undefined;
     try {
       screen = await dependencies.computer?.screenshot(thread.id);
@@ -507,21 +527,39 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const current = await activeThread(pool);
     if (current.id !== thread.id)
       return reply.code(409).send({ error: 'The browser session changed. Request a new view.' });
-    if (await credentialEntryOpen(thread.id))
-      return reply
-        .code(423)
-        .send({ error: 'Browser observations are paused during credential entry.' });
+    if (await blocked())
+      return reply.code(423).send({
+        error: handoff ? handoffClosed : 'Browser observations are paused during credential entry.',
+      });
     if (!screen) return reply.code(404).send({ error: 'There is no browser screen yet.' });
     const screenStatus = dependencies.computer?.screenStatus?.(thread.id);
     reply.header('X-Screen-State', screenStatus?.state ?? 'live');
     if (screenStatus?.capturedAt) reply.header('X-Screen-Captured-At', screenStatus.capturedAt);
     return reply.type('image/png').send(screen);
   }
-  app.get('/api/browser/screen', readBrowserScreen);
-  app.get('/api/inspector/screen', (request, reply) => {
+  app.get('/api/browser/screen', (_request, reply) => readBrowserScreen(reply));
+  app.get('/api/inspector/screen', (_request, reply) => {
     if (!publicConfiguration().inspectorEnabled)
       return reply.code(404).send({ error: 'Inspector is disabled.' });
-    return readBrowserScreen(request, reply);
+    return readBrowserScreen(reply);
+  });
+  app.get('/api/browser-handoff/screen', (_request, reply) => readBrowserScreen(reply, true));
+  app.post('/api/browser-handoff', async (request, reply) => {
+    const input = browserHandoffInput.safeParse(request.body);
+    if (!input.success)
+      return reply.code(400).send({ error: 'Send a click, scroll, key or text.' });
+    const control = dependencies.computer?.control;
+    if (!control) return reply.code(404).send({ error: 'The browser is unavailable.' });
+    const thread = await activeThread(pool);
+    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    try {
+      await control(thread.id, input.data);
+    } catch (error) {
+      if (error instanceof BrowserActionError)
+        return reply.code(409).send({ code: error.code, error: browserErrorMessage(error.code) });
+      throw error;
+    }
+    return { ok: true };
   });
   return app;
 }

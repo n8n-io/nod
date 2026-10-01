@@ -26,8 +26,8 @@ services:
     security_opt: [no-new-privileges:true]
     read_only: true
     pids_limit: 1024
-    mem_limit: 6g
-    cpus: 2
+    mem_limit: 8g
+    cpus: 6
     shm_size: 256m
     volumes:
       - browser-data:/data
