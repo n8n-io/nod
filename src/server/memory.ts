@@ -1,101 +1,62 @@
-import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import type { PrivateObjectStore } from '../ports/object-storage.ts';
+import type { Embedder } from '../ports/embedder.ts';
+import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-storage.ts';
+import { createMemoryVectors } from './memory-vectors.ts';
+import {
+  archive,
+  area,
+  areaEntries,
+  find,
+  fold,
+  id,
+  indexLayout,
+  isEmpty,
+  line,
+  locate,
+  maxBytes,
+  maxEntries,
+  open,
+  parse,
+  path,
+  pathOf,
+  render,
+  similar,
+  slug,
+  slugFor,
+  unsafe,
+  view,
+  type Entry,
+  type Tree,
+} from './memory-tree.ts';
 
 const key = 'memory/MEMORY.md';
-const maxBytes = 64 * 1024;
-const maxEntries = 50;
-const id = z.uuid();
-const kind = z.enum(['fact', 'preference', 'pattern']);
-export const personalSecret =
-  /\b(?:password|passcode|passphrase|otp|pin|2fa|api[ _-]?key|secret|token|bearer|private[ _-]?key|security code|cvv|cvc|verification code|recovery code|palavra[ _-]?passe|senha|código de verificação)\b|\bsk-[A-Za-z0-9_-]{12,}|\b(?:\d[ -]?){14,19}\b/i;
-const block =
-  /^## ([0-9a-f-]{36})\nKind: (fact|preference|pattern)\nUpdated: (\d{4}-\d\d-\d\dT[^\n]+)\nSources: ([0-9a-f-, ]+)\n\n([^\n]+)$/;
-const entrySchema = z.object({
-  id,
-  kind,
-  updated: z.iso.datetime({ offset: true }),
-  sources: z.array(id).min(1).max(5),
-  text: z.string().min(1).max(300),
-});
 
 const saveInput = z
   .object({
-    id: id.optional(),
-    kind,
-    text: z
-      .string()
-      .trim()
-      .min(1)
-      .max(300)
-      .refine((text) => !/[\r\n]/.test(text)),
+    area,
+    slug: slug.optional(),
+    text: line(600),
+    abstract: line(120).optional(),
+    expires: z.iso.date().optional(),
     replace: z.boolean().optional(),
   })
   .strict();
-
-type Entry = z.infer<typeof entrySchema>;
-
-function validate(raw: unknown) {
-  const input = saveInput.parse(raw);
-  if (personalSecret.test(input.text))
-    throw new Error('Sign-in details and payment secrets cannot be remembered.');
-  return input;
-}
-
-// Invalid or secret-bearing blocks are skipped so one bad entry cannot disable or leak memory; the next write drops them.
-function parse(bytes?: Uint8Array): Entry[] {
-  if (!bytes) return [];
-  const body = new TextDecoder().decode(bytes).replace(/^# Memory\n/, '');
-  const entries = new Map<string, Entry>();
-  for (const part of body.split(/\n(?=## )/)) {
-    const match = block.exec(part.trim());
-    const entry = entrySchema.safeParse(
-      match && {
-        id: match[1],
-        kind: match[2],
-        updated: match[3],
-        sources: match[4].split(', '),
-        text: match[5],
-      },
-    );
-    if (entry.success && !personalSecret.test(entry.data.text) && !entries.has(entry.data.id))
-      entries.set(entry.data.id, entry.data);
-  }
-  return [...entries.values()];
-}
-
-function render(entries: Entry[]) {
-  const body = entries
-    .map(
-      (entry) =>
-        `## ${entry.id}\nKind: ${entry.kind}\nUpdated: ${entry.updated}\nSources: ${entry.sources.join(', ')}\n\n${entry.text}`,
-    )
-    .join('\n\n');
-  const bytes = new TextEncoder().encode(`# Memory\n${body ? `\n${body}\n` : ''}`);
-  if (bytes.length > maxBytes) throw new Error('The memory file is full.');
-  return bytes;
-}
-
-function visible(entry: Entry) {
-  return {
-    id: entry.id,
-    kind: entry.kind,
-    text: entry.text,
-    status:
-      entry.kind === 'pattern' ? (entry.sources.length > 1 ? 'observed' : 'tentative') : 'stated',
-    sources: entry.sources,
-    updated: entry.updated,
-  };
-}
+const findInput = z
+  .object({ query: z.string().trim().min(1).max(200), area: area.optional() })
+  .strict();
+const readInput = z.object({ path: z.union([area, path]) }).strict();
 
 export function createMemoryService(options: {
   pool: Pool;
   ownerId: string;
   store: PrivateObjectStore;
+  embedder?: Embedder;
 }) {
-  // Threads that predate the table may already hold outside content in their Pi sessions, so mark them all once.
+  const vectors = createMemoryVectors(options);
+
   async function initialize() {
+    await vectors.initialize();
     await options.pool.query(`DO $$ BEGIN
       IF to_regclass('memory_untrusted_threads') IS NULL THEN
         CREATE TABLE IF NOT EXISTS memory_untrusted_threads (owner_id text NOT NULL, thread_id uuid NOT NULL, marked_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (owner_id, thread_id));
@@ -106,8 +67,6 @@ export function createMemoryService(options: {
     END $$`);
   }
 
-  // A thread is marked before Pi first receives web, file, app or earlier-conversation content.
-  // Pi keeps that content in its session, so inferred saves need confirmation until the thread is reset.
   async function markUntrusted(threadId: string) {
     await options.pool.query(
       'INSERT INTO memory_untrusted_threads(owner_id,thread_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
@@ -123,29 +82,45 @@ export function createMemoryService(options: {
     return !!rowCount;
   }
 
-  async function read() {
+  async function load() {
     const object = await options.store.read(key, maxBytes);
-    return { entries: parse(object?.bytes), version: object?.version ?? null };
+    return { tree: parse(object?.bytes), bytes: object?.bytes, version: object?.version ?? null };
+  }
+
+  async function edit<T>(change: (tree: Tree) => T): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      const current = await load();
+      const result = change(current.tree);
+      const bytes = render(current.tree);
+      if (current.bytes ? Buffer.from(current.bytes).equals(bytes) : isEmpty(current.tree))
+        return result;
+      try {
+        await options.store.write(key, bytes, { expectedVersion: current.version });
+        return result;
+      } catch (error) {
+        if (!(error instanceof ObjectStoreConflict) || attempt === 2) throw error;
+      }
+    }
+  }
+
+  function validate(raw: unknown) {
+    const input = saveInput.parse(raw);
+    if (unsafe(input.text, input.abstract))
+      throw new Error(
+        'Sign-in details, payment secrets and instructions to the assistant cannot be remembered.',
+      );
+    return input;
   }
 
   async function context() {
-    const { entries } = await read();
-    return entries
-      .toSorted((a, b) => b.updated.localeCompare(a.updated))
-      .slice(0, maxEntries)
-      .map((entry) => visible(entry))
-      .map(({ id, kind, text, status }) => ({ id, kind, text, status }));
-  }
-
-  async function list() {
-    return (await read()).entries.map(visible);
+    return indexLayout((await load()).tree).text;
   }
 
   async function cites(messageId: string | null) {
-    return (await read()).entries.some((entry) => !!messageId && entry.sources.includes(messageId));
+    const { tree } = await load();
+    return tree.entries.some((entry) => !!messageId && entry.sources.includes(messageId));
   }
 
-  // An approval is already bound to its requesting user message, so it skips the current-turn check.
   async function save(
     raw: unknown,
     provenance: { sourceMessageId: string | null } & ({ turnId: string } | { approved: true }),
@@ -158,41 +133,85 @@ export function createMemoryService(options: {
     );
     if (!source.rowCount)
       throw new Error('The current owned user message is required as evidence.');
-    const current = await read();
-    const existing = input.id
-      ? current.entries.find((entry) => entry.id === input.id)
-      : current.entries.find((entry) => entry.text.toLowerCase() === input.text.toLowerCase());
-    if (input.id && !existing) throw new Error('The memory entry was not found.');
-    if (existing && existing.kind !== input.kind && !input.replace)
-      throw new Error('A change of memory type needs a replacement.');
-    if (existing && existing.text !== input.text && !input.replace)
-      throw new Error('A change of memory text needs a replacement.');
-    const entry: Entry = {
-      id: existing?.id ?? randomUUID(),
-      kind: input.kind,
-      text: input.text,
-      sources: input.replace
-        ? [sourceMessageId]
-        : [...new Set([...(existing?.sources ?? []), sourceMessageId])].slice(-5),
-      updated: new Date().toISOString(),
-    };
-    const entries = existing
-      ? current.entries.map((item) => (item.id === existing.id ? entry : item))
-      : [...current.entries, entry];
-    if (!existing && entries.length > maxEntries) throw new Error('The memory file is full.');
-    await options.store.write(key, render(entries), { expectedVersion: current.version });
-    return visible(entry);
+    return edit((tree) => {
+      const now = new Date().toISOString();
+      const group = areaEntries(tree, input.area);
+      const same = input.slug
+        ? undefined
+        : group.find((entry) => fold(entry.text) === fold(input.text));
+      const near =
+        input.slug || same ? undefined : group.find((e) => similar(e.text, input.text, 0.6));
+      if (near)
+        throw new Error(
+          `A similar memory exists at ${pathOf(near)}. Save to its slug to add evidence, or use replace:true for a correction.`,
+        );
+      const name = input.slug ?? same?.slug ?? slugFor(tree, input.area, input.text);
+      const existing = locate(tree, `${input.area}/${name}`);
+      const replaced = !!existing && existing.text !== input.text;
+      if (replaced && !input.replace)
+        throw new Error('A change of memory text needs a replacement.');
+      if (!existing && tree.entries.length >= maxEntries)
+        throw new Error('The memory is full. Forget entries first.');
+      if (existing && replaced) archive(tree, existing, 'superseded', now);
+      const abstract = input.abstract ?? (replaced ? undefined : existing?.abstract);
+      const expires = input.expires ?? (replaced ? undefined : existing?.expires);
+      const entry: Entry = {
+        area: input.area,
+        slug: name,
+        text: input.text,
+        ...(abstract ? { abstract } : {}),
+        origin: 'stated',
+        updated: now,
+        sources: replaced
+          ? [sourceMessageId]
+          : [...new Set([...(existing?.sources ?? []), sourceMessageId])].slice(-5),
+        ...(expires ? { expires } : {}),
+      };
+      tree.entries = [...tree.entries.filter((item) => item !== existing), entry];
+      return { path: pathOf(entry), text: entry.text, status: 'stated' };
+    });
   }
 
   async function forget(raw: unknown) {
-    const selected = id.parse(raw);
-    const current = await read();
-    const entries = current.entries.filter((entry) => entry.id !== selected);
-    if (entries.length === current.entries.length)
-      throw new Error('The memory entry was not found.');
-    await options.store.write(key, render(entries), { expectedVersion: current.version });
-    return { ok: true };
+    const target = path.parse(raw);
+    const result = await edit((tree) => {
+      const entry = locate(tree, target);
+      const archived = tree.archive.length;
+      tree.archive = tree.archive.filter((item) => pathOf(item) !== target && item.by !== target);
+      if (!entry && tree.archive.length === archived)
+        throw new Error('The memory entry was not found.');
+      tree.entries = tree.entries.filter((item) => item !== entry);
+      delete tree.overviews[target.split('/')[0] as keyof Tree['overviews']];
+      return { ok: true };
+    });
+    await vectors.drop(target);
+    return result;
   }
 
-  return { initialize, markUntrusted, untrusted, validate, context, list, cites, save, forget };
+  return {
+    initialize,
+    markUntrusted,
+    untrusted,
+    validate,
+    context,
+    cites,
+    save,
+    forget,
+    edit,
+    load: async () => (await load()).tree,
+    view: async () => view((await load()).tree),
+    find: async (raw: unknown) => {
+      const input = findInput.parse(raw);
+      const { tree } = await load();
+      return find(
+        tree,
+        input.query,
+        input.area,
+        await vectors.similarity(tree.entries, input.query),
+      );
+    },
+    read: async (raw: unknown) => open((await load()).tree, readInput.parse(raw).path),
+  };
 }
+
+export type MemoryService = ReturnType<typeof createMemoryService>;

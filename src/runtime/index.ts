@@ -54,7 +54,8 @@ const readOnlyTools: Record<string, true | string[]> = {
     'profile_get',
     'notification_preferences_get',
     'history_search',
-    'memory_list',
+    'memory_find',
+    'memory_read',
     'schedule_list',
     'goal_list',
   ],
@@ -509,7 +510,7 @@ export function createAgentRuntime(dependencies: {
         }),
       );
       const system = systemPrompt(workspace);
-      const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: [] })}`;
+      const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
       const instruct = (
         instruction: string,
         imageCount: number,

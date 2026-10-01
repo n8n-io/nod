@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { createPreferencesStore } from './preferences.ts';
-import { personalSecret, type createMemoryService } from './memory.ts';
+import type { MemoryService } from './memory.ts';
+import { personalSecret } from './memory-tree.ts';
 import { activeThreadSql } from './thread.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
 
@@ -38,7 +39,7 @@ const declinedPersonalAnswer =
 const goalColumns =
   'id,title,description,progress,status,next_action AS "nextAction",target_date AS "targetDate",updated_at AS "updatedAt"';
 type PersonalDependencies = ScheduleDependencies & {
-  memory?: ReturnType<typeof createMemoryService>;
+  memory?: MemoryService;
 };
 
 export function createPersonalService(dependencies: PersonalDependencies) {
@@ -302,7 +303,14 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     }
     if (action === 'schedule_cancel')
       return schedules.update(String(args.id || ''), { enabled: false }, provenance);
-    if (action === 'memory_list') return memory?.list() ?? [];
+    if (action === 'memory_find') {
+      if (!memory) throw new Error('Memory is unavailable.');
+      return memory.find(args);
+    }
+    if (action === 'memory_read') {
+      if (!memory) throw new Error('Memory is unavailable.');
+      return memory.read(args);
+    }
     if (action === 'memory_save') {
       if (!memory) throw new Error('Memory is unavailable.');
       return memory.save(args, {
@@ -312,7 +320,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     }
     if (action === 'memory_forget') {
       if (!memory) throw new Error('Memory is unavailable.');
-      return memory.forget(args.id);
+      return memory.forget(args.path);
     }
     if (action === 'history_search') {
       const query = z.string().min(1).max(200).parse(args.query);
@@ -330,6 +338,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   }
 
   function registerRoutes(app: FastifyInstance) {
+    app.get('/api/memory', () => memory?.view() ?? { areas: [], archive: [] });
     app.get('/api/profile', getProfile);
     app.put('/api/profile', (request) => setProfile(request.body));
     app.get('/api/goals', listGoals);

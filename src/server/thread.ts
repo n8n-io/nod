@@ -795,7 +795,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     ),
     pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [ownerId]),
     dependencies.accountProfile?.().catch(() => undefined),
-    dependencies.memoryContext?.().catch(() => []),
+    dependencies.memoryContext?.().catch(() => ''),
     turn.background ? dependencies.connectedApps?.() : undefined,
     turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
   ]);
@@ -824,7 +824,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       locale: preference?.locale || formattingLocale(timeZoneRegion(timeZone)),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,
       ...(account ? { account } : {}),
-      memory: memory ?? [],
+      memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),
       ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 8, timeoutMs: 90_000 } } : {}),
       personalContext: {

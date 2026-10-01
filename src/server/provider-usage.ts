@@ -16,6 +16,7 @@ const schema = z
     category: z.enum([
       'agent',
       'relevance',
+      'memory',
       'browser',
       'integration',
       'speech',

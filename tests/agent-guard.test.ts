@@ -145,13 +145,13 @@ test('saved memory reaches Pi but stays out of inspector records', async () => {
   const result = await fixture(
     async (tools) => {
       const found = await call(tools, 'manage_personal_context', {
-        action: 'memory_list',
-        args: {},
+        action: 'memory_find',
+        args: { query: 'reports' },
       });
       assert.match(JSON.stringify(found), /short synthetic reports/);
     },
     {
-      memory: [{ id: randomUUID(), kind: 'preference', text: note, status: 'stated' }],
+      memory: JSON.stringify({ preferences: [`short-reports: ${note}`] }),
       manage: async () => [{ text: note }],
       observe: async (event) => {
         observations.push(event);
@@ -583,6 +583,31 @@ test('a read-only turn refuses every outside action with a fixed error and still
   assert.equal(sideEffects, 0);
   assert.deepEqual(result.replies, ['You have two threads to answer.']);
   assert.deepEqual(result.result, { status: 'succeeded' });
+});
+
+test('read-only turns can search memory but not change it', async () => {
+  const actions: string[] = [];
+  await fixture(
+    async (tools) => {
+      for (const action of ['memory_find', 'memory_read'])
+        await call(tools, 'manage_personal_context', { action, args: {} });
+      for (const action of ['memory_save', 'memory_forget'])
+        await assert.rejects(
+          call(tools, 'manage_personal_context', { action, args: {} }),
+          (error: Error) => error.message === refusal,
+          action,
+        );
+    },
+    {
+      readOnly: true,
+      background: true,
+      manage: async (action) => {
+        actions.push(action);
+        return [];
+      },
+    },
+  );
+  assert.deepEqual(actions, ['memory_find', 'memory_read']);
 });
 
 test('activity checks scope reads to one account, deny other tools and record exactly once without chat', async () => {

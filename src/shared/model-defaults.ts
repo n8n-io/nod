@@ -4,3 +4,5 @@ export const agentModels = {
 } as const;
 
 export const relevanceModel = 'gpt-6-luna';
+
+export const embeddingModel = 'text-embedding-3-small';

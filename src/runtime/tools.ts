@@ -18,7 +18,8 @@ export const personalActions = [
   'notification_preferences_get',
   'notification_preferences_update',
   'history_search',
-  'memory_list',
+  'memory_find',
+  'memory_read',
   'memory_save',
   'memory_forget',
   'schedule_list',
@@ -266,7 +267,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's profile, goals, schedules, notification preferences, memory and earlier conversation. memory_list {}, memory_save {kind:'fact'|'preference'|'pattern', text, id?, replace?}, memory_forget {id}. A memory write uses the current owned user message as evidence and is shown in chat; do not repeat it. Reuse an entry ID to add evidence; use replace:true for a correction. Save lasting user facts and repeated patterns, never a guess or a website claim. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} saves a checked value for the current scheduled run and returns the previous one; profile_learn {field, value, quote}; history_search {query}.",
+    "The user's profile, goals, schedules, notification preferences, memory and earlier conversation. Memory is a tree of areas about, preferences, people, routines and lessons; the owner context lists its index. memory_find {query, area?} searches it by meaning and words, memory_read {path} opens an area (summary and entry lines) or an area/slug entry in full, memory_save {area, text, slug?, abstract?, expires?:'YYYY-MM-DD', replace?}, memory_forget {path}. A memory save uses the current owned user message as evidence and is shown in chat; do not repeat it. Save to an existing slug to add evidence; use replace:true for a correction. Save lasting user facts and clear preferences, never a guess or a website claim; set expires on time-bound facts. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} saves a checked value for the current scheduled run and returns the previous one; profile_learn {field, value, quote}; history_search {query}.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
