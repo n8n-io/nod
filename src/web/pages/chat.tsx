@@ -115,6 +115,11 @@ export function Chat({
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState('');
   const [reportStatus, setReportStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
+  useEffect(() => {
+    if (reportStatus !== 'copied') return;
+    const timeout = setTimeout(() => setReportStatus('idle'), 2000);
+    return () => clearTimeout(timeout);
+  }, [reportStatus]);
   const [connectionNotice, setConnectionNotice] = useState<{
     text: string;
     kind: 'success' | 'error';
