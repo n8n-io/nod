@@ -1,12 +1,13 @@
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import type { Embedder } from '../ports/embedder.ts';
+import type { MemoryCurator } from '../ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../ports/object-storage.ts';
-import { createMemoryVectors } from './memory-vectors.ts';
+import { relatedPaths } from './memory-search.ts';
 import {
   archive,
   area,
   areaEntries,
+  brief,
   find,
   fold,
   id,
@@ -51,12 +52,9 @@ export function createMemoryService(options: {
   pool: Pool;
   ownerId: string;
   store: PrivateObjectStore;
-  embedder?: Embedder;
+  curator?: MemoryCurator;
 }) {
-  const vectors = createMemoryVectors(options);
-
   async function initialize() {
-    await vectors.initialize();
     await options.pool.query(`DO $$ BEGIN
       IF to_regclass('memory_untrusted_threads') IS NULL THEN
         CREATE TABLE IF NOT EXISTS memory_untrusted_threads (owner_id text NOT NULL, thread_id uuid NOT NULL, marked_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (owner_id, thread_id));
@@ -174,7 +172,7 @@ export function createMemoryService(options: {
 
   async function forget(raw: unknown) {
     const target = path.parse(raw);
-    const result = await edit((tree) => {
+    return edit((tree) => {
       const entry = locate(tree, target);
       const archived = tree.archive.length;
       tree.archive = tree.archive.filter((item) => pathOf(item) !== target && item.by !== target);
@@ -184,8 +182,6 @@ export function createMemoryService(options: {
       delete tree.overviews[target.split('/')[0] as keyof Tree['overviews']];
       return { ok: true };
     });
-    await vectors.drop(target);
-    return result;
   }
 
   return {
@@ -203,12 +199,13 @@ export function createMemoryService(options: {
     find: async (raw: unknown) => {
       const input = findInput.parse(raw);
       const { tree } = await load();
-      return find(
-        tree,
-        input.query,
-        input.area,
-        await vectors.similarity(tree.entries, input.query),
-      );
+      const hits = find(tree, input.query, input.area);
+      if (hits.length >= 3 || !options.curator?.configured) return hits;
+      const known = new Set(hits.map((hit) => hit.path));
+      const extra = (await relatedPaths(options.curator, tree, input.query, input.area))
+        .filter((target) => !known.has(target))
+        .flatMap((target) => locate(tree, target) ?? []);
+      return [...hits, ...extra.map(brief)].slice(0, 10);
     },
     read: async (raw: unknown) => open((await load()).tree, readInput.parse(raw).path),
   };

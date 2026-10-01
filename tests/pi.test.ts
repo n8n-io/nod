@@ -10,10 +10,16 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
   createAgentSession,
+  ModelRuntime,
   SessionManager,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
+import {
+  createAssistantMessageEventStream,
+  InMemoryCredentialStore,
+  type AssistantMessage,
+} from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import type { AgentSession, RuntimeContext } from '../src/ports/agent.ts';
 import type { WorkspaceExecOptions, WorkspaceSession } from '../src/ports/computer.ts';
 import type { PrivateObjectStore } from '../src/ports/object-storage.ts';
@@ -25,6 +31,7 @@ import {
   rebaseAt,
 } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
+import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import type { runProcess } from '../src/providers/process.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
@@ -1890,3 +1897,44 @@ test(
     }
   },
 );
+
+test('the memory curator runs on the configured Pi provider, parses JSON and refuses provider failures', async () => {
+  const faux = fauxProvider();
+  const runtime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    refreshOnCreate: false,
+    allowModelNetwork: false,
+  });
+  runtime.registerNativeProvider(faux.provider);
+  const provider = faux.provider.id;
+  const curator = createPiMemoryCurator({
+    provider,
+    model: faux.getModel().id,
+    apiKey: 'fixture-key',
+    runtime,
+  });
+  const ask = () =>
+    curator.curate({ task: 'search', instructions: 'Return JSON.', input: { query: 'sibling' } });
+  faux.setResponses([
+    fauxAssistantMessage('Here you go:\n```json\n{"paths":["people/ana"]}\n```'),
+    fauxAssistantMessage('{"ops":[]}'),
+    fauxAssistantMessage('no json here'),
+    fauxAssistantMessage('partial', { stopReason: 'error', errorMessage: 'provider down' }),
+  ]);
+  assert.deepEqual(await ask(), { paths: ['people/ana'] });
+  assert.deepEqual(await ask(), { ops: [] });
+  assert.equal(await ask(), null);
+  await assert.rejects(ask(), /unavailable/);
+  assert.equal(faux.state.callCount, 4);
+  assert.equal(curator.configured, true);
+  assert.equal(createPiMemoryCurator({ provider, runtime }).configured, false);
+  await assert.rejects(
+    createPiMemoryCurator({ provider, apiKey: 'fixture-key', runtime }).curate({
+      task: 'search',
+      instructions: 'Return JSON.',
+      input: {},
+    }),
+    /catalog/,
+  );
+});

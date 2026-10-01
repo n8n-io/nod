@@ -2,7 +2,6 @@ import type { Agent, ModelUsageObservation } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationSession } from '../ports/integrations.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
-import type { Embedder } from '../ports/embedder.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { RelevanceClassifier } from '../ports/relevance.ts';
 import type { SpeechProvider } from '../ports/speech.ts';
@@ -215,16 +214,6 @@ export function meterMemoryCurator(
     curate: (request, signal) =>
       usage.track({ provider: provider.id, category: 'memory', operation: request.task }, () =>
         provider.curate(request, signal),
-      ),
-  };
-}
-
-export function meterEmbedder(provider: Embedder, usage: ProviderUsageStore): Embedder {
-  return {
-    ...provider,
-    embed: (texts, signal) =>
-      usage.track({ provider: provider.id, category: 'memory', operation: 'embed' }, () =>
-        provider.embed(texts, signal),
       ),
   };
 }

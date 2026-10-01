@@ -334,18 +334,6 @@ test('find folds accents and open returns each tier', () => {
   );
   assert.deepEqual(find(tree, 'ana', 'preferences'), []);
   assert.deepEqual(find(tree, 'sibling'), []);
-  const similarity = new Map([
-    ['people/ana', 0.6],
-    ['preferences/cafe', 0.1],
-  ]);
-  assert.deepEqual(
-    find(tree, 'sibling', undefined, similarity).map((hit) => hit.path),
-    ['people/ana'],
-  );
-  assert.deepEqual(
-    find(tree, 'hermana', undefined, new Map([['preferences/cafe', 0.35]])).map((hit) => hit.path),
-    ['people/ana', 'preferences/cafe'],
-  );
   assert.deepEqual(open(tree, 'people'), {
     path: 'people',
     overview: 'Close family.',

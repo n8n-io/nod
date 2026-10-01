@@ -8,7 +8,6 @@ import test from 'node:test';
 import pg from 'pg';
 import type { Agent, RuntimeContext } from '../src/ports/agent.ts';
 import type { ConnectedApp } from '../src/ports/integrations.ts';
-import type { Embedder } from '../src/ports/embedder.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
@@ -2190,7 +2189,7 @@ test(
   },
 );
 
-const memoryFixture = async (tables: string[] = [], embedder?: Embedder) => {
+const memoryFixture = async (tables: string[] = [], curator?: MemoryCurator) => {
   const schema = `test_memory_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const root = await mkdtemp(join(tmpdir(), 'memory-test-'));
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -2230,7 +2229,7 @@ const memoryFixture = async (tables: string[] = [], embedder?: Embedder) => {
     store,
     root,
     post,
-    memory: createMemoryService({ pool, ownerId, store, embedder }),
+    memory: createMemoryService({ pool, ownerId, store, curator }),
     close: async () => {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -2670,75 +2669,59 @@ test(
 );
 
 test(
-  'memory search blends meaning with words, reuses stored vectors and survives embedding failures',
+  'memory search matches words first, asks the model only for sparse results and keeps real paths',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
-    const concepts = [
-      ['sister', 'sibling', 'brother', 'mother'],
-      ['coffee', 'tea', 'lunch'],
-      ['office', 'manager', 'boss'],
-    ];
-    const batches: string[][] = [];
-    let offline = false;
-    const embedder: Embedder = {
-      id: 'fixture',
-      model: 'concepts',
-      configured: true,
-      embed: async (texts) => {
-        if (offline) throw new Error('offline');
-        batches.push(texts);
-        return texts.map((text) =>
-          concepts.map(
-            (group) => group.filter((word) => text.toLowerCase().includes(word)).length + 0.01,
-          ),
-        );
-      },
-    };
-    const { pool, ownerId, store, post, memory, close } = await memoryFixture([], embedder);
+    const { calls, state, curator } = scriptedCurator();
+    const { pool, ownerId, store, post, memory, close } = await memoryFixture([], curator);
     try {
-      await memory.initialize();
       const ana = await memory.save(
         { area: 'people', text: 'Ana is the sister.' },
         await post('Ana is my sister.'),
       );
-      await memory.save(
+      const coffee = await memory.save(
         { area: 'preferences', text: 'Drinks strong coffee.' },
         await post('I drink strong coffee.'),
       );
-      const paths = async (query: string) =>
-        (await memory.find({ query })).map((hit: { path: string }) => hit.path);
-      const sizes = () => batches.map((batch) => batch.length);
-      assert.deepEqual(await paths('sibling'), [ana.path]);
-      assert.deepEqual(sizes(), [3]);
-      assert.deepEqual(await paths('brother'), [ana.path]);
-      assert.deepEqual(sizes(), [3, 1]);
+      const paths = async (query: string, area?: string) =>
+        ((await memory.find({ query, area })) as Array<{ path: string }>).map((hit) => hit.path);
 
-      await memory.save(
-        {
-          area: 'people',
-          slug: 'ana-is-the-sister',
-          text: 'Ana is the sister and works at the office.',
-          replace: true,
-        },
-        await post('Ana works at the office.'),
-      );
+      state.answer = () => ({ paths: [ana.path, 'people/not-a-real-entry', ana.path] });
       assert.deepEqual(await paths('sibling'), [ana.path]);
-      assert.deepEqual(sizes(), [3, 1, 2]);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].task, 'search');
+      assert.deepEqual(calls[0].input, {
+        query: 'sibling',
+        entries: [
+          { path: coffee.path, abstract: 'Drinks strong coffee.' },
+          { path: ana.path, abstract: 'Ana is the sister.' },
+        ],
+      });
+      assert.deepEqual(await paths('coffee'), [coffee.path, ana.path]);
+      assert.equal(calls.length, 2);
+      assert.deepEqual(await paths('sibling', 'preferences'), []);
+      assert.deepEqual(calls[2].input, {
+        query: 'sibling',
+        entries: [{ path: coffee.path, abstract: 'Drinks strong coffee.' }],
+      });
 
-      offline = true;
+      for (const text of ['Likes green tea.', 'Brews black tea at five.', 'Tea after lunch helps.'])
+        await memory.save({ area: 'preferences', text }, await post(text));
+      assert.equal((await paths('tea')).length, 3);
+      assert.equal(calls.length, 3);
+
+      state.answer = () => {
+        throw new Error('offline');
+      };
       assert.deepEqual(await paths('sibling'), []);
-      assert.deepEqual(await paths('sister'), [ana.path]);
-      offline = false;
-      const plain = createMemoryService({ pool, ownerId, store });
-      assert.deepEqual(await plain.find({ query: 'sibling' }), []);
-      assert.equal(batches.length, 3);
+      state.answer = () => 'nonsense';
+      assert.deepEqual(await paths('sibling'), []);
+      assert.equal(calls.length, 5);
 
-      await memory.forget(ana.path);
-      const rows = await pool.query('SELECT path FROM memory_vectors WHERE owner_id=$1', [ownerId]);
-      assert.deepEqual(
-        rows.rows.map((row) => row.path),
-        ['preferences/drinks-strong-coffee'],
-      );
+      const idle = scriptedCurator(false);
+      const plain = createMemoryService({ pool, ownerId, store, curator: idle.curator });
+      assert.deepEqual(await plain.find({ query: 'sibling' }), []);
+      assert.equal(idle.calls.length, 0);
     } finally {
       await close();
     }

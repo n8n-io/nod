@@ -274,14 +274,13 @@ export function indexLayout(tree: Tree, options: { tentative?: boolean; budget?:
 const matches = (tokens: string[], term: string) =>
   tokens.some((token) => token === term || (term.length > 2 && token.startsWith(term)));
 
-const minSimilarity = 0.3;
+export const brief = (entry: Entry) => ({
+  path: pathOf(entry),
+  abstract: abstractOf(entry),
+  status: statusOf(entry),
+});
 
-export function find(
-  tree: Tree,
-  query: string,
-  within?: Area,
-  similarity: Map<string, number> = new Map(),
-) {
+export function find(tree: Tree, query: string, within?: Area) {
   const terms = [...new Set(words(query))];
   return tree.entries
     .filter((entry) => !within || entry.area === within)
@@ -289,7 +288,7 @@ export function find(
       const name = words(entry.slug);
       const brief = words(abstractOf(entry));
       const body = words(entry.text);
-      const lexical = terms.reduce(
+      const score = terms.reduce(
         (sum, term) =>
           sum +
           (matches(name, term) ? 3 : 0) +
@@ -297,21 +296,12 @@ export function find(
           (matches(body, term) ? 1 : 0),
         0,
       );
-      const meaning = similarity.get(pathOf(entry)) ?? 0;
-      return {
-        entry,
-        keep: lexical > 0 || meaning >= minSimilarity,
-        score: lexical / (6 * Math.max(terms.length, 1)) + Math.max(0, meaning),
-      };
+      return { entry, score };
     })
-    .filter((hit) => hit.keep)
+    .filter((hit) => hit.score > 0)
     .toSorted((a, b) => b.score - a.score || b.entry.updated.localeCompare(a.entry.updated))
     .slice(0, 10)
-    .map(({ entry }) => ({
-      path: pathOf(entry),
-      abstract: abstractOf(entry),
-      status: statusOf(entry),
-    }));
+    .map(({ entry }) => brief(entry));
 }
 
 export function open(tree: Tree, target: string) {
@@ -321,13 +311,7 @@ export function open(tree: Tree, target: string) {
     return {
       path: owner.data,
       ...(overview ? { overview: overview.text } : {}),
-      entries: areaEntries(tree, owner.data)
-        .toSorted(bySlug)
-        .map((entry) => ({
-          path: pathOf(entry),
-          abstract: abstractOf(entry),
-          status: statusOf(entry),
-        })),
+      entries: areaEntries(tree, owner.data).toSorted(bySlug).map(brief),
     };
   }
   const entry = locate(tree, target);
