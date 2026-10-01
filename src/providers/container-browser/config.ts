@@ -9,7 +9,7 @@ export function containerBrowserOptions(
   return {
     dataRoot,
     executable: `/app/node_modules/agent-browser/bin/agent-browser-linux-${architecture}`,
-    browserExecutable: '/usr/bin/chromium',
+    browserExecutable: '/app/src/providers/container-browser/chromium.sh',
     platform: 'linux',
     headless: false,
     sandbox: false,

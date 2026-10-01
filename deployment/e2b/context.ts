@@ -63,6 +63,8 @@ export async function prepareE2BContext(options: { role: E2BTemplateRole; root?:
     );
     if (options.role !== 'workspace') {
       for (const name of ['package.json', 'package-lock.json']) await add(name, await read(name));
+      const launcher = 'src/providers/container-browser/chromium.sh';
+      await add(launcher, await read(launcher));
       const queued = [...entries];
       const visited = new Set<string>();
       for (const name of queued) {

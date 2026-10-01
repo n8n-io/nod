@@ -15,6 +15,7 @@ COPY src/shared/browser-errors.ts src/shared/browser-handoff.ts ./src/shared/
 COPY src/providers/process.ts ./src/providers/
 COPY src/providers/agent-browser ./src/providers/agent-browser/
 COPY src/providers/container-browser/worker.ts src/providers/container-browser/bridge.ts src/providers/container-browser/protocol.ts src/providers/container-browser/config.ts ./src/providers/container-browser/
+COPY --chmod=555 src/providers/container-browser/chromium.sh ./src/providers/container-browser/
 RUN mkdir -p /data /opt/otto && chown node:node /data && chmod 700 /data
 COPY src/providers/cloudflare-computer/entrypoint.mjs /opt/otto/entrypoint.mjs
 COPY src/providers/cloudflare-computer/checkpoint.py /opt/otto/checkpoint.py

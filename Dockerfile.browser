@@ -7,6 +7,6 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci && npm cache clean --force
 COPY src ./src
-RUN mkdir /data && chown node:node /data && chmod 700 /data
+RUN chmod 555 src/providers/container-browser/chromium.sh && mkdir /data && chown node:node /data && chmod 700 /data
 USER node
 CMD ["node", "--import", "tsx", "/app/src/providers/container-browser/worker.ts"]

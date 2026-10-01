@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
-import type {
-  ChildProcess,
-  ChildProcessWithoutNullStreams,
-  SpawnOptions,
+import {
+  spawn,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
+  type SpawnOptions,
 } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { connect, createServer, type Socket } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -38,6 +40,7 @@ import {
   existingDaemonCommand,
 } from '../src/providers/agent-browser/screens.ts';
 import { runProcess } from '../src/providers/process.ts';
+import { containerBrowserOptions } from '../src/providers/container-browser/config.ts';
 import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
 import {
   browserNamespace,
@@ -1616,6 +1619,84 @@ test('visual browser actions fence the session when releasing the pointer fails'
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test(
+  'native container browser stays responsive after output exceeds stderr pipe capacity',
+  {
+    skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
+    timeout: 30_000,
+  },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-stderr-native-'));
+    const server = createHttpServer((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end('<button onclick="this.textContent=\'Accepted\'">Continue</button>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const computer = createAgentBrowserComputer(containerBrowserOptions(directory));
+    let stderrPath: string | undefined;
+    try {
+      await computer.act('fixture', { action: 'open', url: `http://127.0.0.1:${address.port}` });
+      assert.ok((await computer.screenshot('fixture'))?.length);
+      for (const pid of await readdir('/proc')) {
+        if (!/^\d+$/.test(pid)) continue;
+        const args = await readFile(`/proc/${pid}/cmdline`, 'utf8').catch(() => '');
+        if (args.includes(`--user-data-dir=${directory}/`) && !args.includes('--type=')) {
+          stderrPath = `/proc/${pid}/fd/2`;
+          break;
+        }
+      }
+      assert.ok(stderrPath);
+      const writer = spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          "import { writeFileSync } from 'node:fs'; writeFileSync(process.argv[1], Buffer.alloc(1024 * 1024, 120));",
+          stderrPath,
+        ],
+        { stdio: 'ignore', timeout: 1500, killSignal: 'SIGKILL' },
+      );
+      const exit = await new Promise<number | null>((resolve, reject) => {
+        writer.once('error', reject);
+        writer.once('exit', resolve);
+      });
+      assert.equal(
+        exit,
+        0,
+        'Chromium stderr must not block when browser output exceeds pipe capacity',
+      );
+      await computer.control!('fixture', { type: 'click', x: 0.03, y: 0.035 });
+      const page = await computer.act('fixture', { action: 'snapshot' });
+      assert.match(page.text, /Accepted/);
+      const screenshot = await computer.screenshot('fixture');
+      assert.ok(screenshot?.length);
+      assert.equal(computer.screenStatus!('fixture').state, 'live');
+    } finally {
+      if (stderrPath) {
+        const pipe = await open(stderrPath, constants.O_RDONLY | constants.O_NONBLOCK).catch(
+          () => undefined,
+        );
+        if (pipe) {
+          try {
+            const buffer = Buffer.alloc(65536);
+            for (let count = 0; count < 32; count++) {
+              const read = await pipe.read(buffer).catch(() => ({ bytesRead: 0 }));
+              if (!read.bytesRead) break;
+            }
+          } finally {
+            await pipe.close();
+          }
+        }
+      }
+      await computer.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   'native visual browser actions solve a canvas interaction inside nested cross-origin frames',

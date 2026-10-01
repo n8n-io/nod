@@ -219,6 +219,10 @@ test('template contexts reject symlinked source and do not copy unrelated local 
       'export const ready = true;\n',
     ),
     writeFile(join(root, 'src/providers/container-browser/bridge.ts'), 'export {};\n'),
+    writeFile(
+      join(root, 'src/providers/container-browser/chromium.sh'),
+      '#!/bin/sh\nexec /usr/bin/chromium "$@" 2>/dev/null\n',
+    ),
     writeFile(join(root, 'deployment/e2b/browser-ready.ts'), 'export {};\n'),
     writeFile(
       join(root, 'src/providers/container-browser/.env'),
@@ -237,6 +241,12 @@ test('template contexts reject symlinked source and do not copy unrelated local 
   await symlink(
     join(root, 'src/providers/container-browser/.env'),
     join(root, 'src/providers/container-browser/dependency.ts'),
+  );
+  await assert.rejects(prepareE2BContext({ role: 'browser', root }), /approved context/);
+  await rm(join(root, 'src/providers/container-browser/chromium.sh'));
+  await symlink(
+    join(root, 'src/providers/container-browser/.env'),
+    join(root, 'src/providers/container-browser/chromium.sh'),
   );
   await assert.rejects(prepareE2BContext({ role: 'browser', root }), /approved context/);
 });
