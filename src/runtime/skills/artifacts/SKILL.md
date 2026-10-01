@@ -1,15 +1,13 @@
 # Create files
 
-Use the task workspace to create files. `python3` has ReportLab, Matplotlib, pandas, Pillow, openpyxl, python-docx and python-pptx. Use `csv` from the Python standard library for a simple table. Use Node or plain text when that is simpler.
+Create files in the task workspace with python3, Node or plain text. Python includes ReportLab, Matplotlib, pandas, Pillow, openpyxl, python-docx and python-pptx; use standard-library csv for simple tables. Give final files clear names and keep intermediates under .otto or remove them.
 
-Save the final file under the task workspace. Give it a clear name. Keep intermediate files under `.otto` or remove them.
+Check before sharing:
 
-Check the file before you share it:
+- PDF: run pdfinfo and pdftotext. For layout, render relevant pages with `pdftoppm -f PAGE -l PAGE -singlefile -scale-to 1600 -png FILE .otto/preview`, inspect .otto/preview.png with read, then remove it.
+- XLSX: use openpyxl to check sheet names, row counts, formulas and key values.
+- DOCX: use python-docx to check paragraphs and tables.
+- PPTX: use python-pptx to check slide count and text.
+- Charts: read the source data and inspect the PNG with read.
 
-- For a PDF, run `pdfinfo` and `pdftotext`. Render pages that need a layout check with `pdftoppm -f PAGE -l PAGE -singlefile -scale-to 1600 -png FILE .otto/preview`, then use `read` on `.otto/preview.png` and remove it.
-- For an XLSX file, open it with `openpyxl` and check the sheet names, row counts, formulas and key values.
-- For a DOCX file, open it with `python-docx` and check the paragraphs and tables.
-- For a PPTX file, open it with `python-pptx` and check the slide count and text.
-- For a chart, read the source data and inspect the PNG with `read`.
-
-Use `share_file` for each final file. A successful `share_file` call sends the file to the user. In the final answer, briefly describe the result without announcing filenames unless the user asks for them. Do not claim that a file was sent if the tool failed.
+Call share_file for each final file. Claim delivery only after success. Briefly describe the content and use in the final answer; include filenames only if requested.
