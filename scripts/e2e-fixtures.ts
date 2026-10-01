@@ -9,7 +9,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AddressInfo, Socket } from 'node:net';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, preValidationHookHandler } from 'fastify';
 import type {
   IntegrationProvider,
   IntegrationService,
@@ -1258,6 +1258,15 @@ consentForm.addEventListener('submit', async (event) => {
         });
         return reply.redirect(callback.href);
       });
+    },
+  };
+}
+
+export function operatorAccess(token: string): { preValidation: preValidationHookHandler } {
+  return {
+    preValidation: async (request, reply) => {
+      if (request.headers.authorization !== `Bearer ${token}`)
+        return reply.code(401).send({ error: 'Operator authorization required.' });
     },
   };
 }

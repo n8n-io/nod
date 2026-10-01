@@ -21,6 +21,7 @@ import {
   fixtureHotel,
   fixtureFlight,
   operatorPage,
+  operatorAccess,
   type Audit,
 } from './e2e-fixtures.ts';
 import { runProcess } from '../src/providers/process.ts';
@@ -340,23 +341,17 @@ try {
     model: { provider, name: model, configured: true },
   });
   const { app } = application;
-  app.addHook('onRequest', async (request, reply) => {
-    const path = request.url.split('?')[0];
-    if (
-      (['/e2e', '/e2e/status', '/e2e/expected-run'].includes(path) ||
-        path.startsWith('/e2e/signup/')) &&
-      request.headers.authorization !== `Bearer ${operatorToken}`
-    )
-      return reply.code(401).send({ error: 'Operator authorization required.' });
-  });
+  const operator = operatorAccess(operatorToken);
   integration.register(app);
   app.addContentTypeParser(
     'application/x-www-form-urlencoded',
     { parseAs: 'string', bodyLimit: 8192 },
     (_request, _body, done) => done(null, {}),
   );
-  app.get('/e2e', async (_request, reply) => reply.type('text/html').send(operatorPage()));
-  app.get('/e2e/status', async () => ({
+  app.get('/e2e', operator, async (_request, reply) =>
+    reply.type('text/html').send(operatorPage()),
+  );
+  app.get('/e2e/status', operator, async () => ({
     fixture: true,
     model: { provider, name: model },
     fixtureLogin,
@@ -365,39 +360,43 @@ try {
     timeline,
     writes: integration.writes,
   }));
-  app.post<{ Params: { variant: string } }>('/e2e/signup/:variant', async (request, reply) => {
-    const variant = request.params.variant;
-    if (variant !== 'base' && variant !== 'alternate')
-      return reply.code(400).send({ error: 'Choose a signup case.' });
-    const { activeThread } = await import('../src/server/thread.ts');
-    const thread = await activeThread(pool);
-    const latest = await pool.query(
-      "SELECT status,waiting_reason FROM turns WHERE owner_id='local-development' AND thread_id=$1 AND NOT background ORDER BY created_at DESC,id DESC LIMIT 1",
-      [thread.id],
-    );
-    const running = await pool.query(
-      "SELECT 1 FROM turns WHERE owner_id='local-development' AND thread_id=$1 AND status='running' LIMIT 1",
-      [thread.id],
-    );
-    if (
-      !signupAttempted[variant] ||
-      latest.rows[0]?.status !== 'waiting' ||
-      latest.rows[0]?.waiting_reason !== 'question' ||
-      running.rowCount
-    )
-      return reply
-        .code(409)
-        .send({ error: 'Wait for the agent to hand over the verification step.' });
-    signupReleased[variant] = true;
-    await writeFile(signupOperatorPath, JSON.stringify(signupReleased), { mode: 0o644 });
-    audit('fixture_signup_operator_release', {
-      alternate: variant === 'alternate',
-      released: true,
-    });
-    return reply.redirect('/e2e');
-  });
+  app.post<{ Params: { variant: string } }>(
+    '/e2e/signup/:variant',
+    operator,
+    async (request, reply) => {
+      const variant = request.params.variant;
+      if (variant !== 'base' && variant !== 'alternate')
+        return reply.code(400).send({ error: 'Choose a signup case.' });
+      const { activeThread } = await import('../src/server/thread.ts');
+      const thread = await activeThread(pool);
+      const latest = await pool.query(
+        "SELECT status,waiting_reason FROM turns WHERE owner_id='local-development' AND thread_id=$1 AND NOT background ORDER BY created_at DESC,id DESC LIMIT 1",
+        [thread.id],
+      );
+      const running = await pool.query(
+        "SELECT 1 FROM turns WHERE owner_id='local-development' AND thread_id=$1 AND status='running' LIMIT 1",
+        [thread.id],
+      );
+      if (
+        !signupAttempted[variant] ||
+        latest.rows[0]?.status !== 'waiting' ||
+        latest.rows[0]?.waiting_reason !== 'question' ||
+        running.rowCount
+      )
+        return reply
+          .code(409)
+          .send({ error: 'Wait for the agent to hand over the verification step.' });
+      signupReleased[variant] = true;
+      await writeFile(signupOperatorPath, JSON.stringify(signupReleased), { mode: 0o644 });
+      audit('fixture_signup_operator_release', {
+        alternate: variant === 'alternate',
+        released: true,
+      });
+      return reply.redirect('/e2e');
+    },
+  );
   const expected = new Map<string, string>();
-  app.post('/e2e/expected-run', async (request, reply) => {
+  app.post('/e2e/expected-run', operator, async (request, reply) => {
     const value = request.body as { scheduleId?: string; dueAt?: string };
     if (
       !value ||
