@@ -162,6 +162,15 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.vault-field-edit {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: text;
+}
 .vault-password-visible {
   font-family: monospace;
 }

@@ -41,7 +41,8 @@ export function collapseScreenshotMessages(messages: Message[]) {
       Boolean(message.turnId) &&
       message.attachments.length === 1 &&
       artifact.mimeType === 'image/png' &&
-      (message.text === 'Browser screenshot.' ||
+      ((!message.text && artifact.source === 'browser_screenshot') ||
+        message.text === 'Browser screenshot.' ||
         message.text === `Browser screenshot: ${artifact.name}`) &&
       !message.reaction &&
       !message.reactions?.length &&
@@ -52,11 +53,11 @@ export function collapseScreenshotMessages(messages: Message[]) {
       const attachments = [...previous.attachments, artifact];
       result[result.length - 1] = {
         ...previous,
-        text: `${attachments.length} screenshots`,
+        text: '',
         attachments,
         createdAt: message.createdAt,
       };
-    } else result.push(message);
+    } else result.push(isScreenshot ? { ...message, text: '' } : message);
     previousWasScreenshot = isScreenshot;
   }
   return result;

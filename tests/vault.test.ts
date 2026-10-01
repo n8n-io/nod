@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import test from 'node:test';
+import { act, createElement } from 'react';
+import { JSDOM } from 'jsdom';
+import { VaultDetails } from '../src/web/components/vault-details.tsx';
+import { Credentials } from '../src/web/pages/credentials.tsx';
 import { Composio } from '@composio/core';
 import Fastify, { type FastifyInstance } from 'fastify';
 import pg from 'pg';
@@ -3329,3 +3333,330 @@ test(
     assert.ok(reads.every((id) => id === 'owned-mailbox'));
   },
 );
+
+test(
+  'manually saved identifier-only logins stay origin-bound and cannot become empty credentials',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const { turn } = await seedTurns(pool);
+    const app = Fastify();
+    const key = randomBytes(32);
+    const injections: CredentialInjection[] = [];
+    const vault = await createVault(pool, {
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      inject: async (input) => {
+        injections.push(input);
+      },
+      resume: async () => {},
+      retry: async () => {},
+    });
+    vault.registerRoutes(app);
+    try {
+      const payload = {
+        label: 'Fixture login',
+        origin: 'https://example.test',
+        username: 'tester@example.test',
+      };
+      for (const invalid of [
+        { ...payload, origin: '' },
+        { ...payload, origin: 'https://user:password@example.test' },
+        { ...payload, username: '' },
+        { ...payload, username: ' ', password: '' },
+      ])
+        assert.equal(
+          (await app.inject({ method: 'POST', url: '/api/vault', payload: invalid })).statusCode,
+          400,
+        );
+      const saved = await app.inject({ method: 'POST', url: '/api/vault', payload });
+      assert.equal(saved.statusCode, 200);
+      const id = saved.json().id as string;
+      const stored = await vault.readCredential(id);
+      assert.deepEqual(stored.secret, { username: payload.username, password: '' });
+      assert.equal(stored.entry.origin, payload.origin);
+      assert.equal(stored.entry.ciphertext.includes(payload.username), false);
+      assert.equal(
+        (await app.inject({ method: 'POST', url: `/api/vault/${id}/details`, payload: {} })).json()
+          .hasPassword,
+        false,
+      );
+      assert.equal(
+        (
+          await app.inject({
+            method: 'PATCH',
+            url: `/api/vault/${id}`,
+            payload: { label: payload.label, username: '' },
+          })
+        ).statusCode,
+        400,
+      );
+      const ref = await turn();
+      const input = {
+        origin: payload.origin,
+        kind: 'identifier' as const,
+        label: payload.label,
+        usernameSelector: '#email',
+      };
+      await assert.rejects(vault.fillSaved(ref, 'another-owner', id, input));
+      await assert.rejects(
+        vault.fillSaved(ref, 'local-development', id, {
+          ...input,
+          origin: 'https://other.example.test',
+        }),
+      );
+      assert.equal(injections.length, 0);
+      await vault.fillSaved(ref, 'local-development', id, input);
+      assert.equal(injections.length, 1);
+      assert.equal(injections[0].username, payload.username);
+      assert.equal(injections[0].origin, payload.origin);
+      assert.equal(
+        await vault.fillSelected(ref, 'local-development', {
+          origin: payload.origin,
+          kind: 'password',
+          label: payload.label,
+          passwordSelector: '#password',
+        }),
+        false,
+      );
+      assert.equal(injections.length, 1);
+      assert.equal(
+        (
+          await app.inject({
+            method: 'PATCH',
+            url: `/api/vault/${id}`,
+            payload: {
+              label: payload.label,
+              username: payload.username,
+              password: 'synthetic-password',
+            },
+          })
+        ).statusCode,
+        200,
+      );
+      assert.equal((await vault.readCredential(id)).secret.password, 'synthetic-password');
+      const details = await app.inject({
+        method: 'POST',
+        url: `/api/vault/${id}/details`,
+        payload: {},
+      });
+      assert.equal(details.json().hasPassword, true);
+      assert.equal(details.body.includes('synthetic-password'), false);
+      const passwordOnly = await app.inject({
+        method: 'POST',
+        url: '/api/vault',
+        payload: {
+          label: 'Password only',
+          origin: 'https://other.example.test',
+          password: 'synthetic-password',
+        },
+      });
+      assert.equal(passwordOnly.statusCode, 200);
+      assert.equal((await vault.readCredential(passwordOnly.json().id)).secret.username, '');
+    } finally {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+async function vaultPage(
+  element: React.ReactNode,
+  response: (path: string, init: RequestInit) => Promise<Response>,
+) {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: 'http://localhost:4310/vault/synthetic_credential_request',
+    pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    FormData: dom.window.FormData,
+    IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: (path: unknown, init: RequestInit = {}) => response(String(path), init),
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  await act(async () => root.render(element));
+  return {
+    window: dom.window,
+    document: dom.window.document,
+    async close() {
+      await act(async () => root.unmount());
+      dom.window.close();
+      for (const [key, value] of originals)
+        if (value) Object.defineProperty(globalThis, key, value);
+        else Reflect.deleteProperty(globalThis, key);
+    },
+  };
+}
+
+test('Vault Escape cancels edits and clears replacement secrets without disabling the selected login', async () => {
+  const entry = {
+    kind: 'login' as const,
+    id: randomUUID(),
+    label: 'Fixture account',
+    origin: 'https://example.test',
+    usernameHint: 'te…',
+    updatedAt: new Date().toISOString(),
+  };
+  let detailsReads = 0;
+  let writes = 0;
+  const page = await vaultPage(
+    createElement(VaultDetails, {
+      entry,
+      onClose() {},
+      onSaved() {
+        writes++;
+      },
+      onDeleted() {
+        writes++;
+      },
+    }),
+    async (path, init) => {
+      if (path.endsWith('/details')) {
+        detailsReads++;
+        return Response.json({ ...entry, username: 'tester@example.test', hasPassword: false });
+      }
+      assert.equal(init.method ?? 'GET', 'GET');
+      return new Response(null, { status: 204 });
+    },
+  );
+  try {
+    const buttons = () => [...page.document.querySelectorAll<HTMLButtonElement>('button')];
+    await act(async () =>
+      buttons()
+        .find((button) => button.hasAttribute('data-vault-edit'))!
+        .click(),
+    );
+    const secret = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+    secret.value = 'synthetic replacement';
+    await act(async () => secret.dispatchEvent(new page.window.Event('input', { bubbles: true })));
+    await act(async () =>
+      secret.dispatchEvent(
+        new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      ),
+    );
+    assert.equal(secret.value, '');
+    assert.equal(page.document.querySelector('form'), null);
+    const edit = buttons().find((button) => button.hasAttribute('data-vault-edit'))!;
+    assert.equal(edit.disabled, false);
+    assert.equal(page.document.activeElement, edit);
+    await act(async () =>
+      edit.dispatchEvent(
+        new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      ),
+    );
+    assert.equal(page.document.querySelector('[data-vault-edit]'), edit);
+    await act(async () =>
+      page.document
+        .querySelector<HTMLButtonElement>('[aria-label="Edit username or email"]')!
+        .click(),
+    );
+    assert.equal(page.document.activeElement?.getAttribute('name'), 'username');
+    assert.equal(
+      page.document.querySelector<HTMLInputElement>('input[name="username"]')!.value,
+      'tester@example.test',
+    );
+    assert.equal(detailsReads, 1);
+    assert.equal(writes, 0);
+  } finally {
+    await page.close();
+  }
+});
+
+test('secure sign-in keeps failed submissions editable and returns to chat only after accepted submission', async () => {
+  const request = {
+    id: 'synthetic_credential_request',
+    turnId: randomUUID(),
+    origin: 'https://example.test',
+    label: 'Fixture sign-in',
+    kind: 'otp',
+    status: 'pending',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    fields: [{ kind: 'otp', selector: '#code', label: 'Verification code' }],
+  };
+  let finish!: (value: Response) => void;
+  let submissions = 0;
+  let closed = 0;
+  let focused = 0;
+  const page = await vaultPage(
+    createElement(Credentials, { id: request.id }),
+    async (_path, init) => {
+      if (init.method !== 'POST') return Response.json(request);
+      submissions++;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+  );
+  Object.defineProperty(page.window, 'opener', {
+    value: {
+      closed: false,
+      location: { origin: page.window.location.origin },
+      focus() {
+        focused++;
+      },
+    },
+  });
+  const close = page.window.close.bind(page.window);
+  page.window.close = () => {
+    closed++;
+    Object.defineProperty(page.window, 'closed', { value: true, configurable: true });
+  };
+  try {
+    const submit = async () => {
+      page.document.querySelector<HTMLInputElement>('input[name="code"]')!.value = '123456';
+      await act(async () =>
+        page.document
+          .querySelector('form')!
+          .dispatchEvent(new page.window.Event('submit', { bubbles: true, cancelable: true })),
+      );
+    };
+    await submit();
+    assert.equal(submissions, 1);
+    assert.equal(closed, 0);
+    assert.equal(page.document.querySelector('form'), null);
+    await act(async () =>
+      finish(Response.json({ error: 'Synthetic rejected request' }, { status: 502 })),
+    );
+    assert.equal(closed, 0);
+    assert.ok(page.document.querySelector('form'));
+    assert.equal(page.document.querySelector<HTMLInputElement>('input[name="code"]')!.value, '');
+    await submit();
+    assert.equal(submissions, 2);
+    assert.equal(closed, 0);
+    await act(async () =>
+      finish(Response.json({ ok: false, retryUrl: '/vault/synthetic_replacement_request' })),
+    );
+    assert.equal(closed, 0);
+    assert.ok(page.document.querySelector('form'));
+    await submit();
+    assert.equal(submissions, 3);
+    assert.equal(closed, 0);
+    await act(async () => finish(Response.json({ ok: true })));
+    assert.equal(closed, 1);
+    assert.equal(focused, 1);
+  } finally {
+    page.window.close = close;
+    await page.close();
+  }
+});

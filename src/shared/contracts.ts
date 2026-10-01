@@ -6,6 +6,7 @@ export interface Artifact {
   mimeType: string;
   size: number;
   url: string;
+  source?: 'browser_screenshot';
 }
 export type MessageReaction = string;
 export type AgentReactionResult =
@@ -75,6 +76,7 @@ export type VaultEntry = VaultLoginEntry | VaultCardEntry;
 export type VaultListEntry = (VaultLoginEntry & { username: string }) | VaultCardEntry;
 export interface VaultLoginDetails extends VaultLoginEntry {
   username: string;
+  hasPassword: boolean;
 }
 interface VaultCardDetails extends VaultCardEntry {
   cardholder: string;

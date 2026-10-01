@@ -1559,11 +1559,16 @@ test(
       assert.equal((await state(reply)).state, 'sent');
       await channels.drain();
       assert.equal(sent.length, 2);
-      const repeated = await addReply(turnId, [image, image]);
+      const repeated = await addReply(turnId, [image, image, document], '');
       await channels.drain();
       assert.equal((await state(repeated)).state, 'sent');
-      assert.equal(sent.length, 3);
+      assert.equal(sent.length, 4);
       assert.equal(sent[2].name, 'screenshot.png');
+      assert.equal(sent[3].name, 'result.txt');
+      assert.deepEqual(Buffer.from(sent[2].file), imageBytes);
+      assert.deepEqual(Buffer.from(sent[3].file), fileBytes);
+      assert.equal(sent[2].caption, '');
+      assert.equal(sent[3].caption, '');
 
       failDocument = true;
       const uncertain = await addReply(turnId, [image, document]);
@@ -1641,7 +1646,7 @@ test(
         reason: 'channel_access_changed',
       });
       assert.equal(sent.length, partialCount);
-      const localOnly = await addReply(turnId, [image]);
+      const localOnly = await addReply(turnId, [image], '');
       await channels.drain();
       assert.equal((await state(localOnly)).state, 'sent');
       assert.match(fallback[0], /https:\/\/otto\.example\/api\/artifacts\//);

@@ -47,28 +47,33 @@ export function shortcutLabel(key: string, mac = true) {
 }
 
 export function returnToChat(
-  event: Pick<
+  event?: Pick<
     MouseEvent,
     'button' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey' | 'preventDefault'
   >,
 ) {
-  if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (event && (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey))
+    return;
+  let canClose = false;
   try {
     if (
-      !window.opener ||
-      window.opener.closed ||
-      window.opener.location.origin !== window.location.origin
-    )
-      return;
-    window.opener.focus();
-  } catch {
+      window.opener &&
+      !window.opener.closed &&
+      window.opener.location.origin === window.location.origin
+    ) {
+      window.opener.focus();
+      canClose = true;
+    }
+  } catch {}
+  if (!canClose) {
+    if (!event) window.location.replace('/');
     return;
   }
-  event.preventDefault();
+  event?.preventDefault();
   try {
     window.close();
   } catch {}
   window.setTimeout(() => {
-    if (!window.closed) window.location.assign('/');
+    if (!window.closed) window.location.replace('/');
   }, 0);
 }

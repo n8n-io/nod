@@ -8,6 +8,20 @@ import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import type { Schedule, ScheduleHistory } from '../src/shared/contracts.ts';
+import {
+  readSchedule,
+  scheduleExpression,
+  scheduleLocalTime,
+  scheduleRunAt,
+  type ScheduleFrequency,
+} from '../src/web/lib/schedules.ts';
+
+test('one-off schedule edits reject skipped or ambiguous clock times', () => {
+  assert.throws(() => scheduleRunAt('2035-03-25', '01:30', 'Europe/Lisbon'));
+  assert.throws(() => scheduleRunAt('2035-10-28', '01:30', 'Europe/Lisbon'));
+  assert.throws(() => scheduleRunAt('2035-02-30', '09:00', 'Europe/Lisbon'));
+  assert.throws(() => scheduleRunAt('2035-10-27', '24:30', 'Europe/Lisbon'));
+});
 
 test(
   'one-off and recurring schedules dispatch atomically with exact timing and retained owned history',
@@ -210,6 +224,70 @@ test(
         },
       );
       await personal.initialize();
+
+      await t.test(
+        'schedule editor changes retain the intended recurrence and exact run time',
+        async () => {
+          for (const [frequency, day, expected] of [
+            ['daily', '1', '2035-10-27T09:30:00.000Z'],
+            ['weekdays', '1', '2035-10-29T10:30:00.000Z'],
+            ['weekends', '1', '2035-10-27T09:30:00.000Z'],
+            ['weekly', '0', '2035-10-28T10:30:00.000Z'],
+            ['monthly', '31', '2035-10-31T10:30:00.000Z'],
+          ] as Array<[ScheduleFrequency, string, string]>) {
+            const schedule = await create({ cron: '0 9 * * *' });
+            const response = await request('PATCH', `/api/schedules/${schedule.id}`, {
+              cron: scheduleExpression(frequency, '10:30', day),
+              timeZone: 'Europe/Lisbon',
+            });
+            assert.equal(response.statusCode, 200, response.body);
+            assert.equal(response.json<Schedule>().nextRun, expected);
+            const job = await jobFor(schedule.id);
+            assert.equal(job.startAfter.toISOString(), expected);
+            await deliver([job]);
+            assert.equal((await runs(schedule.id))[0].scheduledFor, expected);
+            await request('DELETE', `/api/schedules/${schedule.id}`);
+          }
+          const customCron = '15 8 1,15 * 1-5';
+          const custom = await create({ cron: customCron });
+          const draft = readSchedule(custom.cron!);
+          const response = await request('PATCH', `/api/schedules/${custom.id}`, {
+            cron: scheduleExpression(draft.frequency, draft.time, draft.day, custom.cron!),
+            timeZone: 'America/New_York',
+          });
+          assert.equal(response.statusCode, 200, response.body);
+          assert.equal(response.json<Schedule>().cron, customCron);
+          assert.equal(response.json<Schedule>().timeZone, 'America/New_York');
+          assert.equal(
+            (await jobFor(custom.id)).startAfter.toISOString(),
+            response.json<Schedule>().nextRun,
+          );
+          await request('DELETE', `/api/schedules/${custom.id}`);
+
+          for (const [date, timeZone, expected] of [
+            ['2035-10-27', 'Europe/Lisbon', '2035-10-27T08:05:00.000Z'],
+            ['2035-10-28', 'Europe/Lisbon', '2035-10-28T09:05:00.000Z'],
+            ['2035-10-27', 'Asia/Kathmandu', '2035-10-27T03:20:00.000Z'],
+          ]) {
+            const schedule = await create({ kind: 'once', runAt: '2035-10-27T12:00:00Z' });
+            const response = await request('PATCH', `/api/schedules/${schedule.id}`, {
+              runAt: scheduleRunAt(date, '09:05', timeZone),
+              timeZone,
+            });
+            assert.equal(response.statusCode, 200, response.body);
+            assert.equal(response.json<Schedule>().runAt, expected);
+            assert.deepEqual(scheduleLocalTime(response.json<Schedule>().runAt!, timeZone), {
+              date,
+              time: '09:05',
+            });
+            const job = await jobFor(schedule.id);
+            assert.equal(job.startAfter.toISOString(), expected);
+            await deliver([job]);
+            assert.equal((await runs(schedule.id))[0].scheduledFor, expected);
+            await request('DELETE', `/api/schedules/${schedule.id}`);
+          }
+        },
+      );
 
       await t.test(
         'due runs execute only their immutable owned scheduled instruction',

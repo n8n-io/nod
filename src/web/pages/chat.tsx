@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUpRight, Bug, Check } from 'lucide-react';
+import { ArrowDown, Bug, Check } from 'lucide-react';
 import type {
   AppState,
   Artifact,
@@ -8,11 +8,7 @@ import type {
   MessageHistoryPage,
   SubmitMessageResponse,
 } from '../../shared/contracts';
-import {
-  integrationServiceIds,
-  integrationServices,
-  type IntegrationService,
-} from '../../shared/integrations';
+import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
@@ -44,43 +40,11 @@ function verificationFailure(
 function scrollBehavior(): ScrollBehavior {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
 }
-const appSuggestions: Record<IntegrationService, string> = {
-  gmail: 'Find the email I still need to answer',
-  googlecalendar: 'Prepare me for my next meeting',
-  googledrive: 'Find a file in Google Drive',
-  googlesheets: 'Review a spreadsheet',
-  googledocs: 'Summarize a document',
-  slack: 'Catch me up on my Slack mentions',
-  notion: 'Summarize my recent Notion pages',
-  linear: 'Review my open Linear issues',
-};
-const starterSuggestions = ['Plan my day', 'Help me research something', 'Start a goal'];
-function Welcome({ onPick }: { onPick(label: string): void }) {
-  const { data, loading } = usePageData<Connection[]>('/api/apps');
-  const connected = integrationServiceIds.filter((slug) =>
-    data?.some(
-      (connection) =>
-        connection.slug === slug && connection.status === 'connected' && !connection.accessPaths,
-    ),
-  );
-  const labels = [...connected.map((slug) => appSuggestions[slug]), ...starterSuggestions].slice(
-    0,
-    3,
-  );
+function Welcome() {
   return (
     <div className="welcome">
       <BrandMark />
       <h2>What’s on your mind?</h2>
-      {!loading && (
-        <div className="starter-actions">
-          {labels.map((label) => (
-            <button key={label} onClick={() => onPick(label)}>
-              {label}
-              <ArrowUpRight size={15} />
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -186,10 +150,6 @@ export function Chat({
       .catch((cause) => setError(errorMessage(cause)))
       .finally(() => setWelcoming(false));
   }, []);
-  const pick = (label: string) => {
-    setText(label);
-    composer.current?.focus();
-  };
   const persistedStreams = new Set(allMessages.map((message) => message.streamId).filter(Boolean));
   const streamEntries = Object.entries(streams).filter(
     ([id, value]) => value && !persistedStreams.has(id),
@@ -679,7 +639,7 @@ export function Chat({
             )
           )}
           {visibleMessages.length === 0 && !welcoming && !resetting && !working && !sending && (
-            <Welcome onPick={pick} />
+            <Welcome />
           )}
           <div
             className="messages"

@@ -1,6 +1,6 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertCircle, Link2, LoaderCircle, X } from 'lucide-react';
+import { AlertCircle, Check, Link2, LoaderCircle, Plus } from 'lucide-react';
 import type { Connection } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
@@ -34,9 +34,24 @@ const logos = new Set([
   'linear',
 ]);
 
-function ServiceLogo({ slug }: { slug: string }) {
-  return logos.has(slug) ? (
-    <img src={`/logos/${slug}.svg`} alt="" width={24} height={24} />
+function ServiceLogo({ connection }: { connection: Connection }) {
+  const [failed, setFailed] = useState<string>();
+  const source = logos.has(connection.slug)
+    ? `/logos/${connection.slug}.svg`
+    : connection.connectionId
+      ? `/api/apps/${encodeURIComponent(connection.connectionId)}/icon`
+      : undefined;
+  return source && failed !== source ? (
+    <img
+      src={source}
+      alt=""
+      width={24}
+      height={24}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(source)}
+    />
   ) : (
     <Link2 size={24} aria-hidden="true" />
   );
@@ -74,40 +89,40 @@ export function ConnectedAccount({
 }) {
   const issue = connectionIssue(account);
   const label = accountLabel(account);
+  const identity = connectionIdentity(account);
   return (
     <div className="compact-account">
       <div className="compact-account-details">
-        <span className="compact-account-name">{label}</span>
-        {account.accessPaths && (
-          <span className="compact-account-paths">
-            {account.accessPaths.map((path) => path.kind.toUpperCase()).join(' · ')}
-          </span>
-        )}
-        {issue && (
-          <p className="compact-account-issue">
-            <AlertCircle size={12} aria-hidden="true" />
-            {issue}
-          </p>
-        )}
+        <span className="compact-account-name">{identity.primary}</span>
+        {identity.secondary && <span className="compact-account-email">{identity.secondary}</span>}
+        <p className="app-account-status" data-needs-attention={Boolean(issue) || undefined}>
+          {issue ? (
+            <AlertCircle size={13} aria-hidden="true" />
+          ) : (
+            <Check size={13} aria-hidden="true" />
+          )}
+          {issue ?? 'Connected'}
+        </p>
+      </div>
+      <div className="app-account-actions">
         {(account.browserState === 'needs_sign_in' || account.browserState === 'pending') &&
           onReconnect && (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={onReconnect}>
+            <Button variant="outline" size="sm" disabled={busy} onClick={onReconnect}>
               {account.browserState === 'pending' ? 'Continue sign-in' : 'Reconnect'}
             </Button>
           )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="account-disconnect"
+          data-disconnect-account={account.connectionId}
+          aria-label={`Disconnect ${label} from ${account.name}`}
+          disabled={busy}
+          onClick={(event) => onDisconnect(event.currentTarget)}
+        >
+          Disconnect
+        </Button>
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="account-disconnect"
-        data-disconnect-account={account.connectionId}
-        aria-label={`Disconnect ${label} from ${account.name}`}
-        title="Disconnect account"
-        disabled={busy}
-        onClick={(event) => onDisconnect(event.currentTarget)}
-      >
-        <X size={15} aria-hidden="true" />
-      </Button>
     </div>
   );
 }
@@ -153,6 +168,7 @@ export function Apps() {
   const page = useRef<HTMLDivElement>(null);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const dialogService = useRef('');
+  const discoveryTitle = useRef<HTMLHeadingElement>(null);
   const actionRequest = useRef<AbortController | null>(null);
   const groups = connectionGroups(connections ?? []);
   const managed = groups.find((group) => group.service.slug === manageService);
@@ -331,7 +347,7 @@ export function Apps() {
         {items.map(({ service, accounts }) => (
           <article key={service.slug} className="app-card" aria-labelledby={`app-${service.slug}`}>
             <div className="app-card-summary">
-              <ServiceLogo slug={service.slug} />
+              <ServiceLogo connection={service} />
               <div className="app-card-copy">
                 <h3 id={`app-${service.slug}`}>{service.name}</h3>
                 {!accounts.length && <p className="app-card-description">{service.description}</p>}
@@ -380,18 +396,20 @@ export function Apps() {
           <PageTitle path="/apps" />
           <p>Your tools, connected to Otto.</p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => {
-            setWebsiteUrl('');
-            setWebsiteLabel('');
-            setWebsiteConnectionId(undefined);
-            setWebsiteError('');
-            setWebsiteOpen(true);
-          }}
-        >
-          Connect website
-        </Button>
+        <div className="secondary-heading-actions">
+          <Button
+            onClick={() => {
+              setWebsiteUrl('');
+              setWebsiteLabel('');
+              setWebsiteConnectionId(undefined);
+              setWebsiteError('');
+              setWebsiteOpen(true);
+            }}
+          >
+            <Plus size={14} aria-hidden="true" />
+            Connect website
+          </Button>
+        </div>
       </header>
       {(error || loadError) && (
         <Notice onDismiss={error ? () => setError('') : undefined}>{error || loadError}</Notice>
@@ -445,8 +463,13 @@ export function Apps() {
             button?.focus();
           }}
         >
-          <DialogTitle>{managed?.service.name} accounts</DialogTitle>
-          <DialogDescription>Manage the accounts Otto can use for this app.</DialogDescription>
+          <div className="dialog-heading app-manage-heading">
+            {managed && <ServiceLogo connection={managed.service} />}
+            <div>
+              <DialogTitle>{managed?.service.name} accounts</DialogTitle>
+              <DialogDescription>Choose which accounts Otto can use.</DialogDescription>
+            </div>
+          </div>
           <div className="app-manage-accounts">
             {managed?.accounts.map((account) => (
               <ConnectedAccount
@@ -463,17 +486,20 @@ export function Apps() {
               />
             ))}
           </div>
-          <Button
-            data-add-account
-            variant="outline"
-            disabled={Boolean(busy)}
-            onClick={() => managed && void connect(managed.accounts[0], true)}
-          >
-            {busy === `connect:${manageService}` ? (
-              <LoaderCircle size={15} className="spin" aria-hidden="true" />
-            ) : null}
-            Add account
-          </Button>
+          <div className="dialog-actions">
+            <Button
+              data-add-account
+              disabled={Boolean(busy)}
+              onClick={() => managed && void connect(managed.accounts[0], true)}
+            >
+              {busy === `connect:${manageService}` ? (
+                <LoaderCircle size={15} className="spin" aria-hidden="true" />
+              ) : (
+                <Plus size={15} aria-hidden="true" />
+              )}
+              Add account
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
       <Dialog open={websiteOpen} onOpenChange={(open) => !websiteBusy && setWebsiteOpen(open)}>
@@ -536,8 +562,16 @@ export function Apps() {
           if (!open && !savingDiscovery) window.location.assign('/apps');
         }}
       >
-        <DialogContent className="app-discovery-dialog">
-          <DialogTitle>Connect {discovery?.name ?? 'app'}</DialogTitle>
+        <DialogContent
+          className="app-discovery-dialog"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            discoveryTitle.current?.focus();
+          }}
+        >
+          <DialogTitle ref={discoveryTitle} tabIndex={-1}>
+            Connect {discovery?.name ?? 'app'}
+          </DialogTitle>
           <DialogDescription>
             {discovery?.paths.some((path) => path.kind === 'cli')
               ? 'Add your account securely. CLI tokens are saved without a setup check.'

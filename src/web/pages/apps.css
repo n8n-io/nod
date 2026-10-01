@@ -73,54 +73,83 @@
   white-space: nowrap;
 }
 .app-manage-dialog .account-disconnect {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  min-height: 32px;
-  padding: 0;
-  border-radius: 6px;
-  color: var(--muted-foreground);
+  margin-left: auto;
 }
 .app-manage-dialog .account-disconnect:hover:not(:disabled) {
   color: var(--error);
   background: var(--error-soft);
 }
-.app-manage-dialog {
-  width: min(440px, calc(100vw - 32px));
-  padding: 24px;
+.app-manage-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-right: 22px;
+}
+.app-manage-heading > img,
+.app-manage-heading > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--muted-foreground);
+}
+.app-manage-heading h2 {
+  overflow-wrap: anywhere;
 }
 .app-manage-accounts {
-  margin: 14px 0 20px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: var(--surface);
+  overflow: hidden;
 }
 .app-manage-dialog .compact-account {
-  align-items: center;
+  display: grid;
   gap: 12px;
-  min-height: var(--control-height);
-  padding: 2px 0;
+  padding: 16px;
 }
 .app-manage-dialog .compact-account + .compact-account {
   border-top: 1px solid var(--border);
 }
 .app-manage-dialog .compact-account-details {
-  flex: 1;
   padding-top: 0;
 }
 .app-manage-dialog .compact-account-name {
-  min-width: 0;
+  display: block;
   font-size: 13px;
+  font-weight: 550;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.app-manage-dialog .compact-account-paths {
-  display: block;
+.app-manage-dialog .compact-account-email {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.app-account-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.app-account-status > svg {
+  flex: none;
+}
+.app-account-status[data-needs-attention] {
+  color: var(--text-secondary);
+}
+.app-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .app-discovery-dialog {
   width: min(500px, calc(100vw - 32px));
   padding: 24px;
+}
+.app-discovery-dialog > h2:focus-visible {
+  outline: none;
 }
 .app-website-dialog {
   width: min(480px, calc(100vw - 32px));
@@ -220,11 +249,7 @@
   }
 }
 @media (pointer: coarse) {
-  .app-manage-dialog .account-disconnect {
-    width: 40px;
-    height: 40px;
-    min-height: 40px;
-  }
+  .app-account-actions > .button,
   .apps-page .app-connect,
   .apps-page .app-manage {
     min-height: 40px;

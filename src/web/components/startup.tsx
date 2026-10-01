@@ -59,11 +59,6 @@ export function ChatSkeleton({
             <div className="welcome ghost-welcome">
               <BrandMark />
               <h2>What’s on your mind?</h2>
-              <div className="starter-actions">
-                {[120, 214, 118].map((width) => (
-                  <Skeleton key={width} className="ghost-chip" style={{ width }} />
-                ))}
-              </div>
             </div>
           )}
         </div>

@@ -3,10 +3,19 @@ import { ArrowUp, LoaderCircle, MessageCircle, Sparkles } from 'lucide-react';
 import type { AppState, Goal, Schedule } from '../../shared/contracts';
 import { BrandMark } from './brand';
 import { MessageText } from './message';
-import { Button, Input, Notice, Switch } from './ui';
+import { Button, Field, Input, Notice, Switch } from './ui';
+import { SearchPicker, TimeZonePicker, type PickerOption } from './time-zone-picker';
 import { api, errorMessage } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
 import { focusChatMessage } from '../lib/secondary-pages';
+import {
+  readSchedule,
+  scheduleExpression,
+  scheduleLocalTime,
+  scheduleRunAt,
+  scheduleWeekDays,
+  type ScheduleFrequency,
+} from '../lib/schedules';
 
 type Kind = 'goal' | 'schedule';
 type Subject = { kind: Kind; title?: string };
@@ -313,21 +322,43 @@ function pauseNote(kind: Kind, pausing: boolean, title: string) {
 }
 
 const frequencies = [
-  { value: '*', label: 'Every day' },
-  { value: '1-5', label: 'Weekdays' },
-  { value: '0,6', label: 'Weekends' },
-  { value: '1', label: 'Mondays' },
-  { value: '2', label: 'Tuesdays' },
-  { value: '3', label: 'Wednesdays' },
-  { value: '4', label: 'Thursdays' },
-  { value: '5', label: 'Fridays' },
-  { value: '6', label: 'Saturdays' },
-  { value: '0', label: 'Sundays' },
+  { value: 'daily', label: 'Every day' },
+  { value: 'weekdays', label: 'Weekdays' },
+  { value: 'weekends', label: 'Weekends' },
+  { value: 'weekly', label: 'Every week' },
+  { value: 'monthly', label: 'Every month' },
 ];
 
-function simpleCron(cron: string | null) {
-  const match = /^(\d{1,2}) (\d{1,2}) \* \* (\*|1-5|0,6|[0-6])$/.exec(cron ?? '');
-  return match ? { minute: match[1], hour: match[2], day: match[3] } : null;
+function SchedulePicker({
+  label,
+  ...props
+}: {
+  label: string;
+  value: string;
+  options: PickerOption[];
+  disabled: boolean;
+  onChange(value: string): void;
+}) {
+  const id = useId();
+  return (
+    <div className="schedule-timing-field">
+      <span className="field-label" id={id}>
+        {label}
+      </span>
+      <SearchPicker
+        {...props}
+        labelledBy={id}
+        labels={{
+          choose: `Choose ${label.toLowerCase()}`,
+          search: `Search ${label.toLowerCase()}`,
+          placeholder: 'Search options',
+          clear: 'Clear search',
+          list: label,
+          empty: 'No options found.',
+        }}
+      />
+    </div>
+  );
 }
 
 function Toggle({
@@ -357,67 +388,200 @@ function Note({ change }: { change: { busy: boolean } }) {
 
 function ScheduleControls({ schedule, canPause }: { schedule: Schedule; canPause: boolean }) {
   const change = useDirectChange('schedule', schedule.id);
-  const cron = simpleCron(schedule.cron);
-  const time = cron ? `${cron.hour.padStart(2, '0')}:${cron.minute.padStart(2, '0')}` : '';
   return (
-    <div className="plan-controls">
-      {canPause && (
-        <Toggle
-          label={`${schedule.title} on`}
-          on={schedule.enabled}
-          text={schedule.enabled ? 'On' : 'Paused'}
-          disabled={change.busy}
-          onChange={() =>
-            void change.apply(
-              { enabled: !schedule.enabled },
-              pauseNote('schedule', schedule.enabled, schedule.title),
-              { enabled: schedule.enabled },
-            )
-          }
-        />
-      )}
-      {cron && (
-        <>
-          <select
-            className="input plan-input"
-            aria-label={`${schedule.title} days`}
-            value={frequencies.some((item) => item.value === cron.day) ? cron.day : '*'}
+    <div className="schedule-controls">
+      <div className="schedule-control-status">
+        {canPause && (
+          <Toggle
+            label={`${schedule.title} active`}
+            on={schedule.enabled}
+            text={schedule.enabled ? 'Active' : 'Paused'}
             disabled={change.busy}
-            onChange={(event) =>
+            onChange={() =>
               void change.apply(
-                { cron: `${cron.minute} ${cron.hour} * * ${event.target.value}` },
-                `${schedule.title} now runs ${event.target.value === '*' ? 'every day' : `on ${frequencies.find((item) => item.value === event.target.value)!.label.toLowerCase()}`}.`,
-                { cron: schedule.cron },
+                { enabled: !schedule.enabled },
+                pauseNote('schedule', schedule.enabled, schedule.title),
+                { enabled: schedule.enabled },
               )
             }
-          >
-            {frequencies.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <Input
-            className="plan-input"
-            type="time"
-            aria-label={`${schedule.title} time`}
-            defaultValue={time}
-            key={time}
-            disabled={change.busy}
-            onBlur={(event) => {
-              const [hour, minute] = event.target.value.split(':');
-              if (!hour || event.target.value === time) return;
-              void change.apply(
-                { cron: `${Number(minute)} ${Number(hour)} * * ${cron.day}` },
-                `${schedule.title} now runs at ${event.target.value}.`,
-                { cron: schedule.cron },
-              );
-            }}
           />
-        </>
-      )}
-      <Note change={change} />
+        )}
+        <Note change={change} />
+      </div>
+      <ScheduleTiming
+        key={`${schedule.kind}:${schedule.cron}:${schedule.runAt}:${schedule.timeZone}`}
+        schedule={schedule}
+        change={change}
+      />
     </div>
+  );
+}
+
+function ScheduleTiming({
+  schedule,
+  change,
+}: {
+  schedule: Schedule;
+  change: ReturnType<typeof useDirectChange>;
+}) {
+  const initial = {
+    ...readSchedule(schedule.cron ?? ''),
+    ...(schedule.kind === 'once' && schedule.runAt
+      ? scheduleLocalTime(schedule.runAt, schedule.timeZone)
+      : { date: '' }),
+    timeZone: schedule.timeZone,
+  };
+  const [draft, setDraft] = useState(initial);
+  const [error, setError] = useState('');
+  const timeZoneLabel = useId();
+  const dirty = Object.keys(initial).some(
+    (key) => draft[key as keyof typeof draft] !== initial[key as keyof typeof initial],
+  );
+  const zones = [
+    ...new Set([schedule.timeZone, 'UTC', ...(Intl.supportedValuesOf?.('timeZone') ?? [])]),
+  ].sort();
+  const update = (value: Partial<typeof draft>) => {
+    setDraft((previous) => ({ ...previous, ...value }));
+    setError('');
+  };
+  return (
+    <form
+      className="schedule-timing"
+      aria-label={`Timing for ${schedule.title}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!dirty || change.busy) return;
+        try {
+          const body = {
+            timeZone: draft.timeZone,
+            ...(schedule.kind === 'once'
+              ? { runAt: scheduleRunAt(draft.date, draft.time, draft.timeZone) }
+              : {
+                  cron: scheduleExpression(
+                    draft.frequency,
+                    draft.time,
+                    draft.day,
+                    schedule.cron ?? undefined,
+                  ),
+                }),
+          };
+          setError('');
+          void change.apply(body, `Updated ${schedule.title}.`, {
+            timeZone: schedule.timeZone,
+            ...(schedule.kind === 'once' ? { runAt: schedule.runAt } : { cron: schedule.cron }),
+          });
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
+      }}
+    >
+      <div className="schedule-timing-fields">
+        {schedule.kind === 'once' ? (
+          <Field label="Date">
+            <Input
+              type="date"
+              value={draft.date}
+              required
+              disabled={change.busy}
+              onChange={(event) => update({ date: event.target.value })}
+            />
+          </Field>
+        ) : (
+          <SchedulePicker
+            label="Repeat"
+            value={draft.frequency}
+            options={
+              initial.frequency === 'custom'
+                ? [...frequencies, { value: 'custom', label: 'Custom schedule' }]
+                : frequencies
+            }
+            disabled={change.busy}
+            onChange={(frequency) =>
+              update({
+                frequency: frequency as ScheduleFrequency,
+                day: initial.frequency === frequency ? initial.day : '1',
+              })
+            }
+          />
+        )}
+        {schedule.kind === 'recurring' && draft.frequency === 'weekly' && (
+          <SchedulePicker
+            label="Day"
+            value={draft.day}
+            options={[1, 2, 3, 4, 5, 6, 0].map((day) => ({
+              value: String(day),
+              label: scheduleWeekDays[day],
+            }))}
+            disabled={change.busy}
+            onChange={(day) => update({ day })}
+          />
+        )}
+        {schedule.kind === 'recurring' && draft.frequency === 'monthly' && (
+          <SchedulePicker
+            label="Day of month"
+            value={draft.day}
+            options={Array.from({ length: 31 }, (_, index) => ({
+              value: String(index + 1),
+              label: String(index + 1),
+            }))}
+            disabled={change.busy}
+            onChange={(day) => update({ day })}
+          />
+        )}
+        {(schedule.kind === 'once' || draft.frequency !== 'custom') && (
+          <Field label="Time">
+            <Input
+              type="time"
+              value={draft.time}
+              required
+              disabled={change.busy}
+              onChange={(event) => update({ time: event.target.value })}
+            />
+          </Field>
+        )}
+        <div className="schedule-timing-field schedule-time-zone">
+          <span className="field-label" id={timeZoneLabel}>
+            Time zone
+          </span>
+          <TimeZonePicker
+            value={draft.timeZone}
+            zones={zones}
+            disabled={change.busy}
+            labelledBy={timeZoneLabel}
+            onChange={(timeZone) => update({ timeZone })}
+          />
+        </div>
+      </div>
+      {schedule.kind === 'recurring' && draft.frequency === 'custom' && (
+        <p className="field-hint">
+          Custom timing is kept as saved. Choose a repeat option to replace it, or ask Otto to
+          adjust it.
+        </p>
+      )}
+      {schedule.kind === 'recurring' && draft.frequency === 'monthly' && Number(draft.day) > 28 && (
+        <p className="field-hint">Months without this day are skipped.</p>
+      )}
+      {error && <Notice>{error}</Notice>}
+      {dirty && (
+        <div className="schedule-timing-actions">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={change.busy}
+            onClick={() => {
+              setDraft(initial);
+              setError('');
+            }}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={change.busy}>
+            {change.busy ? 'Saving…' : 'Save changes'}
+          </Button>
+        </div>
+      )}
+    </form>
   );
 }
 

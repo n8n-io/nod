@@ -1029,12 +1029,18 @@ test(
         ).rows.map((row) => row.id as string);
         assert.equal(artifacts.length, 1);
         const messages = await db.pool.query(
-          "SELECT attachments FROM messages WHERE turn_id=$1 AND role='assistant'",
+          "SELECT text,attachments FROM messages WHERE turn_id=$1 AND role='assistant'",
           [turn.turnId],
         );
         assert.deepEqual(
           messages.rows.flatMap((row) => row.attachments.map((item: { id: string }) => item.id)),
           artifacts,
+        );
+        assert.ok(messages.rows.every((row) => row.text === ''));
+        assert.ok(
+          messages.rows
+            .flatMap((row) => row.attachments)
+            .every((artifact) => artifact.source === 'browser_screenshot'),
         );
       });
 
@@ -2001,10 +2007,13 @@ test(
             assert.equal(await turnStatus(research), 'succeeded');
             assert.equal(ran(research)?.takeMessages, undefined);
             const messages = (
-              await db.pool.query('SELECT attachments FROM messages WHERE turn_id=$1', [research])
+              await db.pool.query('SELECT text,attachments FROM messages WHERE turn_id=$1', [
+                research,
+              ])
             ).rows;
             assert.equal(messages.length, 1);
             assert.equal(messages[0].attachments[0].name, 'finished.txt');
+            assert.equal(messages[0].text, '');
             quietBackgroundWork = true;
             await thread.resumeAfterCredentials(research);
             const resumed = (

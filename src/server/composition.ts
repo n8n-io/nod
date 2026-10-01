@@ -527,6 +527,14 @@ export async function createApplication(
   });
   let vault!: Awaited<ReturnType<typeof createVault>>;
   let browserConnections!: Awaited<ReturnType<typeof createBrowserConnections>>;
+  const icon = adapters.linkPreviews?.icon
+    ? (origin: string) =>
+        providerUsage.track(
+          { provider: 'public-web', category: 'browser', operation: 'site_icon' },
+          () => adapters.linkPreviews!.icon!(origin),
+          (value) => ({ bytes: value?.bytes.byteLength ?? 0 }),
+        )
+    : undefined;
   const integrations = await createIntegrations(pool, {
     admission,
     ownerId,
@@ -551,6 +559,7 @@ export async function createApplication(
     removeBrowserAccount: (id) => vault.removeLogin(id),
     browserConnections: () => browserConnections.list(),
     removeBrowserConnection: (id) => browserConnections.disconnect(id),
+    icon,
   });
   vault = await createVault(pool, {
     admission,
@@ -561,16 +570,7 @@ export async function createApplication(
     page: computer.currentPage,
     hold: computer.hold,
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
-    ...(adapters.linkPreviews?.icon
-      ? {
-          icon: (origin: string) =>
-            providerUsage.track(
-              { provider: 'public-web', category: 'browser', operation: 'site_icon' },
-              () => adapters.linkPreviews!.icon!(origin),
-              (icon) => ({ bytes: icon?.bytes.byteLength ?? 0 }),
-            ),
-        }
-      : {}),
+    icon,
   });
   browserConnections = await createBrowserConnections(pool, {
     ownerId,

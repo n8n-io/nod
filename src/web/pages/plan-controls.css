@@ -80,15 +80,60 @@
 .plan-controls:empty {
   display: none;
 }
-.plan-controls .plan-input {
-  width: auto;
-  min-height: 32px;
-  padding: 4px 8px;
-  font-size: 12.5px;
-}
 .plan-toggle {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
+}
+.schedule-controls {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.schedule-control-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.schedule-control-status:empty {
+  display: none;
+}
+.schedule-timing {
+  display: grid;
+  gap: 10px;
+}
+.schedule-timing-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.schedule-timing-fields > .field,
+.schedule-timing-field {
+  display: grid;
+  flex: 1 1 130px;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+}
+.schedule-timing-field.schedule-time-zone {
+  flex: 1.5 1 190px;
+}
+.schedule-timing-fields .input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+}
+.schedule-timing > .field-hint,
+.schedule-timing > .notice {
+  margin: 0;
+}
+.schedule-timing-actions {
+  display: flex;
+  justify-content: flex-end;
   gap: 8px;
 }
 .plan-range {

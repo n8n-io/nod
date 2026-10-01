@@ -107,7 +107,10 @@ export function channelReply(
     : hasAttachments
       ? 'Attachments are available in Otto.'
       : '';
-  return `${safe}${files ? `\n\n${files}` : ''}`.trim() || 'A reply is available in Otto.';
+  return (
+    `${safe}${files ? `\n\n${files}` : ''}`.trim() ||
+    (deliversAttachments ? '' : 'A reply is available in Otto.')
+  );
 }
 
 export async function createChannels(pool: Pool, options: ChannelOptions) {

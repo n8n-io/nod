@@ -628,6 +628,9 @@ test('channel replies keep secure credential and approval links in the local app
     true,
   );
   assert.equal(imageReply, 'Attached file.');
+  assert.equal(channelReply('', false, true), '');
+  assert.ok(channelReply('', true).trim());
+  assert.ok(channelReply('').trim());
 });
 
 test('text-only channel replies show verified private file links when an app address is available', () => {

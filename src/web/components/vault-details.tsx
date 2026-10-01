@@ -9,7 +9,7 @@ import type {
   VaultListEntry,
 } from '../../shared/contracts';
 import { api } from '../lib/api';
-import { originLabel } from '../lib/vault-name';
+import { originLabel, suggestLoginName } from '../lib/vault-name';
 import {
   clearVaultSecret,
   formatCardExpiry,
@@ -32,7 +32,9 @@ function hasChanges(form: HTMLFormElement, details: VaultEntryDetails) {
   const data = new FormData(form);
   if (String(data.get('label') ?? '') !== details.label) return true;
   if (
-    ['password', 'cardNumber', 'securityCode', 'removeSecurityCode'].some((name) => data.has(name))
+    ['password', 'cardNumber', 'securityCode', 'removeSecurityCode'].some((name) =>
+      Boolean(data.get(name)),
+    )
   )
     return true;
   if (details.kind === 'login') return String(data.get('username') ?? '') !== details.username;
@@ -75,6 +77,7 @@ export function VaultDetails({
   const formId = useId();
   const bar = useRef<HTMLDivElement>(null);
   const editForm = useRef<HTMLFormElement>(null);
+  const editField = useRef('label');
   const footer = useRef<HTMLDivElement>(null);
   const previousDeleting = useRef(deleting);
   const active = useRef(false);
@@ -86,10 +89,10 @@ export function VaultDetails({
   const item = isCard ? 'card' : 'login';
   const identityName =
     details?.kind === 'login'
-      ? (details.identifierLabel ?? 'Username')
+      ? (details.identifierLabel ?? 'Username or email')
       : isCard
         ? 'Cardholder name'
-        : 'Username';
+        : 'Username or email';
 
   function cancelAction() {
     actionGeneration.current += 1;
@@ -108,6 +111,7 @@ export function VaultDetails({
   function hideSecrets() {
     hideRevealed();
     clearVaultSecret(editForm.current);
+    updateDirty();
   }
 
   function updateDirty() {
@@ -160,7 +164,10 @@ export function VaultDetails({
   }, [deleting]);
 
   useEffect(() => {
-    if (editing) editForm.current?.querySelector<HTMLInputElement>('input[name="label"]')?.focus();
+    if (editing)
+      editForm.current
+        ?.querySelector<HTMLInputElement>(`input[name="${editField.current}"]`)
+        ?.focus();
   }, [editing]);
 
   useEffect(() => {
@@ -195,11 +202,8 @@ export function VaultDetails({
     const username = String(data.get('username') ?? '');
     const cardholder = String(data.get('cardholder') ?? '');
     let replacement = String(data.get(isCard ? 'cardNumber' : 'password') ?? '');
-    if (isCard && data.has('cardNumber') && !replacement.trim()) {
-      setError('Enter the new card number or cancel this change.');
-      event.currentTarget.querySelector<HTMLInputElement>('[name="cardNumber"]')?.focus();
-      return;
-    }
+    const hasPassword =
+      details.kind === 'login' && (Boolean(replacement) || details.hasPassword !== false);
     let securityCode = data.has('removeSecurityCode')
       ? null
       : String(data.get('securityCode') ?? '');
@@ -217,7 +221,9 @@ export function VaultDetails({
             ...(securityCode === null || securityCode ? { securityCode } : {}),
           }
         : {
-            label: String(data.get('label') ?? ''),
+            label:
+              String(data.get('label') ?? '').trim() ||
+              suggestLoginName(entry.kind === 'login' ? entry.origin : ''),
             username,
             ...(replacement ? { password: replacement } : {}),
           },
@@ -252,7 +258,7 @@ export function VaultDetails({
       setDetails(
         updated.kind === 'card'
           ? { ...updated, cardholder, hasSecurityCode }
-          : { ...updated, username },
+          : { ...updated, username, hasPassword },
       );
       setFormRevision((value) => value + 1);
       setDirty(false);
@@ -382,9 +388,12 @@ export function VaultDetails({
     return (
       <>
         {value === undefined ? (
-          <span className="vault-password-mask" aria-label={`${label} hidden`}>
-            {mask}
-          </span>
+          editableValue(
+            name,
+            <span className="vault-password-mask" aria-label={`${label} hidden`}>
+              {mask}
+            </span>,
+          )
         ) : (
           <span className="vault-detail-value vault-password-visible">{value}</span>
         )}
@@ -418,12 +427,32 @@ export function VaultDetails({
   }
 
   function close() {
-    active.current = false;
-    detailsRequest.current?.abort();
-    saveRequest.current?.abort();
+    if (saving) return;
+    if (editing) {
+      discardChanges();
+      return;
+    }
     hideSecrets();
-    setDetails(null);
     onClose();
+  }
+
+  function startEditing(field = 'label') {
+    hideRevealed();
+    editField.current = field;
+    setEditing(true);
+  }
+
+  function editableValue(field: string, value: React.ReactNode) {
+    return (
+      <button
+        type="button"
+        className="vault-detail-value vault-field-edit"
+        aria-label={`Edit ${field === 'label' ? 'name' : field === 'username' ? identityName.toLowerCase() : field}`}
+        onClick={() => startEditing(field)}
+      >
+        {value}
+      </button>
+    );
   }
 
   const host = entry.kind === 'login' ? originLabel(entry.origin) : '';
@@ -478,10 +507,7 @@ export function VaultDetails({
               size="sm"
               data-vault-edit
               disabled={!details || saving}
-              onClick={() => {
-                hideRevealed();
-                setEditing(true);
-              }}
+              onClick={() => startEditing()}
             >
               Edit
             </Button>
@@ -525,16 +551,31 @@ export function VaultDetails({
               updateDirty();
             }}
           />
-          {entry.kind === 'login' &&
-            field('Website', <span className="vault-detail-value">{host}</span>)}
         </form>
       ) : (
         <div className="vault-inset">
+          {field('Name', editableValue('label', name))}
+          {entry.kind === 'login' &&
+            field(
+              'Website',
+              <span className="vault-detail-value">{host}</span>,
+              <Button asChild variant="ghost" size="icon">
+                <a
+                  href={entry.origin}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open ${host}`}
+                >
+                  <ExternalLink size={16} aria-hidden="true" />
+                </a>
+              </Button>,
+            )}
           {field(
             identityName,
-            <span className="vault-detail-value">
-              {details.kind === 'card' ? details.cardholder : details.username || '—'}
-            </span>,
+            editableValue(
+              details.kind === 'card' ? 'cardholder' : 'username',
+              details.kind === 'card' ? details.cardholder : details.username || '—',
+            ),
             copyButton(identityName, () => void performAction('identity')),
           )}
           {details.kind === 'card' ? (
@@ -545,31 +586,18 @@ export function VaultDetails({
               )}
               {field(
                 'Expiry date',
-                <span className="vault-detail-value">
-                  {formatCardExpiry(details.expiryMonth, details.expiryYear)}
-                </span>,
+                editableValue('expiry', formatCardExpiry(details.expiryMonth, details.expiryYear)),
               )}
               {details.hasSecurityCode &&
                 field('Security code', secretControls('securityCode', 'Security code', '••••'))}
             </>
           ) : (
-            <>
-              {field('Password', secretControls('password', 'Password', '••••••••'))}
-              {field(
-                'Website',
-                <span className="vault-detail-value">{host}</span>,
-                <Button asChild variant="ghost" size="icon">
-                  <a
-                    href={entry.kind === 'login' ? entry.origin : undefined}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`Open ${host}`}
-                  >
-                    <ExternalLink size={16} aria-hidden="true" />
-                  </a>
-                </Button>,
-              )}
-            </>
+            field(
+              'Password',
+              details.hasPassword === false
+                ? editableValue('password', <span className="vault-secret-empty">Not saved</span>)
+                : secretControls('password', 'Password', '••••••••'),
+            )
           )}
         </div>
       )}

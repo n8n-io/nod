@@ -955,15 +955,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       mimeType: string,
       text = '',
       publish = true,
+      source?: Artifact['source'],
     ) => {
       const artifact = await current(async (client) => {
-        const artifact = await artifacts.storeArtifact(
-          Buffer.from(bytes),
-          name,
-          mimeType,
-          threadId,
-          client,
-        );
+        const artifact = {
+          ...(await artifacts.storeArtifact(Buffer.from(bytes), name, mimeType, threadId, client)),
+          ...(source ? { source } : {}),
+        };
         if (publish) await insertAssistantMessage(client, ref, text, [artifact]);
         return artifact;
       });
@@ -1073,7 +1071,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         const read = dependencies.readArtifact;
         if (!read) throw new Error('Workspace file delivery is unavailable.');
         const artifact = await current(() => artifacts.publishArtifact(threadId, path, name, read));
-        await post(`Created ${artifact.name}.`, [artifact]);
+        await post('', [artifact]);
         return artifact;
       },
       readWorkspaceFile:
@@ -1084,7 +1082,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           name && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\.png$/.test(name) ? name : 'screenshot.png';
         return turn.background
           ? attachFile({ bytes, name: fileName, mimeType: 'image/png' })
-          : attach(bytes, fileName, 'image/png', `Browser screenshot: ${fileName}`);
+          : attach(bytes, fileName, 'image/png', '', true, 'browser_screenshot');
       },
       publishBrowserFile: attachFile,
     });

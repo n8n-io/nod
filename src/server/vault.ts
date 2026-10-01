@@ -34,6 +34,12 @@ const passwordInput = z
     password: z.string().min(1).max(8192),
   })
   .strict();
+const loginInput = passwordInput
+  .extend({
+    username: z.string().max(320).default(''),
+    password: z.string().max(8192).default(''),
+  })
+  .refine((input) => Boolean(input.username.trim() || input.password));
 const updateInput = z
   .object({
     kind: z.literal('login').optional(),
@@ -604,6 +610,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       } catch {
         throw new VaultError('This saved login could not be opened.', 500);
       }
+      if (!input.username.trim() && !input.password && !secret.password)
+        throw new VaultError('Add a username, email or password for this login.', 400);
       const ciphertext = sealCredential(credentialKey, entry, {
         username: input.username,
         password: input.password || secret.password,
@@ -1845,7 +1853,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           .parse(request.body);
         if (kind === 'card') return saveCard(request.body);
         requireFullHost(request.body);
-        return save(owner, passwordInput.parse(request.body));
+        return save(owner, loginInput.parse(request.body));
       });
       scope.patch<{ Params: { id: string } }>(
         '/api/vault/:id',
@@ -1879,7 +1887,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             };
           }
           const { entry, secret } = await readCredential(request.params.id);
-          return { ...metadata(entry, secret.username), username: secret.username };
+          return {
+            ...metadata(entry, secret.username),
+            username: secret.username,
+            hasPassword: Boolean(secret.password),
+          };
         },
       );
       scope.post<{ Params: { id: string } }>(

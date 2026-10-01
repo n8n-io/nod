@@ -117,10 +117,16 @@ test(
     const pendingBrowserId = randomUUID();
     const savedLoginIds = [randomUUID(), randomUUID()];
     let savedLoginReads = 0;
+    let browserEndpoint = 'https://example.test';
+    const iconOrigins: string[] = [];
     const integrations = await createIntegrations(pool, {
       ownerId: 'local-development',
       provider,
       baseUrl: 'http://localhost:4310',
+      icon: async (origin) => {
+        iconOrigins.push(origin);
+        return { bytes: new Uint8Array([137, 80, 78, 71]), mimeType: 'image/png' };
+      },
       browserAccounts: async () => {
         savedLoginReads++;
         return savedLoginIds.map((id, index) => ({
@@ -144,7 +150,7 @@ test(
           status: 'disconnected' as const,
           connectionId: id,
           triggersEnabled: false,
-          accessPaths: [{ id, kind: 'browser' as const, endpoint: 'https://example.test' }],
+          accessPaths: [{ id, kind: 'browser' as const, endpoint: browserEndpoint }],
           ...(state ? { browserState: state } : {}),
         })),
       wake: async (prompt, id) => {
@@ -200,6 +206,45 @@ test(
       assert.doesNotMatch(JSON.stringify(browserPaths), /synthetic-private|usernameHint|password/);
       await assert.rejects(integrations.list('another-user'), { statusCode: 403 });
       assert.equal(savedLoginReads, 1);
+      await t.test(
+        'app icons use only owned origins and never connection paths or credentials',
+        async () => {
+          const foreign = randomUUID();
+          await pool.query(
+            "INSERT INTO app_connections (id,owner_id,slug,account_id,provider_id) VALUES ($1,'another-user','gmail','ca-foreign','fixture')",
+            [foreign],
+          );
+          for (const id of [foreign, randomUUID(), 'https%3A%2F%2Funowned.example'])
+            assert.equal((await app.inject({ url: `/api/apps/${id}/icon` })).statusCode, 404);
+          assert.deepEqual(iconOrigins, []);
+          browserEndpoint = 'https://example.test/private/account?token=private-query#private';
+          const result = await app.inject({ url: `/api/apps/${discoveredBrowserId}/icon` });
+          assert.equal(result.statusCode, 200);
+          assert.equal(result.headers['content-type'], 'image/png');
+          assert.equal(result.headers['cross-origin-resource-policy'], 'same-origin');
+          assert.equal(result.headers['x-content-type-options'], 'nosniff');
+          assert.match(result.headers['cache-control'] ?? '', /^private,/);
+          assert.deepEqual(iconOrigins, ['https://example.test']);
+          assert.equal(
+            (await app.inject({ url: `/api/apps/${pendingBrowserId}/icon` })).statusCode,
+            200,
+          );
+          assert.deepEqual(iconOrigins, ['https://example.test']);
+          for (const endpoint of [
+            'https://private-user:private-password@example.test/account',
+            'http://127.0.0.1/account',
+            'file:///private/account',
+          ]) {
+            browserEndpoint = endpoint;
+            assert.equal(
+              (await app.inject({ url: `/api/apps/${discoveredBrowserId}/icon` })).statusCode,
+              404,
+            );
+          }
+          assert.deepEqual(iconOrigins, ['https://example.test']);
+          browserEndpoint = 'https://example.test';
+        },
+      );
       await pool.query(
         "INSERT INTO app_connections (owner_id,slug,account_id,trigger_id,triggers_enabled,provider_id) VALUES ('local-development','gmail','ca-fixture','ti-fixture',true,'fixture')",
       );

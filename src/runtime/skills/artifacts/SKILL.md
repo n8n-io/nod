@@ -12,4 +12,4 @@ Check the file before you share it:
 - For a PPTX file, open it with `python-pptx` and check the slide count and text.
 - For a chart, read the source data and inspect the PNG with `read`.
 
-Use `share_file` for each final file. A successful `share_file` call sends the file to the user. In the final answer, give a short summary and do not claim that a file was sent if the tool failed.
+Use `share_file` for each final file. A successful `share_file` call sends the file to the user. In the final answer, briefly describe the result without announcing filenames unless the user asks for them. Do not claim that a file was sent if the tool failed.

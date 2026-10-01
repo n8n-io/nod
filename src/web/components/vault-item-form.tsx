@@ -3,6 +3,7 @@ import { CreditCard, Globe } from 'lucide-react';
 import type { VaultEntry, VaultEntryDetails, VaultListEntry } from '../../shared/contracts';
 import { api } from '../lib/api';
 import { Button, Field, Input, Notice } from './ui';
+import { suggestLoginName } from '../lib/vault-name';
 import { VaultTitle } from './vault-surface';
 
 export function formatCardExpiry(month: number, year: number) {
@@ -33,7 +34,6 @@ function VaultSecretField({
   label,
   editing,
   saved = true,
-  mask = '••••••••',
   disabled,
   onChange,
 }: {
@@ -41,128 +41,70 @@ function VaultSecretField({
   label: string;
   editing: boolean;
   saved?: boolean;
-  mask?: string;
   disabled: boolean;
   onChange?(): void;
 }) {
-  const [mode, setMode] = useState<'keep' | 'replace' | 'remove'>('keep');
+  const [removing, setRemoving] = useState(false);
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
-  const trigger = useRef<HTMLDivElement>(null);
-  const previous = useRef(mode);
+  const previous = useRef(removing);
   const notify = useRef(onChange);
   notify.current = onChange;
   useEffect(() => {
-    if (previous.current === mode) return;
-    previous.current = mode;
-    if (mode === 'replace') input.current?.focus();
-    else trigger.current?.querySelector<HTMLButtonElement>('[data-change-secret]')?.focus();
+    if (previous.current === removing) return;
+    previous.current = removing;
     notify.current?.();
-  }, [mode]);
-  if (editing && mode !== 'replace')
-    return (
-      <div className="field vault-secret-field">
-        <div className="vault-field-heading">
-          <span className="field-label">{label}</span>
-          <div className="vault-field-heading-actions" ref={trigger}>
-            {mode === 'remove' ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                data-change-secret
-                disabled={disabled}
-                onClick={() => setMode('keep')}
-              >
-                Cancel removal
-              </Button>
-            ) : (
-              <>
-                {name === 'securityCode' && saved && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Remove security code"
-                    disabled={disabled}
-                    onClick={() => setMode('remove')}
-                  >
-                    Remove
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  data-change-secret
-                  aria-label={`${saved ? 'Change' : 'Add'} ${label.toLowerCase()}`}
-                  disabled={disabled}
-                  onClick={() => setMode('replace')}
-                >
-                  {saved ? 'Change' : 'Add'}
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="vault-field-box">
-          {mode === 'remove' ? (
-            <>
-              <span className="vault-secret-empty">Will be removed</span>
-              <input name="removeSecurityCode" type="hidden" value="true" />
-            </>
-          ) : saved ? (
-            <span className="vault-password-mask" aria-label={`${label} hidden`}>
-              {mask}
-            </span>
-          ) : (
-            <span className="vault-secret-empty">Not saved</span>
-          )}
-        </div>
-      </div>
-    );
+  }, [removing]);
   return (
     <div className="field vault-secret-field">
       <div className="vault-field-heading">
         <label className="field-label" htmlFor={id}>
-          {editing
-            ? `New ${label.toLowerCase()}`
-            : name === 'securityCode'
-              ? `${label} (CVC/CVV, optional)`
-              : label}
+          {label}
+          {name === 'securityCode' || name === 'password' ? ' (optional)' : ''}
         </label>
-        {editing && (
+        {editing && name === 'securityCode' && saved && (
           <div className="vault-field-heading-actions">
             <Button
-              className="vault-secret-cancel"
               type="button"
               variant="ghost"
               size="sm"
               disabled={disabled}
               onClick={() => {
                 if (input.current) input.current.value = '';
-                setMode('keep');
+                setRemoving((value) => !value);
               }}
             >
-              Cancel change
+              {removing ? 'Keep saved code' : 'Remove'}
             </Button>
           </div>
         )}
       </div>
-      <Input
-        ref={input}
-        id={id}
-        name={name}
-        type="password"
-        inputMode={name === 'password' ? undefined : 'numeric'}
-        autoComplete={
-          name === 'cardNumber' ? 'cc-number' : name === 'securityCode' ? 'cc-csc' : 'new-password'
-        }
-        maxLength={name === 'cardNumber' ? 32 : name === 'securityCode' ? 4 : 8192}
-        pattern={name === 'securityCode' ? '[0-9]{3,4}' : undefined}
-        required={editing || name !== 'securityCode'}
-        disabled={disabled}
-      />
+      {removing ? (
+        <div className="vault-field-box">
+          <span className="vault-secret-empty">Will be removed</span>
+          <input name="removeSecurityCode" type="hidden" value="true" />
+        </div>
+      ) : (
+        <Input
+          ref={input}
+          id={id}
+          name={name}
+          type="password"
+          placeholder={editing ? (saved ? 'Leave blank to keep current' : 'Not saved') : undefined}
+          inputMode={name === 'password' ? undefined : 'numeric'}
+          autoComplete={
+            name === 'cardNumber'
+              ? 'cc-number'
+              : name === 'securityCode'
+                ? 'cc-csc'
+                : 'new-password'
+          }
+          maxLength={name === 'cardNumber' ? 32 : name === 'securityCode' ? 4 : 8192}
+          pattern={name === 'securityCode' ? '[0-9]{3,4}' : undefined}
+          required={!editing && name === 'cardNumber'}
+          disabled={disabled}
+        />
+      )}
     </div>
   );
 }
@@ -180,10 +122,10 @@ export function VaultFields({
 }) {
   const identityLabel =
     details?.kind === 'login'
-      ? (details.identifierLabel ?? 'Username')
+      ? (details.identifierLabel ?? 'Username or email')
       : kind === 'card'
         ? 'Cardholder name'
-        : 'Username';
+        : 'Username or email';
   return (
     <>
       <Field label="Name">
@@ -191,15 +133,17 @@ export function VaultFields({
           name="label"
           defaultValue={details?.label}
           placeholder={kind === 'card' ? 'For example, everyday card' : 'For example, work account'}
-          required
+          required={kind === 'card'}
           maxLength={100}
           disabled={disabled}
         />
       </Field>
-      {kind === 'login' && !details && (
+      {kind === 'login' && (
         <Field label="Website domain">
           <Input
             name="origin"
+            defaultValue={details?.kind === 'login' ? details.origin : undefined}
+            readOnly={Boolean(details)}
             placeholder="example.com"
             autoCapitalize="none"
             spellCheck={false}
@@ -225,7 +169,7 @@ export function VaultFields({
         name={kind === 'card' ? 'cardNumber' : 'password'}
         label={kind === 'card' ? 'Card number' : 'Password'}
         editing={Boolean(details)}
-        mask={details?.kind === 'card' ? `•••• ${details.last4}` : undefined}
+        saved={details?.kind !== 'login' || details.hasPassword !== false}
         disabled={disabled}
         onChange={onSecretChange}
       />
@@ -252,7 +196,6 @@ export function VaultFields({
             label="Security code"
             editing={Boolean(details)}
             saved={details?.kind === 'card' && details.hasSecurityCode}
-            mask="••••"
             disabled={disabled}
             onChange={onSecretChange}
           />
@@ -306,8 +249,18 @@ export function VaultItemForm({
       form.current?.querySelector<HTMLInputElement>('input[name="expiry"]')?.focus();
       return;
     }
-    const label = String(values.get('label') ?? '');
-    const username = String(values.get('username') ?? '');
+    const origin = String(values.get('origin') ?? '').trim();
+    const label =
+      String(values.get('label') ?? '').trim() ||
+      (kind === 'login'
+        ? suggestLoginName(origin.includes('://') ? origin : `https://${origin}`)
+        : '');
+    const username = String(values.get('username') ?? '').trim();
+    if (kind === 'login' && !username && !values.get('password')) {
+      setError('Add a username, email or password for this login.');
+      form.current?.querySelector<HTMLInputElement>('input[name="username"]')?.focus();
+      return;
+    }
     let body = JSON.stringify(
       kind === 'card'
         ? {
@@ -322,7 +275,7 @@ export function VaultItemForm({
           }
         : {
             label,
-            origin: String(values.get('origin') ?? ''),
+            origin,
             username,
             password: String(values.get('password') ?? ''),
           },
