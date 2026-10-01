@@ -408,7 +408,11 @@ test('secure credential pause prevents subsequent tools in the same execution se
     let requested = false;
     const result = await fixture(
       async (tools) => {
-        await call(tools, 'get_credential', { ...input });
+        await call(tools, 'get_credential', {
+          ...input,
+          message: 'Example needs this sign-in step.',
+          action: 'Open secure step',
+        });
         await assert.rejects(
           call(tools, 'manage_personal_context', {
             action: 'goal_create',
@@ -433,7 +437,9 @@ test('secure credential pause prevents subsequent tools in the same execution se
     assert.equal(result.aborted, true);
     assert.equal(requested, true);
     assert.equal(managed, false);
-    assert.equal(result.replies.length, 1);
+    assert.deepEqual(result.replies, [
+      'Example needs this sign-in step. [Open secure step](/credentials/fixture)',
+    ]);
   }
 });
 
@@ -449,7 +455,11 @@ test('a chosen saved login reaches the credential broker without pausing the tur
   let requested = false;
   const result = await fixture(
     async (tools) => {
-      await call(tools, 'get_credential', { ...input });
+      await call(tools, 'get_credential', {
+        ...input,
+        message: 'Example needs your saved login.',
+        action: 'Use saved login',
+      });
     },
     {
       requestCredential: async (request) => {

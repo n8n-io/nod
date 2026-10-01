@@ -20,19 +20,7 @@ const e2eConsentPath =
   /^\/e2e\/connect\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const localPath =
   /^\/(?:api\/artifacts|vault|credentials)\/[A-Za-z0-9_-]+\/?$|^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/;
-const setupLabels = {
-  vault: [
-    'Vault',
-    'Open Vault',
-    'Sign in',
-    'Add login',
-    'Enter login details',
-    'Continue sign-in',
-    'Enter verification code',
-    'Choose a sign-in method',
-  ],
-  website: ['Connect website', 'Continue sign-in'],
-};
+const defaultLabels = { vault: 'Open Vault', website: 'Connect website' };
 const appLabel = /^Connect [\p{L}\p{N}][\p{L}\p{N} .&()+-]{0,79}$/u;
 
 export function setupLink(
@@ -47,11 +35,10 @@ export function setupLink(
   if (link.kind !== 'setup') return null;
   if (link.setup === 'app')
     return { href: link.href, setup: 'app', label: appLabel.test(label) ? label : 'Connect app' };
-  const labels = setupLabels[link.setup];
   return {
     href: link.href,
     setup: link.setup,
-    label: labels.find((candidate) => candidate.toLowerCase() === label.toLowerCase()) ?? labels[0],
+    label: label && !label.includes(link.href) ? label : defaultLabels[link.setup],
   };
 }
 

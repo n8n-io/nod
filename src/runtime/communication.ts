@@ -1,23 +1,25 @@
-import type { CredentialInvitation } from '../ports/agent.ts';
+function plain(value: string) {
+  return value
+    .replace(/[[\]()<>`*_~#|\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-export function vaultInvitation(step: CredentialInvitation, url?: string) {
-  const origin = new URL(step.origin);
-  if (!['https:', 'http:'].includes(origin.protocol) || origin.username || origin.password)
+export function vaultInvitation(
+  origin: string,
+  url: string | undefined,
+  message: string,
+  action: string,
+) {
+  const site = new URL(origin);
+  if (!['https:', 'http:'].includes(site.protocol) || site.username || site.password)
     throw new Error('The sign-in site is unavailable.');
-  const site = origin.origin;
   if (!url || !/^\/(?:vault|credentials)\/[A-Za-z0-9_-]{1,256}$/.test(url))
     throw new Error('The Vault link is unavailable.');
-  if (step.kind === 'otp')
-    return `${site} needs a verification code. [Enter the code securely](${url}) and I will continue the task.`;
-  if (step.methodSelection)
-    return `${site} needs you to sign in. [Choose a sign-in method](${url}) and I will continue the task.`;
-  if (!['identifier', 'password'].includes(step.kind))
-    throw new Error('The sign-in step is unavailable.');
-  if (step.savedLoginAvailable === false)
-    return `${site} needs you to sign in. There isn’t a login saved for this website in Vault. [Add login](${url}) and I will continue the task.`;
-  if (step.savedLoginAvailable === true)
-    return `${site} needs you to sign in. [Continue sign-in](${url}) with your saved login and I will continue the task.`;
-  return `${site} needs you to sign in. [Open the secure form](${url}) and I will continue the task.`;
+  const text = plain(message);
+  const label = plain(action);
+  if (!text || !label) throw new Error('Describe the secure step and its button.');
+  return `${text} [${label}](${url})`;
 }
 
 export function requestsPrivateInput(text: string) {

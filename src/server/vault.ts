@@ -16,7 +16,6 @@ import type {
 import type { BrowserPage, CredentialKind, CredentialSubmission } from '../ports/computer.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SiteIcon } from '../ports/link-preview.ts';
-import type { CredentialInvitation } from '../ports/agent.ts';
 import {
   normalizedEmail,
   verificationRecipient,
@@ -837,7 +836,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     turn: TurnRef,
     ownerId: string,
     raw: CredentialInput,
-  ): Promise<{ url: string; invitation: CredentialInvitation }> {
+  ): Promise<{ url: string }> {
     if (!(await currentTurn(pool, turn, ownerId)))
       throw new VaultError('This task can no longer request credentials.', 409);
     const { input, inspection } = await inspectRequest(turn.threadId, raw);
@@ -884,25 +883,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     } finally {
       client.release();
     }
-    const savedLoginAvailable =
-      input.kind === 'otp'
-        ? undefined
-        : (
-            await pool.query<{ available: boolean }>(
-              'SELECT EXISTS(SELECT 1 FROM vault_entries WHERE owner_id=$1 AND origin=$2) AS available',
-              [ownerId, input.origin],
-            )
-          ).rows[0]?.available;
-    return {
-      url: `/vault/${token}`,
-      invitation: {
-        origin: input.origin,
-        kind: input.kind,
-        methodSelection:
-          inspection.fields.length === 0 && inspection.methods.some((method) => method.supported),
-        ...(savedLoginAvailable === undefined ? {} : { savedLoginAvailable }),
-      },
-    };
+    return { url: `/vault/${token}` };
   }
 
   function tokenHash(token: string) {

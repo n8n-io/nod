@@ -8,6 +8,7 @@ export interface Turn {
   context: RuntimeContext;
   computer: Computer;
   reply(text: string, id?: string, replyToMessageId?: string): Promise<unknown>;
+  invite(text: string): Promise<unknown>;
   pause(
     reason: 'question' | 'approval' | 'credentials',
     text?: string,

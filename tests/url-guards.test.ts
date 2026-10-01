@@ -244,7 +244,8 @@ test('setup links omit tokens and fragments and approval paths never become link
     origin,
   )!;
   assert.deepEqual(link, { href: '/credentials/request-id', kind: 'setup', setup: 'vault' });
-  assert.equal(setupLink(link, 'Click here for a prize')!.label, 'Vault');
+  assert.equal(setupLink(link, 'Add authenticator code')!.label, 'Add authenticator code');
+  assert.equal(setupLink(link, `${origin}/credentials/request-id`)!.label, 'Open Vault');
   assert.equal(safeMessageLink('/approvals/action-id', origin), null);
   assert.equal(safeMessageLink(`${origin}/approvals/action-id`, origin), null);
   const result = render(

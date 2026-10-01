@@ -1424,7 +1424,6 @@ test(
             usernameSelector: '#username',
             passwordSelector: '#password',
           });
-          assert.equal(requested.invitation.savedLoginAvailable, false);
           await assert.rejects(
             vault.fillSaved(turn, owner, first.id, {
               origin: 'https://cards.example.test',

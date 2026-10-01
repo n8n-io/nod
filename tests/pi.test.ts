@@ -198,11 +198,12 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                   id: 'credential-call',
                   name: 'get_credential',
                   arguments: {
-                    action: 'request',
                     origin: 'https://example.com',
                     label: 'Example',
                     kind: 'password',
                     passwordSelector: '#password',
+                    message: 'Example needs your password.',
+                    action: 'Add password',
                   },
                 },
                 {
@@ -277,7 +278,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
     );
     assert.equal(prompts[1].includes('runtime-fixture-key'), false);
     assert.equal(replies.length, 2);
-    assert.match(replies[0], /https:\/\/example\.com.*\/credentials\/fixture/);
+    assert.match(replies[0], /\[Add password\]\(\/credentials\/fixture\)/);
     assert.equal(replies[1], 'Resumed successfully.');
   } finally {
     await runtime.dispose();

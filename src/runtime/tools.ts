@@ -173,7 +173,7 @@ export const toolDefinitions = {
   ),
   get_credential: defineTool(
     'get_credential',
-    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault can fill a saved login or open a secure form. Submit with browser and inspect the result.',
+    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault can fill a saved login or open a secure form. For the form, message is one sentence for the user about this step in their language, and action is the 2-5 word button text, such as "Add authenticator code"; never ask for the value in chat. Submit with browser and inspect the result.',
     Type.Union([
       Type.Object({
         id: uuid,
@@ -188,6 +188,8 @@ export const toolDefinitions = {
         emailCode: Type.Optional(Type.Boolean()),
         emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
         savedLoginId: Type.Optional(uuid),
+        message: Type.String({ minLength: 1, maxLength: 300 }),
+        action: Type.String({ minLength: 1, maxLength: 60 }),
       }),
     ]),
   ),
@@ -387,12 +389,16 @@ export function ottoTools(
     }),
     bind(toolDefinitions.browser_flow, browserFlows),
     bind(toolDefinitions.get_credential, async (input) => {
-      const result = await context.requestCredential(input);
-      if (result.credential) return result.credential;
-      if (!('kind' in input)) throw new Error('This saved login is unavailable.');
+      if (!('kind' in input)) {
+        const result = await context.requestCredential(input);
+        if (!result.credential) throw new Error('This saved login is unavailable.');
+        return result.credential;
+      }
+      const { message, action, ...request } = input;
+      const result = await context.requestCredential(request);
       if (result.filled) return 'Saved login entered.';
       if (!result.url) throw new Error('The secure sign-in request could not be created.');
-      await turn.reply(vaultInvitation(result.invitation ?? input, result.url));
+      await turn.invite(vaultInvitation(request.origin, result.url, message, action));
       await pause('credentials', undefined, { post: false });
       return 'Waiting for secure input.';
     }),

@@ -490,6 +490,7 @@ export function createAgentRuntime(dependencies: {
         context,
         computer,
         reply,
+        invite: (text) => deliverReply(text),
         pause,
         confirm,
       };
