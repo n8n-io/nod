@@ -1030,19 +1030,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             > => result.status === 'fulfilled',
           )
           .map((result) => result.value);
-        if (!searches.length && !options.discovered)
-          throw new Error(
-            results
-              .map((result) =>
-                result.status === 'rejected'
-                  ? result.reason instanceof Error
-                    ? result.reason.message
-                    : String(result.reason)
-                  : '',
-              )
-              .filter(Boolean)
-              .join('; ') || 'No app tool catalog is available.',
-          );
+        const failed = availableProviders.filter(
+          (_item, index) => results[index].status === 'rejected',
+        );
         const tools = Object.assign({}, ...searches.map((item) => item.tools));
         const primary =
           availableProviders[0] === provider && results[0].status === 'fulfilled'
@@ -1096,6 +1086,19 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             accountEmail,
           }));
         const discovered = await options.discovered?.search(query, connectionId, signal);
+        if (failed.length && !searches.length && !discovered?.accounts.length)
+          throw new Error(
+            results
+              .map((result) =>
+                result.status === 'rejected'
+                  ? result.reason instanceof Error
+                    ? result.reason.message
+                    : String(result.reason)
+                  : '',
+              )
+              .filter(Boolean)
+              .join('; ') || 'No app tool catalog is available.',
+          );
         if (discovered?.accounts.length) {
           Object.assign(tools, {
             CONNECTED_HTTP: {
@@ -1128,7 +1131,16 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             },
           });
         }
-        return { ...search, accounts, discovered: discovered?.accounts ?? [] };
+        return {
+          ...search,
+          accounts,
+          discovered: discovered?.accounts ?? [],
+          ...(failed.length
+            ? {
+                incomplete: `Could not search ${failed.map((item) => item.id).join(', ')}. Matching tools may be missing; retry before concluding that no action exists.`,
+              }
+            : {}),
+        };
       } catch (error) {
         throw new IntegrationError(failure('App tool search failed', error), 502);
       }

@@ -2757,6 +2757,7 @@ test(
     const resumes: string[] = [];
     const directAccounts: Array<Record<string, unknown>> = [];
     let composioSearchFails = false;
+    let directSearchFails = false;
     let failInspectOnce = false;
     let state = '';
     let lastService = 'notion';
@@ -2771,7 +2772,8 @@ test(
         return { accountId: `${id}-${service}`, url: 'https://example.test/authorize' };
       },
       search: async () => {
-        if (id === 'composio' && composioSearchFails) throw new Error('Provider unavailable.');
+        if ((id === 'composio' && composioSearchFails) || (id === 'direct' && directSearchFails))
+          throw new Error('Provider unavailable.');
         return {
           tools: {
             [`${id}_tool`]: {},
@@ -2989,6 +2991,31 @@ test(
         'CONNECTED_MCP_CALL',
         'CONNECTED_CLI',
       ]);
+      assert.match((partial as { incomplete: string }).incomplete, /composio/);
+      assert.doesNotMatch((partial as { incomplete: string }).incomplete, /direct/);
+      directSearchFails = true;
+      const unavailable = (await integrations.execute('local-development', 'SEARCH_TOOLS', {
+        query: 'notion',
+      })) as { tools: Record<string, unknown>; discovered: unknown[]; incomplete: string };
+      assert.deepEqual(Object.keys(unavailable.tools), [
+        'CONNECTED_HTTP',
+        'CONNECTED_MCP_CALL',
+        'CONNECTED_CLI',
+      ]);
+      assert.equal(unavailable.discovered.length, 1);
+      assert.match(unavailable.incomplete, /composio, direct/);
+      await pool.query("UPDATE discovered_connections SET owner_id='another-owner' WHERE id=$1", [
+        httpId,
+      ]);
+      await assert.rejects(
+        integrations.execute('local-development', 'SEARCH_TOOLS', { query: 'notion' }),
+        { message: 'App tool search failed: Provider unavailable.; Provider unavailable.' },
+      );
+      await pool.query(
+        "UPDATE discovered_connections SET owner_id='local-development' WHERE id=$1",
+        [httpId],
+      );
+      directSearchFails = false;
       composioSearchFails = false;
       await pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
         existing.rows[0].id,
