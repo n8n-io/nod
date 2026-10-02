@@ -452,6 +452,7 @@
 }
 .chat-turn-preview-content {
   display: -webkit-box;
+  max-height: 9em;
   -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
@@ -462,6 +463,16 @@
 }
 .chat-turn-preview-content :is(ul, ol) {
   padding-left: 1.25em;
+}
+.chat-turn-preview-content table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.chat-turn-preview-content :is(th, td) {
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  text-align: left;
 }
 .chat-turn-preview-link {
   color: var(--foreground);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -779,7 +779,7 @@ async function appsFixture(
       const accountId = `account-${accounts.size + 1}`;
       accounts.set(accountId, service);
       callbacks.push(callback);
-      return { accountId, url: 'https://consent.example.com/connect' };
+      return { accountId, url: `https://consent.example.com/connect?account=${accountId}` };
     },
     search: async () => ({ tools: {}, suggestions: [] }),
     execute: async (action, args, accountId) => {
@@ -1001,6 +1001,112 @@ test(
       'work@example.test',
     );
     assert.ok(accounts.some((item) => item.connectionId === pending.id));
+  },
+);
+
+test(
+  'native setup completion tracks only the successful owned link through account merges and removal',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const work = await f.connect('gmail');
+    const start = async () => {
+      const response = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+      assert.equal(response.statusCode, 200);
+      const callback = new URL(f.callbacks.at(-1)!);
+      const pending = (
+        await f.pool.query('SELECT * FROM app_connections WHERE callback_hash=$1', [
+          createHash('sha256').update(callback.searchParams.get('state')!).digest('hex'),
+        ])
+      ).rows[0];
+      callback.searchParams.set('account', pending.pending_account_id);
+      const hash = createHash('sha256').update(new URL(response.json().url).href).digest('hex');
+      assert.equal(pending.setup_link_hash, hash);
+      return { id: pending.id, hash, callback };
+    };
+    const status = async (...hashes: string[]) => {
+      const response = await f.app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-status',
+        payload: { hashes },
+      });
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.headers['cache-control'], 'no-store');
+      return response.json();
+    };
+    const complete = async (callback: URL) =>
+      (await f.app.inject({ url: `${callback.pathname}${callback.search}` })).headers.location;
+    const personal = await start();
+    const other = await start();
+    await f.pool.query('INSERT INTO app_setup_completions(owner_id,link_hash) VALUES($1,$2)', [
+      'foreign-owner',
+      other.hash,
+    ]);
+    assert.deepEqual(await status(personal.hash, other.hash), []);
+    const wrongAccount = new URL(personal.callback);
+    wrongAccount.searchParams.set('account', work.accountId!);
+    assert.equal(await complete(wrongAccount), 'http://localhost:4310/apps?connection=failed');
+    assert.deepEqual(await status(personal.hash, other.hash), []);
+    assert.equal(
+      await complete(personal.callback),
+      'http://localhost:4310/apps?connection=connected',
+    );
+    assert.deepEqual(await status(personal.hash, other.hash), [personal.hash]);
+    await f.pool.query(
+      "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE id=$1",
+      [other.id],
+    );
+    assert.equal(await complete(other.callback), 'http://localhost:4310/apps?connection=expired');
+    assert.deepEqual(await status(other.hash), []);
+    f.session.authorize = async (_service, callback) => {
+      f.callbacks.push(callback);
+      return { accountId: work.accountId!, url: 'https://consent.example.com/reconnect-work' };
+    };
+    const reconnect = await start();
+    assert.deepEqual(await status(reconnect.hash), []);
+    assert.equal(
+      await complete(reconnect.callback),
+      'http://localhost:4310/apps?connection=connected',
+    );
+    assert.equal(
+      (await f.pool.query('SELECT id FROM app_connections WHERE id=$1', [reconnect.id])).rowCount,
+      0,
+    );
+    assert.equal(
+      (await f.service.list()).find((connection) => connection.accountId === work.accountId)
+        ?.connectionId,
+      work.connectionId,
+    );
+    assert.deepEqual(await status(reconnect.hash), [reconnect.hash]);
+    assert.equal(
+      await complete(reconnect.callback),
+      'http://localhost:4310/apps?connection=expired',
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: `/api/apps/gmail/accounts/${work.connectionId}/disconnect`,
+        })
+      ).statusCode,
+      200,
+    );
+    assert.deepEqual(await status(reconnect.hash), [reconnect.hash]);
+    assert.deepEqual(await status(other.hash), []);
+    for (const receipt of (await f.pool.query('SELECT * FROM app_setup_completions')).rows) {
+      assert.deepEqual(Object.keys(receipt).sort(), ['link_hash', 'owner_id']);
+      assert.match(receipt.link_hash, /^[a-f0-9]{64}$/);
+    }
+    for (const hashes of [
+      [],
+      ['https://consent.example.com/private'],
+      Array(101).fill(personal.hash),
+    ])
+      assert.equal(
+        (await f.app.inject({ method: 'POST', url: '/api/apps/setup-status', payload: { hashes } }))
+          .statusCode,
+        400,
+      );
   },
 );
 

@@ -149,6 +149,12 @@ export function ChatTurnRail({
                   'ul',
                   'ol',
                   'li',
+                  'table',
+                  'thead',
+                  'tbody',
+                  'tr',
+                  'th',
+                  'td',
                 ]}
                 unwrapDisallowed
                 skipHtml
