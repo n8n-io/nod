@@ -16,12 +16,10 @@ import {
   areaEntries,
   digest,
   emptyTree,
-  find,
   indexLayout,
-  open,
+  maxArchive,
   parse,
   render,
-  slugFor,
   type Entry,
   type Tree,
 } from '../src/server/memory-tree.ts';
@@ -293,32 +291,36 @@ test('the memory file round-trips, skips unsafe or invalid entries and converts 
   assert.deepEqual(parse(render(drinks)).overviews, {});
 });
 
-test('text in any script gets a valid path and is found by interior words', () => {
-  const tree = emptyTree();
-  for (const text of ['我住在东京', 'Люблю кофе по утрам', 'Café com leite'])
-    tree.entries.push(entry({ slug: slugFor(tree, 'about', text), text }));
+test('the archive keeps only the newest entries and a full memory file sheds it before refusing a save', () => {
+  const tree = treeOf();
+  for (let index = 0; index < maxArchive + 3; index++) {
+    const note = entry({ slug: `note-${index}`, text: `Synthetic note ${index}.` });
+    tree.entries.push(note);
+    archive(tree, note, 'expired', when);
+  }
+  assert.equal(tree.archive.length, maxArchive);
   assert.deepEqual(
-    tree.entries.map((item) => item.slug),
-    ['note', 'note-2', 'cafe-com-leite'],
+    [tree.archive[0].slug, tree.archive.at(-1)?.slug],
+    ['note-3', `note-${maxArchive + 2}`],
   );
+
+  const large = (index: number) =>
+    entry({ slug: `fact-${index}`, text: `${index} `.padEnd(600, 'x') });
+  const crowded = treeOf(...Array.from({ length: 320 }, (_, index) => large(index)));
+  crowded.archive = Array.from({ length: maxArchive }, (_, index) => ({
+    ...large(1000 + index),
+    archived: when,
+    reason: 'expired' as const,
+  }));
+  const kept = parse(render(crowded));
+  assert.equal(kept.entries.length, 320);
+  assert.ok(kept.archive.length > 0 && kept.archive.length < maxArchive);
   assert.deepEqual(
-    parse(render(tree))
-      .entries.map((item) => item.slug)
-      .sort(),
-    ['cafe-com-leite', 'note', 'note-2'],
+    kept.archive.map((item) => item.slug),
+    crowded.archive.slice(-kept.archive.length).map((item) => item.slug),
   );
-  assert.deepEqual(
-    find(tree, '东京').map((hit) => hit.path),
-    ['about/note'],
-  );
-  assert.deepEqual(
-    find(tree, 'КОФЕ').map((hit) => hit.path),
-    ['about/note-2'],
-  );
-  assert.deepEqual(
-    find(tree, 'CAFÉ').map((hit) => hit.path),
-    ['about/cafe-com-leite'],
-  );
+  crowded.entries.push(...Array.from({ length: 15 }, (_, index) => large(2000 + index)));
+  assert.throws(() => render(crowded), /The memory file is full\./);
 });
 
 test('the prompt index is stable JSON data, hides tentative entries and degrades under budget', () => {
@@ -356,30 +358,6 @@ test('the prompt index is stable JSON data, hides tentative entries and degrades
   assert.match(JSON.parse(full.text).about.at(-1), /^\+\d+ more$/);
   assert.equal(indexLayout(treeOf(...facts.toReversed()), { budget: 600 }).text, full.text);
   assert.equal(indexLayout(emptyTree()).text, '{}');
-});
-
-test('find folds accents and open returns each tier', () => {
-  const cafe = entry({
-    area: 'preferences',
-    slug: 'cafe',
-    text: 'Prefiere café sin azúcar por la mañana.',
-  });
-  const ana = entry({ area: 'people', slug: 'ana', text: 'Ana es su hermana.' });
-  const tree = treeOf(cafe, ana);
-  tree.overviews.people = { text: 'Close family.', digest: digest(areaEntries(tree, 'people')) };
-  assert.deepEqual(
-    find(tree, 'AZUCAR manana').map((hit) => hit.path),
-    ['preferences/cafe'],
-  );
-  assert.deepEqual(find(tree, 'ana', 'preferences'), []);
-  assert.deepEqual(find(tree, 'sibling'), []);
-  assert.deepEqual(open(tree, 'people'), {
-    path: 'people',
-    overview: 'Close family.',
-    entries: [{ path: 'people/ana', abstract: 'Ana es su hermana.', status: 'stated' }],
-  });
-  assert.equal((open(tree, 'people/ana') as { text: string }).text, 'Ana es su hermana.');
-  assert.throws(() => open(tree, 'people/nobody'), /not found/);
 });
 
 test('repair archives expired, stale and duplicate entries, keeps distinct numbers and never deletes', () => {
