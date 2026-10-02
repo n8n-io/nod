@@ -658,6 +658,7 @@ const refused: Array<[string, Record<string, unknown>]> = [
     { action: 'use', url: 'https://mail.example.test/', connectionId: randomUUID() },
   ],
   ['bash', { command: 'curl https://example.test' }],
+  ['codemode', { code: 'return await tools.bash({ command: "curl https://example.test" })' }],
   ['write', { path: 'notes.txt', content: 'Synthetic note' }],
   ['share_file', { path: 'notes.txt' }],
   ['manage_apps', { action: 'connect', service: 'gmail' }],

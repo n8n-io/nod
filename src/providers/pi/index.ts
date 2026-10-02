@@ -7,6 +7,7 @@ import { Type, type TObject } from '@sinclair/typebox';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import {
   createAgentSession,
+  createCodemodeExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -134,6 +135,7 @@ export function createPiAgent(options: {
           label: tool.name.replaceAll('_', ' '),
           description: tool.description,
           parameters: tool.parameters as ToolDefinition['parameters'],
+          exposure: 'model-only',
           executionMode: tool.parallel ? 'parallel' : 'sequential',
           execute: async (_id, args) => {
             await checkpoint();
@@ -147,6 +149,7 @@ export function createPiAgent(options: {
         additionalExtensionPaths: [
           fileURLToPath(import.meta.resolve('pi-web-access/dist/index.js')),
         ],
+        extensionFactories: [createCodemodeExtension({ mode: 'on', models: false })],
         noExtensions: true,
         noSkills: true,
         noPromptTemplates: true,
@@ -155,7 +158,7 @@ export function createPiAgent(options: {
       });
       await extensionLoader.reload();
       const extensions = extensionLoader.getExtensions();
-      if (extensions.errors.length) throw new Error('The Pi web extension could not be loaded.');
+      if (extensions.errors.length) throw new Error('The Pi extensions could not be loaded.');
       for (const extension of extensions.extensions)
         for (const [name, registered] of extension.tools) {
           const search = name === 'web_search';

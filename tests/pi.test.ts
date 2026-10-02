@@ -179,7 +179,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
       options?.resourceLoader
         ?.getExtensions()
         .extensions.flatMap((extension) => [...extension.tools.keys()]),
-      ['web_search', 'source_check', 'fetch_content', 'get_search_content'],
+      ['web_search', 'source_check', 'fetch_content', 'get_search_content', 'codemode'],
     );
     assert.equal(
       options?.resourceLoader?.getSystemPrompt()?.includes('runtime-fixture-key'),
@@ -474,6 +474,7 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
       'source_check',
       'fetch_content',
       'get_search_content',
+      'codemode',
     ]);
     assert.equal(captured!.noTools, 'builtin');
     assert.equal(captured!.cwd, workspace.path);
@@ -484,7 +485,9 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     assert.match(JSON.stringify(result.content), /empty directory/);
     assert.ok(scripts.length > before);
     assert.ok(scripts.slice(before).every((script) => script.includes(workspace.path)));
-    const extension = captured!.resourceLoader!.getExtensions().extensions[0];
+    const extension = captured!
+      .resourceLoader!.getExtensions()
+      .extensions.find((item) => item.tools.has('web_search'))!;
     const storedContent = extension.tools.get('get_search_content')!;
     const missing = await storedContent.definition.execute(
       'call',
@@ -510,6 +513,78 @@ test('Pi sessions use native tools on the sandbox workspace plus Otto tools', as
     );
     assert.match(JSON.stringify(direct.content), /No query provided/);
     assert.deepEqual(ran, ['ls', 'get_search_content', 'web_search']);
+    await session.dispose();
+  } finally {
+    await agent.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('codemode scripts reach only workspace and web tools, each call through the turn guard', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-pi-codemode-'));
+  const { workspace } = recordingWorkspace();
+  const ran: string[] = [];
+  const requests: string[] = [];
+  const code =
+    "const calls = await Promise.all([tools.ls({}), tools.find({ pattern: '*' })]); return JSON.stringify({ calls: calls.length, ottoTool: 'fixture_tool' in tools, apps: 'apps' in tools });";
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: directory,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model, request) => {
+        requests.push(JSON.stringify(request.messages.at(-1)));
+        const first = requests.length === 1;
+        const output: AssistantMessage = {
+          role: 'assistant',
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          timestamp: Date.now(),
+          stopReason: first ? 'toolUse' : 'stop',
+          content: first
+            ? [{ type: 'toolCall', id: 'script', name: 'codemode', arguments: { code } }]
+            : [{ type: 'text', text: 'Done.' }],
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'start', partial: output });
+        stream.push({ type: 'done', reason: first ? 'toolUse' : 'stop', message: output });
+        return stream;
+      };
+      return result;
+    },
+  });
+  try {
+    const session = await agent.open({
+      threadId: randomUUID(),
+      turnId: randomUUID(),
+      systemPrompt: 'fixture',
+      workspace,
+      runTool: async (name, _params, run) => {
+        ran.push(name);
+        return run();
+      },
+      tools: ['fixture_tool', 'apps'].map((name) => ({
+        name,
+        description: 'Fixture',
+        parameters: { type: 'object', properties: {} },
+        execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+      })),
+      shouldStop: () => false,
+      onEvent: () => {},
+    });
+    await session.prompt('Run the script', []);
+    assert.deepEqual(ran.toSorted(), ['codemode', 'find', 'ls']);
+    assert.match(requests[1], /\{\\"calls\\":2,\\"ottoTool\\":false,\\"apps\\":false\}/);
     await session.dispose();
   } finally {
     await agent.dispose();
