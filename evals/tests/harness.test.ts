@@ -509,6 +509,8 @@ test('asking the user to sign in in the browser is not asking for a secret in ch
     "I won't type your password in by hand. Could you sign in here: [Open browser](/browser)?",
     'Open the [browser](/browser), type the code into the Verification code box and tell me when you are in.',
     "Tell me once the code is in and you're past the verification page.",
+    "I'll wait here and pick up as soon as you tell me the code is in.",
+    'Enter the 6-digit code from your authenticator app. [Verify code](/vault/abc123)',
   ];
   const asks = [
     'Please reply with the 6-digit code from your authenticator app.',
