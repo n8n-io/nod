@@ -53,12 +53,16 @@ export function Chat({
   refresh,
   resetConversation,
   initialFocusMessageId,
+  requestedMessage,
+  onRequestHandled,
 }: {
   state: AppState;
   streams: Record<string, string>;
   refresh(): Promise<void>;
   resetConversation(): Promise<string>;
   initialFocusMessageId?: string;
+  requestedMessage?: { id: string; text: string };
+  onRequestHandled?(id: string): void;
 }) {
   const dateFormat = useDateFormat();
   const { data: connections } = usePageData<Connection[]>('/api/apps');
@@ -99,6 +103,7 @@ export function Chat({
   const sendCount = useRef(0);
   const pendingSends = useRef(0);
   const retry = useRef<{ id: string; threadId: string; signature: string } | null>(null);
+  const handledRequest = useRef<string | null>(null);
   const historyVersion = useRef(0);
   const threadId = state.threadId;
   const threadRef = useRef(threadId);
@@ -288,10 +293,13 @@ export function Chat({
     setFocusTarget(null);
     setError('Could not find that message in this chat.');
   }, [focusTarget, loadingHistory, historyPage, hasEarlier, error]);
-  async function send(value: string, attachments: Artifact[]): Promise<ComposerSendResult> {
+  async function send(
+    value: string,
+    attachments: Artifact[],
+    reply: Message | null = replyTo,
+  ): Promise<ComposerSendResult> {
     if (resetLock.current || welcoming) return { sent: false, restoreText: true };
     const sentThread = threadId;
-    const reply = replyTo;
     const verificationRequests = (state.verificationRequests ?? []).filter(
       (request) => !reply || request.turnId === reply.turnId,
     );
@@ -428,6 +436,20 @@ export function Chat({
       }
     }
   }
+  useEffect(() => {
+    if (!requestedMessage || resetting || welcoming || resetLock.current) return;
+    if (handledRequest.current === requestedMessage.id) return;
+    handledRequest.current = requestedMessage.id;
+    onRequestHandled?.(requestedMessage.id);
+    setReplyTo(null);
+    const requestedThread = threadId;
+    void send(requestedMessage.text, [], null).then((result) => {
+      if (threadRef.current !== requestedThread) return;
+      if (!result.sent && result.restoreText)
+        setText((current) => [requestedMessage.text, current].filter(Boolean).join('\n\n'));
+      composer.current?.focus();
+    });
+  }, [requestedMessage, resetting, welcoming]);
   async function finishHandoff(messageId: string) {
     const sentThread = threadId;
     setReturningHandoff(messageId);

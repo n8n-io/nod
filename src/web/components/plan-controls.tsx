@@ -1,13 +1,10 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { ArrowUp, LoaderCircle, MessageCircle, Sparkles } from 'lucide-react';
-import type { AppState, Goal, Schedule } from '../../shared/contracts';
-import { BrandMark } from './brand';
-import { MessageText } from './message';
+import { ArrowUp, LoaderCircle, Sparkles } from 'lucide-react';
+import type { Goal, Schedule } from '../../shared/contracts';
 import { Button, Field, Input, Notice, Switch } from './ui';
 import { SearchPicker, TimeZonePicker, type PickerOption } from './time-zone-picker';
 import { api, errorMessage } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
-import { focusChatMessage } from '../lib/secondary-pages';
 import {
   readSchedule,
   scheduleExpression,
@@ -19,67 +16,10 @@ import {
 
 type Kind = 'goal' | 'schedule';
 type Subject = { kind: Kind; title?: string };
-type Ask = { text: string; messageId: string; turnId?: string; error?: string };
 
 function subjectPrefix(subject: Subject) {
   if (!subject.title) return subject.kind === 'goal' ? 'New goal: ' : 'New schedule: ';
   return `About the ${subject.kind} ${JSON.stringify(subject.title)}: `;
-}
-
-function useAskOtto(conversation: AppState | null) {
-  const [ask, setAsk] = useState<Ask | null>(null);
-  const asked = conversation?.messages.find((message) => message.id === ask?.messageId);
-  const turnId = ask?.turnId ? (asked?.turnId ?? ask.turnId) : undefined;
-  const answer = turnId
-    ? conversation?.messages
-        .filter(
-          (message) =>
-            message.turnId === turnId &&
-            message.role === 'assistant' &&
-            (!asked || Date.parse(message.createdAt) > Date.parse(asked.createdAt)),
-        )
-        .at(-1)
-    : undefined;
-  const turn = conversation?.turns.find((item) => item.id === turnId);
-  const status: 'idle' | 'working' | 'waiting' | 'done' | 'failed' = !ask
-    ? 'idle'
-    : ask.error || turn?.status === 'failed' || turn?.status === 'cancelled'
-      ? 'failed'
-      : !turn || turn.status === 'queued' || turn.status === 'running'
-        ? 'working'
-        : turn.status === 'waiting'
-          ? 'waiting'
-          : 'done';
-  async function send(text: string) {
-    const messageId =
-      ask?.error && ask.text === text && !ask.turnId ? ask.messageId : crypto.randomUUID();
-    setAsk({ text, messageId });
-    try {
-      const result = await api<{ turnId: string }>('/api/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientMessageId: messageId,
-          text,
-          attachmentIds: [],
-          ...(conversation?.threadId ? { threadId: conversation.threadId } : {}),
-        }),
-      });
-      setAsk((current) =>
-        current?.messageId === messageId ? { ...current, turnId: result.turnId } : current,
-      );
-    } catch (cause) {
-      setAsk((current) =>
-        current?.messageId === messageId ? { ...current, error: errorMessage(cause) } : current,
-      );
-    }
-  }
-  useEffect(() => {
-    if (status !== 'done') return;
-    void pageDataCache.refresh('/api/goals', true);
-    void pageDataCache.refresh('/api/schedules', true);
-  }, [status]);
-  return { ask, status, answer, send };
 }
 
 const suggestions = {
@@ -91,16 +31,15 @@ const suggestions = {
 
 function AskOtto({
   subject,
-  conversation,
+  onAsk,
   onClose,
 }: {
   subject: Subject;
-  conversation: AppState | null;
+  onAsk(text: string): void;
   onClose(): void;
 }) {
   const [text, setText] = useState('');
   const input = useRef<HTMLInputElement>(null);
-  const otto = useAskOtto(conversation);
   const id = useId();
   useEffect(() => input.current?.focus(), []);
   const chips = subject.title
@@ -109,9 +48,8 @@ function AskOtto({
       ? suggestions.newGoal
       : suggestions.newSchedule;
   const submit = (value: string) => {
-    if (!value.trim() || otto.status === 'working') return;
-    void otto.send(`${subjectPrefix(subject)}${value.trim()}`);
-    setText('');
+    if (!value.trim()) return;
+    onAsk(`${subjectPrefix(subject)}${value.trim()}`);
   };
   const placeholder = subject.title
     ? `What should change in ${subject.title}?`
@@ -123,95 +61,37 @@ function AskOtto({
       <span className="sr-only" id={`${id}-label`}>
         Ask Otto {subject.title ? `about ${subject.title}` : `for a new ${subject.kind}`}
       </span>
-      {otto.ask && (
-        <div className="ask-otto-exchange" aria-live="polite">
-          <p className="ask-otto-request">{otto.ask.text.replace(subjectPrefix(subject), '')}</p>
-          <div className="ask-otto-reply">
-            <span className="assistant-mark">
-              <BrandMark small />
-            </span>
-            {otto.status === 'working' ? (
-              <span className="ask-otto-working" role="status">
-                <LoaderCircle size={14} className="spin" aria-hidden="true" />
-                Otto is on it
-              </span>
-            ) : otto.status === 'failed' ? (
-              <span className="ask-otto-failed">
-                {otto.ask.error || 'Otto could not finish this. Try again.'}
-              </span>
-            ) : (
-              <MessageText
-                text={
-                  otto.answer?.text ||
-                  (otto.status === 'waiting'
-                    ? 'Otto needs your input. Open the conversation to continue.'
-                    : 'Otto finished this request.')
-                }
-              />
-            )}
-          </div>
-          {otto.status !== 'working' && (
-            <div className="ask-otto-after">
-              {otto.ask.turnId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => focusChatMessage(otto.ask!.messageId)}
-                >
-                  <MessageCircle size={13} aria-hidden="true" />
-                  Open conversation
-                </Button>
-              )}
-              <Button variant="ghost" size="sm" onClick={onClose}>
-                Done
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-      {otto.status !== 'working' && (
-        <>
-          <form
-            className="ask-otto-field"
-            onSubmit={(event) => {
+      <form
+        className="ask-otto-field"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit(text);
+        }}
+      >
+        <Input
+          ref={input}
+          value={text}
+          placeholder={placeholder}
+          aria-label={placeholder}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
               event.preventDefault();
-              submit(text);
-            }}
-          >
-            <Input
-              ref={input}
-              value={text}
-              placeholder={otto.ask ? 'Anything else?' : placeholder}
-              aria-label={placeholder}
-              onChange={(event) => setText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  event.preventDefault();
-                  onClose();
-                }
-              }}
-            />
-            <Button type="submit" size="icon" aria-label="Send to Otto" disabled={!text.trim()}>
-              <ArrowUp size={16} />
-            </Button>
-          </form>
-          {!otto.ask && (
-            <div className="ask-otto-chips">
-              {chips.map((chip) => (
-                <Button
-                  key={chip}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => submit(chip)}
-                >
-                  {chip}
-                </Button>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+              onClose();
+            }
+          }}
+        />
+        <Button type="submit" size="icon" aria-label="Send to Otto" disabled={!text.trim()}>
+          <ArrowUp size={16} />
+        </Button>
+      </form>
+      <div className="ask-otto-chips">
+        {chips.map((chip) => (
+          <Button key={chip} type="button" variant="outline" size="sm" onClick={() => submit(chip)}>
+            {chip}
+          </Button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -635,14 +515,14 @@ export function PlanFooter({
   meta,
   remove,
   canPause,
-  conversation,
+  onAsk,
 }: {
   kind: Kind;
   item: Goal | Schedule;
   meta: ReactNode;
   remove: ReactNode;
   canPause: boolean;
-  conversation: AppState | null;
+  onAsk(text: string): void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -671,7 +551,7 @@ export function PlanFooter({
       {open && (
         <AskOtto
           subject={{ kind, title: item.title }}
-          conversation={conversation}
+          onAsk={onAsk}
           onClose={() => setOpen(false)}
         />
       )}
@@ -679,7 +559,7 @@ export function PlanFooter({
   );
 }
 
-export function NewPlan({ kind, conversation }: { kind: Kind; conversation: AppState | null }) {
+export function NewPlan({ kind, onAsk }: { kind: Kind; onAsk(text: string): void }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -689,7 +569,7 @@ export function NewPlan({ kind, conversation }: { kind: Kind; conversation: AppS
       </Button>
       {open && (
         <div className="connection-menu-options menu new-plan-card">
-          <AskOtto subject={{ kind }} conversation={conversation} onClose={() => setOpen(false)} />
+          <AskOtto subject={{ kind }} onAsk={onAsk} onClose={() => setOpen(false)} />
         </div>
       )}
     </>
