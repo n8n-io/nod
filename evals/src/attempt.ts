@@ -129,10 +129,14 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const modelFault =
       trace.turns.at(-1)?.status !== 'succeeded' ? trace.modelErrors.at(-1) : undefined;
     const providerFault = trace.turns.find((turn) => turn.error && infra.test(turn.error));
+    const refusal =
+      modelFault && /violative|usage policy|content policy/i.test(modelFault)
+        ? `The model provider refused the task: ${modelFault}`
+        : undefined;
     const fault =
       graderFault ??
       judgeFault ??
-      (modelFault
+      (modelFault && !refusal
         ? `The model provider failed: ${modelFault}`
         : providerFault
           ? providerFault.error!
@@ -144,13 +148,13 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       task: trace.task,
       status: incomplete
         ? 'incomplete'
-        : checks.every((check) => check.pass || !check.required) && !failure
+        : checks.every((check) => check.pass || !check.required) && !failure && !refusal
           ? 'pass'
           : 'fail',
       ...(incomplete
         ? { blame: graderFault ? ('harness' as const) : blame(incomplete), error: incomplete }
         : {}),
-      ...(failure && !incomplete ? { error: failure } : {}),
+      ...((failure ?? refusal) && !incomplete ? { error: failure ?? refusal } : {}),
       checks,
       seconds: trace.seconds,
       toolCalls: trace.tools.length,
