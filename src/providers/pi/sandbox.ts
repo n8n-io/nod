@@ -60,8 +60,8 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
         if (exitCode) throw new Error(`Could not write ${path}.`);
       }
       const mode = `[ ! -e ${quote(path)} ] || chmod --reference=${quote(path)} ${quote(temporary)} 2>/dev/null`;
-      if (!(await check(`${mode}; mv -f -- ${quote(temporary)} ${quote(path)}`)))
-        throw new Error(`Could not write ${path}.`);
+      const replace = `[ ! -d ${quote(path)} ] && { ${mode}; mv -f -- ${quote(temporary)} ${quote(path)}; }`;
+      if (!(await check(replace))) throw new Error(`Could not write ${path}.`);
     } catch (error) {
       await run(`rm -f -- ${quote(temporary)}`).catch(() => {});
       throw error;

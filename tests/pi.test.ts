@@ -1140,6 +1140,14 @@ test('native Pi tools run only through workspace exec on sandbox paths that do n
   assert.equal(existsSync(prefix), false);
 });
 
+test('write refuses to replace a directory instead of moving the file into it', async (t) => {
+  const { root, run } = await hostSandbox(t);
+  await mkdir(join(root, 'workspace/reports'));
+  await assert.rejects(run('write', { path: 'reports', content: 'x' }), /Could not write/);
+  assert.deepEqual(await readdir(join(root, 'workspace/reports')), []);
+  assert.deepEqual(await readdir(join(root, 'workspace')), ['reports']);
+});
+
 test('browser flows stay discoverable after a thread reset and stop when a page changes', async (t) => {
   const { prefix, root, workspace, run: nativeRun } = await hostSandbox(t);
   const actions: string[] = [];
