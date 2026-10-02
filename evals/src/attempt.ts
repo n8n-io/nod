@@ -130,7 +130,8 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       trace.turns.at(-1)?.status !== 'succeeded' ? trace.modelErrors.at(-1) : undefined;
     const providerFault = trace.turns.find((turn) => turn.error && infra.test(turn.error));
     const refusal =
-      modelFault && /violative|usage policy|content policy/i.test(modelFault)
+      modelFault &&
+      /violative|usage policy|content (filtering )?policy|safety (filter|system)/i.test(modelFault)
         ? `The model provider refused the task: ${modelFault}`
         : undefined;
     const fault =
