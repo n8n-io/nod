@@ -698,6 +698,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   async function connect(slug: Slug, returnTo: ReturnTarget = 'apps', turn?: TurnRef) {
     requireService(slug);
+    await pool.query(
+      'DELETE FROM app_connections WHERE owner_id=$1 AND account_id IS NULL AND callback_expires<now()',
+      [configuredOwner],
+    );
     const selected = providerFor(slug);
     const prior = await pool.query<{ provider_id: string }>(
       'SELECT DISTINCT provider_id FROM app_connections WHERE owner_id=$1 AND slug=$2 AND provider_id<>$3',

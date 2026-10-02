@@ -2421,6 +2421,11 @@ test(
       `INSERT INTO integration_sessions(owner_id,session_id,provider_id,configuration_version)
        VALUES('local-development','execution-session','composio',3)`,
     );
+    await pool.query(
+      `INSERT INTO app_connections(owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id)
+       VALUES('local-development','gmail','abandoned-account','abandoned-hash',now()-interval '1 minute','composio'),
+       ('another-owner','gmail','foreign-abandoned','foreign-hash',now()-interval '1 minute','composio')`,
+    );
     const connect = () => app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
     const response = await connect();
     assert.equal(response.statusCode, 200);
@@ -2452,11 +2457,15 @@ test(
       ).rows,
       [{ account_id: 'existing-account', revoked: false, pending_account_id: null }],
     );
-    assert.equal(
-      (await pool.query('SELECT pending_account_id FROM app_connections WHERE account_id IS NULL'))
-        .rows[0].pending_account_id,
-      'new-account-1',
+    assert.deepEqual(
+      (
+        await pool.query(
+          'SELECT pending_account_id FROM app_connections WHERE account_id IS NULL ORDER BY pending_account_id',
+        )
+      ).rows,
+      [{ pending_account_id: 'foreign-abandoned' }, { pending_account_id: 'new-account-1' }],
     );
+    await pool.query("DELETE FROM app_connections WHERE owner_id='another-owner'");
     await integrations.execute('local-development', 'GMAIL_LIST_LABELS', {
       connectionId: account.rows[0].id,
       user_id: 'me',
