@@ -70,6 +70,7 @@ type ProposalRow = {
   setup_text: string | null;
   account_name: string | null;
   oauth_state_hash: string | null;
+  oauth_status: 'pending' | 'completing' | 'connected' | 'cancelled' | 'failed' | null;
   connection_id: string | null;
   thread_id: string | null;
   turn_id: string | null;
@@ -166,7 +167,24 @@ export async function createDiscoveredConnections(
       expires_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes'
     );
     ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext;
+    ALTER TABLE discovered_connection_proposals ADD COLUMN IF NOT EXISTS oauth_status text;
   `);
+  const recovery = await pool.connect();
+  try {
+    await recovery.query('BEGIN');
+    const interrupted = await recovery.query<{ id: string }>(
+      `UPDATE discovered_connection_proposals SET oauth_status='failed',oauth_state_hash=NULL
+       WHERE owner_id=$1 AND oauth_status='completing' RETURNING id`,
+      [owner],
+    );
+    for (const row of interrupted.rows) await options.grantVault.remove(row.id, recovery);
+    await recovery.query('COMMIT');
+  } catch (cause) {
+    await recovery.query('ROLLBACK');
+    throw cause;
+  } finally {
+    recovery.release();
+  }
   async function account(id: string) {
     const result = await pool.query<AccountRow>(
       'SELECT * FROM discovered_connections WHERE owner_id=$1 AND id=$2',
@@ -261,12 +279,12 @@ export async function createDiscoveredConnections(
     );
     return { name, url: `/apps?connect=${id}` };
   }
-  async function proposal(id: string) {
+  async function proposal(id: string, client: Pool | PoolClient = pool, lock = false) {
     const row = (
-      await pool.query<ProposalRow>(
-        `SELECT id,owner_id,service,name,paths,connection_id,thread_id,turn_id,setup_url,setup_text,account_name,oauth_state_hash
+      await client.query<ProposalRow>(
+        `SELECT id,owner_id,service,name,paths,connection_id,thread_id,turn_id,setup_url,setup_text,account_name,oauth_state_hash,oauth_status
        FROM discovered_connection_proposals
-       WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
+       WHERE id=$1 AND owner_id=$2 AND expires_at>now()${lock ? ' FOR UPDATE' : ''}`,
         [z.uuid().parse(id), owner],
       )
     ).rows[0];
@@ -278,10 +296,17 @@ export async function createDiscoveredConnections(
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const used = await client.query(
-        'DELETE FROM discovered_connection_proposals WHERE id=$1 AND owner_id=$2 AND expires_at>now() RETURNING id',
-        [pending.id, owner],
-      );
+      const used = pending.oauth_state_hash
+        ? await client.query(
+            `UPDATE discovered_connection_proposals SET oauth_status='connected',oauth_state_hash=NULL
+             WHERE id=$1 AND owner_id=$2 AND expires_at>now() AND oauth_state_hash=$3
+             AND oauth_status='completing' RETURNING id`,
+            [pending.id, owner, pending.oauth_state_hash],
+          )
+        : await client.query(
+            'DELETE FROM discovered_connection_proposals WHERE id=$1 AND owner_id=$2 AND expires_at>now() RETURNING id',
+            [pending.id, owner],
+          );
       if (!used.rowCount) throw error('This connection request expired.', 409);
       if (pending.connection_id) {
         const updated = await client.query(
@@ -369,47 +394,58 @@ export async function createDiscoveredConnections(
       })
       .strict()
       .parse(input);
-    const pending = await proposal(id);
-    const path = pending.paths[0];
-    if (path?.kind !== 'mcp' || path.auth !== 'oauth') throw error('This connection uses a token.');
-    if (path.clientIdRequired && !clientId) throw error('Enter the client ID.');
-    const state = randomBytes(32).toString('base64url');
-    let started: Awaited<ReturnType<DiscoveredOAuth['begin']>>;
-    try {
-      started = await options.oauth.begin(
-        path.endpoint,
-        callbackUrl(),
-        state,
-        path.scope,
-        clientId,
-      );
-    } catch {
-      throw error('The service sign-in could not start. Check its access method.', 502);
-    }
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const pending = await proposal(id, client, true);
+      const path = pending.paths[0];
+      if (path?.kind !== 'mcp' || path.auth !== 'oauth')
+        throw error('This connection uses a token.');
+      if (pending.oauth_status === 'connected') throw error('This app is already connected.', 409);
+      if (pending.oauth_status === 'completing')
+        throw error('Sign-in is finishing. Wait a moment.', 409);
+      if (pending.oauth_state_hash) {
+        const saved = JSON.parse((await options.grantVault.read(pending.id, client)).value);
+        if (typeof saved.url !== 'string')
+          throw error('Continue the sign-in already open in your browser.', 409);
+        await client.query('COMMIT');
+        return { url: saved.url };
+      }
+      if (path.clientIdRequired && !clientId) throw error('Enter the client ID.');
+      const state = randomBytes(32).toString('base64url');
+      let started: Awaited<ReturnType<DiscoveredOAuth['begin']>>;
+      try {
+        started = await options.oauth.begin(
+          path.endpoint,
+          callbackUrl(),
+          state,
+          path.scope,
+          clientId,
+        );
+      } catch {
+        throw error('The service sign-in could not start. Check its access method.', 502);
+      }
       const updated = await client.query(
         `UPDATE discovered_connection_proposals
-         SET account_name=$3,oauth_state_hash=$4
+         SET account_name=$3,oauth_state_hash=$4,oauth_status='pending'
          WHERE id=$1 AND owner_id=$2 AND expires_at>now()`,
         [pending.id, owner, pending.name, createHash('sha256').update(state).digest('hex')],
       );
       if (!updated.rowCount) throw error('This connection request expired.', 409);
       await options.grantVault.put(
         pending.id,
-        JSON.stringify(started.saved),
+        JSON.stringify({ state: started.saved, url: started.url }),
         client,
         new Date(Date.now() + 15 * 60_000),
       );
       await client.query('COMMIT');
+      return { url: started.url };
     } catch (cause) {
       await client.query('ROLLBACK');
       throw cause;
     } finally {
       client.release();
     }
-    return { url: started.url };
   }
   async function completeOAuth(input: unknown) {
     const parsed = z
@@ -423,21 +459,23 @@ export async function createDiscoveredConnections(
     const hash = createHash('sha256').update(parsed.state).digest('hex');
     const pending = (
       await pool.query<ProposalRow>(
-        `SELECT * FROM discovered_connection_proposals
-         WHERE owner_id=$1 AND oauth_state_hash=$2 AND expires_at>now()`,
+        `UPDATE discovered_connection_proposals SET oauth_status='completing'
+         WHERE owner_id=$1 AND oauth_state_hash=$2 AND expires_at>now()
+         AND (oauth_status IS NULL OR oauth_status='pending') RETURNING *`,
         [owner, hash],
       )
     ).rows[0];
     if (!pending) return undefined;
-    if (parsed.error || !parsed.code) {
+    async function failed(outcome: 'cancelled' | 'failed') {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query(
-          'DELETE FROM discovered_connection_proposals WHERE id=$1 AND owner_id=$2 AND oauth_state_hash=$3',
-          [pending.id, owner, hash],
+        const changed = await client.query(
+          `UPDATE discovered_connection_proposals SET oauth_status=$4,oauth_state_hash=NULL
+           WHERE id=$1 AND owner_id=$2 AND oauth_state_hash=$3 AND oauth_status='completing' RETURNING id`,
+          [pending.id, owner, hash, outcome],
         );
-        await options.grantVault.remove(pending.id, client);
+        if (changed.rowCount) await options.grantVault.remove(pending.id, client);
         await client.query('COMMIT');
       } catch (cause) {
         await client.query('ROLLBACK');
@@ -446,22 +484,17 @@ export async function createDiscoveredConnections(
         client.release();
       }
       return {
-        outcome: 'cancelled' as const,
+        outcome,
         service: pending.service,
         returnTo: pending.turn_id ? ('chat' as const) : ('apps' as const),
       };
     }
+    if (parsed.error || !parsed.code) return failed('cancelled');
     const path = pending.paths[0];
-    if (path?.kind !== 'mcp' || path.auth !== 'oauth')
-      return {
-        outcome: 'failed' as const,
-        service: pending.service,
-        returnTo: pending.turn_id ? ('chat' as const) : ('apps' as const),
-      };
+    if (path?.kind !== 'mcp' || path.auth !== 'oauth') return failed('failed');
     try {
-      const saved = JSON.parse(
-        (await options.grantVault.read(pending.id)).value,
-      ) as DiscoveredOAuthState;
+      const grant = JSON.parse((await options.grantVault.read(pending.id)).value);
+      const saved = (grant.state ?? grant) as DiscoveredOAuthState;
       const metadata = saved.discovery?.authorizationServerMetadata;
       const issuer = metadata?.issuer;
       if (parsed.iss && parsed.iss !== issuer) throw new Error();
@@ -488,11 +521,7 @@ export async function createDiscoveredConnections(
         returnTo: pending.turn_id ? ('chat' as const) : ('apps' as const),
       };
     } catch {
-      return {
-        outcome: 'failed' as const,
-        service: pending.service,
-        returnTo: pending.turn_id ? ('chat' as const) : ('apps' as const),
-      };
+      return failed('failed');
     }
   }
   const refreshes = new Map<
@@ -766,9 +795,17 @@ export async function createDiscoveredConnections(
   }
   function registerRoutes(app: FastifyInstance) {
     app.get<{ Params: { id: string } }>('/api/apps/discovery/:id', async (request, reply) => {
-      const row = await proposal(request.params.id);
+      let row = await proposal(request.params.id);
+      let authorizationUrl: string | undefined;
+      if (row.oauth_state_hash) {
+        const grant = await options.grantVault.read(row.id).catch(() => undefined);
+        if (grant) authorizationUrl = JSON.parse(grant.value).url;
+        else row = await proposal(request.params.id);
+      }
       return reply.header('Cache-Control', 'no-store').send({
         name: row.name,
+        oauthStatus: row.oauth_status === 'completing' ? 'pending' : row.oauth_status,
+        authorizationUrl,
         callbackUrl: row.paths.some((path) => path.kind === 'mcp' && path.clientIdRequired)
           ? callbackUrl()
           : undefined,

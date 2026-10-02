@@ -82,7 +82,9 @@ if (full) {
       process.env.OTTO_EXPECTED_RUNTIME_FINGERPRINT !== inputs.fingerprint
     )
       throw new Error('The requested runtime fingerprint does not match these inputs.');
-    await verifyRuntimeRelease(release, inputs.fingerprint, signing);
+    await verifyRuntimeRelease(release, inputs.fingerprint, signing, {
+      descriptorPath: runtimeRelease,
+    });
   }
   if (!skipArchive) {
     const archive = join(dirname(runtimeRelease), release.archive.file);

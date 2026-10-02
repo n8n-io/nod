@@ -2,11 +2,13 @@
 
 ## Alpha PR review — 2026-10-02
 
-[PR #97](https://github.com/n8n-io/otto/pull/97) includes main at `60bf73ac3777252442f97b54e9b1309a388fd3f8`. Its initial hosted CI passed, including browser recovery and E2B isolation. The following review fixes passed a fresh local combined run: **525 integration passes with six optional skips**, **105 desktop passes with one privileged Linux skip**, type/architecture/format checks, and the production build. The disposable database was removed and source hashes stayed unchanged during that run. Updated-head hosted CI remains the merge gate.
+[PR #97](https://github.com/n8n-io/otto/pull/97) includes main at `60bf73ac3777252442f97b54e9b1309a388fd3f8`. Its initial hosted CI passed, including browser recovery and E2B isolation. The following review fixes passed a fresh local combined run: **526 integration passes with six optional skips**, **109 desktop passes with one privileged Linux skip**, type/architecture/format checks, and the production build. The disposable database was removed and source hashes stayed unchanged during that run. Updated-head hosted CI remains the merge gate.
 
 Review fixes cover runtime isolation drift and cache verification, locked browser dependencies, engine-exit and deferred-restart recovery, OAuth callbacks and repeated sign-in clicks, durable preference/read-position failures, timezone defaults, and release/signing contracts. Disposable Docker checks verified retained volume contents, restored restrictions, network rejection and real browser operation; synthetic Vault/AWS environment injections were rejected. Disposable native signing verified execution and restoration of the Keychain search list. These are isolated checks, not installation of CI-produced assets.
 
 The release environment is configured with a permanent internal self-signed identity. New app and runtime releases remain drafts unless publication is explicitly requested. Historical native observations below refer to their recorded bundles; the latest PR review changes have not yet been installed or tested on a fresh physical Mac. The first alpha is not notarized.
+
+Evidence: `.local/desktop-pr-followup-validation-checks-summary.json`, `.local/desktop-pr-validation-checks-summary.json`, `.local/pr97-time-zone-startup.json`, `.local/pr97-runtime-security-check.json`, `.local/pr97-browser-secrets-check.json`, `.local/otto-internal-native-result.json`, `.local/with-apple-signing-native-result.json`, and [hosted CI on `943f540`](https://github.com/n8n-io/otto/actions/runs/37047090113).
 
 ## Seamless title bar — 2026-10-02
 

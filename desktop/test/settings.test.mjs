@@ -1748,15 +1748,22 @@ test('an online preference save failure retains the edit and surfaces retry unti
   assert.deepEqual(JSON.parse(await readFile(storage.path, 'utf8')).pending, {});
 });
 
-test('native automatic date formatting uses timezone regions outside the preset choices', async (t) => {
+test('native timezone detection stays lazy and cached while covering regions outside the presets', async (t) => {
   for (const [timeZone, region] of [
     ['Asia/Singapore', 'SG'],
     ['Asia/Manila', 'PH'],
     ['Asia/Dubai', 'AE'],
   ]) {
     const formatted = [];
+    let regionLookups = 0;
     const f = await setupRenderer(t, 'settings', { phase: 'ready' }, undefined, (window) => {
       const DateTimeFormat = window.Intl.DateTimeFormat;
+      window.Intl.Locale = new Proxy(window.Intl.Locale, {
+        construct(target, args) {
+          if (args[0].startsWith('und-')) regionLookups++;
+          return Reflect.construct(target, args);
+        },
+      });
       window.Intl.DateTimeFormat = function (locale, options) {
         if (options?.weekday) formatted.push(locale);
         return new DateTimeFormat(locale ?? 'en-GB', options ?? { timeZone });
@@ -1764,11 +1771,18 @@ test('native automatic date formatting uses timezone regions outside the preset 
       Object.defineProperty(window.navigator, 'languages', { value: ['en-GB'] });
       Object.defineProperty(window.navigator, 'language', { value: 'en-GB' });
     });
+    assert.equal(regionLookups, 0);
     f.callbacks.navigate({ mode: 'settings', section: 'preferences' });
     await f.waitFor(() => formatted.length > 0);
     assert.equal(formatted.at(-1), `en-${region}`, timeZone);
     await f.window.ottoPreferencesForm.flush({ useCurrentTimeZone: true });
     assert.equal(f.appPreferences.timeZone, timeZone);
+    const initialLookups = regionLookups;
+    assert.ok(initialLookups > 0);
+    f.window.dispatchEvent(new f.window.Event('otto:preferences-open'));
+    await f.window.ottoPreferencesForm.flush();
+    await f.settle();
+    assert.equal(regionLookups, initialLookups);
   }
 });
 

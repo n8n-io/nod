@@ -421,7 +421,12 @@ export function runtimeUrl(value, archive) {
   return url;
 }
 
-export async function verifyRuntimeRelease(release, fingerprint, configuration) {
+export async function verifyRuntimeRelease(
+  release,
+  fingerprint,
+  configuration,
+  { descriptorPath, env = process.env } = {},
+) {
   if (
     release.fingerprint !== fingerprint ||
     release.minimumSystemVersion !== minimumSystemVersion ||
@@ -436,11 +441,21 @@ export async function verifyRuntimeRelease(release, fingerprint, configuration) 
     throw new Error('The runtime release provenance does not match this signed build.');
   if (!/^Otto-Runtime-darwin-arm64-[a-f0-9]{12}\.tar\.gz$/.test(release.archive?.file || ''))
     throw new Error('The runtime archive name is invalid.');
-  if (!release.url) {
-    if (configuration.mode === 'self-signed') return;
-    throw new Error('Developer ID releases require a published anonymous runtime download.');
-  }
-  await verifyRuntimeDownload(release.url, release.archive);
+  const pendingDescriptor = env.OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256;
+  if (
+    pendingDescriptor &&
+    (env.GITHUB_ACTIONS !== 'true' ||
+      !/^[a-f0-9]{64}$/.test(pendingDescriptor) ||
+      !descriptorPath ||
+      pendingDescriptor !==
+        createHash('sha256')
+          .update(await readFile(descriptorPath))
+          .digest('hex'))
+  )
+    throw new Error('The pending runtime descriptor does not match the checked CI artifact.');
+  if (!release.url) return;
+  runtimeUrl(release.url, release.archive.file);
+  if (!pendingDescriptor) await verifyRuntimeDownload(release.url, release.archive);
 }
 
 export async function verifyRuntimeDownload(url, archive) {

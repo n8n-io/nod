@@ -2,7 +2,7 @@ import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { AlertCircle, Check, Link2, LoaderCircle, Plus } from 'lucide-react';
 import type { Connection } from '../../shared/contracts';
-import { api, errorMessage } from '../lib/api';
+import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import {
@@ -26,6 +26,8 @@ import {
 
 type Discovery = {
   name: string;
+  oauthStatus?: 'pending' | 'connected' | 'cancelled' | 'failed' | null;
+  authorizationUrl?: string;
   callbackUrl?: string;
   setupUrl?: string;
   setupText?: string;
@@ -169,11 +171,13 @@ export function Apps() {
   const [discoveryError, setDiscoveryError] = useState('');
   const [savingDiscovery, setSavingDiscovery] = useState(false);
   const [discoverySignIn, setDiscoverySignIn] = useState<{ id: string; url: string } | null>(null);
+  const [discoveryVersion, setDiscoveryVersion] = useState(0);
   const page = useRef<HTMLDivElement>(null);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const dialogService = useRef('');
   const discoveryTitle = useRef<HTMLHeadingElement>(null);
   const actionRequest = useRef<AbortController | null>(null);
+  const discoveryRequest = useRef<AbortController | null>(null);
   const groups = connectionGroups(connections ?? []);
   const managed = groups.find((group) => group.service.slug === manageService);
   const connected = groups.filter((group) => group.accounts.length);
@@ -195,18 +199,68 @@ export function Apps() {
   useEffect(() => () => actionRequest.current?.abort(), []);
   useEffect(() => {
     if (!discoveryId) return;
-    const request = new AbortController();
-    void api<Discovery>(`/api/apps/discovery/${encodeURIComponent(discoveryId)}`, {
-      signal: request.signal,
-    })
-      .then((value) => {
-        if (!request.signal.aborted) setDiscovery(value);
-      })
-      .catch((cause) => {
-        if (!request.signal.aborted) setDiscoveryError(errorMessage(cause));
-      });
-    return () => request.abort();
-  }, [discoveryId]);
+    let timer: number | undefined;
+    let checks = 0;
+    async function check() {
+      window.clearTimeout(timer);
+      discoveryRequest.current?.abort();
+      if (actionRequest.current) return;
+      const request = new AbortController();
+      discoveryRequest.current = request;
+      try {
+        const value = await api<Discovery>(
+          `/api/apps/discovery/${encodeURIComponent(discoveryId!)}`,
+          { signal: request.signal },
+        );
+        if (request.signal.aborted) return;
+        setDiscovery(value);
+        if (value.oauthStatus === 'connected') {
+          const url = new URL(window.location.href);
+          if (url.searchParams.get('connect') !== discoveryId) return;
+          url.searchParams.delete('connect');
+          window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+          setDiscovery(null);
+          setDiscoverySignIn(null);
+          void refresh();
+          return;
+        }
+        setDiscoverySignIn(
+          value.authorizationUrl
+            ? {
+                id: discoveryId!,
+                url: connectionUrl(value.authorizationUrl, window.location.origin),
+              }
+            : null,
+        );
+        if (value.oauthStatus === 'cancelled' || value.oauthStatus === 'failed')
+          setDiscoveryError(
+            value.oauthStatus === 'cancelled'
+              ? 'Connection cancelled. Try again.'
+              : 'The app could not connect. Try again.',
+          );
+        if (value.oauthStatus === 'pending' && checks++ < 12)
+          timer = window.setTimeout(() => void check(), 5000);
+      } catch (cause) {
+        if (request.signal.aborted) return;
+        if (cause instanceof ApiError && cause.status === 404) {
+          setDiscovery(null);
+          setDiscoverySignIn(null);
+        }
+        setDiscoveryError(errorMessage(cause));
+      }
+    }
+    function focus() {
+      checks = 0;
+      void check();
+    }
+    focus();
+    window.addEventListener('focus', focus);
+    return () => {
+      window.clearTimeout(timer);
+      discoveryRequest.current?.abort();
+      window.removeEventListener('focus', focus);
+    };
+  }, [discoveryId, discoveryVersion, refresh]);
   async function saveDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!discoveryId || savingDiscovery) return;
@@ -233,30 +287,36 @@ export function Apps() {
   }
   async function authorizeDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!discoveryId || savingDiscovery) return;
-    const values = new FormData(event.currentTarget);
+    if (!discoveryId || savingDiscovery || actionRequest.current) return;
+    const clientId =
+      event.currentTarget.querySelector<HTMLInputElement>('[name="clientId"]')?.value;
+    const request = new AbortController();
+    actionRequest.current = request;
+    discoveryRequest.current?.abort();
     setSavingDiscovery(true);
     setDiscoveryError('');
     try {
-      let url = discoverySignIn?.id === discoveryId ? discoverySignIn.url : undefined;
-      if (!url) {
-        const result = await api<{ url: string }>(
-          `/api/apps/discovery/${encodeURIComponent(discoveryId)}/authorize`,
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              ...(values.get('clientId') ? { clientId: values.get('clientId') } : {}),
-            }),
-          },
-        );
-        url = connectionUrl(result.url, window.location.origin);
-        setDiscoverySignIn({ id: discoveryId, url });
-      }
+      const result = await api<{ url: string }>(
+        `/api/apps/discovery/${encodeURIComponent(discoveryId)}/authorize`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ ...(clientId ? { clientId } : {}) }),
+          signal: request.signal,
+        },
+      );
+      if (request.signal.aborted) return;
+      const url = connectionUrl(result.url, window.location.origin);
+      setDiscoverySignIn({ id: discoveryId, url });
       await openConnection(url);
-      if (desktopLinksAvailable()) setSavingDiscovery(false);
     } catch (cause) {
+      if (request.signal.aborted) return;
       setDiscoveryError(errorMessage(cause));
-      setSavingDiscovery(false);
+    } finally {
+      if (actionRequest.current === request) actionRequest.current = null;
+      if (!request.signal.aborted) {
+        setSavingDiscovery(false);
+        setDiscoveryVersion((value) => value + 1);
+      }
     }
   }
   async function connect(connection: Connection, addAccount = false) {

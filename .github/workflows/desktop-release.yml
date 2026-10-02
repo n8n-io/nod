@@ -134,13 +134,15 @@ jobs:
     environment: mac-release
     permissions:
       contents: write
+    outputs:
+      descriptor_sha256: ${{ steps.runtime.outputs.runtime_descriptor_sha256 }}
     env:
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
       OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
       OTTO_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
       OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
-      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_base_url || '' }}
+      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ inputs.publish && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_base_url || '' }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -185,12 +187,13 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: node .github/scripts/with-apple-signing.mjs node desktop/scripts/runtime-pack.mjs --release
       - name: Upload and verify the content-addressed runtime
+        id: runtime
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
           OTTO_PUBLISH_RELEASE: ${{ inputs.publish }}
-        run: node .github/scripts/desktop-release.mjs publish-runtime
+        run: node .github/scripts/desktop-release.mjs draft-runtime
       - name: Save the checked runtime descriptor
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -249,6 +252,7 @@ jobs:
           path: .local/desktop-runtime-release
       - name: Sign, package and verify the app
         env:
+          OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: ${{ inputs.publish && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_reused != 'true' && needs.runtime.outputs.descriptor_sha256 || '' }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}

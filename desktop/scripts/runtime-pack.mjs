@@ -41,11 +41,6 @@ const exactUrl = process.env.OTTO_RUNTIME_RELEASE_URL;
 if (baseUrl && exactUrl) throw new Error('Choose one runtime release URL setting.');
 if (baseUrl) runtimeUrl(baseUrl);
 if (exactUrl) runtimeUrl(exactUrl);
-if (configuration?.mode === 'developer-id' && !baseUrl)
-  throw new Error(
-    'Developer ID runtime releases require an immutable OTTO_RUNTIME_RELEASE_BASE_URL.',
-  );
-
 function included(path) {
   if (notices.has(path)) return true;
   if (

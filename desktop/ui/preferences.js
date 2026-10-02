@@ -54,6 +54,7 @@
   const invalid = new Set();
   let loadOperation;
   let preferences;
+  let systemRegion;
   let saving = 0;
   let revision = 0;
   let applied = 0;
@@ -80,11 +81,6 @@
     return result;
   }
 
-  const systemRegion =
-    timeZoneRegion(systemZone) ||
-    [...navigator.languages, navigator.language].map(region).find(Boolean) ||
-    'GB';
-
   function message(id, value = '') {
     const target = element(id);
     target.textContent = value;
@@ -105,6 +101,10 @@
   }
 
   function choices(value) {
+    systemRegion ||=
+      timeZoneRegion(systemZone) ||
+      [...navigator.languages, navigator.language].map(region).find(Boolean) ||
+      'GB';
     const currentRegion = region(value.locale);
     options(controls.locale, [
       ['', `Automatic (${names.of(systemRegion) || systemRegion})`],

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  copyFile,
   mkdtemp,
   mkdir,
   readFile,
@@ -28,7 +29,7 @@ import {
 } from '../runtime/assets.mjs';
 import { checkRelease, prepareRelease } from '../../.github/scripts/prepare-desktop-release.mjs';
 import { cleanupAppleSigning } from '../../.github/scripts/with-apple-signing.mjs';
-import { verifyRuntimeDownload } from '../scripts/release-tools.mjs';
+import { verifyRuntimeDownload, verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 
 async function releaseRepository(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-release-history-')));
@@ -195,39 +196,132 @@ test('runtime public verification uses a bounded GET when HEAD is unsupported or
   }
 });
 
-test('runtime release verifies pending-tag drafts, retries safely and publishes only on request', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-runtime-release-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+async function releaseFixture(t, { isPublic = false, publish = false, plan = false } = {}) {
+  const f = await releaseRepository(t);
+  const root = f.root;
+  const scripts = join(root, '.github/scripts');
+  await mkdir(scripts, { recursive: true });
+  await copyFile(
+    fileURLToPath(new URL('../../.github/scripts/prepare-desktop-release.mjs', import.meta.url)),
+    join(scripts, 'prepare-desktop-release.mjs'),
+  );
+  if (plan) {
+    const { runtimeInputs } = await import('../scripts/runtime-inputs.mjs');
+    const input = await runtimeInputs();
+    const repository = fileURLToPath(new URL('../../', import.meta.url));
+    for (const path of new Set([
+      ...input.inputs.filter(
+        (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
+      ),
+      'package-lock.json',
+      'desktop/package.json',
+      'desktop/package-lock.json',
+    ])) {
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await copyFile(join(repository, path), join(root, path));
+    }
+  }
+  f.commit();
+  await prepareRelease(root, '0.1.0');
+  const source = f.commit();
   const assets = join(root, '.local/desktop-runtime-release');
+  const output = join(root, 'dist/desktop');
   const bin = join(root, 'bin');
-  await Promise.all([mkdir(assets, { recursive: true }), mkdir(bin)]);
+  await Promise.all([
+    mkdir(assets, { recursive: true }),
+    mkdir(output, { recursive: true }),
+    mkdir(bin),
+  ]);
   const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
   const archive = Buffer.from('Synthetic runtime archive');
   const certificate = Buffer.from('Synthetic public certificate');
-  const fingerprint = digest('Synthetic runtime inputs');
+  const signingEnv = {
+    OTTO_SIGNING_MODE: isPublic ? 'developer-id' : 'self-signed',
+    OTTO_SIGNING_IDENTITY: 'Synthetic Otto Signing',
+    OTTO_SIGNING_CERTIFICATE_SHA256: digest(certificate),
+  };
+  const fingerprint = plan
+    ? JSON.parse(
+        (
+          await promisify(execFile)(
+            process.execPath,
+            [join(root, 'desktop/scripts/runtime-inputs.mjs')],
+            { env: signingEnv },
+          )
+        ).stdout,
+      ).fingerprint
+    : digest('Synthetic runtime inputs');
+  const runtimeTag = `runtime-darwin-arm64-${fingerprint}`;
+  const appTag = 'desktop-v0.1.0';
   const name = `Otto-Runtime-darwin-arm64-${digest(archive).slice(0, 12)}.tar.gz`;
   const release = {
     version: 1,
     platform: 'darwin-arm64',
     fingerprint,
     id: digest('Synthetic runtime files'),
+    source,
+    minimumSystemVersion: '14.0',
     archive: { file: name, bytes: archive.length, sha256: digest(archive) },
-    signing: { mode: 'self-signed', certificateSha256: digest(certificate) },
+    signing: {
+      mode: isPublic ? 'developer-id' : 'self-signed',
+      certificateSha256: digest(certificate),
+      ...(isPublic ? { teamId: 'SYNTHETIC1' } : {}),
+    },
+    ...(isPublic
+      ? { notarization: { status: 'Accepted', id: '12345678-1234-1234-1234-123456789abc' } }
+      : {}),
+    ...(isPublic && publish
+      ? { url: `https://github.com/synthetic/otto/releases/download/${runtimeTag}/${name}` }
+      : {}),
+  };
+  const disk = Buffer.from('Synthetic signed disk image');
+  const diskName = 'Otto-0.1.0-arm64.dmg';
+  const metadata = {
+    version: '0.1.0',
+    source,
+    signing: release.signing,
+    notarized: isPublic,
+    runtime: { id: release.id, archive: release.archive },
+    disk: { file: diskName, bytes: disk.length, sha256: digest(disk) },
   };
   await Promise.all([
     writeFile(join(assets, name), archive),
     writeFile(join(assets, 'runtime-release.json'), JSON.stringify(release)),
     writeFile(join(assets, 'SHA256SUMS'), `${digest(archive)}  ${name}\n`),
     writeFile(join(assets, 'signing.cer'), certificate),
+    writeFile(join(output, diskName), disk),
+    writeFile(join(output, 'release.json'), JSON.stringify(metadata)),
+    writeFile(join(output, 'runtime-release.json'), JSON.stringify(release)),
+    writeFile(join(output, 'SHA256SUMS'), `${digest(disk)}  ${diskName}\n`),
+    writeFile(join(output, 'signing.cer'), certificate),
   ]);
+  const statePath = join(root, 'github.json');
+  const readState = async () => JSON.parse(await readFile(statePath, 'utf8'));
+  const writeState = (state) => writeFile(statePath, JSON.stringify(state));
+  await writeState({
+    private: !isPublic,
+    releases: {},
+    created: 0,
+    calls: [],
+    contents: {},
+    runs: [
+      {
+        head_sha: source,
+        head_branch: 'main',
+        head_repository: { full_name: 'synthetic/otto' },
+        event: 'push',
+        conclusion: 'success',
+      },
+    ],
+  });
   await writeFile(
     join(bin, 'gh'),
     `#!${process.execPath}\n` +
-      String.raw`const { readFileSync, writeFileSync, existsSync, mkdirSync } = require('node:fs');
+      String.raw`const { readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const { basename, join } = require('node:path');
 const { createHash } = require('node:crypto');
 const file = process.env.FIXTURE_STATE;
-const state = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { release: null, created: 0, calls: [], contents: {} };
+const state = JSON.parse(readFileSync(file, 'utf8'));
 const args = process.argv.slice(2);
 state.calls.push(args);
 const save = () => writeFileSync(file, JSON.stringify(state));
@@ -235,75 +329,257 @@ const missing = () => { save(); process.stderr.write('Not Found (HTTP 404)'); pr
 const output = (value) => { save(); process.stdout.write(JSON.stringify(value)); process.exit(0); };
 const flag = (name) => args[args.indexOf(name) + 1];
 if (args[0] === 'api') {
-  if (args[1] === 'repos/synthetic/otto') output({ private: true });
-  if (args[1] === 'graphql') output({ data: { repository: { release: state.release ? { databaseId: 123 } : null } } });
-  if (args[1].includes('/releases/tags/') && !state.release?.draft && state.release) output(state.release);
-  if (args[1] === 'repos/synthetic/otto/releases/123' && state.release) output(state.release);
+  if (args[1] === 'repos/synthetic/otto') output({ private: state.private });
+  if (args[1].includes('/actions/workflows/')) output({ workflow_runs: state.runs });
+  if (args[1] === 'graphql') {
+    const tag = args.find(value => value.startsWith('tag=')).slice(4);
+    const release = state.releases[tag];
+    output({ data: { repository: { release: release ? { databaseId: release.id } : null } } });
+  }
+  if (args[1].includes('/releases/tags/')) {
+    const release = state.releases[args[1].split('/').at(-1)];
+    if (release && !release.draft) output(release);
+  }
+  const release = Object.values(state.releases).find(value => args[1] === 'repos/synthetic/otto/releases/' + value.id);
+  if (release) output(release);
   missing();
 }
 if (args[0] !== 'release') throw new Error('Unexpected command');
+const tag = args[2];
 if (args[1] === 'create') {
-  if (state.release) throw new Error('Duplicate release');
-  state.created++;
-  state.release = { id: 123, draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), body: readFileSync(flag('--notes-file'), 'utf8'), assets: [] };
+  if (state.releases[tag]) throw new Error('Duplicate release');
+  const id = ++state.created;
+  state.releases[tag] = { id, draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), body: readFileSync(flag('--notes-file'), 'utf8'), html_url: 'https://github.com/synthetic/otto/releases/tag/untagged-' + id, assets: [] };
 } else {
-  if (!state.release) missing();
+  const release = state.releases[tag];
+  if (!release) missing();
   if (args[1] === 'edit') {
-    if (args.includes('--draft=false')) state.release.draft = false;
-    if (args.includes('--notes-file')) state.release.body = readFileSync(flag('--notes-file'), 'utf8');
+    if (args.includes('--draft=false')) {
+      release.draft = false;
+      release.html_url = 'https://github.com/synthetic/otto/releases/tag/' + tag;
+    }
+    if (args.includes('--notes-file')) release.body = readFileSync(flag('--notes-file'), 'utf8');
   } else if (args[1] === 'upload') {
     const bytes = readFileSync(args[3]);
     const name = basename(args[3]);
-    state.release.assets = state.release.assets.filter(asset => asset.name !== name);
-    state.release.assets.push({ name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex') });
-    state.contents[name] = bytes.toString('base64');
+    release.assets = release.assets.filter(asset => asset.name !== name);
+    release.assets.push({ name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex') });
+    state.contents[tag + '/' + name] = bytes.toString('base64');
   } else if (args[1] === 'download') {
     const name = flag('--pattern');
-    if (!state.contents[name]) missing();
+    if (!state.contents[tag + '/' + name]) missing();
     mkdirSync(flag('--dir'), { recursive: true });
-    writeFileSync(join(flag('--dir'), name), Buffer.from(state.contents[name], 'base64'));
+    writeFileSync(join(flag('--dir'), name), state.corruptDmg && name.endsWith('.dmg') ? 'Corrupted disk image' : Buffer.from(state.contents[tag + '/' + name], 'base64'));
   } else throw new Error('Unexpected release operation');
 }
 save();
 `,
     { mode: 0o700 },
   );
-  const statePath = join(root, 'github.json');
+  const network = join(root, 'network.mjs');
+  await writeFile(
+    network,
+    String.raw`import { readFileSync, writeFileSync } from 'node:fs';
+globalThis.fetch = async (url, options = {}) => {
+  const file = process.env.FIXTURE_STATE;
+  const state = JSON.parse(readFileSync(file, 'utf8'));
+  state.calls.push(['fetch', options.method || 'GET', String(url)]);
+  writeFileSync(file, JSON.stringify(state));
+  const match = String(url).match(/^https:\/\/github\.com\/synthetic\/otto\/releases\/download\/([^/]+)\/([^/]+)$/);
+  if (!match) throw new Error('Unexpected network access');
+  const [, tag, name] = match;
+  const bytes = state.contents[tag + '/' + name];
+  if (state.releases[tag]?.draft || !bytes || state.failPublicDownload) return new Response(null, { status: 404 });
+  const body = Buffer.from(bytes, 'base64');
+  return new Response(options.method === 'HEAD' ? null : body, { headers: { 'content-length': String(body.length) } });
+};
+`,
+  );
   const script = fileURLToPath(
     new URL('../../.github/scripts/desktop-release.mjs', import.meta.url),
   );
-  const invoke = (publish) =>
-    promisify(execFile)(process.execPath, [script, 'publish-runtime'], {
+  const invoke = (command, requestPublish = publish) =>
+    promisify(execFile)(process.execPath, [script, command], {
       cwd: root,
       env: {
-        PATH: bin,
+        PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
         FIXTURE_STATE: statePath,
+        NODE_OPTIONS: `--import=${network}`,
         GH_TOKEN: 'synthetic-fixture-token',
         GITHUB_REPOSITORY: 'synthetic/otto',
-        GITHUB_SHA: 'a'.repeat(40),
-        OTTO_SIGNING_MODE: 'self-signed',
-        OTTO_SIGNING_CERTIFICATE_SHA256: digest(certificate),
+        GITHUB_SHA: source,
+        GITHUB_REF: 'refs/heads/main',
+        APPLE_CONFIGURED: 'true',
+        ...signingEnv,
         OTTO_RUNTIME_FINGERPRINT: fingerprint,
-        ...(publish ? { OTTO_PUBLISH_RELEASE: 'true' } : {}),
+        OTTO_EXPECTED_RUNTIME_FINGERPRINT: fingerprint,
+        OTTO_PUBLISH_RELEASE: String(requestPublish),
       },
       timeout: 30_000,
     });
-  await invoke(false);
-  let saved = JSON.parse(await readFile(statePath, 'utf8'));
-  assert.equal(saved.release.draft, true);
-  assert.equal(saved.release.prerelease, true);
-  assert.equal(saved.release.assets.length, 4);
+  return { invoke, readState, writeState, release, assets, output, runtimeTag, appTag, digest };
+}
+
+test('runtime and app drafts handle pending tags and retries without publishing either release', async (t) => {
+  const f = await releaseFixture(t);
+  const initial = JSON.parse((await f.invoke('draft-runtime')).stdout);
+  assert.equal(
+    initial.runtime_descriptor_sha256,
+    await assetHash(join(f.assets, 'runtime-release.json')),
+  );
+  await f.invoke('draft-runtime');
+  await f.invoke('draft');
+  await f.invoke('draft');
+  const state = await f.readState();
+  assert.equal(state.created, 2);
+  for (const release of Object.values(state.releases)) {
+    assert.equal(release.draft, true);
+    assert.equal(release.prerelease, true);
+  }
+  assert(state.releases[f.appTag].body.includes(state.releases[f.runtimeTag].html_url));
+  assert(!state.calls.some((call) => call.includes('--draft=false')));
+});
+
+test('new public runtime drafts omit anonymous download URLs and support signed manual import', async (t) => {
+  const f = await releaseFixture(t, { isPublic: true });
+  const request = t.mock.method(globalThis, 'fetch', () => {
+    throw new Error('Unexpected anonymous download');
+  });
+  await verifyRuntimeRelease(f.release, f.release.fingerprint, {
+    ...f.release.signing,
+    team: f.release.signing.teamId,
+  });
+  await f.invoke('draft-runtime');
+  await f.invoke('draft');
+  const state = await f.readState();
+  const uploaded = JSON.parse(
+    Buffer.from(state.contents[f.runtimeTag + '/runtime-release.json'], 'base64'),
+  );
+  assert.equal(uploaded.url, undefined);
+  assert.equal(request.mock.callCount(), 0);
+  assert(!state.calls.some((call) => call[0] === 'fetch' || call.includes('--draft=false')));
+});
+
+test('published public runtime reuse adds its working download URL without republishing it', async (t) => {
+  const f = await releaseFixture(t, { isPublic: true, plan: true });
+  await f.invoke('draft-runtime');
+  const state = await f.readState();
+  state.releases[f.runtimeTag].draft = false;
+  await f.writeState(state);
+  const plan = JSON.parse((await f.invoke('plan')).stdout);
+  assert.equal(plan.runtime_reused, 'true');
+  const descriptorPath = join(f.assets, 'runtime-release.json');
+  const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
+  assert.equal(
+    descriptor.url,
+    `https://github.com/synthetic/otto/releases/download/${f.runtimeTag}/${f.release.archive.file}`,
+  );
+  await copyFile(descriptorPath, join(f.output, 'runtime-release.json'));
+  await f.invoke('draft');
+  const saved = await f.readState();
+  assert.equal(saved.releases[f.appTag].draft, true);
+  assert.equal(saved.releases[f.runtimeTag].draft, false);
   assert(!saved.calls.some((call) => call.includes('--draft=false')));
-  await invoke(false);
-  saved = JSON.parse(await readFile(statePath, 'utf8'));
-  assert.equal(saved.created, 1);
-  assert.equal(saved.release.draft, true);
-  assert(!saved.calls.some((call) => call.includes('--draft=false')));
-  await invoke(true);
-  saved = JSON.parse(await readFile(statePath, 'utf8'));
-  assert.equal(saved.created, 1);
-  assert.equal(saved.release.draft, false);
-  await assert.rejects(invoke(true), /Refusing to replace a published or unrelated release/);
+});
+
+test('pending public runtime packaging defers only reachability for the checked CI descriptor', async (t) => {
+  const f = await releaseFixture(t, { isPublic: true, publish: true });
+  const configuration = { ...f.release.signing, team: f.release.signing.teamId };
+  const descriptorPath = join(f.assets, 'runtime-release.json');
+  const env = {
+    GITHUB_ACTIONS: 'true',
+    OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: await assetHash(descriptorPath),
+  };
+  const request = t.mock.method(
+    globalThis,
+    'fetch',
+    async () => new Response(null, { status: 404 }),
+  );
+  await verifyRuntimeRelease(f.release, f.release.fingerprint, configuration, {
+    descriptorPath,
+    env,
+  });
+  assert.equal(request.mock.callCount(), 0);
+  await assert.rejects(
+    verifyRuntimeRelease(f.release, '0'.repeat(64), configuration, { descriptorPath, env }),
+    /provenance/,
+  );
+  await assert.rejects(
+    verifyRuntimeRelease(f.release, f.release.fingerprint, configuration, {
+      descriptorPath,
+      env: { ...env, GITHUB_ACTIONS: 'false' },
+    }),
+    /checked CI artifact/,
+  );
+  await writeFile(descriptorPath, JSON.stringify({ ...f.release, source: '0'.repeat(40) }));
+  await assert.rejects(
+    verifyRuntimeRelease(f.release, f.release.fingerprint, configuration, { descriptorPath, env }),
+    /checked CI artifact/,
+  );
+  await assert.rejects(
+    verifyRuntimeRelease(f.release, f.release.fingerprint, configuration, { env: {} }),
+    /not anonymously reachable/,
+  );
+});
+
+test('runtime publication waits for checked app bytes and retries reuse an already published runtime', async (t) => {
+  const f = await releaseFixture(t, { isPublic: true, publish: true });
+  await f.invoke('draft-runtime');
+  let state = await f.readState();
+  assert.equal(state.releases[f.runtimeTag].draft, true);
+  assert(!state.calls.some((call) => call[0] === 'fetch' || call.includes('--draft=false')));
+  const archive = state.releases[f.runtimeTag].assets.find(
+    (asset) => asset.name === f.release.archive.file,
+  );
+  archive.digest = `sha256:${'0'.repeat(64)}`;
+  await f.writeState(state);
+  await assert.rejects(f.invoke('draft'), /uploaded runtime does not match/);
+  state = await f.readState();
+  assert.equal(state.releases[f.appTag], undefined);
+  state.releases[f.runtimeTag].assets.find(
+    (asset) => asset.name === f.release.archive.file,
+  ).digest = `sha256:${f.release.archive.sha256}`;
+  state.corruptDmg = true;
+  await f.writeState(state);
+  await assert.rejects(f.invoke('draft'), /Downloaded release DMG failed/);
+  state = await f.readState();
+  assert(Object.values(state.releases).every((release) => release.draft));
+  assert(!state.calls.some((call) => call.includes('--draft=false')));
+  state.corruptDmg = false;
+  state.failPublicDownload = true;
+  await f.writeState(state);
+  await assert.rejects(f.invoke('draft'), /publicly downloadable/);
+  state = await f.readState();
+  assert.equal(state.releases[f.runtimeTag].draft, false);
+  assert.equal(state.releases[f.appTag].draft, true);
+  state.failPublicDownload = false;
+  await f.writeState(state);
+  await f.invoke('draft');
+  state = await f.readState();
+  assert(Object.values(state.releases).every((release) => !release.draft));
+  const publications = state.calls.filter((call) => call.includes('--draft=false'));
+  assert.deepEqual(
+    publications.map((call) => call[2]),
+    [f.runtimeTag, f.appTag],
+  );
+  const downloadedApp = state.calls.findIndex(
+    (call) => call[1] === 'download' && call.includes('Otto-0.1.0-arm64.dmg'),
+  );
+  const publishedRuntime = state.calls.findIndex((call) => call.includes('--draft=false'));
+  const checkedPublicRuntime = state.calls.findIndex(
+    (call) => call[0] === 'fetch' && call[1] === 'HEAD',
+  );
+  const publishedApp = state.calls.findLastIndex((call) => call.includes('--draft=false'));
+  assert(
+    downloadedApp < publishedRuntime &&
+      publishedRuntime < checkedPublicRuntime &&
+      checkedPublicRuntime < publishedApp,
+  );
+  assert(!state.releases[f.appTag].body.includes('/untagged-'));
+  await assert.rejects(
+    f.invoke('draft-runtime'),
+    /Refusing to replace a published or unrelated release/,
+  );
 });
 
 test('bundle copy includes explicit release assets under .local while excluding private descendants', async (t) => {

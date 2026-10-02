@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { basename, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { verifyRuntimeDownload } from '../../desktop/scripts/release-tools.mjs';
 
 const root = process.cwd();
@@ -120,7 +121,7 @@ function descriptor(value, fingerprint, baseUrl, isPublic) {
     value.signing?.mode !== signingMode ||
     value.signing?.certificateSha256 !== process.env.OTTO_SIGNING_CERTIFICATE_SHA256 ||
     (signingMode === 'developer-id' && value.notarization?.status !== 'Accepted') ||
-    (isPublic ? value.url !== `${baseUrl}/${value.archive.file}` : value.url !== undefined)
+    (value.url !== undefined && (!isPublic || value.url !== `${baseUrl}/${value.archive.file}`))
   )
     throw new Error('The published runtime descriptor does not match these release inputs.');
   return value;
@@ -208,6 +209,7 @@ async function plan() {
     const asset = runtime.assets.find((entry) => entry.name === saved.archive.file);
     if (asset?.digest !== `sha256:${saved.archive.sha256}` || asset.size !== saved.archive.bytes)
       throw new Error('Published runtime archive metadata failed verification.');
+    if (!runtimeRepo.private) saved.url = `${baseUrl}/${saved.archive.file}`;
     await mkdir(runtimeDirectory, { recursive: true });
     await writeFile(
       join(runtimeDirectory, 'runtime-release.json'),
@@ -283,7 +285,23 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
   return release;
 }
 
-async function publishRuntime() {
+function publishRelease(repository, tag) {
+  gh(
+    [
+      'release',
+      'edit',
+      tag,
+      '--repo',
+      repository,
+      '--draft=false',
+      '--prerelease',
+      '--latest=false',
+    ],
+    repository,
+  );
+}
+
+async function draftRuntime() {
   repositoryName(runtimeRepository);
   const publish = process.env.OTTO_PUBLISH_RELEASE === 'true';
   const fingerprint = process.env.OTTO_RUNTIME_FINGERPRINT;
@@ -300,6 +318,8 @@ async function publishRuntime() {
     baseUrl,
     !repository.private,
   );
+  if (Boolean(value.url) !== (!repository.private && publish))
+    throw new Error('The runtime download URL does not match the requested publication state.');
   const archive = join(runtimeDirectory, value.archive.file);
   if (
     (await hash(archive)) !== value.archive.sha256 ||
@@ -320,33 +340,18 @@ async function publishRuntime() {
       ),
     ],
   });
-  if (publish)
-    gh(
-      [
-        'release',
-        'edit',
-        tag,
-        '--repo',
-        runtimeRepository,
-        '--draft=false',
-        '--prerelease',
-        '--latest=false',
-      ],
-      runtimeRepository,
-    );
   const downloaded = descriptor(
-    await downloadDescriptor(runtimeRepository, tag, baseUrl, !repository.private && publish),
+    await downloadDescriptor(runtimeRepository, tag, baseUrl, false),
     fingerprint,
     baseUrl,
     !repository.private,
   );
-  if (downloaded.archive.sha256 !== value.archive.sha256)
+  if (!isDeepStrictEqual(downloaded, value))
     throw new Error('Downloaded runtime descriptor differs from the uploaded file.');
-  if (!repository.private && publish) await verifyRuntimeDownload(value.url, value.archive);
   await outputValues({
-    runtime_url: `${baseUrl}/${value.archive.file}`,
     runtime_sha256: value.archive.sha256,
-    published: publish,
+    runtime_descriptor_sha256: await hash(join(runtimeDirectory, 'runtime-release.json')),
+    published: false,
   });
 }
 
@@ -354,6 +359,7 @@ async function draftApp() {
   repositoryName(sourceRepository);
   repositoryName(releaseRepository);
   repositoryName(runtimeRepository);
+  const publish = process.env.OTTO_PUBLISH_RELEASE === 'true';
   run(process.execPath, ['.github/scripts/prepare-desktop-release.mjs', '--check']);
   const version = JSON.parse(await readFile('desktop/release.json', 'utf8')).version;
   const tag = `desktop-v${version}`;
@@ -396,12 +402,30 @@ async function draftApp() {
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
   const runtime = JSON.parse(await readFile(join(output, 'runtime-release.json'), 'utf8'));
   const runtimeTag = `runtime-darwin-arm64-${runtime.fingerprint}`;
-  descriptor(
-    runtime,
+  const baseUrl = `https://github.com/${runtimeRepository}/releases/download/${runtimeTag}`;
+  let runtimeRelease = releaseByTag(runtimeRepository, runtimeTag);
+  if (!runtimeRelease) throw new Error('The matching runtime release is unavailable.');
+  descriptor(runtime, process.env.OTTO_EXPECTED_RUNTIME_FINGERPRINT, baseUrl, !runtimeRepo.private);
+  if (Boolean(runtime.url) !== (!runtimeRepo.private && (publish || !runtimeRelease.draft)))
+    throw new Error('The app runtime URL does not match the requested publication state.');
+  const savedRuntime = descriptor(
+    await downloadDescriptor(
+      runtimeRepository,
+      runtimeTag,
+      baseUrl,
+      !runtimeRepo.private && !runtimeRelease.draft,
+    ),
     process.env.OTTO_EXPECTED_RUNTIME_FINGERPRINT,
-    `https://github.com/${runtimeRepository}/releases/download/${runtimeTag}`,
+    baseUrl,
     !runtimeRepo.private,
   );
+  const runtimeAsset = runtimeRelease.assets.find((entry) => entry.name === runtime.archive.file);
+  if (
+    !isDeepStrictEqual({ ...savedRuntime, url: undefined }, { ...runtime, url: undefined }) ||
+    runtimeAsset?.digest !== `sha256:${runtime.archive.sha256}` ||
+    runtimeAsset.size !== runtime.archive.bytes
+  )
+    throw new Error('The uploaded runtime does not match the packaged app.');
   if (
     metadata.runtime?.id !== runtime.id ||
     metadata.runtime?.archive?.sha256 !== runtime.archive.sha256
@@ -416,27 +440,28 @@ async function draftApp() {
       `${metadata.disk.sha256}  ${disk}`
   )
     throw new Error('Packaged DMG and checksums do not match the release metadata.');
-  const runtimeRelease = releaseByTag(runtimeRepository, runtimeTag);
-  if (!runtimeRelease) throw new Error('The matching runtime release is unavailable.');
-  const runtimeLink = runtimeRelease.draft
-    ? runtimeRelease.html_url
-    : `https://github.com/${runtimeRepository}/releases/download/${runtimeTag}/${runtime.archive.file}`;
-  const installation = [
-    `Apple Silicon macOS ${runtime.minimumSystemVersion} or later.`,
-    signingMode === 'self-signed'
-      ? 'Internal self-signed preview. This is not Apple-notarized; macOS may require Privacy & Security → Open Anyway on first launch.'
-      : 'Signed with Developer ID and notarized by Apple.',
-    runtime.url && !runtimeRelease.draft
-      ? 'Otto downloads and verifies its runtime on first launch.'
-      : `Download the [matching runtime pack](${runtimeLink})${runtimeRelease.draft ? ' from the draft release assets' : ''}, leave it compressed, and select it when Otto asks. GitHub access is required for these internal downloads.`,
-    'Saved keys and conversations remain in the existing local profile.',
-  ].join('\n\n');
-  const release = await uploadDraft({
+  const releaseNotes = () => {
+    const runtimeLink = runtimeRelease.draft
+      ? runtimeRelease.html_url
+      : `https://github.com/${runtimeRepository}/releases/download/${runtimeTag}/${runtime.archive.file}`;
+    const installation = [
+      `Apple Silicon macOS ${runtime.minimumSystemVersion} or later.`,
+      signingMode === 'self-signed'
+        ? 'Internal self-signed preview. This is not Apple-notarized; macOS may require Privacy & Security → Open Anyway on first launch.'
+        : 'Signed with Developer ID and notarized by Apple.',
+      runtime.url && !runtimeRelease.draft
+        ? 'Otto downloads and verifies its runtime on first launch.'
+        : `Download the [matching runtime pack](${runtimeLink})${runtimeRelease.draft ? ' from the draft release assets' : ''}, leave it compressed, and select it when Otto asks. GitHub access is required for these internal downloads.`,
+      'Saved keys and conversations remain in the existing local profile.',
+    ].join('\n\n');
+    return `${changes}\n\n${installation}\n\n${marker}\n`;
+  };
+  let release = await uploadDraft({
     repository: releaseRepository,
     tag,
     title: `Otto ${version}`,
     marker,
-    notes: `${changes}\n\n${installation}\n\n${marker}\n`,
+    notes: releaseNotes(),
     files: names.map((name) => join(output, name)),
   });
   const downloadDirectory = join(process.env.RUNNER_TEMP || root, `otto-download-check-${version}`);
@@ -459,20 +484,29 @@ async function draftApp() {
   );
   if ((await hash(join(downloadDirectory, dmg))) !== (await hash(join(output, dmg))))
     throw new Error('Downloaded release DMG failed its checksum.');
-  if (process.env.OTTO_PUBLISH_RELEASE === 'true')
-    gh(
-      [
-        'release',
-        'edit',
-        tag,
-        '--repo',
-        releaseRepository,
-        '--draft=false',
-        '--prerelease',
-        '--latest=false',
-      ],
-      releaseRepository,
-    );
+  if (publish) {
+    if (runtimeRelease.draft) publishRelease(runtimeRepository, runtimeTag);
+    runtimeRelease = releaseByTag(runtimeRepository, runtimeTag);
+    if (!runtimeRelease || runtimeRelease.draft)
+      throw new Error('The runtime release was not published.');
+    if (!runtimeRepo.private) {
+      const published = await downloadDescriptor(runtimeRepository, runtimeTag, baseUrl, true);
+      if (!isDeepStrictEqual(published, savedRuntime))
+        throw new Error('The public runtime descriptor differs from the checked draft.');
+      await verifyRuntimeDownload(runtime.url, runtime.archive);
+    }
+    await uploadDraft({
+      repository: releaseRepository,
+      tag,
+      title: `Otto ${version}`,
+      marker,
+      notes: releaseNotes(),
+      files: [],
+    });
+    publishRelease(releaseRepository, tag);
+    release = releaseByTag(releaseRepository, tag);
+    if (!release || release.draft) throw new Error('The app release was not published.');
+  }
   if (process.env.GITHUB_STEP_SUMMARY)
     await appendFile(
       process.env.GITHUB_STEP_SUMMARY,
@@ -480,12 +514,12 @@ async function draftApp() {
     );
   await outputValues({
     release_url: release.html_url,
-    published: process.env.OTTO_PUBLISH_RELEASE === 'true',
+    published: publish,
   });
 }
 
 const command = process.argv[2];
 if (command === 'plan') await plan();
-else if (command === 'publish-runtime') await publishRuntime();
+else if (command === 'draft-runtime') await draftRuntime();
 else if (command === 'draft') await draftApp();
-else throw new Error('Expected plan, publish-runtime or draft.');
+else throw new Error('Expected plan, draft-runtime or draft.');
