@@ -160,35 +160,6 @@
   gap: 16px;
   margin-top: 22px;
 }
-.app-website-progress {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
-  padding: 14px;
-  border-left: 3px solid var(--accent);
-  border-radius: 0 8px 8px 0;
-  background: var(--surface-subtle);
-}
-.app-website-progress > svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--accent);
-}
-.app-website-progress strong {
-  font-size: 13px;
-}
-.app-website-progress p {
-  margin: 4px 0 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.app-website-progress small {
-  display: block;
-  margin-top: 8px;
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
 .app-discovery-path {
   display: grid;
   gap: 3px;

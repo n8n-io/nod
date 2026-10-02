@@ -37,53 +37,6 @@
   padding: 8px 12px;
   font-size: 13px;
 }
-.secondary-footnote {
-  margin-top: 22px;
-  max-width: 64ch;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.compact-services {
-  display: grid;
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
-  background: var(--surface);
-  overflow: visible;
-}
-.compact-service + .compact-service {
-  border-top: 1px solid var(--border);
-}
-.compact-service {
-  padding: 13px 16px;
-}
-.compact-service-heading {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-}
-.compact-service-heading > img {
-  object-fit: contain;
-  flex-shrink: 0;
-}
-.compact-service-heading h2 {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 600;
-}
-.compact-service-heading > span {
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
-.compact-service-description {
-  margin: 3px 0 0 35px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.compact-accounts {
-  margin: 3px 0 0 35px;
-}
 .compact-account {
   display: flex;
   align-items: flex-start;
@@ -96,39 +49,12 @@
   min-width: 0;
   padding-top: 6px;
 }
-.compact-account-identity {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  line-height: 1.4;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.compact-account-identity > svg {
-  color: var(--muted-foreground);
-  flex-shrink: 0;
-}
 .compact-account-email {
   display: block;
   margin-top: 2px;
   color: var(--muted-foreground);
   font-size: 11px;
   overflow-wrap: anywhere;
-}
-.compact-account-issue {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  margin-top: 4px;
-  color: var(--muted-foreground);
-  font-size: 11px;
-  line-height: 1.4;
-  text-align: left;
-}
-.compact-account-issue svg {
-  margin-top: 1px;
-  flex-shrink: 0;
 }
 .connection-menu {
   position: relative;
@@ -171,9 +97,6 @@
   margin-top: 2px;
   color: var(--muted-foreground);
   font-size: 11px;
-}
-.connection-menu-options .connection-remove {
-  color: var(--muted-foreground);
 }
 .channel-options {
   display: grid;
@@ -245,37 +168,6 @@
   justify-content: space-between;
   gap: 8px;
   margin-top: 7px;
-}
-.channel-settings-menu > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  cursor: pointer;
-  list-style: none;
-}
-.channel-settings-menu > summary::-webkit-details-marker {
-  display: none;
-}
-.channel-settings-menu[open] > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin-top: 8px;
-}
-.channel-delivery-issue {
-  display: grid;
-  gap: 6px;
-  margin-top: 4px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  color: var(--foreground);
-  background: var(--secondary);
-}
-.channel-delivery-issue code {
-  overflow-wrap: anywhere;
-  font-size: 11px;
 }
 .channel-wizard {
   width: min(470px, calc(100vw - 32px));
@@ -654,17 +546,6 @@
   }
   .secondary-heading-actions {
     gap: 0;
-  }
-  .compact-service {
-    padding: 12px;
-  }
-  .compact-accounts,
-  .compact-service-description {
-    margin-left: 0;
-  }
-  .compact-account-identity > small {
-    flex-basis: 100%;
-    padding-left: 20px;
   }
   .channel-option {
     padding: 16px;

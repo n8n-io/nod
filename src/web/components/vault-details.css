@@ -51,20 +51,6 @@
   border-radius: 22%;
   object-fit: contain;
 }
-.vault-section + .vault-section {
-  margin-top: 18px;
-}
-.vault-section > h2 {
-  display: flex;
-  justify-content: space-between;
-  padding: 0 12px 6px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 600;
-}
-.vault-section > h2 > span {
-  font-weight: 500;
-}
 .vault-no-results {
   padding: 24px 12px;
   color: var(--muted-foreground);
