@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { createComputerCommands } from '../src/computer-commands.ts';
 import { RuntimeControlError } from '../src/protocol.ts';
+import { browserRequestBytes } from '../../../src/ports/computer.ts';
 import { launchCloudflareCommand } from '../../../src/providers/cloudflare-computer/transport.ts';
 
 function deferred<T = void>() {
@@ -173,12 +174,12 @@ async function create(f: ReturnType<typeof fixture>, version = '1') {
   return id;
 }
 
-function attachClient(f: ReturnType<typeof fixture>) {
+function attachClient(f: ReturnType<typeof fixture>, role: 'browser' | 'workspace' = 'workspace') {
   let uncertain = 0;
   const process = launchCloudflareCommand({
-    role: 'workspace',
+    role,
     generation: '1',
-    threadId: 'thread',
+    ...(role === 'workspace' && { threadId: 'thread' }),
     fetch: (input, init) => f.registry.fetch(new Request(input, init)) as Promise<Response>,
     onUncertain() {
       uncertain++;
@@ -272,6 +273,33 @@ test('native command streams interoperate with the client and preserve binary in
     );
   } finally {
     await f.close();
+  }
+});
+
+test('a browser command carries an upload-sized request that a workspace command refuses', async () => {
+  const upload = Buffer.alloc(browserRequestBytes, 97);
+  const browser = fixture({ role: 'browser' });
+  const browserClient = attachClient(browser, 'browser');
+  const workspace = fixture();
+  const workspaceClient = attachClient(workspace);
+  try {
+    browserClient.process.stdin.end(upload);
+    await eventual(() => browser.processes[0]?.inputClosed() ?? false);
+    assert.deepEqual(Buffer.concat(browser.processes[0].input), upload);
+    browser.processes[0].finish(0);
+    assert.deepEqual(await browserClient.terminal, { code: 0 });
+    assert.equal(browserClient.uncertain(), 0);
+    assert.equal(browser.registry.uncertain, false);
+    workspaceClient.process.stdin.write(upload);
+    assert.equal(
+      (await workspaceClient.terminal).error,
+      'The remote computer connection did not finish safely.',
+    );
+    assert.equal(workspaceClient.uncertain(), 1);
+    assert.equal(workspace.processes[0]?.input.length ?? 0, 0);
+  } finally {
+    await browser.close();
+    await workspace.close();
   }
 });
 

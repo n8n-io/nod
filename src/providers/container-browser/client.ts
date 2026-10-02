@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   BrowserActionError,
   browserDownloadBytes,
+  browserRequestBytes,
   browserUploadBytes,
   type Computer,
 } from '../../ports/computer.ts';
@@ -13,7 +14,6 @@ import {
   browserRequest,
   browserResponse,
   imageBytes,
-  requestBytes,
   responseBytes,
   type BrowserCall,
   type BrowserMetadata,
@@ -103,7 +103,7 @@ export function createBridgeComputer(options: {
       namespace: options.namespace,
     });
     const encoded = JSON.stringify({ type: 'request', request }) + '\n';
-    if (Buffer.byteLength(encoded) > requestBytes)
+    if (Buffer.byteLength(encoded) > browserRequestBytes)
       return Promise.reject(new Error('The browser request is too large.'));
     const available = options.available?.(input) !== false;
     if (input.method !== 'dispose' && (disposed || uncertain || !available)) {

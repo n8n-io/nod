@@ -6,6 +6,7 @@ import type { Computer } from '../../ports/computer.ts';
 import {
   BrowserActionError,
   browserDownloadBytes,
+  browserRequestBytes,
   browserUploadBytes,
 } from '../../ports/computer.ts';
 import { createAgentBrowserComputer } from '../agent-browser/index.ts';
@@ -16,7 +17,6 @@ import {
   browserResponse,
   browserSocketPath,
   imageBytes,
-  requestBytes,
   responseBytes,
   type BrowserMetadata,
   type BrowserRequest,
@@ -302,7 +302,7 @@ export async function startContainerBrowserWorker(
     };
     socket.on('data', (chunk: string) => {
       received += Buffer.byteLength(chunk);
-      if (terminal || received > requestBytes + 1024) return stop();
+      if (terminal || received > browserRequestBytes + 1024) return stop();
       incoming += chunk;
       for (let line = incoming.indexOf('\n'); line >= 0; line = incoming.indexOf('\n')) {
         const raw = incoming.slice(0, line);

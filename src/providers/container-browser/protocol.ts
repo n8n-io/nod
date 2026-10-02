@@ -3,7 +3,6 @@ import { browserUploadBytes } from '../../ports/computer.ts';
 import { browserHandoffInput } from '../../shared/browser-handoff.ts';
 
 export const browserSocketPath = '/data/control.sock';
-export const requestBytes = Math.ceil(browserUploadBytes / 3) * 4 + 8192;
 export const responseBytes = 17 * 1024 * 1024;
 export const imageBytes = 12 * 1024 * 1024;
 

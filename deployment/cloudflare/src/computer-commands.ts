@@ -6,6 +6,7 @@ import {
   ownerIdentity,
   RuntimeControlError,
 } from './protocol.ts';
+import { browserRequestBytes } from '../../../src/ports/computer.ts';
 import { threadIdentity } from '../../../src/ports/thread-identity.ts';
 
 type Command = {
@@ -31,7 +32,6 @@ type Command = {
   authorizationTimer?: ReturnType<typeof setTimeout>;
 };
 
-const inputLimit = 1024 * 1024 + 1024;
 const outputLimit = 32 * 1024 * 1024;
 const receiptLimit = 32;
 
@@ -45,6 +45,7 @@ export function createComputerCommands(options: {
   authorizationIntervalMs?: number;
   receiptTimeoutMs?: number;
 }) {
+  const inputLimit = (options.role === 'browser' ? browserRequestBytes : 1024 * 1024) + 1024;
   const commands = new Map<string, Command>();
   const receipts = new Map<string, number>();
   const encoder = new TextEncoder();

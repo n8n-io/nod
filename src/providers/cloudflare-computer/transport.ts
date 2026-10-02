@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
+import { browserRequestBytes } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
 
-const inputLimit = 1024 * 1024 + 1024;
 const outputLimit = 32 * 1024 * 1024;
 const frameLimit = 22_000;
 
@@ -39,6 +39,7 @@ export function launchCloudflareCommand(options: {
   } catch {
     throw new Error('The remote computer configuration is invalid.');
   }
+  const inputLimit = (role === 'browser' ? browserRequestBytes : 1024 * 1024) + 1024;
   const id = randomUUID();
   const requestFetch = options.fetch ?? fetch;
   const events = new EventEmitter();

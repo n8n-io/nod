@@ -63,6 +63,7 @@ export interface BrowserObservation {
 }
 export const browserDownloadBytes = 12 * 1024 * 1024;
 export const browserUploadBytes = 12 * 1024 * 1024;
+export const browserRequestBytes = Math.ceil(browserUploadBytes / 3) * 4 + 8192;
 export interface BrowserDownloadInput {
   selector?: string;
   url?: string;

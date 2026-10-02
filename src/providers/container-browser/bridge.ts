@@ -1,7 +1,8 @@
 import { connect } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import type { Readable, Writable } from 'node:stream';
-import { browserFrame, browserSocketPath, requestBytes, responseBytes } from './protocol.ts';
+import { browserRequestBytes } from '../../ports/computer.ts';
+import { browserFrame, browserSocketPath, responseBytes } from './protocol.ts';
 
 export function runBrowserBridge(options: {
   input: Readable;
@@ -31,7 +32,7 @@ export function runBrowserBridge(options: {
     const disconnected = () => finish(1);
     const incoming = (chunk: Buffer | string) => {
       inputSize += Buffer.byteLength(chunk);
-      if (inputSize > requestBytes + 1024) return finish(1);
+      if (inputSize > browserRequestBytes + 1024) return finish(1);
       input += chunk.toString();
       for (let line = input.indexOf('\n'); line >= 0; line = input.indexOf('\n')) {
         const raw = input.slice(0, line);
