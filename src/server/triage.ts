@@ -22,12 +22,7 @@ import type {
   RelevancePolicy,
 } from '../ports/relevance.ts';
 
-import {
-  createPreferencesStore,
-  defaultPreferences,
-  preferencesSchema,
-  type Preferences,
-} from './preferences.ts';
+import { createPreferencesStore, defaultPreferences, type Preferences } from './preferences.ts';
 
 const preferencesStore = createPreferencesStore(pool, ownerId);
 export const getPreferences = preferencesStore.get;
@@ -86,7 +81,7 @@ async function savedUpdates(client: Pick<PoolClient, 'query'> = pool, lock = fal
     await client.query(
       `SELECT id,intent,left(summary,700) AS summary,created_at AS "createdAt" FROM notifications
     WHERE owner_id=$1 AND kind='external' AND decision='digest' AND turn_id IS NULL
-    AND feedback IS DISTINCT FROM 'not_useful' AND created_at>now()-interval '24 hours'
+    AND created_at>now()-interval '24 hours'
     ORDER BY (intent='inspect_message') DESC,CASE WHEN intent='inspect_message' THEN created_at END,created_at DESC
     LIMIT 8${lock ? ' FOR UPDATE SKIP LOCKED' : ''}`,
       [ownerId],
@@ -326,33 +321,28 @@ export function createTriage(options: {
       return;
     }
     const preferences = await getPreferences();
-    const [profile, allGoals, recent, feedback, engagement, saved, recentReviews] =
-      await Promise.all([
-        options.getProfile(),
-        options.listGoals(),
-        pool.query(
-          `SELECT m.role,left(m.text,800) AS text,m.reaction,m.created_at AS "createdAt" FROM messages m
+    const [profile, allGoals, recent, engagement, saved, recentReviews] = await Promise.all([
+      options.getProfile(),
+      options.listGoals(),
+      pool.query(
+        `SELECT m.role,left(m.text,800) AS text,m.reaction,m.created_at AS "createdAt" FROM messages m
            WHERE m.owner_id=$1 AND ${activeThreadSql('m')} ORDER BY m.created_at DESC LIMIT 8`,
-          [ownerId],
-        ),
-        pool.query(
-          'SELECT left(summary,500) AS summary,feedback FROM notifications WHERE owner_id=$1 AND feedback IS NOT NULL ORDER BY created_at DESC LIMIT 12',
-          [ownerId],
-        ),
-        pool.query(
-          `SELECT count(*)::int AS unanswered_wake_messages_24h FROM notifications n WHERE n.owner_id=$1
-        AND n.decision='wake' AND n.feedback IS NULL AND n.created_at>now()-interval '24 hours'
+        [ownerId],
+      ),
+      pool.query(
+        `SELECT count(*)::int AS unanswered_wake_messages_24h FROM notifications n WHERE n.owner_id=$1
+        AND n.decision='wake' AND n.created_at>now()-interval '24 hours'
         AND n.created_at>COALESCE((SELECT max(created_at) FROM messages WHERE owner_id=$1 AND role='user'),'epoch'::timestamptz)
         AND EXISTS(SELECT 1 FROM messages m WHERE m.turn_id=n.turn_id AND m.role='assistant')`,
-          [ownerId],
-        ),
-        kind === 'review' && preferences.notificationRule.trim() ? savedUpdates() : [],
-        pool.query(
-          `SELECT n.created_at AS "createdAt",n.decision,n.feedback,u.status AS "turnStatus" FROM notifications n
+        [ownerId],
+      ),
+      kind === 'review' && preferences.notificationRule.trim() ? savedUpdates() : [],
+      pool.query(
+        `SELECT n.created_at AS "createdAt",n.decision,u.status AS "turnStatus" FROM notifications n
         LEFT JOIN turns u ON u.id=n.turn_id WHERE n.owner_id=$1 AND n.kind='review' ORDER BY n.created_at DESC LIMIT 6`,
-          [ownerId],
-        ),
-      ]);
+        [ownerId],
+      ),
+    ]);
     const goals = activeGoalContext(allGoals);
     if (kind === 'review' && !goals.length && !saved.length) return;
     let decision: Decision = 'digest';
@@ -378,11 +368,10 @@ export function createTriage(options: {
             savedUpdates: saved,
             recentReviews: recentReviews.rows,
             recentConversation: recent.rows,
-            feedback: feedback.rows,
             engagement: {
               unansweredWakeMessages24h: engagement.rows[0].unanswered_wake_messages_24h,
               interpretation:
-                'Weak evidence only: these notifications produced an assistant message with no later user message or explicit feedback. We do not know whether they were read. Avoid repeating updates, but silence does not make useful background work unwanted.',
+                'Weak evidence only: these notifications produced an assistant message with no later user message. We do not know whether they were read. Avoid repeating updates, but silence does not make useful background work unwanted.',
             },
             event: summary.slice(0, 5000),
           },
@@ -515,36 +504,7 @@ export function createTriage(options: {
   }
   function registerTriageRoutes(app: FastifyInstance) {
     app.get('/api/preferences', getPreferences);
-    app.put('/api/preferences', async (request) => {
-      const input = preferencesSchema
-        .extend({
-          locale: preferencesSchema.shape.locale.optional(),
-          hourCycle: preferencesSchema.shape.hourCycle.optional(),
-          quietHoursEnabled: z.boolean().optional(),
-        })
-        .parse(request.body);
-      return updatePreferences(input);
-    });
     app.patch('/api/preferences', async (request) => updatePreferences(request.body));
-    app.get(
-      '/api/notifications',
-      async () =>
-        (
-          await pool.query(
-            'SELECT id,summary,decision,reason,feedback,created_at AS "createdAt" FROM notifications WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 50',
-            [ownerId],
-          )
-        ).rows,
-    );
-    app.post<{ Params: { id: string } }>('/api/notifications/:id/feedback', async (request) => {
-      const input = z.object({ feedback: z.enum(['useful', 'not_useful']) }).parse(request.body);
-      await pool.query('UPDATE notifications SET feedback=$3 WHERE id=$1 AND owner_id=$2', [
-        z.uuid().parse(request.params.id),
-        ownerId,
-        input.feedback,
-      ]);
-      return { ok: true };
-    });
   }
 
   return {

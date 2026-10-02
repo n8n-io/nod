@@ -339,8 +339,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/memory', () => memory?.view() ?? { areas: [], archive: [] });
-    app.get('/api/profile', getProfile);
-    app.put('/api/profile', (request) => setProfile(request.body));
     app.get('/api/goals', listGoals);
     app.post('/api/goals', (request) => createGoal(request.body));
     app.patch<{ Params: { id: string } }>('/api/goals/:id', (request) =>

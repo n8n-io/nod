@@ -1182,7 +1182,7 @@ test(
               old.turnId,
             ])
           ).rows[0].id as string;
-          await request('PUT', '/api/profile', {
+          await personal.manage('profile_update', {
             name: 'Fixture name',
             location: 'Lisbon',
             phone: '',
@@ -1337,7 +1337,10 @@ test(
           assert.equal((await request('GET', '/api/goals')).json().length, 1);
           assert.equal((await request('GET', '/api/schedules')).json().length, 1);
           assert.equal((await request('GET', '/api/vault')).json().length, 1);
-          assert.equal((await request('GET', '/api/profile')).json().name, 'Fixture name');
+          assert.equal(
+            ((await personal.manage('profile_get', {})) as { name: string }).name,
+            'Fixture name',
+          );
           assert.equal(
             (await db.pool.query('SELECT account_id FROM app_connections')).rows[0].account_id,
             'saved-fixture-account',
