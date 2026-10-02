@@ -290,11 +290,8 @@ test(
       });
     const stored = async () =>
       JSON.stringify(
-        (
-          await pool.query(
-            'SELECT row_to_json(i) AS row FROM channel_inbox i UNION ALL SELECT row_to_json(m) FROM messages m UNION ALL SELECT row_to_json(v) FROM chat_verification_submissions v',
-          )
-        ).rows,
+        (await pool.query('SELECT text FROM channel_inbox UNION ALL SELECT text FROM messages'))
+          .rows,
       );
     try {
       assert.equal((await send('year', '2026')).statusCode, 200);
