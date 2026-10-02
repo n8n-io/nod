@@ -28,12 +28,9 @@ export function parseArgs(argv: string[]): Args {
     }
     const [name, inline] = item.slice(2).split(/=(.*)/s);
     if (inline !== undefined) flags.set(name, inline);
-    else if (
-      booleans.has(name) ||
-      argv[index + 1] === undefined ||
-      argv[index + 1].startsWith('--')
-    )
-      flags.set(name, true);
+    else if (booleans.has(name)) flags.set(name, true);
+    else if (argv[index + 1] === undefined || argv[index + 1].startsWith('--'))
+      throw new Error(`--${name} needs a value.`);
     else flags.set(name, argv[++index]);
   }
   const [command = 'help', ...rest] = positional;
@@ -52,4 +49,26 @@ export const whole = (args: Args, name: string, fallback: number) => {
   if (!Number.isInteger(number) || number < 1)
     throw new Error(`--${name} must be a positive whole number.`);
   return number;
+};
+
+export const number = (args: Args, name: string, minimum: number, maximum = Infinity) => {
+  const value = text(args, name);
+  if (value === undefined) return undefined;
+  const parsed = value.trim() === '' ? NaN : Number(value);
+  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum)
+    throw new Error(
+      `--${name} must be a number from ${minimum}${maximum === Infinity ? ' up' : ` to ${maximum}`}.`,
+    );
+  return parsed;
+};
+export const choice = <T extends string>(
+  args: Args,
+  name: string,
+  allowed: readonly T[],
+  fallback: T,
+) => {
+  const value = text(args, name) ?? fallback;
+  if (!allowed.includes(value as T))
+    throw new Error(`--${name} must be one of: ${allowed.join(', ')}.`);
+  return value as T;
 };

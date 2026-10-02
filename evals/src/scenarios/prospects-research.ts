@@ -48,8 +48,14 @@ export default scenario({
         (run) => {
           const rows = (run.apps?.sheets?.books ?? [])
             .flatMap((book) => book.tabs.flatMap((tab) => tab.rows))
-            .filter((row) => row.filter(Boolean).length >= 3);
-          return { pass: rows.length >= 11, evidence: `${Math.max(0, rows.length - 1)} data rows` };
+            .filter(
+              (row) =>
+                row.filter(Boolean).length >= 3 &&
+                !/^(?:#|no\.?$|(?:company|name|store|brand|prospect|business|organi[sz]ation)\b)/i.test(
+                  String(row[0] ?? '').trim(),
+                ),
+            );
+          return { pass: rows.length >= 10, evidence: `${rows.length} data rows` };
         },
         { failure: 'incomplete' },
       ),

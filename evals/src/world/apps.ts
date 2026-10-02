@@ -766,13 +766,19 @@ export function slack(
       write: 'post',
       run(args) {
         const conversation = find(args.channel);
+        const parent = args.thread_ts
+          ? conversation.messages.find((item) => item.ts === args.thread_ts)
+          : undefined;
+        if (args.thread_ts && !parent) throw new Error('thread_not_found');
         const message = {
           user: owner.id,
           text: String(args.text),
           at: now(),
           ts: stamp(now(), sequence++),
+          ...(parent ? { threadTs: parent.ts } : {}),
         };
-        conversation.messages.push(message);
+        if (parent) (parent.replies ??= []).push(message);
+        else conversation.messages.push(message);
         return { ok: true, channel: conversation.id, ts: message.ts, message: view(message) };
       },
     },
@@ -953,9 +959,20 @@ export function createApps(
           const account = accountId ? accounts.get(accountId) : undefined;
           if (!account?.active || account.ownerId !== ownerId)
             throw new Error('No active connected account was found for this request.');
-          world.calls.push({ at: Date.now(), slug: action, args: structuredClone(args) });
-          if (action === 'GMAIL_GET_ATTACHMENT' && parts.gmail) return parts.gmail.attachment(args);
-          throw new Error('This file action is unavailable.');
+          const call = {
+            at: Date.now(),
+            slug: action,
+            args: structuredClone(args),
+          } as AppsWorld['calls'][number];
+          world.calls.push(call);
+          try {
+            if (action === 'GMAIL_GET_ATTACHMENT' && parts.gmail)
+              return parts.gmail.attachment(args);
+            throw new Error('This file action is unavailable.');
+          } catch (error) {
+            call.error = error instanceof Error ? error.message : String(error);
+            throw error;
+          }
         },
         async execute(action, args, accountId) {
           const account = accountId ? accounts.get(accountId) : undefined;

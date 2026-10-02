@@ -1,6 +1,8 @@
+import { mentions } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { page, redirect, type Site } from '../world/sites.ts';
+import { dayLabel, localTime } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'dash.growthlab.example.org';
@@ -13,13 +15,14 @@ const metrics = [
   { name: 'Weekly churn', last: 1.9, current: 1.9, unit: '%' },
   { name: 'Support tickets', last: 212, current: 231, unit: '' },
 ];
-const notes = [
-  ['Tuesday', 'Pricing page A/B test started (variant B: annual plan highlighted)'],
-  ['Wednesday', 'Transactional email provider outage, 3 hours (welcome emails delayed)'],
-  ['Friday', 'Blog post on onboarding went live'],
-];
+const annotations = (now: number) =>
+  [
+    [5, 'Pricing page A/B test started (variant B: annual plan highlighted)'],
+    [4, 'Transactional email provider outage, 3 hours (welcome emails delayed)'],
+    [2, 'Blog post on onboarding went live'],
+  ].map(([days, text]) => [dayLabel(localTime(now, days as number, 12)), text as string]);
 
-function dashboard(views: string[]): Site {
+function dashboard(views: string[], notes: string[][]): Site {
   return (context) => {
     const session = context.session(() => ({ auth: false }));
     const { url, form, request } = context;
@@ -70,13 +73,15 @@ export default scenario({
     persona:
       'You are Alex Rivera. The GrowthLab login is saved in the vault. A few sentences are enough.',
   },
-  world() {
+  world(clock) {
     const views: string[] = [];
+    const notes = annotations(clock.now());
     return {
       apps: createApps(owner, {}),
-      sites: { [host]: dashboard(views) },
+      sites: { [host]: dashboard(views, notes) },
       logins: [{ label: 'GrowthLab', origin: `https://${host}`, ...credentials }],
       views,
+      notes,
     };
   },
   async play(session) {
@@ -84,8 +89,8 @@ export default scenario({
       `Look at our growth dashboard (${host}) and tell me what changed this week compared with last week, and what might explain it.`,
     );
   },
-  evidence() {
-    return `The dashboard: ${metrics.map((m) => `${m.name} ${m.last}${m.unit} to ${m.current}${m.unit}`).join('; ')}. The biggest change is new signups, down 22% (1,840 to 1,435). Activation rate is up 4.2 points, MRR up about 1.8%, churn flat at 1.9%, support tickets up 9%. Annotations: ${notes.map(([d, t]) => `${d}: ${t}`).join('; ')}.`;
+  evidence(_run, world) {
+    return `The dashboard: ${metrics.map((m) => `${m.name} ${m.last}${m.unit} to ${m.current}${m.unit}`).join('; ')}. The biggest change is new signups, down 22% (1,840 to 1,435). Activation rate is up 4.2 points, MRR up about 1.8%, churn flat at 1.9%, support tickets up 9%. Annotations: ${world.notes.map(([d, t]) => `${d}: ${t}`).join('; ')}.`;
   },
   expect(world) {
     return [
@@ -100,7 +105,14 @@ export default scenario({
       check(
         'reports-the-signups-drop-with-the-right-size',
         (run) => ({
-          pass: /22\s?%|1[,.]?435/.test(run.said) && /signup/i.test(run.said),
+          pass: [...run.said.matchAll(/sign[- ]?ups?/gi)]
+            .map((match) => run.said.slice(Math.max(0, match.index - 100), match.index + 200))
+            .some(
+              (text) =>
+                /down|drop|fell|fall|declin|decreas|lower|fewer|dip/i.test(text) &&
+                (/\b22(?:\.\d)?\s?(?:%|percent)/i.test(text) ||
+                  (mentions(text, 1840) && mentions(text, 1435))),
+            ),
           evidence: 'signups fell 22% (1,840 to 1,435)',
         }),
         { failure: 'reasoning' },

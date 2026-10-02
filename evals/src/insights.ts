@@ -29,8 +29,18 @@ function pick(runs: ChartRun[], score: (run: ChartRun) => number | null, directi
   return scored.sort((a, b) => (direction === 'max' ? b.value - a.value : a.value - b.value))[0];
 }
 
+const attempted = (run: ChartRun) =>
+  run.summary.regression.total + run.summary.regression.incomplete;
+
 export function insights(runs: ChartRun[]) {
-  const done = runs.filter((run) => rate(run) !== null);
+  const usable = runs.filter(
+    (run) =>
+      rate(run) !== null &&
+      !run.summary.contaminated &&
+      run.summary.regression.incomplete <= attempted(run) * 0.2,
+  );
+  const widest = Math.max(0, ...usable.map(attempted));
+  const done = usable.filter((run) => attempted(run) >= widest * 0.9);
   const best = pick(done, rate, 'max');
   const contenders = best
     ? done.filter((run) => (rate(run) ?? 0) >= (rate(best.run) ?? 0) - 0.08)

@@ -1,7 +1,7 @@
 import { mentions, noWrites } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, sheets } from '../world/apps.ts';
-import { daysAgo, localTime } from '../world/time.ts';
+import { daysAgo, localDate, localTime } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const budget: Record<string, number> = {
@@ -62,8 +62,29 @@ function transactions(now: number): Row[] {
   ].sort((a, b) => a.at - b.at);
 }
 
-const iso = (at: number) => new Date(at).toLocaleDateString('en-CA', { timeZone: 'Europe/Madrid' });
+const iso = (at: number) => localDate(at);
 const money = (value: number) => value.toFixed(2);
+
+function reported(text: string, category: string, total: number) {
+  const marks = [...text.matchAll(new RegExp(Object.keys(budget).join('|'), 'gi'))].map(
+    (match) => ({
+      name: match[0].toLowerCase(),
+      start: match.index,
+      end: match.index + match[0].length,
+    }),
+  );
+  return marks.some(
+    (mark, index) =>
+      mark.name === category.toLowerCase() &&
+      mentions(
+        text.slice(
+          Math.max(marks[index - 1]?.end ?? 0, mark.start - 80),
+          Math.min(marks[index + 1]?.start ?? text.length, mark.end + 160),
+        ),
+        total,
+      ),
+  );
+}
 
 export default scenario({
   id: 'finance-sheet',
@@ -176,10 +197,20 @@ export default scenario({
       check(
         'reads-the-right-spreadsheet',
         (run) => {
-          const reads = (run.apps?.calls ?? []).filter(
-            (call) => call.slug === 'GOOGLESHEETS_BATCH_GET' && !call.error,
+          const book = (run.apps?.sheets?.books ?? []).find(
+            (item) => item.title === 'Spending 2026',
           );
-          return { pass: reads.length > 0, evidence: `${reads.length} successful range reads` };
+          const reads = (run.apps?.calls ?? []).filter(
+            (call) =>
+              call.slug === 'GOOGLESHEETS_BATCH_GET' &&
+              !call.error &&
+              Boolean(book) &&
+              String(call.args.spreadsheet_id).includes(book!.id),
+          );
+          return {
+            pass: reads.length > 0,
+            evidence: `${reads.length} successful range reads of Spending 2026`,
+          };
         },
         { aspect: 'process', failure: 'tool' },
       ),
@@ -187,12 +218,12 @@ export default scenario({
         'weekly-totals-are-exact',
         (run) => {
           const wrong = Object.entries(world.week).filter(
-            ([, total]) => !mentions(run.said, Math.round(total * 100) / 100),
+            ([category, total]) => !reported(run.said, category, Math.round(total * 100) / 100),
           );
           return {
             pass: !wrong.length,
             evidence: wrong.length
-              ? `missing ${wrong.map(([c, t]) => `${c} ${money(t)}`).join(', ')}`
+              ? `no ${wrong.map(([c, t]) => `${c} ${money(t)}`).join(', ')} next to the category`
               : undefined,
           };
         },

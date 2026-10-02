@@ -187,12 +187,12 @@ export default scenario({
     );
   },
   evidence: (run) =>
-    `${dumpSheets(run)}\n\n${dumpDrafts(run)}\nEmails sent: ${run.apps?.gmail?.sent().length ?? 0}`,
+    `${dumpSheets(run)}\n\n${dumpDrafts(run)}\nEmails sent: ${run.writes.filter((write) => write.kind === 'send').length}`,
   expect() {
-    const sheetText = (run: Parameters<Parameters<typeof check>[1]>[0]) =>
-      (run.apps?.sheets?.books ?? [])
-        .flatMap((book) => book.tabs.flatMap((tab) => tab.rows.flat()))
-        .join(' | ');
+    const sheetRows = (run: Parameters<Parameters<typeof check>[1]>[0]) =>
+      (run.apps?.sheets?.books ?? []).flatMap((book) =>
+        book.tabs.flatMap((tab) => tab.rows.map((row) => row.join(' | '))),
+      );
     return [
       check('sheet-created', (run) => (run.apps?.sheets?.books.length ?? 0) > 0, {
         failure: 'incomplete',
@@ -200,9 +200,9 @@ export default scenario({
       check(
         'sheet-lists-every-open-invoice',
         (run) => {
-          const text = sheetText(run);
+          const rows = sheetRows(run);
           const missing = invoices.filter(
-            (item) => !text.includes(item.number) || !mentions(text, item.amount),
+            (item) => !rows.some((row) => row.includes(item.number) && mentions(row, item.amount)),
           );
           return {
             pass: !missing.length,

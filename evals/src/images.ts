@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { cardPage, type Card } from './chart.ts';
 
@@ -39,7 +40,7 @@ export async function renderImages(cards: Card[], directory: string) {
         '--window-size=1600,900',
         '--virtual-time-budget=3000',
         `--screenshot=${image}`,
-        `file://${page}`,
+        pathToFileURL(page).href,
       ],
       { timeout: 60_000 },
     );

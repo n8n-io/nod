@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { runProcess } from '../../src/providers/process.ts';
 import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
-import { loadEnvironment, repository } from './stack.ts';
+import { keyVariables, loadEnvironment, repository } from './stack.ts';
 
 const container = 'otto-evals-pg';
 const port = 54398;
@@ -40,6 +40,8 @@ async function reachable(url: string) {
   }
 }
 
+let provisioning: Promise<unknown> = Promise.resolve();
+
 export async function ensureDatabase(
   root: string,
   environment: Record<string, string | undefined>,
@@ -48,28 +50,39 @@ export async function ensureDatabase(
   try {
     return { url: await integrationDatabaseUrl(repository, environment), provisioned: false };
   } catch {}
+  const turn = provisioning.then(() => provisionDatabase(root, provision));
+  provisioning = turn.catch(() => {});
+  return turn;
+}
+
+async function provisionDatabase(root: string, provision: boolean) {
   const { password } = await passwordFile(root);
   const url = `postgres://otto:${password}@127.0.0.1:${port}/otto`;
   if (await reachable(url)) return { url, provisioned: true };
   if (!provision) throw new Error('No test database. Run: npm run eval:capability -- doctor --fix');
-  await docker('rm', '-f', container);
-  const started = await docker(
-    'run',
-    '-d',
-    '--name',
-    container,
-    '-e',
-    'POSTGRES_USER=otto',
-    '-e',
-    `POSTGRES_PASSWORD=${password}`,
-    '-e',
-    'POSTGRES_DB=otto',
-    '-p',
-    `127.0.0.1:${port}:5432`,
-    'postgres:17-alpine',
-  );
-  if (started.exitCode)
-    throw new Error(`Could not start the test database: ${started.stderr.trim().slice(0, 200)}`);
+  const state = (
+    await docker('ps', '-a', '--filter', `name=^${container}$`, '--format', '{{.State}}')
+  ).stdout.trim();
+  if (state !== 'running') {
+    await docker('rm', '-f', container);
+    const started = await docker(
+      'run',
+      '-d',
+      '--name',
+      container,
+      '-e',
+      'POSTGRES_USER=otto',
+      '-e',
+      `POSTGRES_PASSWORD=${password}`,
+      '-e',
+      'POSTGRES_DB=otto',
+      '-p',
+      `127.0.0.1:${port}:5432`,
+      'postgres:17-alpine',
+    );
+    if (started.exitCode)
+      throw new Error(`Could not start the test database: ${started.stderr.trim().slice(0, 200)}`);
+  }
   for (let attempt = 0; attempt < 60; attempt++) {
     if (await reachable(url)) return { url, provisioned: true };
     await new Promise((done) => setTimeout(done, 1000));
@@ -121,6 +134,7 @@ export async function doctor(root: string, fix: boolean) {
         const built = await runProcess('docker', ['build', '-f', dockerfile, '-t', tag, '.'], {
           cwd: repository,
           timeoutMs: 1_800_000,
+          maxBytes: 64 * 1024 * 1024,
         });
         ok = built.exitCode === 0;
         if (ok)
@@ -153,14 +167,23 @@ export async function doctor(root: string, fix: boolean) {
       });
     }
   }
-  const keys = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY'].filter((name) => environment[name]);
+  const provider =
+    environment.LLM_PROVIDER ||
+    (environment.OPENAI_API_KEY || !environment.ANTHROPIC_API_KEY ? 'openai' : 'anthropic');
+  const variable = (keyVariables as Record<string, string | undefined>)[provider];
+  const ready = Boolean(variable && environment[variable]);
+  const others = Object.entries(keyVariables)
+    .filter(([name, key]) => name !== provider && environment[key])
+    .map(([name]) => name);
   checks.push({
     name: 'Model keys',
-    ok: keys.length > 0,
-    detail: keys.length
-      ? `${keys.join(' and ')} set${environment.ANTHROPIC_API_KEY ? '' : '; the judge falls back to the agent model (set ANTHROPIC_API_KEY for an independent judge)'}`
-      : 'neither OPENAI_API_KEY nor ANTHROPIC_API_KEY is set',
-    fix: 'export OPENAI_API_KEY=... (or ANTHROPIC_API_KEY=...) in your shell or .env',
+    ok: ready,
+    detail: !variable
+      ? `LLM_PROVIDER=${provider} is not supported (use openai, anthropic or openrouter)`
+      : ready
+        ? `${variable} set for ${provider}${others.length ? `; also ${others.join(', ')}` : ''}${environment.ANTHROPIC_API_KEY ? '' : '; the judge falls back to the agent model (set ANTHROPIC_API_KEY for an independent judge)'}`
+        : `${variable} is not set, and ${provider} is the model provider`,
+    fix: `export ${variable ?? 'OPENAI_API_KEY'}=... in your shell or .env (or set LLM_PROVIDER)`,
   });
   return checks;
 }
@@ -180,17 +203,24 @@ export async function cleanup(root: string) {
     .filter((name) => /^otto-(workspace|browser)-eval-[a-f0-9]+$/.test(name));
   if (orphans.length) await docker('rm', '-f', ...orphans);
   let schemas = 0;
-  try {
-    const environment = await loadEnvironment();
-    const { url } = await ensureDatabase(root, environment, false);
-    const pg = (await import('pg')).default;
-    const pool = new pg.Pool({ connectionString: url, max: 1 });
-    const found = await pool.query(
-      "SELECT nspname FROM pg_namespace WHERE nspname ~ '^eval_(boss_)?[a-f0-9]{12}$'",
-    );
-    for (const row of found.rows) await pool.query(`DROP SCHEMA IF EXISTS ${row.nspname} CASCADE`);
-    schemas = found.rowCount ?? 0;
-    await pool.end();
-  } catch {}
+  const url = await loadEnvironment()
+    .then((environment) => ensureDatabase(root, environment, false))
+    .then((database) => database.url)
+    .catch(() => undefined);
+  if (url) {
+    if (!['127.0.0.1', 'localhost'].includes(new URL(url).hostname))
+      throw new Error('Cleanup only touches a local PostgreSQL database.');
+    try {
+      const pg = (await import('pg')).default;
+      const pool = new pg.Pool({ connectionString: url, max: 1 });
+      const found = await pool.query(
+        "SELECT nspname FROM pg_namespace WHERE nspname ~ '^eval_(boss_)?[a-f0-9]{12}$'",
+      );
+      for (const row of found.rows)
+        await pool.query(`DROP SCHEMA IF EXISTS ${row.nspname} CASCADE`);
+      schemas = found.rowCount ?? 0;
+      await pool.end();
+    } catch {}
+  }
   return { containers: orphans.length, schemas };
 }

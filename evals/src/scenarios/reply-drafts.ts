@@ -201,7 +201,7 @@ export default scenario({
             evidence: `threads ${sofiaDraft?.threadId ?? 'none'}, ${danielDraft?.threadId ?? 'none'}`,
           };
         },
-        { aspect: 'process', failure: 'tool', required: false },
+        { failure: 'tool' },
       ),
       check(
         'sofia-draft-says-two-rounds',

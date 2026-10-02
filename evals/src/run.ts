@@ -12,7 +12,7 @@ import { html, terminal } from './report.ts';
 import type { AttemptResult, RunManifest } from './results.ts';
 import { scenarios } from './scenarios/index.ts';
 import { loadEnvironment, parseModel, repository } from './stack.ts';
-import { saveRun } from './store.ts';
+import { pruneAttempts, readAttempts, saveRun } from './store.ts';
 
 export const defaultJudge = 'anthropic/claude-sonnet-5-5';
 
@@ -75,13 +75,17 @@ export async function prepare(root: string) {
 }
 
 export function select(
-  options: Pick<RunOptions, 'tier' | 'scenarioIds' | 'capability' | 'ignoreWindow'>,
+  options: Pick<
+    RunOptions,
+    'tier' | 'scenarioIds' | 'capability' | 'ignoreWindow' | 'includePending'
+  >,
 ) {
   const chosen = scenarios.filter(
     (item) =>
       (options.scenarioIds
         ? options.scenarioIds.includes(item.id)
-        : options.tier === 'live' || item.tier !== 'live') &&
+        : (options.tier === 'live' || item.tier !== 'live') &&
+          (options.includePending || item.calibration !== 'pending' || item.stance === 'gap')) &&
       (options.scenarioIds || options.tier !== 'pr' || item.tier === 'pr') &&
       (!options.capability || item.capabilities.includes(options.capability as never)),
   );
@@ -130,9 +134,17 @@ async function attemptOnce(options: {
   let captured = '';
   for (const stream of [child.stdout, child.stderr])
     stream.on('data', (chunk) => (captured = (captured + chunk).slice(-20_000)));
-  const timer = setTimeout(() => child.kill('SIGKILL'), (task.item.seconds + 600) * 1000);
+  let grace: NodeJS.Timeout | undefined;
+  const timer = setTimeout(
+    () => {
+      child.kill('SIGTERM');
+      grace = setTimeout(() => child.kill('SIGKILL'), 120_000);
+    },
+    (task.item.seconds + 600) * 1000,
+  );
   await new Promise((done) => child.on('close', done));
   clearTimeout(timer);
+  clearTimeout(grace);
   await writeFile(join(directory, 'logs', `${task.item.id}.${task.attempt}.log`), captured);
   return readFile(file, 'utf8')
     .then((text) => JSON.parse(text) as AttemptResult)
@@ -189,6 +201,7 @@ export async function runSuite(options: RunOptions) {
   let source = repository;
   let refCommit: string | undefined;
   if (options.ref) {
+    if (options.ref.startsWith('-')) throw new Error('A git ref cannot start with a dash.');
     refCommit = git('rev-parse', '--verify', `${options.ref}^{commit}`);
     source = join(tmpdir(), `otto-eval-ref-${refCommit.slice(0, 10)}-${randomUUID().slice(0, 6)}`);
     git('worktree', 'add', '--detach', source, refCommit);
@@ -281,6 +294,11 @@ export async function runSuite(options: RunOptions) {
       `Running ${tasks.length} attempts (${selected.length} scenarios × ${options.repeat}) with ${model}, judge ${judge}, concurrency ${options.concurrency}${options.ref ? `, code at ${options.ref}` : ''}`,
     );
     await Promise.all(Array.from({ length: Math.min(options.concurrency, tasks.length) }, worker));
+    await pruneAttempts(
+      directory,
+      tasks.map((task) => `${task.item.id}.${task.attempt}`),
+    );
+    results.splice(0, results.length, ...(await readAttempts(directory)));
 
     if (options.diagnose && results.some((item) => item.status === 'fail')) {
       console.log('Diagnosing failures...');

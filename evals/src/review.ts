@@ -7,7 +7,13 @@ export const reviewKey = (attempt: Pick<AttemptResult, 'scenario' | 'attempt'>) 
   `${attempt.scenario}.${attempt.attempt}`;
 
 export async function loadReviews(directory: string): Promise<Reviews> {
-  return JSON.parse(await readFile(join(directory, 'reviews.json'), 'utf8').catch(() => '{}'));
+  const saved = await readFile(join(directory, 'reviews.json'), 'utf8').catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return '{}';
+      throw error;
+    },
+  );
+  return JSON.parse(saved);
 }
 
 async function saveReviews(directory: string, reviews: Reviews) {

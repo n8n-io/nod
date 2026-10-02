@@ -25,7 +25,7 @@ export interface Model {
   apiKey: string;
 }
 
-const keyVariables: Record<Provider, string> = {
+export const keyVariables: Record<Provider, string> = {
   openai: 'OPENAI_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',

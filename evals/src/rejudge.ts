@@ -20,37 +20,55 @@ export async function rejudge(options: {
       continue;
     }
     const checks: CheckResult[] = attempt.checks.filter((check) => check.kind === 'check');
-    for (const group of ['task', 'product'] as const) {
-      const old = attempt.checks.filter(
-        (check) => check.kind === 'judge' && check.group === group && check.criterion,
-      );
-      if (!old.length) continue;
-      const verdicts = await judgeCriteria(llm, {
-        standard: group === 'product' ? standard : undefined,
-        task: attempt.task,
-        transcript: attempt.transcript,
-        groundTruth: attempt.groundTruth,
-        criteria: old.map((check) => ({ id: check.id, criterion: check.criterion! })),
-      });
-      const review = options.reviews[reviewKey(attempt)];
-      for (const check of old) {
-        const verdict = verdicts.find((item) => item.id === check.id)!;
-        compared++;
-        if (verdict.pass === check.pass) same++;
-        if (review) {
-          const truth = review.wrongChecks.includes(check.id) ? !check.pass : check.pass;
-          human.total++;
-          if (check.pass === truth) human.old++;
-          if (verdict.pass === truth) human.fresh++;
-        }
-        checks.push({
-          ...check,
-          pass: verdict.pass,
-          na: verdict.na || undefined,
-          evidence: verdict.reasoning,
+    const spentBefore = llm.spent().costUsd ?? 0;
+    const counts = { same: 0, compared: 0, old: 0, fresh: 0, total: 0 };
+    try {
+      for (const group of ['task', 'product'] as const) {
+        const old = attempt.checks.filter(
+          (check) => check.kind === 'judge' && check.group === group && check.criterion,
+        );
+        if (!old.length) continue;
+        const verdicts = await judgeCriteria(llm, {
+          standard: group === 'product' ? standard : undefined,
+          task: attempt.task,
+          transcript: attempt.transcript,
+          groundTruth: attempt.groundTruth,
+          criteria: old.map((check) => ({ id: check.id, criterion: check.criterion! })),
         });
+        const review = options.reviews[reviewKey(attempt)];
+        for (const check of old) {
+          const verdict = verdicts.find((item) => item.id === check.id)!;
+          counts.compared++;
+          if (verdict.pass === check.pass) counts.same++;
+          if (review) {
+            const truth = review.wrongChecks.includes(check.id) ? !check.pass : check.pass;
+            counts.total++;
+            if (check.pass === truth) counts.old++;
+            if (verdict.pass === truth) counts.fresh++;
+          }
+          checks.push({
+            ...check,
+            pass: verdict.pass,
+            na: verdict.na || undefined,
+            evidence: verdict.reasoning,
+          });
+        }
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      next.push({
+        ...attempt,
+        status: 'incomplete',
+        blame: 'infra',
+        error: `Re-judging failed: ${message}`,
+      });
+      continue;
     }
+    same += counts.same;
+    compared += counts.compared;
+    human.old += counts.old;
+    human.fresh += counts.fresh;
+    human.total += counts.total;
     const playFailure =
       attempt.status === 'fail' &&
       attempt.error &&
@@ -60,7 +78,7 @@ export async function rejudge(options: {
       checks,
       status:
         playFailure || checks.some((check) => check.required && !check.pass) ? 'fail' : 'pass',
-      judgeCostUsd: llm.spent().costUsd,
+      judgeCostUsd: (llm.spent().costUsd ?? 0) - spentBefore,
     });
   }
   const pct = (value: number, total: number) =>

@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Write, AppsWorld } from './world/apps.ts';
 import type { Interaction, Session } from './session.ts';
@@ -60,7 +60,7 @@ export interface Run {
   groundTruth(): string;
 }
 
-function clip(value: string, limit: number) {
+export function clip(value: string, limit: number) {
   return value.length <= limit
     ? value
     : `${value.slice(0, Math.floor(limit * 0.7))}\n…[${value.length - limit} characters omitted]…\n${value.slice(-Math.floor(limit * 0.25))}`;
@@ -68,12 +68,20 @@ function clip(value: string, limit: number) {
 
 async function sessionEvents(sessionRoot: string) {
   const entries: any[] = [];
-  for (const thread of await readdir(sessionRoot).catch(() => [] as string[]))
-    for (const file of (await readdir(join(sessionRoot, thread)))
-      .filter((name) => name.endsWith('.jsonl'))
-      .sort())
-      for (const line of (await readFile(join(sessionRoot, thread, file), 'utf8')).split('\n'))
+  for (const thread of await readdir(sessionRoot).catch(() => [] as string[])) {
+    const files = await Promise.all(
+      (await readdir(join(sessionRoot, thread)))
+        .filter((name) => name.endsWith('.jsonl'))
+        .map(async (name) => {
+          const path = join(sessionRoot, thread, name);
+          return { path, modified: (await stat(path)).mtimeMs };
+        }),
+    );
+    const latest = files.sort((a, b) => b.modified - a.modified)[0];
+    if (latest)
+      for (const line of (await readFile(latest.path, 'utf8')).split('\n'))
         if (line.trim()) entries.push(JSON.parse(line));
+  }
   return entries;
 }
 

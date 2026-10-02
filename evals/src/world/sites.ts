@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { randomBytes } from 'node:crypto';
+import { runProcess } from '../../../src/providers/process.ts';
 
 export interface Visit {
   host: string;
@@ -80,7 +81,19 @@ function multipart(body: Buffer, contentType: string) {
   return { form, files };
 }
 
-export async function serveSites(sites: Record<string, Site>) {
+export async function bindAddress() {
+  if (process.platform !== 'linux') return '127.0.0.1';
+  const { stdout } = await runProcess('docker', [
+    'network',
+    'inspect',
+    'bridge',
+    '--format',
+    '{{(index .IPAM.Config 0).Gateway}}',
+  ]);
+  return stdout.trim() || '172.17.0.1';
+}
+
+export async function serveSites(sites: Record<string, Site>, address = '127.0.0.1') {
   const sessions = new Map<string, object>();
   const visits: Visit[] = [];
   const server = createServer(async (request, response: ServerResponse) => {
@@ -139,7 +152,7 @@ export async function serveSites(sites: Record<string, Site>) {
       response.writeHead(500).end('Server error');
     }
   });
-  await new Promise<void>((done) => server.listen(0, '0.0.0.0', done));
+  await new Promise<void>((done) => server.listen(0, address, done));
   return {
     port: (server.address() as AddressInfo).port,
     visits,

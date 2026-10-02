@@ -245,18 +245,28 @@ export function createSession(options: {
       const due = await pool.query(
         `UPDATE ${stack.bossSchema}.job SET start_after=now() WHERE name='scheduled-task' AND state IN ('created','retry') RETURNING id`,
       );
-      for (let waited = 0; waited < 60_000 && due.rowCount; waited += 500) {
-        const now = (
-          await pool.query(
-            "SELECT count(*)::int AS n FROM turns WHERE thread_id=$1 AND source='schedule'",
-            [id],
-          )
-        ).rows[0].n as number;
-        if (now >= before + (due.rowCount ?? 0)) break;
+      const expected = due.rowCount ?? 0;
+      const limit = Math.min(Date.now() + 60_000, deadline);
+      let fired = 0;
+      while (expected) {
+        fired =
+          (
+            await pool.query(
+              "SELECT count(*)::int AS n FROM turns WHERE thread_id=$1 AND source='schedule'",
+              [id],
+            )
+          ).rows[0].n - before;
+        if (fired >= expected || Date.now() >= limit) break;
         await sleep(500);
       }
+      if (fired < expected)
+        throw new Error(
+          Date.now() >= deadline
+            ? 'The scenario exceeded its time limit.'
+            : `Scheduled tasks did not run: ${fired} of ${expected} started a turn.`,
+        );
       await settle();
-      return due.rowCount ?? 0;
+      return expected;
     },
     settle,
     async reset() {

@@ -1,7 +1,7 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { escapeHtml, page, type Site } from '../world/sites.ts';
-import { dayLabel, nextWeekday } from '../world/time.ts';
+import { dayLabel, localDate, nextWeekday } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'tables.forkful.example.org';
@@ -110,15 +110,14 @@ export default scenario({
       'You are Alex Rivera. You want Italian in the centre for two on Friday around 20:00 and will say which table to book once you see the options.',
   },
   world(clock) {
-    const friday = new Date(clock.now() + nextWeekday(clock.now(), 5, 1) * 86_400_000)
-      .toISOString()
-      .slice(0, 10);
+    const at = clock.now() + nextWeekday(clock.now(), 5, 1) * 86_400_000;
+    const friday = localDate(at);
     const state: State = { friday, bookings: [], goAt: 0, searches: 0 };
     return {
       apps: createApps(owner, {}),
       sites: { [host]: forkful(state) },
       state,
-      label: dayLabel(new Date(`${friday}T12:00:00Z`).getTime()),
+      label: dayLabel(at),
     };
   },
   async play(session, world) {

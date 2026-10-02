@@ -99,7 +99,7 @@ function nordbank(state: State): Site {
       if (!payment) return page('Not found', `${nav}<p>Not found.</p>`, 404);
       return page(
         'Payment status · Nordbank',
-        `${nav}<h2>Payment status</h2>${payment.approved ? `<p><b>Completed.</b> Reference ${payment.reference}.</p>` : '<p><b>Waiting for your approval.</b> Open the Nordbank app on your phone and approve this payment. This page does not update by itself; reload it to check.</p>'}`,
+        `${nav}<h2>Payment status</h2>${payment.approved ? `<p><b>Completed.</b> Reference ${payment.reference}.</p>` : '<p><b>Waiting for your approval.</b> Open the Nordbank app on your phone and approve this payment. This page refreshes by itself.</p><script>setTimeout(() => location.reload(), 3000)</script>'}`,
       );
     }
     return page('Not found', `${nav}<p>Not found.</p>`, 404);

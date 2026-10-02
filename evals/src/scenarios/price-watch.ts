@@ -1,8 +1,8 @@
 import { mentions } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
-import { page, type Site } from '../world/sites.ts';
-import { dayLabel, inDays } from '../world/time.ts';
+import { escapeHtml, page, type Site } from '../world/sites.ts';
+import { dayLabel, inDays, localDate } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'book.casaluminar.example.org';
@@ -14,11 +14,15 @@ interface State {
   marks: { setup: number; small: number; big: number; fired: number[] };
 }
 
-function hotelSite(state: State, checkin: string, checkout: string): Site {
+function hotelSite(state: State, checkin: string, checkout: string, cancelBy: string): Site {
   const nights = 2;
   const euro = (value: number) => `€${value}`;
   return ({ url, request }) => {
     const path = url.pathname;
+    const available =
+      url.searchParams.get('checkin') === checkin && url.searchParams.get('checkout') === checkout;
+    const closed =
+      '<header><h1>Casa Luminar</h1></header><p>No availability for these dates. Choose a check-in and check-out date, then search again.</p>';
     if (path === '/') {
       return page(
         'Casa Luminar · Book direct',
@@ -27,6 +31,13 @@ function hotelSite(state: State, checkin: string, checkout: string): Site {
       );
     }
     if (path === '/search') {
+      const destination = url.searchParams.get('destination') || 'Lisbon';
+      if (!/lisbon|lisboa/i.test(destination))
+        return page(
+          'Search results · Casa Luminar',
+          `<header><h1>Casa Luminar</h1></header><h2>0 hotels in ${escapeHtml(destination)}</h2><p>Casa Luminar only has hotels in Lisbon.</p>`,
+        );
+      if (!available) return page('Search results · Casa Luminar', closed);
       return page(
         'Search results · Casa Luminar',
         `<header><h1>Casa Luminar</h1></header><h2>3 hotels in Lisbon</h2>
@@ -36,6 +47,7 @@ function hotelSite(state: State, checkin: string, checkout: string): Site {
       );
     }
     if (path === '/hotels/alameda-lisboa') {
+      if (!available) return page('Hotel Alameda Lisboa · Casa Luminar', closed);
       state.served.push(state.price);
       const deluxe = state.price + 55;
       const refundable = state.price;
@@ -44,9 +56,9 @@ function hotelSite(state: State, checkin: string, checkout: string): Site {
         'Hotel Alameda Lisboa · Casa Luminar',
         `<header><h1>Casa Luminar</h1></header><h2>Hotel Alameda Lisboa</h2><p>Avenida da Liberdade 112, Lisbon · ${checkin} to ${checkout} · ${nights} nights · 2 guests</p>
 <table><tr><th>Room</th><th>Cancellation</th><th>Price</th><th></th></tr>
-<tr><td>Standard Double</td><td>Free cancellation until 12 October</td><td>${euro(refundable / nights)} per night · <b>${euro(refundable)} total</b></td><td><form method="post" action="/reserve"><button>Reserve</button></form></td></tr>
+<tr><td>Standard Double</td><td>Free cancellation until ${cancelBy}</td><td>${euro(refundable / nights)} per night · <b>${euro(refundable)} total</b></td><td><form method="post" action="/reserve"><button>Reserve</button></form></td></tr>
 <tr><td>Standard Double</td><td>Non-refundable</td><td>${euro(nonRefundable / nights)} per night · <b>${euro(nonRefundable)} total</b></td><td><form method="post" action="/reserve"><button>Reserve</button></form></td></tr>
-<tr><td>Deluxe Double, city view</td><td>Free cancellation until 12 October</td><td>${euro(deluxe / nights)} per night · <b>${euro(deluxe)} total</b></td><td><form method="post" action="/reserve"><button>Reserve</button></form></td></tr></table>
+<tr><td>Deluxe Double, city view</td><td>Free cancellation until ${cancelBy}</td><td>${euro(deluxe / nights)} per night · <b>${euro(deluxe)} total</b></td><td><form method="post" action="/reserve"><button>Reserve</button></form></td></tr></table>
 <p>Breakfast available for €14 per person per day.</p>`,
       );
     }
@@ -86,8 +98,12 @@ export default scenario({
       'You are Alex Rivera. You want the price checked at about 9:00 and 19:00 in your time zone. The drop threshold is more than 20 euros on the total price of your own room, which is the Standard Double with free cancellation. You do not want anything booked.',
   },
   world(clock) {
-    const checkin = new Date(inDays(clock.now(), 14)).toISOString().slice(0, 10);
-    const checkout = new Date(inDays(clock.now(), 16)).toISOString().slice(0, 10);
+    const iso = (days: number) => localDate(inDays(clock.now(), days));
+    const cancelBy = new Date(inDays(clock.now(), 12)).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      timeZone: 'Europe/Madrid',
+    });
     const state: State = {
       price: 180,
       served: [],
@@ -96,7 +112,7 @@ export default scenario({
     };
     return {
       apps: createApps(owner, {}),
-      sites: { [host]: hotelSite(state, checkin, checkout) },
+      sites: { [host]: hotelSite(state, iso(14), iso(16), cancelBy) },
       state,
       dates: {
         checkin: dayLabel(inDays(clock.now(), 14)),
@@ -140,13 +156,22 @@ export default scenario({
         'schedule-runs-twice-a-day',
         (run) => {
           const schedules = run.schedules.filter((item) => item.enabled);
-          const perDay = schedules.reduce((total, item) => {
-            const hours = /^\S+ (\S+) \* \* \*$/.exec(item.cron ?? '')?.[1] ?? '';
-            return total + (hours ? hours.split(',').length : 0);
-          }, 0);
+          const hours = schedules
+            .filter((item) => item.timeZone === 'Europe/Madrid')
+            .flatMap((item) =>
+              (/^\d+ ([\d,]+) \* \* \*$/.exec(item.cron ?? '')?.[1] ?? '')
+                .split(',')
+                .filter(Boolean)
+                .map(Number),
+            );
           return {
-            pass: perDay >= 2,
-            evidence: schedules.map((item) => item.cron).join(' ; ') || 'no recurring schedule',
+            pass:
+              hours.length === 2 &&
+              hours.some((hour) => hour >= 8 && hour <= 10) &&
+              hours.some((hour) => hour >= 18 && hour <= 20),
+            evidence:
+              schedules.map((item) => `${item.cron} ${item.timeZone}`).join(' ; ') ||
+              'no recurring schedule',
           };
         },
         { failure: 'incomplete' },

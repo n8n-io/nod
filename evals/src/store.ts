@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
 import { loadReviews } from './review.ts';
@@ -8,15 +8,9 @@ import { repository } from './stack.ts';
 export const resultsRoot = (override?: string) =>
   override ?? join(repository, '.local', 'capability-evals');
 
-export async function loadRun(root: string, label: string) {
-  const directory = join(root, label);
-  const manifest = JSON.parse(
-    await readFile(join(directory, 'manifest.json'), 'utf8').catch(() => {
-      throw new Error(`No saved run called ${label}. Use "runs" to list them.`);
-    }),
-  ) as RunManifest;
+export async function readAttempts(directory: string) {
   const names = await readdir(join(directory, 'attempts')).catch(() => [] as string[]);
-  const attempts = (
+  return (
     await Promise.all(
       names
         .filter((name) => name.endsWith('.json'))
@@ -26,6 +20,16 @@ export async function loadRun(root: string, label: string) {
         ),
     )
   ).sort((a, b) => a.scenario.localeCompare(b.scenario) || a.attempt - b.attempt);
+}
+
+export async function loadRun(root: string, label: string) {
+  const directory = join(root, label);
+  const manifest = JSON.parse(
+    await readFile(join(directory, 'manifest.json'), 'utf8').catch(() => {
+      throw new Error(`No saved run called ${label}. Use "runs" to list them.`);
+    }),
+  ) as RunManifest;
+  const attempts = await readAttempts(directory);
   return {
     directory,
     manifest,
@@ -49,6 +53,13 @@ export async function saveRun(
       JSON.stringify(item, null, 2),
     );
   if (summary) await writeFile(join(directory, 'summary.json'), JSON.stringify(summary, null, 2));
+}
+
+export async function pruneAttempts(directory: string, keep: string[]) {
+  const wanted = new Set(keep.map((name) => `${name}.json`));
+  for (const name of await readdir(join(directory, 'attempts')).catch(() => [] as string[]))
+    if (name.endsWith('.json') && !wanted.has(name))
+      await rm(join(directory, 'attempts', name), { force: true });
 }
 
 export async function listRuns(root: string) {

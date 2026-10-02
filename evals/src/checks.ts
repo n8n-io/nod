@@ -121,9 +121,7 @@ export function dumpDrafts(run: Run, limit = 6000) {
 }
 
 export function urlsGrounded(run: Run) {
-  const evidence = run.tools
-    .map((call) => `${JSON.stringify(call.input)} ${call.output}`)
-    .join('\n');
+  const evidence = [run.task, ...run.tools.map((call) => call.output)].join('\n');
   const cited = [...run.final.matchAll(/https?:\/\/[^\s)\]>"']+/g)].map((match) =>
     match[0].replace(/[.,;:]+$/, ''),
   );

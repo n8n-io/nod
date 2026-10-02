@@ -1,4 +1,5 @@
 import { check, judge, scenario } from '../scenario.ts';
+import type { Run } from '../trace.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { daysAgo } from '../world/time.ts';
 
@@ -9,6 +10,11 @@ interface State {
   marks: { setup: number; check: number; fired: number };
   goAt: number;
 }
+
+const reminders = (run: Run) =>
+  (run.apps?.gmail?.sent() ?? []).filter(
+    (mail) => mail.id !== 'invoice' && mail.to.toLowerCase().includes('kestrel'),
+  );
 
 export default scenario({
   id: 'chase-unpaid-invoice',
@@ -54,13 +60,11 @@ export default scenario({
     await session.say('Yes, send the second nudge.');
   },
   evidence(run, world) {
-    const sent = run.apps?.gmail?.sent() ?? [];
+    const sent = reminders(run);
     return `Emails sent: ${sent.map((mail) => `to ${mail.to} at ${new Date(mail.at).toISOString()}: ${mail.body.slice(0, 160).replace(/\s+/g, ' ')}`).join(' | ') || 'none'}. Tom never replied and nothing was paid. Scheduled follow-up runs started: ${world.state.marks.fired}. Drafts saved: ${(run.apps?.gmail?.drafts() ?? []).length}. Schedules: ${run.schedules.map((item) => `${item.kind} ${item.runAt ? new Date(item.runAt).toISOString().slice(0, 10) : item.cron}`).join('; ') || 'none'}.`;
   },
   expect(world) {
     const s = world.state;
-    const reminders = (run: { apps?: { gmail?: { sent(): Array<{ to: string; at: number }> } } }) =>
-      (run.apps?.gmail?.sent() ?? []).filter((mail) => mail.to.toLowerCase().includes('kestrel'));
     return [
       check(
         'first-reminder-was-sent-to-tom',
@@ -73,7 +77,7 @@ export default scenario({
       check(
         'a-follow-up-check-was-scheduled-and-ran',
         (run) => ({
-          pass: run.schedules.some((item) => item.enabled) && s.marks.fired > 0,
+          pass: run.schedules.length > 0 && s.marks.fired > 0,
           evidence: `${run.schedules.length} schedules, ${s.marks.fired} runs`,
         }),
         { failure: 'incomplete' },
@@ -94,7 +98,12 @@ export default scenario({
         (run) => {
           const text = run.replies.slice(s.marks.setup, s.marks.check).join('\n');
           return {
-            pass: /tom|kestrel/i.test(text) && /nudge|follow|remind|second|draft/i.test(text),
+            pass:
+              /tom|kestrel/i.test(text) &&
+              /nudge|follow|remind|second|draft/i.test(text) &&
+              /\?|\b(?:shall i|should i|would you like|want me to|ok to|okay to|permission|approval|go ahead)\b/i.test(
+                text,
+              ),
             evidence: text ? text.slice(0, 200) : 'the check was silent',
           };
         },

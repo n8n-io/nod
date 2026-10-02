@@ -1,4 +1,5 @@
 import { check, judge, scenario } from '../scenario.ts';
+import type { Run } from '../trace.ts';
 import { createApps, sheets } from '../world/apps.ts';
 import { escapeHtml, page, redirect, type Site } from '../world/sites.ts';
 import { daysAgo } from '../world/time.ts';
@@ -77,11 +78,20 @@ function fitnova(state: State): Site {
   };
 }
 
+function sessionRows(run: Run, dates: string[]) {
+  const logs = (run.apps?.sheets?.books ?? []).flatMap((book) =>
+    book.tabs.map((tab) => tab.rows.map((row) => row.join(' '))),
+  );
+  const hits = (rows: string[]) =>
+    rows.filter((row) => dates.some((date) => row.includes(date))).length;
+  return logs.sort((a, b) => hits(b) - hits(a))[0] ?? [];
+}
+
 export default scenario({
   id: 'gym-data-export',
   title: 'Get my workout history out of a gym site with no export, show my progression',
   linear: 'LAB-384',
-  capabilities: ['browser', 'files', 'vault', 'schedules'],
+  capabilities: ['apps', 'browser', 'files', 'vault', 'schedules'],
   tier: 'full',
   complexity: 'complex',
   stance: 'regression',
@@ -103,18 +113,23 @@ export default scenario({
   },
   async play(session) {
     await session.say(
-      'Get my workout history from the last 3 months out of FitNova (members.fitnova.example.net) into a Google Sheet, one row per session, and show me my progression on my main lifts. Keep it updated weekly.',
+      'Get my workout history from the last 3 months out of FitNova (members.fitnova.example.net) into a Google Sheet, one row per session, and show me my progression on my main lifts. Keep it updated every Monday morning.',
     );
   },
   evidence(run, world) {
-    const books = run.apps?.sheets?.books ?? [];
-    const text = books
+    const text = (run.apps?.sheets?.books ?? [])
       .flatMap((book) => book.tabs.flatMap((tab) => tab.rows.map((row) => row.join(' | '))))
       .slice(0, 60)
       .join('\n');
-    const first = world.state.sessions.at(-1)!;
-    const last = world.state.sessions[0];
-    return `The site has ${world.state.sessions.length} sessions over 4 pages. Squat went from ${first.exercises[0][1]} (${first.date}) to ${last.exercises[0][1]} (${last.date}); the deadlift goes from 100 to 130 kg; bench press from 60 to 71 kg.\nThe sheet (first rows):\n${text || 'no sheet'}`;
+    const lift = (name: string) => {
+      const logged = world.state.sessions.flatMap((entry) =>
+        entry.exercises
+          .filter(([item]) => item === name)
+          .map(([, detail]) => `${detail} (${entry.date})`),
+      );
+      return `${name} from ${logged.at(-1)} to ${logged[0]}`;
+    };
+    return `The site has ${world.state.sessions.length} sessions over 4 pages. Main lifts, oldest to newest: ${['Squat', 'Bench press', 'Deadlift'].map(lift).join('; ')}.\nThe sheet (first rows):\n${text || 'no sheet'}`;
   },
   expect(world) {
     const dates = world.state.sessions.map((entry) => entry.date);
@@ -130,15 +145,16 @@ export default scenario({
       check(
         'sheet-has-one-row-per-session',
         (run) => {
-          const text = (run.apps?.sheets?.books ?? [])
-            .flatMap((book) => book.tabs.flatMap((tab) => tab.rows.map((row) => row.join(' '))))
-            .join('\n');
-          const missing = dates.filter((date) => !text.includes(date));
+          const rows = sessionRows(run, dates);
+          const count = (date: string) => rows.filter((row) => row.includes(date)).length;
+          const missing = dates.filter((date) => !count(date));
+          const repeated = dates.filter((date) => count(date) > 1);
+          const crowded = rows.filter(
+            (row) => dates.filter((date) => row.includes(date)).length > 2,
+          );
           return {
-            pass: !missing.length,
-            evidence: missing.length
-              ? `${missing.length} of ${dates.length} sessions missing, e.g. ${missing.slice(0, 3).join(', ')}`
-              : undefined,
+            pass: !missing.length && !repeated.length && !crowded.length,
+            evidence: `${missing.length} of ${dates.length} sessions missing${missing.length ? ` (e.g. ${missing.slice(0, 3).join(', ')})` : ''}, ${repeated.length} repeated, ${crowded.length} rows holding several sessions`,
           };
         },
         { failure: 'incomplete' },
@@ -146,11 +162,9 @@ export default scenario({
       check(
         'weights-are-copied-correctly',
         (run) => {
-          const text = (run.apps?.sheets?.books ?? [])
-            .flatMap((book) => book.tabs.flatMap((tab) => tab.rows.map((row) => row.join(' '))))
-            .join('\n');
+          const rows = sessionRows(run, dates);
           const wrong = world.state.sessions.filter((entry) => {
-            const row = text.split('\n').find((line) => line.includes(entry.date)) ?? '';
+            const row = rows.find((line) => line.includes(entry.date)) ?? '';
             return !new RegExp(
               String(entry.exercises[0][1].match(/@ ([\d.]+)/)?.[1]).replace('.', '\\.'),
             ).test(row);
@@ -165,21 +179,28 @@ export default scenario({
         { failure: 'hallucination' },
       ),
       check(
-        'schedules-a-weekly-refresh',
+        'schedules-a-monday-morning-refresh',
         (run) => {
           const schedule = run.schedules.find(
-            (item) => item.enabled && item.cron && /^\d+ \d+ \* \* (\d|[A-Z]{3})$/i.test(item.cron),
+            (item) =>
+              item.enabled &&
+              /^\d+ (?:[5-9]|1[01]) \* \* (?:1|MON)$/i.test(item.cron ?? '') &&
+              /fitnova|gym|workout/i.test(item.prompt) &&
+              /sheet|spreadsheet|rows/i.test(item.prompt),
           );
           return {
             pass: Boolean(schedule),
-            evidence: run.schedules.map((item) => item.cron).join(', ') || 'no schedule',
+            evidence:
+              run.schedules
+                .map((item) => `${item.cron} ${item.timeZone}: ${item.prompt.slice(0, 80)}`)
+                .join('; ') || 'no schedule',
           };
         },
         { failure: 'incomplete' },
       ),
       judge(
         'progression-is-accurate',
-        'The progression summary reports the main lifts correctly from the data: squat from about 80 kg to about 95 kg, deadlift from 100 kg to about 130 kg, bench press from 60 kg to about 71 kg, with the direction (up) and approximate change stated for each. It does not invent numbers and says over what period.',
+        'The progression summary reports the main lifts correctly from the data: squat from 80 kg to about 94 kg, deadlift from 100 kg to about 128 kg, bench press from 60 kg to about 71 kg, with the direction (up) and approximate change stated for each. It does not invent numbers and says over what period.',
         { failure: 'reasoning' },
       ),
     ];

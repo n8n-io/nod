@@ -1,6 +1,6 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { calendar, createApps, gmail, type Mail } from '../world/apps.ts';
-import { daysAgo } from '../world/time.ts';
+import { dayLabel, daysAgo, inDays } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
@@ -16,7 +16,7 @@ const meetings: Meeting[] = [
   { summary: '1:1 with Priya', offset: 270, minutes: 30 },
 ];
 
-function mailbox(now: number): Mail[] {
+function mailbox(now: number, deadline: string): Mail[] {
   return [
     {
       id: 'harborline-quote',
@@ -31,8 +31,8 @@ function mailbox(now: number): Mail[] {
       id: 'accountant',
       from: 'Rui Pacheco <rui@pachecoaccounts.example.org>',
       to: owner.email,
-      subject: 'Receipts needed by Thursday',
-      body: 'Hi Alex, please send me the September receipts by Thursday so I can close the quarter. Photos are fine.\n\nRui',
+      subject: `Receipts needed by ${deadline}`,
+      body: `Hi Alex, please send me the September receipts by ${deadline} so I can close the quarter. Photos are fine.\n\nRui`,
       at: daysAgo(now, 2),
     },
     {
@@ -40,7 +40,7 @@ function mailbox(now: number): Mail[] {
       threadId: 'thread-meridian',
       from: 'Sofia Almeida <sofia@meridiancapital.example.org>',
       to: owner.email,
-      subject: 'Moodboard for Thursday?',
+      subject: "Moodboard for today's review?",
       body: 'Hi Alex, will you have the revised moodboard ready for the review today? I would like to share it with the board beforehand.\n\nSofia',
       at: daysAgo(now, 1),
     },
@@ -81,6 +81,12 @@ export default scenario({
   },
   world(clock) {
     const now = clock.now();
+    const deadline = dayLabel(inDays(now, 2));
+    const date = (days: number, locale = 'en-CA', options: Intl.DateTimeFormatOptions = {}) =>
+      new Date(inDays(now, days)).toLocaleDateString(locale, {
+        timeZone: 'Europe/Madrid',
+        ...options,
+      });
     const events = meetings.map((meeting) => ({
       summary: meeting.summary,
       start: now + meeting.offset * 60_000,
@@ -88,22 +94,23 @@ export default scenario({
     }));
     return {
       apps: createApps(owner, {
-        gmail: gmail(owner, mailbox(now), clock.now),
+        gmail: gmail(owner, mailbox(now, deadline), clock.now),
         calendar: calendar(owner, events, 'Europe/Madrid'),
       }),
       marks: { setup: 0, fired: 0, run: 0 },
+      deadline,
       goals: [
         {
-          title: 'Ship the Meridian rebrand by 30 October',
+          title: `Ship the Meridian rebrand by ${date(28, 'en-GB', { day: 'numeric', month: 'long' })}`,
           description: 'Final identity, guidelines and handoff to Sofia.',
           nextAction: 'Send the revised moodboard to Sofia before the review',
-          targetDate: new Date(now + 28 * 86_400_000).toISOString().slice(0, 10),
+          targetDate: date(28),
         },
         {
           title: 'Reach €6,000 a month in recurring work',
           description: 'Close the open proposals and keep two retainers warm.',
           nextAction: 'Follow up on open quotes this week',
-          targetDate: new Date(now + 90 * 86_400_000).toISOString().slice(0, 10),
+          targetDate: date(90),
         },
       ],
     };
@@ -125,7 +132,7 @@ export default scenario({
         .map((text) => `  - ${text.replace(/\s+/g, ' ').slice(0, 1200)}`)
         .join('\n') || '  (no message)';
     return [
-      `Today's meetings: ${meetings.map((m) => m.summary).join('; ')}. Due this week: the accountant needs September receipts by Thursday. Slipping: Marta Silva at Harborline asked for a revised quote 5 days ago and has had no reply. Sofia asked whether the revised moodboard is ready for today's Meridian review. Goals: ship the Meridian rebrand by 30 October; reach €6,000 a month in recurring work.`,
+      `Today's meetings: ${meetings.map((m) => m.summary).join('; ')}. Due soon: the accountant needs September receipts by ${world.deadline}. Slipping: Marta Silva at Harborline asked for a revised quote 5 days ago and has had no reply. Sofia asked whether the revised moodboard is ready for today's Meridian review. Goals: ${world.goals.map((goal) => goal.title).join('; ')}.`,
       `Scheduled runs started: ${marks.fired}.`,
       `Messages when the routine was set up:\n${part(0, marks.setup)}`,
       `Messages from the scheduled run:\n${part(marks.setup, marks.run)}`,
@@ -143,7 +150,7 @@ export default scenario({
           const schedule = run.schedules.find((item) => item.enabled && item.cron);
           const ok = Boolean(
             schedule &&
-            /^0 8 \* \* (\*|1-5|MON-FRI)$/i.test(schedule.cron!) &&
+            /^0 8 \* \* (\*|0-6|1-7)$/.test(schedule.cron!) &&
             schedule.timeZone === 'Europe/Madrid',
           );
           return {
@@ -205,7 +212,7 @@ export default scenario({
       ),
       judge(
         'brief-covers-due-and-slipping',
-        "The brief mentions what is due this week (the accountant's September receipts by Thursday) and what is slipping (the unanswered Harborline revised quote, now five days old), without presenting a newsletter or promotion as work.",
+        `The brief mentions what is due soon (the accountant's September receipts by ${world.deadline}) and what is slipping (the unanswered Harborline revised quote, now five days old), without presenting a newsletter or promotion as work.`,
         { failure: 'reasoning' },
       ),
       judge(

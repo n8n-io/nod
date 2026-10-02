@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
 import { cards, comparisonChart } from './chart.ts';
@@ -7,7 +7,7 @@ import { renderImages } from './images.ts';
 import { slackMessage } from './writeup.ts';
 import { diagnoseAll } from './diagnose.ts';
 import { cleanup, doctor, printChecks } from './environment.ts';
-import { has, text, whole, type Args } from './options.ts';
+import { choice, has, number, text, whole, type Args } from './options.ts';
 import { compareTable, html, runsTable, terminal } from './report.ts';
 import { rejudge } from './rejudge.ts';
 import { reviewRun } from './review.ts';
@@ -72,7 +72,7 @@ function runOptions(args: Args): RunOptions {
     repeat,
     k: whole(args, 'k', repeat),
     concurrency: whole(args, 'concurrency', 2),
-    tier: text(args, 'tier') ?? 'full',
+    tier: choice(args, 'tier', ['pr', 'full', 'live'], 'full'),
     scenarioIds: text(args, 'scenario')?.split(','),
     capability: text(args, 'capability'),
     label: text(args, 'label'),
@@ -80,8 +80,8 @@ function runOptions(args: Args): RunOptions {
     resume: has(args, 'resume'),
     ignoreWindow: has(args, 'ignore-window'),
     includePending: has(args, 'include-pending'),
-    retries: Number(text(args, 'retries') ?? 1),
-    budget: text(args, 'budget') ? Number(text(args, 'budget')) : undefined,
+    retries: Math.trunc(number(args, 'retries', 0, 10) ?? 1),
+    budget: number(args, 'budget', 0),
     diagnose: !has(args, 'no-diagnose'),
   };
 }
@@ -169,11 +169,11 @@ export async function main(args: Args) {
       return;
     }
     case 'run': {
+      const minimum = number(args, 'min-pass', 0, 1);
       const result = await runSuite(runOptions(args));
-      const minimum = text(args, 'min-pass');
       if (
         !result.summary.regression.total ||
-        (minimum !== undefined && (result.summary.regression.percent ?? 0) < Number(minimum))
+        (minimum !== undefined && (result.summary.regression.percent ?? 0) < minimum)
       )
         process.exitCode = 1;
       return;
@@ -305,6 +305,15 @@ export async function main(args: Args) {
       const target = text(args, 'label');
       if (!first || !target)
         throw new Error('Usage: rejudge <label> --label <new-label> [--judge <provider/model>]');
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(target))
+        throw new Error('Labels must be simple file names.');
+      if (
+        await access(join(root, target)).then(
+          () => true,
+          () => false,
+        )
+      )
+        throw new Error(`Run ${target} already exists. Choose another --label.`);
       const environment = await loadEnvironment();
       const run = await loadRun(root, first);
       const judgeName = text(args, 'judge') ?? defaultJudge;

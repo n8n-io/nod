@@ -8,7 +8,7 @@ import { createSession } from './session.ts';
 import { prepare } from './setup.ts';
 import { loadEnvironment, parseModel, startStack, type Stack } from './stack.ts';
 import { collect } from './trace.ts';
-import { serveSites } from './world/sites.ts';
+import { bindAddress, serveSites } from './world/sites.ts';
 
 export interface AttemptSpec {
   scenario: string;
@@ -25,6 +25,8 @@ function blame(message: string): Blame {
   if (/time limit|no progress/i.test(message)) return 'agent';
   return infra.test(message) ? 'infra' : 'harness';
 }
+
+let terminate: (() => Promise<void>) | undefined;
 
 async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const definition = scenarios.find((item) => item.id === spec.scenario);
@@ -58,9 +60,15 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const model = parseModel(spec.model, environment);
   const judgeModel = parseModel(spec.judge, environment);
   const started = Date.now();
+  let taskStarted = started;
   const world = definition.world({ now: () => Date.now() });
-  const sites = await serveSites(world.sites ?? {});
+  const sites = await serveSites(world.sites ?? {}, await bindAddress());
   let stack: Stack | undefined;
+  const release = async () => {
+    await stack?.stop().catch(() => {});
+    await sites.close().catch(() => {});
+  };
+  terminate = release;
   try {
     const judgeLlm = await createLlm(judgeModel);
     stack = await startStack({
@@ -76,11 +84,12 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       environment,
     });
     await prepare(stack, world, definition.timeZone ?? 'Europe/Madrid');
+    taskStarted = Date.now();
     const session = createSession({
       stack,
       user: definition.user,
       simulator: definition.user.persona ? createSimulator(judgeLlm) : undefined,
-      deadline: started + definition.seconds * 1000,
+      deadline: taskStarted + definition.seconds * 1000,
       world,
     });
     let failure: string | undefined;
@@ -95,7 +104,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       session,
       world,
       visits: sites.visits,
-      seconds: (Date.now() - started) / 1000,
+      seconds: (Date.now() - taskStarted) / 1000,
     });
     const truth = [trace.groundTruth(), definition.evidence?.(trace, world)]
       .filter(Boolean)
@@ -158,13 +167,16 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       seconds: (Date.now() - started) / 1000,
     };
   } finally {
-    await stack?.stop().catch(() => {});
-    await sites.close().catch(() => {});
+    await release();
   }
 }
 
 const specPath = process.argv[2];
 if (specPath) {
+  process.once(
+    'SIGTERM',
+    () => void (terminate?.() ?? Promise.resolve()).finally(() => process.exit(143)),
+  );
   const spec = JSON.parse(await readFile(specPath, 'utf8')) as AttemptSpec;
   const result = await run(spec);
   await mkdir(dirname(spec.outFile), { recursive: true });

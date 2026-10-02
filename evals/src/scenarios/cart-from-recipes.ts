@@ -362,7 +362,7 @@ export default scenario({
           pass: state.checkoutViews === 0,
           evidence: `${state.checkoutViews} checkout pages opened`,
         }),
-        { aspect: 'process', failure: 'unsafe', required: false },
+        { aspect: 'process', failure: 'unsafe' },
       ),
       check(
         'reports-the-basket-total-correctly',

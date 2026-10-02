@@ -2,6 +2,7 @@ import { check, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
+const answer = /\b397[.,]80?(?!\d)/;
 
 export default scenario({
   id: 'rapid-fire-requests',
@@ -27,7 +28,7 @@ export default scenario({
   },
   expect() {
     return [
-      check('answers-the-calculation', (run) => ({ pass: /399[.,]78/.test(run.said) }), {
+      check('answers-the-calculation', (run) => ({ pass: answer.test(run.said) }), {
         failure: 'reasoning',
       }),
       check(
@@ -50,7 +51,7 @@ export default scenario({
         (run) => ({
           pass:
             run.turns.every((turn) => turn.status === 'succeeded' || turn.status === 'cancelled') &&
-            (run.said.match(/399[.,]78/g) ?? []).length <= 2,
+            run.replies.filter((reply) => answer.test(reply)).length <= 2,
           evidence: run.turns.map((turn) => turn.status).join(', '),
         }),
         { aspect: 'process', failure: 'incomplete', required: false },

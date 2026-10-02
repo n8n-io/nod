@@ -1,5 +1,8 @@
 export const hoursAgo = (now: number, hours: number) => now - hours * 3_600_000;
 
+export const localDate = (at: number, timeZone = 'Europe/Madrid') =>
+  new Date(at).toLocaleDateString('en-CA', { timeZone });
+
 export function dayLabel(at: number, timeZone = 'Europe/Madrid') {
   return new Intl.DateTimeFormat('en-GB', {
     weekday: 'long',
@@ -9,38 +12,43 @@ export function dayLabel(at: number, timeZone = 'Europe/Madrid') {
   }).format(at);
 }
 
-export const inDays = (now: number, days: number) => now + days * 86_400_000;
+const wall = (at: number, timeZone: string) =>
+  Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+    })
+      .formatToParts(at)
+      .map((part) => [part.type, Number(part.value)]),
+  );
 
 export function localTime(
   now: number,
-  daysAgo: number,
+  back: number,
   hour: number,
   timeZone = 'Europe/Madrid',
   minute = 0,
 ) {
-  const parts = (at: number) =>
-    Object.fromEntries(
-      new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        hourCycle: 'h23',
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: 'numeric',
-        second: 'numeric',
-      })
-        .formatToParts(at)
-        .map((part) => [part.type, Number(part.value)]),
-    );
-  const today = parts(now);
-  const wanted = Date.UTC(today.year, today.month - 1, today.day - daysAgo, hour, minute);
-  const seen = parts(wanted);
+  const today = wall(now, timeZone);
+  const wanted = Date.UTC(today.year, today.month - 1, today.day - back, hour, minute);
+  const seen = wall(wanted, timeZone);
   const offset = Date.UTC(seen.year, seen.month - 1, seen.day, seen.hour, seen.minute) - wanted;
   return wanted - offset;
 }
 
-export const daysAgo = (now: number, days: number) => now - days * 86_400_000;
+export function daysAgo(now: number, days: number, timeZone = 'Europe/Madrid') {
+  const today = wall(now, timeZone);
+  return localTime(now, days, today.hour, timeZone, today.minute);
+}
+
+export const inDays = (now: number, days: number, timeZone = 'Europe/Madrid') =>
+  daysAgo(now, -days, timeZone);
 
 export function nextWeekday(
   now: number,
@@ -50,7 +58,7 @@ export function nextWeekday(
 ) {
   const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   for (let offset = minimumDays; offset < minimumDays + 8; offset++) {
-    const at = now + offset * 86_400_000;
+    const at = inDays(now, offset, timeZone);
     const name = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone }).format(at);
     if (name === names[weekday]) return offset;
   }

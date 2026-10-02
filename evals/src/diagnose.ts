@@ -1,5 +1,6 @@
 import { createLlm, parseJson, type Llm } from './judge.ts';
 import type { AttemptResult, Diagnosis } from './results.ts';
+import { clip } from './trace.ts';
 import type { Model } from './stack.ts';
 
 const categories = [
@@ -32,7 +33,7 @@ export async function diagnose(llm: Llm, attempt: AttemptResult): Promise<Diagno
   for (let tries = 0; tries < 2; tries++) {
     const text = await llm.complete(
       prompt,
-      `Task:\n${attempt.task}\n\nFailed checks:\n${failed.map((check) => `- ${check.id} (${check.failure}): ${check.criterion ? `${check.criterion} ` : ''}${check.evidence ?? ''}`).join('\n') || '(none; the run errored)'}${attempt.error ? `\n\nRun error: ${attempt.error}` : ''}\n\nWorld and ground truth:\n${attempt.groundTruth.slice(0, 9000)}\n\nWhat the assistant finally said:\n${attempt.final.slice(0, 2000)}\n\nTranscript:\n${attempt.transcript.slice(0, 30000)}`,
+      `Task:\n${attempt.task}\n\nFailed checks:\n${failed.map((check) => `- ${check.id} (${check.failure}): ${check.criterion ? `${check.criterion} ` : ''}${check.evidence ?? ''}`).join('\n') || '(none; the run errored)'}${attempt.error ? `\n\nRun error: ${attempt.error}` : ''}\n\nWorld and ground truth:\n${attempt.groundTruth.slice(0, 9000)}\n\nWhat the assistant finally said:\n${attempt.final.slice(0, 2000)}\n\nTranscript:\n${clip(attempt.transcript, 30000)}`,
       900,
     );
     const parsed = parseJson(text);

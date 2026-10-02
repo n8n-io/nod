@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
-import { amounts, mentions } from '../src/checks.ts';
+import { amounts, mentions, urlsGrounded } from '../src/checks.ts';
+import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
 import { agreement, kappa } from '../src/review.ts';
-import { parseArgs, text, whole } from '../src/options.ts';
+import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, trustLabels } from '../src/report.ts';
-import { createApps, gmail, sheets } from '../src/world/apps.ts';
-import { localTime } from '../src/world/time.ts';
+import { select } from '../src/run.ts';
+import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
+import { daysAgo, inDays, localTime } from '../src/world/time.ts';
 
 const manifest: RunManifest = {
   label: 't',
@@ -216,6 +218,83 @@ test('local times are anchored in the user time zone across a daylight saving ch
   assert.equal(clock(localTime(Date.UTC(2026, 9, 2, 12), 1, 18)), '01/10/2026, 18:00');
   assert.equal(clock(localTime(Date.UTC(2026, 9, 26, 12), 1, 18)), '25/10/2026, 18:00');
   assert.equal(clock(localTime(Date.UTC(2026, 9, 25, 12), 1, 18)), '24/10/2026, 18:00');
+  const evening = Date.UTC(2026, 9, 24, 18, 30);
+  assert.equal(clock(inDays(evening, 2)), '26/10/2026, 20:30');
+  assert.equal(clock(daysAgo(inDays(evening, 2), 2)), '24/10/2026, 20:30');
+});
+
+test('a Slack thread reply lands in the thread, not the channel', () => {
+  const owner = { id: 'U1', name: 'Alex', email: 'alex@x.test' };
+  const chat = slack(
+    owner,
+    [],
+    [
+      {
+        name: 'ops',
+        kind: 'channel',
+        messages: [{ user: 'U2', text: 'Who owns the invoice?', at: Date.UTC(2026, 9, 2, 9) }],
+      },
+    ],
+    Date.now,
+  );
+  const send = chat.tools.find((tool) => tool.slug === 'SLACK_SEND_MESSAGE')!;
+  const parent = chat.conversations[0].messages[0];
+  send.run({ channel: 'ops', text: 'Mine', thread_ts: parent.ts });
+  assert.equal(chat.conversations[0].messages.length, 1);
+  assert.equal(parent.replies?.[0].text, 'Mine');
+  assert.throws(
+    () => send.run({ channel: 'ops', text: 'x', thread_ts: '1.1' }),
+    /thread_not_found/,
+  );
+  send.run({ channel: 'ops', text: 'Top level' });
+  assert.equal(chat.conversations[0].messages.length, 2);
+});
+
+test('a link only counts as grounded when a page or tool returned it', () => {
+  const run = (output: string) =>
+    ({
+      task: 'Look at https://given.example/a',
+      final: 'See https://given.example/a, https://found.example/b and https://made.example/c.',
+      tools: [{ name: 'browser', input: { url: 'https://made.example/c' }, output }],
+    }) as never;
+  assert.deepEqual(urlsGrounded(run('Result: https://found.example/b')).invented, [
+    'https://made.example/c',
+  ]);
+});
+
+test('model rankings ignore runs that are contaminated or only partly run', () => {
+  const run = (percent: number, extra: Record<string, unknown> = {}, incomplete = 0) =>
+    ({
+      attempts: [],
+      summary: {
+        manifest: { model: 'openai/m', label: 'l' },
+        regression: { percent, total: 30, incomplete, passPowK: percent },
+        efficiency: { costPerPass: 0.1, seconds: { p50: 60 } },
+        trust: { safetyIncidents: 0 },
+        contaminated: false,
+        ...extra,
+      },
+    }) as never;
+  const good = run(0.6);
+  const flaky = run(0.9, {}, 20);
+  const partial = run(0.95, {
+    regression: { percent: 0.95, total: 10, incomplete: 0, passPowK: 0.95 },
+  });
+  const ranked = insights([good, run(0.9, { contaminated: true }), flaky, partial]);
+  assert.equal(ranked.best?.run, good);
+  assert.equal(insights([run(0.9, { contaminated: true })]).best, undefined);
+});
+
+test('calibrating scenarios run only on request or by name', () => {
+  const plain = { tier: 'full', ignoreWindow: true };
+  const standard = select(plain).map((item) => item.id);
+  const everything = select({ ...plain, includePending: true }).map((item) => item.id);
+  assert.ok(everything.length > standard.length);
+  const pending = everything.find((id) => !standard.includes(id))!;
+  assert.deepEqual(
+    select({ ...plain, scenarioIds: [pending] }).map((item) => item.id),
+    [pending],
+  );
 });
 
 test('the style tripwires catch what the personality forbids and let normal replies through', () => {
@@ -323,6 +402,15 @@ test('the command line understands commands, positionals, flags and booleans', (
   assert.throws(
     () => whole(parseArgs(['run', '--repeat', '0']), 'repeat', 3),
     /positive whole number/,
+  );
+  assert.throws(() => parseArgs(['run', '--repeat']), /needs a value/);
+  assert.throws(() => parseArgs(['run', '--budget', '--resume']), /needs a value/);
+  assert.throws(() => number(parseArgs(['run', '--budget', 'nope']), 'budget', 0), /number from 0/);
+  assert.throws(() => number(parseArgs(['run', '--min-pass', '2']), 'min-pass', 0, 1), /0 to 1/);
+  assert.equal(number(parseArgs(['run', '--min-pass', '0.8']), 'min-pass', 0, 1), 0.8);
+  assert.throws(
+    () => choice(parseArgs(['run', '--tier', 'ful']), 'tier', ['pr', 'full', 'live'], 'full'),
+    /one of: pr, full, live/,
   );
 });
 

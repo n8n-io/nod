@@ -1,6 +1,7 @@
 import { mentions } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
+import type { Run } from '../trace.ts';
 import { page, type Site } from '../world/sites.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
@@ -53,7 +54,24 @@ const brands: Brand[] = [
 interface State {
   week: number;
   hits: Record<string, number>;
-  marks: { setup: number; weekly: number; fired: number };
+  marks: { setup: number; weekly: number; fired: number; firedAt: number };
+}
+
+const targets = brands.flatMap((brand) =>
+  ['/', '/pricing', '/signup'].map((path) => `${brand.host}${path}`),
+);
+
+function screenshotted(run: Run, since: number, action: RegExp) {
+  const seen = new Set<string>();
+  for (const call of run.tools) {
+    if (call.name !== 'browser' || call.at < since || !action.test(String(call.input?.action)))
+      continue;
+    const shown = run.visits
+      .filter((visit) => visit.at <= call.at && targets.includes(`${visit.host}${visit.path}`))
+      .at(-1);
+    if (shown) seen.add(`${shown.host}${shown.path}`);
+  }
+  return [...seen];
 }
 
 function brandSite(brand: Brand, state: State): Site {
@@ -104,7 +122,11 @@ export default scenario({
       'You are Alex Rivera. Use Monday 9:00 in your time zone. A short message with what changed is enough, plus screenshots of changed pages.',
   },
   world() {
-    const state: State = { week: 1, hits: {}, marks: { setup: 0, weekly: 0, fired: 0 } };
+    const state: State = {
+      week: 1,
+      hits: {},
+      marks: { setup: 0, weekly: 0, fired: 0, firedAt: 0 },
+    };
     return {
       apps: createApps(owner, {}),
       sites: Object.fromEntries(brands.map((brand) => [brand.host, brandSite(brand, state)])),
@@ -118,6 +140,7 @@ export default scenario({
     );
     state.marks.setup = await session.assistantCount();
     state.week = 2;
+    state.marks.firedAt = Date.now();
     state.marks.fired = await session.fireSchedules();
     state.marks.weekly = await session.assistantCount();
   },
@@ -138,6 +161,7 @@ export default scenario({
       `Real changes made between the two weeks: Automata Pro price $29 to $39; Flowkite homepage headline "Automate the busywork" to "Build AI agents that run your ops". Relayroute did not change. Every page also shows a "Trusted by N teams" counter that changes on every visit and is not a real change.`,
       `Pages opened during setup (week 1): ${week(1)}`,
       `Pages opened during the Monday run (week 2): ${week(2)}`,
+      `Pages screenshotted in the Monday run: ${screenshotted(run, marks.firedAt, /^(share_)?screenshot$/).join(', ') || 'none'}. Pages whose screenshot was shared with the user: ${screenshotted(run, marks.firedAt, /^share_screenshot$/).join(', ') || 'none'}.`,
       `Messages at setup:\n${lines(0, marks.setup)}`,
       `Messages after the Monday run:\n${lines(marks.setup, marks.weekly)}`,
       `Saved schedules:\n${run.schedules.map((item) => `  "${item.title}" cron=${item.cron ?? '-'} tz=${item.timeZone} enabled=${item.enabled}\n  prompt: ${item.prompt}`).join('\n') || '  none'}`,
@@ -145,11 +169,8 @@ export default scenario({
   },
   expect(world) {
     const { state } = world;
-    const pages = brands.flatMap((brand) =>
-      ['/', '/pricing', '/signup'].map((path) => `${brand.host}${path}`),
-    );
     const opened = (week: number) =>
-      pages.filter((target) => (state.hits[`${target}:${week}`] ?? 0) > 0);
+      targets.filter((target) => (state.hits[`${target}:${week}`] ?? 0) > 0);
     return [
       check(
         'schedule-is-monday-at-nine',
@@ -183,14 +204,28 @@ export default scenario({
         { aspect: 'process', failure: 'incomplete' },
       ),
       check(
-        'took-screenshots',
+        'took-screenshots-of-all-nine-pages-on-monday',
         (run) => {
-          const shots = run.tools.filter(
-            (call) => call.name === 'browser' && /screenshot/i.test(JSON.stringify(call.input)),
-          );
-          return { pass: shots.length >= 9, evidence: `${shots.length} screenshots` };
+          const taken = screenshotted(run, state.marks.firedAt, /^(share_)?screenshot$/);
+          return {
+            pass: taken.length === 9,
+            evidence: `${taken.length} of 9 pages: ${taken.join(', ')}`,
+          };
         },
         { aspect: 'process', failure: 'incomplete' },
+      ),
+      check(
+        'shared-screenshots-of-both-changed-pages',
+        (run) => {
+          const shared = screenshotted(run, state.marks.firedAt, /^share_screenshot$/);
+          return {
+            pass:
+              shared.includes('automata.example.net/pricing') &&
+              shared.includes('flowkite.example.net/'),
+            evidence: shared.join(', ') || 'no screenshot was shared with the user',
+          };
+        },
+        { failure: 'incomplete' },
       ),
       check(
         'weekly-message-names-both-real-changes',

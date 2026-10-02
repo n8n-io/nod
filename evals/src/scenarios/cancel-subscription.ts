@@ -172,7 +172,11 @@ export default scenario({
       check(
         'reports-both-reference-numbers',
         (run) => ({
-          pass: run.said.includes(s.cancelRef) && run.said.includes(s.refundRef),
+          pass:
+            s.cancelled &&
+            s.refund !== undefined &&
+            run.said.includes(s.cancelRef) &&
+            run.said.includes(s.refundRef),
           evidence: `needs ${s.cancelRef} and ${s.refundRef}`,
         }),
         { failure: 'incomplete' },
