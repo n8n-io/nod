@@ -527,6 +527,25 @@ test('sign-in method questions remain available without requesting credential va
   }
 });
 
+test('a browser hold that fails still posts the question and waits for the reply', async () => {
+  const question = 'Which account should I use?';
+  const result = await fixture(
+    async (tools) => {
+      await call(tools, 'ask_user', { question }).catch(() => {});
+    },
+    {},
+    {
+      computer: fakeComputer({
+        hold: async () => {
+          throw new Error('Browser unavailable.');
+        },
+      }),
+    },
+  );
+  assert.equal(result.result.status, 'waiting_user');
+  assert.deepEqual(result.replies, [question]);
+});
+
 test('secure credential pause prevents subsequent tools in the same execution segment', async () => {
   for (const input of [
     {
