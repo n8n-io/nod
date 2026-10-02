@@ -34,7 +34,7 @@ Model defaults, reviewed on 2026-09-30:
 
 Leave `LLM_MODEL`, `TRIAGE_MODEL` and `MEMORY_MODEL` empty to follow these defaults. Memory learning and meaning-based search use the main agent's provider and key, so an OpenAI or an Anthropic key both work; `MEMORY_MODEL` picks another model from that provider. Without a key memory still saves, lints and searches by words. Explicit values override them. `TYPESAFE_API_KEY` selects Jev for triage instead. Main agents retain high reasoning effort. Restart after changing models; existing conversations use the selected model on their next turn. Model upgrades require a Pi SDK version whose catalog includes the selected model.
 
-Ports: 4310 local app, 4330 hosted development (`node scripts/start-hosted.mjs`, see [Cloudflare](deployment/cloudflare/README.md)), 4320 E2E harness, 4346 hosted UI fixture.
+Ports: 4310 local app, 4330 hosted development (`node scripts/start-hosted.mjs`, see [Cloudflare](deployment/cloudflare/README.md)), 4320 E2E harness.
 
 Ctrl-C stops the server; `docker compose stop` stops the containers. Data stays in `.local/` and Docker volumes.
 
