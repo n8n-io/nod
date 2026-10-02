@@ -891,6 +891,120 @@ async function appsFixture(
 }
 
 test(
+  'native app setup reuses owned accounts unless another account is explicitly requested',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const work = await f.connect('gmail');
+    await f.pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+      work.connectionId,
+      'work@example.test',
+    ]);
+    await f.pool.query(
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_email)
+       VALUES('foreign-owner','gmail','foreign-account','fixture','foreign@example.test')`,
+    );
+    const directory = await mkdtemp(join(tmpdir(), 'otto-add-account-'));
+    const threadId = randomUUID();
+    const turnId = randomUUID();
+    const replies: string[] = [];
+    const agent: Agent = {
+      open: async ({ tools }) => ({
+        resumed: false,
+        prompt: async () => {
+          const tool = tools.find((item) => item.name === 'manage_apps')!;
+          for (const extra of [{}, { newAccount: false }])
+            assert.deepEqual(
+              resultValue(await tool.execute({ action: 'connect', service: 'gmail', ...extra })),
+              {
+                status: 'already_connected',
+                accounts: [
+                  {
+                    connectionId: work.connectionId,
+                    accountName: work.accountName,
+                    accountEmail: 'work@example.test',
+                  },
+                ],
+              },
+            );
+          for (const action of ['list', 'propose'])
+            await assert.rejects(tool.execute({ action, service: 'gmail', newAccount: true }));
+          assert.equal(f.callbacks.length, 1);
+          await tool.execute({ action: 'connect', service: 'gmail', newAccount: true });
+        },
+        abort() {},
+        dispose() {},
+      }),
+      dispose() {},
+    };
+    const runtime = createAgentRuntime({
+      agent,
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+    });
+    t.after(async () => {
+      await runtime.dispose();
+      await rm(directory, { recursive: true, force: true });
+    });
+    const result = await runtime.runTurn({
+      threadId,
+      turnId,
+      prompt: 'Connect my personal Gmail too, keeping my work account.',
+      history: [],
+      attachments: [],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      emit: async () => {},
+      reply: async (text) => {
+        replies.push(text);
+      },
+      delta() {},
+      publish: async () => {
+        throw new Error('Unexpected fixture publication.');
+      },
+      requestCredential: async () => {
+        throw new Error('Unexpected fixture credential request.');
+      },
+      integration: async () => {
+        throw new Error('Unexpected fixture app action.');
+      },
+      manage: async () => {
+        throw new Error('Unexpected fixture management.');
+      },
+      connections: (action, service, proposal, newAccount) =>
+        f.service.manageConnections(action, service, { threadId, turnId }, proposal, newAccount),
+    });
+    assert.equal(result.status, 'waiting_user');
+    assert.equal(f.callbacks.length, 2);
+    assert.equal(replies.length, 1);
+    assert.ok(replies[0].includes('https://consent.example.com/connect'));
+    const pending = (
+      await f.pool.query('SELECT * FROM app_connections WHERE owner_id=$1 AND turn_id=$2', [
+        'local-development',
+        turnId,
+      ])
+    ).rows[0];
+    assert.equal(pending.account_id, null);
+    assert.equal(pending.pending_account_id, 'account-2');
+    const callback = new URL(f.callbacks.at(-1)!);
+    callback.searchParams.set('account', pending.pending_account_id);
+    const response = await f.app.inject({ url: `${callback.pathname}${callback.search}` });
+    assert.equal(
+      response.headers.location,
+      'http://localhost:4310/?connection=connected&service=gmail',
+    );
+    const accounts = (await f.service.list()).filter((item) => item.slug === 'gmail');
+    assert.equal(accounts.length, 2);
+    assert.ok(accounts.every((item) => item.status === 'connected'));
+    assert.equal(
+      accounts.find((item) => item.connectionId === work.connectionId)?.accountEmail,
+      'work@example.test',
+    );
+    assert.ok(accounts.some((item) => item.connectionId === pending.id));
+  },
+);
+
+test(
   'legacy app review metadata names only the selected owned account',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {

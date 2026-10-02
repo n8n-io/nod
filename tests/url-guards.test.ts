@@ -268,15 +268,33 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
 
-test('native app setup has one chat button and hides after connection', () => {
-  const text = '[Connect Slack](https://connect.example.com/fixture)';
+test('an existing native account does not hide authorization for another account', () => {
+  const text = '[Connect Gmail](https://connect.composio.dev/link/synthetic-personal-account)';
   const before = render(text);
-  assert.match(before, /<button[^>]*data-setup="app"[^>]*>.*Connect Slack<\/button>/);
-  assert.doesNotMatch(before, /connect\.example\.com/);
+  assert.equal(JSDOM.fragment(before).querySelectorAll('button[data-setup="app"]').length, 1);
   const after = renderToStaticMarkup(
-    createElement(MessageText, { text, connectedAppIds: new Set(['slack']) }),
+    createElement(MessageText, { text, connectedAppIds: new Set(['gmail']) }),
   );
-  assert.doesNotMatch(after, /data-setup="app"/);
+  const actions = JSDOM.fragment(after).querySelectorAll('button[data-setup="app"]');
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].hasAttribute('disabled'), false);
+  assert.doesNotMatch(after, /connect\.composio\.dev/);
+});
+
+test('an app setup action hides only after its exact connection is connected', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const text = `[Connect Gmail](/apps?connect=${id})`;
+  const unrelated = renderToStaticMarkup(
+    createElement(MessageText, {
+      text,
+      connectedAppIds: new Set(['gmail', '00000000-0000-4000-8000-000000000002']),
+    }),
+  );
+  assert.equal(JSDOM.fragment(unrelated).querySelectorAll('button[data-setup="app"]').length, 1);
+  const connected = renderToStaticMarkup(
+    createElement(MessageText, { text, connectedAppIds: new Set([id]) }),
+  );
+  assert.equal(JSDOM.fragment(connected).querySelectorAll('button[data-setup="app"]').length, 0);
 });
 
 test('only intended app paths and credential-free HTTP URLs become links', () => {

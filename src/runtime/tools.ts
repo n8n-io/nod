@@ -249,10 +249,15 @@ export const toolDefinitions = {
   ),
   manage_apps: defineTool(
     'manage_apps',
-    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. connect {service} starts a native sign-in and pauses, or returns the accounts when the service is already connected; propose {service, proposal} saves a new MCP, HTTP or CLI path and gives the user a private setup link.',
+    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. connect {service} starts a native sign-in and pauses, or returns existing native accounts. Use connect {service, newAccount:true} when the user explicitly wants another account, such as personal Gmail alongside work Gmail; it starts a separate sign-in and keeps existing accounts. propose {service, proposal} saves a new MCP, HTTP or CLI path and gives the user a private setup link.',
     Type.Object({
       action: literals(['list', 'connect', 'propose']),
       service: Type.Optional(Type.String({ maxLength: 80 })),
+      newAccount: Type.Optional(
+        Type.Boolean({
+          description: 'Only for connect, when the user wants an additional account.',
+        }),
+      ),
       proposal: Type.Optional(
         Type.Object({
           service: Type.String({ maxLength: 40 }),
@@ -453,7 +458,7 @@ export function ottoTools(
     }),
     bind(toolDefinitions.manage_apps, async (p) => {
       if (!context.connections) throw new Error('Apps are unavailable.');
-      const result = await context.connections(p.action, p.service, p.proposal);
+      const result = await context.connections(p.action, p.service, p.proposal, p.newAccount);
       if (p.action === 'list') return result;
       const { name, url, accounts } = result as {
         name?: unknown;

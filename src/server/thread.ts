@@ -111,6 +111,7 @@ export interface ThreadDependencies {
     service?: string,
     turn?: TurnRef,
     proposal?: unknown,
+    newAccount?: boolean,
   ) => Promise<unknown>;
   browserConnection?: (
     request: BrowserConnectionRequest,
@@ -1023,7 +1024,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         ),
       connections:
         connections &&
-        fenced((action, service, proposal) => connections(action, service, ref, proposal)),
+        fenced((action, service, proposal, newAccount) =>
+          connections(action, service, ref, proposal, newAccount),
+        ),
       browserConnection:
         browserConnection && fenced((request) => browserConnection(request, ref, signal)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),

@@ -1755,7 +1755,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       service?: string,
       turn?: TurnRef,
       proposal?: unknown,
+      newAccount?: boolean,
     ) => {
+      if (newAccount !== undefined && action !== 'connect')
+        throw new IntegrationError(
+          'Additional accounts can only be requested when connecting.',
+          400,
+        );
       if (action === 'list')
         return (await list())
           .filter(
@@ -1791,7 +1797,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           accountName: row.account_name ?? undefined,
           accountEmail: row.account_email ?? undefined,
         }));
-      if (accounts.length) return { name: catalogs[slug].name, accounts };
+      if (accounts.length && newAccount !== true) return { name: catalogs[slug].name, accounts };
       return { name: catalogs[slug].name, ...(await connect(slug, turn ? 'chat' : 'apps', turn)) };
     },
     status: list,
