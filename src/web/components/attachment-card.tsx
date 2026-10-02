@@ -18,6 +18,8 @@ import {
   ImageGallery,
   ImageViewer,
   ownedArtifactUrl,
+  restoreAttachmentFocus,
+  type AttachmentTrigger,
   type ImagePreview,
 } from './attachment-images';
 import {
@@ -156,12 +158,12 @@ function DocumentCard({
   loadDocument,
 }: {
   item: ImagePreview;
-  onOpen(trigger: HTMLButtonElement): void;
+  onOpen(trigger: AttachmentTrigger): void;
   loadDocument: LoadPdf;
 }) {
   const mimeType = item.mimeType ?? '';
   const [pages, setPages] = useState<number | null>(null);
-  const [thumbnail, setThumbnail] = useState(attachmentKind(mimeType) === 'pdf');
+  const [thumbnail, setThumbnail] = useState(attachmentKind(mimeType, item.name) === 'pdf');
   const meta = [
     fileType(item.name),
     pages ? `${pages} ${pages === 1 ? 'page' : 'pages'}` : '',
@@ -170,11 +172,11 @@ function DocumentCard({
     .filter(Boolean)
     .join(' · ');
   return (
-    <div className={`attachment-card is-${attachmentKind(mimeType)}`}>
+    <div className={`attachment-card is-${attachmentKind(mimeType, item.name)}`}>
       <button
         type="button"
         className="attachment-card-open"
-        onClick={(event) => onOpen(event.currentTarget)}
+        onClick={(event) => onOpen({ element: event.currentTarget, keyboard: event.detail === 0 })}
       >
         {thumbnail && (
           <PdfThumbnail
@@ -224,14 +226,14 @@ export function MessageAttachments({
   loadDocument?: LoadPdf;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const trigger = useRef<HTMLButtonElement | null>(null);
+  const trigger = useRef<AttachmentTrigger | null>(null);
   const owned = attachments.filter((artifact) => ownedArtifactUrl(artifact.url));
   const previews = owned.flatMap((artifact) => {
     const preview = artifactPreview(artifact);
     return preview ? [preview] : [];
   });
   const visual = previews.filter((item) =>
-    ['image', 'video'].includes(attachmentKind(item.mimeType ?? '') ?? ''),
+    ['image', 'video'].includes(attachmentKind(item.mimeType ?? '', item.name) ?? ''),
   );
   const documents = previews.filter((item) => !visual.includes(item));
   const rest = owned.filter((artifact) => !visual.some((item) => item.id === artifact.id));
@@ -264,7 +266,7 @@ export function MessageAttachments({
         selectedId={selectedId}
         onSelect={setSelectedId}
         onClose={() => setSelectedId(null)}
-        restoreFocus={() => trigger.current?.focus()}
+        restoreFocus={() => restoreAttachmentFocus(trigger.current)}
       />
     </div>
   );

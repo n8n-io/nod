@@ -6,7 +6,10 @@ import { safeMessageLink } from '../lib/message-links';
 import { formatNumber } from '../lib/date-format';
 
 type Sheet = { name: string; rows: string[][]; header: boolean };
-type Content = { kind: 'markdown'; text: string } | { kind: 'spreadsheet'; sheets: Sheet[] };
+type Content =
+  | { kind: 'markdown'; text: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'spreadsheet'; sheets: Sheet[] };
 const previewRows = 202;
 const previewColumns = 100;
 const previewCellLength = 10_000;
@@ -157,7 +160,7 @@ export default function AttachmentData({
 }: {
   url: string;
   name: string;
-  kind: 'markdown' | 'csv' | 'spreadsheet';
+  kind: 'markdown' | 'text' | 'csv' | 'spreadsheet';
   size: number;
 }) {
   const [content, setContent] = useState<Content | null>(null);
@@ -180,7 +183,7 @@ export default function AttachmentData({
         const blob = await response.blob();
         if (blob.size > 4_000_000) throw new Error('File too large');
         let next: Content;
-        if (kind === 'markdown') next = { kind, text: await blob.text() };
+        if (kind === 'markdown' || kind === 'text') next = { kind, text: await blob.text() };
         else if (kind === 'csv')
           next = {
             kind: 'spreadsheet',
@@ -195,25 +198,45 @@ export default function AttachmentData({
           });
           next = {
             kind: 'spreadsheet',
-            sheets: workbook.SheetNames.map((name) => ({
-              name,
-              header: false,
-              rows: (
-                utils.sheet_to_json(workbook.Sheets[name], {
-                  header: 1,
-                  raw: false,
-                  defval: '',
-                  blankrows: true,
-                  range: 'A1:CV202',
-                }) as unknown[][]
+            sheets: workbook.SheetNames.map((name) => {
+              const sheet = workbook.Sheets[name];
+              const range = sheet['!ref'] ? utils.decode_range(sheet['!ref']) : null;
+              if (
+                range &&
+                (!Number.isFinite(range.e.r) ||
+                  !Number.isFinite(range.e.c) ||
+                  range.e.r < 0 ||
+                  range.e.c < 0)
               )
-                .slice(0, previewRows)
-                .map((row) =>
-                  row
-                    .slice(0, previewColumns)
-                    .map((cell) => String(cell ?? '').slice(0, previewCellLength)),
-                ),
-            })),
+                throw new Error('Invalid spreadsheet range');
+              return {
+                name,
+                header: false,
+                rows: range
+                  ? (
+                      utils.sheet_to_json(sheet, {
+                        header: 1,
+                        raw: false,
+                        defval: '',
+                        blankrows: true,
+                        range: {
+                          s: { r: 0, c: 0 },
+                          e: {
+                            r: Math.min(range.e.r, previewRows - 1),
+                            c: Math.min(range.e.c, previewColumns - 1),
+                          },
+                        },
+                      }) as unknown[][]
+                    )
+                      .slice(0, previewRows)
+                      .map((row) =>
+                        row
+                          .slice(0, previewColumns)
+                          .map((cell) => String(cell ?? '').slice(0, previewCellLength)),
+                      )
+                  : [],
+              };
+            }),
           };
         }
         if (!controller.signal.aborted) setContent(next);
@@ -241,8 +264,23 @@ export default function AttachmentData({
         <div className="attachment-data-loading" role="status">
           Loading preview…
         </div>
+      ) : content.kind === 'text' ? (
+        content.text ? (
+          <pre
+            className="attachment-plain-text"
+            role="region"
+            aria-label="Text preview"
+            tabIndex={0}
+          >
+            {content.text}
+          </pre>
+        ) : (
+          <div className="attachment-data-loading" role="status">
+            This file is empty.
+          </div>
+        )
       ) : content.kind === 'markdown' ? (
-        <div className="attachment-markdown">
+        <div className="message-text attachment-markdown">
           <Markdown
             remarkPlugins={[remarkGfm]}
             skipHtml

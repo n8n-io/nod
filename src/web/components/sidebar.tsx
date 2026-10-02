@@ -7,6 +7,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RotateCcw,
+  Settings,
   Sun,
 } from 'lucide-react';
 import { BrandMark } from './brand';
@@ -452,7 +453,21 @@ export function Sidebar({
             </div>
           )
         )}
-        {account && <AccountMenu account={account} />}
+        {account &&
+          (account.canLogout ? (
+            <AccountMenu account={account} />
+          ) : (
+            <button
+              type="button"
+              className="nav-link"
+              aria-label="Settings"
+              aria-keyshortcuts="Meta+, Control+,"
+              title="Settings"
+              onClick={(event) => account.onSettings('Preferences', event.currentTarget)}
+            >
+              <Settings size={22} aria-hidden="true" />
+            </button>
+          ))}
       </div>
     </aside>
   );

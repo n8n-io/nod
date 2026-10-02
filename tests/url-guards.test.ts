@@ -371,7 +371,14 @@ test('attachment previews and gallery sources accept only owned artifact URLs an
   };
   for (const mimeType of ['text/html', 'application/xhtml+xml', 'video/not-real'])
     assert.equal(artifactPreview({ ...picture, mimeType }), null);
-  for (const mimeType of ['application/pdf', 'audio/mp4', 'video/webm', 'image/svg+xml']) {
+  for (const mimeType of [
+    'application/pdf',
+    'audio/mp4',
+    'video/webm',
+    'image/svg+xml',
+    'text/plain',
+    'application/json',
+  ]) {
     assert.ok(artifactPreview({ ...picture, mimeType }));
     for (const url of [
       'https://example.com/file',
@@ -380,6 +387,13 @@ test('attachment previews and gallery sources accept only owned artifact URLs an
       '/api/artifacts/abc?token=private',
     ])
       assert.equal(artifactPreview({ ...picture, mimeType, url }), null);
+  }
+  for (const name of ['notes.txt', 'report.md', 'data.csv', 'report.pdf', 'table.xlsx']) {
+    const file = { ...picture, name, mimeType: 'application/octet-stream' };
+    assert.ok(artifactPreview(file));
+    assert.equal(artifactImage(file), null);
+    assert.equal(artifactPreview({ ...file, url: 'https://example.com/file' }), null);
+    assert.equal(artifactPreview({ ...file, mimeType: 'text/html' }), null);
   }
   assert.ok(artifactImage(picture));
   for (const url of [

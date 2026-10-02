@@ -16,11 +16,43 @@ export interface ImagePreview {
   downloadUrl?: string;
 }
 
-export type AttachmentKind =
-  'image' | 'audio' | 'video' | 'pdf' | 'markdown' | 'csv' | 'spreadsheet';
+export interface AttachmentTrigger {
+  element: HTMLButtonElement;
+  keyboard: boolean;
+}
 
-export function attachmentKind(mimeType: string): AttachmentKind | null {
+export function restoreAttachmentFocus(trigger: AttachmentTrigger | null) {
+  if (!trigger?.element.isConnected) return false;
+  const { element, keyboard } = trigger;
+  const options = { preventScroll: true, focusVisible: keyboard };
+  element.focus(options);
+  if (!keyboard) {
+    element.dataset.attachmentPointerFocus = '';
+    const controller = new AbortController();
+    const reset = () => {
+      delete element.dataset.attachmentPointerFocus;
+      controller.abort();
+    };
+    for (const event of ['blur', 'keydown', 'pointerdown'])
+      element.addEventListener(event, reset, { once: true, signal: controller.signal });
+  }
+  return true;
+}
+
+export type AttachmentKind =
+  'image' | 'audio' | 'video' | 'pdf' | 'markdown' | 'csv' | 'spreadsheet' | 'text';
+
+export function attachmentKind(mimeType: string, name = ''): AttachmentKind | null {
   const type = mimeType.split(';', 1)[0].trim().toLowerCase();
+  if (['', 'application/octet-stream', 'binary/octet-stream', 'text/plain'].includes(type)) {
+    const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1].toLowerCase();
+    if (extension === 'pdf') return 'pdf';
+    if (extension === 'md' || extension === 'markdown') return 'markdown';
+    if (extension === 'csv') return 'csv';
+    if (extension === 'xlsx') return 'spreadsheet';
+    if (/^(?:png|jpe?g|webp|gif|avif|bmp)$/.test(extension ?? '')) return 'image';
+    if (/^(?:txt|log|json|jsonl|xml|ya?ml)$/.test(extension ?? '')) return 'text';
+  }
   if (/^image\/(?:png|jpeg|webp|gif|avif|bmp|svg\+xml)$/.test(type)) return 'image';
   if (/^audio\/(?:mpeg|wav|x-wav|webm|ogg|mp4|aac|flac)$/.test(type)) return 'audio';
   if (/^video\/(?:mp4|webm|ogg)$/.test(type)) return 'video';
@@ -29,6 +61,11 @@ export function attachmentKind(mimeType: string): AttachmentKind | null {
   if (type === 'text/csv' || type === 'application/csv') return 'csv';
   if (type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     return 'spreadsheet';
+  if (
+    (type.startsWith('text/') && type !== 'text/html') ||
+    /^application\/(?:json|ld\+json|xml|ya?ml)$/.test(type)
+  )
+    return 'text';
   return null;
 }
 
@@ -36,26 +73,28 @@ function vectorImage(mimeType: string) {
   return mimeType.split(';', 1)[0].trim().toLowerCase() === 'image/svg+xml';
 }
 
-export function localPreviewable(mimeType: string) {
-  return Boolean(attachmentKind(mimeType)) && !vectorImage(mimeType);
+export function localPreviewable(mimeType: string, name = '') {
+  return Boolean(attachmentKind(mimeType, name)) && !vectorImage(mimeType);
 }
 
-export function previewableImage(mimeType: string) {
-  return attachmentKind(mimeType) === 'image';
+export function previewableImage(mimeType: string, name = '') {
+  return attachmentKind(mimeType, name) === 'image';
 }
 
 export function artifactPreview(artifact: Artifact): ImagePreview | null {
-  if (!attachmentKind(artifact.mimeType) || !ownedArtifactUrl(artifact.url)) return null;
+  if (!attachmentKind(artifact.mimeType, artifact.name) || !ownedArtifactUrl(artifact.url))
+    return null;
   return { ...artifact, downloadUrl: artifact.url };
 }
 
 export function artifactImage(artifact: Artifact): ImagePreview | null {
-  if (!previewableImage(artifact.mimeType) || !ownedArtifactUrl(artifact.url)) return null;
+  if (!previewableImage(artifact.mimeType, artifact.name) || !ownedArtifactUrl(artifact.url))
+    return null;
   return { ...artifact, downloadUrl: artifact.url };
 }
 
 export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
-  const kind = attachmentKind(image.mimeType ?? 'image/png');
+  const kind = attachmentKind(image.mimeType ?? 'image/png', image.name);
   if (kind === 'image')
     return (
       <img
@@ -91,7 +130,9 @@ export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
           ? 'Markdown'
           : kind === 'csv'
             ? 'CSV'
-            : 'Spreadsheet';
+            : kind === 'text'
+              ? 'Text'
+              : 'Spreadsheet';
   return (
     <span className="attachment-media-thumbnail" aria-hidden="true">
       {kind === 'audio' ? <Music2 size={28} /> : <FileText size={28} />}
@@ -105,7 +146,7 @@ export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
 
 function PreviewContent({ image }: { image: ImagePreview }) {
   const [failed, setFailed] = useState(false);
-  const kind = attachmentKind(image.mimeType ?? 'image/png');
+  const kind = attachmentKind(image.mimeType ?? 'image/png', image.name);
   if (failed)
     return (
       <div className="attachment-preview-unavailable" role="status">
@@ -169,16 +210,18 @@ export function ImageViewer({
   const surface = useRef<HTMLDivElement>(null);
   const safeImages = images.filter(
     (image) =>
-      attachmentKind(image.mimeType ?? 'image/png') &&
+      attachmentKind(image.mimeType ?? 'image/png', image.name) &&
       (ownedArtifactUrl(image.url) ||
         (allowLocalPreviews &&
           image.url.startsWith('blob:') &&
-          localPreviewable(image.mimeType ?? 'image/png'))),
+          localPreviewable(image.mimeType ?? 'image/png', image.name))),
   );
   const index = safeImages.findIndex((image) => image.id === selectedId);
   const current = safeImages[index];
   if (!current) return null;
-  const onlyImages = safeImages.every((image) => previewableImage(image.mimeType ?? 'image/png'));
+  const onlyImages = safeImages.every((image) =>
+    previewableImage(image.mimeType ?? 'image/png', image.name),
+  );
   const itemLabel = onlyImages ? 'image' : 'attachment';
   const move = (next: number) =>
     onSelect(safeImages[Math.max(0, Math.min(next, safeImages.length - 1))].id);
@@ -226,7 +269,7 @@ export function ImageViewer({
           Use the left and right arrow keys to browse attachments. Press Escape to close.
         </DialogDescription>
         <div
-          className={`attachment-viewer-surface is-${attachmentKind(current.mimeType ?? 'image/png')}`}
+          className={`attachment-viewer-surface is-${attachmentKind(current.mimeType ?? 'image/png', current.name)}`}
           ref={surface}
           tabIndex={-1}
           role="group"
@@ -286,12 +329,15 @@ export function ImageViewer({
 
 export function ImageGallery({ images }: { images: ImagePreview[] }) {
   images = images.filter(
-    (image) => ownedArtifactUrl(image.url) && attachmentKind(image.mimeType ?? 'image/png'),
+    (image) =>
+      ownedArtifactUrl(image.url) && attachmentKind(image.mimeType ?? 'image/png', image.name),
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const trigger = useRef<HTMLButtonElement | null>(null);
+  const trigger = useRef<AttachmentTrigger | null>(null);
   const visible = images.slice(0, 4);
-  const onlyImages = images.every((image) => previewableImage(image.mimeType ?? 'image/png'));
+  const onlyImages = images.every((image) =>
+    previewableImage(image.mimeType ?? 'image/png', image.name),
+  );
   const itemLabel = onlyImages ? 'image' : 'attachment';
   return (
     <>
@@ -302,11 +348,11 @@ export function ImageGallery({ images }: { images: ImagePreview[] }) {
         {visible.map((image, index) => (
           <button
             type="button"
-            className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png')}`}
+            className={`attachment-image-tile is-${attachmentKind(image.mimeType ?? 'image/png', image.name)}`}
             key={image.id}
             aria-label={`View ${itemLabel} ${index + 1} of ${images.length}`}
             onClick={(event) => {
-              trigger.current = event.currentTarget;
+              trigger.current = { element: event.currentTarget, keyboard: event.detail === 0 };
               setSelectedId(image.id);
             }}
           >
@@ -324,7 +370,7 @@ export function ImageGallery({ images }: { images: ImagePreview[] }) {
         selectedId={selectedId}
         onSelect={setSelectedId}
         onClose={() => setSelectedId(null)}
-        restoreFocus={() => trigger.current?.focus()}
+        restoreFocus={() => restoreAttachmentFocus(trigger.current)}
       />
     </>
   );
