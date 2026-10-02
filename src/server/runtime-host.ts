@@ -232,9 +232,7 @@ export function createTenantRuntimeHost(options: {
       environment.OTTO_CONTROL_URL =
         options.operatorEnvironment.OTTO_RUNTIME_URL === 'http://otto.runtime'
           ? 'http://otto.control'
-          : options.operatorEnvironment.OTTO_CONTROL_ORIGIN ||
-            options.operatorEnvironment.OTTO_PUBLIC_URL ||
-            '';
+          : options.operatorEnvironment.OTTO_PUBLIC_URL || '';
       await options.transport.start({ ownerId, generation: lease.generation, environment });
       if (closed || Date.parse(lease.expiresAt) <= Date.now())
         throw new Error('The account runtime did not become ready.');
