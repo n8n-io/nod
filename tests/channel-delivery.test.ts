@@ -1257,6 +1257,8 @@ test(
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const { pool, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const logs: string[] = [];
+    t.mock.method(console, 'error', (line: string) => logs.push(line));
     let failSubmit = true;
     const states: Promise<string | undefined>[] = [];
     const channels = await create({
@@ -1297,6 +1299,11 @@ test(
         'pending',
       );
       assert.match((await app.inject('/api/channels')).json().error, /needs attention/);
+      assert.deepEqual(
+        logs.map((line) => JSON.parse(line)),
+        [{ event: 'channel_drain_failed', name: 'Error' }],
+      );
+      assert.equal(logs.join('').includes('Synthetic'), false);
       failSubmit = false;
       states.length = 0;
       await channels.drain();
