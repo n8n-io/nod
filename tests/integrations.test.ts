@@ -3802,7 +3802,7 @@ test(
 );
 
 test(
-  'discovered OAuth sign-in saves the grant in the Vault and rejects a replayed or foreign state',
+  'discovered OAuth sign-in saves the grant in the Vault on a database that still has the legacy ciphertext column',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const schema = `test_discovered_oauth_${randomUUID().replaceAll('-', '')}`;
@@ -3821,6 +3821,13 @@ test(
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
+    await pool.query(
+      `CREATE TABLE discovered_connections (
+        id uuid PRIMARY KEY,owner_id text NOT NULL,service text NOT NULL,name text NOT NULL,
+        account_name text NOT NULL,paths jsonb NOT NULL,ciphertext text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+    );
     let state = '';
     const discovered = await createDiscoveredConnections(pool, {
       ownerId: owner,

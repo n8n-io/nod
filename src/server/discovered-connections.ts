@@ -165,6 +165,7 @@ export async function createDiscoveredConnections(
       account_name text,oauth_state_hash text,
       expires_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes'
     );
+    ALTER TABLE discovered_connections DROP COLUMN IF EXISTS ciphertext;
   `);
   async function account(id: string) {
     const result = await pool.query<AccountRow>(
