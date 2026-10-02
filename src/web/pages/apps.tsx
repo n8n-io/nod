@@ -23,6 +23,23 @@ import {
   Notice,
 } from '../components/ui';
 
+type Discovery = {
+  name: string;
+  callbackUrl?: string;
+  setupUrl?: string;
+  setupText?: string;
+  paths: Array<{
+    kind: string;
+    endpoint?: string;
+    command?: string;
+    auth: string;
+    envName?: string;
+    testPath?: string;
+    scope?: string;
+    clientIdRequired?: boolean;
+  }>;
+};
+
 const logos = new Set([
   'gmail',
   'googlecalendar',
@@ -147,22 +164,7 @@ export function Apps() {
   const [websiteError, setWebsiteError] = useState('');
   const [websiteBusy, setWebsiteBusy] = useState(false);
   const discoveryId = new URLSearchParams(window.location.search).get('connect');
-  const [discovery, setDiscovery] = useState<{
-    name: string;
-    callbackUrl?: string;
-    setupUrl?: string;
-    setupText?: string;
-    paths: Array<{
-      kind: string;
-      endpoint?: string;
-      command?: string;
-      auth: string;
-      envName?: string;
-      testPath?: string;
-      scope?: string;
-      clientIdRequired?: boolean;
-    }>;
-  } | null>(null);
+  const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [discoveryError, setDiscoveryError] = useState('');
   const [savingDiscovery, setSavingDiscovery] = useState(false);
   const page = useRef<HTMLDivElement>(null);
@@ -192,22 +194,9 @@ export function Apps() {
   useEffect(() => {
     if (!discoveryId) return;
     const request = new AbortController();
-    void api<{
-      name: string;
-      callbackUrl?: string;
-      setupUrl?: string;
-      setupText?: string;
-      paths: Array<{
-        kind: string;
-        endpoint?: string;
-        command?: string;
-        auth: string;
-        envName?: string;
-        testPath?: string;
-        scope?: string;
-        clientIdRequired?: boolean;
-      }>;
-    }>(`/api/apps/discovery/${encodeURIComponent(discoveryId)}`, { signal: request.signal })
+    void api<Discovery>(`/api/apps/discovery/${encodeURIComponent(discoveryId)}`, {
+      signal: request.signal,
+    })
       .then((value) => {
         if (!request.signal.aborted) setDiscovery(value);
       })

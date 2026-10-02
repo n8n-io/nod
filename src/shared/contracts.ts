@@ -208,3 +208,17 @@ export interface Preferences {
   quietStart: string;
   quietEnd: string;
 }
+export type ChannelProvider = 'telegram' | 'whatsapp';
+export interface ChannelSetupSummary {
+  provider: ChannelProvider;
+  enabled: boolean;
+  accountName?: string;
+  accountHandle?: string;
+  mode?: 'polling' | 'webhook';
+  webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
+  webhookUrl?: string;
+  pairedUser?: string;
+  allowedUserId?: string;
+  pairingCandidate?: { id: string; name: string };
+  pairingExpiresAt?: string;
+}

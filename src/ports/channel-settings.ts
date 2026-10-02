@@ -1,17 +1,4 @@
-export type ChannelProvider = 'telegram' | 'whatsapp';
-export interface ChannelSetupSummary {
-  provider: ChannelProvider;
-  enabled: boolean;
-  accountName?: string;
-  accountHandle?: string;
-  mode?: 'polling' | 'webhook';
-  webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
-  webhookUrl?: string;
-  pairedUser?: string;
-  allowedUserId?: string;
-  pairingCandidate?: { id: string; name: string };
-  pairingExpiresAt?: string;
-}
+import type { ChannelProvider, ChannelSetupSummary } from '../shared/contracts.ts';
 export interface ChannelSetupConfiguration {
   environment: Record<string, string>;
   summary: ChannelSetupSummary;

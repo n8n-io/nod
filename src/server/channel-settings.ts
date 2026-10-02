@@ -10,12 +10,11 @@ import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import {
   ChannelSetupFailure,
-  type ChannelProvider,
   type ChannelSetupConfiguration,
-  type ChannelSetupSummary,
   type ChannelSetupVerifier,
   type ChannelAccountRegistry,
 } from '../ports/channel-settings.ts';
+import type { ChannelProvider, ChannelSetupSummary } from '../shared/contracts.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { ChannelPairingRequest } from '../ports/messaging.ts';
 

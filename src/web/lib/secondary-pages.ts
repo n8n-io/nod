@@ -1,4 +1,4 @@
-import type { Connection } from '../../shared/contracts';
+import type { ChannelProvider, ChannelSetupSummary, Connection } from '../../shared/contracts';
 
 export function focusChatMessage(messageId: string) {
   window.dispatchEvent(new CustomEvent('otto:focus-message', { detail: { messageId } }));
@@ -51,29 +51,15 @@ export function removeConnection(connections: Connection[], connectionId: string
   );
 }
 
-export type ChannelProvider = 'telegram' | 'whatsapp';
 type ChannelStatus = {
   provider: string;
   status: 'disabled' | 'setup_required' | 'configured';
   missing: string[];
 };
 export type ChannelResponse = { channels: ChannelStatus[]; error: string | null };
-export type ChannelSetup = {
-  provider: ChannelProvider;
-  enabled: boolean;
-  accountName?: string;
-  accountHandle?: string;
-  mode?: 'polling' | 'webhook';
-  webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
-  webhookUrl?: string;
-  pairedUser?: string;
-  allowedUserId?: string;
-  pairingCandidate?: { id: string; name: string };
-  pairingExpiresAt?: string;
-};
-export type ChannelSettings = { ready: boolean; channels: ChannelSetup[] };
+export type ChannelSettings = { ready: boolean; channels: ChannelSetupSummary[] };
 
-export function channelLabel(setup: ChannelSetup | undefined, configured: boolean) {
+export function channelLabel(setup: ChannelSetupSummary | undefined, configured: boolean) {
   if (!setup?.enabled) return configured ? 'Configuration present' : 'Not connected';
   if (setup.webhookStatus === 'registration_pending') return 'Connection needs a retry';
   if (setup.pairingExpiresAt) {

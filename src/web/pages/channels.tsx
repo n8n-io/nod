@@ -1,16 +1,15 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, ExternalLink, X } from 'lucide-react';
+import type { ChannelProvider, ChannelSetupSummary } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { formatTime } from '../lib/date-format';
 import {
   channelLabel,
   channelSetupBody,
   telegramBotUrl,
-  type ChannelProvider,
   type ChannelResponse,
   type ChannelSettings,
-  type ChannelSetup,
 } from '../lib/secondary-pages';
 import {
   Button,
@@ -224,7 +223,7 @@ export function ChannelAccount({
   hosted = false,
 }: {
   provider: ChannelProvider;
-  setup?: ChannelSetup;
+  setup?: ChannelSetupSummary;
   configured: boolean;
   onDisconnect(trigger: HTMLButtonElement): void;
   onPair?(): void;
@@ -345,7 +344,7 @@ function TelegramSetup({
   onManual,
   onSaveId,
 }: {
-  setup?: ChannelSetup;
+  setup?: ChannelSetupSummary;
   pairingUrl: string | null;
   manual: boolean;
   fields: Record<string, string>;
@@ -683,7 +682,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
     setStep(0);
     setEditing(provider);
   }
-  function acceptedSetup(channel: ChannelSetup) {
+  function acceptedSetup(channel: ChannelSetupSummary) {
     request.current?.abort();
     setSettings((current) =>
       current
@@ -725,7 +724,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
     setBusy(true);
     setError('');
     try {
-      const result = await api<{ channel: ChannelSetup; pairingUrl?: string }>(
+      const result = await api<{ channel: ChannelSetupSummary; pairingUrl?: string }>(
         `/api/channel-settings/${editing}`,
         {
           method: 'PUT',
@@ -763,7 +762,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
     setBusy(true);
     setError('');
     try {
-      const result = await api<{ channel: ChannelSetup; pairingUrl?: string }>(
+      const result = await api<{ channel: ChannelSetupSummary; pairingUrl?: string }>(
         `/api/channel-settings/telegram/${action}`,
         { method: 'POST', body: JSON.stringify(body), signal: current.signal },
       );
@@ -806,10 +805,13 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
     setBusy(true);
     setRemoveError('');
     try {
-      const result = await api<{ channel: ChannelSetup }>(`/api/channel-settings/${provider}`, {
-        method: 'DELETE',
-        signal: AbortSignal.any([current.signal, AbortSignal.timeout(15000)]),
-      });
+      const result = await api<{ channel: ChannelSetupSummary }>(
+        `/api/channel-settings/${provider}`,
+        {
+          method: 'DELETE',
+          signal: AbortSignal.any([current.signal, AbortSignal.timeout(15000)]),
+        },
+      );
       if (current.signal.aborted) return;
       acceptedSetup(result.channel);
       setRemoving(null);
