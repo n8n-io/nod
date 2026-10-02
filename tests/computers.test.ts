@@ -59,7 +59,7 @@ const { cloudflareLocalPlan } = await import(
 );
 
 const refused = (error: unknown) => {
-  assert.doesNotMatch(String((error as Error).message), /synthetic|private|secret|detail/i);
+  assert.doesNotMatch(String(error), /synthetic|private|secret|detail/i);
   return true;
 };
 

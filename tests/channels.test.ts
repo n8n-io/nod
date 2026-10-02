@@ -626,6 +626,7 @@ test('channel replies keep secure credential and approval links in the local app
     true,
   );
   assert.equal(imageReply.includes('private-file'), false);
+  assert.match(imageReply, /Attached file/);
   assert.equal(channelReply('', false, true), '');
   assert.ok(channelReply('', true).trim());
   assert.ok(channelReply('').trim());
