@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Monitor, Terminal, FileText, ExternalLink, Maximize2 } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogTitle, Notice } from './ui';
 import { post, errorMessage, apiResponse } from '../lib/api';

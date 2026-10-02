@@ -275,19 +275,3 @@ export function formatDayLabel(value: string | number | Date, format = current, 
     ...(sameYear(value, format, now) ? {} : { year: 'numeric' }),
   }).format(date(value));
 }
-
-export function formatRelativeTime(
-  value: string | number | Date,
-  format = current,
-  now = new Date(),
-) {
-  const minutes = Math.max(0, Math.floor((now.getTime() - date(value).getTime()) / 60_000));
-  const relative = new Intl.RelativeTimeFormat(format.locale, {
-    numeric: 'auto',
-    style: 'short',
-  });
-  if (minutes < 1) return capitalized(relative.format(0, 'second'), format.locale);
-  if (minutes < 60) return relative.format(-minutes, 'minute');
-  if (minutes < 1440) return relative.format(-Math.floor(minutes / 60), 'hour');
-  return formatDate(value, format, now);
-}

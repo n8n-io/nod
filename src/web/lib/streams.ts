@@ -19,7 +19,6 @@ export type StreamAction =
       discardedTurnIds?: string[];
       threadId?: string;
     }
-  | { type: 'reset' }
   | { type: 'thread'; threadId: string };
 
 export const initialStreamState: StreamState = {
@@ -40,7 +39,6 @@ function closeStreams(state: StreamState, ids: string[]): StreamState {
 }
 
 export function streamReducer(state: StreamState, action: StreamAction): StreamState {
-  if (action.type === 'reset') return { ...state, active: {} };
   const threadId = action.threadId ?? state.threadId;
   if (threadId !== state.threadId) {
     if (action.type === 'delta' && state.threadId) return state;
