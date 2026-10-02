@@ -129,11 +129,6 @@ export function deploymentPlan({ environment, release, accountId, publicUrl, gat
   )
     throw new Error('Configure the E2B API key and computer template.');
   if (
-    values.COMPUTER_PROVIDER === 'e2b' &&
-    (values.E2B_BROWSER_TEMPLATE || values.E2B_WORKSPACE_TEMPLATE)
-  )
-    throw new Error('Migrate the separate E2B templates to E2B_COMPUTER_TEMPLATE.');
-  if (
     values.OBJECT_STORAGE_PROVIDER !== 'http' ||
     values.OBJECT_STORAGE_ENDPOINT !== 'http://otto.storage/v1/objects/'
   )

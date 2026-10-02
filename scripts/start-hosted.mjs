@@ -13,13 +13,6 @@ export function hostedEnvironment(
   { root = repository, envFile, inherited = process.env } = {},
 ) {
   const computerProvider = values.COMPUTER_PROVIDER || 'cloudflare';
-  if (
-    computerProvider === 'e2b' &&
-    (values.E2B_BROWSER_TEMPLATE !== undefined || values.E2B_WORKSPACE_TEMPLATE !== undefined)
-  )
-    throw new Error(
-      'Split E2B templates are no longer supported. Configure E2B_COMPUTER_TEMPLATE.',
-    );
   const missing = [
     'DATABASE_URL',
     'OTTO_MASTER_KEY',

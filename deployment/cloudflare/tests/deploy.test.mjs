@@ -355,7 +355,6 @@ test('incomplete hosted computer and storage configuration is rejected before an
     ['E2B missing key', { ...JSON.parse(e2bGateway), E2B_API_KEY: undefined }],
     ['E2B missing computer', { ...JSON.parse(e2bGateway), E2B_COMPUTER_TEMPLATE: undefined }],
     ['E2B empty computer', { ...JSON.parse(e2bGateway), E2B_COMPUTER_TEMPLATE: '  ' }],
-    ['E2B legacy templates', { ...JSON.parse(e2bGateway), E2B_BROWSER_TEMPLATE: 'old-browser' }],
   ]) {
     await t.test(name, async () => {
       const reports = [];

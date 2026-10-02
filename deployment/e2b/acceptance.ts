@@ -116,8 +116,6 @@ export async function readDevelopmentConfiguration(path: string): Promise<Config
     values.COMPUTER_PROVIDER !== 'e2b' ||
     !values.E2B_API_KEY?.trim() ||
     values.E2B_API_KEY.length > 4096 ||
-    values.E2B_BROWSER_TEMPLATE !== undefined ||
-    values.E2B_WORKSPACE_TEMPLATE !== undefined ||
     Object.keys(values).some((key) => /^E2B_(DOMAIN|API_URL|SANDBOX_URL|DEBUG)$/.test(key))
   )
     throw failure();

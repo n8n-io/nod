@@ -176,13 +176,6 @@ export function createDefaultAdapters(
       : undefined;
   if (computerProvider === 'e2b' && (!env.E2B_API_KEY || !env.E2B_COMPUTER_TEMPLATE))
     throw new Error('The remote computer configuration is incomplete.');
-  if (
-    computerProvider === 'e2b' &&
-    (env.E2B_BROWSER_TEMPLATE !== undefined || env.E2B_WORKSPACE_TEMPLATE !== undefined)
-  )
-    throw new Error(
-      'Split E2B templates are no longer supported. Configure E2B_COMPUTER_TEMPLATE.',
-    );
   const e2b = allocations
     ? createE2BAdapters({
         apiKey: env.E2B_API_KEY!,
