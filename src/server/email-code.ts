@@ -8,7 +8,6 @@ export interface EmailCodeRequest {
   origin: string;
   after: number;
   before: number;
-  length?: number;
 }
 
 export interface PrivateEmailCode {
@@ -82,7 +81,7 @@ export function verificationCode(messages: VerificationEmail[], input: EmailCode
         match.index + match[0].length + 100,
       );
       for (const value of nearby.matchAll(/(?<![a-z0-9])\d{4,8}(?![a-z0-9])/gi))
-        if (input.length === undefined || value[0].length === input.length) codes.add(value[0]);
+        codes.add(value[0]);
     }
     if (codes.size !== 1) {
       if (codes.size > 1) return;

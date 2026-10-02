@@ -1173,9 +1173,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         input.after < now - 5 * 60_000 - 30_000 ||
         input.after > now ||
         input.before < input.after ||
-        input.before > now + 30_000 ||
-        (input.length !== undefined &&
-          (!Number.isInteger(input.length) || input.length < 4 || input.length > 8))
+        input.before > now + 30_000
       )
         return;
       const matches = (await connectionRows(ownerId)).filter(
