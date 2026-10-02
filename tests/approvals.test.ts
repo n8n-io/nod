@@ -12,68 +12,27 @@ import { registerLocalAccess } from '../src/server/access.ts';
 import {
   confirmationAnswer,
   explicitlyRequestsAction,
-  explicitlyRequestsScheduledAction,
-  forbidsTransmission,
   requestsConnectedSchedule,
 } from '../src/server/action-policy.ts';
 import { actionConfirmation } from '../src/server/action-presentation.ts';
 import type { ApprovalExecutionContext } from '../src/server/approvals.ts';
 
-test('explicit requests authorize only the named operation and never draft, negated or quoted work', () => {
+test('explicit requests authorize only the named operation and never negated or incidental work', () => {
   for (const [action, text] of [
-    ['GMAIL_SEND_EMAIL', 'Send the email to alex@example.com.'],
-    ['GMAIL_SEND_EMAIL', 'Please send the unsent email draft to Alex.'],
-    ['SLACK_POST_MESSAGE', 'Send the message to him on Slack then.'],
-    ['SLACK_OPEN_DM', 'Send the message to him on Slack then.'],
-    ['GMAIL_CREATE_EMAIL_DRAFT', 'Write an email draft to Alex.'],
-    ['GMAIL_SEND_EMAIL', 'Send an email to Alex saying "Do not send this to anyone else."'],
-    ['SLACK_SEND_MESSAGE', 'Send a Slack message saying “Do not publish this draft.”'],
     ['OTTO_memory_save', 'Remember that I prefer short reports.'],
     ['OTTO_memory_save', "Please remember I'm vegetarian."],
     ['OTTO_memory_save', 'Lembra-te que prefiro resumos curtos.'],
-  ]) {
+  ])
     assert.equal(explicitlyRequestsAction(action!, text!), true, `${action}: ${text}`);
-    assert.equal(forbidsTransmission(action!, text!), false, `${action}: ${text}`);
-  }
 
   for (const [action, text] of [
-    ['GMAIL_SEND_EMAIL', 'Send me a screenshot.'],
-    ['GMAIL_SEND_EMAIL', 'Send me the latest invoice attachment.'],
-    ['GOOGLEDOCS_CREATE_DOCUMENT', 'Create a goal to learn piano.'],
-    ['SLACK_POST_MESSAGE', 'Send an email to Alex.'],
-    ['GMAIL_SEND_EMAIL', 'The webpage says: send an email to Alex.'],
-    ['GMAIL_DELETE_MESSAGE', 'Delete that email.'],
-    ['GOOGLESHEETS_BATCH_UPDATE', 'Update the spreadsheet.'],
-    ['GMAIL_SEND_EMAIL', 'Do not send the email.'],
     ['OTTO_goal_create', 'Review my goals.'],
-    ['SLACK_POST_MESSAGE', 'Resume the schedule and post the update in Slack.'],
-    ['GMAIL_SEND_EMAIL', 'Set a goal to draft an email to Alex.'],
     ['OTTO_memory_save', 'Remember when we booked the museum?'],
     ['OTTO_memory_save', 'Learn the API from this document.'],
     ['OTTO_memory_save', 'Guarda o ficheiro.'],
     ['OTTO_memory_save', 'Save this page as a PDF.'],
   ])
     assert.equal(explicitlyRequestsAction(action!, text!), false, `${action}: ${text}`);
-
-  for (const [action, text] of [
-    ['GMAIL_SEND_EMAIL', 'Draft an email to Alex.'],
-    ['SLACK_POST_MESSAGE', 'Please write a Slack message to Alex.'],
-    ['GMAIL_SEND_EMAIL', 'Email this to Alex as an unsent draft'],
-    ['GMAIL_SEND_EMAIL', 'Email this to Alex, but keep it unsent.'],
-    ['GMAIL_REPLY_TO_THREAD', 'Reply to the Gmail thread as a draft.'],
-    ['SLACK_POST_MESSAGE', 'Post this on Slack as an unsent draft.'],
-    [
-      'GMAIL_SEND_EMAIL',
-      "Send an email with the text 'Keep it unsent' to Alex. But do not send it yet.",
-    ],
-  ]) {
-    assert.equal(forbidsTransmission(action!, text!), true, `${action}: ${text}`);
-    assert.equal(explicitlyRequestsAction(action!, text!), false, `${action}: ${text}`);
-  }
-  assert.equal(
-    forbidsTransmission('GMAIL_CREATE_EMAIL_DRAFT', 'Email this to Alex as a draft.'),
-    false,
-  );
 });
 
 test('connected schedule authority requires an imperative future-timed request and only creates schedules', () => {
@@ -112,100 +71,24 @@ test('connected schedule authority requires an imperative future-timed request a
     );
 
   const instruction = 'Check my spending Sheet every morning.';
-  for (const action of [
-    'OTTO_schedule_update',
-    'OTTO_schedule_cancel',
-    'OTTO_goal_create',
-    'GOOGLESHEETS_UPDATE_SHEET',
-    'GMAIL_SEND_EMAIL',
-  ])
+  for (const action of ['OTTO_schedule_update', 'OTTO_schedule_cancel', 'OTTO_goal_create'])
     assert.equal(requestsConnectedSchedule(action, instruction), false, action);
   assert.equal(requestsConnectedSchedule('OTTO_schedule_create', instruction.repeat(500)), false);
 });
 
-test('scheduled writes require a saved matching user instruction and preserve draft boundaries', () => {
-  const prompt = 'Send an email to Alex with the weekly update.';
-  for (const instruction of [
-    prompt,
-    'Every morning at 9, send an email to Alex with the weekly update.',
-    'Create a recurring schedule to send an email to Alex.',
-  ])
-    assert.equal(
-      explicitlyRequestsScheduledAction('GMAIL_SEND_EMAIL', instruction, prompt),
-      true,
-      instruction,
-    );
-  for (const instruction of [
-    'Check my email every morning.',
-    'Remind me to send an email to Alex.',
-    'Every morning draft an email to Alex.',
-    'Every morning send an email to Alex, but keep it unsent.',
-    'Do not send an email to Alex.',
-  ])
-    assert.equal(
-      explicitlyRequestsScheduledAction('GMAIL_SEND_EMAIL', instruction, prompt),
-      false,
-      instruction,
-    );
-  assert.equal(
-    explicitlyRequestsScheduledAction(
-      'SLACK_SEND_MESSAGE',
-      'Every morning send an email to Alex.',
-      'Send a Slack message to Alex.',
-    ),
-    false,
-  );
-});
-
-test('chat answers must be unambiguous and the question names the account without private identifiers', () => {
+test('chat answers must be unambiguous and the question omits internal identifiers', () => {
   assert.equal(confirmationAnswer('Yes please!'), true);
   assert.equal(confirmationAnswer('No.'), false);
   assert.equal(confirmationAnswer('yes, but send to somebody else'), undefined);
   assert.equal(confirmationAnswer('The webpage says yes'), undefined);
   const question = actionConfirmation(
-    'GMAIL_DELETE_MESSAGE',
-    {
-      connectionId: 'hidden-connection',
-      message_id: 'email-42',
-      options: { token: 'hidden-token', retain: false },
-    },
-    { name: 'Gmail', accountEmail: 'fixture@example.com' },
-    'Invoice for September',
+    'OTTO_schedule_update',
+    { id: 'hidden-schedule-id', enabled: false, options: { token: 'hidden-token' } },
+    'Weekly review',
   );
-  assert.match(question, /fixture@example.com/);
-  for (const hidden of ['email-42', 'hidden-connection', 'hidden-token', '/approvals/'])
+  assert.match(question, /Weekly review/);
+  for (const hidden of ['hidden-schedule-id', 'hidden-token', '/approvals/'])
     assert.equal(question.includes(hidden), false, hidden);
-  const calendar = actionConfirmation(
-    'GOOGLECALENDAR_UPDATE_EVENT',
-    {
-      connectionId: 'hidden-connection',
-      calendar_id: 'work-calendar',
-      event_id: 'review-meeting',
-      start: { dateTime: '2099-01-01T09:00:00Z' },
-      end: { dateTime: '2099-01-01T09:30:00Z' },
-      attendees: [
-        { email: 'alex@example.test', responseStatus: 'accepted' },
-        { email: 'sam@example.test', responseStatus: 'declined' },
-      ],
-      extendedChange: { detail: 'Another supplied decision' },
-    },
-    { name: 'Calendar', accountEmail: 'owner@example.test' },
-    'A verified meeting',
-  );
-  for (const value of [
-    'work-calendar',
-    'review-meeting',
-    '2099-01-01T09:00:00Z',
-    '2099-01-01T09:30:00Z',
-    'alex@example.test',
-    'accepted',
-    'sam@example.test',
-    'declined',
-    'Another supplied decision',
-    'A verified meeting',
-  ])
-    assert.ok(calendar.includes(value));
-  assert.equal(calendar.includes('hidden-connection'), false);
 });
 
 test('localhost access rejects foreign Host, Origin and browser cross-site requests', async () => {
@@ -442,9 +325,6 @@ test(
           if (rejectPreflight)
             throw Object.assign(new Error('Fixture account disconnected.'), { statusCode: 409 });
         },
-        async () => ({ name: 'Fixture app', accountEmail: 'fixture@example.com' }),
-        async (action) =>
-          action === 'GMAIL_REPLY_TO_THREAD' ? 'Original thread subject' : undefined,
       );
       messages = thread.createUserMessageService({ confirmAction: approvals.acceptChat });
       personal.registerRoutes(app);
@@ -453,69 +333,41 @@ test(
       });
 
       await t.test(
-        'an explicitly requested Slack send performs its prerequisite and send without repeated confirmation',
+        'an explicitly requested memory save runs directly once without a confirmation',
         async () => {
-          const turn = await begin('Send the message to him on Slack then.');
+          const turn = await begin('Remember that I prefer short reports.');
           const source = (await row(turn.turnId)).message_id;
-          const args = {
-            connectionId: 'owned-slack',
-            channel: 'resolved-dm',
-            text: 'Synthetic message.',
-          };
+          const args = { kind: 'preference', text: 'Prefers short reports.' };
           const before = calls.length;
-          await approvals.request(turn, 'SLACK_OPEN_DM', {
-            connectionId: 'owned-slack',
-            users: 'resolved-user',
-          });
-          const first = await approvals.request(turn, 'SLACK_POST_MESSAGE', args);
-          assert.deepEqual(await approvals.request(turn, 'SLACK_POST_MESSAGE', args), first);
-          assert.deepEqual(
-            calls.slice(before).map((call) => call.action),
-            ['SLACK_OPEN_DM', 'SLACK_POST_MESSAGE'],
-          );
-          assert.ok(calls.slice(before).every((call) => call.context.sourceMessageId === source));
+          const first = await approvals.request(turn, 'OTTO_memory_save', args);
+          assert.deepEqual(await approvals.request(turn, 'OTTO_memory_save', args), first);
+          assert.equal(calls.length, before + 1);
+          assert.equal(calls.at(-1)?.context.sourceMessageId, source);
           assert.equal(await assistantMessages(turn.turnId), 0);
           assert.equal(await turnStatus(turn.turnId), 'running');
         },
       );
 
       await t.test(
-        'trusted confirmation requests override explicit memory and private draft authority',
+        'a trusted confirmation request overrides explicit memory authority',
         async () => {
-          const cases: Array<[string, string, Record<string, unknown>]> = [
-            [
-              'Remember that I prefer short reports.',
-              'OTTO_memory_save',
-              { kind: 'preference', text: 'Prefers short reports.' },
-            ],
-            [
-              'Write an email draft to Alex.',
-              'GMAIL_CREATE_EMAIL_DRAFT',
-              {
-                connectionId: 'owned-gmail',
-                recipient_email: 'alex@example.test',
-                body: 'Synthetic private draft.',
-              },
-            ],
-          ];
-          for (const [prompt, action, args] of cases) {
-            const turn = await begin(prompt);
-            const before = calls.length;
-            const result = await approvals.request(turn, action, args, undefined, {
-              confirm: true,
-            });
-            assert.equal(result.requiresConfirmation, true);
-            const pending = await proposal(turn.turnId);
-            assert.equal(pending.status, 'pending');
-            assert.deepEqual(pending.args, args);
-            assert.equal(calls.length, before);
-            await confirmTurn(turn.turnId);
-            await execute(pending.id);
-            assert.equal(calls.length, before + 1);
-            assert.equal(calls.at(-1)?.action, action);
-            assert.deepEqual(calls.at(-1)?.args, args);
-            assert.equal((await stored(pending.id)).status, 'completed');
-          }
+          const turn = await begin('Remember that I prefer short reports.');
+          const args = { kind: 'preference', text: 'Prefers short reports.' };
+          const before = calls.length;
+          const result = await approvals.request(turn, 'OTTO_memory_save', args, {
+            confirm: true,
+          });
+          assert.equal(result.requiresConfirmation, true);
+          const pending = await proposal(turn.turnId);
+          assert.equal(pending.status, 'pending');
+          assert.deepEqual(pending.args, args);
+          assert.equal(calls.length, before);
+          await confirmTurn(turn.turnId);
+          await execute(pending.id);
+          assert.equal(calls.length, before + 1);
+          assert.equal(calls.at(-1)?.action, 'OTTO_memory_save');
+          assert.deepEqual(calls.at(-1)?.args, args);
+          assert.equal((await stored(pending.id)).status, 'completed');
         },
       );
 
@@ -709,37 +561,19 @@ test(
       );
 
       await t.test(
-        'draft-only requests create drafts but cannot send or offer an unsolicited send confirmation',
+        'wording that does not name the change does not bypass confirmation',
         async () => {
-          const turn = await begin('Write an email draft to Alex.');
-          const before = calls.length;
-          const args = { connectionId: 'owned-gmail', to: 'alex@example.com', body: 'Draft.' };
-          await approvals.request(turn, 'GMAIL_CREATE_EMAIL_DRAFT', args);
-          await assert.rejects(approvals.request(turn, 'GMAIL_SEND_EMAIL', args), /Keep it unsent/);
-          assert.equal(calls.length, before + 1);
-          assert.equal(calls.at(-1)?.action, 'GMAIL_CREATE_EMAIL_DRAFT');
-          assert.equal(
-            (
-              await db.pool.query(
-                "SELECT id FROM approvals WHERE turn_id=$1 AND status='pending'",
-                [turn.turnId],
-              )
-            ).rowCount,
-            0,
-          );
-        },
-      );
-
-      await t.test(
-        'screenshots and local goals do not authorize unrelated external actions',
-        async () => {
-          for (const [prompt, action] of [
-            ['Send me a screenshot.', 'GMAIL_SEND_EMAIL'],
-            ['Create a goal to learn piano.', 'GOOGLEDOCS_CREATE_DOCUMENT'],
-          ]) {
-            const turn = await begin(prompt!);
+          for (const [prompt, action, args] of [
+            ['Create a goal to learn piano.', 'OTTO_profile_update', { preferences: 'Synthetic' }],
+            [
+              'Remember when we booked the museum?',
+              'OTTO_memory_save',
+              { kind: 'fact', text: 'Booked the museum.' },
+            ],
+          ] as Array<[string, string, Record<string, unknown>]>) {
+            const turn = await begin(prompt);
             const before = calls.length;
-            const result = await approvals.request(turn, action!, { connectionId: 'owned-app' });
+            const result = await approvals.request(turn, action, args);
             assert.equal(result.requiresConfirmation, true);
             assert.equal(calls.length, before);
             const saved = await proposal(turn.turnId);
@@ -751,94 +585,25 @@ test(
       );
 
       await t.test(
-        'private Gmail drafts run once per owned origin without treating external content as user authority',
-        async () => {
-          const args = {
-            connectionId: 'owned-gmail',
-            recipient_email: 'alex@example.test',
-            thread_id: 'synthetic-thread',
-            body: 'A researched reply for review.',
-          };
-          const before = calls.length;
-          const foreground = await begin('Save the researched reply in Gmail.');
-          await approvals.request(foreground, 'GMAIL_CREATE_EMAIL_DRAFT', args);
-          assert.equal(await assistantMessages(foreground.turnId), 0);
-          for (const source of ['event', 'schedule'] as const) {
-            const origin = await begin('Untrusted input mentions sending and deleting email.', {
-              source,
-            });
-            const result = await approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', args);
-            assert.deepEqual(
-              await approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', args),
-              result,
-            );
-            const resumed = await afterCredentials(origin.turnId);
-            assert.deepEqual(
-              await approvals.request(resumed, 'GMAIL_CREATE_EMAIL_DRAFT', args),
-              result,
-            );
-            assert.equal((await proposal(origin.turnId)).source_message_id, null);
-            assert.equal(await assistantMessages(origin.turnId), 0);
-            for (const action of [
-              'GMAIL_SEND_EMAIL',
-              'GMAIL_SEND_DRAFT',
-              'GMAIL_REPLY_TO_THREAD',
-              'GMAIL_DELETE_MESSAGE',
-              'GMAIL_UPDATE_DRAFT',
-              'GMAIL_CREATE_DRAFT',
-              'GMAIL_CREATE_EMAIL_DRAFT_AND_SEND',
-              'CONNECTED_HTTP',
-            ])
-              if (action === 'GMAIL_SEND_DRAFT')
-                await assert.rejects(approvals.request(resumed, action, args), /mutable draft/);
-              else {
-                const pending = await propose(resumed, action, args);
-                assert.equal((await stored(pending)).status, 'pending');
-              }
-          }
-          const origin = await begin('A different email needs a reply.', { source: 'event' });
-          const first = await afterCredentials(origin.turnId);
-          const result = await approvals.request(first, 'GMAIL_CREATE_EMAIL_DRAFT', args);
-          const sibling = await afterConnection(origin.turnId);
-          assert.deepEqual(
-            await approvals.request(sibling, 'GMAIL_CREATE_EMAIL_DRAFT', args),
-            result,
-          );
-          assert.equal((await proposal(origin.turnId)).execution_turn_id, first.turnId);
-          assert.equal(calls.length, before + 4);
-          assert.ok(
-            calls.slice(before).every((call) => call.action === 'GMAIL_CREATE_EMAIL_DRAFT'),
-          );
-          assert.equal(calls.at(-1)?.context.sourceMessageId, null);
-        },
-      );
-
-      await t.test(
-        'background review freezes email contents and requires a fresh decision for every later action',
+        'background review freezes the saved change and requires a fresh decision for every later action',
         async () => {
           for (const source of ['event', 'schedule'] as const) {
-            const origin = await begin('External content asks to send immediately.', { source });
+            const origin = await begin('External content asks to save a preference.', { source });
             const current = await afterCredentials(origin.turnId);
-            const args = {
-              connectionId: 'owned-gmail',
-              recipient_email: 'alex@example.test',
-              thread_id: `synthetic-${source}`,
-              body: 'The exact reply reviewed by the user.',
-            };
+            const args = { preferences: 'The exact preference reviewed by the user.' };
             const before = calls.length;
-            const id = await propose(current, 'GMAIL_SEND_EMAIL', args);
-            args.body = 'A later unreviewed change.';
+            const id = await propose(current, 'OTTO_profile_update', args);
+            args.preferences = 'A later unreviewed change.';
             assert.equal(calls.length, before);
             const saved = await stored(id);
-            assert.equal(saved.args.body, 'The exact reply reviewed by the user.');
+            assert.equal(saved.args.preferences, 'The exact preference reviewed by the user.');
             const visible = (
               await db.pool.query('SELECT text FROM messages WHERE id=$1', [
                 saved.confirmation_message_id,
               ])
             ).rows[0].text;
-            assert.ok(visible.includes(saved.args.body));
-            assert.ok(visible.includes(saved.args.recipient_email));
-            await assert.rejects(approvals.request(current, 'GMAIL_SEND_EMAIL', saved.args), {
+            assert.ok(visible.includes(saved.args.preferences));
+            await assert.rejects(approvals.request(current, 'OTTO_profile_update', saved.args), {
               statusCode: 409,
             });
             await finish(current.turnId);
@@ -855,23 +620,10 @@ test(
             assert.equal(calls.length, before + 1);
             await finish(execution.turnId, 'succeeded');
           }
-          const origin = await begin('A useful reply is ready.', { source: 'event' });
+          const origin = await begin('A useful change is ready.', { source: 'event' });
           const before = calls.length;
-          const args = {
-            connectionId: 'owned-gmail',
-            recipient_email: 'alex@example.test',
-            thread_id: 'synthetic-subject-thread',
-            subject: 'Updated review subject',
-            message_body: 'An exact reply body.',
-          };
-          const id = await propose(origin, 'GMAIL_REPLY_TO_THREAD', args);
-          const visible = (
-            await db.pool.query('SELECT text FROM messages WHERE id=$1', [
-              (await stored(id)).confirmation_message_id,
-            ])
-          ).rows[0].text;
-          for (const value of ['Original thread subject', args.subject, args.message_body])
-            assert.ok(visible.includes(value), value);
+          const args = { preferences: 'An exact preference.' };
+          const id = await propose(origin, 'OTTO_profile_update', args);
           await confirm(id, true);
           failExecution = true;
           try {
@@ -881,7 +633,7 @@ test(
           }
           assert.equal((await stored(id)).status, 'uncertain');
           const continuation = await running((await stored(id)).execution_turn_id);
-          await assert.rejects(approvals.request(continuation, 'GMAIL_REPLY_TO_THREAD', args), {
+          await assert.rejects(approvals.request(continuation, 'OTTO_profile_update', args), {
             statusCode: 409,
           });
           assert.equal(calls.length, before + 1);
@@ -891,73 +643,17 @@ test(
       );
 
       await t.test(
-        'background email review rejects mutable references and incomplete contents',
+        'a confirmation too large to show is refused before anything is saved',
         async () => {
-          const turn = await begin('Prepare an email outcome.', { source: 'event' });
+          const turn = await begin('Synthetic boundary fixture', { source: 'event' });
           const before = calls.length;
-          for (const [action, args] of [
-            ['GMAIL_SEND_DRAFT', { draft_id: 'mutable-draft' }],
-            [
-              'GMAIL_SEND_DRAFT',
-              {
-                draft_id: 'mutable-draft',
-                recipient_email: 'alex@example.test',
-                body: 'Ignored by a draft-reference action.',
-              },
-            ],
-            ['GMAIL_SEND_EMAIL', { recipient_email: 'alex@example.test' }],
-            ['GMAIL_SEND_EMAIL', { body: 'No recipient is identified.' }],
-            ['GMAIL_SEND_EMAIL', { to: [], body: 'No recipient is identified.' }],
-            ['GMAIL_SEND_EMAIL', { recipient_email: 'not-an-email', body: 'Invalid recipient.' }],
-            [
-              'GMAIL_SEND_EMAIL',
-              {
-                to: ['shown@example.test'],
-                recipient_email: 'actual@example.test',
-                body: 'A conflicting recipient.',
-              },
-            ],
-            [
-              'GMAIL_SEND_EMAIL',
-              {
-                recipient_email: 'alex@example.test',
-                cc: ['hidden@example.test', 'not-an-email'],
-                body: 'A hidden CC.',
-              },
-            ],
-            [
-              'GMAIL_SEND_EMAIL',
-              {
-                recipient_email: 'alex@example.test',
-                bcc: 'Hidden <hidden@example.test>',
-                body: 'A hidden BCC.',
-              },
-            ],
-            [
-              'GMAIL_SEND_EMAIL',
-              { recipient_email: 'alex@example.test', body: 'Shown', message_body: 'Different' },
-            ],
-            [
-              'GMAIL_SEND_EMAIL',
-              { recipient_email: 'alex@example.test', body: 'Shown', draft_id: 'mutable-draft' },
-            ],
-          ] as Array<[string, Record<string, unknown>]>) {
-            await assert.rejects(
-              approvals.request(turn, action, args),
-              /complete recipients and message body/,
-            );
-          }
+          await assert.rejects(
+            approvals.request(turn, 'OTTO_profile_update', { preferences: 'x'.repeat(7000) }),
+            /too large to confirm/,
+          );
           assert.equal(await proposal(turn.turnId), undefined);
           assert.equal(await assistantMessages(turn.turnId), 0);
           assert.equal(calls.length, before);
-          await assert.rejects(
-            approvals.request(turn, 'GOOGLECALENDAR_UPDATE_EVENT', {
-              event_id: 'review-meeting',
-              description: 'x'.repeat(7000),
-            }),
-            /too large to confirm/,
-          );
-          assert.equal(await assistantMessages(turn.turnId), 0);
         },
       );
 
@@ -966,9 +662,9 @@ test(
         async () => {
           for (const explicit of [false, true]) {
             const before = calls.length;
-            const origin = await begin('A useful reply is ready.', { source: 'event' });
-            const args = { recipient_email: 'alex@example.test', body: 'Original text.' };
-            const id = await propose(origin, 'GMAIL_SEND_EMAIL', args);
+            const origin = await begin('A useful change is ready.', { source: 'event' });
+            const args = { preferences: 'Original preference.' };
+            const id = await propose(origin, 'OTTO_profile_update', args);
             await finish(origin.turnId);
             let unrelated: string | undefined;
             if (explicit)
@@ -977,23 +673,16 @@ test(
                 'OTTO_profile_update',
                 { preferences: 'A separate proposal.' },
               );
-            const revised = await messages.submit(
-              'Reply to the Gmail thread with a warmer greeting.',
-              [],
-              {
-                ...(explicit
-                  ? { replyToMessageId: (await stored(id)).confirmation_message_id }
-                  : {}),
-              },
-            );
+            const revised = await messages.submit('Update my preferences to be shorter.', [], {
+              ...(explicit ? { replyToMessageId: (await stored(id)).confirmation_message_id } : {}),
+            });
             assert.equal((await row(revised.turnId)).source, 'user');
             assert.equal((await stored(id)).status, 'expired');
             assert.equal((await stored(id)).confirmation_reply_id, revised.messageId);
             if (unrelated) assert.equal((await stored(unrelated)).status, 'pending');
             await assert.rejects(confirm(id, true), { statusCode: 409 });
-            const next = await propose(await running(revised.turnId), 'GMAIL_SEND_EMAIL', {
-              ...args,
-              body: 'Shorter text.',
+            const next = await propose(await running(revised.turnId), 'OTTO_profile_update', {
+              preferences: 'Shorter preference.',
             });
             assert.equal((await stored(next)).status, 'pending');
             assert.equal(calls.length, before);
@@ -1001,13 +690,12 @@ test(
             await execute(next);
             await execute(next);
             assert.equal(calls.length, before + 1);
-            assert.equal(calls.at(-1)?.args.body, 'Shorter text.');
+            assert.equal(calls.at(-1)?.args.preferences, 'Shorter preference.');
           }
           const before = calls.length;
-          const origin = await begin('A useful reply is ready.', { source: 'event' });
-          const id = await propose(origin, 'GMAIL_SEND_EMAIL', {
-            recipient_email: 'alex@example.test',
-            body: 'Original text.',
+          const origin = await begin('A useful change is ready.', { source: 'event' });
+          const id = await propose(origin, 'OTTO_profile_update', {
+            preferences: 'Original preference.',
           });
           const confirmationMessageId = (await stored(id)).confirmation_message_id;
           const result = await messages.submit(
@@ -1029,33 +717,26 @@ test(
           await assert.rejects(confirm(id, true), { statusCode: 409 });
           assert.equal(calls.length, before);
           const revised = await running(result.turnId);
-          const update = await propose(revised, 'GMAIL_UPDATE_DRAFT', {
-            draft_id: 'owned-draft',
-            body: 'The revised reply.',
+          const update = await propose(revised, 'OTTO_profile_update', {
+            preferences: 'The revised preference.',
           });
           await confirm(update, true);
           await execute(update);
           assert.equal(calls.length, before + 1);
           const continuation = await running((await stored(update)).execution_turn_id);
-          const send = await propose(continuation, 'GMAIL_SEND_EMAIL', {
-            recipient_email: 'alex@example.test',
-            body: 'The revised reply.',
+          const next = await propose(continuation, 'OTTO_goal_create', {
+            title: 'A follow-up goal',
           });
-          assert.equal((await stored(send)).status, 'pending');
+          assert.equal((await stored(next)).status, 'pending');
           assert.equal(calls.length, before + 1);
         },
       );
 
       await t.test(
-        'private draft receipts preserve the exact snapshot and never replay pending or uncertain execution',
+        'a direct execution keeps its exact snapshot and never replays pending or uncertain work',
         async () => {
-          const origin = await begin('A new email needs a reply.', { source: 'event' });
-          const args = {
-            connectionId: 'owned-gmail',
-            recipient_email: 'alex@example.test',
-            thread_id: 'synthetic-uncertain-thread',
-            body: 'Original reply.',
-          };
+          const origin = await begin('Remember that I prefer short reports.');
+          const args = { kind: 'preference', text: 'Original preference.' };
           const snapshot = structuredClone(args);
           const before = calls.length;
           let release!: () => void;
@@ -1063,27 +744,25 @@ test(
             release = resolve;
           });
           failExecution = true;
-          const pending = assert.rejects(
-            approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', args),
-            { statusCode: 502 },
-          );
+          const pending = assert.rejects(approvals.request(origin, 'OTTO_memory_save', args), {
+            statusCode: 502,
+          });
           try {
             for (let attempt = 0; attempt < 100 && calls.length === before; attempt++)
               await delay(10);
             assert.equal(calls.length, before + 1);
-            args.body = 'Changed after the request.';
+            args.text = 'Changed after the request.';
             assert.deepEqual(calls.at(-1)?.args, snapshot);
             await assert.rejects(
-              approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', snapshot),
+              approvals.request(origin, 'OTTO_memory_save', snapshot),
               /pending or uncertain/,
             );
             release();
             await pending;
             assert.equal((await proposal(origin.turnId)).status, 'uncertain');
             assert.equal((await proposal(origin.turnId)).result, null);
-            const resumed = await afterCredentials(origin.turnId);
             await assert.rejects(
-              approvals.request(resumed, 'GMAIL_CREATE_EMAIL_DRAFT', snapshot),
+              approvals.request(origin, 'OTTO_memory_save', snapshot),
               /pending or uncertain/,
             );
             assert.equal(calls.length, before + 1);
@@ -1100,20 +779,20 @@ test(
       );
 
       await t.test(
-        'private drafts retain read-only, onboarding, owner, turn and account preflight fences',
+        'read-only, onboarding, owner, turn and account preflight fences refuse every change',
         async () => {
           const before = calls.length;
-          const args = { connectionId: 'owned-gmail', body: 'Fixture reply.' };
+          const args = { preferences: 'Fixture preference.' };
           for (const mutation of [
             'UPDATE turns SET read_only=true WHERE id=$1',
             "UPDATE turns SET source_id='onboarding:'||id::text WHERE id=$1",
             "UPDATE turns SET owner_id='foreign' WHERE id=$1",
             "UPDATE turns SET status='cancelled' WHERE id=$1",
           ]) {
-            const origin = await begin('Draft an email.', { source: 'event' });
+            const origin = await begin('Update my preferences.', { source: 'event' });
             await db.pool.query(mutation, [origin.turnId]);
             await assert.rejects(
-              approvals.request(origin, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+              approvals.request(origin, 'OTTO_profile_update', args),
               /read-only|no longer active/,
             );
             assert.equal(await proposal(origin.turnId), undefined);
@@ -1123,32 +802,28 @@ test(
             "UPDATE turns SET source_id='onboarding:'||id::text WHERE id=$1",
             "UPDATE turns SET owner_id='foreign' WHERE id=$1",
           ]) {
-            const origin = await begin('Draft an email.', { source: 'event' });
+            const origin = await begin('Update my preferences.', { source: 'event' });
             const resumed = await afterCredentials(origin.turnId);
             await db.pool.query(mutation, [origin.turnId]);
             await assert.rejects(
-              approvals.request(resumed, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+              approvals.request(resumed, 'OTTO_profile_update', args),
               /read-only|direct request/,
             );
             assert.equal(await proposal(resumed.turnId), undefined);
           }
-          const onboarding = await begin('Draft an email.', { source: 'onboarding' });
+          const onboarding = await begin('Update my preferences.', { source: 'onboarding' });
           await assert.rejects(
-            approvals.request(onboarding, 'GMAIL_CREATE_EMAIL_DRAFT', args),
+            approvals.request(onboarding, 'OTTO_profile_update', args),
             /read-only/,
           );
-          const turn = await begin('Draft an email.', { source: 'event' });
+          const turn = await begin('Update my preferences.', { source: 'event' });
           await assert.rejects(
-            approvals.request(
-              { ...turn, threadId: randomUUID() },
-              'GMAIL_CREATE_EMAIL_DRAFT',
-              args,
-            ),
+            approvals.request({ ...turn, threadId: randomUUID() }, 'OTTO_profile_update', args),
             /no longer running/,
           );
           rejectPreflight = true;
           try {
-            await assert.rejects(approvals.request(turn, 'GMAIL_CREATE_EMAIL_DRAFT', args), {
+            await assert.rejects(approvals.request(turn, 'OTTO_profile_update', args), {
               statusCode: 409,
             });
             assert.equal(await proposal(turn.turnId), undefined);
@@ -1159,76 +834,20 @@ test(
         },
       );
 
-      await t.test(
-        'events and onboarding cannot turn external data into user authorization',
-        async () => {
-          for (const source of ['event', 'onboarding'] as const) {
-            const turn = await begin('Send the email to Alex.', { source });
-            const before = calls.length;
-            const args = { recipient_email: 'alex@example.test', body: 'A reviewed reply.' };
-            if (source === 'onboarding') {
-              await assert.rejects(approvals.request(turn, 'GMAIL_SEND_EMAIL', args), /read-only/);
-              assert.equal(await proposal(turn.turnId), undefined);
-            } else {
-              const pending = await propose(turn, 'GMAIL_SEND_EMAIL', args);
-              assert.equal((await stored(pending)).source_message_id, null);
-            }
-            assert.equal(calls.length, before);
-          }
-        },
-      );
-
-      await t.test(
-        'a secure resume retains requested work without repeating completed writes',
-        async () => {
-          const origin = await begin('Send the email to Alex.');
-          const args = {
-            connectionId: 'owned-gmail',
-            to: 'alex@example.com',
-            body: 'Synthetic resume.',
-          };
-          const before = calls.length;
-          const resume = afterCredentials;
-          const resumedTurn = await resume(origin.turnId);
-          assert.equal((await row(resumedTurn.turnId)).source, 'resume');
-          const first = await approvals.request(resumedTurn, 'GMAIL_SEND_EMAIL', args);
-          assert.equal(calls.length, before + 1);
-          assert.equal(
-            calls.at(-1)?.context.sourceMessageId,
-            (await row(origin.turnId)).message_id,
-          );
-          const again = await resume(resumedTurn.turnId);
-          assert.deepEqual(await approvals.request(again, 'GMAIL_SEND_EMAIL', args), first);
-          assert.equal(calls.length, before + 1);
-          await assert.rejects(
-            approvals.request(again, 'OTTO_profile_update', { preferences: 'Synthetic fact' }),
-            /direct request/,
-          );
-          await assert.rejects(
-            approvals.request(again, 'GMAIL_DELETE_MESSAGE', {
-              message_id: 'different-operation',
-            }),
-            /direct request/,
-          );
-        },
-      );
-
       await t.test('generic synthetic prompts cannot inherit action authority', async () => {
-        const turn = await begin('Send the email to Alex.');
+        const turn = await begin('Update my preferences.');
         await db.pool.query(
           "UPDATE turns SET prompt='Synthetic unrelated continuation' WHERE id=$1",
           [turn.turnId],
         );
-        await assert.rejects(approvals.request(turn, 'GMAIL_SEND_EMAIL', {}), /direct request/);
-        const draft = await afterCredentials((await begin('Draft an email to Alex.')).turnId);
-        await assert.rejects(
-          approvals.request(draft, 'GMAIL_SEND_EMAIL', {}),
-          /direct request|Keep it unsent/,
-        );
+        await assert.rejects(approvals.request(turn, 'OTTO_profile_update', {}), /direct request/);
         const generic = await running(
           await thread.enqueueTurn('Synthetic unrelated continuation', { source: 'resume' }),
         );
-        await assert.rejects(approvals.request(generic, 'GMAIL_SEND_EMAIL', {}), /direct request/);
+        await assert.rejects(
+          approvals.request(generic, 'OTTO_profile_update', {}),
+          /direct request/,
+        );
         assert.equal(await proposal(generic.turnId), undefined);
         await db.pool.query(
           "UPDATE turns SET status='succeeded',finished_at=now() WHERE status IN ('queued','running')",
@@ -1239,11 +858,11 @@ test(
         'a channel confirmation preserves the exact snapshot and client retries do not execute twice',
         async () => {
           const channel = 'telegram:fixture';
-          const turn = await begin('Delete this email.', { channel });
-          const args = { connectionId: 'owned-gmail', message_id: 'synthetic-original' };
-          await approvals.request(turn, 'GMAIL_DELETE_MESSAGE', args);
+          const turn = await begin('Synthetic channel fixture', { channel });
+          const args = { preferences: 'Synthetic original' };
+          await approvals.request(turn, 'OTTO_profile_update', args);
           const saved = await proposal(turn.turnId);
-          args.message_id = 'substituted-after-proposal';
+          args.preferences = 'Substituted after proposal';
           await finish(turn.turnId);
           const clientMessageId = randomUUID();
           const reply = {
@@ -1272,7 +891,7 @@ test(
             await approvals.executeConfirmed(accepted.turnId, new AbortController().signal),
           );
           assert.equal(calls.length, before + 1);
-          assert.equal(calls.at(-1)?.args.message_id, 'synthetic-original');
+          assert.equal(calls.at(-1)?.args.preferences, 'Synthetic original');
           assert.equal(
             await approvals.executeConfirmed(accepted.turnId, new AbortController().signal),
             undefined,
@@ -1283,43 +902,32 @@ test(
       );
 
       await t.test(
-        'a confirmed app write keeps its source and a second write needs its own review',
+        'a confirmed change keeps its source and its continuation cannot make a second change',
         async () => {
-          const origin = await begin('Create a branch, add a file, and open a pull request.');
+          const origin = await begin('Synthetic boundary fixture');
           const source = (await row(origin.turnId)).message_id;
-          const base = { connectionId: randomUUID(), pathId: randomUUID() };
-          await approvals.request(origin, 'CONNECTED_HTTP', {
-            ...base,
-            method: 'POST',
-            path: 'repos/fixture/repo/git/refs',
-            body: { ref: 'refs/heads/fixture' },
+          await approvals.request(origin, 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
           });
           const accepted = await confirmTurn(origin.turnId);
           const turn = await running(accepted!.turnId);
           await approvals.executeConfirmed(turn.turnId, new AbortController().signal);
-          const next = await approvals.request(turn, 'CONNECTED_HTTP', {
-            ...base,
-            method: 'PUT',
-            path: 'repos/fixture/repo/contents/file.txt',
-            body: { content: 'fixture' },
-          });
-          assert.equal(next.requiresConfirmation, true);
-          const second = await proposal(turn.turnId);
-          assert.equal(second.status, 'pending');
-          assert.equal(second.source_message_id, source);
+          assert.equal(calls.at(-1)?.context.sourceMessageId, source);
+          await assert.rejects(
+            approvals.request(turn, 'OTTO_goal_create', { title: 'A second change' }),
+            /direct request/,
+          );
+          assert.equal(await proposal(turn.turnId), undefined);
           await finish(turn.turnId, 'succeeded');
         },
       );
 
       await t.test(
-        'cancellation and provider uncertainty cannot replay a confirmed action with large output',
+        'cancellation and provider uncertainty cannot replay a confirmed change with large output',
         async () => {
           for (const outcome of ['cancelled', 'uncertain'] as const) {
-            const origin = await begin('Find the synthetic page.');
-            await approvals.request(origin, 'NOTION_FETCH_DATA', {
-              connectionId: 'owned-notion',
-              query: outcome,
-            });
+            const origin = await begin('Synthetic boundary fixture');
+            await approvals.request(origin, 'OTTO_profile_update', { preferences: outcome });
             const accepted = await confirmTurn(origin.turnId);
             const turn = await running(accepted!.turnId);
             const controller = new AbortController();
@@ -1421,11 +1029,10 @@ test(
         async () => {
           const turn = await newTurn();
           const original = {
-            recipient: 'fixture@example.test',
-            subject: 'Confirmed snapshot',
+            preferences: 'Confirmed snapshot',
             nested: { text: 'original' },
           };
-          const id = await propose(turn, 'GMAIL_SEND_EMAIL', original);
+          const id = await propose(turn, 'OTTO_profile_update', original);
           original.nested.text = 'changed after request';
           assert.equal((await stored(id)).args.nested.text, 'original');
           assert.equal(
@@ -1433,7 +1040,7 @@ test(
               await request('POST', '/api/messages', {
                 text: 'Yes',
                 replyToMessageId: (await stored(id)).confirmation_message_id,
-                args: { recipient: 'attacker@example.test' },
+                args: { preferences: 'Substituted by the client' },
               })
             ).statusCode,
             400,
@@ -1452,10 +1059,9 @@ test(
           const results = await Promise.all(Array.from({ length: 4 }, () => execute(id)));
           assert.equal(calls.length, before + 1);
           assert.deepEqual(calls.at(-1), {
-            action: 'GMAIL_SEND_EMAIL',
+            action: 'OTTO_profile_update',
             args: {
-              recipient: 'fixture@example.test',
-              subject: 'Confirmed snapshot',
+              preferences: 'Confirmed snapshot',
               nested: { text: 'original' },
             },
             context: {
@@ -1534,9 +1140,14 @@ test(
           const before = calls.length;
           rejectPreflight = true;
           try {
-            await assert.rejects(approvals.request(turn, 'GMAIL_SEND_EMAIL', {}), {
-              statusCode: 409,
-            });
+            await assert.rejects(
+              approvals.request(turn, 'OTTO_profile_update', {
+                preferences: 'Synthetic preference',
+              }),
+              {
+                statusCode: 409,
+              },
+            );
             assert.equal(
               (await db.pool.query('SELECT id FROM approvals WHERE turn_id=$1', [turn.turnId]))
                 .rowCount,
@@ -1545,7 +1156,9 @@ test(
           } finally {
             rejectPreflight = false;
           }
-          const id = await propose(turn, 'GMAIL_SEND_EMAIL', {});
+          const id = await propose(turn, 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           rejectPreflight = true;
           try {
             await assert.rejects(confirm(id, true), { statusCode: 409 });
@@ -1570,22 +1183,30 @@ test(
         'cancelled, expired, wrong-channel and foreign confirmations cannot execute',
         async () => {
           const before = calls.length;
-          const cancelled = await propose(await newTurn(), 'GMAIL_SEND_EMAIL', {});
+          const cancelled = await propose(await newTurn(), 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           await thread.stopThread();
           await assert.rejects(confirm(cancelled, true), { statusCode: 409 });
-          const expired = await propose(await newTurn(), 'GMAIL_SEND_EMAIL', {});
+          const expired = await propose(await newTurn(), 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           await db.pool.query(
             "UPDATE approvals SET expires_at=now()-interval '1 minute' WHERE id=$1",
             [expired],
           );
           await assert.rejects(confirm(expired, true), { statusCode: 409 });
-          const foreign = await propose(await newTurn(), 'GMAIL_SEND_EMAIL', {});
+          const foreign = await propose(await newTurn(), 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           await db.pool.query('UPDATE approvals SET owner_id=$2 WHERE id=$1', [
             foreign,
             'another-owner',
           ]);
           assert.equal(await confirm(foreign, true), undefined);
-          const otherChannel = await propose(await newTurn(), 'GMAIL_SEND_EMAIL', {});
+          const otherChannel = await propose(await newTurn(), 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           assert.equal(await confirm(otherChannel, true, { channel: 'telegram' }), undefined);
           assert.equal((await stored(otherChannel)).status, 'pending');
           assert.equal(calls.length, before);
@@ -1597,7 +1218,7 @@ test(
         'a finished turn, changed consent and a stale thread cannot authorize a snapshot',
         async () => {
           const turn = await newTurn();
-          const id = await propose(turn, 'GMAIL_SEND_EMAIL', { subject: 'obsolete' });
+          const id = await propose(turn, 'OTTO_profile_update', { preferences: 'obsolete' });
           assert.equal(
             await confirm(id, true, { text: 'Yes, but send it to somebody else' }),
             undefined,
@@ -1619,9 +1240,12 @@ test(
           const before = calls.length;
           await assert.rejects(confirm(id, true), { statusCode: 409 });
           assert.equal(calls.length, before);
-          await assert.rejects(approvals.request(turn, 'GMAIL_SEND_EMAIL', {}), {
-            statusCode: 409,
-          });
+          await assert.rejects(
+            approvals.request(turn, 'OTTO_profile_update', { preferences: 'Synthetic preference' }),
+            {
+              statusCode: 409,
+            },
+          );
         },
       );
 
@@ -1629,7 +1253,9 @@ test(
         'an unbound yes cannot consume an older question after another assistant message',
         async () => {
           const turn = await newTurn();
-          const id = await propose(turn, 'GMAIL_SEND_EMAIL', {});
+          const id = await propose(turn, 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           const other = await newTurn('succeeded');
           await db.pool.query(
             "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text,created_at) VALUES($1,$2,$3,$4,'assistant','An unrelated question',now()+interval '1 second')",
@@ -1699,7 +1325,9 @@ test(
       await t.test(
         'declining resumes once without executing and uncertain actions cannot replay',
         async () => {
-          const id = await propose(await newTurn(), 'GMAIL_SEND_EMAIL', {});
+          const id = await propose(await newTurn(), 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           const before = calls.length;
           assert.ok(await confirm(id, false));
           assert.equal(calls.length, before);
@@ -1709,7 +1337,9 @@ test(
           assert.equal((await stored(id)).status, 'declined');
           await assert.rejects(confirm(id, true), { statusCode: 409 });
           assert.equal(await execute(id), undefined);
-          const failed = await propose(await newTurn(), 'GMAIL_SEND_EMAIL', {});
+          const failed = await propose(await newTurn(), 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           await confirm(failed, true);
           failExecution = true;
           try {
@@ -1731,7 +1361,9 @@ test(
 
       await t.test('a failed decline enqueue rolls back both the decision and reply', async () => {
         const turn = await newTurn();
-        const id = await propose(turn, 'GMAIL_SEND_EMAIL', {});
+        const id = await propose(turn, 'OTTO_profile_update', {
+          preferences: 'Synthetic preference',
+        });
         const countMessages = async () =>
           (await db.pool.query('SELECT id FROM messages WHERE thread_id=$1', [turn.threadId]))
             .rowCount;
@@ -1755,7 +1387,9 @@ test(
       await t.test(
         'stopping after chat acceptance prevents the worker from executing',
         async () => {
-          const id = await propose(await newTurn(), 'GMAIL_SEND_EMAIL', {});
+          const id = await propose(await newTurn(), 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           await confirm(id, true);
           const before = calls.length;
           await thread.stopThread();
@@ -1770,7 +1404,9 @@ test(
         'stopping during confirmed execution records its result and a restart never retries it',
         async () => {
           const turn = await newTurn();
-          const id = await propose(turn, 'GMAIL_SEND_EMAIL', {});
+          const id = await propose(turn, 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           await confirm(id, true);
           let release = () => {};
           executionGate = new Promise<void>((resolve) => {
@@ -1805,7 +1441,9 @@ test(
             executionGate = undefined;
             await completed;
           }
-          const interrupted = await propose(await newTurn(), 'GMAIL_SEND_EMAIL', {});
+          const interrupted = await propose(await newTurn(), 'OTTO_profile_update', {
+            preferences: 'Synthetic preference',
+          });
           await db.pool.query("UPDATE approvals SET status='executing' WHERE id=$1", [interrupted]);
           await createApprovals(async () => {
             throw new Error('Must not automatically retry');

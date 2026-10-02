@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { getDomain } from 'tldts';
-import type { Approval, Connection, VaultLoginEntry } from '../shared/contracts.ts';
+import type { Connection, VaultLoginEntry } from '../shared/contracts.ts';
 import {
   IntegrationInboxCursorExpired,
   type ConnectedApp,
@@ -891,51 +891,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return row;
   }
 
-  async function validateApproval(ownerId: string, action: string, args: Record<string, unknown>) {
-    if (
-      action === 'CONNECTED_HTTP' ||
-      action === 'CONNECTED_MCP_CALL' ||
-      action === 'CONNECTED_CLI'
-    ) {
-      assertOwner(ownerId);
-      if (!options.discovered)
-        throw new IntegrationError('Discovered connections are unavailable.', 503);
-      await options.discovered.selected(args);
-      return;
-    }
-    await selectedConnection(ownerId, action, args);
-  }
-
-  async function describeApproval(
-    ownerId: string,
-    action: string,
-    args: Record<string, unknown>,
-  ): Promise<Approval['connection']> {
-    assertOwner(ownerId);
-    if (
-      action === 'CONNECTED_HTTP' ||
-      action === 'CONNECTED_MCP_CALL' ||
-      action === 'CONNECTED_CLI'
-    )
-      return options.discovered?.describe(args);
-    const slug = slugSchema.safeParse(action.split('_')[0].toLowerCase());
-    const connectionId = z.uuid().safeParse(args.connectionId);
-    if (!slug.success || !connectionId.success) return undefined;
-    const result = await pool.query<Pick<ConnectionRow, 'account_name' | 'account_email'>>(
-      `SELECT account_name,account_email FROM app_connections
-       WHERE id=$1 AND owner_id=$2 AND slug=$3
-       AND provider_id=ANY($4::text[]) AND account_id IS NOT NULL AND NOT revoked`,
-      [connectionId.data, ownerId, slug.data, providerIds],
-    );
-    const row = result.rows[0];
-    if (!row) return undefined;
-    return {
-      name: catalogs[slug.data].name,
-      ...(row.account_name ? { accountName: row.account_name } : {}),
-      ...(row.account_email ? { accountEmail: row.account_email } : {}),
-    };
-  }
-
   async function executeApproved(
     ownerId: string,
     action: string,
@@ -1743,11 +1698,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   return {
     registerRoutes,
     execute,
-    executeApproved,
     emailCode,
     download,
-    validateApproval,
-    describeApproval,
     list,
     connectedApps,
     manageConnections: async (

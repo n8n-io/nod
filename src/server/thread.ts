@@ -83,7 +83,6 @@ export interface ThreadDependencies {
   executeConfirmation?: (
     turnId: string,
     signal: AbortSignal,
-    present: (action: string, result: unknown) => Promise<unknown>,
   ) => Promise<{ prompt: string } | undefined>;
   recordFailure?: (turnId: string, error: unknown) => Promise<void>;
   observe?: (turnId: string, event: RuntimeObservation) => Promise<void>;
@@ -104,7 +103,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { readOnly: boolean; signal: AbortSignal; checkConnectionId?: string },
+    options: { signal: AbortSignal; checkConnectionId?: string },
   ) => Promise<unknown>;
   connections?: (
     action: 'list' | 'connect' | 'propose',
@@ -908,7 +907,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       operation.throwIfAborted();
       return value;
     };
-    const confirmed = await dependencies.executeConfirmation?.(turnId, signal, inline);
+    const confirmed = await dependencies.executeConfirmation?.(turnId, signal);
     if (confirmed) turn.prompt = confirmed.prompt;
     await ensureCurrent();
     const loaded = await loadTurnContext(turn, dependencies);
@@ -1031,7 +1030,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
         operation.throwIfAborted();
         const result = await dependencies.integration(ref, action, args, {
-          readOnly: turn.read_only || turn.source_id?.startsWith('onboarding:') === true,
           signal: operation,
           checkConnectionId: loaded.context.activityCheck?.connectionId,
         });

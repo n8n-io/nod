@@ -335,16 +335,15 @@ test('approval messages preserve source URLs and render supplied markup as text'
     '**keep this literal**',
   ];
   const body = `See <${links[0]}>.\n${links.slice(1).join('\n')}\n${unsafe.join('\n')}`;
-  const args = { recipient_email: 'person@example.test', message_body: body };
-  const document = new JSDOM(render(actionConfirmation('GMAIL_REPLY_TO_THREAD', args))).window
-    .document;
+  const args = { text: body };
+  const document = new JSDOM(render(actionConfirmation('OTTO_memory_save', args))).window.document;
   assert.deepEqual(
     [...document.querySelectorAll('a')].map((anchor) => anchor.getAttribute('href')),
     links,
   );
   assert.ok(document.body.textContent?.includes(body));
   assert.equal(document.querySelector('script,img,iframe,form,strong,em'), null);
-  assert.equal(args.message_body, body);
+  assert.equal(args.text, body);
 });
 
 test('plain browser connection paths hide their token behind one fixed action', () => {

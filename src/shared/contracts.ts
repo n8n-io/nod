@@ -206,15 +206,6 @@ export interface ScheduleHistory {
   runs: ScheduleRun[];
   nextCursor: string | null;
 }
-export interface Approval {
-  id: string;
-  action: string;
-  args: Record<string, unknown>;
-  connection?: Pick<Connection, 'name' | 'accountName' | 'accountEmail'> & {
-    command?: string;
-  };
-  status: 'pending' | 'executing' | 'completed' | 'declined' | 'uncertain' | 'expired';
-}
 export type HourCycle = 'auto' | 'h12' | 'h23';
 export interface Preferences {
   notificationRule: string;

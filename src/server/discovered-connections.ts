@@ -773,14 +773,6 @@ export async function createDiscoveredConnections(
       throw failed('The connected MCP request failed', cause);
     }
   }
-  async function describe(args: Record<string, unknown>) {
-    const { row, path } = await selected(args);
-    return {
-      name: row.name,
-      accountName: row.account_name,
-      ...(path.kind === 'cli' ? { command: path.command } : {}),
-    };
-  }
   function registerRoutes(app: FastifyInstance) {
     app.get<{ Params: { id: string } }>('/api/apps/discovery/:id', async (request, reply) => {
       const row = await proposal(request.params.id);
@@ -832,8 +824,6 @@ export async function createDiscoveredConnections(
     reconnect,
     search,
     execute,
-    selected,
-    describe,
     disconnect,
     registerRoutes,
   };

@@ -257,8 +257,8 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         },
       );
       await client.query(
-        `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction,authority_source_message_id,action_prompt,baseline_observation)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction,authority_source_message_id,baseline_observation)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           randomUUID(),
           ownerId,
@@ -271,7 +271,6 @@ export function createSchedules(dependencies: ScheduleDependencies) {
           row.timeZone,
           row.authorityInstruction,
           row.authoritySourceMessageId,
-          row.prompt,
           row.baselineObservation ? JSON.stringify(row.baselineObservation) : null,
         ],
       );
@@ -309,7 +308,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         schedule_revision integer NOT NULL, job_id uuid UNIQUE NOT NULL,
         title text NOT NULL, turn_id uuid REFERENCES turns(id), scheduled_for timestamptz NOT NULL,
         time_zone text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
-        authority_instruction text, authority_source_message_id uuid, action_prompt text,
+        authority_instruction text, authority_source_message_id uuid,
         baseline_observation jsonb, observation jsonb, observed_at timestamptz,
         UNIQUE(schedule_id,schedule_revision,scheduled_for)
       );

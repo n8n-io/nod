@@ -1,17 +1,4 @@
-import type { Approval } from '../shared/contracts.ts';
-import { createInspectorRedactor } from './inspector-redaction.ts';
-
 const labels: Record<string, string> = {
-  GMAIL_SEND_EMAIL: 'Send this email',
-  GMAIL_CREATE_EMAIL_DRAFT: 'Save this email draft',
-  GMAIL_DELETE_MESSAGE: 'Delete this email',
-  GMAIL_DELETE_EMAIL: 'Delete this email',
-  SLACK_SEND_MESSAGE: 'Send this Slack message',
-  SLACK_POST_MESSAGE: 'Send this Slack message',
-  SLACK_DELETE_MESSAGE: 'Delete this Slack message',
-  GOOGLECALENDAR_DELETE_EVENT: 'Delete this calendar event',
-  GOOGLEDRIVE_DELETE_FILE: 'Delete this file',
-  NOTION_DELETE_BLOCK: 'Delete this Notion block',
   OTTO_goal_create: 'Add this goal',
   OTTO_goal_update: 'Update this goal',
   OTTO_schedule_create: 'Add this schedule',
@@ -20,9 +7,6 @@ const labels: Record<string, string> = {
   OTTO_profile_update: 'Save these preferences',
   OTTO_notification_preferences_update: 'Save these notification preferences',
   OTTO_memory_save: 'Remember this',
-  CONNECTED_HTTP: 'Call this connected API',
-  CONNECTED_MCP_CALL: 'Use this connected tool',
-  CONNECTED_CLI: 'Run this connected command',
 };
 
 function plain(value: string) {
@@ -46,80 +30,12 @@ function text(value: unknown) {
   return typeof value === 'string' && value.trim() ? plain(value.trim()) : undefined;
 }
 
-function fieldLabel(key: string) {
-  const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
-  return plain(words.charAt(0).toUpperCase() + words.slice(1));
-}
-
-function calendarValue(value: unknown): string {
-  if (value === null) return 'None';
-  if (Array.isArray(value))
-    return value.length
-      ? value.map((item, index) => `${index + 1}. ${calendarValue(item)}`).join('\n')
-      : 'Empty list';
-  if (typeof value === 'object' && value) {
-    const entries = Object.entries(value);
-    return entries.length
-      ? entries.map(([key, item]) => `${fieldLabel(key)}: ${calendarValue(item)}`).join('\n')
-      : 'No fields';
-  }
-  return typeof value === 'string' ? plain(value) || 'Empty text' : String(value);
-}
-
-function recipients(value: unknown) {
-  const values = Array.isArray(value) ? value : [value];
-  if (
-    !values.length ||
-    values.some((entry) => typeof entry !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entry))
-  )
-    return undefined;
-  return values.map((entry) => plain(entry as string)).join(', ');
-}
-
-const redactConnected = createInspectorRedactor([], { string: 2000, payload: 2400 });
-
-function connectedText(value: unknown) {
-  const safe = redactConnected(value);
-  const serialized = typeof safe === 'string' ? safe : JSON.stringify(safe);
-  return plain(serialized.length > 1800 ? `${serialized.slice(0, 1800)} [truncated]` : serialized);
-}
-
-function cliArguments(value: unknown) {
-  if (!Array.isArray(value)) return connectedText(value);
-  const masked = value.map((part, index) => {
-    if (typeof part !== 'string') return part;
-    const previous = value[index - 1];
-    if (
-      typeof previous === 'string' &&
-      /^(?:--?)(?:api[-_]?key|auth|authorization|password|secret|token)$/i.test(previous)
-    )
-      return '[redacted]';
-    return part.replace(
-      /^(--?(?:api[-_]?key|auth|authorization|password|secret|token)=).+$/i,
-      '$1[redacted]',
-    );
-  });
-  return connectedText(masked);
-}
-
 export function actionConfirmation(
   action: string,
   args: Record<string, unknown>,
-  connection?: Approval['connection'],
   targetTitle?: string,
 ) {
-  const fallback = /^[A-Z][A-Z0-9]*(?:_[A-Z]+)+$/.test(action)
-    ? action
-        .split('_')
-        .slice(1)
-        .join(' ')
-        .toLowerCase()
-        .replace(/^./, (letter) => letter.toUpperCase())
-    : 'Make this change';
-  const label = labels[action] ?? fallback;
-  const account = text(connection?.accountEmail) || text(connection?.accountName);
-  const service = text(connection?.name);
-  const using = service ? ` using ${service}${account ? ` (${account})` : ''}` : '';
+  const label = labels[action] ?? 'Make this change';
   const details: string[] = [];
   const seen = new Set<string>();
   const add = (label: string, value: string | undefined) => {
@@ -127,36 +43,10 @@ export function actionConfirmation(
     seen.add(label);
     details.push(`${label}: ${value}`);
   };
-  add(action === 'GMAIL_REPLY_TO_THREAD' ? 'Thread subject' : 'For', text(targetTitle));
-  if (action.startsWith('GOOGLECALENDAR_')) {
-    for (const [key, value] of Object.entries(args)) {
-      if (key === 'connectionId') continue;
-      const label = fieldLabel(key);
-      seen.add(label);
-      details.push(`${label}: ${calendarValue(value)}`);
-    }
-  }
-  if (action === 'CONNECTED_HTTP') {
-    add('Method', connectedText(args.method));
-    add('Path', connectedText(args.path));
-    if (args.body !== undefined) add('Request', connectedText(args.body));
-  }
-  if (action === 'CONNECTED_MCP_CALL') {
-    add('Tool', connectedText(args.tool));
-    if (args.input !== undefined) add('Input', connectedText(args.input));
-  }
-  if (action === 'CONNECTED_CLI') {
-    add('Program', text(connection?.command));
-    add('Arguments', cliArguments(args.argv));
-  }
+  add('For', text(targetTitle));
   for (const [key, label] of [
     ['title', 'Title'],
-    ['subject', 'Subject'],
-    ['recipient_name', 'Recipient'],
-    ['channel_name', 'Channel'],
     ['name', 'Name'],
-    ['file_name', 'File'],
-    ['filename', 'File'],
     ['nextAction', 'Next step'],
     ['description', 'Description'],
     ['preferences', 'Preferences'],
@@ -169,9 +59,6 @@ export function actionConfirmation(
     ['locale', 'Region'],
   ])
     add(label!, text(args[key!]));
-  for (const key of ['to', 'recipients', 'recipient_email', 'to_email'])
-    add('To', recipients(args[key]));
-  for (const key of ['cc', 'bcc']) add(key.toUpperCase(), recipients(args[key]));
   if (typeof args.progress === 'number' && Number.isFinite(args.progress))
     add('Progress', `${args.progress}%`);
   if (['active', 'paused', 'completed'].includes(String(args.status)))
@@ -213,14 +100,7 @@ export function actionConfirmation(
               : `Custom timing (${plain(args.cron)})`,
     );
   }
-  for (const key of ['body', 'message_body', 'text', 'content', 'prompt'])
-    add(
-      action === 'OTTO_memory_save'
-        ? 'Note'
-        : action.startsWith('OTTO_schedule_')
-          ? 'Instructions'
-          : 'Message',
-      text(args[key]),
-    );
-  return `${label}${using}?${details.length ? `\n\n${details.join('\n\n')}` : ''}\n\nReply yes to confirm, no to leave it unchanged, or tell me what to change.`;
+  for (const key of ['text', 'prompt'])
+    add(action === 'OTTO_memory_save' ? 'Note' : 'Instructions', text(args[key]));
+  return `${label}?${details.length ? `\n\n${details.join('\n\n')}` : ''}\n\nReply yes to confirm, no to leave it unchanged, or tell me what to change.`;
 }

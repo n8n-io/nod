@@ -97,11 +97,6 @@ test(
       assert.equal(response.statusCode, 200, response.body);
       return response.json<ScheduleHistory>().runs;
     };
-    const turnRef = async (turnId: string) => ({
-      turnId,
-      threadId: (await db.pool.query('SELECT thread_id FROM turns WHERE id=$1', [turnId])).rows[0]
-        .thread_id as string,
-    });
     const saved = async (id: string) =>
       (await personal.listSchedules()).find((schedule) => schedule.id === id)!;
     const inbox: InboundMessage[] = [];
@@ -289,87 +284,6 @@ test(
         },
       );
 
-      await t.test(
-        'due runs execute only their immutable owned scheduled instruction',
-        async () => {
-          const { createApprovals } = await import('../src/server/approvals.ts');
-          const executed: unknown[] = [];
-          const approvals = await createApprovals(async (action, args, context) => {
-            executed.push({ action, args, context });
-            return { sent: true };
-          });
-          const schedule = await create({
-            kind: 'once',
-            runAt: '2035-10-27T09:05:00+01:00',
-            prompt: 'Send an email to Alex with the weekly update.',
-          });
-          await deliver([await jobFor(schedule.id)]);
-          const run = (await runs(schedule.id))[0]!;
-          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [run.turnId]);
-          assert.deepEqual(
-            await approvals.request(await turnRef(run.turnId), 'GMAIL_SEND_EMAIL', {
-              to: 'alex@example.test',
-              body: 'Synthetic fixture',
-            }),
-            { sent: true },
-          );
-          await approvals.request(await turnRef(run.turnId), 'GMAIL_SEND_EMAIL', {
-            to: 'alex@example.test',
-            body: 'Synthetic fixture',
-          });
-          assert.equal(executed.length, 1);
-          assert.equal(
-            (
-              await approvals.request(await turnRef(run.turnId), 'SLACK_SEND_MESSAGE', {
-                text: 'No authority',
-              })
-            ).requiresConfirmation,
-            true,
-          );
-          assert.equal(
-            (
-              await approvals.request(await turnRef(run.turnId), 'GMAIL_DELETE_MESSAGE', {
-                message_id: 'fixture',
-              })
-            ).requiresConfirmation,
-            true,
-          );
-          assert.equal(executed.length, 1);
-          const edited = await create({ cron: '5 9 * * *', prompt: 'Send an email to Alex.' });
-          const source = randomUUID();
-          await db.pool.query(
-            "INSERT INTO messages(id,owner_id,role,text) VALUES($1,'local-development','user','Change it to draft an email to Alex and keep it unsent.')",
-            [source],
-          );
-          await personal.manage(
-            'schedule_update',
-            { id: edited.id, prompt: 'Draft an email to Alex and keep it unsent.' },
-            { sourceMessageId: source },
-          );
-          await deliver([await jobFor(edited.id)]);
-          const draft = (await runs(edited.id))[0]!;
-          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [draft.turnId]);
-          await assert.rejects(
-            approvals.request(await turnRef(draft.turnId), 'GMAIL_SEND_EMAIL', {
-              to: 'alex@example.test',
-            }),
-          );
-          assert.equal(executed.length, 1);
-          const generic = await thread.enqueueTurn('Send an email to Alex.', {
-            source: 'event',
-            sourceId: 'synthetic-event',
-          });
-          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [generic]);
-          await assert.rejects(
-            approvals.request(await turnRef(generic), 'GMAIL_SEND_EMAIL', {
-              to: 'alex@example.test',
-            }),
-          );
-          assert.equal(executed.length, 1);
-          await request('DELETE', `/api/schedules/${schedule.id}`);
-          await request('DELETE', `/api/schedules/${edited.id}`);
-        },
-      );
       await t.test(
         'one-off firing is single-use under concurrent redelivery and restart',
         async () => {

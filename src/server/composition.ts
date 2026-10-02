@@ -587,23 +587,10 @@ export async function createApplication(
     (action, args, provenance) =>
       action === 'OTTO_memory_save'
         ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
-        : action.startsWith('OTTO_')
-          ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-          : providerUsage.withTurn(provenance.turnId, () =>
-              integrations.executeApproved(
-                ownerId,
-                action,
-                args,
-                { threadId: provenance.threadId, turnId: provenance.turnId },
-                provenance.signal,
-              ),
-            ),
+        : personal.manage(action.slice('OTTO_'.length), args, provenance),
     async (action, args) => {
-      if (action.startsWith('OTTO_'))
-        await personal.validateReview(action.slice('OTTO_'.length), args);
-      else await integrations.validateApproval(ownerId, action, args);
+      await personal.validateReview(action.slice('OTTO_'.length), args);
     },
-    (action, args) => integrations.describeApproval(ownerId, action, args),
   );
   const reactions = createAgentReactionService({ pool, ownerId, refresh });
   const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;
@@ -669,7 +656,7 @@ export async function createApplication(
         if (action === 'memory_save' && (await memory.untrusted(turn.threadId))) {
           const input = memory.validate(args);
           // An explicit request allows one direct note, so once any note cites this message the rest are confirmed.
-          const result = await approvals.request(turn, 'OTTO_memory_save', input, undefined, {
+          const result = await approvals.request(turn, 'OTTO_memory_save', input, {
             confirm: await memory.cites(provenance.sourceMessageId),
           });
           if (!(result && typeof result === 'object' && 'requiresConfirmation' in result))

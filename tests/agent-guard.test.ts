@@ -862,7 +862,7 @@ test('activity checks scope reads to one account, deny other tools and record ex
   assert.equal(result.result.status, 'succeeded');
 });
 
-test('failed, approval and omitted app results cannot verify an activity check', async () => {
+test('failed and omitted app results cannot verify an activity check', async () => {
   for (const response of [
     { successful: false, data: { items: [] } },
     { success: false, data: { items: [] } },
@@ -871,8 +871,6 @@ test('failed, approval and omitted app results cannot verify an activity check',
     { data: { status: 'rejected' } },
     { successful: true, data: { data: { successful: false } } },
     { content: [{ type: 'text', text: JSON.stringify({ data: { isError: true } }) }] },
-    { requiresConfirmation: true, question: 'Allow a write?' },
-    { requiresApproval: true },
     { truncated: true, resultOmitted: true, message: 'Response omitted' },
     { truncated: true, message: 'Response omitted' },
     { workspaceFile: 'download.txt', id: 'artifact' },

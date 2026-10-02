@@ -273,18 +273,16 @@ test(
       assert.equal(executed, 1);
       await integrations.execute('local-development', 'GMAIL_FETCH_EMAILS', { max_results: 5 });
       assert.equal(executed, 2);
-      await integrations.executeApproved('local-development', 'GMAIL_SEND_EMAIL', {
+      await integrations.execute('local-development', 'GMAIL_SEND_EMAIL', {
         recipient_email: 'fixture@example.com',
         connectionId: (await integrations.list()).find((row) => row.slug === 'gmail')?.connectionId,
       });
       assert.equal(executed, 3);
       await assert.rejects(integrations.execute('another-user', 'GMAIL_FETCH_EMAILS', {}));
       await assert.rejects(
-        integrations.executeApproved('local-development', 'COMPOSIO_MULTI_EXECUTE_TOOL', {}),
+        integrations.execute('local-development', 'COMPOSIO_MULTI_EXECUTE_TOOL', {}),
       );
-      await assert.rejects(
-        integrations.executeApproved('local-development', 'GITHUB_CREATE_ISSUE', {}),
-      );
+      await assert.rejects(integrations.execute('local-development', 'GITHUB_CREATE_ISSUE', {}));
       const search = await integrations.execute('local-development', 'SEARCH_TOOLS', {
         query: 'Send an email',
       });
@@ -354,9 +352,7 @@ test(
         'discarded',
       );
       assert.equal(delivered.length, 1);
-      await assert.rejects(
-        integrations.executeApproved('local-development', 'GMAIL_SEND_EMAIL', {}),
-      );
+      await assert.rejects(integrations.execute('local-development', 'GMAIL_SEND_EMAIL', {}));
       assert.equal((await send({ ...event, id: 'event-after-disconnect' })).statusCode, 202);
       assert.equal((await pool.query('SELECT * FROM integration_events')).rowCount, 3);
     } finally {
@@ -420,7 +416,7 @@ test(
         "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES ('local-development','gmail','ca-fixture','fixture') RETURNING id",
       );
       const args = { connectionId: rows[0]!.id, recipient_email: 'fixture@example.test' };
-      action = integrations.executeApproved('local-development', 'GMAIL_SEND_EMAIL', args);
+      action = integrations.execute('local-development', 'GMAIL_SEND_EMAIL', args);
       const outcome = action.then(
         () => 'executed',
         () => 'rejected',
@@ -710,29 +706,11 @@ test(
       assert.deepEqual(deleted, ['account-1']);
       assert.equal((await integrations.list()).filter((row) => row.slug === 'gmail').length, 1);
       await assert.rejects(
-        integrations.executeApproved('local-development', 'GMAIL_SEND_EMAIL', {
+        integrations.execute('local-development', 'GMAIL_SEND_EMAIL', {
           connectionId: first.connectionId,
         }),
         { statusCode: 404 },
       );
-      for (const connectionId of [undefined, 'invalid-account-reference']) {
-        await assert.rejects(
-          integrations.validateApproval('local-development', 'GMAIL_SEND_EMAIL', {
-            ...(connectionId === undefined ? {} : { connectionId }),
-          }),
-          { statusCode: 409 },
-        );
-        await assert.rejects(
-          integrations.executeApproved('local-development', 'GMAIL_SEND_EMAIL', {
-            subject: 'Legacy pending approval',
-            ...(connectionId === undefined ? {} : { connectionId }),
-          }),
-          {
-            statusCode: 409,
-            message: 'Choose a connected account for this action.',
-          },
-        );
-      }
       assert.equal(executions.length, 2);
       await integrations.execute('local-development', 'GMAIL_LIST_LABELS', {});
       assert.equal(executions.at(-1)?.accountId, 'account-2');
@@ -889,56 +867,6 @@ async function appsFixture(
     callbacks,
   };
 }
-
-test(
-  'legacy app review metadata names only the selected owned account',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await appsFixture(t);
-    const first = await f.connect('gmail');
-    const selected = await f.connect('gmail');
-    await f.pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
-      selected.connectionId,
-      'selected@example.test',
-    ]);
-    const metadata = await f.service.describeApproval('local-development', 'GMAIL_SEND_EMAIL', {
-      connectionId: selected.connectionId,
-    });
-    assert.deepEqual(metadata, {
-      name: 'Gmail',
-      accountName: `gmail ${selected.accountId}`,
-      accountEmail: 'selected@example.test',
-    });
-    assert.doesNotMatch(JSON.stringify(metadata), /private-callback|connectionId/);
-    assert.notDeepEqual(
-      metadata,
-      await f.service.describeApproval('local-development', 'GMAIL_SEND_EMAIL', {
-        connectionId: first.connectionId,
-      }),
-    );
-    assert.equal(
-      await f.service.describeApproval('local-development', 'NOTION_UPDATE_PAGE', {
-        connectionId: selected.connectionId,
-      }),
-      undefined,
-    );
-    await f.pool.query('UPDATE app_connections SET revoked=true WHERE id=$1', [
-      selected.connectionId,
-    ]);
-    assert.equal(
-      await f.service.describeApproval('local-development', 'GMAIL_SEND_EMAIL', {
-        connectionId: selected.connectionId,
-      }),
-      undefined,
-    );
-    await assert.rejects(
-      f.service.describeApproval('foreign-owner', 'GMAIL_SEND_EMAIL', {
-        connectionId: first.connectionId,
-      }),
-      { statusCode: 403 },
-    );
-  },
-);
 
 test(
   'background app inventory stays local, owned and current without authenticating saved logins',
@@ -1993,7 +1921,7 @@ test(
     assert.ok(f.removed.includes(slack.accountId!));
     assert.ok((await f.service.list()).some((item) => item.connectionId === another.connectionId));
     await assert.rejects(
-      f.service.executeApproved('local-development', 'SLACK_SEND_MESSAGE', {
+      f.service.execute('local-development', 'SLACK_SEND_MESSAGE', {
         connectionId: slack.connectionId,
       }),
       { statusCode: 404 },
@@ -3425,7 +3353,12 @@ test(
       );
       assert.equal(cliCalls, 0);
       await assert.rejects(
-        discovered.selected({ connectionId: foreignId, pathId: mcpPath }),
+        discovered.execute(
+          'CONNECTED_MCP_CALL',
+          { connectionId: foreignId, pathId: mcpPath, tool: 'list_records' },
+          ref,
+          new AbortController().signal,
+        ),
         /unavailable/,
       );
       const mcpArgs = { connectionId, pathId: mcpPath, tool: 'list_records' };
