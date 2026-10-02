@@ -323,7 +323,11 @@ export function AccountSettings({
   onName(name: string): Promise<void>;
   returnFocus(): HTMLElement | null;
 }) {
-  const [tab, setTab] = useState<AccountTab>(initialTab);
+  const tabs: AccountTab[] = account.local
+    ? ['Appearance', 'Preferences']
+    : ['Profile', 'Appearance', 'Preferences'];
+  const selectedTab = tabs.includes(initialTab) ? initialTab : 'Preferences';
+  const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [name, setName] = useState(account.user.name);
   const [error, setError] = useState('');
   const active = useRef(false);
@@ -336,11 +340,11 @@ export function AccountSettings({
   }, []);
   useEffect(() => {
     if (open) {
-      setTab(initialTab);
+      setTab(selectedTab);
       setName(account.user.name);
       setError('');
     }
-  }, [open, initialTab, account.user.id]);
+  }, [open, selectedTab, account.user.id]);
   useEffect(() => setName(account.user.name), [account.user.name]);
   async function saveName(event: React.FormEvent) {
     event.preventDefault();
@@ -371,8 +375,8 @@ export function AccountSettings({
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <div className="account-settings-layout">
-          <nav role="tablist" aria-label="Account settings" aria-orientation="vertical">
-            {(['Profile', 'Appearance', 'Preferences'] as const).map((value, index, tabs) => {
+          <nav role="tablist" aria-label="Settings" aria-orientation="vertical">
+            {tabs.map((value, index) => {
               const Icon =
                 value === 'Profile' ? UserRound : value === 'Appearance' ? Sun : SlidersHorizontal;
               return (
@@ -424,7 +428,7 @@ export function AccountSettings({
               <h3>{tab}</h3>
             </header>
             <div key={tab} className="account-settings-body" tabIndex={0}>
-              {tab === 'Profile' && (
+              {!account.local && tab === 'Profile' && (
                 <form className="account-profile-form" onSubmit={(event) => void saveName(event)}>
                   <div className="account-profile-identity">
                     <AccountAvatar user={account.user} large />
@@ -516,8 +520,8 @@ export function AccountSettings({
               {tab === 'Preferences' && <PreferencesForm />}
             </div>
           </div>
-          <div className="account-settings-signout">
-            {account.canLogout && (
+          {account.canLogout && (
+            <div className="account-settings-signout">
               <button
                 type="button"
                 aria-label="Sign out"
@@ -527,8 +531,8 @@ export function AccountSettings({
                 <LogOut size={16} aria-hidden="true" />
                 <span>Sign out</span>
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -192,7 +192,7 @@
   gap: 12px;
   width: min(1100px, calc(100vw - 24px));
   max-width: none;
-  max-height: calc(100dvh - 24px);
+  max-height: calc(var(--dialog-viewport-height) - 24px);
   padding: 48px 16px 12px;
 }
 
@@ -215,12 +215,12 @@
   display: block;
   max-width: 100%;
   min-width: 0;
-  max-height: calc(100dvh - 148px);
+  max-height: calc(var(--dialog-viewport-height) - 148px);
   object-fit: contain;
 }
 
 .attachment-viewer-surface.is-audio {
-  min-height: min(200px, calc(100dvh - 148px));
+  min-height: min(200px, calc(var(--dialog-viewport-height) - 148px));
 }
 
 .attachment-viewer-surface audio {
@@ -232,7 +232,7 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: min(720px, calc(100dvh - 148px));
+  height: min(720px, calc(var(--dialog-viewport-height) - 148px));
   min-width: 0;
   min-height: 0;
   gap: 8px;
@@ -243,7 +243,7 @@
   flex-direction: column;
   gap: 14px;
   width: 100%;
-  height: min(720px, calc(100dvh - 148px));
+  height: min(720px, calc(var(--dialog-viewport-height) - 148px));
   min-width: 0;
   min-height: 0;
   overflow: hidden;

@@ -4,6 +4,7 @@ import { AlertCircle, Check, Link2, LoaderCircle, Plus } from 'lucide-react';
 import type { Connection } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
+import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import {
   connectionGroups,
   connectionIdentity,
@@ -245,7 +246,8 @@ export function Apps() {
           }),
         },
       );
-      window.location.assign(connectionUrl(result.url, window.location.origin));
+      await openConnection(connectionUrl(result.url, window.location.origin));
+      if (desktopLinksAvailable()) setSavingDiscovery(false);
     } catch (cause) {
       setDiscoveryError(errorMessage(cause));
       setSavingDiscovery(false);
@@ -280,7 +282,7 @@ export function Apps() {
         {
           method: 'POST',
           body: JSON.stringify({
-            returnTo: 'apps',
+            returnTo: desktopLinksAvailable() ? 'window' : 'apps',
             ...(connection.accessPaths?.some((path) => path.kind !== 'browser')
               ? { connectionId: connection.connectionId }
               : {}),
@@ -289,7 +291,8 @@ export function Apps() {
         },
       );
       if (request.signal.aborted) return;
-      window.location.assign(connectionUrl(result.url, window.location.origin));
+      await openConnection(connectionUrl(result.url, window.location.origin));
+      if (desktopLinksAvailable()) setBusy('');
     } catch (cause) {
       if (request.signal.aborted) return;
       setError(errorMessage(cause));

@@ -14,6 +14,7 @@ import { useBrowserTimeZone } from '../hooks/use-browser-time-zone';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
+import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 
 type Pending = 'opening' | 'waiting';
 
@@ -122,7 +123,10 @@ export function Onboarding({
   }
   async function connect(slug: IntegrationService) {
     if (actions.current.has(slug) || saving) return;
-    const popup = window.open('', `otto-connect-${slug}`, 'popup,width=520,height=720');
+    const desktop = desktopLinksAvailable();
+    const popup = desktop
+      ? null
+      : window.open('', `otto-connect-${slug}`, 'popup,width=520,height=720');
     try {
       if (popup) popup.opener = null;
     } catch {}
@@ -135,12 +139,15 @@ export function Onboarding({
     try {
       const response = await api<{ url: string; attempt?: string }>(`/api/apps/${slug}/connect`, {
         method: 'POST',
-        body: JSON.stringify({ returnTo: popup ? 'window' : 'onboarding' }),
+        body: JSON.stringify({ returnTo: popup || desktop ? 'window' : 'onboarding' }),
         signal: request.signal,
       });
       if (request.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
       const url = connectionUrl(response.url, window.location.origin);
-      if (!popup) {
+      if (desktop) {
+        await openConnection(url);
+        next = 'waiting';
+      } else if (!popup) {
         next = 'opening';
         window.location.assign(url);
       } else if (!popup.closed) {
@@ -186,8 +193,10 @@ export function Onboarding({
         )}
       </header>
       <div className="account-onboarding-content">
-        <AccountAvatar user={user} large />
-        <h1>Welcome{user.name.trim() ? `, ${user.name.trim().split(/\s+/)[0]}` : ''}.</h1>
+        {canLogout && <AccountAvatar user={user} large />}
+        <h1>
+          Welcome{canLogout && user.name.trim() ? `, ${user.name.trim().split(/\s+/)[0]}` : ''}.
+        </h1>
         <p>Connect your apps.</p>
         {(error || loadError) && <Notice>{error || loadError}</Notice>}
         {loadError && (

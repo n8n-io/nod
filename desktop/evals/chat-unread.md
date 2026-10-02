@@ -1,0 +1,11 @@
+# Chat unread count
+
+Hypothesis before implementation: the sidebar has no owner/thread-scoped read cursor, so it cannot distinguish initial history from new committed replies or retain that distinction after closing the app. A navigation-only clear would also discard unread replies when Chat is open but unfocused or scrolled away.
+
+The implementation will persist only a timestamp and message IDs at that timestamp. Initial history establishes a baseline. New committed assistant messages count until the focused, visible chat reaches its latest content. Equal-timestamp IDs prevent missed or duplicate replies. Native storage keeps the cursor across engine origin changes; browser storage keys include both owner and thread. A saved cursor outside the current message window triggers fenced history pagination until the cursor or the 99+ display limit.
+
+Focused checks: initial history is read; duplicate/reaction updates and user messages do not increment; equal-timestamp assistant replies count once; separate owners and reset threads cannot inherit read state; persistence contains no message text; older history fills a detected gap and stops at the read point or display cap; aborted history cannot clear or advance another thread's state. Native visible/read-position checks remain separate from these synthetic checks.
+
+Implemented and synthetically verified: three focused tests pass in `tests/channel-stream-isolation.test.ts`, covering cursor semantics and timestamp ties, paginated backlogs/cap/aborts, and actual React hook persistence with delayed native reads, owner changes, reset threads, and failed-read recovery. The independent review found that a failed native read was initially treated as missing state; it now stays unknown, does not overwrite the saved cursor, and retries on focus or reconnect. `tsc --noEmit` passes. Evidence: `.local/chat-unread-tests.log`.
+
+History reconciliation is limited to 15 seconds per attempt and stops once 100 replies establish the `99+` display. While history is incomplete or persistence is unavailable, the badge shows a lower bound or pending indicator, never a falsely exact zero. No message content is persisted. Installed visibility, scroll position, and notification-click acceptance remain with the parent evaluation.

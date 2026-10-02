@@ -20,6 +20,7 @@ import './pages/privacy.css';
 import './pages/onboarding.css';
 import './components/account-settings.css';
 import './components/time-zone-picker.css';
+import './components/sidebar-unread.css';
 
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };

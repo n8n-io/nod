@@ -328,7 +328,9 @@ export async function createApplication(
     : localArtifacts;
   const inspectorDatabase = createInspectorPool();
   const inspectorSecrets = Object.entries(process.env)
-    .filter(([key]) => /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN)$/.test(key))
+    .filter(([key]) =>
+      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN)$/.test(key),
+    )
     .flatMap(([, value]) => (value ? [value] : []));
   if (process.env.DATABASE_URL) {
     inspectorSecrets.push(process.env.DATABASE_URL);

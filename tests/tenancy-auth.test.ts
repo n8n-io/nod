@@ -1223,6 +1223,180 @@ describe('hosted webhooks', () => {
 });
 
 describe('local access', () => {
+  test('desktop APIs require the private launch token including streams, files and webhook routes', async () => {
+    const app = Fastify();
+    const token = randomBytes(32).toString('base64url');
+    registerLocalAccess(app, 4310, { token });
+    let handled = 0;
+    const routes = [
+      { method: 'GET' as const, url: '/api/health' },
+      { method: 'GET' as const, url: '/api/events' },
+      { method: 'GET' as const, url: '/api/artifacts/synthetic-download' },
+      { method: 'GET' as const, url: '/api/desktop/status' },
+      { method: 'POST' as const, url: '/api/messages' },
+      { method: 'POST' as const, url: '/api/runtime/drain' },
+      { method: 'POST' as const, url: '/api/webhooks/composio' },
+      { method: 'POST' as const, url: '/api/webhooks/telegram' },
+      { method: 'POST' as const, url: '/api/webhooks/whatsapp' },
+      { method: 'GET' as const, url: '/api/webhooks/whatsapp' },
+    ];
+    for (const route of routes)
+      app.route({
+        ...route,
+        async handler() {
+          handled++;
+          return { ok: true };
+        },
+      });
+    const headers = { host: '127.0.0.1:4310' };
+    try {
+      for (const route of routes) {
+        for (const candidate of [
+          undefined,
+          token.slice(1),
+          randomBytes(32).toString('base64url'),
+        ]) {
+          const response = await app.inject({
+            ...route,
+            headers: {
+              ...headers,
+              ...(candidate ? { 'x-otto-desktop-token': candidate } : {}),
+            },
+          });
+          assert.equal(response.statusCode, 401, route.url);
+          assert.ok(!response.body.includes(token));
+        }
+        assert.equal(
+          (
+            await app.inject({
+              ...route,
+              url: `${route.url}?token=${token}`,
+              headers: { ...headers, cookie: `x-otto-desktop-token=${token}` },
+            })
+          ).statusCode,
+          401,
+        );
+      }
+      assert.equal(handled, 0);
+      for (const route of routes)
+        assert.equal(
+          (
+            await app.inject({
+              ...route,
+              headers: { ...headers, 'x-otto-desktop-token': token },
+            })
+          ).statusCode,
+          200,
+        );
+      assert.equal(handled, routes.length);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('desktop tokens cannot authorize foreign origins, alternate hosts or cross-site API calls', async () => {
+    const app = Fastify();
+    const token = randomBytes(32).toString('base64url');
+    registerLocalAccess(app, 4310, { token });
+    let handled = 0;
+    app.get('/api/state', async () => {
+      handled++;
+      return { ok: true };
+    });
+    const headers = { host: '127.0.0.1:4310', 'x-otto-desktop-token': token };
+    try {
+      for (const rejected of [
+        { ...headers, host: 'localhost:4310' },
+        { ...headers, host: '[::1]:4310' },
+        { ...headers, host: '127.0.0.1:4311' },
+        { ...headers, host: 'attacker.example:4310' },
+        { ...headers, origin: 'http://localhost:4310' },
+        { ...headers, origin: 'http://127.0.0.1:4311' },
+        { ...headers, origin: 'https://127.0.0.1:4310' },
+        { ...headers, origin: 'https://attacker.example' },
+        { ...headers, origin: 'null' },
+        { ...headers, 'sec-fetch-site': 'cross-site' },
+      ])
+        assert.equal((await app.inject({ url: '/api/state', headers: rejected })).statusCode, 403);
+      assert.equal(handled, 0);
+      assert.equal(
+        (
+          await app.inject({
+            url: '/api/state',
+            headers: { ...headers, origin: 'http://127.0.0.1:4310' },
+          })
+        ).statusCode,
+        200,
+      );
+      assert.equal(handled, 1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test('desktop OAuth exemption is limited to the exact GET callback and one bounded state', async () => {
+    const app = Fastify();
+    const token = randomBytes(32).toString('base64url');
+    const state = randomBytes(32).toString('base64url');
+    registerLocalAccess(app, 4310, { token });
+    const callbacks: string[] = [];
+    app.get<{ Querystring: { state: string } }>('/api/apps/callback', async (request) => {
+      callbacks.push(request.query.state);
+      return { ok: true };
+    });
+    app.post('/api/apps/callback', async () => ({ ok: true }));
+    const headers = {
+      host: '127.0.0.1:4310',
+      'sec-fetch-site': 'cross-site',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-dest': 'document',
+    };
+    try {
+      for (const url of [
+        '/api/apps/callback',
+        '/api/apps/callback?state=short',
+        `/api/apps/callback?state=${state}&state=${state}`,
+        `/api/apps/callback/?state=${state}`,
+        `/api/apps/callback/extra?state=${state}`,
+        `/api/apps?state=${state}`,
+        `/api/apps/callback?state=${'!'.repeat(43)}`,
+      ])
+        assert.equal((await app.inject({ url, headers })).statusCode, 401, url);
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/apps/callback?state=${state}`,
+            headers,
+          })
+        ).statusCode,
+        401,
+      );
+      assert.equal(callbacks.length, 0);
+      assert.equal(
+        (await app.inject({ url: `/api/apps/callback?state=${state}`, headers })).statusCode,
+        200,
+      );
+      assert.deepEqual(callbacks, [state]);
+      for (const rejected of [
+        { ...headers, host: 'attacker.example:4310' },
+        { ...headers, origin: 'https://attacker.example' },
+      ])
+        assert.equal(
+          (
+            await app.inject({
+              url: `/api/apps/callback?state=${state}`,
+              headers: rejected,
+            })
+          ).statusCode,
+          403,
+        );
+      assert.equal(callbacks.length, 1);
+    } finally {
+      await app.close();
+    }
+  });
+
   test('OAuth return permits top-level Apps and onboarding navigation and keeps cross-site APIs blocked', async () => {
     const app = Fastify();
     registerLocalAccess(app, 4310);

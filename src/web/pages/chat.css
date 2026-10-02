@@ -355,6 +355,10 @@
   font-weight: 600;
   letter-spacing: -0.2px;
 }
+.chat-report-button {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
 .chat-page .conversation-scroll > .conversation-column,
 .chat-page > .chat-bottom.conversation-column {
   max-width: var(--chat-width);
@@ -530,19 +534,21 @@
     font-size: 16px;
   }
 }
-.chat-page .message-focused {
-  border-radius: var(--radius);
-  animation: chat-message-focus 2.4s ease-out;
+.chat-page .message-focused .message-body {
+  animation: chat-message-focus 1.6s ease-out;
 }
 @keyframes chat-message-focus {
   0%,
-  45% {
-    background: var(--accent-soft);
-    box-shadow: 0 0 0 6px var(--accent-soft);
+  25% {
+    background-color: color-mix(in srgb, var(--message-background), var(--foreground) 10%);
   }
   100% {
-    background: transparent;
-    box-shadow: 0 0 0 6px transparent;
+    background-color: var(--message-background);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-page .message-focused .message-body {
+    animation-timing-function: step-end;
   }
 }
 .chat-page .messages {
@@ -573,17 +579,18 @@
   align-items: flex-end;
 }
 .chat-page .message .message-body {
+  --message-background: var(--surface-subtle);
   flex: 0 1 auto;
   max-width: min(82%, 640px);
   padding: 10px 16px;
   border-radius: 16px;
-  background: var(--surface-subtle);
+  background: var(--message-background);
   color: var(--foreground);
   overflow-x: auto;
 }
 .chat-page .message-user .message-body {
+  --message-background: var(--chat-sent);
   padding: 10px 16px;
-  background: var(--chat-sent);
   color: var(--chat-sent-foreground);
 }
 .chat-page .message .message-text {

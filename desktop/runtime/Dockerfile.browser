@@ -1,0 +1,12 @@
+FROM node:24.21.0-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends chromium xvfb xauth xdotool ffmpeg fonts-liberation ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+RUN npm init -y && npm pkg set type=module && npm install --omit=dev --no-audit --no-fund agent-browser@0.38.1 tsx@4.20.6 zod@4.1.12 && npm cache clean --force
+COPY src/ports ./src/ports/
+COPY src/shared ./src/shared/
+COPY src/providers/process.ts ./src/providers/
+COPY src/providers/agent-browser ./src/providers/agent-browser/
+COPY src/providers/container-browser ./src/providers/container-browser/
+RUN chmod 555 src/providers/container-browser/chromium.sh && mkdir /data && chown node:node /data && chmod 700 /data
+USER node
+CMD ["node", "--import", "tsx", "/app/src/providers/container-browser/worker.ts"]
