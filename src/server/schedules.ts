@@ -312,6 +312,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
         baseline_observation jsonb, observation jsonb, observed_at timestamptz,
         UNIQUE(schedule_id,schedule_revision,scheduled_for)
       );
+      ALTER TABLE schedule_runs DROP COLUMN IF EXISTS action_prompt;
       CREATE INDEX IF NOT EXISTS schedule_runs_owner_time ON schedule_runs(owner_id,created_at DESC,id DESC);
       CREATE INDEX IF NOT EXISTS schedule_runs_schedule ON schedule_runs(owner_id,schedule_id,created_at DESC,id DESC);
       CREATE INDEX IF NOT EXISTS schedule_runs_turn ON schedule_runs(owner_id,turn_id);
