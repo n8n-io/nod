@@ -22,5 +22,3 @@ export interface ProviderUsageEvent {
   costUsd?: number | null;
   pricing?: 'reported' | 'sdk_estimate' | 'unavailable';
 }
-
-export type RecordProviderUsage = (event: ProviderUsageEvent) => void;

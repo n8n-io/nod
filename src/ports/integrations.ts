@@ -1,6 +1,6 @@
 import type { IntegrationService } from '../shared/integrations.ts';
 import type { Connection } from '../shared/contracts.ts';
-export type { IntegrationService, IntegrationDownloadAction } from '../shared/integrations.ts';
+export type { IntegrationService } from '../shared/integrations.ts';
 export type ConnectedApp = Pick<
   Connection,
   | 'slug'

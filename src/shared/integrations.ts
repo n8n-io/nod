@@ -36,5 +36,3 @@ export const integrationDownloadActions = [
   'GOOGLEDRIVE_DOWNLOAD_FILE',
   'GOOGLEDRIVE_DOWNLOAD_FILE_OPERATION',
 ] as const;
-
-export type IntegrationDownloadAction = (typeof integrationDownloadActions)[number];
