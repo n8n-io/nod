@@ -74,9 +74,10 @@ export function createDirectProvider(options: {
         'notion',
         account.accessToken,
         async (client) => {
-          const tools = (await client.listTools()).tools;
-          let toolName = searching ? 'notion-search' : 'notion-fetch';
+          let toolName = 'notion-fetch';
           if (searching) {
+            const tools = (await client.listTools()).tools;
+            toolName = 'notion-search';
             if (!tools.some((tool) => tool.name === 'notion-get-tool-access'))
               throw new Error('The Notion search access check is unavailable.');
             const access = await client.callTool({ name: 'notion-get-tool-access', arguments: {} });
@@ -109,13 +110,13 @@ export function createDirectProvider(options: {
               tools.some((tool) => tool.name === 'notion-ai-search')
             )
               toolName = 'notion-ai-search';
+            if (!tools.some((tool) => tool.name === toolName))
+              throw new Error('The Notion read tool is unavailable.');
           }
-          const selected = tools.find((tool) => tool.name === toolName);
-          if (!selected) throw new Error('The Notion read tool is unavailable.');
           const input = !searching
             ? { id: args.id ?? args.page_id ?? args.pageId }
             : { query: args.query ?? args.search_query ?? args.searchQuery };
-          const result = await client.callTool({ name: selected.name, arguments: input });
+          const result = await client.callTool({ name: toolName, arguments: input });
           if (result.isError)
             throw new Error(toolFailure('The Notion read failed', result, account.accessToken));
           return result;
@@ -130,8 +131,6 @@ export function createDirectProvider(options: {
         'linear',
         account.accessToken,
         async (client) => {
-          if (!(await client.listTools()).tools.some((tool) => tool.name === toolName))
-            throw new Error('The Linear read tool is unavailable.');
           const result = await client.callTool({ name: toolName, arguments: args });
           if (result.isError)
             throw new Error(toolFailure('The Linear read failed', result, account.accessToken));
