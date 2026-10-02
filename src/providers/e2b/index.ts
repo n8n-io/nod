@@ -72,7 +72,7 @@ export function createE2BAdapters(options: {
     workspaceRoot: options.workspaceRoot,
     status: 'Remote Linux workspace is ready.',
     instructions:
-      'Your remote Linux workspace cannot access protected browser profiles or controls. Node, Python, pipx, git, curl, ffmpeg and yt-dlp are installed. Install trusted CLIs with npm install -g <package> or pipx install <package>. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Internet follows server provider policy. Keep outputs in this workspace.',
+      'Your remote Linux workspace cannot access protected browser profiles or controls. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, jq, ffmpeg, yt-dlp and Tesseract OCR are installed. Install trusted CLIs with npm install -g <package> or pipx install <package>. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Internet follows server provider policy. Keep outputs in this workspace.',
     runCommand: (id, args, input) => {
       if (draining) return Promise.reject(new Error('The remote computer is paused.'));
       return runSupervisedCommand({

@@ -99,7 +99,7 @@ export function createDockerWorkspace(options: {
     workspaceRoot: options.workspaceRoot,
     status: `${options.container}; Linux · internet enabled`,
     instructions:
-      'Your Linux workspace uses Docker networking without an Otto egress firewall. Node, Python, pipx, git, curl, ripgrep, ffmpeg, yt-dlp and poppler-utils are installed. Install trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
+      'Your Linux workspace uses Docker networking without an Otto egress firewall. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils and Tesseract OCR are installed. Install trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
     runCommand: (id, args, input) =>
       runWorkspaceCommand({
         container: options.container,
