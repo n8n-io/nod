@@ -113,10 +113,7 @@ export function createDirectProvider(options: {
             if (!tools.some((tool) => tool.name === toolName))
               throw new Error('The Notion read tool is unavailable.');
           }
-          const input = !searching
-            ? { id: args.id ?? args.page_id ?? args.pageId }
-            : { query: args.query ?? args.search_query ?? args.searchQuery };
-          const result = await client.callTool({ name: toolName, arguments: input });
+          const result = await client.callTool({ name: toolName, arguments: args });
           if (result.isError)
             throw new Error(toolFailure('The Notion read failed', result, account.accessToken));
           return result;

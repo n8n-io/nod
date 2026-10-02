@@ -3061,6 +3061,150 @@ test(
   },
 );
 
+async function directFixture(t: TestContext) {
+  const schema = `direct_fixture_${randomUUID().replaceAll('-', '')}`;
+  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new pg.Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    options: `-c search_path=${schema}`,
+  });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+    await admin.end();
+  });
+  const owner = 'fixture-owner';
+  const key = randomBytes(32);
+  const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+  const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
+  const server = {
+    mcpStatus: 200,
+    mcpFailure: undefined as Error | undefined,
+    tokenStatus: 200,
+    tools: ['notion-search', 'notion-fetch', 'notion-get-tool-access', 'list_issues'],
+    calls: [] as Array<{ name: string; arguments: unknown }>,
+  };
+  const request: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url === 'https://mcp.notion.com/mcp' || url === 'https://mcp.linear.app/mcp/readonly') {
+      if (server.mcpFailure) throw server.mcpFailure;
+      if (server.mcpStatus !== 200) return new Response('revoked', { status: server.mcpStatus });
+      if (init?.method === 'GET') return new Response(null, { status: 405 });
+      const message = JSON.parse(String(init?.body));
+      if (message.id === undefined) return new Response(null, { status: 202 });
+      if (message.method === 'tools/call') {
+        server.calls.push({ name: message.params.name, arguments: message.params.arguments });
+        return Response.json({
+          jsonrpc: '2.0',
+          id: message.id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text:
+                  message.params.name === 'notion-get-tool-access'
+                    ? JSON.stringify({
+                        current_tool_access: { ai_search: { status: 'unavailable' } },
+                      })
+                    : 'synthetic result',
+              },
+            ],
+          },
+        });
+      }
+      return Response.json({
+        jsonrpc: '2.0',
+        id: message.id,
+        result:
+          message.method === 'initialize'
+            ? {
+                protocolVersion: message.params.protocolVersion,
+                capabilities: { tools: {} },
+                serverInfo: { name: 'fixture', version: '1' },
+              }
+            : { tools: server.tools.map((name) => ({ name, inputSchema: { type: 'object' } })) },
+      });
+    }
+    if (url.includes('/.well-known/oauth-protected-resource'))
+      return Response.json({ authorization_servers: [new URL(url).origin] });
+    if (url.endsWith('/.well-known/oauth-authorization-server'))
+      return Response.json({
+        issuer: new URL(url).origin,
+        authorization_endpoint: `${new URL(url).origin}/authorize`,
+        token_endpoint: `${new URL(url).origin}/token`,
+        registration_endpoint: `${new URL(url).origin}/register`,
+      });
+    if (url.endsWith('/register')) return Response.json({ client_id: 'fixture-client' });
+    if (url.endsWith('/token')) {
+      if (server.tokenStatus !== 200) return new Response('{}', { status: server.tokenStatus });
+      return Response.json({ access_token: 'synthetic-renewed-token', expires_in: 3600 });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  };
+  const provider = createDirectProvider({ pool, keyStore, grantVault, ownerId: owner, request });
+  const oauth = createDirectOAuth({ pool, keyStore, grantVault, ownerId: owner, request });
+  await oauth.ready;
+  async function account(service: 'notion' | 'linear', secrets: Record<string, unknown> = {}) {
+    const id = randomUUID();
+    await pool.query(
+      'INSERT INTO direct_oauth_accounts(id,owner_id,service,connected) VALUES($1,$2,$3,true)',
+      [id, owner, service],
+    );
+    await grantVault.put(
+      id,
+      JSON.stringify({
+        clientId: 'fixture-client',
+        accessToken: 'synthetic-access-token',
+        refreshToken: 'synthetic-refresh-token',
+        tokenEndpoint: `https://mcp.${service}.${service === 'notion' ? 'com' : 'app'}/token`,
+        expiresAt: Date.now() + 3_600_000,
+        ...secrets,
+      }),
+    );
+    return id;
+  }
+  return { owner, pool, provider, server, account };
+}
+
+test(
+  'direct Notion reads forward every argument Pi chose',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await directFixture(t);
+    const id = await f.account('notion');
+    const session = await f.provider.createSession(f.owner, { notion: [id] });
+    await session.execute(
+      'NOTION_SEARCH_NOTION_PAGE',
+      {
+        query: 'roadmap',
+        page_url: 'https://www.notion.so/team/synthetic-page',
+        query_type: 'internal',
+        filters: { created_date_range: { start_date: '2026-01-01' } },
+      },
+      id,
+    );
+    await session.execute(
+      'NOTION_RETRIEVE_PAGE',
+      { id: 'synthetic-page', include_discussions: true },
+      id,
+    );
+    assert.deepEqual(f.server.calls, [
+      { name: 'notion-get-tool-access', arguments: {} },
+      {
+        name: 'notion-search',
+        arguments: {
+          query: 'roadmap',
+          page_url: 'https://www.notion.so/team/synthetic-page',
+          query_type: 'internal',
+          filters: { created_date_range: { start_date: '2026-01-01' } },
+        },
+      },
+      { name: 'notion-fetch', arguments: { id: 'synthetic-page', include_discussions: true } },
+    ]);
+  },
+);
+
 test('a discovered MCP server can register, sign in and refresh without service code', async () => {
   const calls: string[] = [];
   const request: typeof fetch = async (input, init) => {
