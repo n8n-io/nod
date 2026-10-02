@@ -44,7 +44,8 @@ export function localTime(
 
 export function daysAgo(now: number, days: number, timeZone = 'Europe/Madrid') {
   const today = wall(now, timeZone);
-  return localTime(now, days, today.hour, timeZone, today.minute);
+  const whole = Math.floor(days);
+  return localTime(now, whole, today.hour, timeZone, today.minute) - (days - whole) * 86_400_000;
 }
 
 export const inDays = (now: number, days: number, timeZone = 'Europe/Madrid') =>

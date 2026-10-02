@@ -194,7 +194,10 @@ function curves(runs: ChartRun[]): Card {
         `<text x="${sx(n)}" y="${height - pad.bottom + 30}" text-anchor="middle" fill="#64748b" font-size="17">${n === 1 ? '1 try' : `${n} tries`}</text>`,
     )
     .join('');
-  const ends = sorted(runs, (run) => at(run, k, 'at')).map((run) => ({
+  const ends = sorted(
+    runs.filter((run) => at(run, k, 'at') !== null),
+    (run) => at(run, k, 'at'),
+  ).map((run) => ({
     run,
     y: sy(at(run, k, 'at') ?? 0),
   }));
@@ -239,7 +242,10 @@ function curves(runs: ChartRun[]): Card {
       return path('at') + path('pow') + name;
     })
     .join('');
-  const dumbbells = sorted(runs, (run) => at(run, k, 'pow'))
+  const dumbbells = sorted(
+    runs.filter((run) => at(run, k, 'at') !== null),
+    (run) => at(run, k, 'pow'),
+  )
     .map((run) => {
       const lo = at(run, k, 'pow') ?? 0;
       const hi = at(run, k, 'at') ?? 0;

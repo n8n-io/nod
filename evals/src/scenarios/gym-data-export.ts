@@ -79,8 +79,8 @@ function fitnova(state: State): Site {
 }
 
 function sessionRows(run: Run, dates: string[]) {
-  const logs = (run.apps?.sheets?.books ?? []).flatMap((book) =>
-    book.tabs.map((tab) => tab.rows.map((row) => row.join(' '))),
+  const logs = (run.apps?.sheets?.books ?? []).map((book) =>
+    book.tabs.flatMap((tab) => tab.rows.map((row) => row.join(' '))),
   );
   const hits = (rows: string[]) =>
     rows.filter((row) => dates.some((date) => row.includes(date))).length;

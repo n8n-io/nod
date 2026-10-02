@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { access, copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
 import { cards, comparisonChart } from './chart.ts';
@@ -307,34 +307,41 @@ export async function main(args: Args) {
         throw new Error('Usage: rejudge <label> --label <new-label> [--judge <provider/model>]');
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(target))
         throw new Error('Labels must be simple file names.');
-      if (
-        await access(join(root, target)).then(
-          () => true,
-          () => false,
-        )
-      )
-        throw new Error(`Run ${target} already exists. Choose another --label.`);
-      const environment = await loadEnvironment();
-      const run = await loadRun(root, first);
-      const judgeName = text(args, 'judge') ?? defaultJudge;
-      const outcome = await rejudge({
-        attempts: run.attempts,
-        reviews: run.reviews,
-        judge: parseModel(judgeName, environment),
-      });
-      const manifest = {
-        ...run.manifest,
-        label: target,
-        judge: judgeName,
-        provenance: { ...run.manifest.provenance, rejudgedFrom: first },
-      };
-      const summary = summarize(manifest, outcome.attempts);
       const directory = join(root, target);
-      await saveRun(directory, manifest, outcome.attempts, summary);
-      await writeFile(join(directory, 'reviews.json'), JSON.stringify(run.reviews, null, 2));
-      await writeFile(join(directory, 'report.html'), html(summary, outcome.attempts, run.reviews));
-      console.log(terminal(summary, outcome.attempts, run.reviews));
-      console.log(outcome.report);
+      await mkdir(root, { recursive: true });
+      await mkdir(directory).catch((error: NodeJS.ErrnoException) => {
+        throw error.code === 'EEXIST'
+          ? new Error(`Run ${target} already exists. Choose another --label.`)
+          : error;
+      });
+      try {
+        const environment = await loadEnvironment();
+        const run = await loadRun(root, first);
+        const judgeName = text(args, 'judge') ?? defaultJudge;
+        const outcome = await rejudge({
+          attempts: run.attempts,
+          reviews: run.reviews,
+          judge: parseModel(judgeName, environment),
+        });
+        const manifest = {
+          ...run.manifest,
+          label: target,
+          judge: judgeName,
+          provenance: { ...run.manifest.provenance, rejudgedFrom: first },
+        };
+        const summary = summarize(manifest, outcome.attempts);
+        await saveRun(directory, manifest, outcome.attempts, summary);
+        await writeFile(join(directory, 'reviews.json'), JSON.stringify(run.reviews, null, 2));
+        await writeFile(
+          join(directory, 'report.html'),
+          html(summary, outcome.attempts, run.reviews),
+        );
+        console.log(terminal(summary, outcome.attempts, run.reviews));
+        console.log(outcome.report);
+      } catch (error) {
+        await rm(directory, { recursive: true, force: true });
+        throw error;
+      }
       return;
     }
     case 'cleanup': {

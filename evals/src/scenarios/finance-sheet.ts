@@ -79,7 +79,7 @@ function reported(text: string, category: string, total: number) {
       mentions(
         text.slice(
           Math.max(marks[index - 1]?.end ?? 0, mark.start - 80),
-          Math.min(marks[index + 1]?.start ?? text.length, mark.end + 160),
+          marks[index + 1]?.start ?? text.length,
         ),
         total,
       ),

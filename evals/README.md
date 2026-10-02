@@ -47,7 +47,7 @@ Thirty scenarios, each a real task from the Otto capabilities project in Linear,
 | `chase-unpaid-invoice`     | LAB-375 | Chase an unpaid invoice, but ask me before the second nudge                   | long-running, schedules, approvals, apps | calibrating |
 | `competitor-digest`        | LAB-377 | Weekly competitor digest with screenshots of what changed                     | browser, schedules, memory, files        | scored      |
 | `finance-sheet`            | LAB-380 | Spending by category vs budget from my sheet, then a daily check              | apps, files, schedules, approvals        | scored      |
-| `gym-data-export`          | LAB-384 | Get my workout history out of a gym site with no export, show my progression  | browser, files, vault, schedules         | calibrating |
+| `gym-data-export`          | LAB-384 | Get my workout history out of a gym site with no export, show my progression  | apps, browser, files, vault, schedules   | calibrating |
 | `health-results-pdf`       | LAB-391 | Get my blood test PDF from email, explain it, remind me to re-test            | files, apps, memory, schedules           | scored      |
 | `invoices-overdue`         | LAB-386 | Find who owes me money in my email, keep a sheet, draft reminders             | apps, files, approvals                   | scored      |
 | `login-2fa-metrics`        | LAB-379 | Log in with 2FA and read weekly active users                                  | vault, browser, approvals                | scored      |

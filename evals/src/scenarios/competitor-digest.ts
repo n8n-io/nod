@@ -64,7 +64,12 @@ const targets = brands.flatMap((brand) =>
 function screenshotted(run: Run, since: number, action: RegExp) {
   const seen = new Set<string>();
   for (const call of run.tools) {
-    if (call.name !== 'browser' || call.at < since || !action.test(String(call.input?.action)))
+    if (
+      call.name !== 'browser' ||
+      call.isError ||
+      call.at < since ||
+      !action.test(String(call.input?.action))
+    )
       continue;
     const shown = run.visits
       .filter((visit) => visit.at <= call.at && targets.includes(`${visit.host}${visit.path}`))

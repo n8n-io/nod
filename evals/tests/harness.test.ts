@@ -221,6 +221,8 @@ test('local times are anchored in the user time zone across a daylight saving ch
   const evening = Date.UTC(2026, 9, 24, 18, 30);
   assert.equal(clock(inDays(evening, 2)), '26/10/2026, 20:30');
   assert.equal(clock(daysAgo(inDays(evening, 2), 2)), '24/10/2026, 20:30');
+  assert.equal(evening - daysAgo(evening, 0.5), 43_200_000);
+  assert.equal(inDays(evening, 1.5) - evening, 133_200_000);
 });
 
 test('a Slack thread reply lands in the thread, not the channel', () => {
@@ -246,6 +248,10 @@ test('a Slack thread reply lands in the thread, not the channel', () => {
     () => send.run({ channel: 'ops', text: 'x', thread_ts: '1.1' }),
     /thread_not_found/,
   );
+  const found = chat.tools
+    .find((tool) => tool.slug === 'SLACK_SEARCH_MESSAGES')!
+    .run({ query: 'mine' }) as { messages: { matches: unknown[] } };
+  assert.equal(found.messages.matches.length, 1);
   send.run({ channel: 'ops', text: 'Top level' });
   assert.equal(chat.conversations[0].messages.length, 2);
 });

@@ -20,7 +20,11 @@ export async function rejudge(options: {
       continue;
     }
     const checks: CheckResult[] = attempt.checks.filter((check) => check.kind === 'check');
-    const spentBefore = llm.spent().costUsd ?? 0;
+    const spentBefore = llm.spent().costUsd;
+    const spentSince = () => {
+      const now = llm.spent().costUsd;
+      return now === null ? null : now - (spentBefore ?? 0);
+    };
     const counts = { same: 0, compared: 0, old: 0, fresh: 0, total: 0 };
     try {
       for (const group of ['task', 'product'] as const) {
@@ -61,6 +65,7 @@ export async function rejudge(options: {
         status: 'incomplete',
         blame: 'infra',
         error: `Re-judging failed: ${message}`,
+        judgeCostUsd: spentSince(),
       });
       continue;
     }
@@ -78,7 +83,7 @@ export async function rejudge(options: {
       checks,
       status:
         playFailure || checks.some((check) => check.required && !check.pass) ? 'fail' : 'pass',
-      judgeCostUsd: (llm.spent().costUsd ?? 0) - spentBefore,
+      judgeCostUsd: spentSince(),
     });
   }
   const pct = (value: number, total: number) =>

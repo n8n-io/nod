@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runProcess } from '../../src/providers/process.ts';
 import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
@@ -18,13 +19,18 @@ export interface Check {
 const docker = (...args: string[]) => runProcess('docker', args);
 
 async function passwordFile(root: string) {
-  const path = join(root, 'database-password');
-  const existing = await readFile(path, 'utf8').catch(() => '');
-  if (existing.trim()) return { path, password: existing.trim(), created: false };
-  const password = randomBytes(18).toString('base64url');
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, password, { mode: 0o600 });
-  return { path, password, created: true };
+  const path = join(homedir(), '.otto-evals', 'database-password');
+  const saved = async (file: string) => (await readFile(file, 'utf8').catch(() => '')).trim();
+  const password = (await saved(path)) || (await saved(join(root, 'database-password')));
+  if (password) {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await writeFile(path, password, { mode: 0o600 });
+    return { path, password };
+  }
+  const created = randomBytes(18).toString('base64url');
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(path, created, { mode: 0o600 });
+  return { path, password: created };
 }
 
 async function reachable(url: string) {
@@ -87,7 +93,11 @@ async function provisionDatabase(root: string, provision: boolean) {
     if (await reachable(url)) return { url, provisioned: true };
     await new Promise((done) => setTimeout(done, 1000));
   }
-  throw new Error('The test database did not become ready.');
+  throw new Error(
+    state === 'running'
+      ? `The ${container} container is running with another password. Remove it with: docker rm -f ${container}`
+      : 'The test database did not become ready.',
+  );
 }
 
 export async function imageNames(environment: Record<string, string | undefined>) {
@@ -171,7 +181,9 @@ export async function doctor(root: string, fix: boolean) {
     environment.LLM_PROVIDER ||
     (environment.OPENAI_API_KEY || !environment.ANTHROPIC_API_KEY ? 'openai' : 'anthropic');
   const variable = (keyVariables as Record<string, string | undefined>)[provider];
-  const ready = Boolean(variable && environment[variable]);
+  const ready =
+    Boolean(variable && environment[variable]) &&
+    (provider !== 'openrouter' || Boolean(environment.LLM_MODEL));
   const others = Object.entries(keyVariables)
     .filter(([name, key]) => name !== provider && environment[key])
     .map(([name]) => name);
@@ -180,9 +192,11 @@ export async function doctor(root: string, fix: boolean) {
     ok: ready,
     detail: !variable
       ? `LLM_PROVIDER=${provider} is not supported (use openai, anthropic or openrouter)`
-      : ready
-        ? `${variable} set for ${provider}${others.length ? `; also ${others.join(', ')}` : ''}${environment.ANTHROPIC_API_KEY ? '' : '; the judge falls back to the agent model (set ANTHROPIC_API_KEY for an independent judge)'}`
-        : `${variable} is not set, and ${provider} is the model provider`,
+      : provider === 'openrouter' && !environment.LLM_MODEL
+        ? 'LLM_PROVIDER=openrouter needs LLM_MODEL, for example moonshotai/kimi-k3'
+        : ready
+          ? `${variable} set for ${provider}${others.length ? `; also ${others.join(', ')}` : ''}${environment.ANTHROPIC_API_KEY ? '' : '; the judge falls back to the agent model (set ANTHROPIC_API_KEY for an independent judge)'}`
+          : `${variable} is not set, and ${provider} is the model provider`,
     fix: `export ${variable ?? 'OPENAI_API_KEY'}=... in your shell or .env (or set LLM_PROVIDER)`,
   });
   return checks;

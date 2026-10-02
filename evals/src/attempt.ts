@@ -64,14 +64,16 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const world = definition.world({ now: () => Date.now() });
   const sites = await serveSites(world.sites ?? {}, await bindAddress());
   let stack: Stack | undefined;
+  let starting: Promise<Stack> | undefined;
   const release = async () => {
+    stack ??= await starting?.catch(() => undefined);
     await stack?.stop().catch(() => {});
     await sites.close().catch(() => {});
   };
   terminate = release;
   try {
     const judgeLlm = await createLlm(judgeModel);
-    stack = await startStack({
+    stack = await (starting = startStack({
       model,
       integrations:
         world.apps?.provider ??
@@ -82,7 +84,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       siteHosts: Object.keys(world.sites ?? {}),
       siteUpstreamPort: sites.port,
       environment,
-    });
+    }));
     await prepare(stack, world, definition.timeZone ?? 'Europe/Madrid');
     taskStarted = Date.now();
     const session = createSession({

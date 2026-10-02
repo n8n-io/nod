@@ -741,6 +741,14 @@ export function slack(
         messages: {
           matches: conversations.flatMap((conversation) =>
             conversation.messages
+              .flatMap((message) => [
+                message,
+                ...(message.replies ?? []).map((reply) => ({
+                  ...reply,
+                  ts: reply.ts ?? message.ts,
+                  threadTs: message.ts,
+                })),
+              ])
               .filter((message) =>
                 message.text.toLowerCase().includes(String(args.query).toLowerCase()),
               )

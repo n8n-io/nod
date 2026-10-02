@@ -155,17 +155,16 @@ export default scenario({
       check(
         'schedule-runs-twice-a-day',
         (run) => {
-          const schedules = run.schedules.filter((item) => item.enabled);
-          const hours = schedules
-            .filter((item) => item.timeZone === 'Europe/Madrid')
-            .flatMap((item) =>
-              (/^\d+ ([\d,]+) \* \* \*$/.exec(item.cron ?? '')?.[1] ?? '')
-                .split(',')
-                .filter(Boolean)
-                .map(Number),
-            );
+          const schedules = run.schedules.filter((item) => item.enabled && item.cron);
+          const hours = schedules.flatMap((item) =>
+            (/^\d+ ([\d,]+) \* \* \*$/.exec(item.cron ?? '')?.[1] ?? '')
+              .split(',')
+              .filter(Boolean)
+              .map(Number),
+          );
           return {
             pass:
+              schedules.every((item) => item.timeZone === 'Europe/Madrid') &&
               hours.length === 2 &&
               hours.some((hour) => hour >= 8 && hour <= 10) &&
               hours.some((hour) => hour >= 18 && hour <= 20),
