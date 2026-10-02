@@ -473,6 +473,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               }),
             ]);
             if (closed) return;
+            const active = remote.active && remote.service === row.slug;
             await pool.query(
               `UPDATE app_connections SET account_active=$4,account_name=COALESCE($5,account_name),
             account_email=COALESCE($6,account_email),account_checked_at=now()
@@ -481,13 +482,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 row.id,
                 row.owner_id,
                 row.provider_id,
-                remote.active && remote.service === row.slug,
+                active,
                 remote.accountName ?? null,
                 remote.accountEmail ?? null,
                 row.account_id,
               ],
             );
-            options.refresh?.();
+            if (
+              active !== row.account_active ||
+              (remote.accountName && remote.accountName !== row.account_name) ||
+              (remote.accountEmail && remote.accountEmail !== row.account_email)
+            )
+              options.refresh?.();
           } catch {
             if (!closed)
               await pool.query(

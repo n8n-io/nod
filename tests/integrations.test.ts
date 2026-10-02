@@ -3262,23 +3262,42 @@ test(
     f.server.tokenStatus = 200;
     const app = Fastify();
     t.after(() => app.close());
+    let refreshes = 0;
     const integrations = await createIntegrations(f.pool, {
       ownerId: f.owner,
       provider: f.provider,
       baseUrl: 'http://localhost:4310',
       wake: async () => {},
+      refresh: () => {
+        refreshes++;
+      },
     });
     integrations.registerRoutes(app);
     await f.pool.query(
       "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES($1,'notion',$2,'direct')",
       [f.owner, uncertain],
     );
-    await integrations.list(f.owner);
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const row = await f.pool.query('SELECT account_active FROM app_connections');
-      if (!row.rows[0].account_active) break;
-      await delay(20);
-    }
+    const inspected = async (before: Date | null) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        await integrations.list(f.owner);
+        const row = await f.pool.query(
+          'SELECT account_active,account_checked_at FROM app_connections',
+        );
+        if (row.rows[0].account_checked_at && row.rows[0].account_checked_at > (before ?? 0))
+          return row.rows[0];
+        await delay(20);
+      }
+      throw new Error('The account was never inspected.');
+    };
+    const first = await inspected(null);
+    assert.equal(first.account_active, false);
+    await delay(50);
+    assert.equal(refreshes, 1);
+    await f.pool.query("UPDATE app_connections SET account_checked_at=now()-interval '2 minutes'");
+    const stale = (await f.pool.query('SELECT account_checked_at FROM app_connections')).rows[0];
+    await inspected(stale.account_checked_at);
+    await delay(50);
+    assert.equal(refreshes, 1);
     const [notion] = (await integrations.list(f.owner, { refresh: false })).filter(
       (item) => item.slug === 'notion',
     );
