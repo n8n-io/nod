@@ -961,7 +961,7 @@ else if (args[0] !== 'pull') throw new Error('Unexpected Docker command');
     '--prebuilt-images',
   ];
   const environment = {
-    PATH: bin,
+    PATH: `${bin}:/usr/bin:/bin`,
     FIXTURE_STATE: statePath,
     FIXTURE_ARCHIVE: archive,
     OTTO_RUNTIME_ASSETS: join(root, 'assets'),
