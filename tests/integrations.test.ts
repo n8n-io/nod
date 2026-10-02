@@ -626,10 +626,6 @@ test(
         new Set([first.connectionId, second.connectionId]),
       );
       assert.equal(
-        (await app.inject({ method: 'POST', url: '/api/apps/gmail/disconnect' })).statusCode,
-        409,
-      );
-      assert.equal(
         (
           await app.inject({
             method: 'POST',
@@ -656,23 +652,13 @@ test(
         ).statusCode,
         404,
       );
+      const watched = (await integrations.list()).filter((row) => row.slug === 'gmail');
       assert.equal(
-        (
-          await app.inject({
-            method: 'POST',
-            url: `/api/apps/gmail/accounts/${first.connectionId}/triggers`,
-            payload: { enabled: false },
-          })
-        ).statusCode,
-        409,
-      );
-      const afterToggle = (await integrations.list()).filter((row) => row.slug === 'gmail');
-      assert.equal(
-        afterToggle.find((row) => row.connectionId === first.connectionId)?.triggerStatus,
+        watched.find((row) => row.connectionId === first.connectionId)?.triggerStatus,
         'active',
       );
       assert.equal(
-        afterToggle.find((row) => row.connectionId === second.connectionId)?.triggerStatus,
+        watched.find((row) => row.connectionId === second.connectionId)?.triggerStatus,
         'active',
       );
       const event = {

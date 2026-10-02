@@ -823,29 +823,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return false;
   }
 
-  async function setTriggers(slug: Slug, enabled: boolean, connectionId?: string) {
-    if (!enabled)
-      throw new IntegrationError(
-        'Updates are always requested for connected apps. Disconnect the account to stop them.',
-        409,
-      );
-    const row = await selectConnection(configuredOwner, slug, connectionId);
-    if (!supportsWatch(slug, providerForRow(row)))
-      throw new IntegrationError('Automatic notifications are unavailable for this service.', 409);
-    await pool.query(
-      `UPDATE app_connections SET watch_requested=$2,watch_attempted=false,watch_revision=watch_revision+1,
-       triggers_enabled=($2 AND trigger_id IS NOT NULL),trigger_id=CASE WHEN $2 THEN trigger_id ELSE NULL END
-       WHERE id=$1 AND owner_id=$3 AND provider_id=$4`,
-      [row.id, enabled, configuredOwner, row.provider_id],
-    );
-    if (!enabled && row.trigger_id) {
-      await providerForRow(row).unsubscribe(row.trigger_id);
-    }
-    if (enabled) await activateWatch(row.id);
-    return { ok: true };
-  }
-
-  async function disconnect(slug: Slug, connectionId?: string) {
+  async function disconnect(slug: Slug, connectionId: string) {
     const row = await selectConnection(configuredOwner, slug, connectionId, true);
     await pool.query(
       `WITH revoked AS (UPDATE app_connections SET revoked=true,triggers_enabled=false,watch_requested=false,
@@ -1597,15 +1575,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             ).href,
           );
       });
-      scope.post<{ Params: { slug: string } }>('/api/apps/:slug/disconnect', async (request) =>
-        disconnect(slugSchema.parse(request.params.slug)),
-      );
-      scope.post<{ Params: { slug: string } }>('/api/apps/:slug/triggers', async (request) =>
-        setTriggers(
-          slugSchema.parse(request.params.slug),
-          z.object({ enabled: z.boolean() }).strict().parse(request.body).enabled,
-        ),
-      );
       scope.post<{ Params: { slug: string; connectionId: string } }>(
         '/api/apps/:slug/accounts/:connectionId/disconnect',
         async (request) => {
@@ -1642,15 +1611,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             : (options.discovered?.disconnect(id, request.params.slug) ??
                 Promise.reject(new IntegrationError('This service is unavailable.', 404)));
         },
-      );
-      scope.post<{ Params: { slug: string; connectionId: string } }>(
-        '/api/apps/:slug/accounts/:connectionId/triggers',
-        async (request) =>
-          setTriggers(
-            slugSchema.parse(request.params.slug),
-            z.object({ enabled: z.boolean() }).strict().parse(request.body).enabled,
-            z.uuid().parse(request.params.connectionId),
-          ),
       );
     });
     app.register(async (scope) => {
