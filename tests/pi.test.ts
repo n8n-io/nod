@@ -526,7 +526,7 @@ test('codemode scripts reach only workspace and web tools, each call through the
   const ran: string[] = [];
   const requests: string[] = [];
   const code =
-    "const calls = await Promise.all([tools.ls({}), tools.find({ pattern: '*' })]); return JSON.stringify({ calls: calls.length, ottoTool: 'fixture_tool' in tools, apps: 'apps' in tools });";
+    "const [, , stored] = await Promise.all([tools.ls({}), tools.find({ pattern: '*' }), tools.get_search_content({ responseId: 'synthetic-missing' })]); return JSON.stringify({ stored: String(stored).includes('No stored results'), ottoTool: 'fixture_tool' in tools, apps: 'apps' in tools });";
   const agent = createPiAgent({
     provider: 'openai',
     apiKey: 'fixture-key',
@@ -583,8 +583,8 @@ test('codemode scripts reach only workspace and web tools, each call through the
       onEvent: () => {},
     });
     await session.prompt('Run the script', []);
-    assert.deepEqual(ran.toSorted(), ['codemode', 'find', 'ls']);
-    assert.match(requests[1], /\{\\"calls\\":2,\\"ottoTool\\":false,\\"apps\\":false\}/);
+    assert.deepEqual(ran.toSorted(), ['codemode', 'find', 'get_search_content', 'ls']);
+    assert.match(requests[1], /\{\\"stored\\":true,\\"ottoTool\\":false,\\"apps\\":false\}/);
     await session.dispose();
   } finally {
     await agent.dispose();
