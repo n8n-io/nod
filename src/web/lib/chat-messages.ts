@@ -31,6 +31,15 @@ export function messagesAreGrouped(
   );
 }
 
+export function mergeMessages(known: Message[], incoming: Message[]) {
+  const byId = new Map(known.map((message) => [message.id, message]));
+  for (const message of incoming) byId.set(message.id, message);
+  return [...byId.values()].sort(
+    (a, b) =>
+      Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+}
+
 export function collapseScreenshotMessages(messages: Message[]) {
   const result: Message[] = [];
   let previousWasScreenshot = false;

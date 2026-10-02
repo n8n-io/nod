@@ -20,6 +20,7 @@ import { api, apiResponse, errorMessage, post } from '../lib/api';
 import {
   collapseScreenshotMessages,
   hasVisibleChatActivity,
+  mergeMessages,
   messagesAreGrouped,
   visibleConversationTurns,
 } from '../lib/chat-messages';
@@ -112,7 +113,6 @@ export function Chat({
     threadId,
     messages: [],
   });
-  const older = historyPage.threadId === threadId ? historyPage.messages : [];
   const hasEarlier =
     (historyPage.threadId === threadId ? historyPage.hasMore : undefined) ??
     state.hasEarlierMessages === true;
@@ -127,10 +127,15 @@ export function Chat({
   const resetLock = useRef(false);
   const setupAction = useRef(() => {});
   const streamTimes = useRef(new Map<string, string>());
-  const persistedMessages = [
-    ...older.filter((item) => !state.messages.some((message) => message.id === item.id)),
-    ...state.messages,
-  ];
+  const known = useRef<{ threadId: string; messages: Message[] }>({ threadId, messages: [] });
+  const persistedMessages = useMemo(() => {
+    const merged = mergeMessages(
+      known.current.threadId === threadId ? known.current.messages : [],
+      [...(historyPage.threadId === threadId ? historyPage.messages : []), ...state.messages],
+    );
+    known.current = { threadId, messages: merged };
+    return merged;
+  }, [threadId, historyPage, state.messages]);
   const persistedIds = new Set(persistedMessages.map((message) => message.id));
   const acknowledgedIds = useRef(persistedIds);
   acknowledgedIds.current = persistedIds;

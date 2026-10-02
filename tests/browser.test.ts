@@ -62,7 +62,7 @@ import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
-import type { AppState } from '../src/shared/contracts.ts';
+import type { AppState, Message } from '../src/shared/contracts.ts';
 
 // Shared helpers
 
@@ -2321,6 +2321,9 @@ async function handoffView(
     async poll() {
       await act(async () => poll());
     },
+    async render(next: React.ReactNode) {
+      await act(async () => root.render(next));
+    },
     async clickImage() {
       const image = element<HTMLImageElement>('img');
       image.getBoundingClientRect = () =>
@@ -2453,6 +2456,67 @@ for (const failure of ['rejected', 'disconnected'] as const)
       await view.close();
     }
   });
+
+test('chat keeps every message across refreshes after earlier messages were loaded', async () => {
+  const threadId = randomUUID();
+  const messages: Message[] = Array.from({ length: 6 }, (_, index) => ({
+    id: randomUUID(),
+    role: 'user',
+    turnId: null,
+    text: `Synthetic message ${index}`,
+    attachments: [],
+    createdAt: new Date(Date.UTC(2026, 9, 1, 12, index)).toISOString(),
+  }));
+  const state = (window: Message[]): AppState => ({
+    threadId,
+    threadStatus: 'idle',
+    hasEarlierMessages: true,
+    messages: window,
+    turns: [],
+    configuration: {
+      provider: 'fixture',
+      model: 'none',
+      llmReady: true,
+      speechReady: false,
+      integrationsReady: false,
+      inspectorEnabled: false,
+      localOnly: true,
+    },
+  });
+  const chat = (window: Message[]) =>
+    createElement(Chat, {
+      state: state(window),
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => threadId,
+    });
+  const view = await handoffView(
+    async (path) => {
+      if (path === '/api/apps') return Response.json([]);
+      assert.match(path, /^\/api\/messages\?/);
+      return Response.json({ messages: messages.slice(0, 2), hasMore: false });
+    },
+    chat(messages.slice(2, 5)),
+  );
+  const shown = () =>
+    [...view.dom.window.document.querySelectorAll<HTMLElement>('[data-message-id]')].map(
+      (element) => element.dataset.messageId,
+    );
+  try {
+    await view.button('Load earlier messages');
+    assert.deepEqual(
+      shown(),
+      messages.slice(0, 5).map((message) => message.id),
+    );
+    await view.render(chat(messages.slice(3, 6)));
+    assert.deepEqual(
+      shown(),
+      messages.map((message) => message.id),
+    );
+  } finally {
+    await view.close();
+  }
+});
 
 for (const failure of ['rejected', 'disconnected'] as const)
   test(`browser handoff preserves a ${failure} input failure through Done and polling without replay`, async () => {
