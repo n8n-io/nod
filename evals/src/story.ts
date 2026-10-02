@@ -12,10 +12,11 @@ export interface Suite {
   gaps: number;
 }
 
-const others = (runs: ChartRun[], best: ChartRun) => {
-  const rest = runs
-    .filter((run) => run !== best && run.summary.regression.percent !== null)
-    .map((run) => run.summary.regression.percent!);
+const others = (eligible: ChartRun[], best: ChartRun) => {
+  const rest = eligible
+    .filter((run) => run !== best)
+    .map((run) => run.summary.regression.percent)
+    .filter((value): value is number => value !== null);
   return rest.length
     ? `The rest finish between ${pct(Math.min(...rest))} and ${pct(Math.max(...rest))}.`
     : '';
@@ -28,7 +29,7 @@ const sections: Array<{ id: string; kicker: string; lead: (runs: ChartRun[]) => 
     lead: (runs) => {
       const found = insights(runs);
       return found.best
-        ? `${label(found.best.run, runs)} completes the most tasks (${pct(found.best.value)}). ${others(runs, found.best.run)}`
+        ? `${label(found.best.run, runs)} completes the most tasks (${pct(found.best.value)}). ${others(found.eligible, found.best.run)}`
         : 'How often each model finishes the task.';
     },
   },
