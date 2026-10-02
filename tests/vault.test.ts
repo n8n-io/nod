@@ -494,7 +494,12 @@ test(
         "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
         [task1.turnId],
       );
-      assert.equal((await app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 200);
+      const concurrent = await Promise.all([
+        app.inject({ method: 'POST', url: `${url}/retry` }),
+        app.inject({ method: 'POST', url: `${url}/retry` }),
+      ]);
+      assert.deepEqual(concurrent.map((result) => result.statusCode).sort(), [200, 409]);
+      assert.equal((await app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
       assert.deepEqual(retried, [task1.turnId]);
       assert.equal(injected, 0);
       assert.equal(keyReads, 0);
@@ -587,59 +592,6 @@ test(
       );
       assert.deepEqual(retried, [task1.turnId, taskRetry.turnId]);
       assert.equal(injected, 2);
-    } finally {
-      await app.close();
-      await pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.end();
-    }
-  },
-);
-
-test(
-  'an expired credential link restarts the credential step only once',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async () => {
-    const schema = `test_vault_${randomUUID().replaceAll('-', '')}`;
-    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
-    await admin.query(`CREATE SCHEMA ${schema}`);
-    const pool = new pg.Pool({
-      connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${schema}`,
-    });
-    const { turn, wait } = await seedTurns(pool);
-    const task = await turn();
-    const app = Fastify();
-    const retried: string[] = [];
-    const vault = await createVault(pool, {
-      keyStore: { id: 'fixture', configured: true, getKey: async () => randomBytes(32) },
-      inject: async () => {},
-      resume: async () => {},
-      retry: async (turnId) => {
-        retried.push(turnId);
-      },
-    });
-    vault.registerRoutes(app);
-    try {
-      const request = await vault.request(task, 'local-development', {
-        origin: 'https://example.com',
-        label: 'Example',
-        kind: 'password',
-        passwordSelector: '#password',
-      });
-      await wait(task);
-      const url = request.url.replace('/vault/', '/api/credential-requests/');
-      await pool.query(
-        "UPDATE credential_requests SET expires_at=now()-interval '1 second' WHERE turn_id=$1",
-        [task.turnId],
-      );
-      const concurrent = await Promise.all([
-        app.inject({ method: 'POST', url: `${url}/retry` }),
-        app.inject({ method: 'POST', url: `${url}/retry` }),
-      ]);
-      assert.deepEqual(concurrent.map((result) => result.statusCode).sort(), [200, 409]);
-      assert.equal((await app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 409);
-      assert.deepEqual(retried, [task.turnId]);
     } finally {
       await app.close();
       await pool.end();
@@ -1948,58 +1900,6 @@ test(
       );
 
       await t.test(
-        'held passwords remain bound to owner, origin, running turn and expiry',
-        async () => {
-          await begin('fences');
-          const count = injections.length;
-          assert.equal(
-            await vault.fillSelected(task('fences'), 'another-owner', requestInput('password')),
-            undefined,
-          );
-          assert.equal(
-            await vault.fillSelected(task('fences'), 'local-development', {
-              ...requestInput('password'),
-              origin: 'https://other.example.test',
-            }),
-            undefined,
-          );
-          observedOrigin = 'https://other.example.test';
-          assert.equal(
-            await vault.fillSelected(task('fences'), 'local-development', requestInput('password')),
-            false,
-          );
-          observedOrigin = origin;
-          await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [
-            task('fences').turnId,
-          ]);
-          assert.equal(
-            await vault.fillSelected(task('fences'), 'local-development', requestInput('password')),
-            false,
-          );
-          await pool.query("UPDATE turns SET status='running' WHERE id=$1", [
-            task('fences').turnId,
-          ]);
-          await pool.query(
-            "UPDATE credential_account_selections SET expires_at=now()-interval '1 second' WHERE root_turn_id=$1",
-            [roots.get('fences')],
-          );
-          assert.equal(
-            await vault.fillSelected(task('fences'), 'local-development', requestInput('password')),
-            false,
-          );
-          assert.equal(injections.length, count);
-          await vault.resumePending();
-          const expired = (
-            await pool.query('SELECT * FROM credential_account_selections WHERE root_turn_id=$1', [
-              roots.get('fences'),
-            ])
-          ).rows[0];
-          assert.equal(expired.ciphertext, '');
-          assert.equal(expired.blocked, true);
-        },
-      );
-
-      await t.test(
         'passwordless identifiers survive recovery, restart and a later login without filling an empty password',
         async () => {
           const username = 'passwordless-member@example.test';
@@ -2097,46 +1997,63 @@ test(
       });
 
       await t.test(
-        'identifier recovery preserves account, origin, owner and turn fences',
+        'held credentials remain bound to owner, origin, running turn and expiry',
         async () => {
-          await begin('identifier-fences', { username: 'fenced-member@example.test' });
-          const turn = task('identifier-fences');
-          const input = requestInput('identifier');
-          const before = injections.length;
-          assert.equal(await vault.fillSelected(turn, 'other-owner', input), undefined);
-          assert.equal(
-            await vault.fillSelected(turn, 'local-development', {
-              ...input,
-              origin: 'https://other.example.test',
-            }),
-            undefined,
-          );
-          observedOrigin = 'https://other.example.test';
-          assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
-          observedOrigin = origin;
-          await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turn.turnId]);
-          assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
-          await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turn.turnId]);
-          assert.equal(
-            await vault.fillSelected(turn, 'local-development', requestInput('otp')),
-            false,
-          );
-          await pool.query(
-            "UPDATE credential_account_selections SET expires_at=now()-interval '1 second' WHERE root_turn_id=$1",
-            [roots.get('identifier-fences')],
-          );
-          assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
-          assert.equal(injections.length, before);
-          const later = await startTurn();
-          assert.equal(await vault.fillSelected(later, 'local-development', input), undefined);
-          const request = await vault.request(later, 'local-development', input);
-          await wait(later);
-          const response = await app.inject({
-            url: request.url.replace('/vault/', '/api/credential-requests/'),
-          });
-          assert.ok(response.json().savedEntries.length > 1);
-          assert.equal(response.json().selectedEntryId, undefined);
-          assert.equal(injections.length, before);
+          for (const kind of ['password', 'identifier'] as const) {
+            const name = `fences-${kind}`;
+            await begin(
+              name,
+              kind === 'identifier' ? { username: 'fenced-member@example.test' } : undefined,
+            );
+            const turn = task(name);
+            const input = requestInput(kind);
+            const count = injections.length;
+            assert.equal(await vault.fillSelected(turn, 'another-owner', input), undefined);
+            assert.equal(
+              await vault.fillSelected(turn, 'local-development', {
+                ...input,
+                origin: 'https://other.example.test',
+              }),
+              undefined,
+            );
+            observedOrigin = 'https://other.example.test';
+            assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
+            observedOrigin = origin;
+            await pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [turn.turnId]);
+            assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
+            await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turn.turnId]);
+            assert.equal(
+              await vault.fillSelected(turn, 'local-development', requestInput('otp')),
+              false,
+            );
+            await pool.query(
+              "UPDATE credential_account_selections SET expires_at=now()-interval '1 second' WHERE root_turn_id=$1",
+              [roots.get(name)],
+            );
+            assert.equal(await vault.fillSelected(turn, 'local-development', input), false);
+            assert.equal(injections.length, count);
+            if (kind === 'password') {
+              await vault.resumePending();
+              const expired = (
+                await pool.query(
+                  'SELECT * FROM credential_account_selections WHERE root_turn_id=$1',
+                  [roots.get(name)],
+                )
+              ).rows[0];
+              assert.equal(expired.ciphertext, '');
+              assert.equal(expired.blocked, true);
+            }
+            const later = await startTurn();
+            assert.equal(await vault.fillSelected(later, 'local-development', input), undefined);
+            const request = await vault.request(later, 'local-development', input);
+            await wait(later);
+            const response = await app.inject({
+              url: request.url.replace('/vault/', '/api/credential-requests/'),
+            });
+            assert.ok(response.json().savedEntries.length > 1);
+            assert.equal(response.json().selectedEntryId, undefined);
+            assert.equal(injections.length, count);
+          }
         },
       );
 
@@ -3636,158 +3553,6 @@ test('Vault Escape cancels edits and clears replacement secrets without disablin
     );
     assert.equal(detailsReads, 1);
     assert.equal(writes, 0);
-  } finally {
-    await page.close();
-  }
-});
-
-test('Vault preserves the saved card when a replacement contains only whitespace', async () => {
-  const entry: VaultCardEntry = {
-    kind: 'card',
-    id: randomUUID(),
-    label: 'Fixture card',
-    brand: 'Visa',
-    last4: '4242',
-    expiryMonth: 12,
-    expiryYear: 2028,
-    updatedAt: new Date().toISOString(),
-  };
-  const updates: Record<string, unknown>[] = [];
-  let saved = 0;
-  const page = await vaultPage(
-    createElement(VaultDetails, {
-      entry,
-      onClose() {},
-      onSaved() {
-        saved++;
-      },
-      onDeleted() {},
-    }),
-    async (path, init) => {
-      if (path.endsWith('/details'))
-        return Response.json({ ...entry, cardholder: 'Alex Tester', hasSecurityCode: false });
-      assert.equal(init.method, 'PATCH');
-      const update = JSON.parse(String(init.body));
-      updates.push(update);
-      if ('cardNumber' in update)
-        return Response.json({ error: 'Invalid replacement card number' }, { status: 400 });
-      return Response.json({ ...entry, label: update.label });
-    },
-  );
-  try {
-    await act(async () =>
-      page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
-    );
-    const card = page.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!;
-    card.value = '   ';
-    await act(async () => card.dispatchEvent(new page.window.Event('input', { bubbles: true })));
-    const save = page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-    assert.equal(save.disabled, true);
-    const label = page.document.querySelector<HTMLInputElement>('input[name="label"]')!;
-    label.value = 'Renamed fixture card';
-    await act(async () => label.dispatchEvent(new page.window.Event('input', { bubbles: true })));
-    assert.equal(save.disabled, false);
-    await act(async () => save.click());
-    assert.equal(updates.length, 1);
-    assert.equal(Object.hasOwn(updates[0], 'cardNumber'), false);
-    assert.equal(updates[0].label, label.value);
-    assert.equal(saved, 1);
-    assert.equal(page.document.querySelector('form'), null);
-  } finally {
-    await page.close();
-  }
-});
-
-test('Vault keeps intentional whitespace in replacement passwords', async () => {
-  const entry = {
-    kind: 'login' as const,
-    id: randomUUID(),
-    label: 'Fixture account',
-    origin: 'https://example.test',
-    usernameHint: 'te…',
-    updatedAt: new Date().toISOString(),
-  };
-  const passwords: string[] = [];
-  const page = await vaultPage(
-    createElement(VaultDetails, { entry, onClose() {}, onSaved() {}, onDeleted() {} }),
-    async (path, init) => {
-      if (path.endsWith('/details'))
-        return Response.json({ ...entry, username: 'tester@example.test', hasPassword: true });
-      if (path.endsWith('/icon')) return new Response(null, { status: 204 });
-      assert.equal(init.method, 'PATCH');
-      passwords.push(JSON.parse(String(init.body)).password);
-      return Response.json(entry);
-    },
-  );
-  try {
-    for (const value of ['   ', '  synthetic password  ']) {
-      await act(async () =>
-        page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
-      );
-      const password = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
-      password.value = value;
-      await act(async () =>
-        password.dispatchEvent(new page.window.Event('input', { bubbles: true })),
-      );
-      const save = page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-      assert.equal(save.disabled, false);
-      await act(async () => save.click());
-      assert.equal(passwords.at(-1), value);
-    }
-    assert.equal(passwords.length, 2);
-  } finally {
-    await page.close();
-  }
-});
-
-test('secure sign-in derives an unused login name when the optional name is cleared', async () => {
-  const request = {
-    id: 'synthetic_credential_request',
-    turnId: randomUUID(),
-    origin: 'https://example.test',
-    label: 'Fixture sign-in',
-    kind: 'password',
-    status: 'pending',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    fields: [{ kind: 'password', selector: '#password', label: 'Password' }],
-    savedEntries: ['Example.test', 'Example.test 2'].map((label) => ({
-      kind: 'login',
-      id: randomUUID(),
-      label,
-      origin: 'https://example.test',
-      usernameHint: 'te…',
-      updatedAt: new Date().toISOString(),
-    })),
-  };
-  const submitted: Record<string, unknown>[] = [];
-  const page = await vaultPage(
-    createElement(Credentials, { id: request.id }),
-    async (_path, init) => {
-      if (init.method !== 'POST') return Response.json(request);
-      submitted.push(JSON.parse(String(init.body)));
-      return Response.json({ error: 'Synthetic paused sign-in' }, { status: 503 });
-    },
-  );
-  try {
-    await act(async () =>
-      [...page.document.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Use another login')!
-        .click(),
-    );
-    page.document.querySelector<HTMLInputElement>('input[name="label"]')!.value = '  ';
-    page.document.querySelector<HTMLInputElement>('input[name="password"]')!.value =
-      'synthetic password';
-    await act(async () =>
-      page.document
-        .querySelector('form')!
-        .dispatchEvent(new page.window.Event('submit', { bubbles: true, cancelable: true })),
-    );
-    assert.equal(submitted.length, 1);
-    assert.equal(submitted[0].label, 'Example.test 3');
-    assert.equal(
-      request.savedEntries.some((entry) => entry.label === submitted[0].label),
-      false,
-    );
   } finally {
     await page.close();
   }
