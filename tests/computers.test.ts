@@ -132,7 +132,7 @@ test('E2B SDK configuration keeps keys server-side, blocks public traffic and bo
   assert.equal(started.stdin, true);
   assert.equal(started.background, true);
   assert.equal(started.requestTimeoutMs, 1234);
-  assert.equal(started.timeoutMs, 180_000);
+  assert.equal(started.timeoutMs, 0);
   assert.deepEqual(started.envs, {});
   assert.equal(JSON.stringify(started).includes('synthetic-server-key'), false);
   await command.sendStdin(Buffer.from('synthetic private input'));

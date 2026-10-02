@@ -71,7 +71,7 @@ export function createE2BClient(options: {
                 ? 'otto-connected'
                 : 'node',
           envs: {},
-          timeoutMs: 180_000,
+          timeoutMs: 0,
           requestTimeoutMs,
           onStdout: input.stdout,
           onStderr: input.stderr,
