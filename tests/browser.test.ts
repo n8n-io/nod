@@ -1893,7 +1893,17 @@ test(
         await act({ action: 'press', key });
       const observation = await act({
         action: 'evaluate',
-        script: "JSON.parse(document.querySelector('#result').textContent)",
+        script: `new Promise(resolve => {
+          const read = () => {
+            const state = JSON.parse(document.querySelector('#result').textContent || 'null');
+            if (state?.keys.length >= 3) {
+              removeEventListener('message', read);
+              resolve(state);
+            }
+          };
+          addEventListener('message', read);
+          read();
+        })`,
       });
       assert.deepEqual(JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1)), {
         selected: true,
