@@ -99,6 +99,11 @@ function Workspace({
     threadId: string;
     messageId: string;
   } | null>();
+  const [chatRequests, setChatRequests] = useState<Array<{ id: string; text: string }>>([]);
+  const askInChat = (text: string) => {
+    setChatRequests((current) => [...current, { id: crypto.randomUUID(), text }]);
+    navigate('/');
+  };
   const [inspectionFocus, setInspectionFocus] = useState<{ messageId: string; turnId: string }>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<AccountTab>(
@@ -280,6 +285,10 @@ function Workspace({
                   toolbarActions={currentPath === '/' ? toolbarActions : null}
                   visible={currentPath === '/'}
                   onReadLatest={unread.markRead}
+                  requestedMessage={chatRequests[0]}
+                  onRequestHandled={(id) =>
+                    setChatRequests((current) => current.filter((request) => request.id !== id))
+                  }
                 />
               ) : error ? (
                 <div className="initial-loading">
@@ -300,8 +309,8 @@ function Workspace({
             {currentPath === '/vault' && <Vault />}
             {currentPath === '/apps' && <Apps />}
             {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
-            {currentPath === '/goals' && <Goals conversation={visibleState} />}
-            {currentPath === '/schedule' && <SchedulePage conversation={visibleState} />}
+            {currentPath === '/goals' && <Goals onAsk={askInChat} />}
+            {currentPath === '/schedule' && <SchedulePage onAsk={askInChat} />}
             {!navigationItems.some((item) => item.path === currentPath) && (
               <div className="empty-state">
                 <h1>This page isn’t here.</h1>

@@ -27,47 +27,6 @@
   flex-wrap: wrap;
   gap: 6px;
 }
-.ask-otto-exchange {
-  display: grid;
-  gap: 8px;
-}
-.ask-otto-request {
-  justify-self: end;
-  max-width: 85%;
-  color: var(--muted-foreground);
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.ask-otto-reply {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  font-size: 13.5px;
-  line-height: 1.55;
-}
-.ask-otto-reply .message-text {
-  min-width: 0;
-  padding-top: 2px;
-}
-.ask-otto-reply .message-text p {
-  margin: 0;
-}
-.ask-otto-working,
-.ask-otto-failed {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding-top: 3px;
-  color: var(--muted-foreground);
-  font-size: 13px;
-}
-.ask-otto-after {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px;
-}
 .plan-controls {
   display: flex;
   flex-wrap: wrap;

@@ -2,6 +2,8 @@
 
 Create files in the task workspace with python3, Node or plain text. Python includes ReportLab, Matplotlib, pandas, Pillow, openpyxl, python-docx and python-pptx; use standard-library csv for simple tables. Give final files clear names and keep intermediates under .otto or remove them.
 
+When saving an existing document, preserve its source bytes unless the user requested changes. Use the selected destination or the workspace by default. Saving a file does not require a memory entry.
+
 Check before sharing:
 
 - PDF: run pdfinfo and pdftotext. For layout, render relevant pages with `pdftoppm -f PAGE -l PAGE -singlefile -scale-to 1600 -png FILE .otto/preview`, inspect .otto/preview.png with read, then remove it.

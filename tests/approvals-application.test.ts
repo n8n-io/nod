@@ -46,7 +46,9 @@ test(
               dispose() {},
               async prompt(text) {
                 if (phase === 0) {
-                  const input = JSON.parse(text.split('Request data (JSON):\n')[1]!);
+                  const input = JSON.parse(
+                    text.split('Request data (JSON):\n')[1]!.split('\n')[0]!,
+                  );
                   const plan = plans.get(input.currentInstruction)!;
                   assert.ok(plan);
                   await options.tools

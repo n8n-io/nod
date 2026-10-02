@@ -69,7 +69,7 @@ test(
               abort() {},
               dispose() {},
               async prompt(text) {
-                const input = text.split('Request data (JSON):\n')[1];
+                const input = text.split('Request data (JSON):\n')[1]?.split('\n')[0];
                 const plan = input ? plans.get(JSON.parse(input).currentInstruction) : undefined;
                 for (const step of plan ?? []) await run(options, step);
                 options.onEvent({ type: 'final', text: 'Synthetic memory request handled.' });
