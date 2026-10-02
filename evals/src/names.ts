@@ -1,4 +1,5 @@
 const known: Array<[RegExp, string, string]> = [
+  [/gpt-6\.1-sol/i, 'GPT 6.1 Sol', '#10a37f'],
   [/gpt-6\.1/i, 'GPT 6.1', '#10a37f'],
   [/opus-5-5/i, 'Opus 5.5', '#d4572a'],
   [/sonnet-5-5/i, 'Sonnet 5.5', '#f2a65a'],
