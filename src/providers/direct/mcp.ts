@@ -1,7 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Service } from './oauth.ts';
-import { loadDirectPlugin } from './plugin.ts';
+import { endpoints, type Service } from './oauth.ts';
 
 export async function withDirectMcp<T>(
   service: Service,
@@ -12,7 +11,7 @@ export async function withDirectMcp<T>(
 ) {
   signal?.throwIfAborted();
   const client = new Client({ name: 'Otto', version: '0.1.0' });
-  const endpoint = await loadDirectPlugin(service);
+  const endpoint = new URL(endpoints[service]);
   signal?.throwIfAborted();
   const transport = new StreamableHTTPClientTransport(endpoint, {
     requestInit: { headers: { Authorization: `Bearer ${accessToken}` } },

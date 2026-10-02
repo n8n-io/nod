@@ -3,9 +3,12 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { AppGrantVault } from '../../ports/app-grants.ts';
 import type { CredentialKeyStore } from '../../ports/key-store.ts';
-import { loadDirectPlugin } from './plugin.ts';
 
-export type Service = 'notion' | 'linear';
+export const endpoints = {
+  notion: 'https://mcp.notion.com/mcp',
+  linear: 'https://mcp.linear.app/mcp/readonly',
+} as const;
+export type Service = keyof typeof endpoints;
 type Secrets = {
   accessToken?: string;
   refreshToken?: string;
@@ -187,7 +190,7 @@ export function createDirectOAuth(options: {
     if (callback.hostname === 'localhost') callback.hostname = '127.0.0.1';
     const id = randomUUID();
     const verifier = randomBytes(32).toString('base64url');
-    const endpoint = await loadDirectPlugin(service);
+    const endpoint = new URL(endpoints[service]);
     const server = endpoint.origin;
     const resourceUrl = service === 'linear' ? endpoint.href : undefined;
     const resource = z

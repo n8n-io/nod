@@ -4,7 +4,6 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public
-COPY plugins ./plugins
 COPY src ./src
 RUN npx vite build
 
@@ -17,7 +16,6 @@ ENV NODE_ENV=production PORT=4310 HOST=0.0.0.0 OTTO_DATA_ROOT=/data
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/src ./src
-COPY --from=build --chown=node:node /app/plugins ./plugins
 COPY --from=build --chown=node:node /app/dist ./dist
 RUN mkdir /data && chown node:node /data
 USER node
