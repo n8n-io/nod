@@ -17,9 +17,10 @@ import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import type { Static } from '@sinclair/typebox';
+import type { Editor } from '@tiptap/core';
 import { JSDOM } from 'jsdom';
 import pg from 'pg';
-import { act, createElement } from 'react';
+import { act, createElement, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
   Agent,
@@ -1891,11 +1892,19 @@ test(
       await act({ action: 'click', ...point(300, 130), durationMs: 120 });
       for (const key of ['ArrowLeft', 'ArrowRight', 'Space'] as const)
         await act({ action: 'press', key });
-      const observation = await act({
-        action: 'evaluate',
-        script: "JSON.parse(document.querySelector('#result').textContent)",
-      });
-      assert.deepEqual(JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1)), {
+      const readResult = async () => {
+        const observation = await act({
+          action: 'evaluate',
+          script: "JSON.parse(document.querySelector('#result').textContent)",
+        });
+        return JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1));
+      };
+      let actual = await readResult();
+      for (const deadline = Date.now() + 2000; actual.keys.length < 3 && Date.now() < deadline;) {
+        await delay(20);
+        actual = await readResult();
+      }
+      assert.deepEqual(actual, {
         selected: true,
         dragged: true,
         held: true,
@@ -2364,6 +2373,7 @@ async function handoffView(
     },
     async close() {
       if (!unmounted) await act(async () => root.unmount());
+      await act(async () => delay(10));
       dom.window.close();
       URL.createObjectURL = createUrl;
       URL.revokeObjectURL = revokeUrl;
@@ -2374,6 +2384,299 @@ async function handoffView(
     },
   };
 }
+
+function requestedChatState(): AppState {
+  return {
+    threadId: randomUUID(),
+    threadStatus: 'idle',
+    messages: [
+      {
+        id: randomUUID(),
+        role: 'assistant',
+        turnId: randomUUID(),
+        text: 'An earlier synthetic conversation.',
+        attachments: [],
+        createdAt: '2026-10-01T12:00:00.000Z',
+      },
+    ],
+    turns: [],
+    configuration: {
+      provider: 'fixture',
+      model: 'none',
+      llmReady: true,
+      integrationsReady: false,
+      inspectorEnabled: false,
+      localOnly: true,
+    },
+  };
+}
+
+test('chat request submits once under StrictMode and keeps the pending message visible', async () => {
+  const state = requestedChatState();
+  const pending = deferred<Response>();
+  const submissions: Array<{ clientMessageId: string; text: string }> = [];
+  const handled: string[] = [];
+  const request = { id: randomUUID(), text: 'Create a synthetic goal.' };
+  const chat = () =>
+    createElement(
+      StrictMode,
+      null,
+      createElement(Chat, {
+        state,
+        streams: {},
+        refresh: async () => {},
+        resetConversation: async () => state.threadId,
+        requestedMessage: { ...request },
+        onRequestHandled: (id) => handled.push(id),
+      }),
+    );
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/apps') return Response.json([]);
+    assert.equal(path, '/api/messages');
+    submissions.push(JSON.parse(String(options?.body)));
+    return pending.promise;
+  }, chat());
+  try {
+    assert.equal(submissions.length, 1);
+    assert.deepEqual(handled, [request.id]);
+    assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 1);
+    await view.render(chat());
+    assert.equal(submissions.length, 1);
+    assert.deepEqual(handled, [request.id]);
+    await act(async () =>
+      pending.resolve(
+        Response.json({
+          messageId: submissions[0].clientMessageId,
+          threadId: state.threadId,
+          turnId: randomUUID(),
+        }),
+      ),
+    );
+    await view.render(chat());
+    assert.equal(submissions.length, 1);
+    assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 1);
+  } finally {
+    pending.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+    await view.close();
+  }
+});
+
+test('chat request waits for model readiness before consuming and submitting once', async () => {
+  const state = requestedChatState();
+  const pending = deferred<Response>();
+  const submissions: Array<{ clientMessageId: string; text: string }> = [];
+  const handled: string[] = [];
+  const request = { id: randomUUID(), text: 'Create a synthetic goal.' };
+  const chat = (llmReady: boolean) =>
+    createElement(Chat, {
+      state: { ...state, configuration: { ...state.configuration, llmReady } },
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+      requestedMessage: request,
+      onRequestHandled: (id) => handled.push(id),
+    });
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/apps') return Response.json([]);
+    assert.equal(path, '/api/messages');
+    submissions.push(JSON.parse(String(options?.body)));
+    return pending.promise;
+  }, chat(false));
+  try {
+    assert.equal(submissions.length, 0);
+    assert.deepEqual(handled, []);
+    await view.render(chat(true));
+    assert.equal(submissions.length, 1);
+    assert.deepEqual(handled, [request.id]);
+    await act(async () =>
+      pending.resolve(
+        Response.json({
+          messageId: submissions[0].clientMessageId,
+          threadId: state.threadId,
+          turnId: randomUUID(),
+        }),
+      ),
+    );
+    await view.render(chat(true));
+    assert.equal(submissions.length, 1);
+    assert.deepEqual(handled, [request.id]);
+  } finally {
+    pending.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+    await view.close();
+  }
+});
+
+test('chat request queues a later page request behind an unacknowledged message', async () => {
+  const state = requestedChatState();
+  const first = deferred<Response>();
+  const second = deferred<Response>();
+  const submissions: Array<{ clientMessageId: string; text: string }> = [];
+  const requests = [
+    { id: randomUUID(), text: 'Create a synthetic goal.' },
+    { id: randomUUID(), text: 'Schedule a synthetic reminder.' },
+  ];
+  const chat = (requestedMessage: (typeof requests)[number]) =>
+    createElement(Chat, {
+      state,
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+      requestedMessage,
+    });
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/apps') return Response.json([]);
+    assert.equal(path, '/api/messages');
+    submissions.push(JSON.parse(String(options?.body)));
+    return submissions.length === 1 ? first.promise : second.promise;
+  }, chat(requests[0]));
+  try {
+    await view.render(chat(requests[1]));
+    assert.equal(submissions.length, 1);
+    assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 2);
+    await act(async () =>
+      first.resolve(
+        Response.json({
+          messageId: submissions[0].clientMessageId,
+          threadId: state.threadId,
+          turnId: randomUUID(),
+        }),
+      ),
+    );
+    assert.deepEqual(
+      submissions.map((submission) => submission.text),
+      requests.map((request) => request.text),
+    );
+    assert.notEqual(submissions[0].clientMessageId, submissions[1].clientMessageId);
+    await act(async () =>
+      second.resolve(
+        Response.json({
+          messageId: submissions[1].clientMessageId,
+          threadId: state.threadId,
+          turnId: randomUUID(),
+        }),
+      ),
+    );
+    await view.render(chat({ ...requests[1] }));
+    assert.equal(submissions.length, 2);
+    assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 2);
+  } finally {
+    first.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+    second.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+    await view.close();
+  }
+});
+
+test('chat request restores failed queued requests in submission order without dispatching the later request', async () => {
+  const state = requestedChatState();
+  const pending = deferred<Response>();
+  const draft = 'Keep this unsent draft.';
+  const requests = [
+    { id: randomUUID(), text: 'Create a synthetic goal.' },
+    { id: randomUUID(), text: 'Schedule a synthetic reminder.' },
+  ];
+  const submissions: Array<{ text: string }> = [];
+  const chat = (requestedMessage?: (typeof requests)[number]) =>
+    createElement(Chat, {
+      state,
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+      requestedMessage,
+    });
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/apps') return Response.json([]);
+    assert.equal(path, '/api/messages');
+    submissions.push(JSON.parse(String(options?.body)));
+    return pending.promise;
+  }, chat());
+  try {
+    const editor = view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor;
+    await act(async () => editor.commands.setContent(draft));
+    await view.render(chat(requests[0]));
+    await view.render(chat(requests[1]));
+    assert.equal(submissions.length, 1);
+    assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 2);
+    await act(async () =>
+      pending.resolve(Response.json({ error: 'Synthetic request rejected' }, { status: 503 })),
+    );
+    assert.equal(submissions.length, 1);
+    assert.equal(editor.getMarkdown(), `${requests[0].text}\n\n${requests[1].text}\n\n${draft}`);
+    assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 0);
+    await view.render(chat({ ...requests[1] }));
+    assert.equal(submissions.length, 1);
+  } finally {
+    pending.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+    await view.close();
+  }
+});
+
+test('chat request isolates a stale reply and attachments and restores failure before the existing draft', async () => {
+  const state = requestedChatState();
+  const pending = deferred<Response>();
+  const request = { id: randomUUID(), text: 'Create a synthetic goal.' };
+  const draft = 'Keep this unsent draft.';
+  const artifact = {
+    id: randomUUID(),
+    name: 'synthetic-draft.txt',
+    mimeType: 'text/plain',
+    size: 5,
+    url: '/api/artifacts/synthetic-draft',
+  };
+  const submissions: Array<{
+    clientMessageId: string;
+    text: string;
+    replyToMessageId?: string;
+    attachmentIds: string[];
+  }> = [];
+  const chat = (requestedMessage?: typeof request) =>
+    createElement(Chat, {
+      state,
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+      requestedMessage,
+    });
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/apps') return Response.json([]);
+    if (path === '/api/uploads') return Response.json(artifact);
+    assert.equal(path, '/api/messages');
+    submissions.push(JSON.parse(String(options?.body)));
+    return pending.promise;
+  }, chat());
+  try {
+    const editor = view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor;
+    await act(async () => {
+      editor.commands.setContent(draft);
+      view.element<HTMLButtonElement>('[aria-label="Reply to message"]').click();
+      const input = view.element<HTMLInputElement>('[aria-label="Choose files"]');
+      Object.defineProperty(input, 'files', {
+        value: [new File(['draft'], artifact.name, { type: artifact.mimeType })],
+      });
+      input.dispatchEvent(new view.dom.window.Event('change', { bubbles: true }));
+    });
+    assert.ok(view.element('.composer-reply'));
+    await view.render(chat(request));
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].replyToMessageId, undefined);
+    assert.deepEqual(submissions[0].attachmentIds, []);
+    assert.equal(editor.getMarkdown(), draft);
+    assert.ok(view.element('[aria-label="Remove synthetic-draft.txt"]'));
+    assert.equal(view.dom.window.document.querySelector('.composer-reply'), null);
+    await act(async () =>
+      pending.resolve(Response.json({ error: 'Synthetic request rejected' }, { status: 503 })),
+    );
+    assert.equal(editor.getMarkdown(), `${request.text}\n\n${draft}`);
+    assert.ok(view.element('[aria-label="Remove synthetic-draft.txt"]'));
+    assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 0);
+    assert.equal(view.dom.window.document.querySelector('.composer-reply'), null);
+    await view.render(chat({ ...request }));
+    assert.equal(submissions.length, 1);
+    assert.equal(editor.getMarkdown(), `${request.text}\n\n${draft}`);
+  } finally {
+    pending.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+    await view.close();
+  }
+});
 
 for (const failure of ['rejected', 'disconnected'] as const)
   test(`chat preserves a ${failure} browser continuation until an acknowledged retry`, async () => {

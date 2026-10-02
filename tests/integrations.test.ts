@@ -9,6 +9,7 @@ import { Composio } from '@composio/core';
 import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
 import Fastify from 'fastify';
 import pg from 'pg';
+import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import type {
   Agent,
   AgentEvent,
@@ -70,6 +71,198 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
     },
   };
 }
+
+test('synthetic Gmail filters its inbox and sent mail by query, labels and date', async (t) => {
+  const fixture = createIntegrationFixture('http://localhost:4320');
+  const app = Fastify();
+  fixture.register(app);
+  t.after(() => app.close());
+  const session = await fixture.provider.createSession('fixture-owner', {});
+  const { accountId } = await session.authorize('gmail', 'http://localhost:4320/apps');
+  assert.equal(
+    (await app.inject({ method: 'POST', url: `/e2e/connect/${accountId}` })).statusCode,
+    302,
+  );
+  const search = async (query: string, label_ids?: string[]) => {
+    const result = (await session.execute(
+      'GMAIL_FETCH_EMAILS',
+      { query, ...(label_ids ? { label_ids } : {}) },
+      accountId,
+    )) as { messages: Array<{ id: string }> };
+    return result.messages.map((message) => message.id);
+  };
+  assert.deepEqual(await search('subject:does-not-exist'), []);
+  assert.deepEqual(await search('in:inbox is:unread from:alex@example.test'), ['fixture-mail-1']);
+  assert.deepEqual(await search('subject:"Northstar sent review" has:attachment'), [
+    'fixture-sent-1-newest',
+  ]);
+  assert.deepEqual(await search('-subject:Northstar'), []);
+  assert.deepEqual(await search('', ['SENT']), ['fixture-sent-1-newest', 'fixture-sent-1-older']);
+  assert.deepEqual(await search('in:sent', ['INBOX']), []);
+  assert.deepEqual(await search('newer_than:1d'), ['fixture-mail-1', 'fixture-sent-1-newest']);
+  assert.deepEqual(await search('before:2000-01-01'), []);
+  await assert.rejects(search('unsupported:value'), /not supported/);
+  const attachment = {
+    message_id: 'fixture-sent-1-newest',
+    attachment_id: 'fixture-attachment-1-2048',
+    file_name: 'northstar-review-2048.csv',
+  };
+  assert.equal(
+    Buffer.from(
+      (await session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId)).bytes,
+    ).toString(),
+    'invoice,status,amount_eur\nNS-2048,Reviewed,360.00\n',
+  );
+  const second = await session.authorize('gmail', 'http://localhost:4320/apps');
+  await app.inject({ method: 'POST', url: `/e2e/connect/${second.accountId}` });
+  await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', attachment, second.accountId));
+  await session.execute('GMAIL_DELETE_MESSAGE', { message_id: attachment.message_id }, accountId);
+  assert.deepEqual(await search('has:attachment'), []);
+  await assert.rejects(
+    session.execute(
+      'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+      { message_id: attachment.message_id },
+      accountId,
+    ),
+    /not found/,
+  );
+  await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId));
+});
+
+test('synthetic Gmail keeps scenario records isolated across reads, deletes and downloads', async (t) => {
+  for (const id of ['mailbox-contract', 'mailbox-contract-v2']) {
+    const bytes = Buffer.from('A source attachment belonging to this scenario.');
+    const fixture = createIntegrationFixture('http://localhost:4320', undefined, {
+      eventToken: 'synthetic-webhook-token',
+      data: {
+        id,
+        accountEmail: 'scenario@example.test',
+        messages: [
+          {
+            id: 'scenario-inbox',
+            threadId: 'scenario-inbox-thread',
+            from: 'source@example.test',
+            to: 'scenario@example.test',
+            subject: 'Received source',
+            body: 'Received source body.',
+            date: '2026-10-01T10:00:00Z',
+            labelIds: ['INBOX', 'UNREAD'],
+          },
+          {
+            id: 'scenario-sent',
+            threadId: 'scenario-sent-thread',
+            from: 'scenario@example.test',
+            to: 'recipient@example.test',
+            subject: 'Sent source',
+            body: 'Sent source body.',
+            date: '2026-10-02T10:00:00Z',
+            labelIds: ['SENT'],
+          },
+        ],
+        attachments: [
+          {
+            messageId: 'scenario-sent',
+            attachmentId: 'scenario-attachment',
+            name: 'source.txt',
+            mimeType: 'text/plain',
+            bytes,
+          },
+        ],
+        calendarEvents: [],
+      },
+    });
+    const app = Fastify();
+    fixture.register(app);
+    t.after(() => app.close());
+    const session = await fixture.provider.createSession('fixture-owner', {});
+    const { accountId } = await session.authorize('gmail', 'http://localhost:4320/apps');
+    assert.equal(
+      (await app.inject({ method: 'POST', url: `/e2e/connect/${accountId}` })).statusCode,
+      302,
+    );
+    const search = async (args: Record<string, unknown> = {}) => {
+      const result = (await session.execute('GMAIL_FETCH_EMAILS', args, accountId)) as {
+        messages: Array<{ id: string }>;
+      };
+      return result.messages.map((message) => message.id);
+    };
+    const attachment = {
+      message_id: 'scenario-sent',
+      attachment_id: 'scenario-attachment',
+      file_name: 'source.txt',
+    };
+    assert.deepEqual(await search(), []);
+    await assert.rejects(
+      session.execute(
+        'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+        { message_id: 'scenario-sent' },
+        accountId,
+      ),
+    );
+    await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId));
+    await assert.rejects(
+      session.execute('GMAIL_DELETE_MESSAGE', { message_id: 'scenario-sent' }, accountId),
+    );
+    await fixture.provider.subscribe('fixture-owner', 'gmail', accountId);
+    fixture.releaseInbox(accountId);
+    assert.deepEqual(await search({ query: 'in:sent' }), ['scenario-sent']);
+    assert.deepEqual(await search(), ['scenario-sent', 'scenario-inbox']);
+    assert.deepEqual(await search({ label_ids: ['SENT'] }), ['scenario-sent']);
+    assert.deepEqual(await search({ query: 'after:2026-10-02' }), ['scenario-sent']);
+    assert.deepEqual(await search({ query: 'in:sent', label_ids: ['INBOX'] }), []);
+    assert.deepEqual(await search({ query: 'Northstar' }), []);
+    for (const message_id of ['fixture-mail-1', 'fixture-sent-1-newest']) {
+      await assert.rejects(
+        session.execute('GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID', { message_id }, accountId),
+        /not found/,
+      );
+      await assert.rejects(
+        session.execute('GMAIL_DELETE_MESSAGE', { message_id }, accountId),
+        /not found/,
+      );
+    }
+    await assert.rejects(
+      session.download!(
+        'GMAIL_GET_ATTACHMENT',
+        {
+          message_id: 'fixture-sent-1-newest',
+          attachment_id: 'fixture-attachment-1-2048',
+          file_name: 'northstar-review-2048.csv',
+        },
+        accountId,
+      ),
+    );
+    assert.equal(fixture.writes.length, 0);
+    const found = (await session.execute(
+      'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+      { message_id: 'scenario-sent' },
+      accountId,
+    )) as { message: { from: string; attachments: Array<{ filename: string }> } };
+    assert.equal(found.message.from, 'scenario@example.test');
+    assert.equal(found.message.attachments[0].filename, 'source.txt');
+    assert.deepEqual(
+      (await session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId)).bytes,
+      bytes,
+    );
+    const otherOwner = await fixture.provider.createSession('other-owner', {});
+    await assert.rejects(otherOwner.execute('GMAIL_FETCH_EMAILS', {}, accountId));
+    await assert.rejects(otherOwner.download!('GMAIL_GET_ATTACHMENT', attachment, accountId));
+    await session.execute('GMAIL_DELETE_MESSAGE', { message_id: 'scenario-sent' }, accountId);
+    assert.deepEqual(await search({ query: 'in:sent' }), []);
+    await assert.rejects(
+      session.execute(
+        'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID',
+        { message_id: 'scenario-sent' },
+        accountId,
+      ),
+    );
+    await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId));
+    assert.deepEqual(
+      fixture.writes.map((write) => write.action),
+      ['GMAIL_DELETE_MESSAGE'],
+    );
+  }
+});
 
 test('notification summaries exclude message bodies, tokens, and unbounded provider payloads', () => {
   const summary = eventOverview('gmail', 'GMAIL_NEW_GMAIL_MESSAGE', {

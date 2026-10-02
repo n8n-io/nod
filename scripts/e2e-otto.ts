@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   appendFile,
   chmod,
@@ -23,6 +23,7 @@ import {
   registerOperatorPage,
   operatorAccess,
   type Audit,
+  type IntegrationFixtureData,
 } from './e2e-fixtures.ts';
 import { runProcess } from '../src/providers/process.ts';
 import { agentModels } from '../src/shared/model-defaults.ts';
@@ -40,6 +41,40 @@ const port = Number(configuredPort);
 if (!/^\d{1,5}$/.test(configuredPort) || port < 1 || port > 65_535)
   throw new Error('OTTO_E2E_PORT must be an integer between 1 and 65535.');
 const baseUrl = `http://localhost:${port}`;
+const scenario = environment.OTTO_E2E_SCENARIO;
+const eventMode = environment.OTTO_E2E_EVENT === 'true';
+if (eventMode && !scenario) throw new Error('An inbox event needs a synthetic scenario.');
+if (
+  scenario &&
+  ![
+    'health-results-base',
+    'health-results-appointment',
+    'health-results-base-v2',
+    'health-results-appointment-v2',
+  ].includes(scenario)
+)
+  throw new Error('Choose an available synthetic scenario.');
+const fixtureData: IntegrationFixtureData | undefined = scenario
+  ? await (async () => {
+      const data = JSON.parse(
+        await readFile(join(repository, 'scripts', 'fixtures', `${scenario}.json`), 'utf8'),
+      ) as IntegrationFixtureData;
+      return {
+        ...data,
+        attachments: await Promise.all(
+          data.attachments.map(async (file) => ({
+            ...file,
+            bytes: await readFile(join(repository, 'scripts', 'fixtures', file.name)),
+          })),
+        ),
+      };
+    })()
+  : undefined;
+const sourceFiles = fixtureData?.attachments.map(({ bytes, ...file }) => ({
+  ...file,
+  size: bytes.byteLength,
+  sha256: createHash('sha256').update(bytes).digest('hex'),
+}));
 const provider = environment.LLM_PROVIDER || 'openai';
 const model = environment.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
 const apiKey =
@@ -87,7 +122,11 @@ const audit: Audit = (kind, fields = {}) => {
   if (timeline.length > 10_000) timeline.shift();
   logQueue = logQueue.then(() => appendFile(logPath, JSON.stringify(event) + '\n')).catch(() => {});
 };
-const integration = createIntegrationFixture(baseUrl, audit, { signup: true });
+const integration = createIntegrationFixture(baseUrl, audit, {
+  signup: !scenario,
+  data: fixtureData,
+  eventToken: eventMode ? operatorToken : undefined,
+});
 const signupAttempted = { base: false, alternate: false };
 const signupReleased = { base: false, alternate: false };
 let application:
@@ -340,6 +379,13 @@ try {
     model: { provider, name: model, configured: true },
   });
   const { app } = application;
+  if (fixtureData) {
+    await application.triage.updatePreferences({ timeZone: 'Europe/Lisbon' });
+    if (fixtureData.profile)
+      await application.personal.manage('profile_update', fixtureData.profile);
+    for (const schedule of fixtureData.schedules ?? [])
+      await application.personal.manage('schedule_create', schedule);
+  }
   const operator = operatorAccess(operatorToken);
   integration.register(app);
   app.addContentTypeParser(
@@ -347,16 +393,85 @@ try {
     { parseAs: 'string', bodyLimit: 8192 },
     (_request, _body, done) => done(null, {}),
   );
-  registerOperatorPage(app, operatorToken);
+  registerOperatorPage(app, operatorToken, fixtureData);
   app.get('/e2e/status', operator, async () => ({
     fixture: true,
     model: { provider, name: model },
     fixtureLogin,
     fixtureHotel,
     fixtureFlight,
+    scenario: fixtureData
+      ? { id: fixtureData.id, accountEmail: fixtureData.accountEmail, sourceFiles }
+      : null,
     timeline,
     writes: integration.writes,
   }));
+  app.get('/e2e/evidence', operator, async (_request, reply) => {
+    if (!fixtureData) return reply.code(404).send({ error: 'No scenario was selected.' });
+    const [messages, turns, artifacts, schedules, runs] = await Promise.all([
+      pool.query(
+        "SELECT id,thread_id,turn_id,role,text,attachments,created_at FROM messages WHERE owner_id='local-development' ORDER BY created_at,id",
+      ),
+      pool.query(
+        "SELECT id,thread_id,status,source,prompt,error,created_at,started_at,finished_at FROM turns WHERE owner_id='local-development' ORDER BY created_at,id",
+      ),
+      pool.query(
+        "SELECT id,name,mime_type,size,created_at FROM artifacts WHERE owner_id='local-development' ORDER BY created_at,id",
+      ),
+      pool.query(
+        "SELECT id,title,prompt,kind,run_at,time_zone,enabled,next_run_at FROM schedules WHERE owner_id='local-development' ORDER BY created_at,id",
+      ),
+      pool.query(
+        "SELECT id,schedule_id,turn_id,scheduled_for,created_at FROM schedule_runs WHERE owner_id='local-development' ORDER BY created_at,id",
+      ),
+    ]);
+    return {
+      fixture: true,
+      scenario: fixtureData.id,
+      sourceFiles,
+      calendarEvents: fixtureData.calendarEvents,
+      messages: messages.rows,
+      turns: turns.rows,
+      artifacts: artifacts.rows,
+      schedules: schedules.rows,
+      runs: runs.rows,
+      writes: integration.writes,
+    };
+  });
+  app.post('/e2e/inbox-arrival', operator, async (request, reply) => {
+    if (!eventMode) return reply.code(404).send({ error: 'Inbox events are not enabled.' });
+    const value = request.body as { connectionId?: unknown } | undefined;
+    if (
+      value?.connectionId !== undefined &&
+      (typeof value.connectionId !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.connectionId))
+    )
+      return reply.code(400).send({ error: 'Provide an owned Gmail connection ID.' });
+    await application!.integrations.syncWatches();
+    const rows = await pool.query<{ account_id: string }>(
+      "SELECT account_id FROM app_connections WHERE owner_id='local-development' AND slug='gmail' AND provider_id='synthetic-apps' AND account_active AND NOT revoked AND triggers_enabled AND trigger_id IS NOT NULL AND ($1::uuid IS NULL OR id=$1)",
+      [value?.connectionId ?? null],
+    );
+    if (rows.rowCount !== 1)
+      return reply
+        .code(409)
+        .send({ error: 'Choose one connected synthetic Gmail account with updates enabled.' });
+    const event = integration.releaseInbox(rows.rows[0]!.account_id);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/webhooks/synthetic-apps',
+      headers: {
+        host: new URL(baseUrl).host,
+        origin: baseUrl,
+        'content-type': 'application/json',
+        'x-fixture-signature': operatorToken,
+      },
+      payload: event,
+    });
+    return reply
+      .code(response.statusCode)
+      .send({ ...response.json<Record<string, unknown>>(), messageId: event.data.message_id });
+  });
   app.post<{ Params: { variant: string } }>(
     '/e2e/signup/:variant',
     operator,
@@ -394,17 +509,20 @@ try {
   );
   const expected = new Map<string, string>();
   app.post('/e2e/expected-run', operator, async (request, reply) => {
-    const value = request.body as { scheduleId?: string; dueAt?: string };
+    const value = request.body as { scheduleId?: unknown; dueAt?: unknown } | undefined;
     if (
-      !value ||
-      !/^[a-f0-9-]{36}$/.test(value.scheduleId || '') ||
-      !Number.isFinite(Date.parse(value.dueAt || ''))
+      typeof value?.scheduleId !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.scheduleId) ||
+      typeof value.dueAt !== 'string' ||
+      !Number.isFinite(Date.parse(value.dueAt))
     )
       return reply.code(400).send({ error: 'Provide a schedule ID and an absolute ISO due time.' });
-    expected.set(value.scheduleId!, new Date(value.dueAt!).toISOString());
+    const scheduleId = value.scheduleId.toLowerCase();
+    const dueAt = new Date(value.dueAt).toISOString();
+    expected.set(scheduleId, dueAt);
     audit('schedule_expected', {
-      scheduleId: value.scheduleId!,
-      dueAt: expected.get(value.scheduleId!)!,
+      scheduleId,
+      dueAt,
     });
     return { ok: true };
   });
@@ -555,6 +673,10 @@ try {
     container,
     timings: logPath,
     model: { provider, name: model },
+    scenario: fixtureData
+      ? { id: fixtureData.id, accountEmail: fixtureData.accountEmail, sourceFiles }
+      : null,
+    eventMode,
     evidence:
       'Real app, Pi model, Chrome, Vault and thread workspace; synthetic connected apps, sign-in website and channel setup. Speech and channel delivery disabled.',
   };

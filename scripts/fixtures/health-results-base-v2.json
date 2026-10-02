@@ -1,0 +1,31 @@
+{
+  "id": "health-results-base-v2",
+  "accountEmail": "work@example.test",
+  "messages": [
+    {
+      "id": "fixture-nb-2026-1001",
+      "threadId": "fixture-nb-2026-1001-thread",
+      "from": "results@northbridge.example.test",
+      "to": "work@example.test",
+      "subject": "Your laboratory report NB-2026-1001",
+      "body": "Your report is attached. Please discuss the results with your requesting clinician.",
+      "date": "2026-10-01T16:00:00+01:00",
+      "labelIds": ["INBOX", "UNREAD"]
+    }
+  ],
+  "attachments": [
+    {
+      "messageId": "fixture-nb-2026-1001",
+      "attachmentId": "fixture-nb-2026-1001-report",
+      "name": "health-results-base-v2.pdf",
+      "mimeType": "application/pdf"
+    }
+  ],
+  "calendarEvents": [],
+  "profile": {
+    "name": "Alex Rowan",
+    "location": "Lisbon, Portugal",
+    "phone": "",
+    "preferences": ""
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "id": "health-results-appointment",
+  "accountEmail": "work@example.test",
+  "messages": [
+    {
+      "id": "fixture-hc-2026-0930",
+      "threadId": "fixture-hc-2026-0930-thread",
+      "from": "results@harbour.example.test",
+      "to": "work@example.test",
+      "subject": "Your laboratory report HC-2026-0930",
+      "body": "Your report is attached. Please discuss the results with your requesting clinician. This is synthetic test data only.",
+      "date": "2026-09-30T16:00:00+01:00",
+      "labelIds": ["INBOX", "UNREAD"]
+    }
+  ],
+  "attachments": [
+    {
+      "messageId": "fixture-hc-2026-0930",
+      "attachmentId": "fixture-hc-2026-0930-report",
+      "name": "health-results-appointment.pdf",
+      "mimeType": "application/pdf"
+    }
+  ],
+  "calendarEvents": [
+    {
+      "id": "fixture-calendar-language-exam",
+      "summary": "Portuguese language exam",
+      "description": "Language course assessment. Bring student ID.",
+      "start": {
+        "dateTime": "2026-10-10T10:00:00+01:00",
+        "timeZone": "Europe/Lisbon"
+      },
+      "end": {
+        "dateTime": "2026-10-10T11:30:00+01:00",
+        "timeZone": "Europe/Lisbon"
+      },
+      "status": "confirmed",
+      "htmlLink": "https://calendar.google.com/calendar/u/0/r/eventedit/fixture-calendar-language-exam"
+    },
+    {
+      "id": "fixture-calendar-results-review",
+      "summary": "Results review - Dr Mira Vale",
+      "description": "Review Harbour Clinical Laboratory report HC-2026-0930 with Dr Mira Vale. Bring the report; discuss whether further tests are needed.",
+      "start": {
+        "dateTime": "2026-10-12T11:30:00+01:00",
+        "timeZone": "Europe/Lisbon"
+      },
+      "end": {
+        "dateTime": "2026-10-12T12:00:00+01:00",
+        "timeZone": "Europe/Lisbon"
+      },
+      "status": "confirmed",
+      "htmlLink": "https://calendar.google.com/calendar/u/0/r/eventedit/fixture-calendar-results-review"
+    }
+  ],
+  "profile": {
+    "name": "Sam Linden",
+    "location": "Lisbon, Portugal",
+    "phone": "",
+    "preferences": "The user said these were routine tests requested at an annual check-up and that they currently feel well. They prefer to discuss further testing with their usual clinician."
+  },
+  "schedules": [
+    {
+      "title": "Prepare for the results review",
+      "prompt": "Remind me to bring my Harbour Clinical Laboratory report HC-2026-0930 to my appointment with Dr Mira Vale tomorrow at 11:30.",
+      "kind": "once",
+      "runAt": "2026-10-11T18:00:00+01:00",
+      "timeZone": "Europe/Lisbon"
+    }
+  ]
+}

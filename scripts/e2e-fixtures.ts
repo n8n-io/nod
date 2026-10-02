@@ -12,6 +12,7 @@ import type { AddressInfo, Socket } from 'node:net';
 import type { FastifyInstance, preValidationHookHandler } from 'fastify';
 import type {
   IntegrationProvider,
+  IntegrationEvent,
   IntegrationService,
   IntegrationSession,
   VerificationEmail,
@@ -511,7 +512,8 @@ const toolDefinitions = [
   },
   {
     name: 'GMAIL_FETCH_EMAILS',
-    description: 'Read synthetic Gmail messages. Use query in:sent for sent mail, newest first.',
+    description:
+      'Read synthetic Gmail messages, newest first. Search accepts AND-separated text or quoted phrases, from:, to:, subject:, has:attachment, in:inbox, in:sent, label:, is:unread, after:YYYY-MM-DD, before:YYYY-MM-DD, newer_than:Nd and older_than:Nd. Prefix a term with - to exclude it. Other operators and OR groups are rejected.',
     parameters: {
       type: 'object',
       properties: {
@@ -568,7 +570,23 @@ const toolDefinitions = [
   {
     name: 'GOOGLECALENDAR_EVENTS_LIST',
     description: 'Read synthetic calendar events.',
-    parameters: { type: 'object', properties: {} },
+    parameters: {
+      type: 'object',
+      properties: {
+        calendar_id: { type: 'string' },
+        calendarId: { type: 'string' },
+        time_min: { type: 'string' },
+        timeMin: { type: 'string' },
+        time_max: { type: 'string' },
+        timeMax: { type: 'string' },
+        query: { type: 'string' },
+        q: { type: 'string' },
+        max_results: { type: 'integer', minimum: 1, maximum: 100 },
+        maxResults: { type: 'integer', minimum: 1, maximum: 100 },
+        singleEvents: { type: 'boolean' },
+        orderBy: { type: 'string', enum: ['startTime'] },
+      },
+    },
   },
   {
     name: 'GOOGLEDRIVE_FIND_FILE',
@@ -674,11 +692,52 @@ const toolDefinitions = [
   },
 ];
 
+export interface IntegrationFixtureData {
+  id: string;
+  accountEmail: string;
+  profile?: { name: string; location: string; phone: string; preferences: string };
+  schedules?: Array<{
+    title: string;
+    prompt: string;
+    kind: 'once';
+    runAt: string;
+    timeZone: string;
+  }>;
+  messages: Array<{
+    id: string;
+    threadId: string;
+    from: string;
+    to: string;
+    subject: string;
+    body: string;
+    date: string;
+    labelIds: string[];
+  }>;
+  attachments: Array<{
+    messageId: string;
+    attachmentId: string;
+    name: string;
+    mimeType: string;
+    bytes: Uint8Array;
+  }>;
+  calendarEvents: Array<{
+    id: string;
+    summary: string;
+    description: string;
+    start: { dateTime: string; timeZone: string };
+    end: { dateTime: string; timeZone: string };
+    status: string;
+    htmlLink: string;
+  }>;
+}
+
 export function createIntegrationFixture(
   baseUrl: string,
   audit: Audit = () => {},
-  options: { signup?: boolean } = {},
+  options: { signup?: boolean; data?: IntegrationFixtureData; eventToken?: string } = {},
 ) {
+  const realistic = options.data?.id.endsWith('-v2') === true;
+  const fixtureMetadata = realistic ? {} : { fixture: true };
   const accounts = new Map<
     string,
     {
@@ -687,14 +746,17 @@ export function createIntegrationFixture(
       callback: string;
       active: boolean;
       number: number;
+      subscriptionId?: string;
     }
   >();
   const sessions = new Map<string, IntegrationSession>();
   const verificationMail = new Map<SignupVariant, VerificationEmail>();
   const accountEmail = (account: { service: IntegrationService; number: number }) =>
-    options.signup && account.service === 'gmail'
-      ? fixtureCredentials.username
-      : `tester${account.number}@example.test`;
+    options.data && ['gmail', 'googlecalendar'].includes(account.service)
+      ? options.data.accountEmail
+      : options.signup && account.service === 'gmail'
+        ? fixtureCredentials.username
+        : `tester${account.number}@example.test`;
   const writes: Array<{ id: string; accountId: string; action: string }> = [];
   const drafts = new Map<
     string,
@@ -715,6 +777,102 @@ export function createIntegrationFixture(
   let accountSequence = 0;
   const observedAt = Date.now();
   const attachmentText = 'invoice,status,amount_eur\nNS-2048,Reviewed,360.00\n';
+  let inboxVisible = !options.eventToken;
+  function emailMatches(
+    message: {
+      from: string;
+      to?: string;
+      subject: string;
+      body: string;
+      date?: string;
+      labelIds?: string[];
+      attachments?: unknown[];
+    },
+    query: string,
+  ) {
+    if ((query.match(/"/g)?.length ?? 0) % 2 || /[{}()]|(?:^|\s)OR(?:\s|$)/.test(query))
+      throw new Error('Use supported AND-separated synthetic Gmail search terms.');
+    const terms = query.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+    return terms
+      .map((raw) => {
+        const exclude = raw.startsWith('-');
+        const term = (exclude ? raw.slice(1) : raw).replaceAll('"', '').toLowerCase();
+        const separator = term.indexOf(':');
+        const operator = separator < 0 ? '' : term.slice(0, separator);
+        const value = separator < 0 ? term : term.slice(separator + 1);
+        let matches: boolean;
+        if (!value) throw new Error('The synthetic Gmail search term is empty.');
+        if (!operator)
+          matches = `${message.from} ${message.to ?? ''} ${message.subject} ${message.body}`
+            .toLowerCase()
+            .includes(value);
+        else if (operator === 'from' || operator === 'to' || operator === 'subject')
+          matches = String(message[operator] ?? '')
+            .toLowerCase()
+            .includes(value);
+        else if (operator === 'has' && value === 'attachment')
+          matches = Boolean(message.attachments?.length);
+        else if (
+          operator === 'in' ||
+          operator === 'label' ||
+          (operator === 'is' && value === 'unread')
+        )
+          matches = Boolean(message.labelIds?.some((label) => label.toLowerCase() === value));
+        else if (operator === 'after' || operator === 'before') {
+          const timestamp = /^\d{4}[-/]\d{2}[-/]\d{2}$/.test(value)
+            ? Date.parse(value.replaceAll('/', '-') + 'T00:00:00Z')
+            : NaN;
+          if (!Number.isFinite(timestamp))
+            throw new Error('Use an absolute date in the synthetic Gmail search.');
+          matches =
+            Boolean(message.date) &&
+            (operator === 'after'
+              ? Date.parse(message.date!) > timestamp
+              : Date.parse(message.date!) < timestamp);
+        } else if (operator === 'newer_than' || operator === 'older_than') {
+          if (!/^\d+d$/.test(value))
+            throw new Error('Use a whole number of days in the synthetic Gmail search.');
+          const timestamp = observedAt - Number(value.slice(0, -1)) * 86_400_000;
+          matches =
+            Boolean(message.date) &&
+            (operator === 'newer_than'
+              ? Date.parse(message.date!) > timestamp
+              : Date.parse(message.date!) < timestamp);
+        } else throw new Error('This synthetic Gmail search operator is not supported.');
+        return exclude ? !matches : matches;
+      })
+      .every(Boolean);
+  }
+  function mailboxMessages(number: number) {
+    if (!inboxVisible) return [];
+    return options.data
+      ? options.data.messages.map((message) => ({
+          ...message,
+          emailId: message.id,
+          attachments: options
+            .data!.attachments.filter((file) => file.messageId === message.id)
+            .map((file) => ({
+              attachmentId: file.attachmentId,
+              filename: file.name,
+              mimeType: file.mimeType,
+              size: file.bytes.byteLength,
+            })),
+        }))
+      : [
+          {
+            id: 'fixture-mail-1',
+            emailId: 'fixture-mail-1',
+            from: 'alex@example.test',
+            to: accountEmail({ service: 'gmail', number }),
+            subject: 'Northstar review',
+            body: 'Please review invoice NS-1042 for EUR 240 and prepare a summary by Friday. This is synthetic test data.',
+            date: new Date(observedAt).toISOString(),
+            labelIds: ['INBOX', 'UNREAD'],
+            attachments: [],
+          },
+          ...sentMessages(number),
+        ];
+  }
   function sentMessages(number: number) {
     return [
       {
@@ -757,8 +915,8 @@ export function createIntegrationFixture(
     supportedServices: (Object.keys(names) as IntegrationService[]).filter(
       (service) => service !== 'linear',
     ),
-    webhooksConfigured: false,
-    supportsSubscriptions: [],
+    webhooksConfigured: Boolean(options.eventToken),
+    supportsSubscriptions: options.eventToken ? ['gmail'] : [],
     async createSession(ownerId) {
       const session: IntegrationSession = {
         id: randomUUID(),
@@ -775,11 +933,17 @@ export function createIntegrationFixture(
         },
         async search() {
           return {
-            tools: toolDefinitions,
+            tools: realistic
+              ? toolDefinitions.map((tool) => ({
+                  ...tool,
+                  description: tool.description.replace(/synthetic /gi, ''),
+                }))
+              : toolDefinitions,
             suggestions: [
               {
-                useCase:
-                  'Read synthetic app data, save an unsent Gmail draft, send an explicitly requested fixture email or delete an observed fixture message.',
+                useCase: realistic
+                  ? 'Read connected app data, save drafts and carry out explicitly requested actions.'
+                  : 'Read synthetic app data, save an unsent Gmail draft, send an explicitly requested fixture email or delete an observed fixture message.',
                 primaryToolSlugs: toolDefinitions.map((tool) => tool.name),
               },
             ],
@@ -797,15 +961,33 @@ export function createIntegrationFixture(
           if (action.startsWith('GMAIL_') && args.user_id !== undefined && args.user_id !== 'me')
             throw new Error('Use the selected synthetic account.');
           const fields =
-            action === 'GMAIL_LIST_DRAFTS'
-              ? ['user_id']
-              : action === 'GMAIL_GET_DRAFT'
-                ? ['draft_id', 'user_id']
-                : action === 'GMAIL_DELETE_MESSAGE'
-                  ? ['message_id', 'user_id']
-                  : undefined;
+            action === 'GMAIL_FETCH_EMAILS'
+              ? ['query', 'max_results', 'user_id', 'include_payload', 'verbose', 'label_ids']
+              : action === 'GMAIL_LIST_DRAFTS'
+                ? ['user_id']
+                : action === 'GMAIL_GET_DRAFT'
+                  ? ['draft_id', 'user_id']
+                  : action === 'GMAIL_DELETE_MESSAGE'
+                    ? ['message_id', 'user_id']
+                    : undefined;
           if (fields && Object.keys(args).some((key) => !fields.includes(key)))
             throw new Error('The synthetic action fields are invalid.');
+          if (
+            action === 'GMAIL_FETCH_EMAILS' &&
+            ((args.query !== undefined && typeof args.query !== 'string') ||
+              (args.max_results !== undefined &&
+                (typeof args.max_results !== 'number' ||
+                  !Number.isInteger(args.max_results) ||
+                  args.max_results < 1 ||
+                  args.max_results > 100)) ||
+              (args.label_ids !== undefined &&
+                (!Array.isArray(args.label_ids) ||
+                  args.label_ids.some((label) => typeof label !== 'string'))) ||
+              ['include_payload', 'verbose'].some(
+                (field) => args[field] !== undefined && typeof args[field] !== 'boolean',
+              ))
+          )
+            throw new Error('The mailbox query fields are invalid.');
           const sent =
             action === 'GMAIL_FETCH_EMAILS' &&
             (/(?:^|\s)(?:in|label):sent(?:\s|$)/i.test(String(args.query ?? '')) ||
@@ -821,41 +1003,42 @@ export function createIntegrationFixture(
                 { id: 'INBOX', name: 'INBOX' },
                 { id: 'REVIEW', name: `Review account ${account.number}` },
               ],
-              fixture: true,
+              ...fixtureMetadata,
             };
-          if (action === 'GMAIL_FETCH_EMAILS')
-            return {
-              messages: (sent
-                ? sentMessages(account.number)
-                : [
-                    {
-                      id: 'fixture-mail-1',
-                      emailId: 'fixture-mail-1',
-                      from: 'alex@example.test',
-                      subject: 'Northstar review',
-                      body: 'Please review invoice NS-1042 for EUR 240 and prepare a summary by Friday. This is synthetic test data.',
-                    },
-                  ]
+          if (action === 'GMAIL_FETCH_EMAILS') {
+            const messages = mailboxMessages(account.number)
+              .filter((message) => !deletedMessages.has(`${accountId}:${message.id}`))
+              .filter(
+                (message) =>
+                  emailMatches(message, String(args.query ?? '')) &&
+                  (!Array.isArray(args.label_ids) ||
+                    args.label_ids.every((label) => message.labelIds.includes(String(label)))),
               )
-                .filter((message) => !deletedMessages.has(`${accountId}:${message.id}`))
-                .slice(
-                  0,
-                  typeof args.max_results === 'number'
-                    ? Math.max(1, Math.min(100, args.max_results))
-                    : 10,
-                ),
-              fixture: true,
-            };
+              .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+              .slice(
+                0,
+                typeof args.max_results === 'number'
+                  ? Math.max(1, Math.min(100, args.max_results))
+                  : 10,
+              );
+            audit('fixture_inbox_read', {
+              accountId: accountId!,
+              query: String(args.query ?? '').slice(0, 1000),
+              labels: JSON.stringify(args.label_ids ?? []),
+              matchedIds: messages.map((message) => message.id).join(','),
+            });
+            return { messages, ...fixtureMetadata };
+          }
           if (action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID') {
-            const message = sentMessages(account.number).find(
+            const message = mailboxMessages(account.number).find(
               (item) =>
                 item.emailId === args.message_id && !deletedMessages.has(`${accountId}:${item.id}`),
             );
             if (!message) throw new Error('The synthetic email was not found in this account.');
-            return { message, fixture: true };
+            return { message, ...fixtureMetadata };
           }
           if (action === 'GMAIL_GET_ATTACHMENT')
-            return { downloadRequired: true, action, args, fixture: true };
+            return { downloadRequired: true, action, args, ...fixtureMetadata };
           if (action === 'GMAIL_CREATE_EMAIL_DRAFT') {
             if (
               Object.keys(args).some(
@@ -888,7 +1071,7 @@ export function createIntegrationFixture(
             return {
               id: draft.id,
               message: draft.message,
-              fixture: true,
+              ...fixtureMetadata,
               deliveredExternally: false,
             };
           }
@@ -897,24 +1080,24 @@ export function createIntegrationFixture(
               drafts: [...drafts.values()]
                 .filter((draft) => draft.accountId === accountId)
                 .map((draft) => ({ id: draft.id, message: draft.message })),
-              fixture: true,
+              ...fixtureMetadata,
             };
           if (action === 'GMAIL_GET_DRAFT') {
             const draft = typeof args.draft_id === 'string' ? drafts.get(args.draft_id) : undefined;
             if (!draft || draft.accountId !== accountId)
               throw new Error('The synthetic draft was not found in this account.');
-            return { id: draft.id, message: draft.message, fixture: true };
+            return { id: draft.id, message: draft.message, ...fixtureMetadata };
           }
           if (action === 'GMAIL_DELETE_MESSAGE') {
             const draft = [...drafts.values()].find(
               (value) => value.accountId === accountId && value.message.id === args.message_id,
             );
-            const message = sentMessages(account.number).find(
+            const message = mailboxMessages(account.number).find(
               (value) => value.id === args.message_id,
             );
             if (
               typeof args.message_id !== 'string' ||
-              (!draft && !message && args.message_id !== 'fixture-mail-1') ||
+              (!draft && !message) ||
               deletedMessages.has(`${accountId}:${args.message_id}`)
             )
               throw new Error('The synthetic email was not found in this account.');
@@ -925,7 +1108,7 @@ export function createIntegrationFixture(
               id: item.id,
               message_id: args.message_id,
               deleted: true,
-              fixture: true,
+              ...fixtureMetadata,
               deliveredExternally: false,
             };
           }
@@ -937,7 +1120,7 @@ export function createIntegrationFixture(
             };
             const matches =
               !args.query || /northstar|review|invoice/i.test(String(args.query)) ? [message] : [];
-            return { messages: { matches, total: matches.length }, fixture: true };
+            return { messages: { matches, total: matches.length }, ...fixtureMetadata };
           }
           if (action === 'NOTION_SEARCH_NOTION_PAGE') {
             const page = {
@@ -950,9 +1133,71 @@ export function createIntegrationFixture(
             };
             const results =
               !args.query || /northstar|review|invoice/i.test(String(args.query)) ? [page] : [];
-            return { results, has_more: false, fixture: true };
+            return { results, has_more: false, ...fixtureMetadata };
           }
-          if (action === 'GOOGLECALENDAR_EVENTS_LIST')
+          if (action === 'GOOGLECALENDAR_EVENTS_LIST') {
+            if (options.data) {
+              const field = (first: string, second: string) => {
+                if (
+                  args[first] !== undefined &&
+                  args[second] !== undefined &&
+                  args[first] !== args[second]
+                )
+                  throw new Error('The calendar query has conflicting fields.');
+                return args[first] ?? args[second];
+              };
+              if (
+                Object.keys(args).some(
+                  (key) =>
+                    ![
+                      'calendar_id',
+                      'calendarId',
+                      'time_min',
+                      'timeMin',
+                      'time_max',
+                      'timeMax',
+                      'query',
+                      'q',
+                      'max_results',
+                      'maxResults',
+                      'singleEvents',
+                      'orderBy',
+                    ].includes(key),
+                )
+              )
+                throw new Error('The calendar query has unsupported fields.');
+              const calendarId = field('calendar_id', 'calendarId');
+              const timeMin = field('time_min', 'timeMin');
+              const timeMax = field('time_max', 'timeMax');
+              const maximum = field('max_results', 'maxResults');
+              if (args.orderBy !== undefined && args.orderBy !== 'startTime')
+                throw new Error('The calendar query has an unsupported ordering.');
+              if (calendarId !== undefined && calendarId !== 'primary')
+                throw new Error('The synthetic calendar was not found in this account.');
+              const from = timeMin === undefined ? -Infinity : Date.parse(String(timeMin));
+              const until = timeMax === undefined ? Infinity : Date.parse(String(timeMax));
+              if (Number.isNaN(from) || Number.isNaN(until) || from >= until)
+                throw new Error('The synthetic calendar time window is invalid.');
+              const query = String(field('query', 'q') ?? '').toLowerCase();
+              const items = options.data.calendarEvents
+                .filter(
+                  (event) =>
+                    Date.parse(event.end.dateTime) > from &&
+                    Date.parse(event.start.dateTime) < until &&
+                    (!query ||
+                      `${event.summary} ${event.description}`.toLowerCase().includes(query)),
+                )
+                .sort((a, b) => Date.parse(a.start.dateTime) - Date.parse(b.start.dateTime))
+                .slice(0, typeof maximum === 'number' ? Math.max(1, Math.min(100, maximum)) : 100);
+              audit('fixture_calendar_read', {
+                accountId: accountId!,
+                query,
+                from: timeMin === undefined ? null : String(timeMin),
+                until: timeMax === undefined ? null : String(timeMax),
+                matchedIds: items.map((event) => event.id).join(','),
+              });
+              return { items, timeZone: 'Europe/Lisbon', ...fixtureMetadata };
+            }
             return {
               items: [
                 {
@@ -962,8 +1207,9 @@ export function createIntegrationFixture(
                   end: { dateTime: new Date(Date.now() + 90_000_000).toISOString() },
                 },
               ],
-              fixture: true,
+              ...fixtureMetadata,
             };
+          }
           if (action === 'GOOGLEDRIVE_FIND_FILE') {
             const query = String(args.query ?? '').toLowerCase();
             return {
@@ -979,7 +1225,7 @@ export function createIntegrationFixture(
                       },
                     ]
                   : [],
-              fixture: true,
+              ...fixtureMetadata,
             };
           }
           if (action === 'GOOGLESHEETS_SEARCH_SPREADSHEETS') {
@@ -996,7 +1242,7 @@ export function createIntegrationFixture(
                       },
                     ]
                   : [],
-              fixture: true,
+              ...fixtureMetadata,
             };
           }
           if (
@@ -1023,7 +1269,7 @@ export function createIntegrationFixture(
                 spreadsheetId: id,
                 properties: { title: 'September spending test' },
                 sheets: ['Spending', 'Budget'].map((title) => ({ properties: { title } })),
-                fixture: true,
+                ...fixtureMetadata,
               };
             if (args.ranges !== undefined && !Array.isArray(args.ranges))
               throw new Error('The synthetic cell ranges are invalid.');
@@ -1076,11 +1322,11 @@ export function createIntegrationFixture(
                   .filter((row) => row.length > 0),
               };
             });
-            return { spreadsheetId: id, valueRanges, fixture: true };
+            return { spreadsheetId: id, valueRanges, ...fixtureMetadata };
           }
           if (action === 'GMAIL_SEND_EMAIL') {
             const item = recordWrite(action, accountId!);
-            return { id: item.id, fixture: true, deliveredExternally: false };
+            return { id: item.id, ...fixtureMetadata, deliveredExternally: false };
           }
           throw new Error('This synthetic tool is not implemented.');
         },
@@ -1105,17 +1351,19 @@ export function createIntegrationFixture(
           }
           if (account.service !== 'gmail')
             throw new Error('Connect the selected synthetic Gmail account first.');
-          const message = sentMessages(account.number)[0];
-          const attachment = message.attachments[0];
+          const message = mailboxMessages(account.number).find(
+            (value) => value.emailId === args.message_id,
+          );
+          const attachment = message?.attachments.find(
+            (value) => value.attachmentId === args.attachment_id,
+          );
           if (
             action !== 'GMAIL_GET_ATTACHMENT' ||
+            !message ||
+            !attachment ||
             deletedMessages.has(`${accountId}:${message.id}`) ||
-            args.message_id !== message.emailId ||
-            args.attachment_id !== attachment.attachmentId ||
             args.file_name !== attachment.filename ||
-            (args.user_id !== undefined &&
-              args.user_id !== 'me' &&
-              args.user_id !== message.from) ||
+            (args.user_id !== undefined && args.user_id !== 'me') ||
             Object.keys(args).some(
               (key) => !['message_id', 'attachment_id', 'file_name', 'user_id'].includes(key),
             )
@@ -1123,8 +1371,21 @@ export function createIntegrationFixture(
             throw new Error(
               'The synthetic attachment does not match the observed email and account.',
             );
-          const bytes = Buffer.from(attachmentText);
-          audit('fixture_integration_download', { action, accountId, size: bytes.byteLength });
+          const supplied = options.data?.attachments.find(
+            (file) =>
+              file.messageId === message.id && file.attachmentId === attachment.attachmentId,
+          );
+          if (options.data && !supplied)
+            throw new Error('The synthetic attachment was not found in this scenario.');
+          const bytes = Buffer.from(supplied?.bytes ?? attachmentText);
+          audit('fixture_integration_download', {
+            action,
+            accountId,
+            messageId: message.id,
+            attachmentId: attachment.attachmentId,
+            size: bytes.byteLength,
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          });
           return { name: attachment.filename, mimeType: attachment.mimeType, bytes };
         },
       };
@@ -1145,7 +1406,9 @@ export function createIntegrationFixture(
         ? {
             active: account.active,
             service: account.service,
-            accountName: `Synthetic account ${account.number}`,
+            accountName: realistic
+              ? (options.data?.profile?.name ?? 'Work account')
+              : `Synthetic account ${account.number}`,
             accountEmail: accountEmail(account),
           }
         : { active: false, service: 'unknown' };
@@ -1174,20 +1437,73 @@ export function createIntegrationFixture(
         success: value.outcome === 'success',
       };
     },
-    async subscribe() {
-      throw new Error('Synthetic trigger delivery is not configured.');
+    async subscribe(ownerId, service, accountId) {
+      const account = accounts.get(accountId);
+      if (
+        !options.eventToken ||
+        service !== 'gmail' ||
+        !account?.active ||
+        account.ownerId !== ownerId
+      )
+        throw new Error('Synthetic trigger delivery is not configured for this account.');
+      account.subscriptionId ??= randomUUID();
+      return { id: account.subscriptionId };
     },
-    async unsubscribe() {},
-    async verifyWebhook() {
-      throw new Error('Synthetic webhook delivery is disabled.');
+    async unsubscribe(id) {
+      for (const account of accounts.values())
+        if (account.subscriptionId === id) delete account.subscriptionId;
     },
-    matchesSubscription() {
-      return false;
+    async verifyWebhook(body, headers) {
+      if (!options.eventToken || headers['x-fixture-signature'] !== options.eventToken)
+        throw new Error('Synthetic webhook verification failed.');
+      const event = (typeof body === 'string' ? JSON.parse(body) : body) as IntegrationEvent;
+      const account = accounts.get(event.accountId);
+      if (
+        !account?.active ||
+        account.ownerId !== event.ownerId ||
+        account.subscriptionId !== event.subscriptionId
+      )
+        throw new Error('Synthetic webhook account is unavailable.');
+      return event;
+    },
+    matchesSubscription(service, trigger) {
+      return (
+        Boolean(options.eventToken) && service === 'gmail' && trigger === 'fixture-inbox-update'
+      );
     },
   };
   return {
     provider,
     writes,
+    releaseInbox(accountId: string): IntegrationEvent {
+      const account = accounts.get(accountId);
+      const message = options.data?.messages[0];
+      if (
+        !options.eventToken ||
+        !account?.active ||
+        account.service !== 'gmail' ||
+        !account.subscriptionId ||
+        !message
+      )
+        throw new Error('Connect the selected synthetic Gmail account and enable updates first.');
+      inboxVisible = true;
+      audit('fixture_inbox_arrival', { accountId, messageId: message.id });
+      return {
+        id: `fixture-arrival-${message.id}`,
+        ownerId: account.ownerId,
+        service: 'gmail',
+        accountId,
+        subscriptionId: account.subscriptionId,
+        trigger: 'fixture-inbox-update',
+        data: {
+          message_id: message.id,
+          thread_id: message.threadId,
+          subject: message.subject,
+          sender: message.from,
+          timestamp: message.date,
+        },
+      };
+    },
     signupCodeSent(alternate: boolean) {
       if (!options.signup) return;
       const variant = alternate ? 'alternate' : 'base';
@@ -1271,7 +1587,11 @@ export function operatorAccess(token: string): { preValidation: preValidationHoo
   };
 }
 
-export function registerOperatorPage(app: FastifyInstance, token: string) {
+export function registerOperatorPage(
+  app: FastifyInstance,
+  token: string,
+  scenario?: { id: string; accountEmail: string },
+) {
   app.get('/e2e', async (_request, reply) =>
     reply
       .header('Cache-Control', 'no-store')
@@ -1317,12 +1637,13 @@ export function registerOperatorPage(app: FastifyInstance, token: string) {
           const button = event.target.closest('button[data-operator]');
           if (!button || button.disabled) return;
           const action = button.dataset.operator;
-          if (!['base', 'alternate', 'status'].includes(action)) return;
+          if (!['base', 'alternate', 'status', 'evidence'].includes(action)) return;
           button.disabled = true;
           result.textContent = '';
           try {
-            const response = await request(action === 'status' ? '/e2e/status' : '/e2e/signup/' + action, action === 'status' ? 'GET' : 'POST');
-            if (action === 'status') {
+            const reading = action === 'status' || action === 'evidence';
+            const response = await request(reading ? '/e2e/' + action : '/e2e/signup/' + action, reading ? 'GET' : 'POST');
+            if (reading) {
               events.textContent = JSON.stringify(await response.json(), null, 2);
               events.hidden = false;
             } else result.textContent = 'Case released. Complete verification in the handed-off browser, then click Done.';
@@ -1339,11 +1660,16 @@ export function registerOperatorPage(app: FastifyInstance, token: string) {
       .header('Cache-Control', 'no-store')
       .header('Referrer-Policy', 'no-referrer')
       .type('text/html')
-      .send(operatorPage()),
+      .send(operatorPage(scenario)),
   );
 }
 
-export function operatorPage() {
+export function operatorPage(scenario?: { id: string; accountEmail: string }) {
+  if (scenario)
+    return html(
+      'Otto isolated document evaluation',
+      `<h2>${scenario.id}</h2><p>Connect Gmail and Google Calendar through <a href="/apps">Apps</a>. Both synthetic accounts use ${scenario.accountEmail}. Consent occurs only on this local app.</p><p>The selected inbox contains one report with its PDF attachment. Calendar reads return the selected scenario's records. Use a fresh harness for every attempt and keep the evaluation key outside the agent workspace.</p><p>Time zone: Europe/Lisbon. No real mailbox, calendar or recipient is connected. Reminders created by the agent run through Otto's normal scheduler.</p><p><a href="/">Open Otto</a></p><button type="button" data-operator="status">Timing events and source hashes</button><button type="button" data-operator="evidence">Stored results and schedules</button>`,
+    );
   const signupOperator = `<h2>Trial signup evaluation</h2><p>Connect synthetic Gmail as ${fixtureCredentials.username} before starting. Each attempt needs a fresh acceptance harness. The trial details have editable defaults.</p><p>Base recipient: ${fixtureSignup.base.recipient}. Holdout recipient: ${fixtureSignup.alternate.recipient}.</p><p>After Otto asks you to complete human verification, release the matching case here. Then click Verify I am human in Otto's handed-off browser and click Done to return control.</p><button type="button" data-operator="base">Release base case</button><button type="button" data-operator="alternate">Release holdout case</button>`;
   return html(
     'Otto isolated acceptance environment',
