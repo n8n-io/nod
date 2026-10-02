@@ -500,7 +500,6 @@ export async function createApplication(
   const discovered = await createDiscoveredConnections(pool, {
     ownerId,
     baseUrl: publicOrigin,
-    keyStore: adapters.keyStore,
     grantVault,
     transport: createDiscoveredTransport(),
     accountReplaced: triage.invalidateActivityCheck,

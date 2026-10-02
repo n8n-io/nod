@@ -2831,7 +2831,6 @@ test(
       const discovered = await createDiscoveredConnections(pool, {
         ownerId: 'local-development',
         baseUrl: 'http://localhost:4310',
-        keyStore,
         grantVault,
         transport: createDiscoveredTransport(unavailableFetch),
         oauth: createDiscoveredOAuth(unavailableFetch),
@@ -3399,7 +3398,6 @@ test(
       const discovered = await createDiscoveredConnections(pool, {
         ownerId: owner,
         baseUrl: 'http://localhost:4310',
-        keyStore,
         grantVault,
         transport: {
           validateEndpoint: async (endpoint) => endpoint,
@@ -3750,7 +3748,6 @@ test(
     const discovered = await createDiscoveredConnections(pool, {
       ownerId: owner,
       baseUrl: 'http://localhost:4310',
-      keyStore,
       grantVault,
       transport,
       oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
@@ -3801,6 +3798,92 @@ test(
         return true;
       },
     );
+  },
+);
+
+test(
+  'discovered OAuth sign-in saves the grant in the Vault and rejects a replayed or foreign state',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_discovered_oauth_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const owner = 'fixture-owner';
+    const key = randomBytes(32);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
+    let state = '';
+    const discovered = await createDiscoveredConnections(pool, {
+      ownerId: owner,
+      baseUrl: 'http://localhost:4310',
+      grantVault,
+      transport: {
+        validateEndpoint: async (endpoint) => endpoint,
+        http: async () => ({ status: 200, body: null }),
+        listTools: async () => [{ name: 'list_records', inputSchema: {} }],
+        callTool: async () => ({}),
+      },
+      oauth: {
+        begin: async (_endpoint, _redirect, nextState) => {
+          state = nextState;
+          return {
+            url: 'https://fixture.example/authorize',
+            saved: { redirectUri: 'http://127.0.0.1:4310/api/apps/callback' },
+          };
+        },
+        finish: async (_endpoint, saved, code) => {
+          assert.equal(code, 'fixture-code');
+          return {
+            ...saved,
+            tokens: { access_token: 'synthetic-oauth-token', token_type: 'Bearer' },
+          };
+        },
+        refresh: async () => {
+          throw new Error('No refresh is expected.');
+        },
+      },
+    });
+    const app = Fastify();
+    t.after(() => app.close());
+    discovered.registerRoutes(app);
+    const proposed = await discovered.propose({
+      service: 'fixture-app',
+      name: 'Fixture app',
+      paths: [{ kind: 'mcp', endpoint: 'https://fixture.example/mcp', auth: 'oauth' }],
+    });
+    const begin = await app.inject({
+      method: 'POST',
+      url: `/api/apps/discovery/${new URL(proposed.url, 'http://localhost').searchParams.get('connect')}/authorize`,
+      payload: {},
+    });
+    assert.equal(begin.statusCode, 200);
+    assert.equal(begin.json().url, 'https://fixture.example/authorize');
+    assert.equal(
+      await discovered.completeOAuth({ state: randomBytes(32).toString('base64url') }),
+      undefined,
+    );
+    assert.deepEqual(await discovered.completeOAuth({ state, code: 'fixture-code' }), {
+      outcome: 'connected',
+      service: 'fixture-app',
+      returnTo: 'apps',
+    });
+    const [account] = await discovered.list();
+    assert.equal(account.accountName, 'Fixture app');
+    assert.equal(
+      JSON.parse((await grantVault.read(account.connectionId!)).value).tokens.access_token,
+      'synthetic-oauth-token',
+    );
+    assert.equal(await discovered.completeOAuth({ state, code: 'fixture-code' }), undefined);
+    assert.equal((await discovered.list()).length, 1);
   },
 );
 
