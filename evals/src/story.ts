@@ -149,7 +149,7 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
 <div class="how">${steps.map(([title, text]) => `<div class="step"><b>${esc(title)}</b><span>${esc(text)}</span></div>`).join('')}</div>
 ${body}
 <div class="learned"><h2>What we learned</h2><ul>${learned.map((line) => `<li>${esc(line)}</li>`).join('')}</ul></div>
-<div class="credit">Approach borrowed from n8n’s LangTracer: real scenarios, state-based grading, an independent judge, pass@k and pass^k, failure attribution and human review. Every model ran at Otto’s shipped reasoning setting (high). The full suite has ${suite.total} scenarios; ${suite.calibrating} are still being calibrated and ${suite.gaps} are stretch goals Otto cannot do yet. Judge: ${esc(first.judge.split('/').pop() ?? '')}. Code at ${esc(first.ref ?? first.commit.slice(0, 7))}.</div>
+<div class="credit">Approach borrowed from n8n’s LangTracer: real scenarios, state-based grading, an independent judge, pass@k and pass^k, failure attribution and human review. Every model ran at Otto’s shipped reasoning setting (high). The full suite has ${suite.total} scenarios; ${suite.calibrating} are still being calibrated and ${suite.gaps} are stretch goals Otto cannot do yet. Judge: ${esc(first.judge.split('/').pop() ?? '')}. Code: evals/ in n8n-io/otto.</div>
 </div><script>document.title=String(document.documentElement.scrollHeight)</script>`;
   return { id: '00-the-story', html: `<style>${extra}</style>${html}`, fit: true };
 }

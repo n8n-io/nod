@@ -62,7 +62,7 @@ function frame(runs: ChartRun[], title: string, subtitle: string, body: string, 
   const first = runs[0].summary.manifest;
   const judges = [...new Set(runs.map((run) => run.summary.manifest.judge.split('/').pop()!))];
   const scenarios = Math.max(...runs.map((run) => run.summary.scenarios.length));
-  return `<div class="card"><div><div class="eyebrow">Otto capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.ref ?? first.commit.slice(0, 7))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
+  return `<div class="card"><div><div class="eyebrow">Otto capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
 }
 
 const colorOf = (run: ChartRun, runs: ChartRun[]) =>
