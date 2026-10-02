@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -743,7 +743,7 @@ async function appsFixture(
       const accountId = `account-${accounts.size + 1}`;
       accounts.set(accountId, service);
       callbacks.push(callback);
-      return { accountId, url: 'https://consent.example.com/connect' };
+      return { accountId, url: `https://consent.example.com/connect?account=${accountId}` };
     },
     search: async () => ({ tools: {}, suggestions: [] }),
     execute: async (action, args, accountId) => {
@@ -853,6 +853,226 @@ async function appsFixture(
     callbacks,
   };
 }
+
+test(
+  'native app setup reuses owned accounts unless another account is explicitly requested',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const work = await f.connect('gmail');
+    await f.pool.query('UPDATE app_connections SET account_email=$2 WHERE id=$1', [
+      work.connectionId,
+      'work@example.test',
+    ]);
+    await f.pool.query(
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_email)
+       VALUES('foreign-owner','gmail','foreign-account','fixture','foreign@example.test')`,
+    );
+    const directory = await mkdtemp(join(tmpdir(), 'otto-add-account-'));
+    const threadId = randomUUID();
+    const turnId = randomUUID();
+    const replies: string[] = [];
+    const agent: Agent = {
+      open: async ({ tools }) => ({
+        resumed: false,
+        prompt: async () => {
+          const tool = tools.find((item) => item.name === 'manage_apps')!;
+          for (const extra of [{}, { newAccount: false }])
+            assert.deepEqual(
+              resultValue(await tool.execute({ action: 'connect', service: 'gmail', ...extra })),
+              {
+                status: 'already_connected',
+                accounts: [
+                  {
+                    connectionId: work.connectionId,
+                    accountName: work.accountName,
+                    accountEmail: 'work@example.test',
+                  },
+                ],
+              },
+            );
+          for (const action of ['list', 'propose'])
+            await assert.rejects(tool.execute({ action, service: 'gmail', newAccount: true }));
+          assert.equal(f.callbacks.length, 1);
+          await tool.execute({ action: 'connect', service: 'gmail', newAccount: true });
+        },
+        abort() {},
+        dispose() {},
+      }),
+      dispose() {},
+    };
+    const runtime = createAgentRuntime({
+      agent,
+      computer: fakeComputer(),
+      workspace: fakeWorkspace(),
+    });
+    t.after(async () => {
+      await runtime.dispose();
+      await rm(directory, { recursive: true, force: true });
+    });
+    const result = await runtime.runTurn({
+      threadId,
+      turnId,
+      prompt: 'Connect my personal Gmail too, keeping my work account.',
+      history: [],
+      attachments: [],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      emit: async () => {},
+      reply: async (text) => {
+        replies.push(text);
+      },
+      delta() {},
+      publish: async () => {
+        throw new Error('Unexpected fixture publication.');
+      },
+      requestCredential: async () => {
+        throw new Error('Unexpected fixture credential request.');
+      },
+      integration: async () => {
+        throw new Error('Unexpected fixture app action.');
+      },
+      manage: async () => {
+        throw new Error('Unexpected fixture management.');
+      },
+      connections: (action, service, proposal, newAccount) =>
+        f.service.manageConnections(action, service, { threadId, turnId }, proposal, newAccount),
+    });
+    assert.equal(result.status, 'waiting_user');
+    assert.equal(f.callbacks.length, 2);
+    assert.equal(replies.length, 1);
+    assert.ok(replies[0].includes('https://consent.example.com/connect'));
+    const pending = (
+      await f.pool.query('SELECT * FROM app_connections WHERE owner_id=$1 AND turn_id=$2', [
+        'local-development',
+        turnId,
+      ])
+    ).rows[0];
+    assert.equal(pending.account_id, null);
+    assert.equal(pending.pending_account_id, 'account-2');
+    const callback = new URL(f.callbacks.at(-1)!);
+    callback.searchParams.set('account', pending.pending_account_id);
+    const response = await f.app.inject({ url: `${callback.pathname}${callback.search}` });
+    assert.equal(
+      response.headers.location,
+      'http://localhost:4310/?connection=connected&service=gmail',
+    );
+    const accounts = (await f.service.list()).filter((item) => item.slug === 'gmail');
+    assert.equal(accounts.length, 2);
+    assert.ok(accounts.every((item) => item.status === 'connected'));
+    assert.equal(
+      accounts.find((item) => item.connectionId === work.connectionId)?.accountEmail,
+      'work@example.test',
+    );
+    assert.ok(accounts.some((item) => item.connectionId === pending.id));
+  },
+);
+
+test(
+  'native setup completion tracks only the successful owned link through account merges and removal',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const work = await f.connect('gmail');
+    const start = async () => {
+      const response = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+      assert.equal(response.statusCode, 200);
+      const callback = new URL(f.callbacks.at(-1)!);
+      const pending = (
+        await f.pool.query('SELECT * FROM app_connections WHERE callback_hash=$1', [
+          createHash('sha256').update(callback.searchParams.get('state')!).digest('hex'),
+        ])
+      ).rows[0];
+      callback.searchParams.set('account', pending.pending_account_id);
+      const hash = createHash('sha256').update(new URL(response.json().url).href).digest('hex');
+      assert.equal(pending.setup_link_hash, hash);
+      return { id: pending.id, hash, callback };
+    };
+    const status = async (...hashes: string[]) => {
+      const response = await f.app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-status',
+        payload: { hashes },
+      });
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.headers['cache-control'], 'no-store');
+      return response.json();
+    };
+    const complete = async (callback: URL) =>
+      (await f.app.inject({ url: `${callback.pathname}${callback.search}` })).headers.location;
+    const personal = await start();
+    const other = await start();
+    await f.pool.query('INSERT INTO app_setup_completions(owner_id,link_hash) VALUES($1,$2)', [
+      'foreign-owner',
+      other.hash,
+    ]);
+    assert.deepEqual(await status(personal.hash, other.hash), []);
+    const wrongAccount = new URL(personal.callback);
+    wrongAccount.searchParams.set('account', work.accountId!);
+    assert.equal(await complete(wrongAccount), 'http://localhost:4310/apps?connection=failed');
+    assert.deepEqual(await status(personal.hash, other.hash), []);
+    assert.equal(
+      await complete(personal.callback),
+      'http://localhost:4310/apps?connection=connected',
+    );
+    assert.deepEqual(await status(personal.hash, other.hash), [personal.hash]);
+    await f.pool.query(
+      "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE id=$1",
+      [other.id],
+    );
+    assert.equal(await complete(other.callback), 'http://localhost:4310/apps?connection=expired');
+    assert.deepEqual(await status(other.hash), []);
+    f.session.authorize = async (_service, callback) => {
+      f.callbacks.push(callback);
+      return { accountId: work.accountId!, url: 'https://consent.example.com/reconnect-work' };
+    };
+    const reconnect = await start();
+    assert.deepEqual(await status(reconnect.hash), []);
+    assert.equal(
+      await complete(reconnect.callback),
+      'http://localhost:4310/apps?connection=connected',
+    );
+    assert.equal(
+      (await f.pool.query('SELECT id FROM app_connections WHERE id=$1', [reconnect.id])).rowCount,
+      0,
+    );
+    assert.equal(
+      (await f.service.list()).find((connection) => connection.accountId === work.accountId)
+        ?.connectionId,
+      work.connectionId,
+    );
+    assert.deepEqual(await status(reconnect.hash), [reconnect.hash]);
+    assert.equal(
+      await complete(reconnect.callback),
+      'http://localhost:4310/apps?connection=expired',
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'POST',
+          url: `/api/apps/gmail/accounts/${work.connectionId}/disconnect`,
+        })
+      ).statusCode,
+      200,
+    );
+    assert.deepEqual(await status(reconnect.hash), [reconnect.hash]);
+    assert.deepEqual(await status(other.hash), []);
+    for (const receipt of (await f.pool.query('SELECT * FROM app_setup_completions')).rows) {
+      assert.deepEqual(Object.keys(receipt).sort(), ['link_hash', 'owner_id']);
+      assert.match(receipt.link_hash, /^[a-f0-9]{64}$/);
+    }
+    for (const hashes of [
+      [],
+      ['https://consent.example.com/private'],
+      Array(101).fill(personal.hash),
+    ])
+      assert.equal(
+        (await f.app.inject({ method: 'POST', url: '/api/apps/setup-status', payload: { hashes } }))
+          .statusCode,
+        400,
+      );
+  },
+);
 
 test(
   'background app inventory stays local, owned and current without authenticating saved logins',

@@ -23,7 +23,6 @@ import { SetupActions } from './setup-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
-import { integrationServiceIds, integrationServices } from '../../shared/integrations';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
 
@@ -41,16 +40,9 @@ export const MessageText = memo(function MessageText({
   const content = useRef<HTMLDivElement>(null);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
   const actions = messageSetupLinks(text, origin);
-  const connected = (href: string, label: string) =>
-    Boolean(
-      connectedAppIds?.has(
-        href.startsWith('/apps?connect=')
-          ? href.slice('/apps?connect='.length)
-          : (integrationServiceIds.find(
-              (slug) => label === `Connect ${integrationServices[slug].name}`,
-            ) ?? ''),
-      ),
-    );
+  const connected = (href: string) =>
+    href.startsWith('/apps?connect=') &&
+    Boolean(connectedAppIds?.has(href.slice('/apps?connect='.length)));
   return (
     <>
       <div className="message-text" ref={content}>
@@ -98,7 +90,7 @@ export const MessageText = memo(function MessageText({
         </Markdown>
         <SetupActions
           actions={actions.filter(
-            (action) => action.setup !== 'browser' && !connected(action.href, action.label),
+            (action) => action.setup !== 'browser' && !connected(action.href),
           )}
         />
         {onHandoffDone && actions.some((action) => action.setup === 'browser') && (

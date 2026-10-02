@@ -49,6 +49,7 @@ type ConnectionRow = {
   account_id: string | null;
   pending_account_id: string | null;
   callback_hash: string | null;
+  setup_link_hash: string | null;
   callback_expires: Date | null;
   callback_return_to: ReturnTarget;
   trigger_id: string | null;
@@ -232,6 +233,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       owner_id text PRIMARY KEY, session_id text NOT NULL,
       provider_id text NOT NULL DEFAULT 'composio', configuration_version integer NOT NULL DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS app_setup_completions (
+      owner_id text NOT NULL, link_hash text NOT NULL,
+      PRIMARY KEY (owner_id,link_hash)
+    );
     CREATE TABLE IF NOT EXISTS integration_events (
       id text PRIMARY KEY, owner_id text NOT NULL, summary text NOT NULL, state text NOT NULL DEFAULT 'queued',
       slug text, account_id text, trigger_id text, claimed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
@@ -239,6 +244,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     );
     CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;
     ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,
+      ADD COLUMN IF NOT EXISTS setup_link_hash text,
       ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,
       ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,
       ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;
@@ -736,8 +742,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           502,
         );
       await pool.query(
-        `INSERT INTO app_connections (owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id,callback_return_to,turn_id)
-         VALUES ($1,$2,$3,$4,now() + interval '10 minutes',$5,$6,$7)`,
+        `INSERT INTO app_connections (owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id,callback_return_to,turn_id,setup_link_hash)
+         VALUES ($1,$2,$3,$4,now() + interval '10 minutes',$5,$6,$7,$8)`,
         [
           configuredOwner,
           slug,
@@ -746,6 +752,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           selected.id,
           returnTo,
           turn?.turnId ?? null,
+          createHash('sha256').update(redirect.href).digest('hex'),
         ],
       );
       return { url: attempt.url, ...(returnTo === 'window' ? { attempt: nonce } : {}) };
@@ -785,6 +792,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
       if (!claimed.rows[0])
         throw new IntegrationError('This connection link was already used.', 409);
+      if (row.setup_link_hash)
+        await client.query(
+          'INSERT INTO app_setup_completions (owner_id,link_hash) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+          [configuredOwner, row.setup_link_hash],
+        );
       const existing = await client.query<ConnectionRow>(
         'SELECT * FROM app_connections WHERE owner_id=$1 AND provider_id=$2 AND account_id=$3 AND id<>$4 FOR UPDATE',
         [configuredOwner, row.provider_id, query.accountId, row.id],
@@ -810,7 +822,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         }
       } else {
         await client.query(
-          `UPDATE app_connections SET account_id=pending_account_id,pending_account_id=NULL,callback_hash=NULL,
+          `UPDATE app_connections SET account_id=pending_account_id,pending_account_id=NULL,callback_hash=NULL,setup_link_hash=NULL,
            callback_expires=NULL,revoked=false,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3 WHERE id=$1`,
           [row.id, remote.accountName ?? null, remote.accountEmail ?? null],
         );
@@ -1495,6 +1507,24 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         });
       });
       scope.get('/api/apps', async () => list());
+      scope.post('/api/apps/setup-status', async (request, reply) => {
+        const { hashes } = z
+          .object({
+            hashes: z
+              .array(z.string().regex(/^[a-f0-9]{64}$/))
+              .min(1)
+              .max(100),
+          })
+          .strict()
+          .parse(request.body);
+        const completed = await pool.query<{ link_hash: string }>(
+          'SELECT link_hash FROM app_setup_completions WHERE owner_id=$1 AND link_hash=ANY($2::text[])',
+          [configuredOwner, hashes],
+        );
+        return reply
+          .header('Cache-Control', 'no-store')
+          .send(completed.rows.map((row) => row.link_hash));
+      });
       scope.get<{ Params: { id: string } }>('/api/apps/:id/icon', async (request, reply) => {
         const value = await icon(request.params.id);
         if (!value) return reply.code(404).send({ error: 'The app icon is unavailable.' });
@@ -1691,7 +1721,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       service?: string,
       turn?: TurnRef,
       proposal?: unknown,
+      newAccount?: boolean,
     ) => {
+      if (newAccount !== undefined && action !== 'connect')
+        throw new IntegrationError(
+          'Additional accounts can only be requested when connecting.',
+          400,
+        );
       if (action === 'list')
         return (await list())
           .filter(
@@ -1727,7 +1763,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           accountName: row.account_name ?? undefined,
           accountEmail: row.account_email ?? undefined,
         }));
-      if (accounts.length) return { name: catalogs[slug].name, accounts };
+      if (accounts.length && newAccount !== true) return { name: catalogs[slug].name, accounts };
       return { name: catalogs[slug].name, ...(await connect(slug, turn ? 'chat' : 'apps', turn)) };
     },
     status: list,

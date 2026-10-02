@@ -112,6 +112,7 @@ export interface RuntimeContext {
     action: 'list' | 'connect' | 'propose',
     service?: string,
     proposal?: unknown,
+    newAccount?: boolean,
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
   waitForUser?(question: string): Promise<void>;

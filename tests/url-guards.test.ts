@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import test from 'node:test';
 import { crc32 } from 'node:zlib';
-import { createElement } from 'react';
+import { act, createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { JSDOM } from 'jsdom';
 import { actionConfirmation } from '../src/server/action-presentation.ts';
@@ -12,7 +13,7 @@ import {
   requestPublicPreview,
 } from '../src/providers/public-web/link-preview.ts';
 import { previewableUrl } from '../src/shared/link-preview.ts';
-import { artifactPreview } from '../src/web/components/attachment-images.tsx';
+import { artifactImage, artifactPreview } from '../src/web/components/attachment-images.tsx';
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
@@ -268,6 +269,116 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
 
+test('an existing native account does not hide authorization for another account', () => {
+  const text = '[Connect Gmail](https://connect.composio.dev/link/synthetic-personal-account)';
+  const before = render(text);
+  assert.equal(JSDOM.fragment(before).querySelectorAll('button[data-setup="app"]').length, 1);
+  const after = renderToStaticMarkup(
+    createElement(MessageText, { text, connectedAppIds: new Set(['gmail']) }),
+  );
+  const actions = JSDOM.fragment(after).querySelectorAll('button[data-setup="app"]');
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].hasAttribute('disabled'), false);
+  assert.doesNotMatch(after, /connect\.composio\.dev/);
+});
+
+test('an app setup action hides only after its exact connection is connected', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const text = `[Connect Gmail](/apps?connect=${id})`;
+  const unrelated = renderToStaticMarkup(
+    createElement(MessageText, {
+      text,
+      connectedAppIds: new Set(['gmail', '00000000-0000-4000-8000-000000000002']),
+    }),
+  );
+  assert.equal(JSDOM.fragment(unrelated).querySelectorAll('button[data-setup="app"]').length, 1);
+  const connected = renderToStaticMarkup(
+    createElement(MessageText, { text, connectedAppIds: new Set([id]) }),
+  );
+  assert.equal(JSDOM.fragment(connected).querySelectorAll('button[data-setup="app"]').length, 0);
+});
+
+test('native setup actions hide only completed links and retain other account requests across refreshes', async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: origin,
+    pretendToBeVisual: true,
+  });
+  const links = [
+    'https://connect.composio.dev/link/synthetic-work',
+    'https://connect.composio.dev/link/synthetic-personal',
+  ];
+  const hashes = links.map((href) => createHash('sha256').update(href).digest('hex'));
+  const requests: string[][] = [];
+  let completed: string[] = [];
+  let failing = false;
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: async (path: unknown, init: RequestInit) => {
+      assert.equal(path, '/api/apps/setup-status');
+      assert.equal(init.method, 'POST');
+      const body = JSON.parse(String(init.body));
+      assert.deepEqual(Object.keys(body), ['hashes']);
+      assert.deepEqual(body.hashes, hashes);
+      requests.push(body.hashes);
+      return Response.json(failing ? { error: 'Unavailable' } : completed, {
+        status: failing ? 503 : 200,
+      });
+    },
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  const buttons = () => [...dom.window.document.querySelectorAll('button[data-setup="app"]')];
+  const waitFor = async (ready: () => boolean) => {
+    for (let attempt = 0; attempt < 50 && !ready(); attempt++)
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+    assert.ok(ready());
+  };
+  const render = (key: string) =>
+    act(async () =>
+      root.render(
+        createElement(MessageText, {
+          key,
+          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]})`,
+          connectedAppIds: new Set(['gmail']),
+        }),
+      ),
+    );
+  try {
+    await render('initial');
+    await waitFor(() => requests.length === 1);
+    assert.equal(buttons().length, 2);
+    completed = [hashes[0]];
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await waitFor(() => buttons().length === 1);
+    assert.ok(buttons()[0].textContent?.includes('personal'));
+    failing = true;
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await waitFor(() => requests.length === 3);
+    assert.equal(buttons().length, 1);
+    failing = false;
+    await render('reload');
+    await waitFor(() => requests.length === 4 && buttons().length === 1);
+    assert.ok(buttons()[0].textContent?.includes('personal'));
+    assert.doesNotMatch(dom.window.document.body.innerHTML, /synthetic-work|synthetic-personal/);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  }
+});
+
 test('only intended app paths and credential-free HTTP URLs become links', () => {
   for (const value of [
     'javascript:alert(1)',
@@ -335,17 +446,6 @@ test('approval messages preserve source URLs and render supplied markup as text'
   assert.equal(args.text, body);
 });
 
-test('native app setup has one chat button and hides after connection', () => {
-  const text = '[Connect Slack](https://connect.example.com/fixture)';
-  const before = render(text);
-  assert.match(before, /<button[^>]*data-setup="app"[^>]*>.*Connect Slack<\/button>/);
-  assert.doesNotMatch(before, /connect\.example\.com/);
-  const after = renderToStaticMarkup(
-    createElement(MessageText, { text, connectedAppIds: new Set(['slack']) }),
-  );
-  assert.doesNotMatch(after, /data-setup="app"/);
-});
-
 test('plain browser connection paths hide their token behind one fixed action', () => {
   const path = `/browser-connect/${'x'.repeat(43)}`;
   const text = `Continue at ${path}?token=hidden#fragment. Again ${path}.`;
@@ -360,7 +460,7 @@ test('plain browser connection paths hide their token behind one fixed action', 
     assert.deepEqual(messageSetupLinks(`/browser-connect/${token}`, origin), []);
 });
 
-test('attachment previews accept only owned artifact URLs and inert types', () => {
+test('attachment previews and gallery sources accept only owned artifact URLs and inert types', () => {
   const picture: Artifact = {
     id: '00000000-0000-4000-8000-000000000000',
     name: 'Picture.png',
@@ -370,7 +470,14 @@ test('attachment previews accept only owned artifact URLs and inert types', () =
   };
   for (const mimeType of ['text/html', 'application/xhtml+xml', 'video/not-real'])
     assert.equal(artifactPreview({ ...picture, mimeType }), null);
-  for (const mimeType of ['application/pdf', 'audio/mp4', 'video/webm', 'image/svg+xml']) {
+  for (const mimeType of [
+    'application/pdf',
+    'audio/mp4',
+    'video/webm',
+    'image/svg+xml',
+    'text/plain',
+    'application/json',
+  ]) {
     assert.ok(artifactPreview({ ...picture, mimeType }));
     for (const url of [
       'https://example.com/file',
@@ -380,4 +487,19 @@ test('attachment previews accept only owned artifact URLs and inert types', () =
     ])
       assert.equal(artifactPreview({ ...picture, mimeType, url }), null);
   }
+  for (const name of ['notes.txt', 'report.md', 'data.csv', 'report.pdf', 'table.xlsx']) {
+    const file = { ...picture, name, mimeType: 'application/octet-stream' };
+    assert.ok(artifactPreview(file));
+    assert.equal(artifactImage(file), null);
+    assert.equal(artifactPreview({ ...file, url: 'https://example.com/file' }), null);
+    assert.equal(artifactPreview({ ...file, mimeType: 'text/html' }), null);
+  }
+  assert.ok(artifactImage(picture));
+  for (const url of [
+    'https://example.com/image.png',
+    'javascript:alert(1)',
+    '/credentials/private',
+    '/api/artifacts/abc?token=private',
+  ])
+    assert.equal(artifactImage({ ...picture, url }), null);
 });

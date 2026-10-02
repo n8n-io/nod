@@ -12,6 +12,8 @@ import {
   localPreviewable,
   ownedArtifactUrl,
   previewableImage,
+  restoreAttachmentFocus,
+  type AttachmentTrigger,
   type ImagePreview,
 } from './attachment-images';
 
@@ -55,7 +57,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const attachmentValues = useRef<DraftAttachment[]>([]);
   const uploads = useRef(new Set<AbortController>());
   const previewUrls = useRef(new Set<string>());
-  const previewTrigger = useRef<HTMLButtonElement | null>(null);
+  const previewTrigger = useRef<AttachmentTrigger | null>(null);
   const lastText = useRef(text);
   const sends = useRef(0);
   const unsent = useRef<Array<{ sequence: number; text: string; attachments: DraftAttachment[] }>>(
@@ -142,7 +144,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       const controller = new AbortController();
       uploads.current.add(controller);
       let previewUrl: string | undefined;
-      if (localPreviewable(file.type)) {
+      if (localPreviewable(file.type, file.name)) {
         try {
           previewUrl = URL.createObjectURL(file);
           previewUrls.current.add(previewUrl);
@@ -236,7 +238,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const url =
       item.previewUrl ||
       (item.artifact && ownedArtifactUrl(item.artifact.url) ? item.artifact.url : undefined);
-    return attachmentKind(item.mimeType) && url
+    return attachmentKind(item.mimeType, item.name) && url
       ? [
           {
             id: item.id,
@@ -249,7 +251,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         ]
       : [];
   });
-  const previewLabel = images.every((image) => previewableImage(image.mimeType ?? 'image/png'))
+  const previewLabel = images.every((image) =>
+    previewableImage(image.mimeType ?? 'image/png', image.name),
+  )
     ? 'image'
     : 'attachment';
   return (
@@ -297,7 +301,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               const image = images[imageIndex];
               return (
                 <div
-                  className={`pending-attachment${image ? ` is-preview${previewableImage(item.mimeType) ? ' is-image' : ''}` : ''}`}
+                  className={`pending-attachment${image ? ` is-preview${previewableImage(item.mimeType, item.name) ? ' is-image' : ''}` : ''}`}
                   key={item.id}
                 >
                   {image ? (
@@ -307,7 +311,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                         className="pending-image-preview"
                         aria-label={`Preview ${previewLabel} ${imageIndex + 1} of ${images.length}`}
                         onClick={(event) => {
-                          previewTrigger.current = event.currentTarget;
+                          previewTrigger.current = {
+                            element: event.currentTarget,
+                            keyboard: event.detail === 0,
+                          };
                           setPreviewId(item.id);
                         }}
                       >
@@ -404,9 +411,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         selectedId={previewId}
         onSelect={setPreviewId}
         onClose={() => setPreviewId(null)}
-        restoreFocus={() =>
-          previewTrigger.current?.isConnected ? previewTrigger.current.focus() : focus()
-        }
+        restoreFocus={() => {
+          if (!restoreAttachmentFocus(previewTrigger.current)) focus();
+        }}
       />
     </div>
   );

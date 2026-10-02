@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Message } from '../../shared/contracts';
 import { formatDateTime, formatFullDateTime, useDateFormat } from '../lib/date-format';
 
@@ -19,6 +21,7 @@ export function ChatTurnRail({
   );
   const dateFormat = useDateFormat();
   const track = useRef<HTMLDivElement>(null);
+  const previewElement = useRef<HTMLDivElement>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const turns = messages.filter((message) => message.role === 'user');
   const currentId = turns.some((message) => message.id === focusedId)
@@ -34,13 +37,20 @@ export function ChatTurnRail({
     else if (button.offsetTop + button.offsetHeight > container.scrollTop + container.clientHeight)
       container.scrollTop = button.offsetTop + button.offsetHeight - container.clientHeight;
   }, [activeId, turns.length]);
+  useLayoutEffect(() => {
+    if (!preview || !previewElement.current) return;
+    const rect = previewElement.current.getBoundingClientRect();
+    const left = Math.max(8, Math.min(preview.left, window.innerWidth - rect.width - 8));
+    const top = Math.max(8, Math.min(preview.top, window.innerHeight - rect.height - 8));
+    if (left !== preview.left || top !== preview.top) setPreview({ ...preview, left, top });
+  }, [preview]);
   if (turns.length < 2) return null;
   function show(message: Message, element: HTMLElement) {
     const rect = element.getBoundingClientRect();
     setPreview({
       message,
-      left: Math.max(8, Math.min(rect.right + 12, window.innerWidth - 280)),
-      top: Math.max(8, Math.min(rect.top - 8, window.innerHeight - 108)),
+      left: rect.right + 12,
+      top: rect.top - 8,
     });
   }
   function excerpt(message: Message) {
@@ -117,13 +127,45 @@ export function ChatTurnRail({
           <div
             className="chat-turn-preview"
             id="chat-turn-preview"
+            ref={previewElement}
             role="tooltip"
             style={{ left: preview.left, top: preview.top }}
           >
             <time dateTime={preview.message.createdAt}>
               {formatDateTime(preview.message.createdAt, dateFormat)}
             </time>
-            <span>{excerpt(preview.message)}</span>
+            <div className="chat-turn-preview-content">
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                allowedElements={[
+                  'p',
+                  'br',
+                  'strong',
+                  'em',
+                  'del',
+                  'code',
+                  'a',
+                  'img',
+                  'ul',
+                  'ol',
+                  'li',
+                  'table',
+                  'thead',
+                  'tbody',
+                  'tr',
+                  'th',
+                  'td',
+                ]}
+                unwrapDisallowed
+                skipHtml
+                components={{
+                  a: ({ children }) => <span className="chat-turn-preview-link">{children}</span>,
+                  img: ({ alt }) => <span>{alt || 'Image'}</span>,
+                }}
+              >
+                {preview.message.text || excerpt(preview.message)}
+              </Markdown>
+            </div>
           </div>,
           document.body,
         )}
