@@ -2453,6 +2453,51 @@ test('chat request submits once under StrictMode and keeps the pending message v
   }
 });
 
+test('chat request waits for model readiness before consuming and submitting once', async () => {
+  const state = requestedChatState();
+  const pending = deferred<Response>();
+  const submissions: Array<{ clientMessageId: string; text: string }> = [];
+  const handled: string[] = [];
+  const request = { id: randomUUID(), text: 'Create a synthetic goal.' };
+  const chat = (llmReady: boolean) =>
+    createElement(Chat, {
+      state: { ...state, configuration: { ...state.configuration, llmReady } },
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+      requestedMessage: request,
+      onRequestHandled: (id) => handled.push(id),
+    });
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/apps') return Response.json([]);
+    assert.equal(path, '/api/messages');
+    submissions.push(JSON.parse(String(options?.body)));
+    return pending.promise;
+  }, chat(false));
+  try {
+    assert.equal(submissions.length, 0);
+    assert.deepEqual(handled, []);
+    await view.render(chat(true));
+    assert.equal(submissions.length, 1);
+    assert.deepEqual(handled, [request.id]);
+    await act(async () =>
+      pending.resolve(
+        Response.json({
+          messageId: submissions[0].clientMessageId,
+          threadId: state.threadId,
+          turnId: randomUUID(),
+        }),
+      ),
+    );
+    await view.render(chat(true));
+    assert.equal(submissions.length, 1);
+    assert.deepEqual(handled, [request.id]);
+  } finally {
+    pending.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
+    await view.close();
+  }
+});
+
 test('chat request queues a later page request behind an unacknowledged message', async () => {
   const state = requestedChatState();
   const first = deferred<Response>();

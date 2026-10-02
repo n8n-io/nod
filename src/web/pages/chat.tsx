@@ -442,7 +442,14 @@ export function Chat({
     }
   }
   useEffect(() => {
-    if (!requestedMessage || resetting || welcoming || resetLock.current) return;
+    if (
+      !requestedMessage ||
+      !state.configuration.llmReady ||
+      resetting ||
+      welcoming ||
+      resetLock.current
+    )
+      return;
     if (handledRequest.current === requestedMessage.id) return;
     handledRequest.current = requestedMessage.id;
     onRequestHandled?.(requestedMessage.id);
@@ -463,7 +470,7 @@ export function Chat({
       if (unsent.length) setText((current) => [...unsent, current].filter(Boolean).join('\n\n'));
       composer.current?.focus();
     });
-  }, [requestedMessage, resetting, welcoming]);
+  }, [requestedMessage, state.configuration.llmReady, resetting, welcoming]);
   async function finishHandoff(messageId: string) {
     const sentThread = threadId;
     setReturningHandoff(messageId);
