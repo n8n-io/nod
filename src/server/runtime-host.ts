@@ -43,8 +43,6 @@ const forwardedEnvironment = [
   'COMPOSIO_NOTION_AUTH_CONFIG_ID',
   'OBJECT_STORAGE_PROVIDER',
   'OBJECT_STORAGE_ENDPOINT',
-  'OBJECT_STORAGE_BUCKET',
-  'OBJECT_STORAGE_REGION',
 ] as const;
 
 type Entry = { lease: TenantLease; secret: string; healthy: boolean; stopping?: Promise<void> };

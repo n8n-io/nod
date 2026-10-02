@@ -17,12 +17,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test, { type TestContext } from 'node:test';
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
 import { Composio } from '@composio/core';
 import pg from 'pg';
 import { browserDownloadBytes } from '../src/ports/computer.ts';
@@ -45,7 +39,6 @@ import { runBrowserBridge } from '../src/providers/container-browser/bridge.ts';
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { createHttpObjectStore } from '../src/providers/object-storage/http.ts';
-import { createS3ObjectStore } from '../src/providers/object-storage/s3.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
 import { createPostgresObjectStore } from '../src/server/object-storage.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
@@ -424,47 +417,6 @@ test('HTTP storage bounds responses, uses version conditions and never forwards 
     store.read(key, 100),
     (error: Error) => !/secret|private.*URL|token/.test(error.message),
   );
-});
-
-test('self-host S3 storage binds every operation to the configured owner and environment', async (t) => {
-  const client = new S3Client({
-    region: 'auto',
-    credentials: { accessKeyId: 'fixture', secretAccessKey: 'fixture' },
-  });
-  const commands: unknown[] = [];
-  t.mock.method(
-    client,
-    'send',
-    async (command: GetObjectCommand | PutObjectCommand | DeleteObjectCommand) => {
-      commands.push(command);
-      assert.equal(command.input.Bucket, 'fixture-private');
-      assert.equal(command.input.Key, 'development/owner-one/' + key);
-      if (command instanceof GetObjectCommand)
-        return {
-          ETag: '"read"',
-          ContentLength: 3,
-          Body: { transformToWebStream: () => new Response('abc').body! },
-        };
-      if (command instanceof PutObjectCommand) return { ETag: '"written"' };
-      return {};
-    },
-  );
-  const store = createS3ObjectStore({
-    client,
-    bucket: 'fixture-private',
-    ownerId: 'owner-one',
-    environment: 'development',
-  });
-  assert.equal((await store.read(key, 4))?.bytes.toString(), 'abc');
-  await store.write(key, Buffer.from('x'), { expectedVersion: null });
-  assert.equal((commands[1] as PutObjectCommand).input.IfNoneMatch, '*');
-  await store.remove(key, { expectedVersion: '"written"' });
-  assert.equal((commands[2] as DeleteObjectCommand).input.IfMatch, '"written"');
-  await assert.rejects(
-    store.write('../other-owner/file', Buffer.from('x'), { expectedVersion: null }),
-    /unavailable/,
-  );
-  client.destroy();
 });
 
 async function fixture() {
