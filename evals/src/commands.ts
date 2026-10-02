@@ -229,8 +229,6 @@ export async function main(args: Args) {
         : undefined;
       const suite = {
         total: scenarios.length,
-        scored: scenarios.filter((item) => item.calibration !== 'pending' && item.stance !== 'gap')
-          .length,
         calibrating: scenarios.filter(
           (item) => item.calibration === 'pending' && item.stance !== 'gap',
         ).length,

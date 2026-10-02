@@ -8,7 +8,6 @@ export interface StoryNotes {
 
 export interface Suite {
   total: number;
-  scored: number;
   calibrating: number;
   gaps: number;
 }
