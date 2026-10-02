@@ -1,0 +1,10 @@
+{
+  "name": "otto-evals",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "eval": "tsx src/cli.ts"
+  }
+}

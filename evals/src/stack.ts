@@ -1,0 +1,344 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+import { createServer } from 'node:net';
+import { chmod, copyFile, mkdir, mkdtemp, realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import pg from 'pg';
+import { parse } from 'dotenv';
+import { readFile } from 'node:fs/promises';
+import type { IntegrationProvider } from '../../src/ports/integrations.ts';
+import { runProcess } from '../../src/providers/process.ts';
+import { agentModels } from '../../src/shared/model-defaults.ts';
+import { ChannelSetupFailure } from '../../src/ports/channel-settings.ts';
+import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
+
+const here = dirname(fileURLToPath(import.meta.url));
+export const repository = resolve(here, '../..');
+export const appSource = process.env.OTTO_EVAL_SOURCE || repository;
+
+export type Provider = 'openai' | 'anthropic' | 'openrouter';
+
+export interface Model {
+  provider: Provider;
+  name: string;
+  apiKey: string;
+}
+
+export const keyVariables: Record<Provider, string> = {
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+};
+
+export async function loadEnvironment() {
+  return {
+    ...parse(await readFile(join(repository, '.env'), 'utf8').catch(() => '')),
+    ...process.env,
+  } as Record<string, string | undefined>;
+}
+
+export function selectModel(
+  environment: Record<string, string | undefined>,
+  provider: string = environment.LLM_PROVIDER || 'openai',
+  name = environment.LLM_MODEL,
+): Model {
+  if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'openrouter')
+    throw new Error(
+      'Choose the openai, anthropic or openrouter provider, for example openai/gpt-6.1-sol or openrouter/moonshotai/kimi-k3.',
+    );
+  const apiKey = environment[keyVariables[provider]];
+  if (!apiKey) throw new Error(`Set ${keyVariables[provider]} to run ${provider} models.`);
+  if (provider === 'openrouter' && !name)
+    throw new Error('Name the OpenRouter model, for example openrouter/moonshotai/kimi-k3.');
+  return { provider, name: name || agentModels[provider as 'openai' | 'anthropic'], apiKey };
+}
+
+async function freePort() {
+  const probe = createServer();
+  await new Promise<void>((done) => probe.listen(0, '127.0.0.1', done));
+  const { port } = probe.address() as { port: number };
+  await new Promise((done) => probe.close(done));
+  return port;
+}
+
+export function parseModel(value: string, environment: Record<string, string | undefined>) {
+  const [provider, ...rest] = value.split('/');
+  return selectModel(environment, provider, rest.join('/') || undefined);
+}
+
+export interface Stack {
+  baseUrl: string;
+  directory: string;
+  workspaceRoot: string;
+  container: string;
+  pool: pg.Pool;
+  bossSchema: string;
+  sessionRoot: string;
+  exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
+  stop(): Promise<void>;
+}
+
+export async function startStack(options: {
+  model: Model;
+  integrations: IntegrationProvider;
+  siteHosts: string[];
+  siteUpstreamPort: number;
+  environment: Record<string, string | undefined>;
+}): Promise<Stack> {
+  const { model, environment } = options;
+  const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
+  const schema = `eval_${suffix}`;
+  const bossSchema = `eval_boss_${suffix}`;
+  const container = `otto-workspace-eval-${suffix}`;
+  const browserContainer = `otto-browser-eval-${suffix}`;
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'otto-eval-')));
+  const workspaceRoot = join(directory, '.local', 'workspaces');
+  const toolsRoot = join(directory, 'workspace-tools');
+  await mkdir(workspaceRoot, { recursive: true });
+  await mkdir(toolsRoot);
+  await chmod(workspaceRoot, 0o777);
+  await chmod(toolsRoot, 0o777);
+  const baseDatabase = new URL(await integrationDatabaseUrl(repository, environment));
+  if (!['127.0.0.1', 'localhost'].includes(baseDatabase.hostname))
+    throw new Error('The evaluation requires a local PostgreSQL test database.');
+  const admin = new pg.Pool({ connectionString: baseDatabase.href, max: 2 });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const database = new URL(baseDatabase);
+  database.searchParams.set('options', `-c search_path=${schema}`);
+  process.env.DATABASE_URL = database.href;
+  process.env.PGBOSS_SCHEMA = bossSchema;
+  const port = await freePort();
+  process.env.PORT = String(port);
+  process.env.OTTO_PUBLIC_URL = `http://localhost:${port}`;
+  process.env.OTTO_MODE = 'local';
+  process.env.OTTO_DATA_ROOT = join(directory, '.local');
+  process.env.NODE_ENV = 'production';
+  process.env.DEV_INSPECTOR = 'true';
+  process.env[keyVariables[model.provider]] = model.apiKey;
+  process.chdir(appSource);
+
+  let containerStarted = false;
+  let browserStarted = false;
+  let application:
+    | Awaited<ReturnType<(typeof import('../../src/server/composition.ts'))['createApplication']>>
+    | undefined;
+  let databasePool: pg.Pool | undefined;
+  async function stop() {
+    await application?.app.close().catch(() => {});
+    if (browserStarted) await runProcess('docker', ['rm', '-f', browserContainer]).catch(() => {});
+    if (containerStarted) await runProcess('docker', ['rm', '-f', container]).catch(() => {});
+    await databasePool?.end().catch(() => {});
+    await admin
+      .query(`DROP SCHEMA IF EXISTS ${bossSchema} CASCADE; DROP SCHEMA IF EXISTS ${schema} CASCADE`)
+      .catch(() => {});
+    await admin.end().catch(() => {});
+  }
+  try {
+    const workspaceImage = environment.OTTO_EVAL_WORKSPACE_IMAGE || 'otto-local-workspace';
+    const browserImage = environment.OTTO_EVAL_BROWSER_IMAGE || 'otto-local-browser';
+    for (const image of [workspaceImage, browserImage]) {
+      const inspected = await runProcess('docker', [
+        'image',
+        'inspect',
+        image,
+        '--format',
+        '{{.Id}}',
+      ]);
+      if (inspected.exitCode)
+        throw new Error(
+          `Docker image ${image} is missing. Run npm run dev once, or set OTTO_EVAL_WORKSPACE_IMAGE and OTTO_EVAL_BROWSER_IMAGE.`,
+        );
+    }
+    const started = await runProcess('docker', [
+      'run',
+      '-d',
+      '--name',
+      container,
+      '--init',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges',
+      '--pids-limit',
+      '4096',
+      '--memory',
+      '8g',
+      '--cpus',
+      '4',
+      '--user',
+      'node',
+      '--mount',
+      `type=bind,source=${workspaceRoot},target=/workspace`,
+      '--mount',
+      `type=bind,source=${toolsRoot},target=/home/node`,
+      '--tmpfs',
+      '/tmp:size=268435456',
+      workspaceImage,
+      'sleep',
+      'infinity',
+    ]);
+    if (started.exitCode) throw new Error('Could not start the isolated workspace container.');
+    containerStarted = true;
+
+    const worker = join(directory, 'browser-worker');
+    await mkdir(join(worker, 'src', 'world'), { recursive: true });
+    for (const name of ['browser-worker.ts', 'fixture-proxy.ts'])
+      await copyFile(join(here, 'world', name), join(worker, 'src', 'world', name));
+    const browser = await runProcess('docker', [
+      'run',
+      '-d',
+      '--name',
+      browserContainer,
+      '--init',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges',
+      '--read-only',
+      '--pids-limit',
+      '1024',
+      '--memory',
+      '8g',
+      '--cpus',
+      '4',
+      '--shm-size',
+      '256m',
+      '--user',
+      'node',
+      '--add-host',
+      'host.docker.internal:host-gateway',
+      '--env',
+      `EVAL_SITE_HOSTS=${(options.siteHosts.length ? options.siteHosts : ['unused.example.org']).join(',')}`,
+      '--env',
+      `EVAL_SITE_UPSTREAM=http://host.docker.internal:${options.siteUpstreamPort}`,
+      '--mount',
+      `type=bind,source=${worker},target=/app/evals,readonly`,
+      '--mount',
+      `type=bind,source=${join(appSource, 'src')},target=/app/src,readonly`,
+      '--tmpfs',
+      '/data:uid=1000,gid=1000,mode=700,size=536870912',
+      '--tmpfs',
+      '/tmp:size=268435456',
+      '--tmpfs',
+      '/home/node:uid=1000,gid=1000,mode=700,size=268435456',
+      browserImage,
+      'node',
+      '--import',
+      'tsx',
+      '/app/evals/src/world/browser-worker.ts',
+    ]);
+    if (browser.exitCode) throw new Error('Could not start the isolated browser container.');
+    browserStarted = true;
+    let ready = false;
+    for (let attempt = 0; attempt < 60 && !ready; attempt++) {
+      const probe = await runProcess('docker', [
+        'exec',
+        browserContainer,
+        'node',
+        '-e',
+        'const s=require("node:net").connect("/data/control.sock");s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))',
+      ]);
+      ready = probe.exitCode === 0;
+      if (!ready) await new Promise((done) => setTimeout(done, 500));
+    }
+    if (!ready) throw new Error('The isolated browser did not become ready.');
+
+    const load = <T>(path: string) =>
+      import(pathToFileURL(join(appSource, path)).href) as Promise<T>;
+    const [
+      { createApplication },
+      { pool },
+      { createPiAgent },
+      { createContainerBrowserComputer },
+      { createDockerWorkspace },
+      { createOpenAIRelevanceClassifier },
+      { createPublicLinkPreviewProvider },
+    ] = await Promise.all([
+      load<typeof import('../../src/server/composition.ts')>('src/server/composition.ts'),
+      load<typeof import('../../src/server/db.ts')>('src/server/db.ts'),
+      load<typeof import('../../src/providers/pi/index.ts')>('src/providers/pi/index.ts'),
+      load<typeof import('../../src/providers/container-browser/index.ts')>(
+        'src/providers/container-browser/index.ts',
+      ),
+      load<typeof import('../../src/providers/docker/index.ts')>('src/providers/docker/index.ts'),
+      load<typeof import('../../src/providers/openai/relevance.ts')>(
+        'src/providers/openai/relevance.ts',
+      ),
+      load<typeof import('../../src/providers/public-web/link-preview.ts')>(
+        'src/providers/public-web/link-preview.ts',
+      ),
+    ]);
+    databasePool = pool;
+    const vaultKey = randomBytes(32);
+    const sessionRoot = join(directory, '.local', 'sessions');
+    application = await createApplication({
+      agent: createPiAgent({
+        provider: model.provider,
+        model: model.name,
+        apiKey: model.apiKey,
+        sessionRoot,
+      }),
+      computer: createContainerBrowserComputer({
+        dataRoot: join(directory, '.local'),
+        container: browserContainer,
+      }),
+      workspace: createDockerWorkspace({ container, workspaceRoot }),
+      integrations: options.integrations,
+      messagingSetup: {
+        verifier: {
+          verify: async () => {
+            throw new ChannelSetupFailure('invalid_input');
+          },
+        },
+        create: () => ({
+          channels: (['telegram', 'whatsapp'] as const).map((id) => ({
+            id,
+            status: 'disabled' as const,
+            missing: [],
+            accountId: '',
+            allowedSenderIds: [],
+          })),
+          receive: async () => ({ status: 404, body: { error: 'Channels are disabled.' } }),
+          post: async () => {
+            throw new Error('Channels are disabled.');
+          },
+          close: async () => {},
+        }),
+      },
+      speech: {
+        id: 'disabled',
+        configured: false,
+        synthesize: async () => {
+          throw new Error('Speech is disabled in the evaluation.');
+        },
+      },
+      keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
+      relevance: createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+      linkPreviews: createPublicLinkPreviewProvider(),
+      model: { provider: model.provider, name: model.name, configured: true },
+    });
+    await application.app.listen({ host: '127.0.0.1', port });
+    return {
+      baseUrl: `http://localhost:${port}`,
+      directory,
+      workspaceRoot,
+      container,
+      pool,
+      bossSchema,
+      sessionRoot,
+      async exec(command, timeoutMs = 120_000) {
+        const result = await runProcess(
+          'docker',
+          ['exec', '--user', 'node', '--workdir', '/workspace', container, 'bash', '-c', command],
+          { timeoutMs },
+        );
+        return { exitCode: result.exitCode ?? 1, output: result.stdout + result.stderr };
+      },
+      stop,
+    };
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+}
