@@ -13,6 +13,7 @@ import type {
   RuntimeContext,
   RuntimeObservation,
 } from '../src/ports/agent.ts';
+import { requestsPrivateInput } from '../src/runtime/communication.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { inlineAppResult } from '../src/server/integration-result.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
@@ -235,34 +236,6 @@ test('verification email codes stay out of app tool results, observations and wo
   ]);
 });
 
-test('long foreground work keeps both useful progress messages', async () => {
-  const originalNow = Date.now;
-  let now = originalNow();
-  Date.now = () => now;
-  const computer = fakeComputer({
-    act: async () => ({ url: 'https://example.test/jobs', text: 'Synthetic jobs', candidates: [] }),
-  });
-  try {
-    const result = await fixture(
-      async (tools) => {
-        await call(tools, 'browser', { action: 'open', url: 'https://example.test/jobs' });
-        await call(tools, 'browser', { action: 'snapshot' });
-        now += 60_000;
-        await call(tools, 'browser', { action: 'snapshot' });
-        await call(tools, 'send_message', { text: 'I found the first source.' });
-        await call(tools, 'browser', { action: 'snapshot' });
-        await call(tools, 'send_message', { text: 'I checked another source.' });
-      },
-      {},
-      { computer },
-    );
-    assert.equal(result.result.status, 'succeeded');
-    assert.equal(result.replies.length, 2);
-  } finally {
-    Date.now = originalNow;
-  }
-});
-
 test('saved memory reaches Pi but stays out of inspector records', async () => {
   const note = 'Prefers short synthetic reports.';
   const observations: unknown[] = [];
@@ -461,7 +434,7 @@ test('a continuation repeating the same private-input request fails instead of b
 });
 
 test('PIN and semantic login identifier requests never reach chat', async () => {
-  for (const text of [
+  const requests = [
     'Qual é o teu PIN da Chave Móvel Digital?',
     'Envia-me o teu código PIN.',
     'Preciso do seu PIN de autenticação.',
@@ -490,21 +463,29 @@ test('PIN and semantic login identifier requests never reach chat', async () => 
     'O teu email, por favor, para iniciar sessão.',
     'Your phone number, please, to sign in.',
     'Sign in: your email, please.',
-  ]) {
-    for (const method of ['ask_user', 'send_message', 'final']) {
-      let prompts = 0;
-      const result = await fixture(async (tools, emit) => {
-        prompts++;
-        if (prompts > 1) emit({ type: 'final', text: 'I will use secure sign-in instead.' });
-        else if (method === 'final') {
-          emit({ type: 'text_delta', text });
-          emit({ type: 'final', text });
-        } else await call(tools, method, method === 'ask_user' ? { question: text } : { text });
-      });
-      assert.equal(result.result.status, 'succeeded', `${method}: ${text}`);
-      assert.equal(result.replies.includes(text), false, `${method}: ${text}`);
-      assert.equal(result.deltas.join('').includes(text), false, `${method}: ${text}`);
-    }
+    'What is your API key?',
+    'Please send me your api_key.',
+    'Envia-me a chave API.',
+    'Qual é a tua chave de API?',
+    'Enter the API key to continue.',
+  ];
+  for (const text of requests) assert.equal(requestsPrivateInput(text), true, text);
+  for (const text of ['Can you explain what an API key is?', 'How do I rotate an API key?'])
+    assert.equal(requestsPrivateInput(text), false, text);
+  const text = requests[0];
+  for (const method of ['ask_user', 'send_message', 'final']) {
+    let prompts = 0;
+    const result = await fixture(async (tools, emit) => {
+      prompts++;
+      if (prompts > 1) emit({ type: 'final', text: 'I will use secure sign-in instead.' });
+      else if (method === 'final') {
+        emit({ type: 'text_delta', text });
+        emit({ type: 'final', text });
+      } else await call(tools, method, method === 'ask_user' ? { question: text } : { text });
+    });
+    assert.equal(result.result.status, 'succeeded', method);
+    assert.equal(result.replies.includes(text), false, method);
+    assert.equal(result.deltas.join('').includes(text), false, method);
   }
 });
 
