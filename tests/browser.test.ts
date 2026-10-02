@@ -749,6 +749,10 @@ test('discarding a thread closes its browser and deletes only its throwaway data
     await computer.bindProfile!('bound', savedProfile);
     await computer.discard!('old');
     await computer.discard!('bound');
+    await assert.rejects(
+      computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' }),
+      /was reset/,
+    );
     assert.equal(commands.filter((command) => command === 'close').length, 1);
     assert.deepEqual(
       (await readdir(join(runtime, 'profiles'))).sort(),
@@ -1932,6 +1936,17 @@ test('a password typed through the handoff in several pauses hides only the fini
       assert.equal(JSON.stringify(observation).includes(secret), false);
     assert.match((await computer.act('fixture', { action: 'snapshot' })).text, /Sign in password/);
     await computer.act('fixture', { action: 'fill', selector: '#search', text: 'Sign' });
+    const page = fixture.pages.get('fixture')!;
+    const other = page.dom.window.document.createElement('input');
+    other.type = 'password';
+    page.dom.window.document.body.append(other);
+    other.focus();
+    await computer.control!('fixture', { type: 'type', text: `${secret}2` });
+    const first = await computer.act('fixture', {
+      action: 'evaluate',
+      script: "document.querySelector('#account').value",
+    });
+    assert.equal(JSON.stringify(first).includes(secret), false);
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });

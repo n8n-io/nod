@@ -41,7 +41,7 @@ interface BrowserState {
   injecting: boolean;
   secrets: Set<string>;
   secretsByOrigin: Map<string, Set<string>>;
-  typed?: { value: string; origin: string; fresh: boolean };
+  typed?: { value: string; origin: string; field: number; fresh: boolean };
   protectedSelectors: Set<string>;
   uploads: Set<string>;
   started: boolean;
@@ -155,6 +155,7 @@ export function createAgentBrowserComputer(options: {
   onDiagnostic?(event: BrowserDiagnostic): void;
 }): Computer & { canCheckpoint(): boolean } {
   const browsers = new Map<string, BrowserState>();
+  const discarded = new Set<string>();
   let lastSession: { threadId: string; lastActivityAt: string } | undefined;
   const markActivity = (id: string) => {
     lastSession = { threadId: id, lastActivityAt: new Date().toISOString() };
@@ -239,6 +240,7 @@ export function createAgentBrowserComputer(options: {
   function stateFor(id: string): BrowserState {
     if (disposed) throw new Error('The browser service has stopped.');
     threadIdentity(id);
+    if (discarded.has(id)) throw new Error('This conversation was reset. Its browser is gone.');
     let state = browsers.get(id);
     if (!state) {
       state = {
@@ -1283,20 +1285,26 @@ export function createAgentBrowserComputer(options: {
           { action: 'keyboard', subaction: 'type', text: input.text },
           signal,
         );
-        const secret = await evaluate(
+        const typed = await evaluate(
           state,
-          "(() => { const field = document.activeElement; return field instanceof HTMLInputElement && field.type === 'password' ? field.value : null; })()",
+          "(() => { const field = document.activeElement; return field instanceof HTMLInputElement && field.type === 'password' ? [field.value, [...document.querySelectorAll('input[type=\"password\"]')].indexOf(field)] : null; })()",
           signal,
         );
-        if (typeof secret === 'string' && secret) {
+        const [secret, field] = z.tuple([z.string(), z.number()]).catch(['', -1]).parse(typed);
+        if (secret) {
           const origin = new URL(await currentUrl(state, signal)).origin;
           const secrets = state.secretsByOrigin.get(origin) ?? new Set<string>();
           const earlier = state.typed;
-          if (earlier?.fresh && earlier.origin === origin && secret.startsWith(earlier.value)) {
+          if (
+            earlier?.fresh &&
+            earlier.origin === origin &&
+            earlier.field === field &&
+            secret.startsWith(earlier.value)
+          ) {
             state.secrets.delete(earlier.value);
             secrets.delete(earlier.value);
           }
-          state.typed = { value: secret, origin, fresh: !state.secrets.has(secret) };
+          state.typed = { value: secret, origin, field, fresh: !state.secrets.has(secret) };
           state.secrets.add(secret);
           secrets.add(secret);
           state.secretsByOrigin.set(origin, secrets);
@@ -1427,6 +1435,7 @@ export function createAgentBrowserComputer(options: {
 
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
+    discarded.add(id);
     await closeBrowser(id);
     await Promise.all([
       rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
