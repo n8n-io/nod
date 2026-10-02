@@ -237,10 +237,14 @@ export function createAgentBrowserComputer(options: {
       }
     };
   }
-  function stateFor(id: string): BrowserState {
-    if (disposed) throw new Error('The browser service has stopped.');
+  function assertNotDiscarded(id: string) {
     threadIdentity(id);
     if (discarded.has(id)) throw new Error('This conversation was reset. Its browser is gone.');
+  }
+
+  function stateFor(id: string): BrowserState {
+    if (disposed) throw new Error('The browser service has stopped.');
+    assertNotDiscarded(id);
     let state = browsers.get(id);
     if (!state) {
       state = {
@@ -1374,8 +1378,9 @@ export function createAgentBrowserComputer(options: {
 
   async function bindProfile(id: string, rawProfileId: string): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
-    threadIdentity(id);
+    assertNotDiscarded(id);
     await allocate(async () => {
+      assertNotDiscarded(id);
       const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
       if (previous?.saved.profileId === profileId) {
         if (!previous.saved.restoreSession) {

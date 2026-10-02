@@ -753,6 +753,7 @@ test('discarding a thread closes its browser and deletes only its throwaway data
       computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' }),
       /was reset/,
     );
+    await assert.rejects(computer.bindProfile!('old', savedProfile), /was reset/);
     assert.equal(commands.filter((command) => command === 'close').length, 1);
     assert.deepEqual(
       (await readdir(join(runtime, 'profiles'))).sort(),
