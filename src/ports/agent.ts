@@ -168,7 +168,7 @@ export interface PromptSnapshot {
 }
 export interface RuntimeResult {
   status: 'succeeded' | 'waiting_credentials' | 'waiting_user';
-  waitingFor?: 'question' | 'approval' | 'credentials' | 'browser';
+  waitingFor?: 'question' | 'approval' | 'credentials';
   question?: string;
 }
 export interface AgentImage {
