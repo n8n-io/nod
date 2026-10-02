@@ -3205,6 +3205,69 @@ test(
   },
 );
 
+test(
+  'direct accounts that lost their authorization turn inactive so Pi can connect them again',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await directFixture(t);
+    const healthy = await f.account('linear');
+    assert.deepEqual(await f.provider.inspectAccount(healthy, f.owner), {
+      active: true,
+      service: 'linear',
+      accountName: `Linear account ${healthy.slice(0, 8)}`,
+    });
+    f.server.mcpStatus = 401;
+    assert.deepEqual(await f.provider.inspectAccount(healthy, f.owner), {
+      active: false,
+      service: 'linear',
+    });
+    f.server.mcpStatus = 200;
+    f.server.mcpFailure = new Error('Synthetic network failure.');
+    await assert.rejects(f.provider.inspectAccount(healthy, f.owner), /Synthetic network failure/);
+    f.server.mcpFailure = undefined;
+    const uncertain = await f.account('notion', { refreshUncertain: true });
+    assert.deepEqual(await f.provider.inspectAccount(uncertain, f.owner), {
+      active: false,
+      service: 'notion',
+    });
+    const expired = await f.account('linear', { expiresAt: Date.now() - 1000 });
+    f.server.tokenStatus = 500;
+    await assert.rejects(f.provider.inspectAccount(expired, f.owner), /Provider request failed/);
+    f.server.tokenStatus = 400;
+    assert.deepEqual(await f.provider.inspectAccount(expired, f.owner), {
+      active: false,
+      service: 'linear',
+    });
+    f.server.tokenStatus = 200;
+    const app = Fastify();
+    t.after(() => app.close());
+    const integrations = await createIntegrations(f.pool, {
+      ownerId: f.owner,
+      provider: f.provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => {},
+    });
+    integrations.registerRoutes(app);
+    await f.pool.query(
+      "INSERT INTO app_connections(owner_id,slug,account_id,provider_id) VALUES($1,'notion',$2,'direct')",
+      [f.owner, uncertain],
+    );
+    await integrations.list(f.owner);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const row = await f.pool.query('SELECT account_active FROM app_connections');
+      if (!row.rows[0].account_active) break;
+      await delay(20);
+    }
+    const [notion] = (await integrations.list(f.owner, { refresh: false })).filter(
+      (item) => item.slug === 'notion',
+    );
+    assert.equal(notion.status, 'disconnected');
+    const reconnect = await integrations.manageConnections('connect', 'notion');
+    assert.equal('accounts' in reconnect, false);
+    assert.match('url' in reconnect ? reconnect.url : '', /^https:\/\/mcp\.notion\.com\//);
+  },
+);
+
 test('a discovered MCP server can register, sign in and refresh without service code', async () => {
   const calls: string[] = [];
   const request: typeof fetch = async (input, init) => {
