@@ -8,15 +8,17 @@ export type { ChartRun } from './insights.ts';
 export interface Card {
   id: string;
   html: string;
+  fit?: boolean;
 }
 
-const esc = (value: string) =>
+export const esc = (value: string) =>
   value.replace(
     /[&<>"]/g,
     (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]!,
   );
-const pct = (value: number | null) => (value === null ? 'n/a' : `${Math.round(value * 100)}%`);
-const money = (value: number | null) =>
+export const pct = (value: number | null) =>
+  value === null ? 'n/a' : `${Math.round(value * 100)}%`;
+export const money = (value: number | null) =>
   value === null ? 'n/a' : value < 0.1 ? `$${value.toFixed(3)}` : `$${value.toFixed(2)}`;
 const secs = (value: number | null) =>
   value === null
@@ -25,7 +27,7 @@ const secs = (value: number | null) =>
       ? `${(value / 60).toFixed(1)} min`
       : `${Math.round(value)} s`;
 
-const css = `*{box-sizing:border-box;margin:0}body{background:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
+export const css = `*{box-sizing:border-box;margin:0}body{background:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
 .card{width:1600px;height:900px;padding:60px 72px 44px;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;flex-direction:column;position:relative;overflow:hidden}
 .eyebrow{font-size:15px;font-weight:700;letter-spacing:.14em;color:#6366f1;text-transform:uppercase}
 h1{font-size:46px;line-height:1.08;font-weight:780;letter-spacing:-.025em;margin-top:10px}
