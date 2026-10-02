@@ -1425,6 +1425,18 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
+  async function discard(rawId: string): Promise<void> {
+    const id = threadIdentity(rawId);
+    await closeBrowser(id);
+    await Promise.all([
+      rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
+      rm(resolve(runtimeRoot, 'downloads', id), { recursive: true, force: true }),
+      rm(resolve(runtimeRoot, `screen-${id}.capture.png`), { force: true }),
+      screens.delete(id),
+    ]);
+    screenStatuses.delete(id);
+  }
+
   function browserStatus(): string {
     const count = [...browsers.values()].filter(
       (state) => state.started || state.saved.navigationFailed,
@@ -1470,6 +1482,7 @@ export function createAgentBrowserComputer(options: {
     currentPage: tracked(currentPage),
     hold: tracked(hold),
     close: tracked(closeBrowser),
+    discard: tracked(discard),
     status: browserStatus,
     dispose: async () => {
       disposed = true;

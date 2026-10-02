@@ -8,7 +8,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { constants } from 'node:fs';
-import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { connect, createServer, type Socket } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -821,6 +821,58 @@ for (const action of ['snapshot', 'click'] as const)
     }
   });
 
+test('discarding a thread closes its browser and deletes only its throwaway data', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-discard-'));
+  const fixture = stagedLoginBrowser();
+  const commands: string[] = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (executable, args, options) => {
+      commands.push(args[args.indexOf('--idle-timeout') + 2]);
+      return fixture.run(executable, args, options);
+    },
+  });
+  const runtime = join(directory, 'runtime');
+  const savedProfile = randomUUID();
+  const dirs = ['profiles/old', 'downloads/old', 'profiles/other', `profiles/${savedProfile}`];
+  const screens = [
+    'screen-old.png',
+    'screen-old.capture.png',
+    'screen-bound.png',
+    'screen-other.png',
+  ];
+  try {
+    for (const dir of dirs) {
+      await mkdir(join(runtime, dir), { recursive: true });
+      await writeFile(join(runtime, dir, 'data'), 'synthetic');
+    }
+    for (const screen of screens) await writeFile(join(runtime, screen), 'synthetic');
+    await computer.act('old', { action: 'open', url: 'https://1.1.1.1/login' });
+    await computer.act('other', { action: 'open', url: 'https://1.1.1.1/login' });
+    await computer.bindProfile!('bound', savedProfile);
+    await computer.discard!('old');
+    await computer.discard!('bound');
+    assert.equal(commands.filter((command) => command === 'close').length, 1);
+    assert.deepEqual(
+      (await readdir(join(runtime, 'profiles'))).sort(),
+      [savedProfile, 'other'].sort(),
+    );
+    assert.deepEqual(await readdir(join(runtime, 'downloads')), []);
+    assert.deepEqual(
+      (await readdir(runtime)).filter((file) => file.startsWith('screen-')),
+      ['screen-other.png'],
+    );
+    assert.equal(computer.screenStatus!('old').state, 'unavailable');
+    assert.equal(
+      (await computer.act('other', { action: 'snapshot' })).url,
+      'https://1.1.1.1/login',
+    );
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 async function wedgedBrowser(options: { idleTimeoutMs?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-drain-failure-'));
   const fixture = stagedLoginBrowser();
@@ -1093,6 +1145,9 @@ function workerComputer() {
     close: async () => {
       calls.push({ method: 'close' });
     },
+    discard: async (id) => {
+      calls.push({ method: 'discard', input: id });
+    },
     dispose: async () => {
       calls.push({ method: 'dispose' });
     },
@@ -1294,6 +1349,22 @@ test('malformed methods and namespaces never reach a computer or filesystem path
       () => createContainerBrowserComputer({ dataRoot: '/synthetic', container: 'otto-workspace' }),
       /BROWSER_CONTAINER/,
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('discard reaches the namespace computer of the same thread only', async () => {
+  const fixture = await harness();
+  try {
+    const computer = fixture.client('/synthetic/discard');
+    await computer.act('task', { action: 'snapshot' });
+    await computer.discard!('task');
+    assert.deepEqual(fixture.instance('/synthetic/discard').calls, [
+      { method: 'act', input: { action: 'snapshot' } },
+      { method: 'discard', input: 'task' },
+    ]);
+    await assert.rejects(computer.discard!('../task'));
   } finally {
     await fixture.close();
   }

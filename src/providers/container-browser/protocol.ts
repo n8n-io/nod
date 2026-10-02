@@ -151,6 +151,7 @@ export const browserRequest = z.discriminatedUnion('method', [
     })
     .strict(),
   z.object({ ...identity, method: z.literal('close'), threadId: thread }).strict(),
+  z.object({ ...identity, method: z.literal('discard'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('dispose') }).strict(),
   z.object({ ...identity, method: z.literal('quiesce') }).strict(),
   z.object({ ...identity, method: z.literal('status') }).strict(),

@@ -67,7 +67,7 @@ export interface AppDependencies {
   speech?: SpeechService;
   computer?: Pick<
     Computer,
-    'screenshot' | 'control' | 'status' | 'screenStatus' | 'currentSession'
+    'screenshot' | 'control' | 'status' | 'screenStatus' | 'currentSession' | 'discard'
   >;
   runtime?: {
     status(): { browser: string; workspace: string; activeThreads?: number };
@@ -217,7 +217,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
     z.object({})
       .strict()
       .parse(request.body ?? {});
-    return resetThread();
+    const { previousThreadId, ...reset } = await resetThread();
+    void dependencies.computer?.discard?.(previousThreadId).catch(() => {});
+    return reset;
   });
   app.post('/api/onboarding', async (request) => {
     const { timeZone, threadId } = z

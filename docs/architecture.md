@@ -28,7 +28,7 @@ Every user message, schedule fire, event wake, reaction and resume inserts a `tu
 - A question, approval or credential request ends the turn `waiting`. The next user message is simply the next turn in the same Pi session. Completed forms, app connections and approvals queue a `resume` turn.
 - Stop aborts the running turn and cancels queued ones. There is no turn timeout.
 - Nothing is retried. An error or restart ends the turn `failed` with one fixed message asking the user to check outside effects or say continue.
-- Reset (Get started) archives the thread and cancels its turns; the next turn starts a new Pi session, workspace and computer. Messages, accounts, Vault, goals and schedules are kept. The client's `threadId` fences late writes after a reset.
+- Reset (Get started) archives the thread and cancels its turns; the next turn starts a new Pi session, workspace and computer. The old thread's browser is closed and its throwaway profile, downloads and screens are deleted; saved browser sessions stay. Messages, accounts, Vault, goals and schedules are kept. The client's `threadId` fences late writes after a reset.
 - Background turns (schedules, events) stream nothing and deliver only explicit `send_message` calls.
 
 There is no migration from the earlier task model; existing databases must be reset.

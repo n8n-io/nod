@@ -106,7 +106,13 @@ test(
     const accounts = createAccountStore(db.pool);
     await accounts.initialize();
     const userMessages = thread.createUserMessageService({ confirmAction: approvals.acceptChat });
+    const discarded: string[] = [];
     const app = await createApp({
+      computer: fakeComputer({
+        discard: async (threadId) => {
+          discarded.push(threadId);
+        },
+      }),
       submitMessage: userMessages.submit,
       configuration: () => ({ ...configuration(), llmReady: true }),
       onboard: (_timeZone, threadId) => thread.restartOnboarding(threadId),
@@ -1242,6 +1248,8 @@ test(
           assert.equal(reset.statusCode, 200, reset.body);
           freshThread = reset.json<{ ok: boolean; threadId: string }>().threadId;
           assert.notEqual(freshThread, firstThreadId);
+          assert.deepEqual(discarded, [firstThreadId]);
+          assert.equal('previousThreadId' in reset.json(), false);
           assert.deepEqual(
             (
               await db.pool.query(

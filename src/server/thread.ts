@@ -434,11 +434,11 @@ export async function resetThread() {
       "UPDATE threads SET archived_at=now(),status='idle',updated_at=now() WHERE id=$1",
       [thread.id],
     );
-    return { cancelled, threadId: (await activeThread(client)).id };
+    return { cancelled, previousThreadId: thread.id, threadId: (await activeThread(client)).id };
   });
   abortTurns(result.cancelled);
   refresh();
-  return { ok: true, threadId: result.threadId };
+  return { ok: true, threadId: result.threadId, previousThreadId: result.previousThreadId };
 }
 
 const onboardingPrompt =

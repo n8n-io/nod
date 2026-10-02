@@ -112,6 +112,9 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return computer.hold(request.threadId, request.until);
     case 'close':
       return computer.close(request.threadId);
+    case 'discard':
+      if (!computer.discard) throw new Error();
+      return computer.discard(request.threadId);
     case 'status':
       return null;
     case 'dispose':
