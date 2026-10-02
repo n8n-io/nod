@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -9,9 +10,12 @@ from reportlab.pdfgen import canvas
 
 
 root = Path(__file__).resolve().parent
-formatter = root.parent.parent / "node_modules" / ".bin" / "prettier"
+node = shutil.which("node")
+if node is None:
+    raise SystemExit("Node.js is required to format fixtures; make node available on PATH.")
+formatter = root.parent.parent / "node_modules" / "prettier" / "bin" / "prettier.cjs"
 if not formatter.is_file():
-    raise SystemExit("Install repository dependencies before generating fixtures.")
+    raise SystemExit("Local Prettier is missing; install repository dependencies before generating fixtures.")
 if sys.argv[1:] not in ([], ["--v2"]):
     raise SystemExit("Use --v2 for the revised report inputs, or no arguments for v1.")
 version = 2 if sys.argv[1:] else 1
@@ -195,4 +199,17 @@ for case in cases:
         }
     json_path = root / (scenario_id + ".json")
     json_path.write_text(json.dumps(data, indent=2) + "\n")
-    subprocess.run([str(formatter), "--write", str(json_path)], check=True)
+    try:
+        subprocess.run(
+            [node, str(formatter), "--write", str(json_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as error:
+        details = (error.stderr or error.stdout or "No diagnostic output.").strip()
+        raise SystemExit(
+            f"Prettier failed to format {json_path.name} (exit {error.returncode}): {details}"
+        ) from None
+    except OSError as error:
+        raise SystemExit(f"Could not run Node.js to format {json_path.name}: {error}") from None

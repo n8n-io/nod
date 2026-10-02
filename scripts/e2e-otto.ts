@@ -517,10 +517,12 @@ try {
       !Number.isFinite(Date.parse(value.dueAt))
     )
       return reply.code(400).send({ error: 'Provide a schedule ID and an absolute ISO due time.' });
-    expected.set(value.scheduleId, new Date(value.dueAt).toISOString());
+    const scheduleId = value.scheduleId.toLowerCase();
+    const dueAt = new Date(value.dueAt).toISOString();
+    expected.set(scheduleId, dueAt);
     audit('schedule_expected', {
-      scheduleId: value.scheduleId,
-      dueAt: expected.get(value.scheduleId)!,
+      scheduleId,
+      dueAt,
     });
     return { ok: true };
   });
