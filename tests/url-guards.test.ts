@@ -16,7 +16,7 @@ import { artifactPreview } from '../src/web/components/attachment-images.tsx';
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
-import { safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
+import { messageSetupLinks, safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
 
 const origin = 'http://localhost:4310';
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
@@ -333,6 +333,98 @@ test('approval messages preserve source URLs and render supplied markup as text'
   assert.ok(document.body.textContent?.includes(body));
   assert.equal(document.querySelector('script,img,iframe,form,strong,em'), null);
   assert.equal(args.text, body);
+});
+
+test('native app setup has one chat button and hides after connection', () => {
+  const text = '[Connect Slack](https://connect.example.com/fixture)';
+  const before = render(text);
+  assert.match(before, /<button[^>]*data-setup="app"[^>]*>.*Connect Slack<\/button>/);
+  assert.doesNotMatch(before, /connect\.example\.com/);
+  const after = renderToStaticMarkup(
+    createElement(MessageText, { text, connectedAppIds: new Set(['slack']) }),
+  );
+  assert.doesNotMatch(after, /data-setup="app"/);
+});
+
+test('only intended app paths and credential-free HTTP URLs become links', () => {
+  for (const value of [
+    'javascript:alert(1)',
+    'JaVaScRiPt:alert',
+    'data:text/html,test',
+    'file:///etc/passwd',
+    'mailto:hello@example.com',
+    '//evil.example/api/artifacts/id',
+    '/api/vault',
+    '/api/artifacts/',
+    '/api/artifacts/id/extra',
+    '/api/artifacts/id/../../credentials/request',
+    '/api/artifacts/%2e%2e/credentials/request',
+    '/api/artifacts/id%2f..%2fvault',
+    'http://localhost:4310/api/vault',
+    'http://localhost:4310/api/artifacts/id/../../credentials/request',
+    'https://user:password@example.com/',
+    'https://example.com/\njavascript:alert',
+    'https:\\evil.example',
+    'https://example.com/"onclick="alert',
+  ])
+    assert.equal(safeMessageLink(value, origin), null, value);
+  assert.deepEqual(safeMessageLink('https://example.com/docs?q=otto#usage', origin), {
+    href: 'https://example.com/docs?q=otto#usage',
+    kind: 'external',
+  });
+  assert.deepEqual(safeMessageLink('/api/artifacts/file-id', origin), {
+    href: '/api/artifacts/file-id',
+    kind: 'artifact',
+  });
+  const result = render(
+    '//evil.example/api/artifacts/id file:///credentials/id javascript:/approvals/id',
+  );
+  assert.doesNotMatch(result, /<a /);
+});
+
+test('approval messages preserve source URLs and render supplied markup as text', () => {
+  const links = [
+    'https://workspace.slack.com/archives/C_TEST/p123456?thread_ts=123_456&cid=C_TEST#part_one',
+    'https://example.test/path_(review)?values=one&next=two#note_1',
+    'https://example.test/path_(review)',
+    ...['!', '.', ',', ';', ':', '?', ')'].flatMap((suffix) => [
+      `https://example.test/source${suffix}`,
+      `https://example.test/source?key=value${suffix}`,
+      `https://example.test/source#section${suffix}`,
+    ]),
+  ];
+  const unsafe = [
+    '<script>alert(1)</script>',
+    '<img src="javascript:alert(1)" onerror="alert(1)">',
+    '[approve](javascript:alert(1))',
+    '[internal](/api/state)',
+    'https://user:password@example.test/private',
+    '**keep this literal**',
+  ];
+  const body = `See <${links[0]}>.\n${links.slice(1).join('\n')}\n${unsafe.join('\n')}`;
+  const args = { text: body };
+  const document = new JSDOM(render(actionConfirmation('OTTO_memory_save', args))).window.document;
+  assert.deepEqual(
+    [...document.querySelectorAll('a')].map((anchor) => anchor.getAttribute('href')),
+    links,
+  );
+  assert.ok(document.body.textContent?.includes(body));
+  assert.equal(document.querySelector('script,img,iframe,form,strong,em'), null);
+  assert.equal(args.text, body);
+});
+
+test('plain browser connection paths hide their token behind one fixed action', () => {
+  const path = `/browser-connect/${'x'.repeat(43)}`;
+  const text = `Continue at ${path}?token=hidden#fragment. Again ${path}.`;
+  assert.deepEqual(messageSetupLinks(text, origin), [
+    { href: path, setup: 'website', label: 'Connect website' },
+  ]);
+  const [body, actions] = render(text).split('<div class="setup-group">');
+  assert.doesNotMatch(body, /xxxx|token=hidden|fragment/);
+  assert.equal((body.match(/Connect website/g) ?? []).length, 2);
+  assert.equal((actions.match(/data-setup="website"/g) ?? []).length, 1);
+  for (const token of ['x'.repeat(42), 'x'.repeat(44)])
+    assert.deepEqual(messageSetupLinks(`/browser-connect/${token}`, origin), []);
 });
 
 test('attachment previews accept only owned artifact URLs and inert types', () => {
