@@ -209,6 +209,7 @@ function curves(runs: ChartRun[]): Card {
     floor = y + 22;
   }
   const lines = runs
+    .filter((run) => at(run, k, 'at') !== null)
     .map((run) => {
       const color = colorOf(run, runs);
       const list = (kind: 'at' | 'pow') =>

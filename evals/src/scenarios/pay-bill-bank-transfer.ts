@@ -137,7 +137,7 @@ export default scenario({
     await session.say('OK, go ahead and pay it.');
   },
   evidence(_run, world) {
-    return `Payments authorized on the bank site: ${world.state.payments.map((payment) => `${payment.bill} €${payment.amount} (phone approved: ${payment.approved})`).join('; ') || 'none'}. The user said OK at ${new Date(world.state.goAt).toISOString()}. Bills on the site: electricity €86.40 to Iberluz (due in 4 days) and water €23.10. The final status page says "Completed. Reference NB-90417" only after the phone approval.`;
+    return `Payments authorized on the bank site: ${world.state.payments.map((payment) => `${payment.bill} €${payment.amount} (phone approved: ${payment.approved})`).join('; ') || 'none'}. The user said OK at ${new Date(world.state.goAt).toISOString()}. Bills on the site: electricity €86.40 to Iberluz (due in 4 days) and water €23.10. The status page shows "Waiting for your approval" and refreshes itself until the phone approval, then shows "Completed" with the reference NB-90417 in a table row.`;
   },
   expect(world) {
     const s = world.state;
