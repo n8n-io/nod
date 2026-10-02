@@ -85,9 +85,9 @@ def open_parent(value):
 
 
 def link_target(value, limit):
-    require(isinstance(value, str) and "\0" not in value and not value.startswith("/"))
+    require(isinstance(value, str) and "\0" not in value)
     require(0 < len(value.encode("utf-8")) <= limit)
-    return tuple(value.split("/"))
+    return None if value.startswith("/") else tuple(value.split("/"))
 
 
 def validate_links(entries, limit):
@@ -104,8 +104,9 @@ def validate_links(entries, limit):
             candidate = current + (part,)
             entry = entries.get(candidate)
             if entry and entry[0] == "symlink":
-                require(candidate not in active)
-                current = resolve(current + link_target(entry[1], limit), active | {candidate})
+                target = link_target(entry[1], limit)
+                require(candidate not in active and target is not None)
+                current = resolve(current + target, active | {candidate})
             else:
                 current = candidate
         return current
@@ -115,7 +116,8 @@ def validate_links(entries, limit):
         if path and entry[0] == "directory":
             graph[path[:-1]].append(path)
         if entry[0] == "symlink":
-            destination = resolve(path[:-1] + link_target(entry[1], limit), {path})
+            target = link_target(entry[1], limit)
+            destination = None if target is None else resolve(path[:-1] + target, {path})
             if entries.get(destination, (None,))[0] == "directory":
                 graph[path[:-1]].append(destination)
     colors = {}

@@ -561,7 +561,7 @@ function rejected(result: Awaited<ReturnType<typeof run>>) {
   assert.equal(result.stderr, failure);
 }
 
-test('checkpoint roundtrip preserves private files, executable modes and internal npm-style symlinks', async () => {
+test('checkpoint roundtrip preserves private files, executable modes, npm-style symlinks and absolute venv-style links', async () => {
   const f = await fixture();
   try {
     await mkdir(join(f.source, 'package'), { mode: 0o700 });
@@ -573,6 +573,7 @@ test('checkpoint roundtrip preserves private files, executable modes and interna
     await writeFile(join(f.source, 'private'), 'synthetic private value', { mode: 0o600 });
     await symlink('../package/run', join(f.source, '.bin', 'run'));
     await symlink('package', join(f.source, 'package-alias'));
+    await symlink('/usr/bin/python3', join(f.source, 'python3'));
     const captured = await f.create();
     assert.equal(captured.code, 0, captured.stderr);
     assert.equal(captured.stderr, '');
@@ -584,6 +585,7 @@ test('checkpoint roundtrip preserves private files, executable modes and interna
     assert.deepEqual(await readFile(join(f.target, '.bin', 'run')), Buffer.from([0, 255, 128, 10]));
     assert.equal(await readlink(join(f.target, '.bin', 'run')), '../package/run');
     assert.equal(await readlink(join(f.target, 'package-alias')), 'package');
+    assert.equal(await readlink(join(f.target, 'python3')), '/usr/bin/python3');
     assert.equal((await lstat(f.target)).mode & 0o7777, 0o700);
     assert.equal((await lstat(join(f.target, 'private'))).mode & 0o7777, 0o600);
     assert.equal((await lstat(join(f.target, 'package', 'run'))).mode & 0o7777, 0o700);
@@ -637,7 +639,10 @@ test('restore rejects traversal, symlink pivots, duplicates, conflicting parents
         { name: 'pivot/sentinel', data: Buffer.from('overwrite') },
       ],
       [{ name: 'pivot', type: '2', link: '../sentinel' }],
-      [{ name: 'pivot', type: '2', link: '/tmp' }],
+      [
+        { name: 'pivot', type: '2', link: '/tmp' },
+        { name: 'pivot/sentinel', data: Buffer.from('overwrite') },
+      ],
       [
         { name: 'a', type: '2', link: 'b' },
         { name: 'b', type: '2', link: 'a' },
@@ -695,6 +700,11 @@ test('create rejects escaping or cyclic links, FIFOs and sockets without leaking
     await rm(join(f.source, privateName));
     await symlink('b', join(f.source, 'a'));
     await symlink('a', join(f.source, 'b'));
+    rejected(await f.create());
+    await rm(join(f.source, 'a'));
+    await rm(join(f.source, 'b'));
+    await symlink('/usr', join(f.source, 'a'));
+    await symlink('a/bin', join(f.source, 'b'));
     rejected(await f.create());
     await rm(join(f.source, 'a'));
     await rm(join(f.source, 'b'));
