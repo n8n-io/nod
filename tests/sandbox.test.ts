@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
+import { existsSync } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -293,6 +294,31 @@ test('cancel waits for the remote process group, including a child ignoring TERM
     await f.close();
   }
 });
+
+test(
+  'cancel reaches a command that moved itself into a new process group',
+  { skip: !existsSync('/proc') },
+  async () => {
+    const f = await local();
+    const controller = new AbortController();
+    try {
+      const command =
+        'import os,time; os.setpgid(0,0); open("ready","w").close(); time.sleep(2); open("late","w").write("unexpected")';
+      const operation = f.run(['sh', '-c', `python3 -c '${command}' & wait`], {
+        signal: controller.signal,
+      });
+      const rejected = assert.rejects(operation, /Task cancelled/);
+      await ready(join(f.directory, 'ready'));
+      controller.abort();
+      await rejected;
+      await delay(2200);
+      assert.equal(await exists(join(f.directory, 'late')), false);
+    } finally {
+      controller.abort();
+      await f.close();
+    }
+  },
+);
 
 test('output overflow and timeout drain the remote command before rejecting', async () => {
   for (const limited of [true, false]) {

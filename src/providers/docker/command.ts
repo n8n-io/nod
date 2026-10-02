@@ -48,25 +48,33 @@ def send(value):
  except (BrokenPipeError,OSError):
   connected=False
   cancel('connection')
+def members():
+ found=[]
+ for name in os.listdir('/proc'):
+  if not name.isdigit(): continue
+  try:
+   with open('/proc/'+name+'/stat') as f: values=f.read().rsplit(')',1)[1].split()
+   if p.pid in [int(values[2]),int(values[3])] and values[0] not in ['Z','X']: found.append(int(name))
+  except (OSError,ValueError,IndexError): pass
+ return found
+def kill(value):
+ try: os.killpg(p.pid,value)
+ except ProcessLookupError: pass
+ if os.path.isdir('/proc'):
+  for pid in members():
+   try: os.kill(pid,value)
+   except OSError: pass
 def cancel(value):
  global reason,stopping
  if reason is not None: return
  reason=value
  stopping=time.monotonic()
- try: os.killpg(p.pid,signal.SIGTERM)
- except ProcessLookupError: pass
+ kill(signal.SIGTERM)
 def input_data():
  try: p.stdin.write(r.get('input','').encode('utf-8'));p.stdin.close()
  except (BrokenPipeError,OSError): pass
 def group_running():
- if os.path.isdir('/proc'):
-  for name in os.listdir('/proc'):
-   if not name.isdigit(): continue
-   try:
-    with open('/proc/'+name+'/stat') as f: values=f.read().rsplit(')',1)[1].split()
-    if int(values[2])==p.pid and values[0] not in ['Z','X']: return True
-   except (OSError,ValueError,IndexError): pass
-  return False
+ if os.path.isdir('/proc'): return bool(members())
  try: os.killpg(p.pid,0);return True
  except ProcessLookupError: return False
 threading.Thread(target=input_data,daemon=True).start()
@@ -74,8 +82,7 @@ while True:
  now=time.monotonic()
  if now>=deadline: cancel('timeout')
  if reason and not killed and now-stopping>=2:
-  try: os.killpg(p.pid,signal.SIGKILL)
-  except ProcessLookupError: pass
+  kill(signal.SIGKILL)
   killed=True
  if reason and now-stopping>=6:
   if home: shutil.rmtree(home,ignore_errors=True)
