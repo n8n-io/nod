@@ -8,17 +8,26 @@ function poolSize(value: string | undefined, fallback: number) {
   return size;
 }
 
-export const pool = new pg.Pool({
-  connectionString: databaseUrl,
-  max: poolSize(process.env.DATABASE_POOL_MAX, 12),
-  connectionTimeoutMillis: 10_000,
-});
+export function createPool(config: pg.PoolConfig) {
+  const created = new pg.Pool({
+    connectionString: databaseUrl,
+    connectionTimeoutMillis: 10_000,
+    ...config,
+  });
+  created.on('error', (error) => {
+    const code = (error as { code?: unknown }).code;
+    console.error(
+      `A database connection failed while idle: ${error.name}${typeof code === 'string' ? ` ${code}` : ''}`,
+    );
+  });
+  return created;
+}
+
+export const pool = createPool({ max: poolSize(process.env.DATABASE_POOL_MAX, 12) });
 
 export function createInspectorPool() {
-  return new pg.Pool({
-    connectionString: databaseUrl,
+  return createPool({
     max: poolSize(process.env.INSPECTOR_DATABASE_POOL_MAX, 2),
-    connectionTimeoutMillis: 10_000,
     statement_timeout: 500,
     query_timeout: 750,
   });

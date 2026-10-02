@@ -976,6 +976,15 @@ test(
         },
       );
 
+      await t.test('an idle database connection error is logged without crashing', (t) => {
+        const logged = t.mock.method(console, 'error', () => {});
+        assert.doesNotThrow(() =>
+          db.pool.emit('error', Object.assign(new Error('private-fixture'), { code: '57P01' })),
+        );
+        assert.match(String(logged.mock.calls[0].arguments[0]), /Error 57P01/);
+        assert.doesNotMatch(String(logged.mock.calls[0].arguments[0]), /private-fixture/);
+      });
+
       await t.test('stop cancels the running turn and every queued turn', async () => {
         block('stop running');
         const runningTurn = await thread.submitUserMessage('stop running', [], { channel: 'web' });

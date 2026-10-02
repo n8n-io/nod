@@ -74,7 +74,7 @@ import { createChannelAccountRegistry } from './channel-account-registry.ts';
 import { createTenantControl, createTenantChannelRegistry } from './tenant-control.ts';
 import { createHostedWebhooks } from './hosted-webhooks.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
-import { createInspectorPool, initializeDatabase, pool } from './db.ts';
+import { createInspectorPool, createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
 import { createInspectorStore } from './inspector.ts';
@@ -954,10 +954,9 @@ export async function createGatewayApplication(
   await pool.query(
     'CREATE SCHEMA IF NOT EXISTS otto_auth; REVOKE ALL ON SCHEMA otto_auth FROM PUBLIC',
   );
-  const authenticationDatabase = new pg.Pool({
+  const authenticationDatabase = createPool({
     connectionString: databaseUrl,
     max: 4,
-    connectionTimeoutMillis: 10_000,
     options: '-c search_path=otto_auth',
   });
   let runtimes: ReturnType<typeof createTenantRuntimeHost> | undefined;
