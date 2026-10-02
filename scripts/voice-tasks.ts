@@ -1,11 +1,6 @@
 import type { VoiceScenario } from './voice-scenarios.ts';
 
 const said = (name: string, pattern: string) => ({ name, pattern });
-const readSomething = said(
-  'saysWhatItRead',
-  '\\b(read|checked|went through|looked at|scanned|from)\\b[^.\\n]{0,80}\\b(\\d+|since|last|this week|today)\\b',
-);
-
 const slack = {
   SLACK_LIST_CONVERSATIONS: {
     channels: [
@@ -304,7 +299,7 @@ export const taskScenarios: VoiceScenario[] = [
     id: 'lab-376-slack-catchup',
     issue: 'LAB-376',
     title: 'Slack catch-up: what did I miss, what needs my reply',
-    good: 'Acknowledges and names what it will read. Summary in 15 lines or fewer, says the channels, window and message count, and lists the seeded question from Filipe under "needs your reply" with links.',
+    good: 'Briefly acknowledges the task. Summary in 15 lines or fewer, stays within the requested channels and time window, and lists the seeded question from Filipe under "needs your reply" with links.',
     prompt:
       'Summarise what I missed in #n8n-labs and my DMs since yesterday 18:00. What needs a reply from me?',
     work: true,
@@ -314,7 +309,6 @@ export const taskScenarios: VoiceScenario[] = [
     maxLines: 15,
     expect: [
       said('catchesSeededQuestion', 'Filipe[^\\n]{0,120}(demo|vault|Friday)'),
-      said('saysWindowAndCount', '\\b\\d+\\s+(messages|msgs)'),
       said('links', 'slack\\.example'),
     ],
   },
@@ -336,17 +330,14 @@ export const taskScenarios: VoiceScenario[] = [
     id: 'lab-382-event',
     issue: 'LAB-382',
     title: 'Background: 5 new emails arrive, 2 need a reply',
-    good: 'One short heads-up, then the two drafts (Clara, Ben) shown whole. Nothing for the newsletter, CI mail or FYI, and says in one line that it skipped them.',
+    good: 'One short heads-up, then the two drafts (Clara, Ben) shown whole. Nothing for the newsletter, CI mail or FYI.',
     prompt:
       "Event wake from gmail: 5 new emails (ids e1-e5). Saved instruction: When a new email arrives that needs a reply from me, draft one in my voice and show it to me. Don't send. Work quietly; send a concise message only when there is a useful result or necessary question.",
     background: true,
     apps: ['gmail'],
     data: { GMAIL: newEmails },
     maxWords: 160,
-    expect: [
-      said('draftsBoth', 'Clara[\\s\\S]*Ben|Ben[\\s\\S]*Clara'),
-      said('saysSkipped', 'skip|other three|other 3|the rest|no reply needed|don.t need'),
-    ],
+    expect: [said('draftsBoth', 'Clara[\\s\\S]*Ben|Ben[\\s\\S]*Clara')],
   },
   {
     id: 'lab-386-invoices',
@@ -366,7 +357,6 @@ export const taskScenarios: VoiceScenario[] = [
     },
     maxWords: 130,
     expect: [
-      readSomething,
       said('sheetLink', 'docs\\.google\\.example'),
       said(
         'leavesOutPaid',
@@ -483,7 +473,7 @@ export const taskScenarios: VoiceScenario[] = [
     id: 'lab-383-youtube',
     issue: 'LAB-383',
     title: 'YouTube: n8n videos from the last 30 days, grouped into topics',
-    good: 'Acks with the route it will take. Short summary with the growing topics first, backed by numbers; the table goes in a file or one message. Says how many videos it looked at.',
+    good: 'Briefly acknowledges the task. Short summary with the growing topics first, backed by topic metrics and relevant sources; the table goes in a file or one message. States any material coverage limitation.',
     prompt:
       'Find the YouTube videos about n8n from the last 30 days, group them into topics, and tell me which topics are growing. Leave out the official n8n channel.',
     work: true,
@@ -522,7 +512,6 @@ export const taskScenarios: VoiceScenario[] = [
       ],
     },
     maxWords: 160,
-    expect: [readSomething],
   },
   {
     id: 'lab-393-dinner',
@@ -595,9 +584,6 @@ export const taskScenarios: VoiceScenario[] = [
     apps: ['gmail'],
     data: { GMAIL: adminInbox },
     maxWords: 130,
-    expect: [
-      readSomething,
-      said('asksBeforePaying', '(pay|send|sign)[^.\\n]{0,80}\\?|want me to|ok to|shall i'),
-    ],
+    expect: [said('asksBeforePaying', '(pay|send|sign)[^.\\n]{0,80}\\?|want me to|ok to|shall i')],
   },
 ];
