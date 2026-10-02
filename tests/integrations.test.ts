@@ -3662,6 +3662,109 @@ test(
   },
 );
 
+test(
+  'discovered HTTP and MCP failures keep their status and message but never the token',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_discovered_failures_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    });
+    const owner = 'fixture-owner';
+    const token = 'synthetic-secret-token';
+    const key = randomBytes(32);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
+    const transport = createDiscoveredTransport(async (input, init) => {
+      if (String(input) === 'https://fixture.example/api/records')
+        return Response.json(
+          { error: { code: 'invalid_field', detail: `Rejected ${token}` } },
+          { status: 422 },
+        );
+      if (init?.method === 'GET') return new Response(null, { status: 405 });
+      const message = JSON.parse(String(init?.body));
+      if (message.id === undefined) return new Response(null, { status: 202 });
+      return Response.json({
+        jsonrpc: '2.0',
+        id: message.id,
+        result:
+          message.method === 'initialize'
+            ? {
+                protocolVersion: message.params.protocolVersion,
+                capabilities: { tools: {} },
+                serverInfo: { name: 'fixture', version: '1' },
+              }
+            : {
+                isError: true,
+                content: [{ type: 'text', text: `Unknown record for ${token}` }],
+              },
+      });
+    });
+    const discovered = await createDiscoveredConnections(pool, {
+      ownerId: owner,
+      baseUrl: 'http://localhost:4310',
+      keyStore,
+      grantVault,
+      transport,
+      oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
+    });
+    const connectionId = randomUUID();
+    const httpPath = randomUUID();
+    const mcpPath = randomUUID();
+    await pool.query(
+      'INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths) VALUES($1,$2,$3,$4,$5,$6)',
+      [
+        connectionId,
+        owner,
+        'fixture-app',
+        'Fixture app',
+        'Synthetic account',
+        JSON.stringify([
+          {
+            id: httpPath,
+            kind: 'http',
+            endpoint: 'https://fixture.example/api',
+            auth: 'bearer',
+            testPath: 'records',
+          },
+          { id: mcpPath, kind: 'mcp', endpoint: 'https://fixture.example/mcp', auth: 'bearer' },
+        ]),
+      ],
+    );
+    await grantVault.put(connectionId, token);
+    const failure = (error: unknown) => (error instanceof Error ? error.message : '');
+    await assert.rejects(
+      discovered.execute('CONNECTED_HTTP', {
+        connectionId,
+        pathId: httpPath,
+        method: 'GET',
+        path: 'records',
+      }),
+      (error) => {
+        assert.match(failure(error), /\(422\).*invalid_field.*Rejected \[redacted\]/);
+        assert.doesNotMatch(failure(error), new RegExp(token));
+        return true;
+      },
+    );
+    await assert.rejects(
+      discovered.execute('CONNECTED_MCP_CALL', { connectionId, pathId: mcpPath, tool: 'find' }),
+      (error) => {
+        assert.match(failure(error), /Unknown record for \[redacted\]/);
+        assert.doesNotMatch(failure(error), new RegExp(token));
+        return true;
+      },
+    );
+  },
+);
+
 test('Composio failure envelopes reject with the provider error', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',

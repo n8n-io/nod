@@ -6,6 +6,15 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { publicUrl } from '../agent-browser/network.ts';
 import type { DiscoveredTransport } from '../../ports/discovered.ts';
 
+function failureText(content: unknown) {
+  const blocks = Array.isArray(content) ? (content as Array<{ text?: string }>) : [];
+  const text = blocks
+    .map((block) => block.text ?? '')
+    .join('\n')
+    .trim();
+  return (text || JSON.stringify(content ?? null)).slice(0, 4000);
+}
+
 export async function safeRemoteFetch(
   input: string | URL | Request,
   init?: RequestInit,
@@ -144,7 +153,10 @@ export function createDiscoveredTransport(
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
       const content = await response.text();
-      if (!response.ok) throw new Error('The remote API request failed.');
+      if (!response.ok)
+        throw new Error(
+          `The remote API request failed (${response.status}): ${content.slice(0, 4000)}`,
+        );
       let parsed: unknown = null;
       if (content) {
         try {
@@ -169,7 +181,8 @@ export function createDiscoveredTransport(
         headers,
         async (client) => {
           const result = await client.callTool({ name, arguments: input });
-          if (result.isError) throw new Error('The remote MCP request failed.');
+          if (result.isError)
+            throw new Error(`The remote MCP tool failed: ${failureText(result.content)}`);
           return result;
         },
         signal,
