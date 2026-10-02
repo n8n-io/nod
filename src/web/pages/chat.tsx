@@ -104,8 +104,10 @@ export function Chat({
   const pendingSends = useRef(0);
   const retry = useRef<{ id: string; threadId: string; signature: string } | null>(null);
   const handledRequest = useRef<string | null>(null);
+  const requestedSends = useRef<Array<{ text: string; result?: ComposerSendResult }>>([]);
   const historyVersion = useRef(0);
   const threadId = state.threadId;
+  const initializedThread = useRef(threadId);
   const threadRef = useRef(threadId);
   threadRef.current = threadId;
   const [historyPage, setHistoryPage] = useState<{
@@ -201,6 +203,8 @@ export function Chat({
     });
   }, [state.messages, threadId]);
   useEffect(() => {
+    if (initializedThread.current === threadId) return;
+    initializedThread.current = threadId;
     historyVersion.current++;
     setHistoryPage({ threadId, messages: [] });
     setLoadingHistory(false);
@@ -212,6 +216,7 @@ export function Chat({
     sendQueue.current = Promise.resolve(true);
     pendingSends.current = 0;
     retry.current = null;
+    requestedSends.current = [];
     setText('');
     setSending(false);
     setReturningHandoff(null);
@@ -443,10 +448,19 @@ export function Chat({
     onRequestHandled?.(requestedMessage.id);
     setReplyTo(null);
     const requestedThread = threadId;
+    const request: { text: string; result?: ComposerSendResult } = {
+      text: requestedMessage.text,
+    };
+    requestedSends.current.push(request);
     void send(requestedMessage.text, [], null).then((result) => {
       if (threadRef.current !== requestedThread) return;
-      if (!result.sent && result.restoreText)
-        setText((current) => [requestedMessage.text, current].filter(Boolean).join('\n\n'));
+      request.result = result;
+      if (requestedSends.current.some((item) => !item.result)) return;
+      const unsent = requestedSends.current
+        .filter((item) => item.result && !item.result.sent && item.result.restoreText)
+        .map((item) => item.text);
+      requestedSends.current = [];
+      if (unsent.length) setText((current) => [...unsent, current].filter(Boolean).join('\n\n'));
       composer.current?.focus();
     });
   }, [requestedMessage, resetting, welcoming]);
