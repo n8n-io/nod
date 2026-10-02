@@ -99,6 +99,7 @@ describe('runtime host', () => {
         OTTO_MASTER_KEY: 'synthetic-master-key',
         AUTH_SECRET: 'synthetic-auth-secret',
         GOOGLE_CLIENT_SECRET: 'synthetic-google-secret',
+        UNLISTED_OPERATOR_SECRET: 'synthetic-unlisted-secret',
         DATABASE_URL: 'postgresql://operator:private@db.example.test/control',
         OPENAI_API_KEY: 'synthetic-server-provider-key',
         COMPUTER_PROVIDER: 'e2b',
@@ -441,8 +442,19 @@ describe('runtime host', () => {
         configuration.environment.OBJECT_STORAGE_ROOT,
         `/private/otto-files/${configuration.ownerId}`,
       );
-      for (const key of ['OTTO_MASTER_KEY', 'AUTH_SECRET', 'GOOGLE_CLIENT_SECRET'])
+      for (const key of [
+        'OTTO_MASTER_KEY',
+        'AUTH_SECRET',
+        'GOOGLE_CLIENT_SECRET',
+        'UNLISTED_OPERATOR_SECRET',
+      ])
         assert.equal(configuration.environment[key], undefined);
+      assert.equal(
+        Object.values(configuration.environment).some((value) =>
+          /synthetic-(master-key|auth-secret|google-secret|unlisted-secret)/.test(value),
+        ),
+        false,
+      );
       assert.ok(configuration.environment.DATABASE_URL.includes(configuration.ownerId));
     }
     const body = JSON.stringify({ text: 'synthetic task' });
