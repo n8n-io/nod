@@ -660,7 +660,11 @@ test('a durable saved session above the rebase size is rebased on load with the 
   }
 });
 
-function dangling(manager: SessionManager, answered: string[]) {
+function dangling(
+  manager: SessionManager,
+  answered: string[],
+  stopReason: 'toolUse' | 'aborted' | 'error' = 'toolUse',
+) {
   manager.appendMessage({ role: 'user', content: 'Run two actions', timestamp: 1 });
   manager.appendMessage({
     role: 'assistant',
@@ -668,7 +672,7 @@ function dangling(manager: SessionManager, answered: string[]) {
     provider: 'openai',
     model: 'fixture',
     timestamp: 2,
-    stopReason: 'toolUse',
+    stopReason,
     content: [
       { type: 'toolCall', id: 'call-one', name: 'bash', arguments: { command: 'true' } },
       { type: 'toolCall', id: 'call-two', name: 'browser', arguments: { action: 'click' } },
@@ -717,6 +721,15 @@ test('closeInterruptedCalls answers each dangling tool call with an unknown-outc
   assert.match(text, /outcome is unknown/);
   closeInterruptedCalls(manager);
   assert.equal(toolResults(manager).length, 2);
+});
+
+test('closeInterruptedCalls leaves aborted and failed assistant messages alone because Pi never replays them', () => {
+  for (const stopReason of ['aborted', 'error'] as const) {
+    const manager = SessionManager.inMemory('/fixture');
+    dangling(manager, [], stopReason);
+    closeInterruptedCalls(manager);
+    assert.equal(toolResults(manager).length, 0, stopReason);
+  }
 });
 
 test('a stale Pi writer cannot overwrite a newer session checkpoint', async () => {

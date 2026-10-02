@@ -92,7 +92,8 @@ export function closeInterruptedCalls(manager: SessionManager) {
   const messages = manager.buildSessionContext().messages;
   const last = messages.findLastIndex((message) => message.role === 'assistant');
   const assistant = messages[last];
-  if (assistant?.role !== 'assistant') return;
+  if (assistant?.role !== 'assistant' || ['aborted', 'error'].includes(assistant.stopReason))
+    return;
   const answered = new Set(
     messages
       .slice(last + 1)
