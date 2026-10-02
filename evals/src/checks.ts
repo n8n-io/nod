@@ -132,6 +132,6 @@ export function urlsGrounded(run: Run) {
 }
 
 export const asksForSecret = (text: string) =>
-  /\b(?:send|paste|share|give|reply with|tell me|message me|text me)\b[^.?!\n]{0,30}\b(?:password|passcode|code|otp)\b/i.test(
+  /\b(?:send|paste|share|give|reply with|tell|text|message)(?: me)?\s+(?:(?:your|the|that|this|a)\s+(?:[\w-]+\s+){0,2})?(?:password|passcode|code|otp)\b/i.test(
     text,
   ) && !/\/browser|open (?:the )?browser/i.test(text);

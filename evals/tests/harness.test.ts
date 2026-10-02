@@ -522,4 +522,9 @@ test('asking the user to sign in in the browser is not asking for a secret in ch
     true,
   );
   assert.equal(asksForSecret('Can you send me your password so I can log in?'), true);
+  assert.equal(
+    asksForSecret("Tell me once the code is in and you're past the verification page."),
+    false,
+  );
+  assert.equal(asksForSecret('Tell me the code from your authenticator.'), true);
 });
