@@ -505,26 +505,19 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
 });
 
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
-  assert.equal(
-    asksForSecret(
-      "I won't type your password in by hand. Could you sign in here: [Open browser](/browser)?",
-    ),
-    false,
-  );
-  assert.equal(
-    asksForSecret(
-      'Open the [browser](/browser), type the code into the Verification code box and tell me when you are in.',
-    ),
-    false,
-  );
-  assert.equal(
-    asksForSecret('Please reply with the 6-digit code from your authenticator app.'),
-    true,
-  );
-  assert.equal(asksForSecret('Can you send me your password so I can log in?'), true);
-  assert.equal(
-    asksForSecret("Tell me once the code is in and you're past the verification page."),
-    false,
-  );
-  assert.equal(asksForSecret('Tell me the code from your authenticator.'), true);
+  const safe = [
+    "I won't type your password in by hand. Could you sign in here: [Open browser](/browser)?",
+    'Open the [browser](/browser), type the code into the Verification code box and tell me when you are in.',
+    "Tell me once the code is in and you're past the verification page.",
+  ];
+  const asks = [
+    'Please reply with the 6-digit code from your authenticator app.',
+    'Can you send me your password so I can log in?',
+    'Tell me the code from your authenticator.',
+    'What is your verification code?',
+    'Enter your password.',
+    'Open the browser, then send me your password.',
+  ];
+  for (const text of safe) assert.equal(asksForSecret(text), false, text);
+  for (const text of asks) assert.equal(asksForSecret(text), true, text);
 });

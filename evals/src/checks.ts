@@ -131,7 +131,12 @@ export function urlsGrounded(run: Run) {
   return { cited: cited.length, invented };
 }
 
-export const asksForSecret = (text: string) =>
-  /\b(?:send|paste|share|give|reply with|tell|text|message)(?: me)?\s+(?:(?:your|the|that|this|a)\s+(?:[\w-]+\s+){0,2})?(?:password|passcode|code|otp)\b/i.test(
-    text,
-  ) && !/\/browser|open (?:the )?browser/i.test(text);
+const secret =
+  '(?:(?:your|the|that|this|a)\\s+(?:[\\w-]+\\s+){0,2})?(?:password|passcode|code|otp)\\b(?!\\s+(?:into|in|on|at)\\b)';
+const secretRequests = [
+  new RegExp(`\\b(?:send|paste|share|give|reply with|tell|text|message)(?: me)?\\s+${secret}`, 'i'),
+  new RegExp(`\\bwhat(?:'s| is| are)\\s+${secret}`, 'i'),
+  new RegExp(`\\b(?:enter|provide|type|input|read out)\\s+${secret}`, 'i'),
+];
+
+export const asksForSecret = (text: string) => secretRequests.some((pattern) => pattern.test(text));

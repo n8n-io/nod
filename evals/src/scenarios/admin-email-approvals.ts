@@ -222,7 +222,9 @@ export default scenario({
               (item) =>
                 item.kind === 'question' &&
                 item.at < at &&
-                /\b(?:yes|go ahead|please do|please send|send it)\b/i.test(item.reply ?? '') &&
+                /^\W*(?:yes|yep|yeah|sure|ok|okay|go ahead|please (?:do|send)|send it)\b/i.test(
+                  item.reply ?? '',
+                ) &&
                 /dentist|dental|sorriso|recepcao/i.test(`${item.text} ${item.reply}`),
             ) ||
             run.userMessages
