@@ -531,7 +531,8 @@ test(
               (error: unknown) => ({ error }),
             );
             const artifact = await stored;
-            const cancelling = action === 'stop' ? threads.stopThread() : threads.resetThread();
+            const cancelling =
+              action === 'stop' ? threads.stopThread() : threads.resetThread(threadId);
             stagingCompletion = cancelling;
             try {
               assert.equal(

@@ -16,6 +16,13 @@ const linearTools = {
   LINEAR_LIST_TEAMS: 'list_teams',
   LINEAR_GET_STATUS_UPDATES: 'get_status_updates',
 } as const;
+const notionTools = {
+  NOTION_RETRIEVE_PAGE: 'notion-fetch',
+  NOTION_GET_PAGE_MARKDOWN: 'notion-fetch',
+  NOTION_CREATE_PAGES: 'notion-create-pages',
+  NOTION_UPDATE_PAGE: 'notion-update-page',
+  NOTION_GET_ASYNC_TASK: 'notion-get-async-task',
+} as const;
 
 function toolFailure(label: string, result: Record<string, unknown>, token: string) {
   const blocks = Array.isArray(result.content)
@@ -69,16 +76,15 @@ export function createDirectProvider(options: {
     const account = await oauth.access(ownerId, id, signal);
     if (account.service === 'notion') {
       const searching = action === 'NOTION_SEARCH_NOTION_PAGE';
-      if (!searching && !['NOTION_RETRIEVE_PAGE', 'NOTION_GET_PAGE_MARKDOWN'].includes(action))
-        throw new Error('This Notion action is unavailable.');
+      const mappedTool = notionTools[action as keyof typeof notionTools];
+      if (!searching && !mappedTool) throw new Error('This Notion action is unavailable.');
       return mcp(
         'notion',
         account.accessToken,
         async (client) => {
-          let toolName = 'notion-fetch';
+          const tools = (await client.listTools()).tools;
+          let toolName = searching ? 'notion-search' : mappedTool;
           if (searching) {
-            const tools = (await client.listTools()).tools;
-            toolName = 'notion-search';
             if (!tools.some((tool) => tool.name === 'notion-get-tool-access'))
               throw new Error('The Notion search access check is unavailable.');
             const access = await client.callTool({ name: 'notion-get-tool-access', arguments: {} });
@@ -111,12 +117,12 @@ export function createDirectProvider(options: {
               tools.some((tool) => tool.name === 'notion-ai-search')
             )
               toolName = 'notion-ai-search';
-            if (!tools.some((tool) => tool.name === toolName))
-              throw new Error('The Notion read tool is unavailable.');
           }
-          const result = await client.callTool({ name: toolName, arguments: args });
+          const selected = tools.find((tool) => tool.name === toolName);
+          if (!selected) throw new Error('The Notion tool is unavailable for this account.');
+          const result = await client.callTool({ name: selected.name, arguments: args });
           if (result.isError)
-            throw new Error(toolFailure('The Notion read failed', result, account.accessToken));
+            throw new Error(toolFailure('The Notion request failed', result, account.accessToken));
           return result;
         },
         signal,
@@ -152,6 +158,15 @@ export function createDirectProvider(options: {
     NOTION_GET_PAGE_MARKDOWN: {
       description: 'Read a Notion page by ID or URL.',
       parameters: { id: 'Page ID or URL.' },
+    },
+    NOTION_CREATE_PAGES: {
+      description: 'Create Notion pages, including entries under a database or data source.',
+    },
+    NOTION_UPDATE_PAGE: {
+      description: 'Update the content or properties of a Notion page.',
+    },
+    NOTION_GET_ASYNC_TASK: {
+      description: 'Check completion of a Notion page write that returned an async task.',
     },
     LINEAR_LIST_PROJECTS: {
       description: 'List Linear projects. Use query to find a project by name.',
@@ -234,8 +249,7 @@ export function createDirectProvider(options: {
                     )
                       ? 'notion-search'
                       : 'notion-ai-search',
-                    NOTION_RETRIEVE_PAGE: 'notion-fetch',
-                    NOTION_GET_PAGE_MARKDOWN: 'notion-fetch',
+                    ...notionTools,
                   };
             for (const [action, toolName] of Object.entries(names)) {
               const tool = available.tools.find((entry) => entry.name === toolName);

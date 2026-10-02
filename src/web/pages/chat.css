@@ -351,6 +351,7 @@
   padding: 12px 32px;
 }
 .chat-title {
+  margin-right: auto;
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.2px;

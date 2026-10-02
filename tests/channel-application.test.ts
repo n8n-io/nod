@@ -1,20 +1,26 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { createChannelSettings } from '../src/server/channel-settings.ts';
 import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
+import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { fakeComputer } from './runtime-fixtures.ts';
 
 test(
   'application loads encrypted channel setup, replaces transports, and continues replies within their channel',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 45000 },
-  async () => {
+  async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
     const schema = `test_channel_app_${suffix}`;
     const bossSchema = `test_channel_app_boss_${suffix}`;
+    const objects = await mkdtemp(join(tmpdir(), 'channel-memory-'));
+    t.after(() => rm(objects, { recursive: true, force: true }));
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
     const url = new URL(process.env.TEST_DATABASE_URL!);
@@ -79,6 +85,7 @@ test(
         },
       },
       computer: fakeComputer(),
+      objectStore: createFilesystemObjectStore(objects),
       workspace: {
         status: () => '',
         open: () => {
@@ -207,7 +214,7 @@ test(
       );
       await application.channels!.drain();
       assert.deepEqual(sent, ['Which city?']);
-      assert.equal((await send(2, 'Lisbon')).statusCode, 200);
+      assert.equal((await send(2, 'I live in Lisbon')).statusCode, 200);
       await application.channels!.drain();
       const turns = (
         await pool.query(
@@ -222,6 +229,46 @@ test(
           .rows[0].turn_id,
         turns[1].id,
       );
+      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turns[1].id]);
+      const source = (
+        await pool.query("SELECT id,owner_id FROM messages WHERE turn_id=$1 AND role='user'", [
+          turns[1].id,
+        ])
+      ).rows[0];
+      for (const [action, args] of [
+        ['profile_learn', { field: 'location', value: 'Lisbon', quote: 'I live in Lisbon' }],
+        ['memory_learn', { area: 'about', quote: 'I live in Lisbon' }],
+      ] as const) {
+        await application.personal.manage(action, args, {
+          sourceMessageId: source.id,
+          turnId: turns[1].id,
+        });
+        await application.channels!.drain();
+      }
+      assert.equal(
+        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [source.owner_id])).rows[0]
+          .data.location,
+        'Lisbon',
+      );
+      const remembered = JSON.parse(await readFile(join(objects, 'memory', 'MEMORY.md'), 'utf8'));
+      assert.equal(remembered.entries.length, 1);
+      assert.equal(remembered.entries[0].text, 'I live in Lisbon');
+      assert.deepEqual(remembered.entries[0].sources, [source.id]);
+      const notice = await pool.query(
+        "SELECT id,text,owner_id,thread_id FROM messages WHERE turn_id=$1 AND role='assistant'",
+        [turns[1].id],
+      );
+      assert.equal(notice.rowCount, 1);
+      assert.equal(notice.rows[0].owner_id, source.owner_id);
+      assert.equal(notice.rows[0].thread_id, first.thread_id);
+      assert.deepEqual(sent, ['Which city?', notice.rows[0].text]);
+      const receipt = await pool.query(
+        'SELECT o.state,i.owner_id,i.provider,i.sender_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id WHERE o.message_id=$1',
+        [notice.rows[0].id],
+      );
+      assert.deepEqual(receipt.rows, [
+        { state: 'sent', owner_id: source.owner_id, provider: 'telegram', sender_id: '123' },
+      ]);
       const disabled = await application.app.inject({
         method: 'DELETE',
         url: '/api/channel-settings/telegram',

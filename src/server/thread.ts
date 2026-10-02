@@ -427,9 +427,11 @@ export async function stopThread() {
   refresh();
 }
 
-export async function resetThread() {
+export async function resetThread(expectedThreadId: string) {
   const result = await transaction(async (client) => {
     const thread = await lockThread(client);
+    if (thread.id !== expectedThreadId)
+      throw httpError('This conversation has changed. Reload it before clearing messages.');
     const cancelled = await cancelQueued(client, thread.id);
     await client.query(
       "UPDATE threads SET archived_at=now(),status='idle',updated_at=now() WHERE id=$1",

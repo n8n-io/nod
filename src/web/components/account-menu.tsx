@@ -33,26 +33,32 @@ export function AccountMenuItems({
   };
   return (
     <>
-      <div className="account-menu-identity" role="group" aria-label="Signed-in account">
-        <AccountAvatar user={account.user} />
-        <div>
-          <strong>{account.user.name}</strong>
-          {account.user.email && <span>{account.user.email}</span>}
-        </div>
-      </div>
-      <button
-        type="button"
-        role={menu ? 'menuitem' : undefined}
-        onClick={(event) => openSettings('Profile', event.currentTarget)}
-      >
-        <UserRound size={18} aria-hidden="true" />
-        Profile
-      </button>
+      {account.canLogout && (
+        <>
+          <div className="account-menu-identity" role="group" aria-label="Signed-in account">
+            <AccountAvatar user={account.user} />
+            <div>
+              <strong>{account.user.name}</strong>
+              {account.user.email && <span>{account.user.email}</span>}
+            </div>
+          </div>
+          <button
+            type="button"
+            role={menu ? 'menuitem' : undefined}
+            onClick={(event) => openSettings('Profile', event.currentTarget)}
+          >
+            <UserRound size={18} aria-hidden="true" />
+            Profile
+          </button>
+        </>
+      )}
       <button
         type="button"
         role={menu ? 'menuitem' : undefined}
         aria-keyshortcuts={shortcuts ? 'Meta+, Control+,' : undefined}
-        onClick={(event) => openSettings('Preferences', event.currentTarget)}
+        onClick={(event) =>
+          openSettings(account.canLogout ? 'Preferences' : 'Appearance', event.currentTarget)
+        }
       >
         <Settings size={18} aria-hidden="true" />
         Settings

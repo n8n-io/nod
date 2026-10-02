@@ -65,13 +65,15 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     return { name: '', location: '', phone: '', preferences: '', ...result.rows[0]?.data };
   }
 
-  async function setProfile(raw: unknown) {
+  async function setProfile(raw: unknown, sourceMessageId?: string | null) {
+    if (memory && !(await memory.enabled())) throw new Error('Memory is turned off.');
     const data = profileSchema.parse(raw);
     await pool.query(
       'INSERT INTO profiles(owner_id,data) VALUES($1,$2) ON CONFLICT(owner_id) DO UPDATE SET data=$2',
       [ownerId, data],
     );
     refresh();
+    if (sourceMessageId) await memory?.saved(sourceMessageId);
     return data;
   }
 
@@ -145,6 +147,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     args: Record<string, unknown>,
     provenance?: { sourceMessageId: string | null; turnId?: string },
   ) {
+    if (memory && !(await memory.enabled())) throw new Error('Memory is turned off.');
     const input = z
       .object({
         quote: z.string().trim().min(1).max(2000),
@@ -227,6 +230,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       client.release();
     }
     refresh();
+    await memory?.saved(sourceMessageId);
     return { ok: true };
   }
 
@@ -286,7 +290,8 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       return result;
     }
     if (action === 'profile_get') return getProfile();
-    if (action === 'profile_update') return setProfile({ ...(await getProfile()), ...args });
+    if (action === 'profile_update')
+      return setProfile({ ...(await getProfile()), ...args }, provenance?.sourceMessageId);
     if (action === 'goal_list') return listGoals();
     if (action === 'goal_create') return createGoal(args);
     if (action === 'goal_update') {
@@ -317,6 +322,19 @@ export function createPersonalService(dependencies: PersonalDependencies) {
         sourceMessageId: provenance?.sourceMessageId ?? null,
         turnId: z.uuid().parse(provenance?.turnId),
       });
+    }
+    if (action === 'memory_learn' || action === 'memory_control') {
+      if (!memory) throw new Error('Memory is unavailable.');
+      const source = {
+        sourceMessageId: provenance?.sourceMessageId ?? null,
+        turnId: z.uuid().parse(provenance?.turnId),
+      };
+      if (action === 'memory_learn') return memory.learn(args, source);
+      const result = await memory.control(args, source);
+      if (result.cleared)
+        await pool.query("UPDATE profiles SET data='{}'::jsonb WHERE owner_id=$1", [ownerId]);
+      refresh();
+      return result;
     }
     if (action === 'memory_forget') {
       if (!memory) throw new Error('Memory is unavailable.');

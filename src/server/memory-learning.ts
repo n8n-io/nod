@@ -44,8 +44,9 @@ export function createMemoryLearning(options: {
   }
 
   async function reflect() {
-    if (!options.curator.configured) return 0;
+    if (!options.curator.configured || !(await options.memory.enabled())) return 0;
     const tree = await options.memory.load();
+    if (!tree.enabled) return 0;
     if (!tree.reflected) {
       const { rows } = await options.pool.query(`SELECT ${utc('now()')} AS now`);
       await options.memory.edit((fresh) => {
@@ -95,10 +96,11 @@ export function createMemoryLearning(options: {
   }
 
   async function consolidate() {
-    if (!options.curator.configured) return 0;
+    if (!options.curator.configured || !(await options.memory.enabled())) return 0;
     let applied = 0;
     for (const target of areas) {
       const tree = await options.memory.load();
+      if (!tree.enabled) return applied;
       const entries = areaEntries(tree, target);
       const overview = tree.overviews[target];
       const now = new Date();
@@ -121,6 +123,11 @@ export function createMemoryLearning(options: {
         })),
       });
       applied += await options.memory.edit((fresh) => {
+        if (
+          fresh.reflected !== tree.reflected ||
+          digest(areaEntries(fresh, target)) !== digest(entries)
+        )
+          return 0;
         fresh.consolidated[target] = now.toISOString();
         return proposed ? applyConsolidate(fresh, target, proposed, now.toISOString()) : 0;
       });
@@ -129,6 +136,7 @@ export function createMemoryLearning(options: {
   }
 
   async function run() {
+    if (!(await options.memory.enabled())) return;
     await options.memory.edit((tree) => repair(tree, new Date()));
     await reflect();
     await consolidate();

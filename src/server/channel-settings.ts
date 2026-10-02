@@ -28,6 +28,10 @@ const summarySchema = z.object({
   webhookStatus: z.enum(['registered', 'manual_setup', 'registration_pending']).optional(),
   webhookUrl: z.url().max(2048).optional(),
   pairedUser: z.string().min(1).max(200).optional(),
+  pairedUsername: z
+    .string()
+    .regex(/^[A-Za-z0-9_]{1,64}$/)
+    .optional(),
   allowedUserId: z
     .string()
     .regex(/^[1-9]\d{0,15}$/)
@@ -36,6 +40,10 @@ const summarySchema = z.object({
     .object({
       id: z.string().regex(/^[1-9]\d{0,15}$/),
       name: z.string().min(1).max(200),
+      username: z
+        .string()
+        .regex(/^[A-Za-z0-9_]{1,64}$/)
+        .optional(),
     })
     .optional(),
   pairingExpiresAt: z.iso.datetime().optional(),
@@ -43,6 +51,10 @@ const summarySchema = z.object({
 const candidateSchema = z.object({
   senderId: z.string().regex(/^[1-9]\d{0,15}$/),
   senderName: z.string().min(1).max(200),
+  senderUsername: z
+    .string()
+    .regex(/^[A-Za-z0-9_]{1,64}$/)
+    .optional(),
   accountId: z.string().min(1).max(256),
   messageId: z.string().min(1).max(256),
   threadId: z.string().min(1).max(1024),
@@ -459,7 +471,11 @@ export async function createChannelSettings(
           },
           {
             ...summarySchema.parse(row.summary),
-            pairingCandidate: { id: sender.data.senderId, name: sender.data.senderName },
+            pairingCandidate: {
+              id: sender.data.senderId,
+              name: sender.data.senderName,
+              ...(sender.data.senderUsername ? { username: sender.data.senderUsername } : {}),
+            },
             pairingExpiresAt: expiresAt.toISOString(),
           },
           false,
@@ -496,12 +512,15 @@ export async function createChannelSettings(
         pairingCandidate: _candidate,
         pairingExpiresAt: _expiry,
         pairedUser: _user,
+        pairedUsername: _username,
         ...rest
       } = summarySchema.parse(row.summary);
       const summary = summarySchema.parse({
         ...rest,
         allowedUserId: id,
-        ...(candidate ? { pairedUser: candidate.senderName } : {}),
+        ...(candidate
+          ? { pairedUser: candidate.senderName, pairedUsername: candidate.senderUsername }
+          : {}),
       });
       const notify = await replaceTelegram(
         row,

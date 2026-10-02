@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, FileText } from 'lucide-react';
-import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { FileText, Minus, Plus } from 'lucide-react';
+import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import { localPreviewUrl, ownedArtifactUrl } from '../lib/attachment-url';
 import { Button } from './ui';
 
@@ -35,46 +35,94 @@ export function PdfPage({
   document,
   number,
   width,
+  height,
+  zoom = 1,
+  scrollRoot,
   onError,
   onRendered,
 }: {
   document: PreviewPdfDocument;
   number: number;
   width: number;
+  height?: number;
+  zoom?: number;
+  scrollRoot?: RefObject<HTMLDivElement | null>;
   onError(): void;
   onRendered?(): void;
 }) {
+  const element = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
+  const [page, setPage] = useState<{
+    source: PDFPageProxy;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [visible, setVisible] = useState(!scrollRoot);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let active = true;
-    let rendering: RenderTask | undefined;
-    void (async () => {
-      try {
-        const page = await document.getPage(number);
-        if (!active || !canvas.current) return;
-        const original = page.getViewport({ scale: 1 });
+    setPage(null);
+    setLoading(true);
+    void document
+      .getPage(number)
+      .then((source) => {
+        if (!active) return;
+        const viewport = source.getViewport({ scale: 1 });
         if (
-          !Number.isFinite(original.width) ||
-          !Number.isFinite(original.height) ||
-          !(original.width > 0 && original.height > 0)
+          !Number.isFinite(viewport.width) ||
+          !Number.isFinite(viewport.height) ||
+          !(viewport.width > 0 && viewport.height > 0)
         )
           throw new Error('Invalid PDF page.');
-        const density = Math.min(window.devicePixelRatio || 1, 2);
-        const scale = Math.min(
-          Math.max(width - 24, 100) / original.width,
-          Math.sqrt(8_388_608 / (original.width * original.height)) / density,
-          8192 / Math.max(original.width, original.height) / density,
+        setPage({ source, width: viewport.width, height: viewport.height });
+      })
+      .catch(() => {
+        if (active) onError();
+      });
+    return () => {
+      active = false;
+    };
+  }, [document, number, onError]);
+  useEffect(() => {
+    if (!scrollRoot || !element.current || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => setVisible(entries.some((entry) => entry.isIntersecting)),
+      { root: scrollRoot.current, rootMargin: '100% 0px' },
+    );
+    observer.observe(element.current);
+    return () => observer.disconnect();
+  }, [scrollRoot]);
+  const original = page ?? { width: 612, height: 792 };
+  const scale =
+    Math.min(
+      Math.max(width - 24, 1) / original.width,
+      height === undefined ? Infinity : Math.max(height - 24, 1) / original.height,
+    ) * zoom;
+  const displayWidth = original.width * scale;
+  const displayHeight = original.height * scale;
+  useEffect(() => {
+    const target = canvas.current;
+    if (!page || !visible || !target) return;
+    let active = true;
+    let rendering: RenderTask | undefined;
+    setLoading(true);
+    void (async () => {
+      try {
+        const viewport = page.source.getViewport({ scale });
+        const density = Math.min(
+          window.devicePixelRatio || 1,
+          2,
+          Math.sqrt(8_388_608 / (viewport.width * viewport.height)),
+          8192 / Math.max(viewport.width, viewport.height),
         );
-        const viewport = page.getViewport({ scale });
-        const target = canvas.current;
         const context = target.getContext('2d');
         if (!context) throw new Error('PDF canvas unavailable.');
         target.width = Math.max(1, Math.floor(viewport.width * density));
         target.height = Math.max(1, Math.floor(viewport.height * density));
-        target.style.width = `${viewport.width}px`;
-        target.style.height = `${viewport.height}px`;
-        rendering = page.render({
+        rendering = page.source.render({
           canvas: target,
           canvasContext: context,
           viewport,
@@ -91,16 +139,33 @@ export function PdfPage({
     return () => {
       active = false;
       rendering?.cancel();
+      target.width = 0;
+      target.height = 0;
+      page.source.cleanup();
     };
-  }, [document, number, width, onError, onRendered]);
+  }, [page, visible, scale, onError, onRendered]);
   return (
-    <div className="attachment-pdf-page" aria-busy={loading}>
-      {loading && (
+    <div
+      className="attachment-pdf-page"
+      ref={element}
+      aria-busy={visible && loading}
+      style={scrollRoot ? { width: displayWidth, height: displayHeight } : undefined}
+    >
+      {loading && visible && (
         <span className="attachment-pdf-loading" role="status">
           Loading page…
         </span>
       )}
-      <canvas ref={canvas} role="img" aria-label={`PDF page ${number}`} hidden={loading} />
+      <canvas
+        key={scale}
+        ref={canvas}
+        width={0}
+        height={0}
+        role="img"
+        aria-label={`PDF page ${number}`}
+        hidden={!visible || loading}
+        style={{ width: displayWidth, height: displayHeight }}
+      />
     </div>
   );
 }
@@ -114,10 +179,11 @@ export default function PdfPreview({
   name: string;
   loadDocument?: LoadPdf;
 }) {
-  const container = useRef<HTMLDivElement>(null);
+  const scroll = useRef<HTMLDivElement>(null);
   const [document, setDocument] = useState<PreviewPdfDocument | null>(null);
-  const [page, setPage] = useState(1);
-  const [width, setWidth] = useState(720);
+  const [size, setSize] = useState({ width: 720, height: 600 });
+  const [fit, setFit] = useState<'page' | 'width'>('page');
+  const [zoom, setZoom] = useState(1);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const safe = ownedArtifactUrl(url) || localPreviewUrl(url);
@@ -126,7 +192,8 @@ export default function PdfPreview({
     const controller = new AbortController();
     let task: PreviewPdfLoading | undefined;
     setDocument(null);
-    setPage(1);
+    setFit('page');
+    setZoom(1);
     setFailed(false);
     void (async () => {
       try {
@@ -149,22 +216,38 @@ export default function PdfPreview({
     };
   }, [url, safe, attempt, loadDocument]);
   useEffect(() => {
+    const element = scroll.current;
+    if (!element) return;
     const resize = () => {
-      if (container.current?.clientWidth) setWidth(container.current.clientWidth);
+      if (element.clientWidth && element.clientHeight)
+        setSize((current) =>
+          current.width === element.clientWidth && current.height === element.clientHeight
+            ? current
+            : { width: element.clientWidth, height: element.clientHeight },
+        );
     };
     resize();
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize);
-    if (container.current) observer?.observe(container.current);
+    observer?.observe(element);
     window.addEventListener('resize', resize);
     return () => {
       observer?.disconnect();
       window.removeEventListener('resize', resize);
     };
-  }, []);
+  }, [document, failed]);
   const fail = useRef(() => setFailed(true)).current;
+  function fitTo(value: 'page' | 'width') {
+    setFit(value);
+    setZoom(1);
+  }
   if (!safe) return <div role="status">Preview unavailable</div>;
   return (
-    <div className="attachment-pdf-preview" ref={container}>
+    <div
+      className="attachment-pdf-preview"
+      onKeyDown={(event) => {
+        if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) event.stopPropagation();
+      }}
+    >
       {failed ? (
         <div className="attachment-preview-unavailable" role="status">
           <FileText size={32} aria-hidden="true" />
@@ -178,57 +261,67 @@ export default function PdfPreview({
         </div>
       ) : document ? (
         <>
-          <PdfPage
-            key={`${page}:${width}`}
-            document={document}
-            number={page}
-            width={width}
-            onError={fail}
-          />
-          {document.numPages > 1 && (
-            <div
-              className="attachment-pdf-controls"
-              aria-label="PDF pages"
-              onKeyDown={(event) => {
-                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-                if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-                event.preventDefault();
-                event.stopPropagation();
-                setPage((value) =>
-                  event.key === 'Home'
-                    ? 1
-                    : event.key === 'End'
-                      ? document.numPages
-                      : Math.max(
-                          1,
-                          Math.min(document.numPages, value + (event.key === 'ArrowLeft' ? -1 : 1)),
-                        ),
-                );
-              }}
+          <div className="attachment-pdf-controls" aria-label="PDF view">
+            <span>
+              {document.numPages} {document.numPages === 1 ? 'page' : 'pages'}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={fit === 'page' && zoom === 1}
+              onClick={() => fitTo('page')}
             >
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Previous PDF page"
-                disabled={page === 1}
-                onClick={() => setPage((value) => Math.max(1, value - 1))}
-              >
-                <ChevronLeft size={18} />
-              </Button>
-              <span role="status">
-                Page {page} of {document.numPages}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Next PDF page"
-                disabled={page === document.numPages}
-                onClick={() => setPage((value) => Math.min(document.numPages, value + 1))}
-              >
-                <ChevronRight size={18} />
-              </Button>
+              Fit page
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={fit === 'width' && zoom === 1}
+              onClick={() => fitTo('width')}
+            >
+              Fit width
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom out"
+              disabled={zoom <= 0.25}
+              onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}
+            >
+              <Minus size={16} aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom in"
+              disabled={zoom >= 4}
+              onClick={() => setZoom((value) => Math.min(4, value + 0.25))}
+            >
+              <Plus size={16} aria-hidden="true" />
+            </Button>
+          </div>
+          <div
+            className="attachment-pdf-scroll"
+            ref={scroll}
+            tabIndex={0}
+            role="region"
+            aria-label="PDF document"
+          >
+            <div className="attachment-pdf-pages">
+              {Array.from({ length: document.numPages }, (_, index) => (
+                <PdfPage
+                  key={index + 1}
+                  document={document}
+                  number={index + 1}
+                  width={size.width}
+                  height={fit === 'page' ? size.height : undefined}
+                  zoom={zoom}
+                  scrollRoot={scroll}
+                  onError={fail}
+                />
+              ))}
             </div>
-          )}
+          </div>
         </>
       ) : (
         <div className="attachment-preview-unavailable" role="status">

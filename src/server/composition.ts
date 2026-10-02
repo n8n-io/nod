@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import pg from 'pg';
 import { z } from 'zod';
@@ -90,7 +91,6 @@ import {
   createUserMessageService,
   enqueueTurn,
   initializeThreads,
-  reply,
   restartOnboarding,
   resumeAfterConnection,
   resumeAfterCredentials,
@@ -459,11 +459,29 @@ export async function createApplication(
     redactError: createErrorRedactor(inspectorSecrets),
   });
   const speech = createSpeech(speechProvider);
+  const memoryNoticeHash = createHash('sha256').update(`memory-notice:${ownerId}`).digest('hex');
+  const memoryNoticeId = `${memoryNoticeHash.slice(0, 8)}-${memoryNoticeHash.slice(8, 12)}-8${memoryNoticeHash.slice(13, 16)}-8${memoryNoticeHash.slice(17, 20)}-${memoryNoticeHash.slice(20, 32)}`;
   const memory = createMemoryService({
     pool,
     ownerId,
     store: adapters.objectStore ?? createFilesystemObjectStore(join(dataRoot, 'objects')),
     curator,
+    onSaved: async (sourceMessageId) => {
+      const result = await pool.query(
+        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
+         SELECT $1,$2,'assistant',$3,m.thread_id,m.turn_id FROM messages m
+         JOIN threads t ON t.id=m.thread_id AND t.owner_id=m.owner_id AND t.archived_at IS NULL
+         WHERE m.id=$4 AND m.owner_id=$2 AND m.role='user'
+         ON CONFLICT(id) DO NOTHING RETURNING id`,
+        [
+          memoryNoticeId,
+          ownerId,
+          'I’ve saved this and will remember useful details you share. You can ask me to stop saving or forget your saved details anytime.',
+          sourceMessageId,
+        ],
+      );
+      if (result.rowCount) refresh();
+    },
   });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
   const personal = createPersonalService({
@@ -643,24 +661,24 @@ export async function createApplication(
             `OTTO_${action}`,
             await personal.validateReview(action, args),
           );
-        // After outside content, an inferred note needs confirmation; an explicit "remember" request saves directly.
         if (action === 'memory_save' && (await memory.untrusted(turn.threadId))) {
           const input = memory.validate(args);
-          // An explicit request allows one direct note, so once any note cites this message the rest are confirmed.
-          const result = await approvals.request(turn, 'OTTO_memory_save', input, {
+          return approvals.request(turn, 'OTTO_memory_save', input, {
             confirm: await memory.cites(provenance.sourceMessageId),
           });
-          if (!(result && typeof result === 'object' && 'requiresConfirmation' in result))
-            await reply(turn, `Remembered: ${input.text}`);
-          return result;
         }
-        if (action === 'memory_save' || action === 'memory_forget') {
-          const result = await withTurnLock(turn.turnId, () =>
+        if (
+          [
+            'memory_save',
+            'memory_forget',
+            'memory_learn',
+            'memory_control',
+            'profile_learn',
+          ].includes(action)
+        ) {
+          return withTurnLock(turn.turnId, () =>
             personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
           );
-          if (action === 'memory_save')
-            await reply(turn, `Remembered: ${(result as { text: string }).text}`);
-          return result;
         }
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },

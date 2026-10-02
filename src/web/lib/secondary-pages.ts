@@ -59,6 +59,10 @@ type ChannelStatus = {
 export type ChannelResponse = { channels: ChannelStatus[]; error: string | null };
 export type ChannelSettings = { ready: boolean; channels: ChannelSetupSummary[] };
 
+export function telegramIdentity(id: string, name?: string, username?: string) {
+  return [name, username ? `@${username}` : undefined, `ID ${id}`].filter(Boolean).join(', ');
+}
+
 export function channelLabel(setup: ChannelSetupSummary | undefined, configured: boolean) {
   if (!setup?.enabled) return configured ? 'Configuration present' : 'Not connected';
   if (setup.webhookStatus === 'registration_pending') return 'Connection needs a retry';
@@ -69,7 +73,7 @@ export function channelLabel(setup: ChannelSetupSummary | undefined, configured:
       : 'Waiting for Start in Telegram';
   }
   if (setup.allowedUserId)
-    return `Only ${setup.pairedUser ? `${setup.pairedUser}, ` : ''}ID ${setup.allowedUserId} can message Otto`;
+    return `Only ${telegramIdentity(setup.allowedUserId, setup.pairedUser, setup.pairedUsername)} can message Otto`;
   if (setup.mode === 'polling') return null;
   return setup.webhookStatus === 'registered' ? 'Webhook registered' : 'Finish delivery setup';
 }

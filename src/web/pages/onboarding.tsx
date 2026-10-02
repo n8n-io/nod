@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, LoaderCircle } from 'lucide-react';
 import type { AccountPreparationResponse, AccountUser } from '../../shared/account';
-import type { Connection } from '../../shared/contracts';
+import type { Configuration, Connection } from '../../shared/contracts';
+import { SetupNotice } from '../components/setup-notice';
 import {
   integrationServiceIds,
   integrationServices,
@@ -36,6 +37,7 @@ export function Onboarding({
 }) {
   useBrowserTimeZone();
   const { data, error: loadError, loading, refresh } = usePageData<Connection[]>('/api/apps');
+  const { data: configuration } = usePageData<Configuration>('/api/configuration');
   const [pending, setPending] = useState<Partial<Record<IntegrationService, Pending>>>({});
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -189,6 +191,7 @@ export function Onboarding({
         <AccountAvatar user={user} large />
         <h1>Welcome{user.name.trim() ? `, ${user.name.trim().split(/\s+/)[0]}` : ''}.</h1>
         <p>Connect your apps.</p>
+        {configuration && <SetupNotice configuration={configuration} capability="apps" />}
         {(error || loadError) && <Notice>{error || loadError}</Notice>}
         {loadError && (
           <Button variant="outline" onClick={() => void refresh()}>

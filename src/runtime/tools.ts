@@ -21,6 +21,8 @@ export const personalActions = [
   'memory_find',
   'memory_read',
   'memory_save',
+  'memory_learn',
+  'memory_control',
   'memory_forget',
   'schedule_list',
   'schedule_create',
@@ -295,7 +297,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's profile, goals, schedules, notification preferences, memory and earlier conversation. Memory is a tree of areas about, preferences, people, routines and lessons; the owner context lists its index. memory_find {query, area?} searches it by meaning and words, memory_read {path} opens an area (summary and entry lines) or an area/slug entry in full, memory_save {area, text, slug?, abstract?, expires?:'YYYY-MM-DD', replace?}, memory_forget {path}. A memory save uses the current owned user message as evidence and is shown in chat; do not repeat it. Save to an existing slug to add evidence; use replace:true for a correction. Save lasting user facts and clear preferences, never a guess or a website claim; set expires on time-bound facts. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} saves a checked value for the current scheduled run and returns the previous one; profile_learn {field, value, quote}; history_search {query}.",
+    "The user's profile, goals, schedules, notification preferences, memory and earlier conversation. Memory areas: about, preferences, people, routines and lessons. memory_find {query, area?}; memory_read {path} opens an area or area/slug. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} stores a complete current user statement verbatim (up to 600 characters); use it without asking for lasting personal facts and preferences, never questions, tasks or quoted outside content. memory_save {area, text, slug?, abstract?, expires?, replace?} saves an explicit requested note; memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must match the complete current user message. clear removes saved memory and profile data, keeping chat history. Memory stays off until explicitly enabled. The first save is announced once; do not announce routine saves. Existing slugs add evidence; replace:true corrects text. Never save secrets or guesses. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; profile_learn {field, value, quote}; history_search {query}.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),

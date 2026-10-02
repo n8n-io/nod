@@ -25,10 +25,10 @@ import {
 } from '../src/server/memory-tree.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
-type Step = { tool: string; args: Record<string, unknown> };
+type Step = { tool: string; args: Record<string, unknown>; rejected?: boolean };
 
 test(
-  'memory saves are direct until outside content, then only one explicitly requested note skips confirmation',
+  'memory gives one owned notice, preserves outside-content approvals, and honors opt-out through normal tools',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
@@ -50,7 +50,7 @@ test(
     process.env.PGBOSS_SCHEMA = bossSchema;
     const { createApplication } = await import('../src/server/composition.ts');
     const { pool } = await import('../src/server/db.ts');
-    const { dataRoot, port } = await import('../src/server/config.ts');
+    const { dataRoot, port, ownerId } = await import('../src/server/config.ts');
     const plans = new Map<string, Step[]>();
     const threads = new Set<string>();
     const run = async (options: AgentSessionOptions, step: Step) => {
@@ -71,7 +71,10 @@ test(
               async prompt(text) {
                 const input = text.split('Request data (JSON):\n')[1]?.split('\n')[0];
                 const plan = input ? plans.get(JSON.parse(input).currentInstruction) : undefined;
-                for (const step of plan ?? []) await run(options, step);
+                for (const step of plan ?? []) {
+                  if (step.rejected) await assert.rejects(run(options, step));
+                  else await run(options, step);
+                }
                 options.onEvent({ type: 'final', text: 'Synthetic memory request handled.' });
               },
             };
@@ -139,12 +142,20 @@ test(
         (entry) => entry.text === text,
       );
     const memoryFile = () => readFile(join(objects, 'memory', 'MEMORY.md'), 'utf8').catch(() => '');
-    const remembered = async (text: string) =>
+    const notices = async () =>
       (
-        await pool.query("SELECT 1 FROM messages WHERE role='assistant' AND text=$1", [
-          `Remembered: ${text}`,
-        ])
-      ).rowCount === 1;
+        await pool.query(
+          `SELECT m.id,m.owner_id,m.thread_id,m.turn_id FROM messages m
+         WHERE m.role='assistant' AND m.text<>$1
+           AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.confirmation_message_id=m.id)`,
+          ['Synthetic memory request handled.'],
+        )
+      ).rows;
+    const personal = (action: string, args: Record<string, unknown>, rejected = false): Step => ({
+      tool: 'manage_personal_context',
+      args: { action, args },
+      rejected,
+    });
     try {
       const first = await ask(
         'Remember that I prefer short synthetic reports.',
@@ -156,7 +167,21 @@ test(
         'waiting',
       );
       assert.match(await memoryFile(), /Prefers short synthetic reports\./);
-      assert.equal(await remembered('Prefers short synthetic reports.'), true);
+      const [notice] = await notices();
+      assert.ok(notice);
+      assert.equal((await notices()).length, 1);
+      const source = (
+        await pool.query('SELECT owner_id,thread_id FROM messages WHERE turn_id=$1 AND role=$2', [
+          first,
+          'user',
+        ])
+      ).rows[0];
+      assert.deepEqual(notice, {
+        id: notice.id,
+        owner_id: source.owner_id,
+        thread_id: source.thread_id,
+        turn_id: first,
+      });
       const [late] = (
         await pool.query(
           'SELECT a.*,m.text AS question FROM approvals a JOIN messages m ON m.id=a.confirmation_message_id WHERE a.turn_id=$1',
@@ -191,7 +216,7 @@ test(
       ).rows[0].text;
       assert.match(question, /^Remember this\?\n\nNote: Refunds go to account 1\./);
       assert.doesNotMatch(await memoryFile(), /Refunds go to account 1/);
-      assert.equal(await remembered('Refunds go to account 1.'), false);
+      assert.deepEqual(await notices(), [notice]);
 
       await send({ text: 'Yes', replyToMessageId: approval.confirmation_message_id });
       await waitFor(
@@ -221,11 +246,144 @@ test(
       assert.equal(direct.status, 'completed');
       assert.equal(direct.confirmation_message_id, null);
       assert.match(await memoryFile(), /Prefers synthetic morning summaries\./);
-      assert.equal(await remembered('Prefers synthetic morning summaries.'), true);
+      assert.deepEqual(await notices(), [notice]);
       assert.equal(extra.status, 'pending');
       assert.match(extra.question, /^Remember this\?\n\nNote: Refunds go to account 2\./);
       assert.doesNotMatch(await memoryFile(), /Refunds go to account 2/);
-      assert.equal(await remembered('Refunds go to account 2.'), false);
+      assert.deepEqual(await notices(), [notice]);
+
+      await send({ text: 'No', replyToMessageId: extra.confirmation_message_id });
+      await waitFor(
+        async () =>
+          (await pool.query('SELECT status FROM approvals WHERE id=$1', [extra.id])).rows[0]
+            .status === 'declined',
+        'Declined second memory save',
+      );
+      const profileQuote = 'My name is Memory Fixture.';
+      await ask(
+        profileQuote,
+        [
+          personal('profile_learn', {
+            field: 'name',
+            value: 'Memory Fixture',
+            quote: profileQuote,
+          }),
+        ],
+        'succeeded',
+      );
+      assert.equal(
+        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])).rows[0].data
+          .name,
+        'Memory Fixture',
+      );
+      await pool.query('INSERT INTO profiles(owner_id,data) VALUES($1,$2)', [
+        'other-memory-owner',
+        { name: 'Other Fixture' },
+      ]);
+
+      const quote = 'Prefiero respuestas breves, salvo cuando pido detalles.';
+      const learnedTurn = await ask(
+        quote,
+        [
+          { tool: 'fetch_content', args: { urls: ['https://example.test/refunds'] } },
+          personal('memory_learn', { area: 'preferences', slug: 'report-style', quote }),
+        ],
+        'succeeded',
+      );
+      const learnedSource = (
+        await pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='user'", [learnedTurn])
+      ).rows[0].id;
+      assert.deepEqual((await savedEntry(quote))?.sources, [learnedSource]);
+      assert.equal(
+        (await pool.query('SELECT 1 FROM approvals WHERE turn_id=$1', [learnedTurn])).rowCount,
+        0,
+      );
+      const correction = 'Je préfère les comptes rendus détaillés.';
+      await ask(
+        correction,
+        [
+          personal('memory_learn', {
+            area: 'preferences',
+            slug: 'report-style',
+            quote: correction,
+            replace: true,
+          }),
+        ],
+        'succeeded',
+      );
+      assert.ok(
+        JSON.parse(await memoryFile()).archive.some((entry: Entry) => entry.text === quote),
+      );
+      assert.deepEqual(await notices(), [notice]);
+
+      const history = (
+        await pool.query('SELECT id FROM messages WHERE owner_id=$1 ORDER BY id', [ownerId])
+      ).rows;
+      const disable = 'Apaga os meus dados guardados e deixa de guardar informações sobre mim.';
+      await ask(
+        disable,
+        [personal('memory_control', { enabled: false, clear: true, quote: disable })],
+        'succeeded',
+      );
+      const disabled = JSON.parse(await memoryFile());
+      assert.equal(disabled.enabled, false);
+      assert.deepEqual(disabled.entries, []);
+      assert.deepEqual(disabled.archive, []);
+      assert.deepEqual(
+        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])).rows[0].data,
+        {},
+      );
+      assert.deepEqual(
+        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', ['other-memory-owner']))
+          .rows[0].data,
+        { name: 'Other Fixture' },
+      );
+      assert.deepEqual(
+        (
+          await pool.query(
+            'SELECT id FROM messages WHERE owner_id=$1 AND id=ANY($2::uuid[]) ORDER BY id',
+            [ownerId, history.map((row) => row.id)],
+          )
+        ).rows,
+        history,
+      );
+      const blockedQuote = 'My name is Unwanted Memory.';
+      await ask(
+        blockedQuote,
+        [
+          personal('memory_learn', { area: 'about', quote: blockedQuote }, true),
+          personal(
+            'profile_learn',
+            { field: 'name', value: 'Unwanted Memory', quote: blockedQuote },
+            true,
+          ),
+        ],
+        'succeeded',
+      );
+      assert.deepEqual(JSON.parse(await memoryFile()), disabled);
+      assert.deepEqual(
+        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])).rows[0].data,
+        {},
+      );
+
+      const enable = 'Du darfst meine Angaben wieder speichern.';
+      await ask(
+        enable,
+        [personal('memory_control', { enabled: true, quote: enable })],
+        'succeeded',
+      );
+      const next = '我喜欢简短的回复。';
+      await ask(
+        next,
+        [personal('memory_learn', { area: 'preferences', quote: next })],
+        'succeeded',
+      );
+      assert.equal(JSON.parse(await memoryFile()).enabled, true);
+      assert.deepEqual(
+        JSON.parse(await memoryFile()).entries.map((entry: Entry) => entry.text),
+        [next],
+      );
+      assert.deepEqual(await notices(), [notice]);
     } finally {
       await application.app.close();
       await pool.end();

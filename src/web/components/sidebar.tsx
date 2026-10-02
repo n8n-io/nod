@@ -6,7 +6,6 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
-  RotateCcw,
   Settings,
   Sun,
 } from 'lucide-react';
@@ -27,7 +26,6 @@ export function Sidebar({
   collapsed,
   onToggle,
   onNavigate,
-  onRestart,
   development = import.meta.env?.DEV === true,
   inspectorEnabled = false,
   inspectorOpen = false,
@@ -38,7 +36,6 @@ export function Sidebar({
   collapsed: boolean;
   onToggle(): void;
   onNavigate(path: string): void;
-  onRestart(): void;
   development?: boolean;
   inspectorEnabled?: boolean;
   inspectorOpen?: boolean;
@@ -406,52 +403,39 @@ export function Sidebar({
             </kbd>
           </button>
         )}
-        {development ? (
-          <button
-            type="button"
-            className="nav-link"
-            aria-label="Get started"
-            title="Get started"
-            onClick={onRestart}
-          >
-            <RotateCcw size={22} aria-hidden="true" />
-            <span className="nav-label">Get started</span>
-          </button>
-        ) : (
-          inspectorEnabled && (
-            <div className="sidebar-app-menu">
-              <ConnectionMenu
-                label="App menu"
-                triggerClassName="nav-link"
-                compact
-                open={appMenuOpen}
-                onOpenChange={setAppMenuOpen}
-                trigger={
-                  <>
-                    <MoreHorizontal size={22} aria-hidden="true" />
-                    <span className="nav-label">More</span>
-                  </>
-                }
-              >
-                {(close) => (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    aria-expanded={inspectorOpen}
-                    aria-controls="developer-inspector"
-                    aria-keyshortcuts="Meta+I Control+I"
-                    title={`Inspector (${shortcutLabel('i', mac)})`}
-                    onClick={() => {
-                      close();
-                      onToggleInspector?.();
-                    }}
-                  >
-                    <Monitor size={18} aria-hidden="true" /> Inspector
-                  </button>
-                )}
-              </ConnectionMenu>
-            </div>
-          )
+        {!development && inspectorEnabled && (
+          <div className="sidebar-app-menu">
+            <ConnectionMenu
+              label="App menu"
+              triggerClassName="nav-link"
+              compact
+              open={appMenuOpen}
+              onOpenChange={setAppMenuOpen}
+              trigger={
+                <>
+                  <MoreHorizontal size={22} aria-hidden="true" />
+                  <span className="nav-label">More</span>
+                </>
+              }
+            >
+              {(close) => (
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-expanded={inspectorOpen}
+                  aria-controls="developer-inspector"
+                  aria-keyshortcuts="Meta+I Control+I"
+                  title={`Inspector (${shortcutLabel('i', mac)})`}
+                  onClick={() => {
+                    close();
+                    onToggleInspector?.();
+                  }}
+                >
+                  <Monitor size={18} aria-hidden="true" /> Inspector
+                </button>
+              )}
+            </ConnectionMenu>
+          </div>
         )}
         {account &&
           (account.canLogout ? (
@@ -463,9 +447,10 @@ export function Sidebar({
               aria-label="Settings"
               aria-keyshortcuts="Meta+, Control+,"
               title="Settings"
-              onClick={(event) => account.onSettings('Preferences', event.currentTarget)}
+              onClick={(event) => account.onSettings('Appearance', event.currentTarget)}
             >
               <Settings size={22} aria-hidden="true" />
+              <span className="nav-label">Settings</span>
             </button>
           ))}
       </div>

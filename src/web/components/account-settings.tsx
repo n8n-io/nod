@@ -323,7 +323,11 @@ export function AccountSettings({
   onName(name: string): Promise<void>;
   returnFocus(): HTMLElement | null;
 }) {
-  const [tab, setTab] = useState<AccountTab>(initialTab);
+  const initial = initialTab === 'Profile' && !account.canLogout ? 'Appearance' : initialTab;
+  const [tab, setTab] = useState<AccountTab>(initial);
+  const tabs: AccountTab[] = account.canLogout
+    ? ['Profile', 'Appearance', 'Preferences']
+    : ['Appearance', 'Preferences'];
   const [name, setName] = useState(account.user.name);
   const [error, setError] = useState('');
   const active = useRef(false);
@@ -336,11 +340,11 @@ export function AccountSettings({
   }, []);
   useEffect(() => {
     if (open) {
-      setTab(initialTab);
+      setTab(initial);
       setName(account.user.name);
       setError('');
     }
-  }, [open, initialTab, account.user.id]);
+  }, [open, initial, account.user.id]);
   useEffect(() => setName(account.user.name), [account.user.name]);
   async function saveName(event: React.FormEvent) {
     event.preventDefault();
@@ -372,7 +376,7 @@ export function AccountSettings({
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <div className="account-settings-layout">
           <nav role="tablist" aria-label="Account settings" aria-orientation="vertical">
-            {(['Profile', 'Appearance', 'Preferences'] as const).map((value, index, tabs) => {
+            {tabs.map((value, index) => {
               const Icon =
                 value === 'Profile' ? UserRound : value === 'Appearance' ? Sun : SlidersHorizontal;
               return (
@@ -424,7 +428,7 @@ export function AccountSettings({
               <h3>{tab}</h3>
             </header>
             <div key={tab} className="account-settings-body" tabIndex={0}>
-              {tab === 'Profile' && (
+              {tab === 'Profile' && account.canLogout && (
                 <form className="account-profile-form" onSubmit={(event) => void saveName(event)}>
                   <div className="account-profile-identity">
                     <AccountAvatar user={account.user} large />

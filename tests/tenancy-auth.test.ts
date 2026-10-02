@@ -1392,6 +1392,21 @@ describe('signed multipart', () => {
           body: new Uint8Array(body),
           signal: AbortSignal.timeout(5000),
         });
+      await t.test('hosted users and developers cannot reset conversations', async () => {
+        const target = '/api/conversation/reset';
+        const body = Buffer.from(JSON.stringify({ threadId: randomUUID() }));
+        for (const developer of [false, true]) {
+          const signature = signRuntimeRequest({
+            ...context,
+            method: 'POST',
+            target,
+            body,
+            developer,
+          });
+          const result = await send(target, body, signature, 'application/json');
+          assert.equal(result.status, 404, await result.text());
+        }
+      });
       await t.test(
         'valid files preserve bytes and metadata; replay and tampering have no effects',
         async () => {

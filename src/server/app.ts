@@ -139,6 +139,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     return result.rows;
   }
+  app.get('/api/configuration', async () => publicConfiguration());
   app.get('/api/state', async () => {
     const thread = await activeThread(pool);
     const [messages, turns, verificationRequests] = await Promise.all([
@@ -208,11 +209,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
       publicConfiguration().llmReady,
     );
   });
-  app.post('/api/conversation/reset', async (request) => {
-    z.object({})
-      .strict()
-      .parse(request.body ?? {});
-    const { previousThreadId, ...reset } = await resetThread();
+  app.post('/api/conversation/reset', async (request, reply) => {
+    if (!configuration().conversationResetEnabled)
+      return reply.code(404).send({ error: 'Not found.' });
+    const { threadId } = z.object({ threadId: z.uuid() }).strict().parse(request.body);
+    const { previousThreadId, ...reset } = await resetThread(threadId);
     void dependencies.computer?.discard?.(previousThreadId).catch(() => {});
     return reset;
   });

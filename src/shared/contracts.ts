@@ -130,6 +130,7 @@ export interface Configuration {
   integrationsReady: boolean;
   inspectorEnabled: boolean;
   localOnly: boolean;
+  conversationResetEnabled: boolean;
 }
 export interface AppState {
   threadId: string;
@@ -218,7 +219,8 @@ export interface ChannelSetupSummary {
   webhookStatus?: 'registered' | 'manual_setup' | 'registration_pending';
   webhookUrl?: string;
   pairedUser?: string;
+  pairedUsername?: string;
   allowedUserId?: string;
-  pairingCandidate?: { id: string; name: string };
+  pairingCandidate?: { id: string; name: string; username?: string };
   pairingExpiresAt?: string;
 }

@@ -23,6 +23,27 @@ Configuration lives in the ignored `.env` (all local settings are listed in `.en
 
 Notion and Linear connect through their hosted MCP servers without extra keys. Telegram and WhatsApp are configured from the **Channels** page.
 
+### Composio key permissions
+
+In the [Composio Dashboard](https://dashboard.composio.dev), open **Platform → your project → Settings → API Keys → Create API Key** and create a scoped project key with these permissions:
+
+| Permission area        | Access         | Used by Otto                                                                     |
+| ---------------------- | -------------- | -------------------------------------------------------------------------------- |
+| Connected accounts     | Read and write | Check connections and disconnect accounts                                        |
+| Session management     | Read and write | Create, restore and delete sessions; open app sign-in links                      |
+| Session tool execution | Write only     | Find app actions, load their schemas and run them                                |
+| Proxy execute (Legacy) | Write only     | Read account identity, check Gmail updates and retrieve requested sign-in emails |
+
+Leave **Auth configs**, **Tools**, **Toolkits**, **Triggers**, **Webhooks**, **Observability**, **MCP (Legacy)** and **Tool execution (Legacy)** at **No access**. If you configure `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**: the SDK reads trigger definitions before creating subscriptions, and Otto removes subscriptions when disconnected. Otto does not manage Composio webhook endpoints through the API.
+
+Copy the key into `COMPOSIO_API_KEY` in the repository's ignored `.env`, restart Otto, then connect apps from **Apps**. Keep the key on the server. Permissions cannot be edited after creation; create a replacement key if a permission is missing. A valid key with insufficient permissions can produce an “Invalid API key” error. See Composio's [permission route map](https://docs.composio.dev/reference/authenticating-to-composio/project-api-key-permissions) and [permission troubleshooting](https://docs.composio.dev/kb/guide/platform-project-api-key-permissions).
+
+These are permissions on the **Composio project key**. The Google or Slack consent screen separately controls what Otto can read or change in that account. Otto uses Composio's default app OAuth scopes unless you supply a `COMPOSIO_*_AUTH_CONFIG_ID` from `.env.example`. To narrow those grants, configure the required app scopes in that auth config and reconnect existing accounts; changing the project key does not change app consent. See [Controlling scopes](https://docs.composio.dev/docs/authentication/controlling-scopes).
+
+Reviewed on 2026-10-02 against [`@composio/core` 0.21.0 and Otto's adapter](src/providers/composio/integrations.ts). The table covers the calls Otto makes; it has not been exercised with a newly created scoped key.
+
+### Models
+
 Model defaults, reviewed on 2026-09-30:
 
 | Role                   | Model                                                                                                           | Selection                                                            |

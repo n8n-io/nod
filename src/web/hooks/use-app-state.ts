@@ -73,26 +73,31 @@ export function useAppState(accountId?: string) {
     }
   }, [advanceThread]);
 
-  const resetConversation = useCallback(() => {
-    if (resetRequest.current) return resetRequest.current;
-    const request = (async () => {
-      requestVersion.current++;
-      const result = await post<{ ok: true; threadId: string }>('/api/conversation/reset');
-      if (typeof result.threadId !== 'string' || !result.threadId)
-        throw new Error('The conversation could not be restarted. Try again.');
-      if (!active.current) return result.threadId;
-      advanceThread(result.threadId);
-      setError('');
-      return result.threadId;
-    })();
-    resetRequest.current = request;
-    void request
-      .finally(() => {
-        if (resetRequest.current === request) resetRequest.current = null;
-      })
-      .catch(() => {});
-    return request;
-  }, [advanceThread]);
+  const resetConversation = useCallback(
+    (expectedThreadId: string) => {
+      if (resetRequest.current) return resetRequest.current;
+      const request = (async () => {
+        requestVersion.current++;
+        const result = await post<{ ok: true; threadId: string }>('/api/conversation/reset', {
+          threadId: expectedThreadId,
+        });
+        if (typeof result.threadId !== 'string' || !result.threadId)
+          throw new Error('The conversation could not be restarted. Try again.');
+        if (!active.current) return result.threadId;
+        advanceThread(result.threadId);
+        setError('');
+        return result.threadId;
+      })();
+      resetRequest.current = request;
+      void request
+        .finally(() => {
+          if (resetRequest.current === request) resetRequest.current = null;
+        })
+        .catch(() => {});
+      return request;
+    },
+    [advanceThread],
+  );
 
   useEffect(() => {
     active.current = true;

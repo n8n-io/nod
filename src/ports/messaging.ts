@@ -29,6 +29,7 @@ export interface ChannelPairingRequest {
   accountId: string;
   senderId: string;
   senderName: string;
+  senderUsername?: string;
   messageId: string;
   threadId: string;
   code: string;

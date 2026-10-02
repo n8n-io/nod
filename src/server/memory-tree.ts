@@ -70,6 +70,7 @@ export type Entry = z.infer<typeof entrySchema>;
 export type Archived = z.infer<typeof archivedSchema>;
 export type Reason = Archived['reason'];
 export interface Tree {
+  enabled: boolean;
   reflected: string | null;
   retries: number;
   entries: Entry[];
@@ -79,6 +80,7 @@ export interface Tree {
 }
 
 export const emptyTree = (): Tree => ({
+  enabled: true,
   reflected: null,
   retries: 0,
   entries: [],
@@ -87,7 +89,7 @@ export const emptyTree = (): Tree => ({
   archive: [],
 });
 export const isEmpty = (tree: Tree) =>
-  !tree.reflected && !tree.entries.length && !tree.archive.length;
+  tree.enabled && !tree.reflected && !tree.entries.length && !tree.archive.length;
 
 export const pathOf = (entry: { area: Area; slug: string }) => `${entry.area}/${entry.slug}`;
 export const bySlug = (a: Entry, b: Entry) => a.slug.localeCompare(b.slug);
@@ -201,6 +203,7 @@ export function parse(bytes?: Uint8Array): Tree {
   } catch {
     return tree;
   }
+  tree.enabled = doc.enabled !== false;
   tree.reflected =
     typeof doc.reflected === 'string' && watermark.test(doc.reflected) ? doc.reflected : null;
   tree.retries = z.number().int().min(0).max(9).catch(0).parse(doc.retries);
@@ -228,6 +231,7 @@ export function render(tree: Tree) {
       JSON.stringify(
         {
           version: 2,
+          enabled: tree.enabled,
           reflected: tree.reflected,
           retries: tree.retries,
           entries: tree.entries.toSorted(

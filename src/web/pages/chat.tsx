@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, Bug, Check } from 'lucide-react';
+import { ArrowDown, Bug, Check, Trash2 } from 'lucide-react';
 import type {
   AppState,
   Artifact,
@@ -14,7 +14,16 @@ import { Composer, type ComposerHandle, type ComposerSendResult } from '../compo
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
-import { Button, Notice, Skeleton } from '../components/ui';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  Notice,
+  Skeleton,
+} from '../components/ui';
+import { SetupNotice } from '../components/setup-notice';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
 import {
@@ -57,7 +66,7 @@ export function Chat({
   state: AppState;
   streams: Record<string, string>;
   refresh(): Promise<void>;
-  resetConversation(): Promise<string>;
+  resetConversation(threadId: string): Promise<string>;
   initialFocusMessageId?: string;
 }) {
   const dateFormat = useDateFormat();
@@ -77,6 +86,7 @@ export function Chat({
   const [sending, setSending] = useState(false);
   const [returningHandoff, setReturningHandoff] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [resetTarget, setResetTarget] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [reportStatus, setReportStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
   useEffect(() => {
@@ -123,7 +133,6 @@ export function Chat({
   const scroll = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const resetLock = useRef(false);
-  const setupAction = useRef(() => {});
   const streamTimes = useRef(new Map<string, string>());
   const known = useRef<{ threadId: string; messages: Message[] }>({ threadId, messages: [] });
   const persistedMessages = useMemo(() => {
@@ -215,11 +224,6 @@ export function Chat({
     setStopping(false);
     stickToBottom.current = true;
   }, [threadId]);
-  useEffect(() => {
-    const restart = () => setupAction.current();
-    window.addEventListener('otto:restart-setup', restart);
-    return () => window.removeEventListener('otto:restart-setup', restart);
-  }, []);
   useEffect(() => {
     const url = new URL(window.location.href);
     if (url.pathname !== '/') return;
@@ -518,32 +522,29 @@ export function Chat({
       window.removeEventListener('resize', updateActiveTurn);
     };
   }, [state.messages, historyPage, streams, optimistic]);
-  async function startOnboarding() {
-    if (resetLock.current || !state.configuration.llmReady) return;
+  async function clearMessages() {
+    if (resetLock.current || !resetTarget || !state.configuration.conversationResetEnabled) return;
     resetLock.current = true;
     setResetting(true);
     setError('');
     try {
-      const nextThread = await resetConversation();
+      const nextThread = await resetConversation(resetTarget);
       threadRef.current = nextThread;
       historyVersion.current++;
       setHistoryPage({ threadId: nextThread, messages: [] });
       setLoadingHistory(false);
       setReplyTo(null);
       setText('');
-      await post('/api/onboarding', {
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        threadId: nextThread,
-      });
+      setResetTarget(null);
       await refresh();
     } catch (cause) {
+      setResetTarget(null);
       setError(errorMessage(cause));
     } finally {
       resetLock.current = false;
       setResetting(false);
     }
   }
-  setupAction.current = () => void startOnboarding();
   async function stop() {
     if (stopping) return;
     const stoppedThread = threadId;
@@ -583,6 +584,18 @@ export function Chat({
     <div className="chat-page">
       <header className="chat-report-action">
         <h1 className="chat-title">Chat</h1>
+        {import.meta.env?.DEV === true && state.configuration.conversationResetEnabled && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={resetting || sending || welcoming}
+            onClick={() => setResetTarget(threadId)}
+          >
+            <Trash2 size={14} aria-hidden="true" />
+            Clear messages
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"
@@ -754,11 +767,7 @@ export function Chat({
             {connectionNotice.text}
           </Notice>
         )}
-        {!state.configuration.llmReady && (
-          <Notice kind="info">
-            The assistant isn’t connected yet. Check the development setup.
-          </Notice>
-        )}
+        <SetupNotice configuration={state.configuration} capability="assistant" />
         <Composer
           key={threadId}
           ref={composer}
@@ -772,6 +781,22 @@ export function Chat({
           stopping={stopping}
         />
       </div>
+      <Dialog open={resetTarget !== null} onOpenChange={(open) => !open && setResetTarget(null)}>
+        <DialogContent>
+          <DialogTitle>Clear messages?</DialogTitle>
+          <DialogDescription>
+            This starts an empty chat and stops its running tasks.
+          </DialogDescription>
+          <div className="dialog-actions">
+            <Button variant="outline" disabled={resetting} onClick={() => setResetTarget(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={resetting} onClick={() => void clearMessages()}>
+              {resetting ? 'Clearing…' : 'Clear messages'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

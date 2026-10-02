@@ -391,6 +391,22 @@
   margin-top: 12px;
 }
 
+.telegram-pairing-qr {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.telegram-pairing-qr svg {
+  border-radius: 8px;
+}
+
+.telegram-pairing-qr figcaption {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
 .telegram-manual-toggle {
   margin-top: 12px;
   padding: 0;

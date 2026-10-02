@@ -1,13 +1,14 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, ExternalLink, X } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import type { ChannelProvider, ChannelSetupSummary } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
-import { formatTime } from '../lib/date-format';
 import {
   channelLabel,
   channelSetupBody,
   telegramBotUrl,
+  telegramIdentity,
   type ChannelResponse,
   type ChannelSettings,
 } from '../lib/secondary-pages';
@@ -324,10 +325,6 @@ export function ChannelAccount({
   );
 }
 
-function expiryTime(value?: string) {
-  return value ? formatTime(value) : '';
-}
-
 function TelegramSetup({
   setup,
   pairingUrl,
@@ -368,11 +365,10 @@ function TelegramSetup({
   const expired = Boolean(expiry && Date.parse(expiry) <= Date.now());
   const candidate = ready && !paired && !expired && !manual ? setup?.pairingCandidate : undefined;
   const botUrl = telegramBotUrl(setup?.accountHandle);
-  const identity = paired
-    ? setup?.pairedUser
-      ? `${setup.pairedUser}, ID ${setup.allowedUserId}`
-      : `ID ${setup?.allowedUserId}`
-    : '';
+  const identity =
+    paired && setup?.allowedUserId
+      ? telegramIdentity(setup.allowedUserId, setup.pairedUser, setup.pairedUsername)
+      : '';
   return (
     <>
       <DialogTitle>{paired ? 'Telegram is connected' : 'Connect Telegram'}</DialogTitle>
@@ -393,9 +389,7 @@ function TelegramSetup({
             <strong>
               {saved ? `${setup?.accountHandle ?? 'Your bot'} is verified` : 'Add your bot'}
             </strong>
-            {saved ? (
-              <p>Otto checked the token with Telegram.</p>
-            ) : (
+            {!saved && (
               <form className="telegram-checklist-form" onSubmit={onVerify}>
                 <ChannelSetupStep
                   provider="telegram"
@@ -433,7 +427,7 @@ function TelegramSetup({
                     ? 'Enter your Telegram user ID'
                     : candidate
                       ? 'Is this you?'
-                      : 'Open Telegram and press Start'}
+                      : 'Press Start in Telegram'}
             </strong>
             {paired ? (
               <p>Only this Telegram account can message Otto: {identity}.</p>
@@ -489,11 +483,13 @@ function TelegramSetup({
             ) : candidate ? (
               <>
                 <p className="telegram-candidate" role="status">
-                  Only this Telegram account can message Otto:{' '}
                   <strong>
-                    {candidate.name}, ID {candidate.id}
+                    {telegramIdentity(candidate.id, candidate.name, candidate.username)}
                   </strong>
-                  . Is this you?
+                </p>
+                <p>
+                  Compare this name{candidate.username ? ' and @username' : ''} with your profile in
+                  Telegram Settings.
                 </p>
                 <div className="telegram-checklist-actions">
                   <Button size="sm" data-telegram-primary disabled={busy} onClick={onConfirm}>
@@ -506,13 +502,24 @@ function TelegramSetup({
               </>
             ) : (
               <>
-                <p>
-                  {expired
-                    ? 'This link has expired. Get a new link, then press Start again.'
-                    : pairingUrl
-                      ? `Open your bot and press Start. Otto then asks you to confirm your account here. The link works once and expires at ${expiryTime(expiry)}.`
+                {expired || !pairingUrl ? (
+                  <p>
+                    {expired
+                      ? 'This link has expired. Get a new link, then press Start again.'
                       : 'Get a start link, then press Start in Telegram.'}
-                </p>
+                  </p>
+                ) : (
+                  <figure className="telegram-pairing-qr">
+                    <QRCodeSVG
+                      value={pairingUrl}
+                      size={176}
+                      marginSize={4}
+                      level="M"
+                      title="Open the Telegram pairing link on your phone"
+                    />
+                    <figcaption>Scan to start on mobile.</figcaption>
+                  </figure>
+                )}
                 <div className="telegram-checklist-actions">
                   {expired || !pairingUrl ? (
                     <Button size="sm" data-telegram-primary disabled={busy} onClick={onNewLink}>
@@ -527,7 +534,7 @@ function TelegramSetup({
                           target="_blank"
                           rel="noopener noreferrer"
                         >
-                          Open Telegram
+                          Open Telegram app
                           <ExternalLink size={13} />
                         </a>
                       </Button>

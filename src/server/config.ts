@@ -37,6 +37,10 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
         ? process.env.DEV_INSPECTOR !== 'false'
         : process.env.DEV_INSPECTOR === 'true',
     localOnly: runtimeMode === 'local',
+    conversationResetEnabled:
+      runtimeMode === 'local' &&
+      runtimeEnvironment === 'development' &&
+      process.env.NODE_ENV !== 'production',
     ...overrides,
   };
 }

@@ -53,6 +53,7 @@ export function createMemoryService(options: {
   ownerId: string;
   store: PrivateObjectStore;
   curator?: MemoryCurator;
+  onSaved?: (sourceMessageId: string) => Promise<void>;
 }) {
   async function initialize() {
     await options.pool.query(`DO $$ BEGIN
@@ -85,15 +86,23 @@ export function createMemoryService(options: {
     return { tree: parse(object?.bytes), bytes: object?.bytes, version: object?.version ?? null };
   }
 
-  async function edit<T>(change: (tree: Tree) => T): Promise<T> {
+  async function edit<T>(change: (tree: Tree) => T, allowDisabled = false): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       const current = await load();
+      if (!current.tree.enabled && !allowDisabled) throw new Error('Memory is turned off.');
+      const previous = new Map(
+        current.tree.entries.map((entry) => [pathOf(entry), JSON.stringify(entry)]),
+      );
       const result = change(current.tree);
       const bytes = render(current.tree);
       if (current.bytes ? Buffer.from(current.bytes).equals(bytes) : isEmpty(current.tree))
         return result;
       try {
         await options.store.write(key, bytes, { expectedVersion: current.version });
+        const saved = current.tree.entries.find(
+          (entry) => previous.get(pathOf(entry)) !== JSON.stringify(entry),
+        );
+        if (saved) await options.onSaved?.(saved.sources.at(-1)!);
         return result;
       } catch (error) {
         if (!(error instanceof ObjectStoreConflict) || attempt === 2) throw error;
@@ -111,7 +120,65 @@ export function createMemoryService(options: {
   }
 
   async function context() {
-    return indexLayout((await load()).tree).text;
+    const { tree } = await load();
+    const index = indexLayout(tree).text;
+    return tree.enabled ? index : JSON.stringify({ savingEnabled: false, ...JSON.parse(index) });
+  }
+
+  async function currentSource(
+    provenance: { sourceMessageId: string | null; turnId: string },
+    quote: string,
+  ) {
+    const source = await options.pool.query(
+      "SELECT text FROM messages WHERE id=$1 AND owner_id=$2 AND role='user' AND turn_id=$3",
+      [id.parse(provenance.sourceMessageId), options.ownerId, id.parse(provenance.turnId)],
+    );
+    if (!source.rowCount || String(source.rows[0].text).trim() !== quote)
+      throw new Error('The complete current owned user message is required.');
+  }
+
+  async function learn(
+    raw: unknown,
+    provenance: { sourceMessageId: string | null; turnId: string },
+  ) {
+    const { quote, ...input } = saveInput
+      .omit({ text: true, abstract: true })
+      .extend({ quote: line(600) })
+      .parse(raw);
+    await currentSource(provenance, quote);
+    return save({ ...input, text: quote }, provenance);
+  }
+
+  async function control(
+    raw: unknown,
+    provenance: { sourceMessageId: string | null; turnId: string },
+  ) {
+    const input = z
+      .object({
+        enabled: z.boolean().optional(),
+        clear: z.boolean().default(false),
+        quote: z.string().trim().min(1).max(2000),
+      })
+      .strict()
+      .parse(raw);
+    if (input.enabled === undefined && !input.clear)
+      throw new Error('Choose whether to turn memory on, turn it off or clear it.');
+    await currentSource(provenance, input.quote);
+    const { rows } = await options.pool.query(
+      `SELECT to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS now`,
+    );
+    return edit((tree) => {
+      if (input.enabled !== undefined) tree.enabled = input.enabled;
+      if (input.clear) {
+        tree.entries = [];
+        tree.archive = [];
+        tree.overviews = {};
+        tree.consolidated = {};
+      }
+      tree.reflected = `${rows[0].now}/00000000-0000-0000-0000-000000000000`;
+      tree.retries = 0;
+      return { enabled: tree.enabled, cleared: input.clear };
+    }, true);
   }
 
   async function cites(messageId: string | null) {
@@ -180,7 +247,7 @@ export function createMemoryService(options: {
         throw new Error('The memory entry was not found.');
       tree.entries = tree.entries.filter((item) => item !== entry);
       return { ok: true };
-    });
+    }, true);
   }
 
   return {
@@ -190,6 +257,10 @@ export function createMemoryService(options: {
     validate,
     context,
     cites,
+    enabled: async () => (await load()).tree.enabled,
+    saved: async (sourceMessageId: string) => options.onSaved?.(sourceMessageId),
+    learn,
+    control,
     save,
     forget,
     edit,

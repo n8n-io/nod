@@ -1244,10 +1244,48 @@ test(
             [approvalTurn.turnId],
           );
 
-          const reset = await request('POST', '/api/conversation/reset', {});
+          const foreignResetThread = randomUUID();
+          await db.pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'reset-other-owner')", [
+            foreignResetThread,
+          ]);
+          for (const threadId of [randomUUID(), foreignResetThread]) {
+            const rejected = await request('POST', '/api/conversation/reset', { threadId });
+            assert.equal(rejected.statusCode, 409, rejected.body);
+            assert.equal((await thread.activeThread()).id, firstThreadId);
+          }
+          assert.equal((await request('POST', '/api/conversation/reset', {})).statusCode, 400);
+          const previousNodeEnv = process.env.NODE_ENV;
+          process.env.NODE_ENV = 'production';
+          try {
+            const rejected = await request('POST', '/api/conversation/reset', {
+              threadId: firstThreadId,
+            });
+            assert.equal(rejected.statusCode, 404, rejected.body);
+            assert.equal((await thread.activeThread()).id, firstThreadId);
+            assert.equal(heldContext.signal.aborted, false);
+          } finally {
+            if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+            else process.env.NODE_ENV = previousNodeEnv;
+          }
+          const reset = await request('POST', '/api/conversation/reset', {
+            threadId: firstThreadId,
+          });
           assert.equal(reset.statusCode, 200, reset.body);
           freshThread = reset.json<{ ok: boolean; threadId: string }>().threadId;
           assert.notEqual(freshThread, firstThreadId);
+          const repeated = await request('POST', '/api/conversation/reset', {
+            threadId: firstThreadId,
+          });
+          assert.equal(repeated.statusCode, 409, repeated.body);
+          assert.equal((await thread.activeThread()).id, freshThread);
+          assert.equal(
+            (
+              await db.pool.query('SELECT archived_at FROM threads WHERE id=$1', [
+                foreignResetThread,
+              ])
+            ).rows[0].archived_at,
+            null,
+          );
           assert.deepEqual(discarded, [firstThreadId]);
           assert.equal('previousThreadId' in reset.json(), false);
           assert.deepEqual(
@@ -2508,6 +2546,167 @@ const scriptedCurator = (configured = true) => {
   };
   return { calls, state, curator };
 };
+
+test(
+  'verbatim memory learning keeps whole owned statements and persistent opt-out fences every save path',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const { pool, ownerId, store, post, memory, close } = await memoryFixture();
+    try {
+      const quote = 'Prefiro relatórios curtos, exceto quando peço uma análise detalhada.';
+      const source = await post(quote);
+      const saved = await memory.learn({ area: 'preferences', quote }, source);
+      assert.equal(saved.text, quote);
+      assert.deepEqual((await memory.load()).entries[0].sources, [source.sourceMessageId]);
+      const japanese = '返信は短くしてください。';
+      await memory.learn({ area: 'preferences', quote: japanese }, await post(japanese));
+      assert.deepEqual(
+        (await memory.load()).entries.map((entry) => entry.text).sort(),
+        [quote, japanese].sort(),
+      );
+
+      await assert.rejects(
+        memory.learn({ area: 'preferences', quote: 'Prefiro relatórios curtos.' }, source),
+      );
+      await assert.rejects(
+        memory.learn({ area: 'preferences', quote, text: 'An invented preference.' }, source),
+      );
+      for (const provenance of [
+        { ...source, turnId: randomUUID() },
+        await post(quote, { owner: 'other-owner' }),
+        await post(quote, { role: 'assistant' }),
+      ]) {
+        await assert.rejects(memory.learn({ area: 'preferences', quote }, provenance));
+        await assert.rejects(memory.control({ enabled: false, quote }, provenance));
+      }
+      const secret = 'My password is hunter2.';
+      await assert.rejects(memory.learn({ area: 'about', quote: secret }, await post(secret)));
+      assert.equal((await memory.load()).entries.length, 2);
+      assert.equal(await memory.enabled(), true);
+
+      const correction = 'Prefiro relatórios detalhados.';
+      await memory.learn(
+        { area: 'preferences', slug: saved.path.split('/')[1], quote: correction, replace: true },
+        await post(correction),
+      );
+      assert.equal((await memory.load()).archive.length, 1);
+      const disable = 'Não guardes mais informações sobre mim.';
+      const disableSource = await post(disable);
+      await assert.rejects(
+        memory.control({ enabled: false, quote: 'A different request.' }, disableSource),
+      );
+      await memory.control({ enabled: false, quote: disable }, disableSource);
+      const reopened = createMemoryService({ pool, ownerId, store });
+      assert.equal(await reopened.enabled(), false);
+      const before = await reopened.load();
+      const blocked = 'I always drink green tea.';
+      const blockedSource = await post(blocked);
+      await assert.rejects(reopened.learn({ area: 'preferences', quote: blocked }, blockedSource));
+      await assert.rejects(reopened.save({ area: 'preferences', text: blocked }, blockedSource));
+      await assert.rejects(
+        reopened.save(
+          { area: 'preferences', text: blocked },
+          { sourceMessageId: blockedSource.sourceMessageId, approved: true },
+        ),
+      );
+      await assert.rejects(
+        reopened.edit((tree) => {
+          tree.entries = [];
+        }),
+      );
+      assert.deepEqual(await reopened.load(), before);
+      const japaneseEntry = before.entries.find((entry) => entry.text === japanese)!;
+      await reopened.forget(`${japaneseEntry.area}/${japaneseEntry.slug}`);
+      assert.equal(
+        (await reopened.load()).entries.some((entry) => entry.text === japanese),
+        false,
+      );
+
+      const clear = 'Apaga tudo o que guardaste sobre mim.';
+      await reopened.control({ clear: true, quote: clear }, await post(clear));
+      const cleared = await createMemoryService({ pool, ownerId, store }).load();
+      assert.deepEqual(cleared.entries, []);
+      assert.deepEqual(cleared.archive, []);
+      assert.deepEqual(cleared.overviews, {});
+      assert.equal(await memory.enabled(), false);
+      assert.notEqual(cleared.reflected, undefined);
+      assert.equal(
+        (await pool.query('SELECT 1 FROM messages WHERE id=$1', [source.id])).rowCount,
+        1,
+      );
+
+      const enable = 'Du darfst dir meine Angaben wieder merken.';
+      await memory.control({ enabled: true, quote: enable }, await post(enable));
+      assert.equal(await reopened.enabled(), true);
+      await reopened.learn({ area: 'preferences', quote: blocked }, await post(blocked));
+      assert.deepEqual(
+        (await memory.load()).entries.map((entry) => entry.text),
+        [blocked],
+      );
+    } finally {
+      await close();
+    }
+  },
+);
+
+test(
+  'memory opt-out stops background work and rejects reflection started before disable and re-enable',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
+    const { calls, state, curator } = scriptedCurator();
+    const learning = createMemoryLearning({ pool, ownerId, memory, curator });
+    let release: (value: unknown) => void = () => {};
+    try {
+      await memory.edit((tree) => {
+        tree.reflected = nilMark;
+      });
+      await post('I only drink oat milk in coffee.', { at: '2026-01-01T10:00:00Z' });
+      let started!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      state.answer = () =>
+        new Promise((resolve) => {
+          release = resolve;
+          started();
+        });
+      const pending = learning.reflect();
+      await entered;
+      const disable = 'No guardes más información sobre mí.';
+      await memory.control({ enabled: false, quote: disable }, await post(disable));
+      const disabled = await memory.load();
+      assert.equal(await learning.reflect(), 0);
+      assert.equal(await learning.consolidate(), 0);
+      await learning.run();
+      assert.equal(calls.length, 1);
+      assert.deepEqual(await memory.load(), disabled);
+
+      const enable = 'Puedes volver a recordar mis preferencias.';
+      await memory.control({ enabled: true, quote: enable }, await post(enable));
+      const resumed = await memory.load();
+      release({
+        ops: [
+          {
+            op: 'add',
+            area: 'preferences',
+            slug: 'oat-milk',
+            text: 'Drinks oat milk in coffee.',
+            m: [1],
+            quote: 'oat milk in coffee',
+          },
+        ],
+      });
+      assert.equal(await pending, 0);
+      assert.deepEqual(await memory.load(), resumed);
+      assert.equal(await learning.reflect(), 0);
+      assert.equal(calls.length, 1);
+    } finally {
+      release({ ops: [] });
+      await close();
+    }
+  },
+);
 
 test(
   'background learning reads only plain user messages, once, and keeps its own watermark',

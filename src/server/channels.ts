@@ -348,7 +348,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const replyId = randomUUID();
       await client.query(
         "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,'assistant',$3,(SELECT id FROM threads WHERE owner_id=$2 AND archived_at IS NULL))",
-        [replyId, ownerId, 'Otto is connected. Send a message to start.'],
+        [replyId, ownerId, 'You’re connected! You can now chat with me on Telegram.'],
       );
       await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
         replyId,

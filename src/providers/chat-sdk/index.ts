@@ -23,6 +23,7 @@ const telegramMessage = z.object({
     id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     is_bot: z.literal(false),
     first_name: z.string().max(256),
+    last_name: z.string().max(256).optional(),
     username: z.string().max(256).optional(),
   }),
   chat: z.object({
@@ -295,7 +296,7 @@ export function createChatSdkTransport(
         if (!env.TELEGRAM_ALLOWED_USER_ID) {
           const code = start?.[1];
           if (!code || !/^[A-Za-z0-9_-]{16,64}$/.test(code)) return accepted();
-          const { username, first_name } = parsed.data.from;
+          const { username, first_name, last_name } = parsed.data.from;
           return {
             ...accepted(),
             pairing: {
@@ -303,9 +304,11 @@ export function createChatSdkTransport(
               accountId: env.TELEGRAM_BOT_TOKEN!.split(':')[0],
               senderId: String(parsed.data.from.id),
               senderName:
-                username && /^[A-Za-z0-9_]{1,64}$/.test(username)
-                  ? `@${username}`
-                  : first_name.trim().slice(0, 100) || 'your Telegram account',
+                [first_name, last_name].filter(Boolean).join(' ').trim().slice(0, 200) ||
+                'your Telegram account',
+              ...(username && /^[A-Za-z0-9_]{1,64}$/.test(username)
+                ? { senderUsername: username }
+                : {}),
               messageId: message.id,
               threadId: message.threadId,
               code,

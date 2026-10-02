@@ -93,7 +93,7 @@ function Workspace({
   const developer = session.capabilities.developer;
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
     settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
-    setSettingsTab(tab);
+    setSettingsTab(tab === 'Profile' && session.auth.mode === 'local' ? 'Appearance' : tab);
     setSettingsOpen(true);
   };
   useEffect(() => {
@@ -206,11 +206,6 @@ function Workspace({
         onToggleInspector={() => setInspector((value) => !value)}
         onNavigate={navigate}
         account={account}
-        onRestart={() => {
-          navigate('/');
-          setInspectionFocus(undefined);
-          window.dispatchEvent(new CustomEvent('otto:restart-setup'));
-        }}
       />
       <div className="workspace-frame">
         <div className="workspace-body">
@@ -244,7 +239,7 @@ function Workspace({
               )}
             </div>
             {currentPath === '/vault' && <Vault />}
-            {currentPath === '/apps' && <Apps />}
+            {currentPath === '/apps' && <Apps configuration={state?.configuration} />}
             {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
             {currentPath === '/goals' && <Goals conversation={visibleState} />}
             {currentPath === '/schedule' && <SchedulePage conversation={visibleState} />}

@@ -1,7 +1,8 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { AlertCircle, Check, Link2, LoaderCircle, Plus } from 'lucide-react';
-import type { Connection } from '../../shared/contracts';
+import type { Configuration, Connection } from '../../shared/contracts';
+import { SetupNotice } from '../components/setup-notice';
 import { api, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import {
@@ -144,7 +145,7 @@ export function ConnectedAccount({
   );
 }
 
-export function Apps() {
+export function Apps({ configuration }: { configuration?: Configuration }) {
   const {
     data: connections,
     error: loadError,
@@ -400,6 +401,7 @@ export function Apps() {
           </Button>
         </div>
       </header>
+      {configuration && <SetupNotice configuration={configuration} capability="apps" />}
       {(error || loadError) && (
         <Notice onDismiss={error ? () => setError('') : undefined}>{error || loadError}</Notice>
       )}

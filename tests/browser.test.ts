@@ -2402,6 +2402,7 @@ for (const failure of ['rejected', 'disconnected'] as const)
         integrationsReady: false,
         inspectorEnabled: false,
         localOnly: true,
+        conversationResetEnabled: false,
       },
     };
     const view = await handoffView(
@@ -2495,6 +2496,7 @@ test('chat keeps every message across refreshes after earlier messages were load
       integrationsReady: false,
       inspectorEnabled: false,
       localOnly: true,
+      conversationResetEnabled: false,
     },
   });
   const chat = (window: Message[]) =>

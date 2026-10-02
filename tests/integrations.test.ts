@@ -5897,3 +5897,179 @@ test('discovered OAuth cancellation stops discovery and token refresh without sa
     assert.equal(requests, 1);
   }
 });
+
+test(
+  'direct Notion page writes preserve native schemas, arguments and owned account boundaries',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `notion_write_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const ownerId = 'fixture-owner';
+    const accountId = randomUUID();
+    const otherAccountId = randomUUID();
+    const key = randomBytes(32);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const pages = new Map<string, { title: string; content: string; parent?: unknown }>();
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const definitions = [
+      { name: 'notion-create-pages', inputSchema: { type: 'object', required: ['pages'] } },
+      {
+        name: 'notion-update-page',
+        inputSchema: { type: 'object', required: ['page_id', 'command'] },
+      },
+      { name: 'notion-fetch', inputSchema: { type: 'object', required: ['id'] } },
+      { name: 'notion-get-async-task', inputSchema: { type: 'object', required: ['task_id'] } },
+    ];
+    let writesAvailable = true;
+    const request: typeof fetch = async (_input, init) => {
+      if (init?.method === 'GET') return new Response(null, { status: 405 });
+      const message = JSON.parse(String(init?.body));
+      if (message.id === undefined) return new Response(null, { status: 202 });
+      let result: unknown;
+      if (message.method === 'initialize')
+        result = {
+          protocolVersion: message.params.protocolVersion,
+          capabilities: { tools: {} },
+          serverInfo: { name: 'notion-fixture', version: '1' },
+        };
+      else if (message.method === 'tools/list')
+        result = {
+          tools: definitions.filter((tool) => writesAvailable || tool.name === 'notion-fetch'),
+        };
+      else {
+        assert.equal(
+          new Headers(init?.headers).get('authorization'),
+          'Bearer synthetic-notion-token',
+        );
+        const { name, arguments: args } = message.params;
+        calls.push({ name, args });
+        if (name === 'notion-create-pages') {
+          assert.ok(Array.isArray(args.pages));
+          assert.equal(args.pages.length, 1);
+          const id = randomUUID();
+          pages.set(id, {
+            title: args.pages[0].properties.title,
+            content: args.pages[0].content,
+            parent: args.parent,
+          });
+          result = { content: [{ type: 'text', text: JSON.stringify({ id }) }] };
+        } else if (name === 'notion-update-page') {
+          assert.equal(args.command, 'insert_content');
+          const page = pages.get(args.page_id)!;
+          page.content += '\n' + args.content;
+          result = { content: [{ type: 'text', text: JSON.stringify({ id: args.page_id }) }] };
+        } else if (name === 'notion-get-async-task') {
+          result = { content: [{ type: 'text', text: JSON.stringify({ status: 'succeeded' }) }] };
+        } else {
+          assert.equal(name, 'notion-fetch');
+          result = { content: [{ type: 'text', text: JSON.stringify(pages.get(args.id)) }] };
+        }
+      }
+      return Response.json({ jsonrpc: '2.0', id: message.id, result });
+    };
+    try {
+      const grantVault = await createAppGrantVault(pool, { ownerId, keyStore });
+      const provider = createDirectProvider({ pool, ownerId, keyStore, grantVault, request });
+      await assert.rejects(provider.inspectAccount(accountId, ownerId));
+      await pool.query(
+        "INSERT INTO direct_oauth_accounts(id,owner_id,service,connected) VALUES($1,$2,'notion',true),($3,'other-owner','notion',true)",
+        [accountId, ownerId, otherAccountId],
+      );
+      await grantVault.put(accountId, JSON.stringify({ accessToken: 'synthetic-notion-token' }));
+      const integrations = await createIntegrations(pool, {
+        ownerId,
+        provider,
+        baseUrl: 'http://localhost:4310',
+        wake: async () => {},
+      });
+      const connectionId = (
+        await pool.query(
+          "INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active,account_checked_at) VALUES($1,'notion',$2,'direct',true,now()) RETURNING id",
+          [ownerId, accountId],
+        )
+      ).rows[0].id;
+      const session = await provider.createSession(ownerId, { notion: [accountId] });
+      const discovered = await session.search('notion');
+      assert.deepEqual(
+        (discovered.tools as Record<string, { inputSchema: unknown }>).NOTION_CREATE_PAGES
+          .inputSchema,
+        definitions[0].inputSchema,
+      );
+      assert.ok((discovered.tools as Record<string, unknown>).NOTION_UPDATE_PAGE);
+      for (const parent of [undefined, { page_id: 'parent-fixture' }]) {
+        const args = {
+          connectionId,
+          pages: [
+            { properties: { title: 'Otto diagnostic' }, content: 'Synthetic diagnostic content.' },
+          ],
+          ...(parent ? { parent } : { creation_mode: 'draft' }),
+          allow_async: false,
+        };
+        await integrations.execute(ownerId, 'NOTION_CREATE_PAGES', args);
+        const { connectionId: _connectionId, ...createArgs } = args;
+        assert.deepEqual(calls.at(-1), { name: 'notion-create-pages', args: createArgs });
+        const id = [...pages.keys()].at(-1)!;
+        const read = await integrations.execute(ownerId, 'NOTION_RETRIEVE_PAGE', {
+          connectionId,
+          id,
+        });
+        assert.match(JSON.stringify(read), /Synthetic diagnostic content\./);
+        assert.equal(pages.get(id)?.title, 'Otto diagnostic');
+        assert.deepEqual(pages.get(id)?.parent, parent);
+        const update = {
+          connectionId,
+          page_id: id,
+          command: 'insert_content',
+          content: 'Follow-up detail.',
+        };
+        await integrations.execute(ownerId, 'NOTION_UPDATE_PAGE', update);
+        const { connectionId: _updateConnectionId, ...updateArgs } = update;
+        assert.deepEqual(calls.at(-1), { name: 'notion-update-page', args: updateArgs });
+        const updated = await integrations.execute(ownerId, 'NOTION_RETRIEVE_PAGE', {
+          connectionId,
+          id,
+        });
+        assert.match(JSON.stringify(updated), /Follow-up detail\./);
+      }
+      assert.match(
+        JSON.stringify(
+          await integrations.execute(ownerId, 'NOTION_GET_ASYNC_TASK', {
+            connectionId,
+            task_id: 'task-fixture',
+          }),
+        ),
+        /succeeded/,
+      );
+      const before = calls.length;
+      await assert.rejects(
+        integrations.execute('other-owner', 'NOTION_CREATE_PAGES', {
+          connectionId,
+          pages: [],
+        }),
+      );
+      await assert.rejects(session.execute('NOTION_CREATE_PAGES', { pages: [] }, otherAccountId));
+      await assert.rejects(
+        session.execute('NOTION_CREATE_PAGES', { pages: [] }, accountId, AbortSignal.abort()),
+      );
+      writesAvailable = false;
+      assert.equal(
+        ((await session.search('notion')).tools as Record<string, unknown>).NOTION_CREATE_PAGES,
+        undefined,
+      );
+      await assert.rejects(session.execute('NOTION_CREATE_PAGES', { pages: [] }, accountId));
+      await assert.rejects(session.execute('NOTION_DELETE_PAGE', {}, accountId));
+      await pool.query('UPDATE direct_oauth_accounts SET connected=false WHERE id=$1', [accountId]);
+      await assert.rejects(session.execute('NOTION_CREATE_PAGES', { pages: [] }, accountId));
+      assert.equal(calls.length, before);
+    } finally {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
