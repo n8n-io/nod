@@ -268,7 +268,6 @@ export function createDefaultAdapters(
       }),
     speech: createOpenAISpeechProvider({
       apiKey: env.OPENAI_API_KEY,
-      transcriptionModel: env.STT_MODEL,
       speechModel: env.TTS_MODEL,
       voice: env.TTS_VOICE,
     }),
@@ -736,7 +735,6 @@ export async function createApplication(
       return restartOnboarding(threadId);
     },
     startOnboarding: welcome,
-    speech,
     computer,
     runtime,
     inspector,
@@ -745,7 +743,6 @@ export async function createApplication(
         provider: adapters.model.provider,
         model: adapters.model.name,
         llmReady: adapters.model.configured,
-        speechReady: adapters.speech.configured,
         integrationsReady: adapters.integrations.configured,
       }),
   });

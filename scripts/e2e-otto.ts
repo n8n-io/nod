@@ -332,7 +332,6 @@ try {
     speech: {
       id: 'disabled',
       configured: false,
-      transcribe: unavailable,
       synthesize: unavailable,
     },
     keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },

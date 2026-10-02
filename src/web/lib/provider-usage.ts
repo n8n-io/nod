@@ -25,7 +25,6 @@ export function operationLabel(operation: string) {
     compaction: 'Context compaction',
     cache_warming: 'Cache warming',
     synthesize: 'Speech synthesis',
-    transcribe: 'Transcription',
     execute: 'Execution',
   };
   const words = operation.replaceAll('_', ' ');

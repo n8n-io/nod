@@ -222,10 +222,6 @@ export function meterSpeech(provider: SpeechProvider, usage: ProviderUsageStore)
   const base = { provider: provider.id, category: 'speech' as const };
   return {
     ...provider,
-    transcribe: (input, signal) =>
-      usage.track({ ...base, operation: 'transcribe', bytes: input.bytes.byteLength }, () =>
-        provider.transcribe(input, signal),
-      ),
     synthesize: (text, signal) =>
       usage.track(
         { ...base, operation: 'synthesize', characters: [...text].length },

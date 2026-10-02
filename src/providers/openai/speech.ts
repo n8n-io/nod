@@ -1,9 +1,7 @@
-import { z } from 'zod';
 import type { SpeechProvider } from '../../ports/speech.ts';
 
 export function createOpenAISpeechProvider(options: {
   apiKey?: string;
-  transcriptionModel?: string;
   speechModel?: string;
   voice?: string;
   fetch?: typeof fetch;
@@ -19,24 +17,6 @@ export function createOpenAISpeechProvider(options: {
   return {
     id: 'openai',
     configured: Boolean(options.apiKey),
-    async transcribe(input, signal) {
-      signal?.throwIfAborted();
-      const form = new FormData();
-      form.append(
-        'file',
-        new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }),
-        input.fileName,
-      );
-      form.append('model', options.transcriptionModel || 'gpt-4o-mini-transcribe');
-      const response = await request('https://api.openai.com/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: headers(),
-        body: form,
-        signal: timeout(signal),
-      });
-      if (!response.ok) throw new Error('Speech transcription failed.');
-      return z.object({ text: z.string().max(100_000) }).parse(await response.json()).text;
-    },
     async synthesize(text, signal) {
       signal?.throwIfAborted();
       const response = await request('https://api.openai.com/v1/audio/speech', {

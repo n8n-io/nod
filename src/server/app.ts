@@ -30,7 +30,6 @@ import { inspectorPayloadLimit, inspectorRetentionDays, type InspectorStore } fr
 import type { AgentToolMetadata } from '../ports/agent.ts';
 import { registerRuntimeAccess } from './runtime-auth.ts';
 import { createMultipartReader } from './multipart.ts';
-import type { SpeechService } from './speech.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { browserHandoffInput } from '../shared/browser-handoff.ts';
@@ -65,7 +64,6 @@ export interface AppDependencies {
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
-  speech?: SpeechService;
   computer?: Pick<
     Computer,
     'screenshot' | 'control' | 'status' | 'screenStatus' | 'currentSession' | 'discard'
@@ -83,11 +81,6 @@ export interface AppDependencies {
 export async function createApp(dependencies: AppDependencies = {}) {
   const publicConfiguration = dependencies.configuration ?? configuration;
   const artifacts = dependencies.artifacts ?? localArtifacts;
-  const speech = () => {
-    if (!dependencies.speech)
-      throw Object.assign(new Error('Speech is not configured.'), { statusCode: 503 });
-    return dependencies.speech;
-  };
   const app = Fastify({
     logger: false,
     bodyLimit: 256 * 1024,
@@ -390,23 +383,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
     }
     reply.header('Content-Length', file.size);
     return reply.send(await artifacts.readArtifact(file.id));
-  });
-  app.post('/api/speech/transcribe', async (request) => {
-    const file = await uploads.readFile(request);
-    if (!file || !file.mimetype.startsWith('audio/'))
-      throw Object.assign(new Error('Choose an audio recording.'), { statusCode: 400 });
-    return {
-      text: await speech().transcribe({
-        bytes: file.bytes,
-        mimeType: file.mimetype,
-        fileName: file.filename || 'recording.webm',
-      }),
-    };
-  });
-  app.post('/api/speech/speak', async (request) => {
-    const { text } = z.object({ text: z.string().min(1).max(3000) }).parse(request.body);
-    const audio = await speech().synthesize(text);
-    return artifacts.storeArtifact(audio.bytes, audio.fileName, audio.mimeType);
   });
   app.get('/api/inspector/tools', async (_request, reply) => {
     if (!publicConfiguration().inspectorEnabled)

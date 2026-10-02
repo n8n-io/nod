@@ -127,7 +127,6 @@ export interface Configuration {
   provider: string;
   model: string;
   llmReady: boolean;
-  speechReady: boolean;
   integrationsReady: boolean;
   inspectorEnabled: boolean;
   localOnly: boolean;

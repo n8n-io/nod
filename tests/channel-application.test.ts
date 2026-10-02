@@ -89,7 +89,6 @@ test(
       speech: {
         id: 'fixture',
         configured: false,
-        transcribe: async () => '',
         synthesize: async () => ({
           bytes: Buffer.alloc(0),
           mimeType: 'audio/mpeg',

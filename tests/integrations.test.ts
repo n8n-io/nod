@@ -4485,7 +4485,6 @@ test('metering covers capabilities without recording prompts, arguments, output 
     {
       id: 'openai',
       configured: true,
-      transcribe: async () => 'private transcript',
       synthesize: async () => ({
         bytes: Buffer.from('sound'),
         mimeType: 'audio/mpeg',
@@ -4495,11 +4494,6 @@ test('metering covers capabilities without recording prompts, arguments, output 
     usage,
   );
   await speech.synthesize('private speech');
-  await speech.transcribe({
-    bytes: Buffer.from('audio'),
-    mimeType: 'audio/wav',
-    fileName: 'private.wav',
-  });
   await meterRelevance(
     { id: 'jev', configured: true, classify: async () => 'ignore' },
     usage,
@@ -4546,7 +4540,6 @@ test('metering covers capabilities without recording prompts, arguments, output 
       'response',
       'compaction',
       'synthesize',
-      'transcribe',
       'classify',
       'restore_session',
       'execute',

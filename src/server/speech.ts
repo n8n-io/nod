@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AudioInput, GeneratedAudio, SpeechProvider } from '../ports/speech.ts';
+import type { GeneratedAudio, SpeechProvider } from '../ports/speech.ts';
 
 export function createSpeech(provider: SpeechProvider) {
   function available(signal?: AbortSignal) {
@@ -8,26 +8,6 @@ export function createSpeech(provider: SpeechProvider) {
       throw Object.assign(new Error('Speech is not configured.'), { statusCode: 503 });
   }
   return {
-    async transcribe(input: AudioInput, signal?: AbortSignal): Promise<string> {
-      available(signal);
-      if (
-        !input.mimeType.startsWith('audio/') ||
-        !input.bytes.length ||
-        input.bytes.length > 15 * 1024 * 1024
-      ) {
-        throw Object.assign(new Error('Choose an audio recording smaller than 15 MB.'), {
-          statusCode: 400,
-        });
-      }
-      try {
-        const result = await provider.transcribe(input, signal);
-        signal?.throwIfAborted();
-        return z.string().max(100_000).parse(result);
-      } catch {
-        signal?.throwIfAborted();
-        throw new Error('Speech transcription failed.');
-      }
-    },
     async synthesize(input: string, signal?: AbortSignal): Promise<GeneratedAudio> {
       available(signal);
       const text = z.string().trim().min(1).max(3000).parse(input);

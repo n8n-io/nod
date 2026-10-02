@@ -31,7 +31,6 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
     provider: 'unconfigured',
     model: 'Unconfigured',
     llmReady: false,
-    speechReady: false,
     integrationsReady: false,
     inspectorEnabled:
       runtimeMode === 'local'

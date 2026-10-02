@@ -26,7 +26,6 @@ import type { TenantLease } from '../src/server/tenants.ts';
 import { channelWebhookToken, createHostedWebhooks } from '../src/server/hosted-webhooks.ts';
 import type { IntegrationProvider } from '../src/ports/integrations.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
-import type { AudioInput } from '../src/ports/speech.ts';
 
 describe('gateway', () => {
   const origin = 'http://localhost:4399';
@@ -1326,7 +1325,7 @@ describe('signed multipart', () => {
   };
 
   test(
-    'signed tenant uploads and transcription parse only complete authenticated multipart bytes over HTTP',
+    'signed tenant uploads parse only complete authenticated multipart bytes over HTTP',
     { timeout: 20_000 },
     async (t) => {
       const ownerId = randomUUID();
@@ -1356,7 +1355,6 @@ describe('signed multipart', () => {
       const { localArtifacts, maxFileSize } = await import('../src/server/artifacts.ts');
       const { pool } = await import('../src/server/db.ts');
       const writes: { bytes: Buffer; name: string; mimeType: string }[] = [];
-      const transcriptions: AudioInput[] = [];
       const app = await createApp({
         artifacts: {
           ...localArtifacts,
@@ -1364,15 +1362,6 @@ describe('signed multipart', () => {
             writes.push({ bytes, name, mimeType });
             const id = randomUUID();
             return { id, name, mimeType, size: bytes.length, url: `/api/artifacts/${id}` };
-          },
-        },
-        speech: {
-          async transcribe(input) {
-            transcriptions.push(input);
-            return 'Synthetic transcription';
-          },
-          async synthesize() {
-            throw new Error('Unexpected speech synthesis');
           },
         },
       });
@@ -1404,7 +1393,7 @@ describe('signed multipart', () => {
           signal: AbortSignal.timeout(5000),
         });
       await t.test(
-        'valid files and audio preserve bytes and metadata; replay and tampering have no effects',
+        'valid files preserve bytes and metadata; replay and tampering have no effects',
         async () => {
           const bytes = form([{ name: 'context', bytes: Buffer.from('synthetic') }, upload]);
           const signature = token('/api/uploads', bytes);
@@ -1422,17 +1411,6 @@ describe('signed multipart', () => {
             401,
           );
           assert.equal(writes.length, 1);
-          const audio = form([{ ...upload, filename: 'recording.webm', mimeType: 'audio/webm' }]);
-          assert.equal((await send('/api/speech/transcribe', audio)).status, 200);
-          assert.deepEqual(transcriptions, [
-            { bytes: upload.bytes, fileName: 'recording.webm', mimeType: 'audio/webm' },
-          ]);
-          assert.equal(
-            (await send('/api/speech/transcribe', changed, token('/api/speech/transcribe', audio)))
-              .status,
-            401,
-          );
-          assert.equal(transcriptions.length, 1);
         },
       );
       await t.test(
