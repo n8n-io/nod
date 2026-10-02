@@ -218,6 +218,13 @@ export default scenario({
         (run) => {
           const writes = run.writes.filter((write) => write.kind === 'send');
           const agreed = (at: number) =>
+            run.interactions.some(
+              (item) =>
+                item.kind === 'question' &&
+                item.at < at &&
+                /\b(?:yes|go ahead|please do|please send|send it)\b/i.test(item.reply ?? '') &&
+                /dentist|dental|sorriso|recepcao/i.test(`${item.text} ${item.reply}`),
+            ) ||
             run.userMessages
               .slice(1)
               .some(

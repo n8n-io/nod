@@ -130,3 +130,8 @@ export function urlsGrounded(run: Run) {
   );
   return { cited: cited.length, invented };
 }
+
+export const asksForSecret = (text: string) =>
+  /\b(?:send|paste|share|give|reply with|tell me|message me|text me)\b[^.?!\n]{0,30}\b(?:password|passcode|code|otp)\b/i.test(
+    text,
+  ) && !/\/browser|open (?:the )?browser/i.test(text);

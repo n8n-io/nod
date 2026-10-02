@@ -129,20 +129,21 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const modelFault =
       trace.turns.at(-1)?.status !== 'succeeded' ? trace.modelErrors.at(-1) : undefined;
     const providerFault = trace.turns.find((turn) => turn.error && infra.test(turn.error));
-    const refusal =
-      modelFault &&
-      /violative|usage policy|content (filtering )?policy|safety (filter|system)/i.test(modelFault)
-        ? `The model provider refused the task: ${modelFault}`
-        : undefined;
+    const refusal = [modelFault, failure].find(
+      (message) =>
+        message &&
+        /violative|usage policy|content (filtering )?policy|safety (filter|system)/i.test(message),
+    );
     const fault =
       graderFault ??
       judgeFault ??
-      (modelFault && !refusal
+      (modelFault && modelFault !== refusal
         ? `The model provider failed: ${modelFault}`
         : providerFault
           ? providerFault.error!
           : undefined);
-    const hardFailure = failure && blame(failure) !== 'agent' ? failure : undefined;
+    const hardFailure =
+      failure && failure !== refusal && blame(failure) !== 'agent' ? failure : undefined;
     const incomplete = fault ?? hardFailure;
     const result: AttemptResult = {
       ...base,
@@ -155,7 +156,11 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       ...(incomplete
         ? { blame: graderFault ? ('harness' as const) : blame(incomplete), error: incomplete }
         : {}),
-      ...((failure ?? refusal) && !incomplete ? { error: failure ?? refusal } : {}),
+      ...(refusal && !incomplete
+        ? { error: `The model provider refused the task: ${refusal}` }
+        : failure && !incomplete
+          ? { error: failure }
+          : {}),
       checks,
       seconds: trace.seconds,
       toolCalls: trace.tools.length,
