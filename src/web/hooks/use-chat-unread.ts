@@ -22,6 +22,7 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
             initial: latestChatReadCursor(state.messages),
             pending: null as ChatReadCursor | null,
             cursor: null as ChatReadCursor | null,
+            writing: false,
           }
         : null,
     [ownerId, state?.threadId],
@@ -38,6 +39,25 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
     count: number;
     pending: boolean;
   } | null>(null);
+  const persist = useCallback(async () => {
+    if (!scope || current.current !== scope || scope.writing || !scope.cursor) return;
+    scope.writing = true;
+    try {
+      while (scope.pending && current.current === scope) {
+        const next = scope.pending;
+        await writeChatReadCursor(scope.ownerId, scope.threadId, next);
+        if (current.current !== scope) return;
+        scope.cursor = mergeChatReadCursor(scope.cursor, next);
+        if (scope.pending === next) scope.pending = null;
+        setRead({ scope, cursor: scope.cursor });
+        setUnavailable(null);
+      }
+    } catch {
+      if (current.current === scope) setUnavailable(scope);
+    } finally {
+      scope.writing = false;
+    }
+  }, [scope]);
   useEffect(() => {
     if (!scope) return;
     let active = true;
@@ -46,13 +66,12 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
         if (!active || current.current !== scope) return;
         const stored = saved ?? scope.initial;
         const baseline = scope.cursor ? mergeChatReadCursor(stored, scope.cursor) : stored;
-        const pending = scope.pending;
-        scope.cursor = pending ? mergeChatReadCursor(baseline, pending) : baseline;
-        scope.pending = null;
+        scope.cursor = baseline;
+        if (scope.pending || !saved)
+          scope.pending = mergeChatReadCursor(baseline, scope.pending ?? baseline);
         setUnavailable(null);
-        setRead({ scope, cursor: scope.cursor });
-        if (!saved || pending)
-          void writeChatReadCursor(scope.ownerId, scope.threadId, scope.cursor);
+        setRead({ scope, cursor: baseline });
+        void persist();
       })
       .catch(() => {
         if (active && current.current === scope) setUnavailable(scope);
@@ -60,7 +79,7 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
     return () => {
       active = false;
     };
-  }, [scope, attempt]);
+  }, [scope, attempt, persist]);
   useEffect(() => {
     const retry = () => setAttempt((value) => value + 1);
     window.addEventListener('focus', retry);
@@ -113,11 +132,10 @@ export function useChatUnread(ownerId: string, state: AppState | null) {
       }
       const merged = mergeChatReadCursor(scope.cursor, next);
       if (JSON.stringify(merged) === JSON.stringify(scope.cursor)) return;
-      scope.cursor = merged;
-      setRead({ scope, cursor: merged });
-      void writeChatReadCursor(scope.ownerId, scope.threadId, merged);
+      scope.pending = mergeChatReadCursor(scope.pending ?? scope.cursor, merged);
+      void persist();
     },
-    [scope, messages],
+    [scope, messages, persist],
   );
   const reconciled =
     history?.scope === scope && history.cursor === cursor && history.messages === messages;

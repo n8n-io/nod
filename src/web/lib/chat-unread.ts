@@ -113,10 +113,8 @@ export async function writeChatReadCursor(
   cursor: ChatReadCursor,
 ) {
   const value = parseChatReadCursor(cursor);
-  if (!value) return;
-  try {
-    const native = saveDesktopChatReadCursor(ownerId, threadId, value);
-    if (native) await native;
-    else window.localStorage.setItem(chatReadStorageKey(ownerId, threadId), JSON.stringify(value));
-  } catch {}
+  if (!value) throw new Error('The read position is invalid.');
+  const native = saveDesktopChatReadCursor(ownerId, threadId, value);
+  if (native) await native;
+  else window.localStorage.setItem(chatReadStorageKey(ownerId, threadId), JSON.stringify(value));
 }

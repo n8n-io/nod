@@ -252,7 +252,7 @@ test('quiet hours suppress the configured interval with inclusive start and excl
   );
 });
 
-test('quiet hours follow the saved IANA time zone and daylight saving, with server-compatible UTC fallback', () => {
+test('quiet hours follow the saved IANA time zone and daylight saving', () => {
   const preferences = {
     quietHoursEnabled: true,
     timeZone: 'Europe/Lisbon',
@@ -263,13 +263,24 @@ test('quiet hours follow the saved IANA time zone and daylight saving, with serv
   assert.equal(isQuietTime(preferences, new Date('2026-01-01T21:00:00Z')), false);
   assert.equal(isQuietTime(preferences, new Date('2026-07-01T07:00:00Z')), false);
   assert.equal(isQuietTime(preferences, new Date('2026-01-01T07:00:00Z')), true);
+});
+
+test('unset notification time zones follow the current system zone', (t) => {
+  const DateTimeFormat = Intl.DateTimeFormat;
+  t.mock.method(Intl, 'DateTimeFormat', function (locale, options) {
+    return new DateTimeFormat(locale, options ?? { timeZone: 'Asia/Tokyo' });
+  });
+  const preferences = {
+    quietHoursEnabled: true,
+    timeZone: null,
+    quietStart: '22:00',
+    quietEnd: '08:00',
+  };
+  assert.equal(isQuietTime(preferences, new Date('2026-10-02T13:00:00Z')), true);
+  assert.equal(isQuietTime(preferences, new Date('2026-10-02T23:00:00Z')), false);
   assert.equal(
-    isQuietTime({ ...preferences, timeZone: null }, new Date('2026-07-01T21:00:00Z')),
+    isQuietTime({ ...preferences, timeZone: 'UTC' }, new Date('2026-10-02T13:00:00Z')),
     false,
-  );
-  assert.equal(
-    isQuietTime({ ...preferences, timeZone: null }, new Date('2026-07-01T22:00:00Z')),
-    true,
   );
 });
 

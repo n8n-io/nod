@@ -31,6 +31,7 @@ import { createDiscoveredOAuth } from '../src/providers/discovered/oauth.ts';
 import { createDiscoveredTransport, safeRemoteFetch } from '../src/providers/discovered/remote.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
+import { registerLocalAccess } from '../src/server/access.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
 import { createErrorRedactor } from '../src/server/inspector-redaction.ts';
 import { createProviderUsageStore } from '../src/server/provider-usage.ts';
@@ -853,6 +854,125 @@ async function appsFixture(
     callbacks,
   };
 }
+
+test(
+  'desktop OAuth callbacks use a public completion page and preserve owned turn continuation',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const ownerId = 'local-development';
+    const grantVault = await createAppGrantVault(f.pool, {
+      ownerId,
+      keyStore: { id: 'fixture', configured: true, getKey: async () => Buffer.alloc(32, 1) },
+    });
+    for (const desktop of [false, true]) {
+      const resumed: string[] = [];
+      const resumeConnection = async (turnId: string) => {
+        resumed.push(turnId);
+        return true;
+      };
+      let discoveredState = '';
+      const discovered = await createDiscoveredConnections(f.pool, {
+        ownerId,
+        baseUrl: 'http://127.0.0.1:4310',
+        grantVault,
+        resumeConnection,
+        transport: {
+          validateEndpoint: async (endpoint) => endpoint,
+          http: async () => ({ status: 200, body: null }),
+          listTools: async () => [{ name: 'list_records', inputSchema: {} }],
+          callTool: async () => ({}),
+        },
+        oauth: {
+          begin: async (_endpoint, redirectUri, state) => {
+            discoveredState = state;
+            return { url: 'https://fixture.example/authorize', saved: { redirectUri } };
+          },
+          finish: async (_endpoint, saved, code) => {
+            assert.equal(code, 'fixture-code');
+            return {
+              ...saved,
+              tokens: { access_token: 'synthetic-oauth-token', token_type: 'Bearer' },
+            };
+          },
+          refresh: async () => {
+            throw new Error('No refresh is expected.');
+          },
+        },
+      });
+      const integrations = await createIntegrations(f.pool, {
+        ownerId,
+        provider: f.provider,
+        baseUrl: 'http://127.0.0.1:4310',
+        callbackReturnTo: desktop ? 'window' : undefined,
+        discovered,
+        resumeConnection,
+        wake: async () => {},
+      });
+      const app = Fastify();
+      t.after(() => app.close());
+      const token = 'synthetic-desktop-token';
+      registerLocalAccess(app, 4310, desktop ? { token } : undefined);
+      integrations.registerRoutes(app);
+      const headers = { host: '127.0.0.1:4310', 'x-otto-desktop-token': token };
+      for (const fromChat of [false, true]) {
+        const turn = fromChat ? { threadId: randomUUID(), turnId: randomUUID() } : undefined;
+        const expectedPage = desktop ? '/connected.html' : fromChat ? '/' : '/apps';
+        const expectedOutcome = fromChat ? 'continued' : 'connected';
+        await integrations.manageConnections('connect', 'gmail', turn, undefined, true);
+        const callback = new URL(f.callbacks.at(-1)!);
+        callback.searchParams.set('account', [...f.accounts.keys()].at(-1)!);
+        const response = await app.inject({
+          url: `${callback.pathname}${callback.search}`,
+          headers: { host: headers.host },
+        });
+        assert.equal(response.statusCode, 302, response.body);
+        const destination = new URL(response.headers.location!);
+        assert.equal(destination.pathname, expectedPage);
+        assert.equal(destination.searchParams.get('connection'), expectedOutcome);
+        const replay = await app.inject({
+          url: `${callback.pathname}${callback.search}`,
+          headers: { host: headers.host },
+        });
+        assert.equal(new URL(replay.headers.location!).searchParams.get('connection'), 'expired');
+        assert.deepEqual(resumed, turn ? [turn.turnId] : []);
+        resumed.length = 0;
+
+        const proposal = await discovered.propose(
+          {
+            service: `fixture-${desktop ? 'desktop' : 'web'}-${fromChat ? 'chat' : 'apps'}`,
+            name: 'Fixture app',
+            paths: [{ kind: 'mcp', endpoint: 'https://fixture.example/mcp', auth: 'oauth' }],
+          },
+          turn,
+        );
+        const id = new URL(proposal.url, 'http://localhost').searchParams.get('connect');
+        const begin = await app.inject({
+          method: 'POST',
+          url: `/api/apps/discovery/${id}/authorize`,
+          headers,
+          payload: {},
+        });
+        assert.equal(begin.statusCode, 200, begin.body);
+        const complete = await app.inject({
+          url: `/api/apps/callback?state=${discoveredState}&code=fixture-code`,
+          headers: { host: headers.host },
+        });
+        assert.equal(complete.statusCode, 302, complete.body);
+        const completed = new URL(complete.headers.location!);
+        assert.equal(completed.pathname, expectedPage);
+        assert.equal(completed.searchParams.get('connection'), expectedOutcome);
+        assert.deepEqual(resumed, turn ? [turn.turnId] : []);
+        resumed.length = 0;
+      }
+      if (desktop)
+        assert.equal(
+          (await app.inject({ url: '/api/apps', headers: { host: headers.host } })).statusCode,
+          401,
+        );
+    }
+  },
+);
 
 test(
   'native app setup reuses owned accounts unless another account is explicitly requested',
@@ -5702,5 +5822,145 @@ test('discovered OAuth cancellation stops discovery and token refresh without sa
       name: 'AbortError',
     });
     assert.equal(requests, 1);
+  }
+});
+
+test('desktop OAuth retains pending sign-in links and matches onboarding completion attempts', async () => {
+  const { JSDOM } = await import('jsdom');
+  const { act, createElement } = await import('react');
+  const origin = 'http://localhost:4310';
+  const id = '11111111-1111-4111-8111-111111111111';
+  const dom = new JSDOM('<div id="root"></div>', {
+    url: `${origin}/apps?connect=${id}`,
+    pretendToBeVisual: true,
+  });
+  const opened: string[] = [];
+  let launches = 0;
+  const attempt = 'a'.repeat(43);
+  let receive: ((event: { data: unknown }) => void) | undefined;
+  class Channel {
+    set onmessage(value: (event: { data: unknown }) => void) {
+      receive = value;
+    }
+    close() {}
+  }
+  Object.assign(dom.window, {
+    ottoDesktop: {
+      openExternal: async (url: string) => {
+        opened.push(url);
+      },
+    },
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
+    Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    MutationObserver: dom.window.MutationObserver,
+    getComputedStyle: dom.window.getComputedStyle,
+    FormData: dom.window.FormData,
+    BroadcastChannel: Channel,
+    IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: async (path: unknown, init: RequestInit = {}) => {
+      if (path === '/api/apps')
+        return Response.json([{ slug: 'gmail', name: 'Gmail', status: 'disconnected' }]);
+      if (path === '/api/preferences') return Response.json({ timeZone: 'Europe/Lisbon' });
+      if (path === '/api/account/prepare') return Response.json({ ok: true });
+      if (path === '/api/apps/gmail/connect') {
+        assert.deepEqual(JSON.parse(String(init.body)), { returnTo: 'window' });
+        return Response.json({ url: 'https://connect.example.test/gmail', attempt });
+      }
+      if (path === `/api/apps/discovery/${id}`)
+        return Response.json({
+          name: 'Fixture',
+          paths: [{ kind: 'mcp', auth: 'oauth', endpoint: 'https://fixture.example.test/mcp' }],
+        });
+      assert.equal(path, `/api/apps/discovery/${id}/authorize`);
+      assert.equal(init.method, 'POST');
+      launches++;
+      return Response.json({ url: `https://fixture.example.test/sign-in?attempt=${launches}` });
+    },
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { Apps } = await import('../src/web/pages/apps.tsx');
+  const { Onboarding } = await import('../src/web/pages/onboarding.tsx');
+  const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  try {
+    pageDataCache.clear();
+    await act(async () => root.render(createElement(Apps)));
+    await settle();
+    const form = dom.window.document.querySelector('.app-discovery-dialog form');
+    assert.ok(form, dom.window.document.body.innerHTML);
+    for (let count = 0; count < 2; count++) {
+      await act(async () =>
+        form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })),
+      );
+      await settle();
+    }
+    assert.equal(launches, 1);
+    assert.deepEqual(opened, [
+      'https://fixture.example.test/sign-in?attempt=1',
+      'https://fixture.example.test/sign-in?attempt=1',
+    ]);
+    dom.window.history.replaceState(null, '', '/onboarding');
+    await act(async () =>
+      root.render(
+        createElement(Onboarding, {
+          user: { id, name: 'Fixture', email: null, avatarUrl: null },
+          canLogout: false,
+          onLogout() {},
+          async onComplete() {},
+        }),
+      ),
+    );
+    await settle();
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Connect Gmail"]')!.click(),
+    );
+    assert.ok(
+      dom.window.document
+        .querySelector('#onboarding-gmail')!
+        .closest('article')!
+        .classList.contains('waiting'),
+    );
+    await act(async () =>
+      receive!({ data: { service: 'gmail', connection: 'cancelled', attempt: 'b'.repeat(43) } }),
+    );
+    assert.ok(
+      dom.window.document
+        .querySelector('#onboarding-gmail')!
+        .closest('article')!
+        .classList.contains('waiting'),
+    );
+    await act(async () =>
+      receive!({ data: { service: 'gmail', connection: 'cancelled', attempt } }),
+    );
+    assert.equal(
+      dom.window.document
+        .querySelector('#onboarding-gmail')!
+        .closest('article')!
+        .classList.contains('waiting'),
+      false,
+    );
+  } finally {
+    await act(async () => root.unmount());
+    pageDataCache.clear();
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
   }
 });

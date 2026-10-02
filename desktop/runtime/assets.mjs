@@ -106,12 +106,12 @@ async function verifiedCache(release, signal, cacheRoot) {
     if (marker.id !== release.id) return undefined;
     for (const file of release.files) {
       const metadata = await lstat(join(root, file.path));
-      if (!metadata.isFile() || metadata.size !== file.bytes) return undefined;
-    }
-    for (const name of criticalFiles) {
-      const item = release.files.find((file) => file.path === name);
-      const path = join(root, name);
-      if (!(await lstat(path)).isFile() || (await assetHash(path, signal)) !== item.sha256)
+      if (
+        !metadata.isFile() ||
+        metadata.size !== file.bytes ||
+        (metadata.mode & 0o7777) !== file.mode ||
+        (await assetHash(join(root, file.path), signal)) !== file.sha256
+      )
         return undefined;
     }
     return root;

@@ -26,7 +26,15 @@ The updated app visibly explained Keychain access during startup. The user compl
 
 The user rejected preparation inside the Settings sidebar and requested four guided steps with background preparation. The frozen case, baseline failure, and pre-fix hypothesis are in [guided onboarding](guided-onboarding.md). This supersedes the two-step U03 design without changing its historical observations.
 
-The guided version is installed as app `04e72cf90584d7a4d68ca54a944f4e0f0b54c047`. Resetting only the completion flag opened the provider step; Continue opened preferences, with all controls fitting the default window. Runtime warmup took 17.304 seconds while setup was incomplete, and no engine utility process existed before completion. The existing Chat was subsequently visible. Encrypted keys and original session bytes were verified unchanged. The user interacted with the UI during the pass, so further native automation stopped; the complete theme/step matrix is not claimed. The 66 desktop checks and independent five-case renderer run are green, as are check/build and the 526-pass integration suite with five optional skips.
+The guided version is installed as app `04e72cf90584d7a4d68ca54a944f4e0f0b54c047`. Resetting only the completion flag opened the provider step; Continue opened preferences, with all controls fitting the default window. Runtime warmup ran from 10:19:14.175Z to 10:19:31.479Z (17.304 seconds) while setup was incomplete, and no engine utility process existed before completion. The existing Chat was visible after engine readiness at 10:19:54.184Z. Private evidence: `.local/desktop-evals/evidence/guided-onboarding-native.json` and `guided-onboarding-bundle.json`. Encrypted keys and original session bytes were verified unchanged. The user interacted with the UI during the pass, so further native automation stopped; the complete theme/step matrix is not claimed. The 66 desktop checks and independent five-case renderer run are green, as are check/build and the 526-pass integration suite with five optional skips.
+
+### U03.v3 — installed readiness notification
+
+Installed app CDHash `2dfbeeb8d4ba95fa8bb528b504aada823bed1913`, web entry `index-D9HqtqeI.js`, macOS arm64. The native run began at the provider step with masked keys and no Settings navigation. Otto was hidden during computer preparation, which ran from 10:29:59.271Z to 10:30:17.489Z. Existing encrypted keys and original session bytes were verified unchanged.
+
+The user directly confirmed that the readiness banner appeared and clicking it worked. This supplies the previously missing human OS-banner and activation evidence for this installed attempt; it is user-confirmed rather than independently observed by the UI tool. It does not establish every quiet-hours, opt-out, or startup permutation, which remain controlled contract evidence. Private record: `.local/desktop-evals/evidence/three-step-onboarding-native.json`.
+
+The frozen source passed 73 desktop checks and 526 integration checks, with five optional integration skips, zero failures, and verified removal of the disposable database. Check and build passed. These results precede the later Keychain explanation and attachment-overlay changes and do not validate those changes.
 
 ### T02.v1 — Pi 1.0 installed artifact check
 
@@ -68,7 +76,7 @@ On the same installed UI build, Quiet hours changed from on to off, Settings was
 
 ### T03.v1 — final-bundle reminder, partial native acceptance
 
-The exact frozen prompt was sent through the installed composer. One `schedule_create` succeeded at 09:41:35.610Z, due at 09:43:30Z. The normal dispatcher started the turn at 09:43:32.238Z; one `send_message` succeeded at 09:43:34.832Z. The exact text “The Otto desktop reminder check is complete.” appeared once in native Chat at 10:43. The sidebar showed one unread reply on Schedule, then no badge when the latest Chat was visible. No duplicate dispatch or delivery appeared through 105 seconds after the due time. Pi-reported setup plus execution cost: USD 0.0114943.
+The exact frozen prompt was sent through the installed composer. One `schedule_create` succeeded at 09:41:35.610Z, due at 09:43:30Z. The normal dispatcher started the turn at 09:43:32.238Z; one `send_message` succeeded at 09:43:34.832Z. The exact text “The Otto desktop reminder check is complete.” appeared once in native Chat at 10:43 Europe/Lisbon (09:43 UTC). The sidebar showed one unread reply on Schedule, then no badge when the latest Chat was visible. No duplicate dispatch or delivery appeared through 105 seconds after the due time. Pi-reported setup plus execution cost: USD 0.0114943.
 
 T03-C1/C2 pass. T03-C3 remains incomplete because the window-close condition could not be established while the app was also being inspected. Notification Center could not be inspected with the available UI automation. The user directly confirmed “Banner text and click both worked.” This is user-observed OS acceptance on the named bundle, distinct from the automated trace and native Chat observations. Private trace and receiving-UI evidence: `.local/desktop-evals/evidence/T03-final.json` and `chat-installed.png`.
 

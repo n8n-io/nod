@@ -2,6 +2,8 @@
 
 Frozen at 2026-10-02 00:21:30 UTC. Case `U03H.v1`: isolated empty-key onboarding, with OpenAI as the base and Anthropic as the held-out provider. The application source is not changed for this evaluation.
 
+Status: historical and stale for the current release. The recorded hashes bind an earlier uncommitted two-step onboarding snapshot, not the current PR. Keep its original score and inputs as history; the current guided wizard has a different sequence and is evaluated under [U03.v3](guided-onboarding.md#u03v3--detected-defaults-and-a-return-notification) and the committed renderer regressions. No current-release acceptance is inferred from this PASS.
+
 ## Method and fixed inputs
 
 Run the actual `desktop/ui/index.html` and `desktop/ui/setup.js` in a disposable JSDOM renderer, connected to the actual native settings store on a temporary disk path. Encryption uses the existing synthetic AES-GCM adapter; provider validation performs no network request. The prepare bridge records calls and reads the committed store, without starting an engine or model.

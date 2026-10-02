@@ -440,7 +440,11 @@ export async function verifyRuntimeRelease(release, fingerprint, configuration) 
     if (configuration.mode === 'self-signed') return;
     throw new Error('Developer ID releases require a published anonymous runtime download.');
   }
-  const original = runtimeUrl(release.url, release.archive.file);
+  await verifyRuntimeDownload(release.url, release.archive);
+}
+
+export async function verifyRuntimeDownload(url, archive) {
+  const original = runtimeUrl(url, archive.file);
   async function request(method) {
     let url = original;
     for (let redirects = 0; redirects <= 5; redirects++) {
@@ -461,7 +465,7 @@ export async function verifyRuntimeRelease(release, fingerprint, configuration) 
     throw new Error('The runtime download has too many redirects.');
   }
   let response = await request('HEAD');
-  if (!response.ok) {
+  if (!response.ok || !/^[1-9]\d*$/.test(response.headers.get('content-length') || '')) {
     await response.body?.cancel();
     response = await request('GET');
   }
@@ -470,7 +474,7 @@ export async function verifyRuntimeRelease(release, fingerprint, configuration) 
     response.status === 206
       ? Number(response.headers.get('content-range')?.split('/').at(-1))
       : Number(response.headers.get('content-length'));
-  if (![200, 206].includes(response.status) || bytes !== release.archive.bytes)
+  if (![200, 206].includes(response.status) || bytes !== archive.bytes)
     throw new Error(
       'The runtime archive is not anonymously reachable with the expected size. Publish the immutable runtime first.',
     );

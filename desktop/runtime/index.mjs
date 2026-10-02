@@ -289,6 +289,80 @@ async function prepare(options, onComputerStart) {
   });
 }
 
+export async function ensureNetwork(runDocker, { name, subnet, bridge }) {
+  let inspected = await runDocker(['network', 'inspect', name]).catch(() => undefined);
+  if (!inspected) {
+    await runDocker([
+      'network',
+      'create',
+      '--driver',
+      'bridge',
+      '--subnet',
+      subnet,
+      '--opt',
+      `com.docker.network.bridge.name=${bridge}`,
+      '--opt',
+      'com.docker.network.bridge.enable_icc=false',
+      name,
+    ]);
+    inspected = await runDocker(['network', 'inspect', name]);
+  }
+  const [network] = JSON.parse(inspected);
+  if (
+    network?.Driver !== 'bridge' ||
+    network.Scope !== 'local' ||
+    network.EnableIPv6 !== false ||
+    network.Internal !== false ||
+    network.IPAM?.Config?.length !== 1 ||
+    network.IPAM.Config[0].Subnet !== subnet ||
+    network.Options?.['com.docker.network.bridge.name'] !== bridge ||
+    network.Options?.['com.docker.network.bridge.enable_icc'] !== 'false'
+  )
+    throw new Error('The Otto computer network has unexpected isolation settings.');
+}
+
+export async function replaceContainer(
+  runDocker,
+  name,
+  imageId,
+  args,
+  { command = [], ...extra } = {},
+) {
+  const inspected = await runDocker(['container', 'inspect', name]).catch(() => undefined);
+  if (inspected) {
+    const [current] = JSON.parse(inspected);
+    if (current?.Config?.Labels?.['dev.otto.desktop.experiment'] !== 'true')
+      throw new Error('The Otto container identity changed.');
+    for (let index = 0; index < args.length; index++) {
+      if (args[index] !== '--volume') continue;
+      const [volume, destination] = args[++index].split(':');
+      if (
+        !current.Mounts?.some(
+          (mount) =>
+            mount.Type === 'volume' && mount.Name === volume && mount.Destination === destination,
+        )
+      )
+        throw new Error('The Otto container storage needs recovery.');
+    }
+    await runDocker(['stop', '--time', '20', name]);
+    await runDocker(['rm', name]);
+  }
+  await runDocker(
+    [
+      'run',
+      '-d',
+      '--name',
+      name,
+      '--label',
+      'dev.otto.desktop.experiment=true',
+      ...args,
+      imageId,
+      ...command,
+    ],
+    extra,
+  );
+}
+
 async function finishRuntime({
   dataRoot,
   resourcesPath,
@@ -318,21 +392,7 @@ async function finishRuntime({
     ['browser', '172.31.82.0/24', 'otto-browser'],
   ]) {
     const name = `otto-${role}-${identity}`;
-    const existing = await runDocker(['network', 'inspect', name]).catch(() => null);
-    if (!existing)
-      await runDocker([
-        'network',
-        'create',
-        '--driver',
-        'bridge',
-        '--subnet',
-        subnet,
-        '--opt',
-        `com.docker.network.bridge.name=${bridge}`,
-        '--opt',
-        'com.docker.network.bridge.enable_icc=false',
-        name,
-      ]);
+    await ensureNetwork(runDocker, { name, subnet, bridge });
   }
   await runLima(['shell', vm, 'sudo', 'bash', '-s'], { input: protectNetworks });
   const volumes = {
@@ -343,34 +403,8 @@ async function finishRuntime({
   };
   for (const volume of Object.values(volumes)) await runDocker(['volume', 'create', volume]);
   const image = (name) => manifest.images.find((item) => item.name === name).id;
-  async function ensureContainer(name, imageId, args, { command = [], ...extra } = {}) {
-    let current;
-    try {
-      current = JSON.parse(await runDocker(['container', 'inspect', name]))[0];
-    } catch {}
-    if (current && current.Image !== imageId) {
-      await runDocker(['stop', '--time', '20', name]);
-      await runDocker(['rm', name]);
-      current = undefined;
-    }
-    if (!current)
-      await runDocker(
-        [
-          'run',
-          '-d',
-          '--name',
-          name,
-          '--label',
-          'dev.otto.desktop.experiment=true',
-          ...args,
-          imageId,
-          ...command,
-        ],
-        extra,
-      );
-    else if (!current.State.Running) await runDocker(['start', name]);
-  }
-  await ensureContainer(
+  await replaceContainer(
+    runDocker,
     names.postgres,
     image('postgres'),
     [
@@ -418,7 +452,8 @@ async function finishRuntime({
     { signal, attempts: 12 },
   );
   status('starting', 'Preparing your workspace…', 0.82);
-  await ensureContainer(
+  await replaceContainer(
+    runDocker,
     names.workspace,
     image('workspace'),
     [
@@ -447,7 +482,7 @@ async function finishRuntime({
     { command: ['infinity'] },
   );
   status('starting', 'Preparing your browser…', 0.9);
-  await ensureContainer(names.browser, image('browser'), [
+  await replaceContainer(runDocker, names.browser, image('browser'), [
     '--network',
     `otto-browser-${identity}`,
     '--init',

@@ -85,6 +85,7 @@ type IntegrationOptions = {
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
   validateActivityCheck?(turn: TurnRef, connectionId: string): Promise<void>;
   baseUrl: string;
+  callbackReturnTo?: 'window';
   refresh?(): void;
   discovered?: Awaited<ReturnType<typeof createDiscoveredConnections>>;
   browserAccounts?: () => Promise<VaultLoginEntry[]>;
@@ -1603,12 +1604,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             }
           }
         }
+        const destination = options.callbackReturnTo ?? returnTo;
         return reply
           .header('Cache-Control', 'no-store')
           .header('Referrer-Policy', 'no-referrer')
           .redirect(
             new URL(
-              `${returnPaths[returnTo]}?connection=${outcome}${(returnTo === 'chat' || returnTo === 'window') && service ? `&service=${service}` : ''}${returnTo === 'window' && attempt ? `&attempt=${attempt}` : ''}`,
+              `${returnPaths[destination]}?connection=${outcome}${(destination === 'chat' || destination === 'window') && service ? `&service=${service}` : ''}${destination === 'window' && attempt ? `&attempt=${attempt}` : ''}`,
               options.baseUrl,
             ).href,
           );

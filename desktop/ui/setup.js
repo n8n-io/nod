@@ -254,7 +254,7 @@ function renderProviders() {
 function updateActions() {
   const loading = preparing || mode === 'loading';
   element('retry-settings').hidden =
-    loading || mode !== 'settings' || latestStatus.phase !== 'error';
+    loading || mode !== 'settings' || !(latestStatus.phase === 'error' || latestStatus.error);
   element('continue').hidden = loading || (mode === 'settings' && section !== 'providers');
   element('continue').disabled = busy || !initialized || (mode === 'settings' && !dirty);
   element('continue').textContent = busy
@@ -313,7 +313,7 @@ function showPage(focus = false) {
   for (const item of document.querySelectorAll('[data-section]'))
     item.setAttribute('aria-current', item.dataset.section === page ? 'page' : 'false');
   element('scroll-area').scrollTop = 0;
-  if (!onboarding && latestStatus.phase === 'error')
+  if (!onboarding && (latestStatus.phase === 'error' || latestStatus.error))
     displayError(latestStatus.error || latestStatus.message);
   updateActions();
   if (focus && onboarding) element('heading').focus({ preventScroll: true });
@@ -334,7 +334,11 @@ function updateStatus(value) {
   latestStatus = value || { phase: 'waiting' };
   const runtime = latestStatus.runtime;
   const failure =
-    latestStatus.phase === 'error' ? latestStatus : runtime?.phase === 'error' ? runtime : null;
+    latestStatus.phase === 'error' || latestStatus.error
+      ? latestStatus
+      : runtime?.phase === 'error'
+        ? runtime
+        : null;
   const active =
     failure ||
     (runtime && runtime.phase !== 'ready' && !['starting', 'ready'].includes(latestStatus.phase)
@@ -343,7 +347,7 @@ function updateStatus(value) {
   element('status').textContent =
     active.message ||
     (runtime?.phase === 'ready' ? 'Starting Otto…' : 'Preparing your local workspace…');
-  const ready = latestStatus.phase === 'ready';
+  const ready = latestStatus.phase === 'ready' && !failure;
   const progress = element('progress-value');
   progress.classList.toggle('determinate', ready || Boolean(failure));
   progress.style.width = ready ? '100%' : failure ? '0%' : '';
@@ -499,6 +503,10 @@ element('back').addEventListener('click', () => {
 element('retry').addEventListener('click', () => void prepare({ retry: true }));
 element('retry-settings').addEventListener('click', () => void prepare({ retry: true }));
 element('edit-settings').addEventListener('click', async () => {
+  if (mode === 'settings') {
+    showPage(true);
+    return;
+  }
   if (mode === 'onboarding') {
     step = 2;
     showPage(true);
@@ -535,7 +543,12 @@ async function initialize() {
   desktop.onPreferences?.(applyPreferences);
   desktop.onNavigate?.((navigation) => {
     if (mode === 'onboarding' && !preparing && !navigation.reset) return;
-    if (preparing && navigation.mode === 'settings') return;
+    if (
+      preparing &&
+      navigation.mode === 'settings' &&
+      ['preparing', 'starting'].includes(latestStatus.phase)
+    )
+      return;
     if (navigation.mode === mode && mode !== 'settings' && !navigation.reset) return;
     mode = navigation.mode;
     section = navigation.section;

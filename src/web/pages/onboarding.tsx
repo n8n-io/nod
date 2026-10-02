@@ -144,6 +144,11 @@ export function Onboarding({
       });
       if (request.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
       const url = connectionUrl(response.url, window.location.origin);
+      if (desktop || popup) {
+        if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
+          throw new Error('The app could not connect. Try again.');
+        attempts.current.set(slug, response.attempt);
+      }
       if (desktop) {
         await openConnection(url);
         next = 'waiting';
@@ -151,9 +156,6 @@ export function Onboarding({
         next = 'opening';
         window.location.assign(url);
       } else if (!popup.closed) {
-        if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
-          throw new Error('The app could not connect. Try again.');
-        attempts.current.set(slug, response.attempt);
         next = 'waiting';
         popup.location.href = url;
       }

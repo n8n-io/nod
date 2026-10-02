@@ -1,9 +1,10 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes, X509Certificate } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, renameSync, writeFileSync } from 'node:fs';
 import { chmod, lstat, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 
 class SigningError extends Error {}
 
@@ -29,16 +30,73 @@ async function runnerRoot(environment) {
   return root;
 }
 
-function execute(command, args, { env, signal, inherit = false, timeout = 120_000 }) {
+function processGroup(pid) {
+  return execFileSync('/bin/ps', ['-axo', 'pid=,pgid=,uid=,stat=,lstart='], {
+    encoding: 'utf8',
+    maxBuffer: 4 * 1024 ** 2,
+  })
+    .split('\n')
+    .flatMap((line) => {
+      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
+      return match && Number(match[2]) === pid && !match[4].includes('Z')
+        ? [{ pid: Number(match[1]), uid: Number(match[3]), started: match[5].trim() }]
+        : [];
+    });
+}
+
+async function stopProcessGroup(group) {
+  let verified = false;
+  for (const signal of ['SIGTERM', 'SIGKILL']) {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const members = processGroup(group.pid);
+      if (!members.length) return;
+      const leader = members.find((member) => member.pid === group.pid);
+      if (
+        (!leader && !verified) ||
+        (leader && leader.started !== group.started) ||
+        members.some((member) => member.uid !== process.getuid())
+      )
+        fail('The saved signing process group no longer has its recorded identity.');
+      verified = true;
+      if (attempt === 0)
+        try {
+          process.kill(-group.pid, signal);
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error;
+        }
+      await delay(50);
+    }
+  }
+  fail('The signing process group did not stop; cleanup was refused.');
+}
+
+function execute(command, args, { env, signal, register, inherit = false, timeout = 120_000 }) {
   return new Promise((accept, reject) => {
     if (signal?.aborted) return reject(new SigningError('Apple signing was interrupted.'));
-    const child = spawn(command, args, {
-      env,
-      detached: true,
-      stdio: inherit ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'ignore'],
-    });
+    const launcher = `import { spawn } from 'node:child_process';
+let input = '';
+for await (const bytes of process.stdin) input += bytes;
+if (!input) process.exit(1);
+const [command, args] = JSON.parse(input);
+const child = spawn(command, args, { stdio: ['ignore', 'inherit', 'inherit'] });
+child.once('error', () => process.exit(1));
+child.once('close', (code) => process.exit(code ?? 1));`;
+    const child = spawn(
+      register ? process.execPath : command,
+      register ? ['--input-type=module', '-e', launcher] : args,
+      {
+        env,
+        detached: true,
+        stdio: [
+          register ? 'pipe' : 'ignore',
+          inherit ? 'inherit' : 'pipe',
+          inherit ? 'inherit' : 'ignore',
+        ],
+      },
+    );
     let output = '';
     let stopped = false;
+    let unregister;
     let killTimer;
     const kill = (name) => {
       if (child.pid)
@@ -65,10 +123,24 @@ function execute(command, args, { env, signal, inherit = false, timeout = 120_00
       clearTimeout(timer);
       clearTimeout(killTimer);
       signal?.removeEventListener('abort', stop);
+      try {
+        if (unregister && !processGroup(child.pid).length) unregister();
+      } catch {
+        stopped = true;
+      }
       if (stopped || code !== 0)
         reject(new SigningError('An Apple signing command failed or was interrupted.'));
       else accept(output);
     });
+    if (register && child.pid)
+      try {
+        unregister = register(child.pid);
+        child.stdin.on('error', stop);
+        child.stdin.end(JSON.stringify([command, args]));
+      } catch {
+        stopped = true;
+        kill('SIGKILL');
+      }
   });
 }
 
@@ -93,9 +165,20 @@ async function readState(root) {
       fail('The saved signing cleanup state is unsafe.');
     const state = JSON.parse(await handle.readFile('utf8'));
     if (
-      state.version !== 1 ||
+      state.version !== 2 ||
       !Number.isSafeInteger(state.pid) ||
       state.pid <= 1 ||
+      !Array.isArray(state.groups) ||
+      state.groups.length > 64 ||
+      state.groups.some(
+        (group) =>
+          !Number.isSafeInteger(group.pid) ||
+          group.pid <= 1 ||
+          typeof group.started !== 'string' ||
+          !group.started ||
+          group.started.length > 64 ||
+          /[\r\n\0]/.test(group.started),
+      ) ||
       typeof state.directory !== 'string' ||
       dirname(state.directory) !== root ||
       !/^otto-apple-signing-[A-Za-z0-9]{6}$/.test(basename(state.directory)) ||
@@ -148,6 +231,7 @@ export async function cleanupAppleSigning({
     }
     if (running) fail('The signing process is still running; cleanup was refused.');
   }
+  for (const group of state.groups) await stopProcessGroup(group);
   const options = { env: signingEnvironment(env) };
   let failure;
   try {
@@ -227,7 +311,7 @@ export async function withAppleSigning(command, args, { env = process.env, run =
   const directory = await mkdtemp(join(root, 'otto-apple-signing-'));
   await chmod(directory, 0o700);
   const keychain = join(directory, 'signing.keychain-db');
-  const state = { version: 1, pid: process.pid, directory, keychain, searchList };
+  const state = { version: 2, pid: process.pid, directory, keychain, searchList, groups: [] };
   try {
     await writeFile(join(root, 'otto-apple-signing-state.json'), JSON.stringify(state), {
       mode: 0o600,
@@ -253,7 +337,23 @@ export async function withAppleSigning(command, args, { env = process.env, run =
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
   const security = (args) =>
-    run('/usr/bin/security', args, { env: childEnv, signal: controller.signal });
+    run('/usr/bin/security', args, { env: childEnv, signal: controller.signal, register });
+  const register = (pid) => {
+    const leader = processGroup(pid).find((member) => member.pid === pid);
+    if (!leader || leader.uid !== process.getuid())
+      fail('The signing child process group could not be identified.');
+    const save = () => {
+      const pending = join(directory, 'cleanup-state.json');
+      writeFileSync(pending, JSON.stringify(state), { mode: 0o600, flag: 'wx' });
+      renameSync(pending, join(root, 'otto-apple-signing-state.json'));
+    };
+    state.groups.push({ pid, started: leader.started });
+    save();
+    return () => {
+      state.groups = state.groups.filter((group) => group.pid !== pid);
+      save();
+    };
+  };
   try {
     await writeFile(certificatePath, Buffer.from(certificate, 'base64'), {
       mode: 0o600,
@@ -335,12 +435,13 @@ export async function withAppleSigning(command, args, { env = process.env, run =
           '--keychain',
           keychain,
         ],
-        { env: childEnv, signal: controller.signal },
+        { env: childEnv, signal: controller.signal, register },
       );
     }
     await run(command, args, {
       env: childEnv,
       signal: controller.signal,
+      register,
       inherit: true,
       timeout: 3_600_000,
     });

@@ -1,9 +1,23 @@
 import assert from 'node:assert/strict';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { create } from 'tar';
 import { copyBundleSource } from '../scripts/engine-dependencies.mjs';
 import {
@@ -12,6 +26,285 @@ import {
   findRuntimeAssets,
   installRuntimeArchive,
 } from '../runtime/assets.mjs';
+import { checkRelease, prepareRelease } from '../../.github/scripts/prepare-desktop-release.mjs';
+import { cleanupAppleSigning } from '../../.github/scripts/with-apple-signing.mjs';
+import { verifyRuntimeDownload } from '../scripts/release-tools.mjs';
+
+async function releaseRepository(t) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-release-history-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = (...args) =>
+    execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        PATH: process.env.PATH,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_AUTHOR_NAME: 'Synthetic Release Test',
+        GIT_AUTHOR_EMAIL: 'test@example.invalid',
+        GIT_COMMITTER_NAME: 'Synthetic Release Test',
+        GIT_COMMITTER_EMAIL: 'test@example.invalid',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  const commit = () => {
+    git('add', '.');
+    git('commit', '-m', 'Synthetic release change');
+    return git('rev-parse', 'HEAD');
+  };
+  await mkdir(join(root, 'desktop'));
+  const pkg = { name: 'synthetic-desktop', version: '0.1.0' };
+  await Promise.all([
+    writeFile(join(root, 'desktop/package.json'), JSON.stringify(pkg)),
+    writeFile(
+      join(root, 'desktop/package-lock.json'),
+      JSON.stringify({ ...pkg, packages: { '': pkg } }),
+    ),
+    writeFile(join(root, 'desktop/CHANGELOG.md'), '# Desktop changes\n'),
+    writeFile(join(root, 'desktop/main.mjs'), 'export const initial = true;\n'),
+  ]);
+  git('init', '--initial-branch=main');
+  commit();
+  return { root, git, commit };
+}
+
+test('release preparation records initial and subsequent source histories and rejects reused versions', async (t) => {
+  const f = await releaseRepository(t);
+  const initial = await prepareRelease(f.root, '0.1.0');
+  assert.equal(initial.previousTag, null);
+  f.commit();
+  assert.equal((await checkRelease(f.root, '0.1.0')).source, initial.source);
+  f.git('tag', 'desktop-v0.1.0', initial.source);
+  await assert.rejects(checkRelease(f.root, '0.1.0'), /previous tag does not match/);
+  f.git('tag', '--force', 'desktop-v0.1.0');
+  await writeFile(join(f.root, 'desktop/main.mjs'), 'export const updated = true;\n');
+  f.commit();
+  await assert.rejects(prepareRelease(f.root, '0.1.0'), /already exists/);
+  const next = await prepareRelease(f.root, '0.2.0');
+  assert.equal(next.previousTag, 'desktop-v0.1.0');
+  f.commit();
+  const checked = await checkRelease(f.root, '0.2.0');
+  assert.equal(checked.source, next.source);
+  assert.match(checked.notes, /Previous release: `desktop-v0.1.0`/);
+});
+
+test('release gate rejects malformed metadata, uncommitted notes and source drift', async (t) => {
+  const f = await releaseRepository(t);
+  await assert.rejects(prepareRelease(f.root, '0.1.0-alpha'), /stable semantic version/);
+  await prepareRelease(f.root, '0.1.0');
+  const prepared = f.commit();
+  const notes = join(f.root, 'desktop/CHANGELOG.md');
+  await writeFile(notes, '# Replaced notes\n');
+  await assert.rejects(checkRelease(f.root, '0.1.0'), /Commit desktop\/CHANGELOG.md/);
+  f.commit();
+  await assert.rejects(checkRelease(f.root, '0.1.0'), /leading changelog section/);
+  f.git('reset', '--hard', prepared);
+  const manifestPath = join(f.root, 'desktop/release.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  await writeFile(manifestPath, JSON.stringify({ ...manifest, version: '9.9.9' }));
+  f.commit();
+  await assert.rejects(checkRelease(f.root, '0.1.0'), /inconsistent/);
+  f.git('reset', '--hard', prepared);
+  await writeFile(join(f.root, 'desktop/main.mjs'), 'export const late = true;\n');
+  f.commit();
+  await assert.rejects(
+    checkRelease(f.root, '0.1.0'),
+    /Source changes landed after release preparation/,
+  );
+});
+
+test('signing cleanup fences process identity and stops an orphaned group before deleting its keychain', async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-signing-cleanup-')));
+  const directory = await mkdtemp(join(root, 'otto-apple-signing-'));
+  const worker = spawn(
+    process.execPath,
+    ['-e', "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);"],
+    { detached: true, stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  t.after(async () => {
+    try {
+      process.kill(-worker.pid, 'SIGKILL');
+    } catch {}
+    await rm(root, { recursive: true, force: true });
+  });
+  await once(worker.stdout, 'data');
+  const exited = once(worker, 'exit');
+  const started = execFileSync('/bin/ps', ['-p', String(worker.pid), '-o', 'lstart='], {
+    encoding: 'utf8',
+  }).trim();
+  const keychain = join(directory, 'signing.keychain-db');
+  const marker = join(root, 'otto-apple-signing-state.json');
+  const state = {
+    version: 2,
+    pid: 2147483647,
+    directory,
+    keychain,
+    searchList: [],
+    groups: [{ pid: worker.pid, started: 'Wrong process start time' }],
+  };
+  await writeFile(keychain, 'Synthetic keychain', { mode: 0o600 });
+  await writeFile(marker, JSON.stringify(state), { mode: 0o600 });
+  const calls = [];
+  const run = async (command, args) => {
+    assert.equal(command, '/usr/bin/security');
+    assert.equal(worker.signalCode, 'SIGKILL');
+    calls.push(args[0]);
+    if (args[0] === 'delete-keychain') await rm(keychain);
+  };
+  await assert.rejects(
+    cleanupAppleSigning({ env: { RUNNER_TEMP: root }, run }),
+    /recorded identity/,
+  );
+  assert.deepEqual(calls, []);
+  assert.equal(await readFile(keychain, 'utf8'), 'Synthetic keychain');
+  state.groups[0].started = started;
+  await writeFile(marker, JSON.stringify(state), { mode: 0o600 });
+  await cleanupAppleSigning({ env: { RUNNER_TEMP: root }, run });
+  await exited;
+  assert.deepEqual(calls, ['delete-keychain', 'list-keychains']);
+  assert.deepEqual(await readdir(root), []);
+});
+
+test('runtime public verification uses a bounded GET when HEAD is unsupported or lacks length', async (t) => {
+  for (const head of [new Response(null, { status: 405 }), new Response(null, { status: 200 })]) {
+    const calls = [];
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      calls.push(options);
+      return options.method === 'HEAD'
+        ? head
+        : new Response('x', { status: 206, headers: { 'content-range': 'bytes 0-0/123' } });
+    });
+    await verifyRuntimeDownload('https://runtime.example.invalid/runtime.tar.gz', {
+      file: 'runtime.tar.gz',
+      bytes: 123,
+    });
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['HEAD', 'GET'],
+    );
+    assert.equal(calls[1].headers.range, 'bytes=0-0');
+    await assert.rejects(
+      verifyRuntimeDownload('https://runtime.example.invalid/runtime.tar.gz', {
+        file: 'runtime.tar.gz',
+        bytes: 124,
+      }),
+      /expected size/,
+    );
+    t.mock.restoreAll();
+  }
+});
+
+test('runtime release verifies pending-tag drafts, retries safely and publishes only on request', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-runtime-release-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const assets = join(root, '.local/desktop-runtime-release');
+  const bin = join(root, 'bin');
+  await Promise.all([mkdir(assets, { recursive: true }), mkdir(bin)]);
+  const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+  const archive = Buffer.from('Synthetic runtime archive');
+  const certificate = Buffer.from('Synthetic public certificate');
+  const fingerprint = digest('Synthetic runtime inputs');
+  const name = `Otto-Runtime-darwin-arm64-${digest(archive).slice(0, 12)}.tar.gz`;
+  const release = {
+    version: 1,
+    platform: 'darwin-arm64',
+    fingerprint,
+    id: digest('Synthetic runtime files'),
+    archive: { file: name, bytes: archive.length, sha256: digest(archive) },
+    signing: { mode: 'self-signed', certificateSha256: digest(certificate) },
+  };
+  await Promise.all([
+    writeFile(join(assets, name), archive),
+    writeFile(join(assets, 'runtime-release.json'), JSON.stringify(release)),
+    writeFile(join(assets, 'SHA256SUMS'), `${digest(archive)}  ${name}\n`),
+    writeFile(join(assets, 'signing.cer'), certificate),
+  ]);
+  await writeFile(
+    join(bin, 'gh'),
+    `#!${process.execPath}\n` +
+      String.raw`const { readFileSync, writeFileSync, existsSync, mkdirSync } = require('node:fs');
+const { basename, join } = require('node:path');
+const { createHash } = require('node:crypto');
+const file = process.env.FIXTURE_STATE;
+const state = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { release: null, created: 0, calls: [], contents: {} };
+const args = process.argv.slice(2);
+state.calls.push(args);
+const save = () => writeFileSync(file, JSON.stringify(state));
+const missing = () => { save(); process.stderr.write('Not Found (HTTP 404)'); process.exit(1); };
+const output = (value) => { save(); process.stdout.write(JSON.stringify(value)); process.exit(0); };
+const flag = (name) => args[args.indexOf(name) + 1];
+if (args[0] === 'api') {
+  if (args[1] === 'repos/synthetic/otto') output({ private: true });
+  if (args[1] === 'graphql') output({ data: { repository: { release: state.release ? { databaseId: 123 } : null } } });
+  if (args[1].includes('/releases/tags/') && !state.release?.draft && state.release) output(state.release);
+  if (args[1] === 'repos/synthetic/otto/releases/123' && state.release) output(state.release);
+  missing();
+}
+if (args[0] !== 'release') throw new Error('Unexpected command');
+if (args[1] === 'create') {
+  if (state.release) throw new Error('Duplicate release');
+  state.created++;
+  state.release = { id: 123, draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), body: readFileSync(flag('--notes-file'), 'utf8'), assets: [] };
+} else {
+  if (!state.release) missing();
+  if (args[1] === 'edit') {
+    if (args.includes('--draft=false')) state.release.draft = false;
+    if (args.includes('--notes-file')) state.release.body = readFileSync(flag('--notes-file'), 'utf8');
+  } else if (args[1] === 'upload') {
+    const bytes = readFileSync(args[3]);
+    const name = basename(args[3]);
+    state.release.assets = state.release.assets.filter(asset => asset.name !== name);
+    state.release.assets.push({ name, size: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex') });
+    state.contents[name] = bytes.toString('base64');
+  } else if (args[1] === 'download') {
+    const name = flag('--pattern');
+    if (!state.contents[name]) missing();
+    mkdirSync(flag('--dir'), { recursive: true });
+    writeFileSync(join(flag('--dir'), name), Buffer.from(state.contents[name], 'base64'));
+  } else throw new Error('Unexpected release operation');
+}
+save();
+`,
+    { mode: 0o700 },
+  );
+  const statePath = join(root, 'github.json');
+  const script = fileURLToPath(
+    new URL('../../.github/scripts/desktop-release.mjs', import.meta.url),
+  );
+  const invoke = (publish) =>
+    promisify(execFile)(process.execPath, [script, 'publish-runtime'], {
+      cwd: root,
+      env: {
+        PATH: bin,
+        FIXTURE_STATE: statePath,
+        GH_TOKEN: 'synthetic-fixture-token',
+        GITHUB_REPOSITORY: 'synthetic/otto',
+        GITHUB_SHA: 'a'.repeat(40),
+        OTTO_SIGNING_MODE: 'self-signed',
+        OTTO_SIGNING_CERTIFICATE_SHA256: digest(certificate),
+        OTTO_RUNTIME_FINGERPRINT: fingerprint,
+        ...(publish ? { OTTO_PUBLISH_RELEASE: 'true' } : {}),
+      },
+      timeout: 30_000,
+    });
+  await invoke(false);
+  let saved = JSON.parse(await readFile(statePath, 'utf8'));
+  assert.equal(saved.release.draft, true);
+  assert.equal(saved.release.prerelease, true);
+  assert.equal(saved.release.assets.length, 4);
+  assert(!saved.calls.some((call) => call.includes('--draft=false')));
+  await invoke(false);
+  saved = JSON.parse(await readFile(statePath, 'utf8'));
+  assert.equal(saved.created, 1);
+  assert.equal(saved.release.draft, true);
+  assert(!saved.calls.some((call) => call.includes('--draft=false')));
+  await invoke(true);
+  saved = JSON.parse(await readFile(statePath, 'utf8'));
+  assert.equal(saved.created, 1);
+  assert.equal(saved.release.draft, false);
+  await assert.rejects(invoke(true), /Refusing to replace a published or unrelated release/);
+});
 
 test('bundle copy includes explicit release assets under .local while excluding private descendants', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'otto-bundle-copy-'));
@@ -410,3 +703,283 @@ finally:
     });
   },
 );
+
+test('runtime cache reuse rejects same-size noncritical changes and executable-mode drift', async (t) => {
+  const { chmod } = await import('node:fs/promises');
+  const options = await fixture(t);
+  const path = 'lima/bin/lima';
+  const original = Buffer.from('Synthetic additional executable');
+  await writeFile(join(options.source, path), original);
+  options.release.files.push({
+    path,
+    bytes: original.length,
+    mode: 0o755,
+    sha256: createHash('sha256').update(original).digest('hex'),
+  });
+  await create(
+    { cwd: options.source, file: options.archivePath, portable: true, noMtime: true, gzip: true },
+    options.release.files.map((file) => file.path),
+  );
+  options.release.archive = {
+    bytes: (await stat(options.archivePath)).size,
+    sha256: await assetHash(options.archivePath),
+  };
+  await writeFile(
+    join(options.resourcesPath, 'runtime-release.json'),
+    JSON.stringify(options.release),
+  );
+  const installed = await installRuntimeArchive(options);
+  const target = join(installed, path);
+  const changed = Buffer.from(original);
+  changed[0] ^= 1;
+  await writeFile(target, changed);
+  assert.equal(await findRuntimeAssets(options), undefined);
+  await installRuntimeArchive(options);
+  assert.deepEqual(await readFile(target), original);
+  await chmod(target, 0o644);
+  assert.equal(await findRuntimeAssets(options), undefined);
+  await installRuntimeArchive(options);
+  assert.equal((await stat(target)).mode & 0o7777, 0o755);
+  assert.equal(await findRuntimeAssets(options), installed);
+});
+
+test('runtime networks reject isolation drift before any workload can start', async () => {
+  const { ensureNetwork } = await import('../runtime/index.mjs');
+  const expected = {
+    name: 'otto-workspace-synthetic',
+    subnet: '172.31.81.0/24',
+    bridge: 'otto-workspace',
+  };
+  const network = {
+    Driver: 'bridge',
+    Scope: 'local',
+    EnableIPv6: false,
+    Internal: false,
+    IPAM: { Config: [{ Subnet: expected.subnet }] },
+    Options: {
+      'com.docker.network.bridge.name': expected.bridge,
+      'com.docker.network.bridge.enable_icc': 'false',
+    },
+  };
+  for (const change of [
+    (value) => (value.Driver = 'host'),
+    (value) => (value.EnableIPv6 = true),
+    (value) => (value.IPAM.Config[0].Subnet = '172.31.82.0/24'),
+    (value) => (value.Options['com.docker.network.bridge.name'] = 'unprotected-bridge'),
+    (value) => (value.Options['com.docker.network.bridge.enable_icc'] = 'true'),
+  ]) {
+    const drifted = structuredClone(network);
+    change(drifted);
+    const calls = [];
+    await assert.rejects(
+      ensureNetwork(async (args) => {
+        calls.push(args);
+        return JSON.stringify([drifted]);
+      }, expected),
+      /isolation settings/,
+    );
+    assert.deepEqual(calls, [['network', 'inspect', expected.name]]);
+  }
+  const calls = [];
+  await ensureNetwork(async (args) => {
+    calls.push(args);
+    return JSON.stringify([network]);
+  }, expected);
+  assert.deepEqual(calls, [['network', 'inspect', expected.name]]);
+});
+
+test('runtime replaces owned containers even with unchanged images and retains their data volumes', async () => {
+  const { replaceContainer } = await import('../runtime/index.mjs');
+  const name = 'otto-workspace-synthetic';
+  const image = `sha256:${'a'.repeat(64)}`;
+  const args = [
+    '--network',
+    'otto-workspace-synthetic',
+    '--cap-drop',
+    'ALL',
+    '--security-opt',
+    'no-new-privileges:true',
+    '--volume',
+    'otto-workspace-synthetic:/workspace',
+  ];
+  const current = {
+    Image: image,
+    Config: { Labels: { 'dev.otto.desktop.experiment': 'true' } },
+    Mounts: [{ Type: 'volume', Name: 'otto-workspace-synthetic', Destination: '/workspace' }],
+    HostConfig: { Privileged: true, NetworkMode: 'host' },
+    State: { Running: true },
+  };
+  const calls = [];
+  await replaceContainer(
+    async (command) => {
+      calls.push(command);
+      return command[1] === 'inspect' ? JSON.stringify([current]) : '';
+    },
+    name,
+    image,
+    args,
+  );
+  assert.deepEqual(calls, [
+    ['container', 'inspect', name],
+    ['stop', '--time', '20', name],
+    ['rm', name],
+    ['run', '-d', '--name', name, '--label', 'dev.otto.desktop.experiment=true', ...args, image],
+  ]);
+  for (const changed of [
+    { ...current, Config: { Labels: {} } },
+    { ...current, Mounts: [{ Type: 'volume', Name: 'other-data', Destination: '/workspace' }] },
+  ]) {
+    const commands = [];
+    await assert.rejects(
+      replaceContainer(
+        async (command) => {
+          commands.push(command);
+          return JSON.stringify([changed]);
+        },
+        name,
+        image,
+        args,
+      ),
+      /identity changed|storage needs recovery/,
+    );
+    assert.deepEqual(commands, [['container', 'inspect', name]]);
+  }
+});
+
+test('runtime fingerprints include tsx native dependencies and reject symlinked input roots', async (t) => {
+  const { cp, realpath } = await import('node:fs/promises');
+  const { runtimeInputs } = await import('../scripts/runtime-inputs.mjs');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-runtime-inputs-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = fileURLToPath(new URL('../../', import.meta.url));
+  const input = await runtimeInputs();
+  const sourcePaths = input.inputs.filter(
+    (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
+  );
+  for (const path of new Set([
+    ...sourcePaths,
+    'package-lock.json',
+    'desktop/package.json',
+    'desktop/package-lock.json',
+  ])) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await cp(join(repository, path), join(root, path));
+  }
+  const run = () =>
+    promisify(execFile)(process.execPath, [join(root, 'desktop/scripts/runtime-inputs.mjs')], {
+      env: { PATH: process.env.PATH },
+    });
+  const before = JSON.parse((await run()).stdout).fingerprint;
+  const lockPath = join(root, 'package-lock.json');
+  const lock = JSON.parse(await readFile(lockPath, 'utf8'));
+  const native = input.inputs
+    .find((path) => path.endsWith('node_modules/@esbuild/darwin-arm64'))
+    .slice('package-lock.json:'.length);
+  assert.ok(native);
+  lock.packages[native].integrity = 'synthetic-native-change';
+  await writeFile(lockPath, JSON.stringify(lock));
+  assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
+  const outside = join(root, 'outside');
+  await mkdir(outside);
+  await writeFile(join(outside, 'must-not-be-hashed'), 'Synthetic outside-checkout content');
+  await rm(join(root, 'src/ports'), { recursive: true });
+  await symlink(outside, join(root, 'src/ports'));
+  await assert.rejects(run(), /cannot contain symbolic links/);
+  await rm(join(root, 'src/ports'));
+  await mkdir(join(root, 'src/ports'));
+  await rm(join(root, 'Dockerfile.workspace'));
+  await symlink(join(outside, 'must-not-be-hashed'), join(root, 'Dockerfile.workspace'));
+  await assert.rejects(run(), /cannot contain symbolic links/);
+});
+
+test('image preparation replaces a cached PostgreSQL image from the wrong architecture', async (t) => {
+  const { cp, realpath } = await import('node:fs/promises');
+  const { runtimeInputs } = await import('../scripts/runtime-inputs.mjs');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-image-architecture-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = fileURLToPath(new URL('../../', import.meta.url));
+  const input = await runtimeInputs();
+  for (const path of new Set([
+    ...input.inputs.filter(
+      (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
+    ),
+    'package-lock.json',
+    'desktop/package.json',
+    'desktop/package-lock.json',
+  ])) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await cp(join(repository, path), join(root, path));
+  }
+  await symlink(join(repository, 'node_modules'), join(root, 'node_modules'));
+  await writeFile(join(root, 'desktop/scripts/check-browser-image.mjs'), '');
+  const bin = join(root, 'bin');
+  const archiveRoot = join(root, 'image');
+  await mkdir(bin);
+  await mkdir(archiveRoot);
+  const imageId = 'a'.repeat(64);
+  await writeFile(join(archiveRoot, `${imageId}.json`), '{}');
+  await writeFile(
+    join(archiveRoot, 'manifest.json'),
+    JSON.stringify([
+      {
+        Config: `${imageId}.json`,
+        RepoTags: [
+          'otto-desktop-workspace:experiment',
+          'otto-desktop-browser:experiment',
+          'postgres:17-alpine',
+        ],
+        Layers: [],
+      },
+    ]),
+  );
+  const archive = join(root, 'image.tar');
+  await create({ cwd: archiveRoot, file: archive, portable: true }, [
+    'manifest.json',
+    `${imageId}.json`,
+  ]);
+  const statePath = join(root, 'docker.json');
+  await writeFile(statePath, JSON.stringify({ architecture: 'amd64', calls: [] }));
+  await writeFile(
+    join(bin, 'docker'),
+    `#!${process.execPath}\n` +
+      String.raw`
+const { readFileSync, writeFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+const state = JSON.parse(readFileSync(process.env.FIXTURE_STATE, 'utf8'));
+state.calls.push(args);
+if (args[0] === 'pull') state.architecture = 'arm64';
+writeFileSync(process.env.FIXTURE_STATE, JSON.stringify(state));
+if (args[0] === 'image' && args[1] === 'inspect') process.stdout.write(JSON.stringify([{ Id: 'sha256:' + 'a'.repeat(64), Architecture: args[2] === 'postgres:17-alpine' ? state.architecture : 'arm64', Os: 'linux' }]));
+else if (args[0] === 'save') process.stdout.write(readFileSync(process.env.FIXTURE_ARCHIVE));
+else if (args[0] !== 'pull') throw new Error('Unexpected Docker command');
+`,
+    { mode: 0o700 },
+  );
+  const args = [
+    join(root, 'desktop/scripts/prepare-runtime.mjs'),
+    '--images-only',
+    '--prebuilt-images',
+  ];
+  const environment = {
+    PATH: bin,
+    FIXTURE_STATE: statePath,
+    FIXTURE_ARCHIVE: archive,
+    OTTO_RUNTIME_ASSETS: join(root, 'assets'),
+    OTTO_RUNTIME_DOWNLOADS: join(root, 'downloads'),
+  };
+  await promisify(execFile)(process.execPath, args, { env: environment, timeout: 20_000 });
+  const saved = JSON.parse(await readFile(statePath, 'utf8'));
+  assert.deepEqual(
+    saved.calls.filter((call) => call[0] === 'pull'),
+    [['pull', '--platform', 'linux/arm64', 'postgres:17-alpine']],
+  );
+  const manifest = JSON.parse(await readFile(join(root, 'assets/images-manifest.json'), 'utf8'));
+  assert.equal(manifest.images.find((image) => image.name === 'postgres').id, `sha256:${imageId}`);
+  saved.calls = [];
+  await writeFile(statePath, JSON.stringify(saved));
+  await promisify(execFile)(process.execPath, args, { env: environment, timeout: 20_000 });
+  assert.equal(
+    JSON.parse(await readFile(statePath, 'utf8')).calls.some((call) => call[0] === 'pull'),
+    false,
+  );
+});

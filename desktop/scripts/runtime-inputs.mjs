@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +8,8 @@ const inputs = [
   '.dockerignore',
   'Dockerfile.workspace',
   'desktop/runtime/Dockerfile.browser',
+  'desktop/runtime/browser/package.json',
+  'desktop/runtime/browser/package-lock.json',
   'desktop/runtime/downloads.json',
   'desktop/scripts/build-lima.mjs',
   'desktop/scripts/check-browser-image.mjs',
@@ -30,11 +32,10 @@ export async function runtimeInputs() {
   const entries = [];
   async function collect(path) {
     const full = join(repository, path);
-    let children;
-    try {
-      children = await readdir(full, { withFileTypes: true });
-    } catch (error) {
-      if (error.code !== 'ENOTDIR') throw error;
+    const metadata = await lstat(full);
+    if ((!metadata.isFile() && !metadata.isDirectory()) || (await realpath(full)) !== full)
+      throw new Error('Runtime inputs cannot contain symbolic links.');
+    if (metadata.isFile()) {
       entries.push([
         path,
         createHash('sha256')
@@ -43,11 +44,9 @@ export async function runtimeInputs() {
       ]);
       return;
     }
-    for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!child.isFile() && !child.isDirectory())
-        throw new Error('Runtime inputs cannot contain symbolic links.');
+    const children = await readdir(full, { withFileTypes: true });
+    for (const child of children.sort((a, b) => a.name.localeCompare(b.name)))
       await collect(`${path}/${child.name}`);
-    }
   }
   for (const input of inputs) await collect(input);
   const configuration = JSON.parse(
@@ -70,6 +69,7 @@ export async function runtimeInputs() {
   entries.push(['signing.mode', signingMode]);
   for (const [lockPath, name] of [
     ['package-lock.json', 'tar'],
+    ['package-lock.json', 'tsx'],
     ['desktop/package-lock.json', '@electron/osx-sign'],
   ]) {
     const lock = JSON.parse(await readFile(join(repository, lockPath), 'utf8'));
@@ -95,7 +95,10 @@ export async function runtimeInputs() {
         `${lockPath}:${path}`,
         createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
       ]);
-      for (const dependency of Object.keys(metadata.dependencies || {}))
+      for (const dependency of Object.keys({
+        ...metadata.dependencies,
+        ...metadata.optionalDependencies,
+      }))
         collectPackage(dependency, path);
     }
     collectPackage(name);

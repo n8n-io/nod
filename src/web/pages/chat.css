@@ -540,7 +540,7 @@
 @keyframes chat-message-focus {
   0%,
   25% {
-    background-color: color-mix(in srgb, var(--message-background), var(--foreground) 10%);
+    background-color: color-mix(in srgb, var(--message-background), var(--accent) 22%);
   }
   100% {
     background-color: var(--message-background);

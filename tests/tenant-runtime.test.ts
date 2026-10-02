@@ -31,6 +31,23 @@ import { join, resolve } from 'node:path';
 import { createLocalRuntimeTransport } from '../src/providers/runtime-host/local.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
 
+async function bounded<T>(promise: Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Fixture did not reach the expected boundary.')),
+          2_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 describe('runtime host', () => {
   function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -40,23 +57,6 @@ describe('runtime host', () => {
       reject = no;
     });
     return { promise, resolve, reject };
-  }
-
-  async function bounded<T>(promise: Promise<T>) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        promise,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error('Fixture did not reach the expected boundary.')),
-            2_000,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   function fixture(t: TestContext, heartbeatMs = 15_000) {
@@ -767,20 +767,20 @@ describe('tenant drain', () => {
         );
       assert.equal(f.admission.paused, false);
       const working = f.request('/api/work');
-      await started.promise;
+      await bounded(started.promise);
       const preparing = f.request('/api/runtime/drain', input);
       void preparing.then(() => {
         received = true;
       });
-      await stopping.promise;
+      await bounded(stopping.promise);
       assert.equal(f.admission.paused, true);
       assert.equal(received, false);
       assert.equal((await f.request('/api/work')).statusCode, 503);
       finish.resolve();
-      assert.equal((await working).statusCode, 200);
+      assert.equal((await bounded(working)).statusCode, 200);
       assert.equal(received, false);
       workerFinished.resolve();
-      const receipt = await preparing;
+      const receipt = await bounded(preparing);
       assert.equal(receipt.statusCode, 200, receipt.body);
       assert.equal(receipt.json().drained, true);
       assert.equal(effects, 1);

@@ -377,6 +377,7 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
   const loads: Array<{ owner: string; thread: string; resolve(value: unknown): void }> = [];
   const saved: Array<{ owner: string; thread: string; cursor: unknown }> = [];
   let failRead = false;
+  let failWrite = false;
   Object.assign(dom.window, {
     ottoDesktop: {
       getChatReadCursor: (owner: string, thread: string) =>
@@ -384,6 +385,7 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
           ? Promise.reject(new Error('Synthetic saved-state failure'))
           : new Promise((resolve) => loads.push({ owner, thread, resolve })),
       setChatReadCursor: async (owner: string, thread: string, cursor: unknown) => {
+        if (failWrite) throw new Error('Synthetic read-position write failure');
         saved.push({ owner, thread, cursor });
       },
     },
@@ -469,4 +471,18 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
   assert.equal(result.count, 1);
   assert.equal(result.pending, false);
   assert.equal(saved.length, writes);
+  failWrite = true;
+  await act(async () => result.markRead(threadC));
+  assert.equal(result.count, 1);
+  assert.equal(result.pending, true);
+  assert.equal(saved.length, writes);
+  failWrite = false;
+  await act(async () => dom.window.dispatchEvent(new dom.window.Event('online')));
+  await act(async () => loads.at(-1)!.resolve(cursor));
+  assert.equal(result.count, 0);
+  assert.equal(result.pending, false);
+  assert.equal(saved.length, writes + 1);
+  assert.equal(saved.at(-1)!.owner, ownerA);
+  assert.equal(saved.at(-1)!.thread, threadC);
+  assert.deepEqual(saved.at(-1)!.cursor, latestChatReadCursor([unreadMessage(2)]));
 });

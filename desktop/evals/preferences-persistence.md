@@ -1,6 +1,8 @@
 # Preference persistence evaluation
 
-This is a synthetic renderer and native-store contract evaluation for the Otto desktop Settings refinement in this conversation. It does not establish installed Electron or live engine acceptance; the parent task owns those checks.
+This is a synthetic renderer and native-store contract evaluation for the Otto desktop Settings persistence refinement. It does not establish installed Electron or live engine acceptance; the parent task owns those checks.
+
+These hashes and scores describe the uncommitted source snapshots at the original red/green attempts, before later onboarding and Settings changes. They do not identify the current PR or release assets. Current CI reruns the committed persistence regressions; it does not rerun an independent holdout because that synthetic case is now disclosed.
 
 ## Frozen case
 
@@ -15,7 +17,7 @@ This is a synthetic renderer and native-store contract evaluation for the Otto d
 | Run rule          | Node 26.7.0, macOS, `TZ=Europe/Lisbon`, deterministic harness with no model; three repetitions per red and green attempt; ten-second limit per repetition.                                                                                      |
 | Base commit       | `95c8d3ffed646a6be07cd738ecd73b4fefec8de6`, with the current desktop experiment working-tree changes.                                                                                                                                           |
 | Input hashes      | SHA-256: renderer `eb51ab0746d38af7fdad45f2ad963015bd7cf9be1296852b3b3efe9a0feba151`; HTML `c627b01677346ed34493e69e136265b4ae5665699b61945426de8bf5f2257c5a`; native store `b9edf30f483050a01abc5b64e978b83ce23cbee0a00f6cb5f372ce57565b8b88`. |
-| Holdout           | PERSIST-02.v1: an independent agent selects different fields and expected values, then scores the same timing contract without sharing its answer key with the fixing agent.                                                                    |
+| Holdout           | PERSIST-HOLDOUT-01.v1: an independent agent selects different fields and expected values, then scores the same timing contract without sharing its answer key with the fixing agent.                                                            |
 
 | Check      | Applies when                                                    | Pass condition                                                                                            | Evidence and method                                                   |
 | ---------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -65,7 +67,7 @@ Times are the captured log's filesystem creation and final-write timestamps; ela
 
 ### Independent holdout and final gate
 
-The separate evaluator selected different fields, froze its inputs, and ran the same main-queue and disk-reopen checks without modifying the renderer. PERSIST-02.v1 passed 3/3 repetitions (478 ms, 21 ms, 23 ms): pass-at-least-once 100%; pass-every-time 100%. It independently confirmed the fixed renderer hash above. Its setup, answer key, and run metadata are in [the separate holdout record](preferences-persistence-holdout.md), which the fixing agent did not inspect.
+The separate evaluator selected different fields, froze its inputs, and ran the same main-queue and disk-reopen checks without modifying the renderer. PERSIST-HOLDOUT-01.v1 passed 3/3 repetitions (478 ms, 21 ms, 23 ms): pass-at-least-once 100%; pass-every-time 100%. It independently confirmed the fixed renderer hash above. Its setup, answer key, and run metadata are in [the separate holdout record](preferences-persistence-holdout.md), which the fixing agent did not inspect.
 
 Evidence: `/tmp/otto-preferences-persistence-holdout-20261002.log`, SHA-256 `b76fd4c03bd145454b6d3cb43a8b693224b4029168a1b27c8c6ba55ca9bf86d7`.
 

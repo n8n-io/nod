@@ -1,7 +1,8 @@
 FROM node:24.21.0-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends chromium xvfb xauth xdotool ffmpeg fonts-liberation ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-RUN npm init -y && npm pkg set type=module && npm install --omit=dev --no-audit --no-fund agent-browser@0.38.1 tsx@4.20.6 zod@4.1.12 && npm cache clean --force
+COPY desktop/runtime/browser/package.json desktop/runtime/browser/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY src/ports ./src/ports/
 COPY src/shared ./src/shared/
 COPY src/providers/process.ts ./src/providers/

@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { basename, join } from 'node:path';
+import { verifyRuntimeDownload } from '../../desktop/scripts/release-tools.mjs';
 
 const root = process.cwd();
 const runtimeDirectory = join(root, '.local/desktop-runtime-release');
@@ -40,6 +41,33 @@ function gh(args, repository = sourceRepository) {
 function api(route, repository = sourceRepository) {
   const result = gh(['api', route], repository);
   return result === undefined ? undefined : JSON.parse(result);
+}
+
+function releaseByTag(repository, tag) {
+  const published = api(`repos/${repository}/releases/tags/${tag}`, repository);
+  if (published) return published;
+  const [owner, name] = repository.split('/');
+  const result = JSON.parse(
+    gh(
+      [
+        'api',
+        'graphql',
+        '-f',
+        'query=query($owner: String!, $name: String!, $tag: String!) { repository(owner: $owner, name: $name) { release(tagName: $tag) { databaseId } } }',
+        '-f',
+        `owner=${owner}`,
+        '-f',
+        `name=${name}`,
+        '-f',
+        `tag=${tag}`,
+      ],
+      repository,
+    ),
+  );
+  const id = result.data?.repository?.release?.databaseId;
+  if (id === undefined || id === null) return;
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid GitHub release identifier.');
+  return api(`repos/${repository}/releases/${id}`, repository);
 }
 
 async function hash(path) {
@@ -199,7 +227,7 @@ async function plan() {
 }
 
 async function uploadDraft({ repository, tag, title, notes, marker, files }) {
-  let release = api(`repos/${repository}/releases/tags/${tag}`, repository);
+  let release = releaseByTag(repository, tag);
   if (release && (!release.draft || !release.body?.includes(marker)))
     throw new Error('Refusing to replace a published or unrelated release.');
   const notesPath = join(process.env.RUNNER_TEMP || root, `otto-${tag}-notes.md`);
@@ -213,6 +241,8 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
         '--repo',
         repository,
         '--draft',
+        '--prerelease',
+        '--latest=false',
         ...(repository === sourceRepository ? ['--target', process.env.GITHUB_SHA] : []),
         '--title',
         title,
@@ -223,7 +253,19 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
     );
   else
     gh(
-      ['release', 'edit', tag, '--repo', repository, '--title', title, '--notes-file', notesPath],
+      [
+        'release',
+        'edit',
+        tag,
+        '--repo',
+        repository,
+        '--prerelease',
+        '--latest=false',
+        '--title',
+        title,
+        '--notes-file',
+        notesPath,
+      ],
       repository,
     );
   for (const file of files) {
@@ -231,7 +273,7 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
       throw new Error('GitHub release assets must be smaller than 2 GiB.');
     gh(['release', 'upload', tag, file, '--repo', repository, '--clobber'], repository);
   }
-  release = api(`repos/${repository}/releases/tags/${tag}`, repository);
+  release = releaseByTag(repository, tag);
   if (!release?.draft) throw new Error('Release draft was not created.');
   for (const file of files) {
     const asset = release.assets.find((entry) => entry.name === basename(file));
@@ -243,6 +285,7 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
 
 async function publishRuntime() {
   repositoryName(runtimeRepository);
+  const publish = process.env.OTTO_PUBLISH_RELEASE === 'true';
   const fingerprint = process.env.OTTO_RUNTIME_FINGERPRINT;
   if (!hashPattern.test(fingerprint)) throw new Error('Invalid runtime fingerprint.');
   const tag = `runtime-darwin-arm64-${fingerprint}`;
@@ -277,35 +320,33 @@ async function publishRuntime() {
       ),
     ],
   });
-  gh(
-    [
-      'release',
-      'edit',
-      tag,
-      '--repo',
+  if (publish)
+    gh(
+      [
+        'release',
+        'edit',
+        tag,
+        '--repo',
+        runtimeRepository,
+        '--draft=false',
+        '--prerelease',
+        '--latest=false',
+      ],
       runtimeRepository,
-      '--draft=false',
-      '--prerelease',
-      '--latest=false',
-    ],
-    runtimeRepository,
-  );
+    );
   const downloaded = descriptor(
-    await downloadDescriptor(runtimeRepository, tag, baseUrl, !repository.private),
+    await downloadDescriptor(runtimeRepository, tag, baseUrl, !repository.private && publish),
     fingerprint,
     baseUrl,
     !repository.private,
   );
   if (downloaded.archive.sha256 !== value.archive.sha256)
-    throw new Error('Public runtime descriptor differs from the uploaded file.');
-  if (!repository.private) {
-    const response = await fetch(value.url, { method: 'HEAD', signal: AbortSignal.timeout(30000) });
-    if (!response.ok || Number(response.headers.get('content-length')) !== value.archive.bytes)
-      throw new Error('The runtime archive is not publicly downloadable with the expected size.');
-  }
+    throw new Error('Downloaded runtime descriptor differs from the uploaded file.');
+  if (!repository.private && publish) await verifyRuntimeDownload(value.url, value.archive);
   await outputValues({
     runtime_url: `${baseUrl}/${value.archive.file}`,
     runtime_sha256: value.archive.sha256,
+    published: publish,
   });
 }
 
@@ -375,15 +416,19 @@ async function draftApp() {
       `${metadata.disk.sha256}  ${disk}`
   )
     throw new Error('Packaged DMG and checksums do not match the release metadata.');
-  const runtimeLink = `https://github.com/${runtimeRepository}/releases/download/${runtimeTag}/${runtime.archive.file}`;
+  const runtimeRelease = releaseByTag(runtimeRepository, runtimeTag);
+  if (!runtimeRelease) throw new Error('The matching runtime release is unavailable.');
+  const runtimeLink = runtimeRelease.draft
+    ? runtimeRelease.html_url
+    : `https://github.com/${runtimeRepository}/releases/download/${runtimeTag}/${runtime.archive.file}`;
   const installation = [
     `Apple Silicon macOS ${runtime.minimumSystemVersion} or later.`,
     signingMode === 'self-signed'
       ? 'Internal self-signed preview. This is not Apple-notarized; macOS may require Privacy & Security → Open Anyway on first launch.'
       : 'Signed with Developer ID and notarized by Apple.',
-    runtime.url
+    runtime.url && !runtimeRelease.draft
       ? 'Otto downloads and verifies its runtime on first launch.'
-      : `Download the [matching runtime pack](${runtimeLink}), leave it compressed, and select it when Otto asks. GitHub access is required for these internal downloads.`,
+      : `Download the [matching runtime pack](${runtimeLink})${runtimeRelease.draft ? ' from the draft release assets' : ''}, leave it compressed, and select it when Otto asks. GitHub access is required for these internal downloads.`,
     'Saved keys and conversations remain in the existing local profile.',
   ].join('\n\n');
   const release = await uploadDraft({

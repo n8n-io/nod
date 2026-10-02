@@ -149,10 +149,13 @@ if (hostOnly) {
         ['build', '--platform', 'linux/arm64', '-f', item.dockerfile, '-t', item.tag, '.'],
         { stdio: 'inherit' },
       );
-    else if (!item.dockerfile)
-      await run('docker', ['image', 'inspect', item.tag]).catch(() =>
-        run('docker', ['pull', '--platform', 'linux/arm64', item.tag], { stdio: 'inherit' }),
-      );
+    else if (!item.dockerfile) {
+      const current = await run('docker', ['image', 'inspect', item.tag])
+        .then((output) => JSON.parse(output)[0])
+        .catch(() => undefined);
+      if (current?.Architecture !== 'arm64' || current?.Os !== 'linux')
+        await run('docker', ['pull', '--platform', 'linux/arm64', item.tag], { stdio: 'inherit' });
+    }
     const inspection = JSON.parse(await run('docker', ['image', 'inspect', item.tag]))[0];
     if (inspection.Architecture !== 'arm64' || inspection.Os !== 'linux')
       throw new Error(`${item.name} image is not Linux arm64.`);

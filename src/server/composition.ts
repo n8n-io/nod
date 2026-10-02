@@ -57,6 +57,7 @@ import { createChannelSettings } from './channel-settings.ts';
 import {
   configuration,
   dataRoot,
+  desktopMode,
   ownerId,
   publicOrigin,
   runtimeGeneration,
@@ -547,6 +548,7 @@ export async function createApplication(
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,
+    callbackReturnTo: desktopMode ? 'window' : undefined,
     discovered,
     browserAccounts: () => vault.list(ownerId),
     removeBrowserAccount: (id) => vault.removeLogin(id),

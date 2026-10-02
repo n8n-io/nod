@@ -67,7 +67,7 @@ export function assistantNotificationPreview(message, secrets = []) {
 export function isQuietTime(preferences, now = new Date()) {
   if (!preferences.quietHoursEnabled) return false;
   const current = new Intl.DateTimeFormat('en-GB', {
-    timeZone: preferences.timeZone ?? 'UTC',
+    timeZone: preferences.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone,
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',

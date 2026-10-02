@@ -33,17 +33,7 @@ Hypothesis: coupling runtime preparation to engine launch and reusing settings n
 
 ## Attempts
 
-### Attempt 1 — implemented and partially observed in the installed app
-
-Base `f187ac8`; app CDHash `04e72cf90584d7a4d68ca54a944f4e0f0b54c047`; unchanged runtime `88904e5a1db4527ce90791a2296bf20740b0f5450ef84fad94b02f7a0eb4e81b`; macOS arm64. No model request was made for this onboarding check.
-
-The installed profile's completion flag was reset without touching credentials or conversation storage. Native observation confirmed masked provider fields, the upfront trust explanation, no Settings sidebar, and Continue opening the preferences step. Every preference control fit within the default 680 × 760 window. Computer warmup began at 10:19:14.175Z while onboarding was incomplete and there was no engine utility process. It finished at 10:19:31.479Z; the existing Chat was visible after engine readiness at 10:19:54.184Z. That interval includes setup interaction, not only engine startup.
-
-The UI tool subsequently reported user interaction, so further native automation stopped. The native run does not establish the complete four-step/theme matrix. Source/lifecycle checks establish the remaining state transitions separately. Encrypted credential bytes and the original session bytes were independently verified unchanged. Private evidence: `.local/desktop-evals/evidence/guided-onboarding-native.json` and `guided-onboarding-bundle.json`.
-
-Controlled results: 66/66 desktop checks pass. Independent actual-renderer OpenAI/Anthropic empty-key and preference edge checks pass 5/5, with frozen source hashes. They cover guided order, masked-key retention, Back, delayed persistence, explicit retry, missing selected keys, shared warmup, and abort/cleanup. Root check/build pass; integration passes 526 with five optional skips and zero failures in a fresh disposable database. These are not first-install, live-provider, or native OS permission evidence.
-
-Case result: partial native acceptance with controlled gates green; U03-C9's complete installed theme matrix remains unmeasured. The app is available for direct user review through Replay onboarding.
+The authoritative v2 attempt record is in [Guided onboarding redesign](runs.md#guided-onboarding-redesign--2026-10-02). It preserves partial native acceptance, controlled results, and the unmeasured theme matrix.
 
 Independent review also identified a recovery gap before packaging: a profile with `onboardingCompleted: true` but no key for its selected provider was routed into loading, while startup skipped the engine preparation that would report the missing key. The predicted outcome is an endless loading screen. The recovery fix must route that state to provider setup, including a provider change that leaves only the other provider's key present. This is a separate migration/recovery regression, not evidence from a real user's reset profile.
 
@@ -59,10 +49,4 @@ Use one installed incomplete-onboarding launch with existing encrypted keys and 
 
 Hypothesis: removing predictable defaults from the wizard reduces effort without reducing control, while a one-use preparation receipt plus durable notification choice can bring an absent user back without reopening windows or duplicating assistant notifications. Reject if explicit settings are overwritten, opting out still notifies, a completed replay emits a fresh readiness notification, or runtime completion forces focus.
 
-### Attempt 1 — installed notification accepted by the user
-
-Installed app CDHash `2dfbeeb8d4ba95fa8bb528b504aada823bed1913`, web entry `index-D9HqtqeI.js`, macOS arm64. The native run began at the provider step with masked keys and no Settings navigation. Otto was hidden during computer preparation, which ran from 10:29:59.271Z to 10:30:17.489Z. Existing encrypted keys and original session bytes were verified unchanged.
-
-The user directly confirmed that the readiness banner appeared and clicking it worked. This supplies the previously missing human OS-banner and activation evidence for this installed attempt; it is user-confirmed rather than independently observed by the UI tool. It does not establish every quiet-hours, opt-out, or startup permutation, which remain controlled contract evidence. Private record: `.local/desktop-evals/evidence/three-step-onboarding-native.json`.
-
-The frozen source passed 73 desktop checks and 526 integration checks, with five optional integration skips, zero failures, and verified removal of the disposable database. Check and build passed. These results precede the later Keychain explanation and attachment-overlay changes and do not validate those changes.
+The authoritative v3 attempt record is in [U03.v3 readiness notification](runs.md#u03v3--installed-readiness-notification). The banner and click were confirmed by the user; other permutations remain controlled contract evidence.

@@ -108,7 +108,7 @@ function StartupShell({ children }: { children: ReactNode }) {
           <BrandMark />
           <span>otto</span>
         </span>
-        <nav className="main-nav">
+        <nav className="main-nav" id="sidebar-navigation">
           <ul>
             {navigationItems.map((item) => (
               <li key={item.path}>

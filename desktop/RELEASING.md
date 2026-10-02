@@ -1,6 +1,6 @@
 # Desktop releases
 
-The current distribution target is an internal, self-signed Apple Silicon preview. The workflows prepare a version/changelog PR, require CI on the exact main revision, build a signed DMG, and verify the uploaded bytes before publishing. The app release stays a draft unless the workflow's publish option is enabled. New runtime packs are published as immutable prereleases during the build so subsequent app releases can reuse them.
+The current distribution target is an internal, self-signed Apple Silicon preview. The workflows prepare a version/changelog PR, require CI on the exact main revision, build a signed DMG, and verify the uploaded bytes before publishing. The app and any new runtime release stay drafts unless the workflow's publish option is enabled. Both are marked as prereleases, including the first `0.1.0` alpha. Published runtime packs are immutable and can be reused by subsequent app releases.
 
 Self-signing does not satisfy Gatekeeper's Developer ID and notarization requirements. A new Mac may require **System Settings → Privacy & Security → Open Anyway**. Otto explains its separate Keychain prompt before accessing saved API keys. Keeping the same certificate across builds gives the app a stable signing identity; it does not guarantee that macOS will never ask for Keychain approval. See [Electron signing guidance](https://www.electronjs.org/docs/latest/tutorial/code-signing) and [Apple distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/).
 
@@ -28,8 +28,8 @@ Repository Actions settings must permit GitHub Actions to create pull requests. 
 2. Run **Prepare desktop release** from main with a stable version such as `0.1.0`. It opens or updates `release/desktop`, changing only the desktop package, lockfile, release manifest, and changelog. Review the generated commit summaries and edit them into user-facing release notes as needed.
 3. Merge that release PR after its CI passes. Wait for CI on the resulting exact main commit. If other source changes landed after the changelog was generated, regenerate the release PR before packaging; only the four release metadata files may differ from the recorded source.
 4. Run **Build desktop release** from main. Leave **publish** disabled for the first inspection. The workflow verifies the committed version/notes, the exact successful CI revision, signing configuration, destination access, and any reusable runtime before starting Mac jobs.
-5. Inspect the app draft and complete the physical-Mac acceptance checks below. The draft includes the DMG, checksums, public signing certificate, app/runtime metadata, and the current changelog section.
-6. Publish that verified draft through GitHub when approved. Future runs can enable **publish** to publish a preview automatically after asset verification. Published versions are never overwritten; prepare a new version for changes.
+5. Inspect the app and runtime drafts and complete the physical-Mac acceptance checks below. The app draft includes the DMG, checksums, public signing certificate, app/runtime metadata, and the current changelog section. Its notes link to the matching runtime draft's release page. Draft access requires repository write access. Download draft assets from their GitHub release pages or with `gh release download <tag> --repo <owner/repository>`.
+6. When approved, publish the verified runtime draft first, then the app draft through GitHub. Future runs can enable **publish** to publish both previews after asset verification. Published versions are never overwritten; prepare a new version for changes. Draft runtimes are rebuilt on a new workflow run; only published runtime packs qualify for reuse.
 
 Private runtime downloads require GitHub access. The app contains no GitHub credential: a tester downloads the matching runtime archive from the release notes and selects it in Otto's file picker. A previously verified local runtime is reused. Automatic first-launch downloading requires a public immutable runtime URL, which is reserved for the later Developer ID distribution path.
 
@@ -49,7 +49,7 @@ flowchart LR
   C --> R{Runtime inputs changed?}
   R -->|Yes| I[Linux ARM image build]
   I --> H[Mac host tools and runtime signing]
-  H --> V[Publish and verify runtime]
+  H --> V[Upload and verify runtime draft]
   R -->|No| D[Verify existing runtime descriptor]
   V --> A[Mac app packaging and signature checks]
   D --> A
@@ -71,7 +71,7 @@ GitHub's listed standard rates currently make Linux ARM materially cheaper than 
 
 ## Signing and verification boundaries
 
-The signing wrapper imports the certificate into an isolated temporary keychain, verifies its public fingerprint, identity and validity, and supplies only keychain handles and public metadata to packaging. It removes raw Apple secrets from child environments. Cleanup restores the previous keychain search list and deletes its own temporary material, including after a failed command. It never changes the user's certificate trust settings. An `always()` workflow step provides an additional cleanup attempt.
+The signing wrapper imports the certificate into an isolated temporary keychain, verifies its public fingerprint, identity and validity, and supplies only keychain handles and public metadata to packaging. It removes raw Apple secrets from child environments. Each signing command waits until its process group is recorded. Cleanup verifies and stops surviving groups before restoring the previous keychain search list and deleting its own temporary material, including after a failed command. It never changes the user's certificate trust settings. An `always()` workflow step provides an additional cleanup attempt.
 
 Self-signed Electron builds retain hardened runtime but use the `disable-library-validation` entitlement: internal certificates have no Apple Team ID, so the normal library validation rejects Electron’s own framework. This exception applies only to self-signed app processes; Developer ID keeps the default Electron role entitlements. See [Apple library validation](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.disable-library-validation).
 

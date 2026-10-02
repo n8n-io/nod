@@ -1,5 +1,13 @@
 # Desktop experiment validation
 
+## Alpha PR review — 2026-10-02
+
+[PR #97](https://github.com/n8n-io/otto/pull/97) includes main at `60bf73ac3777252442f97b54e9b1309a388fd3f8`. Its initial hosted CI passed, including browser recovery and E2B isolation. The following review fixes passed a fresh local combined run: **525 integration passes with six optional skips**, **105 desktop passes with one privileged Linux skip**, type/architecture/format checks, and the production build. The disposable database was removed and source hashes stayed unchanged during that run. Updated-head hosted CI remains the merge gate.
+
+Review fixes cover runtime isolation drift and cache verification, locked browser dependencies, engine-exit and deferred-restart recovery, OAuth callbacks and repeated sign-in clicks, durable preference/read-position failures, timezone defaults, and release/signing contracts. Disposable Docker checks verified retained volume contents, restored restrictions, network rejection and real browser operation; synthetic Vault/AWS environment injections were rejected. Disposable native signing verified execution and restoration of the Keychain search list. These are isolated checks, not installation of CI-produced assets.
+
+The release environment is configured with a permanent internal self-signed identity. New app and runtime releases remain drafts unless publication is explicitly requested. Historical native observations below refer to their recorded bundles; the latest PR review changes have not yet been installed or tested on a fresh physical Mac. The first alpha is not notarized.
+
 ## Seamless title bar — 2026-10-02
 
 Removed the desktop toolbar's bottom border. The title bar and sidebar already share the same theme color. The installed app was visually checked in light and dark appearance; System appearance was restored afterward. All 29 installed web files match the new build, and the original settings, preferences, owner/runtime configuration and conversation file remain unchanged. No live model request was sent.
@@ -72,7 +80,7 @@ Base `f187ac8911beba6d091d54b3274312c67f13ef81`; the earlier main comparison was
 ### User-facing changes
 
 - Onboarding now has three guided steps: provider keys, login/notifications, and actual preparation. Date/time defaults are detected; existing preferences survive and remain editable in Settings.
-- Readiness can notify an opted-in user who leaves during setup, outside quiet hours. It neither steals focus nor notifies on ordinary completed-profile startup. The user confirmed the real banner and click on the preceding `2dfbeeb8` installed revision; this is direct human acceptance, distinct from controlled event-order tests.
+- Readiness can notify an opted-in user who leaves during setup, outside quiet hours. It neither steals focus nor notifies on ordinary completed-profile startup. The authoritative user-confirmed banner and click record is in [U03.v3](evals/runs.md#u03v3--installed-readiness-notification).
 - Settings has no separate title strip, uses tighter spacing, and no longer focuses its heading when changing sections. The duplicate page title in the main desktop toolbar is removed. The Chat bug-report action remains visible.
 - Before saving keys or opening Otto, a macOS-only explanation identifies the Keychain password prompt and says to enter the password only in the system dialog. The same explanation appears during configured startup before decryption. The installed startup view was observed before the OS prompt; no password was read or entered by automation.
 - Attachment dialogs reserve the native title-bar region. The same available height controls images, video, PDF and spreadsheet previews; browser dialogs retain their original geometry. The keyboard skip link also stays below native controls.
@@ -95,11 +103,7 @@ The installed app is `~/Applications/Otto Preview.app`, deep/strict ad-hoc signa
 
 ### Installed onboarding observations
 
-Only the completion flag was reset. Saved encrypted keys and the entire pre-existing Pi session were independently verified unchanged afterward. The actual app opened on the provider step without a Settings sidebar, and Continue opened preferences. All date/time, quiet-hours, and appearance controls fit in the default 680 × 760 window without scrolling. The local/external communication explanation appears above the provider fields.
-
-Computer preparation began at **10:19:14.175Z**, while onboarding was incomplete and no engine utility process existed. The runtime was ready at **10:19:31.479Z**: **17.304 seconds**, overlapping setup. The existing Chat was visible after `Engine ready` at **10:19:54.184Z**. The 40.009-second interval includes user interaction and is not an isolated startup benchmark.
-
-The user interacted with the app during this native pass, so automation stopped changing its UI. Later wizard steps and Dark appearance remain unscored in this exact installed pass. Their controlled renderer/lifecycle results below are separate evidence. The guided flow can be opened again through **Otto → Replay onboarding…**, preserving keys and conversations. The frozen case, retained failure, and implementation hypotheses are in [guided onboarding](evals/guided-onboarding.md).
+See the authoritative [guided onboarding run](evals/runs.md#guided-onboarding-redesign--2026-10-02) for observed steps, unchanged profile data, and the incomplete theme matrix.
 
 ### Changes and controlled evidence
 

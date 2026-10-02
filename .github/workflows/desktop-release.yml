@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the checked app draft as a preview release
+        description: Publish checked app and runtime drafts as preview releases
         type: boolean
         default: false
 
@@ -126,7 +126,7 @@ jobs:
           if-no-files-found: error
 
   runtime:
-    name: Sign and publish the immutable runtime
+    name: Sign and prepare the runtime release
     needs: [plan, images]
     if: needs.plan.outputs.runtime_reused != 'true'
     runs-on: macos-15
@@ -184,11 +184,12 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: node .github/scripts/with-apple-signing.mjs node desktop/scripts/runtime-pack.mjs --release
-      - name: Publish and verify the content-addressed runtime
+      - name: Upload and verify the content-addressed runtime
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
+          OTTO_PUBLISH_RELEASE: ${{ inputs.publish }}
         run: node .github/scripts/desktop-release.mjs publish-runtime
       - name: Save the checked runtime descriptor
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

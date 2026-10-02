@@ -1,6 +1,6 @@
 # Independent preference persistence holdout
 
-Frozen at 2026-10-02 00:13:18 UTC by the independent desktop reviewer, after reading only the shared harness contract and before running the held-out case. The fixing agent did not receive the inputs or answer key.
+Frozen at 2026-10-02 00:13:18 UTC by the independent desktop reviewer, after reading only the shared harness contract and before running the held-out case. The fixing agent did not receive the inputs or answer key during that original run. This completed synthetic case was subsequently committed as a regression and retired as an independent holdout. Future independent evaluations must choose new unseen inputs; rerunning this file now proves regression behavior only.
 
 Case: `PERSIST-HOLDOUT-01.v1`
 

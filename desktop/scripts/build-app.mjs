@@ -8,6 +8,7 @@ import { assetHash, runtimeRelease as readRuntimeRelease } from '../runtime/asse
 import { runtimeInputs } from './runtime-inputs.mjs';
 import {
   exportCertificate,
+  minimumSystemVersion as supportedMinimumSystemVersion,
   notarize,
   run,
   signApplication,
@@ -68,11 +69,11 @@ let release;
 let minimumSystemVersion;
 if (full) {
   const manifest = JSON.parse(await readFile(join(runtimeAssets, 'manifest.json'), 'utf8'));
-  minimumSystemVersion = manifest.minimumSystemVersion || '26.0';
+  minimumSystemVersion = manifest.minimumSystemVersion || supportedMinimumSystemVersion;
 } else {
   release = await readRuntimeRelease(dirname(runtimeRelease));
   if (!release) throw new Error('The runtime release descriptor is missing.');
-  minimumSystemVersion = release.minimumSystemVersion || '26.0';
+  minimumSystemVersion = release.minimumSystemVersion || supportedMinimumSystemVersion;
   if (signing) {
     await verifyIdentity(signing);
     const inputs = await runtimeInputs();

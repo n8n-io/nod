@@ -136,14 +136,7 @@ const readinessNotice = createReadinessNotice({
   notify: async (eligible) => {
     const saved = await appPreferences.get();
     if (!eligible() || quitting || !preferences.notifications || foregroundWindow()) return false;
-    if (
-      !Notification.isSupported() ||
-      isQuietTime({
-        ...saved.preferences,
-        timeZone: saved.preferences.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone,
-      })
-    )
-      return true;
+    if (!Notification.isSupported() || isQuietTime(saved.preferences)) return true;
     const notification = new Notification({
       title: 'Otto is ready',
       body:
@@ -566,8 +559,6 @@ async function stopEngine() {
   });
   if (engine === child) engine = undefined;
   closingEngine = false;
-  for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
-  engineWindows.clear();
 }
 
 async function finishEnginePreparation() {
@@ -599,8 +590,12 @@ async function startEngine({ runtime, signal }) {
   if (engine && !restartRequired && enginePreferencesReady) return finishEnginePreparation();
   if (engine) {
     const current = await engineRequest('/api/desktop/status');
-    if (!current.ok || (await current.json()).activeWork)
-      throw new Error('Finish or stop the current task before applying new settings.');
+    if (!current.ok) throw new Error('Otto could not check its current work. Try again.');
+    if ((await current.json()).activeWork)
+      throw Object.assign(
+        new Error('Finish or stop the current task before applying new settings.'),
+        { code: 'OTTO_RESTART_DEFERRED' },
+      );
     const transition = {
       nonce: randomUUID(),
       targetRelease: '0000000000000000000000000000000000000000',
@@ -686,13 +681,16 @@ async function startEngine({ runtime, signal }) {
         void writeDiagnostic(line).catch(() => {});
   });
   child.on('exit', (code) => {
+    if (engine !== child) return;
     stopNotifications?.();
     stopNotifications = undefined;
     if (!closingEngine) void writeDiagnostic(`Engine exited with code ${code}.`).catch(() => {});
-    if (engine === child) {
-      engine = undefined;
-      enginePreferencesReady = false;
-    }
+    engine = undefined;
+    enginePreferencesReady = false;
+    engineOrigin = '';
+    authToken = '';
+    for (const window of engineWindows) if (!window.isDestroyed()) window.destroy();
+    engineWindows.clear();
     if (!quitting && !closingEngine) {
       update({
         phase: 'error',
@@ -734,8 +732,14 @@ async function prepare(options = {}) {
     .start({ retry: options?.retry === true })
     .catch((error) => {
       void writeDiagnostic(error.message).catch(() => {});
+      const deferred =
+        error.code === 'OTTO_RESTART_DEFERRED' &&
+        engine &&
+        enginePreferencesReady &&
+        !closingEngine &&
+        !quitting;
       update({
-        phase: 'error',
+        phase: deferred ? 'ready' : 'error',
         message: bounded(error.message),
         error: bounded(error.message),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',

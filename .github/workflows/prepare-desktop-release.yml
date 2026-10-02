@@ -57,7 +57,7 @@ jobs:
             desktop/release.json
             desktop/CHANGELOG.md
       - name: Run CI for the bot-created release branch
-        if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
+        if: steps.pr.outputs.pull-request-number != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run ci.yml --ref release/desktop

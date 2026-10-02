@@ -141,20 +141,6 @@ export function AccountMenuItems({
 }
 
 export function AccountMenu({ account }: { account: AccountControls }) {
-  if (account.local)
-    return (
-      <button
-        type="button"
-        className="nav-link"
-        aria-label="Settings"
-        aria-keyshortcuts="Meta+, Control+,"
-        title="Settings"
-        onClick={(event) => account.onSettings('Preferences', event.currentTarget)}
-      >
-        <Settings size={22} aria-hidden="true" />
-        <span className="nav-label">Settings</span>
-      </button>
-    );
   return (
     <div className="sidebar-account-menu">
       <ConnectionMenu

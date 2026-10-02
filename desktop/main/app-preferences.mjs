@@ -132,7 +132,7 @@ export function createAppPreferencesStore(path, { request, isReady }) {
         await read();
         if (Object.keys(patch).length)
           await write({ ...state, pending: { ...state.pending, ...patch } });
-        if (isReady()) await synchronize().catch(() => {});
+        if (isReady()) await synchronize();
         return view();
       });
     },

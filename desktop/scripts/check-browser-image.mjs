@@ -67,7 +67,7 @@ try {
     name,
     'node',
     '-e',
-    'const fs=require("node:fs");for(const p of ["/Users","/opt/otto-assets","/var/run/docker.sock"])if(fs.existsSync(p))process.exit(1);if(Object.keys(process.env).some(k=>/(API_KEY|SECRET|PASSWORD|TOKEN)$/.test(k)))process.exit(1)',
+    'const fs=require("node:fs");for(const p of ["/Users","/opt/otto-assets","/var/run/docker.sock"])if(fs.existsSync(p))process.exit(1);if(Object.keys(process.env).some(k=>!["PATH","HOSTNAME","HOME","NODE_VERSION","YARN_VERSION"].includes(k)))process.exit(1)',
   ]);
   const thread = randomUUID();
   const result = await computer.act(thread, { action: 'open', url: 'https://example.com' });

@@ -26,7 +26,7 @@ The intended general fix transfers only a validated, bounded, regular SDK overfl
 
 The frozen red run failed all three checks: guard-visible path remained on the host, no full workspace output existed, and the SDK temporary file remained. This confirms the application integration gap. Evidence: `.local/codemode-output-red.log`, SHA-256 `57793aace67fcfd56a454b54f17f1090a6258c0bd1e10902cbae30e38e92e902`; one failing run, 241 ms case time and 2,205 ms harness time. No model or external request; cost unavailable.
 
-Before-fix SHA-256: Pi provider `323bd23deeb8c7f91a0725c46173cf0cae456a9c72a795f64c433bbe32e7fddb`; test file `2bcbab00e17b35e0270613f0cea496b13f481c17c925396162df8bca6c0d5510`. The frozen prompt, generated text, checks and repetition count remain unchanged for green.
+Before-fix SHA-256: Pi provider `323bd23deeb8c7f91a0725c46173cf0cae456a9c72a795f64c433bbe32e7fddb`; test file `2bcbab00e17b35e0270613f0cea496b13f481c17c925396162df8bca6c0d5510`. The first fixed-source run retained the v1 prompt, generated text, checks and repetition count; its cleanup measurement was rejected as described below.
 
 ### Evaluator correction: CODE-OUTPUT-01.v2
 
@@ -53,6 +53,6 @@ The final helper also opens nonblocking so a non-regular file such as a FIFO is 
 
 Final source passed the actual Electron utility-process smoke again, including the overflow transfer: `.local/pi1-electron-smoke-final.log`, SHA-256 `559636159d43020cc6f5d0eaa65bb0a6741601601edde7366928300da06908de`. The combined Pi and agent-guard suite, including the independent evaluator's appended cases, passed 67/67 in 8,470 ms: `.local/pi1-codemode-related-final.log`, SHA-256 `7fa88b0df91acc9eb117c65b468368139223b0d72258dd1657cd1b626b6585bd`. TypeScript also passed. The fixing agent did not inspect the held-out inputs or answer key.
 
-The independent evaluator repeated its unchanged frozen scenarios on this final hash and reported all nine repetitions and four checks passing with zero model calls. Evidence: `.local/desktop-evals/evidence/codemode-output-holdout-v1-attempt2.json` and `.log`; log SHA-256 `8112eb7bf4c4170fa87459415370b89652b9516980b653f2d2812d8b929a6f29`. Its first attempt is retained separately. The fixing agent did not inspect either answer key.
+The independent evaluator used a separate overflow/guard-failure/cleanup-failure scenario set, rather than repetitions of CODE-C1–C3 alone. Its own four-check gate covered those scenarios and reported nine repetitions passing on this final hash, with zero model calls. Evidence: `.local/desktop-evals/evidence/codemode-output-holdout-v1-attempt2.json` and `.log`; log SHA-256 `8112eb7bf4c4170fa87459415370b89652b9516980b653f2d2812d8b929a6f29`. Its first attempt is retained separately. The fixing agent did not inspect either answer key.
 
 The synthetic gate is green: preserved red, fixed primary, independent failure/overflow holdouts, related regressions and real Electron utility-process worker/WASM execution all pass. Packaging is released for this source hash. Root-owned installed-app, live task and final whole-repository checks remain separate evidence.

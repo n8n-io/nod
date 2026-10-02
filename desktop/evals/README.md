@@ -1,10 +1,12 @@
 # Desktop PoC acceptance loop
 
-Frozen: 2026-10-02. Method: `/Users/filipetavares/Downloads/agent-eval-loop/SKILL.md` and its case/run templates. Source task: this chat's request to install Otto locally, unify Settings, preserve preferences, simplify onboarding, and evaluate the PoC repeatedly.
+Frozen: 2026-10-02. Method: the user-supplied [Agent Eval Loop](method/SKILL.md) and [case/run templates](method/references/records.md), preserved here for reproducibility.
+
+Source task: deliver an installable macOS Otto alpha that runs its workspace and browser locally, accepts OpenAI or Anthropic keys and an optional Composio key, offers one themed Settings window with persistent preferences, and guides provider setup, login/notification choices, and background preparation. Validate ordinary assistant work, file delivery, reminders, recovery, and the native UX without resetting the user's profile. Preserve a path to Windows/Linux and hosted use; this alpha does not claim those platforms are ready.
 
 ## Setup and limits
 
-Use the installed `~/Applications/Otto Preview.app` and its separate experiment profile on this Apple Silicon Mac. Base commit: `95c8d3f`; each attempt also records the bundle signature and runtime release because the experiment is uncommitted. Model for assistant cases: OpenAI `gpt-6.1-sol`, via the existing encrypted key. The assistant receives only the frozen prompt and its stated inputs. Evaluator answer keys and source snapshots stay in ignored `.local/desktop-evals/answers`, outside the assistant workspace and context.
+Use the installed `~/Applications/Otto Preview.app` and its separate experiment profile on this Apple Silicon Mac. Base commit: `95c8d3f`; each attempt also records the bundle signature and runtime release because the experiment is uncommitted. Model for assistant cases: OpenAI `gpt-6.1-sol`, via the existing encrypted key. The assistant receives only the frozen prompt and its stated inputs. During an independent evaluation, evaluator answer keys and source snapshots stay in ignored `.local/desktop-evals/answers`, outside the evaluated assistant workspace and context. Completed synthetic holdouts may graduate into committed regressions; once disclosed, they are no longer independent holdouts for future changes and must be replaced for a new independent gate.
 
 Allowed effects: public web reads; synthetic files inside the experiment workspace; downloads of those files; temporary local preferences; one-shot reminders in the experiment's own chat. No connected-account actions, messages to real recipients, purchases, host-file access from the assistant, database resets, credential changes, publishing, or deployments. Do not reveal real provider keys for screenshots. Restore temporary preferences after their checks. Automated tests remain synthetic; provider calls below are manually authorized acceptance through the normal installed UI.
 

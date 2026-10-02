@@ -67,12 +67,21 @@
     }
   }
 
+  function timeZoneRegion(value) {
+    let result;
+    for (let first = 65; first <= 90; first++) {
+      for (let second = 65; second <= 90; second++) {
+        const locale = new Intl.Locale(`und-${String.fromCharCode(first, second)}`);
+        if (!locale.getTimeZones && !('timeZones' in locale)) return null;
+        const zones = locale.getTimeZones?.() ?? locale.timeZones;
+        if (zones?.includes(value)) result = locale.region;
+      }
+    }
+    return result;
+  }
+
   const systemRegion =
-    regions.find((value) => {
-      const locale = new Intl.Locale(`und-${value}`);
-      const zones = locale.getTimeZones?.() ?? locale.timeZones;
-      return zones?.includes(systemZone);
-    }) ||
+    timeZoneRegion(systemZone) ||
     [...navigator.languages, navigator.language].map(region).find(Boolean) ||
     'GB';
 

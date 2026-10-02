@@ -168,6 +168,7 @@ export function Apps() {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [discoveryError, setDiscoveryError] = useState('');
   const [savingDiscovery, setSavingDiscovery] = useState(false);
+  const [discoverySignIn, setDiscoverySignIn] = useState<{ id: string; url: string } | null>(null);
   const page = useRef<HTMLDivElement>(null);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const dialogService = useRef('');
@@ -237,16 +238,21 @@ export function Apps() {
     setSavingDiscovery(true);
     setDiscoveryError('');
     try {
-      const result = await api<{ url: string }>(
-        `/api/apps/discovery/${encodeURIComponent(discoveryId)}/authorize`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            ...(values.get('clientId') ? { clientId: values.get('clientId') } : {}),
-          }),
-        },
-      );
-      await openConnection(connectionUrl(result.url, window.location.origin));
+      let url = discoverySignIn?.id === discoveryId ? discoverySignIn.url : undefined;
+      if (!url) {
+        const result = await api<{ url: string }>(
+          `/api/apps/discovery/${encodeURIComponent(discoveryId)}/authorize`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              ...(values.get('clientId') ? { clientId: values.get('clientId') } : {}),
+            }),
+          },
+        );
+        url = connectionUrl(result.url, window.location.origin);
+        setDiscoverySignIn({ id: discoveryId, url });
+      }
+      await openConnection(url);
       if (desktopLinksAvailable()) setSavingDiscovery(false);
     } catch (cause) {
       setDiscoveryError(errorMessage(cause));
@@ -612,12 +618,22 @@ export function Apps() {
             <form onSubmit={(event) => void authorizeDiscovery(event)} autoComplete="off">
               {discovery.paths[0]?.clientIdRequired && (
                 <Field label="Client ID">
-                  <Input name="clientId" required maxLength={500} autoComplete="off" />
+                  <Input
+                    name="clientId"
+                    required
+                    maxLength={500}
+                    autoComplete="off"
+                    disabled={savingDiscovery || discoverySignIn?.id === discoveryId}
+                  />
                 </Field>
               )}
               {discovery.callbackUrl && <p>Set the app callback URL to {discovery.callbackUrl}.</p>}
               <Button type="submit" disabled={savingDiscovery}>
-                {savingDiscovery ? 'Opening sign-in…' : `Continue to ${discovery.name}`}
+                {savingDiscovery
+                  ? 'Opening sign-in…'
+                  : discoverySignIn?.id === discoveryId
+                    ? 'Continue sign-in'
+                    : `Continue to ${discovery.name}`}
               </Button>
             </form>
           ) : discovery ? (

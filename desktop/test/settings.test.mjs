@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createSettingsStore } from '../main/settings.mjs';
@@ -254,6 +257,222 @@ test('native navigation keeps incomplete setup and startup out of normal Setting
   }
   assert.equal(desktopSetupMode({ completed: true, replaying: false, running: false }), 'loading');
   assert.equal(desktopSetupMode({ completed: true, replaying: false, running: true }), 'settings');
+});
+
+async function runningDesktop(t, request, { allowStart = false } = {}) {
+  const storage = await fixture(t);
+  await storage.store.save({
+    openaiApiKey: 'synthetic-running-provider-key',
+    onboardingCompleted: true,
+  });
+  const windows = [];
+  const children = [];
+  const context = {
+    app: {
+      setName() {},
+      setPath() {},
+      getPath: () => dirname(storage.path),
+      requestSingleInstanceLock: () => false,
+      quit() {},
+    },
+    process: { platform: 'darwin', argv: [], env: {} },
+    dirname,
+    join,
+    resolve,
+    fileURLToPath,
+    pathToFileURL,
+    mkdir,
+    appendFile,
+    readFile,
+    stat,
+    writeFile,
+    randomUUID,
+    randomBytes,
+    createServer,
+    AbortController,
+    AbortSignal,
+    setTimeout,
+    clearTimeout,
+    fetch: request,
+    createSettingsStore: () => storage.store,
+    createAppPreferencesStore: () => ({ sync: async () => {} }),
+    createChatReadCursorStore: () => ({}),
+    createReadinessNotice: () => ({ update() {} }),
+    createDesktopLifecycle: (options) =>
+      createDesktopLifecycle({
+        ...options,
+        prepareRuntime: async () => {
+          await mkdir(join(dirname(storage.path), 'profiles', 'local'), { recursive: true });
+          return { env: {} };
+        },
+      }),
+    desktopSetupMode,
+    nativeTheme: { shouldUseDarkColors: false },
+    safeStorage: storage.encryption,
+    validateProviderKey: () => assert.fail('The main process must not validate a key again.'),
+    Notification: { isSupported: () => false },
+    utilityProcess: {
+      fork() {
+        assert.ok(allowStart, 'The healthy engine must not restart.');
+        const child = new EventEmitter();
+        child.stdout = { resume() {} };
+        child.stderr = new EventEmitter();
+        child.kill = () => child.emit('exit', 0);
+        children.push(child);
+        return child;
+      },
+    },
+    BrowserWindow: class extends EventEmitter {
+      constructor() {
+        super();
+        this.webContents = Object.assign(new EventEmitter(), {
+          setWindowOpenHandler() {},
+          send() {},
+        });
+        windows.push(this);
+      }
+      isDestroyed() {
+        return this.destroyed === true;
+      }
+      isFocused() {
+        return false;
+      }
+      loadURL(url) {
+        this.url = url;
+      }
+      loadFile(path) {
+        this.path = path;
+      }
+      show() {}
+      focus() {}
+      setSize() {}
+      destroy() {
+        this.destroyed = true;
+        this.emit('closed');
+      }
+    },
+  };
+  const source = (await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8'))
+    .replace(/^import[\s\S]*?;\n/gm, '')
+    .replaceAll(
+      'import.meta.url',
+      JSON.stringify(new URL('../main/main.mjs', import.meta.url).href),
+    );
+  runInNewContext(
+    `${source}
+    engine = {};
+    enginePreferencesReady = true;
+    engineOrigin = 'http://127.0.0.1:4310';
+    onboardingCompleted = true;
+    providerConfigured = true;
+    status.phase = 'ready';
+    globalThis.running = {
+      prepare,
+      showEngine,
+      status: () => status,
+      setRestartRequired: (value) => { restartRequired = value; },
+      crash: () => { engine = undefined; enginePreferencesReady = false; },
+    };`,
+    context,
+  );
+  return { ...context.running, windows, children, storage };
+}
+
+test('an engine crash retires every stale chat window before recovery opens the new engine', async (t) => {
+  const requests = [];
+  const f = await runningDesktop(
+    t,
+    async (url) => {
+      requests.push(url);
+      assert.equal(new URL(url).pathname, '/api/health');
+      return Response.json({ ok: true });
+    },
+    { allowStart: true },
+  );
+  f.crash();
+  assert.equal((await f.prepare()).phase, 'ready');
+  f.showEngine();
+  const previous = f.windows.at(-1);
+  const secondary = new previous.constructor();
+  previous.webContents.emit('did-create-window', secondary);
+  f.children[0].emit('exit', 1);
+  assert.equal(f.status().phase, 'error');
+  assert.equal(previous.isDestroyed(), true);
+  assert.equal(secondary.isDestroyed(), true);
+  assert.equal((await f.prepare({ retry: true })).phase, 'ready');
+  f.showEngine();
+  const current = f.windows.at(-1);
+  assert.notEqual(current, previous);
+  assert.equal(current.isDestroyed(), false);
+  assert.equal(current.url, new URL(requests.at(-1)).origin);
+  assert.equal(f.children.length, 2);
+});
+
+test('a deferred provider restart keeps the healthy chat accessible and settings pending', async (t) => {
+  const calls = [];
+  const f = await runningDesktop(t, async (url) => {
+    calls.push(url);
+    return Response.json({ activeWork: true });
+  });
+  f.setRestartRequired(true);
+  const result = await f.prepare();
+  assert.equal(result.phase, 'ready');
+  assert.equal(result.restartRequired, true);
+  assert.match(result.error, /Finish or stop/);
+  assert.deepEqual(calls, ['http://127.0.0.1:4310/api/desktop/status']);
+  f.showEngine();
+  assert.equal(f.windows.at(-1).url, 'http://127.0.0.1:4310');
+});
+
+test('deferred restart recovery preserves provider settings without replaying onboarding', async (t) => {
+  const running = await runningDesktop(t, async () => Response.json({ activeWork: true }));
+  const f = await setupRenderer(t, 'settings', { phase: 'ready' }, running.storage.store);
+  running.setRestartRequired(true);
+  f.desktop.prepare = running.prepare;
+  f.desktop.replayOnboarding = () => assert.fail('Saved provider settings must not replay setup.');
+  f.document.querySelector('#provider-key-field .key-action:last-child').click();
+  const key = f.document.getElementById('openaiApiKey');
+  key.value = 'synthetic-replacement-provider-key';
+  key.dispatchEvent(new f.window.Event('input', { bubbles: true }));
+  await f.submit();
+  await f.waitFor(() => !f.document.getElementById('retry').hidden);
+  assert.equal(f.document.getElementById('preparation-error').hidden, false);
+  assert.equal((await running.storage.store.environment()).OPENAI_API_KEY, key.value);
+  f.document.getElementById('edit-settings').click();
+  await f.settle();
+  assert.equal(f.document.getElementById('settings-form').hidden, false);
+  assert.equal(f.document.getElementById('retry-settings').hidden, false);
+  assert.equal(f.document.getElementById('error').hidden, false);
+  f.document.getElementById('retry-settings').click();
+  await f.waitFor(() => !f.document.getElementById('retry').hidden);
+  f.callbacks.navigate({ mode: 'settings', section: 'providers' });
+  assert.equal(f.document.getElementById('settings-form').hidden, false);
+  assert.equal(f.document.getElementById('sidebar').hidden, false);
+});
+
+test('a failed restart health check or crashed engine retains the error state', async (t) => {
+  for (const crashed of [false, true]) {
+    const f = await runningDesktop(t, async () => {
+      if (crashed) f.crash();
+      return Response.json({ activeWork: true }, { status: crashed ? 200 : 503 });
+    });
+    f.setRestartRequired(true);
+    assert.equal((await f.prepare()).phase, 'error');
+    f.showEngine();
+    assert.equal(f.windows.at(-1).url, undefined);
+  }
+});
+
+test('saving unchanged provider and general preferences reuses the running engine', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('No restart admission check is needed.'));
+  const revision = await f.storage.store.revision();
+  await f.storage.store.save({ provider: 'openai' });
+  await f.storage.store.save({ theme: 'dark', notifications: true });
+  f.setRestartRequired((await f.storage.store.revision()) !== revision);
+  const result = await f.prepare();
+  assert.equal(result.phase, 'ready');
+  assert.equal(result.restartRequired, false);
+  assert.equal(result.error, undefined);
 });
 
 async function fixture(t, validate) {
@@ -801,7 +1020,7 @@ test('failed preference synchronization retains the queue across restarts and bl
   const pending = await reopened.get();
   assert.equal(pending.pending, true);
   assert.equal(pending.preferences.hourCycle, 'h12');
-  await reopened.save({ quietStart: '21:45' });
+  await assert.rejects(reopened.save({ quietStart: '21:45' }), /could not read your preferences/);
   f.state.fail = false;
   const synchronized = await f.reopen().sync();
   assert.equal(synchronized.pending, false);
@@ -814,7 +1033,7 @@ test('unconfirmed preference responses cannot discard the durable queue', async 
   const f = await preferencesFixture(t);
   f.state.online = true;
   f.state.malformed = true;
-  assert.equal((await f.store.save({ quietEnd: '09:30' })).pending, true);
+  await assert.rejects(f.store.save({ quietEnd: '09:30' }), /could not read your preferences/);
   assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).pending, { quietEnd: '09:30' });
   f.state.malformed = false;
   const result = await f.reopen().sync();
@@ -1110,7 +1329,13 @@ test('model access failures preserve provider selection, working keys, and pendi
   assert.equal((await f.reopen().environment()).OTTO_VAULT_KEY, vaultKey);
 });
 
-async function setupRenderer(t, mode = 'settings', initialStatus = { phase: 'ready' }, savedStore) {
+async function setupRenderer(
+  t,
+  mode = 'settings',
+  initialStatus = { phase: 'ready' },
+  savedStore,
+  configure = () => {},
+) {
   const { JSDOM } = await import('jsdom');
   const dom = new JSDOM(await readFile(new URL('../ui/index.html', import.meta.url), 'utf8'), {
     url: `https://otto-settings.test/?mode=${mode}&section=providers`,
@@ -1196,6 +1421,7 @@ async function setupRenderer(t, mode = 'settings', initialStatus = { phase: 'rea
     new URL('../ui/preferences.js', import.meta.url),
     'utf8',
   );
+  configure(dom.window);
   dom.window.eval(setupSource);
   dom.window.eval(preferencesSource);
   const settle = () => new Promise(setImmediate);
@@ -1495,6 +1721,55 @@ test('disabling quiet hours in Settings clears invalid hidden times without losi
   assert.equal(f.appPreferences.quietHoursEnabled, false);
   assert.equal(f.appPreferences.quietStart, '22:00');
   assert.equal(f.appPreferences.quietEnd, '08:00');
+});
+
+test('an online preference save failure retains the edit and surfaces retry until synchronization succeeds', async (t) => {
+  const storage = await preferencesFixture(t);
+  storage.state.online = true;
+  const f = await setupRenderer(t);
+  f.desktop.getAppPreferences = storage.store.get;
+  f.desktop.saveAppPreferences = storage.store.save;
+  f.callbacks.navigate({ mode: 'settings', section: 'preferences' });
+  const clock = f.document.getElementById('preference-clock');
+  await f.waitFor(() => clock.value === 'h23');
+  storage.state.fail = true;
+  clock.value = 'h12';
+  clock.dispatchEvent(new f.window.Event('change', { bubbles: true }));
+  await f.waitFor(() => !f.document.getElementById('preferences-error').hidden);
+  assert.equal(clock.value, 'h12');
+  assert.equal(storage.state.server.hourCycle, 'h23');
+  assert.deepEqual(JSON.parse(await readFile(storage.path, 'utf8')).pending, { hourCycle: 'h12' });
+  await assert.rejects(f.window.ottoPreferencesForm.flush());
+  storage.state.fail = false;
+  f.window.dispatchEvent(new f.window.Event('otto:preferences-open'));
+  await f.waitFor(() => storage.state.server.hourCycle === 'h12');
+  await f.window.ottoPreferencesForm.flush();
+  assert.equal(f.document.getElementById('preferences-error').hidden, true);
+  assert.deepEqual(JSON.parse(await readFile(storage.path, 'utf8')).pending, {});
+});
+
+test('native automatic date formatting uses timezone regions outside the preset choices', async (t) => {
+  for (const [timeZone, region] of [
+    ['Asia/Singapore', 'SG'],
+    ['Asia/Manila', 'PH'],
+    ['Asia/Dubai', 'AE'],
+  ]) {
+    const formatted = [];
+    const f = await setupRenderer(t, 'settings', { phase: 'ready' }, undefined, (window) => {
+      const DateTimeFormat = window.Intl.DateTimeFormat;
+      window.Intl.DateTimeFormat = function (locale, options) {
+        if (options?.weekday) formatted.push(locale);
+        return new DateTimeFormat(locale ?? 'en-GB', options ?? { timeZone });
+      };
+      Object.defineProperty(window.navigator, 'languages', { value: ['en-GB'] });
+      Object.defineProperty(window.navigator, 'language', { value: 'en-GB' });
+    });
+    f.callbacks.navigate({ mode: 'settings', section: 'preferences' });
+    await f.waitFor(() => formatted.length > 0);
+    assert.equal(formatted.at(-1), `en-${region}`, timeZone);
+    await f.window.ottoPreferencesForm.flush({ useCurrentTimeZone: true });
+    assert.equal(f.appPreferences.timeZone, timeZone);
+  }
 });
 
 test(
