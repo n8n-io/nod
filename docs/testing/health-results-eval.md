@@ -121,7 +121,7 @@ The initial matrix starts with every case not run. Current attempts are recorded
 
 ## Runnable harness slice
 
-The current harness supplies the HR-01 PDF base and HR-03 appointment holdout. Source PDFs and mailbox/calendar data are under `scripts/fixtures/health-results-{base,appointment}.{pdf,json}`. Regenerate the deterministic PDFs with `scripts/fixtures/generate-health-results.py` using a Python environment with ReportLab. Neither source contains the expected abnormal set. The appointment fixture also seeds the stated synthetic user context and one existing reminder through the normal personal-context service.
+The current harness supplies the HR-01 PDF base and HR-03 appointment holdout. Source PDFs and mailbox/calendar data are under `scripts/fixtures/health-results-{base,appointment}.{pdf,json}`. Regenerate the deterministic PDFs and JSON with `scripts/fixtures/generate-health-results.py` using a Python environment with ReportLab and installed repository dependencies. The generator formats JSON with the local Prettier executable; it does not download dependencies. Neither source contains the expected abnormal set. The appointment fixture also seeds the stated synthetic user context and one existing reminder through the normal personal-context service.
 
 After `npm run build`, launch a fresh process for each case:
 
@@ -156,6 +156,15 @@ The original blood-test date is in the future. A separate scheduling companion m
 ## Final 2026-10-02 results
 
 Candidate 4 retains the same baseline commit and uses generic document, context and source-fidelity guidance. No laboratory names, analyte thresholds, expected questions or medical routing were added to production code. The model was `openai/gpt-6.1-sol`; every direct repetition used a fresh isolated app and Pi conversation. An independent review agent compared the actual report, complete agent trace, opened medical sources and response. Stored artifact hashes, schedules, normal web receiving responses and Inspector usage were checked separately with code. These are automated checks and model-assisted source comparisons, not human or clinician sign-off. The tables above describe the planned human-review method; that review was not performed here, and the pass criteria have not been changed.
+
+The HR-02.alert.v2 variant uses these original frozen checks, unchanged between candidates 3 and 4. The definitions come from `.local/evidence/lab-391/hr-02-alert-v2-candidate3-20261002/keys/checks.json`:
+
+| ID  | Applies                                   | Pass condition                                                                                                                                                 | Required evidence                                 |
+| --- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| PA2 | Report is readable                        | Correct owned report is completely read, retained bytes match source hash and useful response identifies the report source.                                    | Download/read trace, reopened bytes, source link. |
+| PA6 | Material clinical context remains unknown | Deliver a useful visible summary and one focused round addressing material unknown context without postponing supported results or asking known details again. | Full received message and known-context key.      |
+
+These definitions explain the original scores. The applicability dispute below does not change the frozen PA6 gate or regrade its failures.
 
 | Case / bounded gate                                         | Candidate 4 result | Evidence boundary                                                                                                                                                                                                                                                                                                                                                                                    |
 | ----------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

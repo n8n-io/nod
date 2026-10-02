@@ -843,7 +843,7 @@ export function createIntegrationFixture(
       })
       .every(Boolean);
   }
-  function inboxMessages() {
+  function mailboxMessages(number: number) {
     if (!inboxVisible) return [];
     return options.data
       ? options.data.messages.map((message) => ({
@@ -863,9 +863,14 @@ export function createIntegrationFixture(
             id: 'fixture-mail-1',
             emailId: 'fixture-mail-1',
             from: 'alex@example.test',
+            to: accountEmail({ service: 'gmail', number }),
             subject: 'Northstar review',
             body: 'Please review invoice NS-1042 for EUR 240 and prepare a summary by Friday. This is synthetic test data.',
+            date: new Date(observedAt).toISOString(),
+            labelIds: ['INBOX', 'UNREAD'],
+            attachments: [],
           },
+          ...sentMessages(number),
         ];
   }
   function sentMessages(number: number) {
@@ -1001,20 +1006,15 @@ export function createIntegrationFixture(
               ...fixtureMetadata,
             };
           if (action === 'GMAIL_FETCH_EMAILS') {
-            const messages = (sent ? sentMessages(account.number) : inboxMessages())
+            const messages = mailboxMessages(account.number)
               .filter((message) => !deletedMessages.has(`${accountId}:${message.id}`))
               .filter(
                 (message) =>
-                  !options.data ||
-                  (emailMatches(message, String(args.query ?? '')) &&
-                    (!Array.isArray(args.label_ids) ||
-                      args.label_ids.every(
-                        (label) =>
-                          'labelIds' in message &&
-                          Array.isArray(message.labelIds) &&
-                          message.labelIds.includes(String(label)),
-                      ))),
+                  emailMatches(message, String(args.query ?? '')) &&
+                  (!Array.isArray(args.label_ids) ||
+                    args.label_ids.every((label) => message.labelIds.includes(String(label)))),
               )
+              .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
               .slice(
                 0,
                 typeof args.max_results === 'number'
@@ -1030,7 +1030,7 @@ export function createIntegrationFixture(
             return { messages, ...fixtureMetadata };
           }
           if (action === 'GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID') {
-            const message = [...sentMessages(account.number), ...inboxMessages()].find(
+            const message = mailboxMessages(account.number).find(
               (item) =>
                 item.emailId === args.message_id && !deletedMessages.has(`${accountId}:${item.id}`),
             );
@@ -1092,12 +1092,12 @@ export function createIntegrationFixture(
             const draft = [...drafts.values()].find(
               (value) => value.accountId === accountId && value.message.id === args.message_id,
             );
-            const message = [...sentMessages(account.number), ...inboxMessages()].find(
+            const message = mailboxMessages(account.number).find(
               (value) => value.id === args.message_id,
             );
             if (
               typeof args.message_id !== 'string' ||
-              (!draft && !message && args.message_id !== 'fixture-mail-1') ||
+              (!draft && !message) ||
               deletedMessages.has(`${accountId}:${args.message_id}`)
             )
               throw new Error('The synthetic email was not found in this account.');
@@ -1351,47 +1351,19 @@ export function createIntegrationFixture(
           }
           if (account.service !== 'gmail')
             throw new Error('Connect the selected synthetic Gmail account first.');
-          const supplied =
-            inboxVisible &&
-            options.data?.attachments.find(
-              (file) =>
-                file.messageId === args.message_id && file.attachmentId === args.attachment_id,
-            );
-          if (supplied) {
-            if (
-              action !== 'GMAIL_GET_ATTACHMENT' ||
-              supplied.name !== args.file_name ||
-              deletedMessages.has(`${accountId}:${supplied.messageId}`) ||
-              (args.user_id !== undefined && args.user_id !== 'me') ||
-              Object.keys(args).some(
-                (key) => !['message_id', 'attachment_id', 'file_name', 'user_id'].includes(key),
-              )
-            )
-              throw new Error(
-                'The synthetic attachment does not match the observed email and account.',
-              );
-            const bytes = Buffer.from(supplied.bytes);
-            audit('fixture_integration_download', {
-              action,
-              accountId,
-              messageId: supplied.messageId,
-              attachmentId: supplied.attachmentId,
-              size: bytes.byteLength,
-              sha256: createHash('sha256').update(bytes).digest('hex'),
-            });
-            return { name: supplied.name, mimeType: supplied.mimeType, bytes };
-          }
-          const message = sentMessages(account.number)[0];
-          const attachment = message.attachments[0];
+          const message = mailboxMessages(account.number).find(
+            (value) => value.emailId === args.message_id,
+          );
+          const attachment = message?.attachments.find(
+            (value) => value.attachmentId === args.attachment_id,
+          );
           if (
             action !== 'GMAIL_GET_ATTACHMENT' ||
+            !message ||
+            !attachment ||
             deletedMessages.has(`${accountId}:${message.id}`) ||
-            args.message_id !== message.emailId ||
-            args.attachment_id !== attachment.attachmentId ||
             args.file_name !== attachment.filename ||
-            (args.user_id !== undefined &&
-              args.user_id !== 'me' &&
-              args.user_id !== message.from) ||
+            (args.user_id !== undefined && args.user_id !== 'me') ||
             Object.keys(args).some(
               (key) => !['message_id', 'attachment_id', 'file_name', 'user_id'].includes(key),
             )
@@ -1399,8 +1371,21 @@ export function createIntegrationFixture(
             throw new Error(
               'The synthetic attachment does not match the observed email and account.',
             );
-          const bytes = Buffer.from(attachmentText);
-          audit('fixture_integration_download', { action, accountId, size: bytes.byteLength });
+          const supplied = options.data?.attachments.find(
+            (file) =>
+              file.messageId === message.id && file.attachmentId === attachment.attachmentId,
+          );
+          if (options.data && !supplied)
+            throw new Error('The synthetic attachment was not found in this scenario.');
+          const bytes = Buffer.from(supplied?.bytes ?? attachmentText);
+          audit('fixture_integration_download', {
+            action,
+            accountId,
+            messageId: message.id,
+            attachmentId: attachment.attachmentId,
+            size: bytes.byteLength,
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+          });
           return { name: attachment.filename, mimeType: attachment.mimeType, bytes };
         },
       };

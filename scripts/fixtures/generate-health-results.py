@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,6 +9,9 @@ from reportlab.pdfgen import canvas
 
 
 root = Path(__file__).resolve().parent
+formatter = root.parent.parent / "node_modules" / ".bin" / "prettier"
+if not formatter.is_file():
+    raise SystemExit("Install repository dependencies before generating fixtures.")
 if sys.argv[1:] not in ([], ["--v2"]):
     raise SystemExit("Use --v2 for the revised report inputs, or no arguments for v1.")
 version = 2 if sys.argv[1:] else 1
@@ -189,4 +193,6 @@ for case in cases:
             "phone": "",
             "preferences": "",
         }
-    (root / (scenario_id + ".json")).write_text(json.dumps(data, indent=2) + "\n")
+    json_path = root / (scenario_id + ".json")
+    json_path.write_text(json.dumps(data, indent=2) + "\n")
+    subprocess.run([str(formatter), "--write", str(json_path)], check=True)

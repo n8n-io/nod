@@ -440,8 +440,12 @@ try {
   });
   app.post('/e2e/inbox-arrival', operator, async (request, reply) => {
     if (!eventMode) return reply.code(404).send({ error: 'Inbox events are not enabled.' });
-    const value = request.body as { connectionId?: string } | undefined;
-    if (value?.connectionId !== undefined && !/^[a-f0-9-]{36}$/.test(value.connectionId))
+    const value = request.body as { connectionId?: unknown } | undefined;
+    if (
+      value?.connectionId !== undefined &&
+      (typeof value.connectionId !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.connectionId))
+    )
       return reply.code(400).send({ error: 'Provide an owned Gmail connection ID.' });
     await application!.integrations.syncWatches();
     const rows = await pool.query<{ account_id: string }>(
@@ -505,17 +509,18 @@ try {
   );
   const expected = new Map<string, string>();
   app.post('/e2e/expected-run', operator, async (request, reply) => {
-    const value = request.body as { scheduleId?: string; dueAt?: string };
+    const value = request.body as { scheduleId?: unknown; dueAt?: unknown } | undefined;
     if (
-      !value ||
-      !/^[a-f0-9-]{36}$/.test(value.scheduleId || '') ||
-      !Number.isFinite(Date.parse(value.dueAt || ''))
+      typeof value?.scheduleId !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.scheduleId) ||
+      typeof value.dueAt !== 'string' ||
+      !Number.isFinite(Date.parse(value.dueAt))
     )
       return reply.code(400).send({ error: 'Provide a schedule ID and an absolute ISO due time.' });
-    expected.set(value.scheduleId!, new Date(value.dueAt!).toISOString());
+    expected.set(value.scheduleId, new Date(value.dueAt).toISOString());
     audit('schedule_expected', {
-      scheduleId: value.scheduleId!,
-      dueAt: expected.get(value.scheduleId!)!,
+      scheduleId: value.scheduleId,
+      dueAt: expected.get(value.scheduleId)!,
     });
     return { ok: true };
   });
