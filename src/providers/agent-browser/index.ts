@@ -908,14 +908,8 @@ export function createAgentBrowserComputer(options: {
           const autocomplete = await command(state, ['get', 'attr', target, 'autocomplete'], {
             signal,
           });
-          const loginField = await command(
-            state,
-            ['get', 'attr', target, 'data-otto-login-field'],
-            { signal },
-          );
           if (
             /password|one-time-code|username/i.test([type.value, autocomplete.value].join(' ')) ||
-            /identifier|password|otp/.test(String(loginField.value ?? '')) ||
             state.protectedSelectors.has(target)
           )
             throw new Error('Use the secure credential request tool for this field.');
