@@ -25,6 +25,7 @@ import {
 } from './thread.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { registerLocalAccess } from './access.ts';
+import { logFailure } from './failure-log.ts';
 import { inspectorPayloadLimit, inspectorRetentionDays, type InspectorStore } from './inspector.ts';
 import type { AgentToolMetadata } from '../ports/agent.ts';
 import { registerRuntimeAccess } from './runtime-auth.ts';
@@ -120,6 +121,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.setErrorHandler((error, _request, reply) => {
     const known = error instanceof Error ? (error as Error & { statusCode?: number }) : undefined;
     const status = error instanceof z.ZodError ? 400 : known?.statusCode || 500;
+    if (status >= 500) logFailure('request_failed', error);
     reply.code(status).send({
       error:
         error instanceof z.ZodError
