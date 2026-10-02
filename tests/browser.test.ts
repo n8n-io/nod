@@ -1971,17 +1971,18 @@ test(
   },
 );
 
-test('a password typed through the handoff stays out of browser observations', async () => {
+test('a password typed through the handoff in several pauses hides only the finished value', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-secret-'));
   const fixture = stagedLoginBrowser();
-  const secret = 'synthetic-handoff-password';
+  const secret = 'Sign-handoff-password';
   const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
   try {
     await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
     fixture.pages.get('fixture')!.stage = 'password';
     fixture.pages.get('fixture')!.render();
     await computer.act('fixture', { action: 'click', selector: '#account' });
-    await computer.control!('fixture', { type: 'type', text: secret });
+    await computer.control!('fixture', { type: 'type', text: 'Sign' });
+    await computer.control!('fixture', { type: 'type', text: secret.slice(4) });
     assert.equal(fixture.pages.get('fixture')!.input.value, secret);
     for (const observation of [
       await computer.act('fixture', { action: 'snapshot' }),
@@ -1991,6 +1992,8 @@ test('a password typed through the handoff stays out of browser observations', a
       }),
     ])
       assert.equal(JSON.stringify(observation).includes(secret), false);
+    assert.match((await computer.act('fixture', { action: 'snapshot' })).text, /Sign in password/);
+    await computer.act('fixture', { action: 'fill', selector: '#search', text: 'Sign' });
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });

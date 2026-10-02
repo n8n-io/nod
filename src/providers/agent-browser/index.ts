@@ -41,6 +41,7 @@ interface BrowserState {
   injecting: boolean;
   secrets: Set<string>;
   secretsByOrigin: Map<string, Set<string>>;
+  typed?: { value: string; origin: string; fresh: boolean };
   protectedSelectors: Set<string>;
   uploads: Set<string>;
   started: boolean;
@@ -1290,6 +1291,12 @@ export function createAgentBrowserComputer(options: {
         if (typeof secret === 'string' && secret) {
           const origin = new URL(await currentUrl(state, signal)).origin;
           const secrets = state.secretsByOrigin.get(origin) ?? new Set<string>();
+          const earlier = state.typed;
+          if (earlier?.fresh && earlier.origin === origin && secret.startsWith(earlier.value)) {
+            state.secrets.delete(earlier.value);
+            secrets.delete(earlier.value);
+          }
+          state.typed = { value: secret, origin, fresh: !state.secrets.has(secret) };
           state.secrets.add(secret);
           secrets.add(secret);
           state.secretsByOrigin.set(origin, secrets);
