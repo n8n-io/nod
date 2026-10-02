@@ -2501,7 +2501,8 @@ const scriptedCurator = (configured = true) => {
 test(
   'background learning reads only plain user messages, once, and keeps its own watermark',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
-  async () => {
+  async (t) => {
+    t.mock.method(console, 'error', () => {});
     const { pool, ownerId, post, memory, close } = await memoryFixture([approvalsTable]);
     const idle = await memoryFixture([approvalsTable]);
     try {
@@ -2638,26 +2639,29 @@ test(
       state.answer = () => {
         throw new Error('offline');
       };
-      await assert.rejects(learning.reflect(), /offline/);
-      assert.equal((await memory.load()).reflected, before);
+      assert.equal(await learning.reflect(), 0);
+      const offline = await memory.load();
+      assert.equal(offline.reflected, before);
+      assert.equal(offline.retries, 1);
       state.answer = () => 'not an object';
-      for (const retries of [1, 2]) {
-        assert.equal(await learning.reflect(), 0);
-        const waiting = await memory.load();
-        assert.equal(waiting.reflected, before);
-        assert.equal(waiting.retries, retries);
-      }
+      assert.equal(await learning.reflect(), 0);
+      const waiting = await memory.load();
+      assert.equal(waiting.reflected, before);
+      assert.equal(waiting.retries, 2);
+      state.answer = () => {
+        throw new Error('offline');
+      };
       assert.equal(await learning.reflect(), 0);
       const skipped = await memory.load();
       assert.notEqual(skipped.reflected, before);
       assert.equal(skipped.retries, 0);
-      assert.equal(calls.length, 6);
+      assert.equal(calls.length, 5);
 
       await post('I only drink oat milk in coffee.', { at: '2026-01-01T13:00:00Z' });
       let release!: (value: unknown) => void;
       state.answer = () => new Promise((resolve) => (release = resolve));
       const slow = learning.reflect();
-      while (calls.length < 7) await delay(5);
+      while (calls.length < 6) await delay(5);
       const newer = `2026-01-01T13:30:00.000000Z/${randomUUID()}`;
       await memory.edit((tree) => {
         tree.reflected = newer;
@@ -2681,6 +2685,21 @@ test(
         raced.entries.some((entry) => entry.slug === 'oat-milk'),
         false,
       );
+
+      const trip = await memory.save(
+        { area: 'preferences', text: 'Is travelling this week.', expires: '2020-01-01' },
+        await post('I am travelling this week.', { at: '2026-01-01T14:00:00Z' }),
+      );
+      state.answer = () => {
+        throw new Error('offline');
+      };
+      await learning.run();
+      const maintained = await memory.load();
+      assert.equal(
+        maintained.entries.some((entry) => `${entry.area}/${entry.slug}` === trip.path),
+        false,
+      );
+      assert.equal(maintained.retries, 1);
 
       const unconfigured = scriptedCurator(false);
       await createMemoryLearning({

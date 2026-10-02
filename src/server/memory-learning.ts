@@ -35,6 +35,14 @@ export function createMemoryLearning(options: {
   memory: MemoryService;
   curator: MemoryCurator;
 }) {
+  async function ask(task: 'reflect' | 'consolidate', instructions: string, input: object) {
+    const reply = await options.curator.curate({ task, instructions, input }).catch(() => {
+      console.error('Memory maintenance could not reach the memory model.');
+    });
+    const parsed = answer.safeParse(reply);
+    return parsed.success ? parsed.data.ops : undefined;
+  }
+
   async function reflect() {
     if (!options.curator.configured) return 0;
     const tree = await options.memory.load();
@@ -59,18 +67,12 @@ export function createMemoryLearning(options: {
     const messages: Array<{ id: string; text: string }> = rows.filter((row) => !unsafe(row.text));
     let ops: unknown[] = [];
     if (messages.length) {
-      const reply = answer.safeParse(
-        await options.curator.curate({
-          task: 'reflect',
-          instructions: reflectInstructions,
-          input: {
-            today: new Date().toISOString().slice(0, 10),
-            memory: indexLayout(tree, { tentative: true }).text,
-            messages: messages.map((message, index) => ({ m: index + 1, text: message.text })),
-          },
-        }),
-      );
-      if (!reply.success) {
+      const proposed = await ask('reflect', reflectInstructions, {
+        today: new Date().toISOString().slice(0, 10),
+        memory: indexLayout(tree, { tentative: true }).text,
+        messages: messages.map((message, index) => ({ m: index + 1, text: message.text })),
+      });
+      if (!proposed) {
         await options.memory.edit((fresh) => {
           if (fresh.reflected !== tree.reflected) return;
           fresh.retries += 1;
@@ -81,7 +83,7 @@ export function createMemoryLearning(options: {
         });
         return 0;
       }
-      ops = reply.data.ops;
+      ops = proposed;
     }
     return options.memory.edit((fresh) => {
       if (fresh.reflected !== tree.reflected) return 0;
@@ -106,37 +108,29 @@ export function createMemoryLearning(options: {
         now.getTime() - Date.parse(tree.consolidated[target] ?? '1970-01-01') < dayMs
       )
         continue;
-      const reply = answer.safeParse(
-        await options.curator.curate({
-          task: 'consolidate',
-          instructions: consolidateInstructions,
-          input: {
-            today: now.toISOString().slice(0, 10),
-            area: target,
-            overview: overview?.text ?? null,
-            entries: entries.toSorted(bySlug).map((entry) => ({
-              slug: entry.slug,
-              text: entry.text,
-              abstract: abstractOf(entry),
-              status: statusOf(entry),
-              updated: entry.updated.slice(0, 10),
-            })),
-          },
-        }),
-      );
+      const proposed = await ask('consolidate', consolidateInstructions, {
+        today: now.toISOString().slice(0, 10),
+        area: target,
+        overview: overview?.text ?? null,
+        entries: entries.toSorted(bySlug).map((entry) => ({
+          slug: entry.slug,
+          text: entry.text,
+          abstract: abstractOf(entry),
+          status: statusOf(entry),
+          updated: entry.updated.slice(0, 10),
+        })),
+      });
       applied += await options.memory.edit((fresh) => {
         fresh.consolidated[target] = now.toISOString();
-        return reply.success
-          ? applyConsolidate(fresh, target, reply.data.ops, now.toISOString())
-          : 0;
+        return proposed ? applyConsolidate(fresh, target, proposed, now.toISOString()) : 0;
       });
     }
     return applied;
   }
 
   async function run() {
-    await reflect();
     await options.memory.edit((tree) => repair(tree, new Date()));
+    await reflect();
     await consolidate();
   }
 
