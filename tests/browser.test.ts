@@ -595,9 +595,11 @@ async function transportFixture(respectTimeouts = false) {
       if (!socket.destroyed) socket.end(JSON.stringify({ success: true, data }) + '\n');
     });
   });
-  await new Promise<void>((resolve) =>
-    server.listen(join(directory, `${browserSessionId('fixture')}.sock`), resolve),
-  );
+  const startDaemon = () =>
+    new Promise<void>((resolve) =>
+      server.listen(join(directory, `${browserSessionId('fixture')}.sock`), resolve),
+    );
+  await startDaemon();
   const computer = createAgentBrowserComputer({
     dataRoot: directory,
     onDiagnostic: (event) => diagnostics.push(event),
@@ -648,6 +650,11 @@ async function transportFixture(respectTimeouts = false) {
     },
     after(value: typeof after) {
       after = value;
+    },
+    startDaemon,
+    async stopDaemon() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     },
     async cleanup() {
       before = async () => {};
@@ -814,45 +821,99 @@ for (const action of ['snapshot', 'click'] as const)
     }
   });
 
-test('failed interruption cleanup blocks later actions until an explicit close succeeds', async () => {
+async function wedgedBrowser(options: { idleTimeoutMs?: number } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-drain-failure-'));
   const fixture = stagedLoginBrowser();
   const commands: string[] = [];
   let failClose = true;
   const computer = createBrowserFixture({
     dataRoot: directory,
-    run: async (executable, args, options) => {
+    ...options,
+    run: async (executable, args, input) => {
       const action = args[args.indexOf('--idle-timeout') + 2];
       commands.push(action);
       if (action === 'open' && failClose)
         throw new Error('Runtime command exceeded its time limit.');
       if (action === 'close' && failClose) throw new Error('Synthetic close unavailable.');
-      return fixture.run(executable, args, options);
+      return fixture.run(executable, args, input);
     },
   });
+  await assert.rejects(
+    computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' }),
+    /could not stop safely/,
+  );
+  return {
+    computer,
+    commands,
+    repair: () => {
+      failClose = false;
+    },
+    async cleanup() {
+      failClose = false;
+      await computer.dispose();
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+test('failed interruption cleanup blocks actions until the next open retries the close', async () => {
+  const wedged = await wedgedBrowser();
+  const { computer, commands } = wedged;
   try {
-    await assert.rejects(
-      computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' }),
-      /could not stop safely/,
-    );
-    const count = commands.length;
     await assert.rejects(computer.act('fixture', { action: 'snapshot' }), /expired/);
+    const count = commands.length;
     await assert.rejects(
       computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' }),
-      /expired/,
+      /Synthetic close unavailable/,
     );
-    assert.equal(commands.length, count);
-    failClose = false;
-    await computer.close('fixture');
+    assert.equal(commands.slice(count).at(-1), 'close');
+    wedged.repair();
     const reopened = await computer.act('fixture', {
       action: 'open',
       url: 'https://1.1.1.1/login',
     });
     assert.equal(reopened.url, 'https://1.1.1.1/login');
   } finally {
-    failClose = false;
-    await computer.dispose();
-    await rm(directory, { recursive: true, force: true });
+    await wedged.cleanup();
+  }
+});
+
+test('calls rejected by a wedged browser do not keep it from idling out', async () => {
+  const wedged = await wedgedBrowser({ idleTimeoutMs: 40 });
+  const { computer, commands } = wedged;
+  try {
+    wedged.repair();
+    const count = commands.length;
+    for (const deadline = Date.now() + 3000; !commands.slice(count).includes('close');) {
+      assert.ok(Date.now() < deadline, 'the idle sweep never closed the wedged browser');
+      await assert.rejects(computer.act('fixture', { action: 'snapshot' }));
+      await delay(5);
+    }
+    const reopened = await computer.act('fixture', {
+      action: 'open',
+      url: 'https://1.1.1.1/login',
+    });
+    assert.equal(reopened.url, 'https://1.1.1.1/login');
+  } finally {
+    await wedged.cleanup();
+  }
+});
+
+test('a browser whose daemon is gone closes without a daemon and can be reopened', async () => {
+  const f = await transportFixture();
+  try {
+    await f.computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    await f.stopDaemon();
+    await assert.rejects(f.computer.act('fixture', { action: 'snapshot' }), /unavailable/);
+    await f.startDaemon();
+    const reopened = await f.computer.act('fixture', {
+      action: 'open',
+      url: 'https://1.1.1.1/login',
+    });
+    assert.equal(reopened.url, 'https://1.1.1.1/login');
+    assert.equal(f.actions.includes('close'), false);
+  } finally {
+    await f.cleanup();
   }
 });
 

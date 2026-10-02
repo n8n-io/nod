@@ -146,7 +146,11 @@ export function existingDaemonCommand(
     const abort = () => stop(new DaemonTransportError('aborted'));
     signal?.addEventListener('abort', abort, { once: true });
     deadline = setTimeout(() => stop(new DaemonTransportError('timeout')), timeoutMs);
-    socket.once('error', () => stop(new DaemonTransportError('socket_error')));
+    socket.once('error', (error: NodeJS.ErrnoException) =>
+      command.action === 'close' && ['ENOENT', 'ECONNREFUSED'].includes(error.code ?? '')
+        ? stop(undefined, {})
+        : stop(new DaemonTransportError('socket_error')),
+    );
     socket.once('end', () => stop(new DaemonTransportError('socket_closed')));
     socket.once('connect', () =>
       socket.write(JSON.stringify({ id: randomUUID(), ...command }) + '\n'),

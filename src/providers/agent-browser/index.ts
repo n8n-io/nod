@@ -263,12 +263,14 @@ export function createAgentBrowserComputer(options: {
   }
 
   function serialize<T>(state: BrowserState, operation: () => Promise<T>): Promise<T> {
-    state.lastUsed = Date.now();
     state.busy += 1;
     const execute = async () => {
+      if (state.closed || state.closing) {
+        state.busy -= 1;
+        throw new Error('The browser session has expired. Open the URL again.');
+      }
+      state.lastUsed = Date.now();
       try {
-        if (state.closed || state.closing)
-          throw new Error('The browser session has expired. Open the URL again.');
         return await operation();
       } finally {
         state.busy -= 1;
@@ -332,7 +334,7 @@ export function createAgentBrowserComputer(options: {
       state.closed = true;
       await saveState(state);
     } catch {
-      throw new Error('The browser could not stop safely. Close it before continuing.');
+      throw new Error('The browser could not stop safely. Open the URL again to retry.');
     }
   }
 
@@ -791,9 +793,12 @@ export function createAgentBrowserComputer(options: {
     const gesture = visualGesture(input);
     const savedProfile = input.action === 'open' ? await screens.load(id) : null;
     if (input.action === 'open' && !browsers.has(id)) await recoverBrowser(id, true);
-    if (input.action === 'open' && browsers.get(id)?.recovered) await closeBrowser(id);
-    if (input.action === 'open' && browsers.get(id)?.closed) await closeBrowser(id);
-    if (input.action === 'open' && browsers.get(id)?.saved.navigationFailed) await closeBrowser(id);
+    const existing = input.action === 'open' ? browsers.get(id) : undefined;
+    if (
+      existing &&
+      (existing.recovered || existing.closed || existing.closing || existing.saved.navigationFailed)
+    )
+      await closeBrowser(id);
     const state = stateFor(id);
     if (input.action === 'open' && savedProfile?.profileId && !state.saved.profileId) {
       state.saved.profileId = savedProfile.profileId;
