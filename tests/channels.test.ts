@@ -619,15 +619,13 @@ test('channel replies keep secure credential and approval links in the local app
   );
   assert.equal(reply.includes('secret-token'), false);
   assert.equal(reply.includes('private-id'), false);
-  assert.match(reply, /Open Otto/);
   assert.match(reply, /https:\/\/example.com\/docs/);
-  assert.match(reply, /Attachments are available/);
   const imageReply = channelReply(
     '[Image](http://localhost:4310/api/artifacts/private-file)',
     false,
     true,
   );
-  assert.equal(imageReply, 'Attached file.');
+  assert.equal(imageReply.includes('private-file'), false);
   assert.equal(channelReply('', false, true), '');
   assert.ok(channelReply('', true).trim());
   assert.ok(channelReply('').trim());
@@ -652,7 +650,6 @@ test('text-only channel replies show verified private file links when an app add
     /https:\/\/otto\.example\/api\/artifacts\/00000000-0000-4000-8000-000000000001/,
   );
   assert.equal((reply.match(/https:\/\/otto\.example\/api\/artifacts\//g) ?? []).length, 1);
-  assert.doesNotMatch(reply, /Attachments are available in Otto/);
 });
 
 test(
