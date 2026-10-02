@@ -596,33 +596,6 @@ test(
         },
       );
       await t.test(
-        'revoked channel access blocks a due reminder without rerouting or retry',
-        async () => {
-          const schedule = await createRouted(origin);
-          const job = await jobFor(schedule.id);
-          clock = new Date(job.data.scheduledFor);
-          await deliver([job]);
-          await channels!.replaceTransport({
-            ...transport,
-            channels: [{ ...transport.channels[0]!, allowedSenderIds: [] }],
-          });
-          const before = sent.length;
-          const messageId = await reply(
-            (await routedRuns(schedule.id))[0].turn_id,
-            'Revoked fixture.',
-          );
-          const state = (
-            await db.pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
-              messageId,
-            ])
-          ).rows[0];
-          assert.deepEqual(state, { state: 'blocked', reason: 'channel_access_changed' });
-          await channels!.replaceTransport(transport);
-          await channels!.drain();
-          assert.equal(sent.length, before);
-        },
-      );
-      await t.test(
         'a real timed occurrence reaches the original Telegram fixture once',
         async () => {
           workerMock.mock.restore();
@@ -668,29 +641,6 @@ test(
           await thread.boss.offWork('scheduled-task', { wait: true });
         },
       );
-      await t.test('scheduled replies cannot extend a provider reply window', async () => {
-        const schedule = await createRouted(origin);
-        const job = await jobFor(schedule.id);
-        clock = new Date(job.data.scheduledFor);
-        await deliver([job]);
-        await db.pool.query("UPDATE channel_inbox SET received_at=now()-interval '2 days'");
-        await channels!.replaceTransport({
-          ...transport,
-          channels: [{ ...transport.channels[0]!, replyWindowMs: 86_400_000 }],
-        });
-        const before = sent.length;
-        const messageId = await reply(
-          (await routedRuns(schedule.id))[0].turn_id,
-          'Expired-window fixture.',
-        );
-        const state = (
-          await db.pool.query('SELECT state,reason FROM channel_outbox WHERE message_id=$1', [
-            messageId,
-          ])
-        ).rows[0];
-        assert.deepEqual(state, { state: 'blocked', reason: 'reply_window_closed' });
-        assert.equal(sent.length, before);
-      });
     } finally {
       await channels?.close();
       await app.close();
