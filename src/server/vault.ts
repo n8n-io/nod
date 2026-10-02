@@ -23,6 +23,7 @@ import {
   type PrivateEmailCode,
 } from './email-code.ts';
 import { ownerId as owner } from './config.ts';
+import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { TurnRef } from './thread.ts';
 const passwordInput = z
@@ -1837,6 +1838,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       scope.setErrorHandler((error, _request, reply) => {
         const status =
           error instanceof VaultError ? error.statusCode : error instanceof z.ZodError ? 400 : 500;
+        if (status >= 500) logFailure('vault_request_failed', error);
         reply.code(status).send({
           error:
             error instanceof VaultError
