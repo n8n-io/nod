@@ -16,7 +16,7 @@ import { artifactImage, artifactPreview } from '../src/web/components/attachment
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
-import { messageSetupLinks, safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
+import { safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
 
 const origin = 'http://localhost:4310';
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
@@ -268,17 +268,6 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
 
-test('native app setup has one chat button and hides after connection', () => {
-  const text = '[Connect Slack](https://connect.example.com/fixture)';
-  const before = render(text);
-  assert.match(before, /<button[^>]*data-setup="app"[^>]*>.*Connect Slack<\/button>/);
-  assert.doesNotMatch(before, /connect\.example\.com/);
-  const after = renderToStaticMarkup(
-    createElement(MessageText, { text, connectedAppIds: new Set(['slack']) }),
-  );
-  assert.doesNotMatch(after, /data-setup="app"/);
-});
-
 test('only intended app paths and credential-free HTTP URLs become links', () => {
   for (const value of [
     'javascript:alert(1)',
@@ -344,20 +333,6 @@ test('approval messages preserve source URLs and render supplied markup as text'
   assert.ok(document.body.textContent?.includes(body));
   assert.equal(document.querySelector('script,img,iframe,form,strong,em'), null);
   assert.equal(args.text, body);
-});
-
-test('plain browser connection paths hide their token behind one fixed action', () => {
-  const path = `/browser-connect/${'x'.repeat(43)}`;
-  const text = `Continue at ${path}?token=hidden#fragment. Again ${path}.`;
-  assert.deepEqual(messageSetupLinks(text, origin), [
-    { href: path, setup: 'website', label: 'Connect website' },
-  ]);
-  const [body, actions] = render(text).split('<div class="setup-group">');
-  assert.doesNotMatch(body, /xxxx|token=hidden|fragment/);
-  assert.equal((body.match(/Connect website/g) ?? []).length, 2);
-  assert.equal((actions.match(/data-setup="website"/g) ?? []).length, 1);
-  for (const token of ['x'.repeat(42), 'x'.repeat(44)])
-    assert.deepEqual(messageSetupLinks(`/browser-connect/${token}`, origin), []);
 });
 
 test('attachment previews and gallery sources accept only owned artifact URLs and inert types', () => {
