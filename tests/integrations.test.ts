@@ -3163,9 +3163,9 @@ async function directFixture(t: TestContext) {
     }
     throw new Error(`Unexpected request: ${url}`);
   };
-  const provider = createDirectProvider({ pool, keyStore, grantVault, ownerId: owner, request });
   const oauth = createDirectOAuth({ pool, keyStore, grantVault, ownerId: owner, request });
   await oauth.ready;
+  const provider = createDirectProvider({ pool, keyStore, grantVault, ownerId: owner, request });
   async function account(service: 'notion' | 'linear', secrets: Record<string, unknown> = {}) {
     const id = randomUUID();
     await pool.query(
