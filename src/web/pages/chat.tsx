@@ -32,8 +32,6 @@ function verificationFailure(
 ) {
   if (ambiguous)
     return 'More than one sign-in needs a code. Reply to the verification request you want to complete.';
-  if (status === 'rejected')
-    return 'That verification code was not accepted. Check the code and try again.';
   if (status === 'unavailable')
     return 'That verification request is no longer available. Wait for a new code request.';
   return 'The verification code could not be confirmed. Check the sign-in request and try again.';

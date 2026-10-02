@@ -332,7 +332,7 @@ export function createBridgeComputer(options: {
       } = input;
       return (
         z
-          .object({ status: z.enum(['submitted', 'rejected']) })
+          .object({ status: z.literal('submitted') })
           .strict()
           .nullable()
           .parse(

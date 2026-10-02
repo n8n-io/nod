@@ -29,7 +29,7 @@ test(
   )`);
     const ordinary: string[] = [];
     const injected: Array<{ owner: string; turnId: string; code: string; requestId: string }> = [];
-    let outcome: 'submitted' | 'rejected' | 'unavailable' = 'submitted';
+    let outcome: 'submitted' | 'unavailable' = 'submitted';
     let hold: Promise<void> | undefined;
     let started: (() => void) | undefined;
     let throwPrivateError = false;

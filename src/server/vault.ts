@@ -104,10 +104,7 @@ const requestInput = z
   })
   .strict();
 type CredentialInput = z.infer<typeof requestInput>;
-type StoredInspection = Required<Pick<CredentialRequest, 'fields' | 'methods'>> & {
-  origin: string;
-  url: string;
-};
+type StoredInspection = Required<Pick<CredentialRequest, 'fields'>> & { origin: string };
 export type CredentialInjection = CredentialInput & {
   threadId: string;
   username?: string;
@@ -131,7 +128,6 @@ type EntryRow = {
   label: string;
   origin: string;
   username_hint: string;
-  identifier_label: string;
   ciphertext: string;
   updated_at: Date;
 };
@@ -166,7 +162,6 @@ type SelectionRow = {
   owner_id: string;
   origin: string;
   entry_id: string | null;
-  identifier_label: string;
   login_label: string;
   ciphertext: string;
   blocked: boolean;
@@ -267,15 +262,6 @@ export function openCredential(
     );
 }
 
-function safeIdentifierLabel(value: string | undefined) {
-  return value
-    ?.replace(/[\p{Cc}\p{Cf}<>]/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .slice(0, 80)
-    .trim();
-}
-
 function inferredIdentifierLabel(username: string) {
   return z.email().safeParse(username).success ? 'Email' : 'Username';
 }
@@ -287,8 +273,7 @@ function metadata(entry: EntryRow, username?: string): VaultLoginEntry {
     label: entry.label,
     origin: entry.origin,
     usernameHint: entry.username_hint,
-    identifierLabel:
-      safeIdentifierLabel(entry.identifier_label) || inferredIdentifierLabel(username ?? ''),
+    ...(username === undefined ? {} : { identifierLabel: inferredIdentifierLabel(username) }),
     updatedAt: new Date(entry.updated_at).toISOString(),
   };
 }
@@ -377,8 +362,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS vault_entries (
       id text PRIMARY KEY, owner_id text NOT NULL, label text NOT NULL, origin text NOT NULL,
-      username_hint text NOT NULL, ciphertext text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
-      identifier_label text NOT NULL DEFAULT ''
+      username_hint text NOT NULL, ciphertext text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS vault_cards (
       id text PRIMARY KEY, owner_id text NOT NULL, label text NOT NULL,
@@ -401,17 +385,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     CREATE TABLE IF NOT EXISTS credential_account_selections (
       id text NOT NULL, root_turn_id uuid NOT NULL REFERENCES turns(id), owner_id text NOT NULL, origin text NOT NULL,
       entry_id text, ciphertext text NOT NULL, blocked boolean NOT NULL DEFAULT false, expires_at timestamptz NOT NULL,
-      identifier_label text NOT NULL DEFAULT '', login_label text NOT NULL DEFAULT '', credential_entered_at timestamptz,
+      login_label text NOT NULL DEFAULT '', credential_entered_at timestamptz,
       PRIMARY KEY(root_turn_id,owner_id,origin)
     );
     CREATE INDEX IF NOT EXISTS credential_requests_turn ON credential_requests(turn_id);
     CREATE INDEX IF NOT EXISTS credential_requests_root_turn ON credential_requests(root_turn_id,owner_id,origin,kind);
     CREATE INDEX IF NOT EXISTS vault_entries_owner ON vault_entries(owner_id);
   `);
-  const identifiers = new Map<
-    string,
-    { value: string; identifierLabel: string; expiresAt: number }
-  >();
+  const identifiers = new Map<string, { value: string; expiresAt: number }>();
   const identifierKey = (rootTurnId: string, ownerId: string, origin: string) =>
     JSON.stringify([rootTurnId, ownerId, origin]);
   let keyPromise: Promise<Buffer> | undefined;
@@ -537,12 +518,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     }
   }
 
-  async function save(
-    ownerId: string,
-    raw: unknown,
-    database: Pick<PoolClient, 'query'> = pool,
-    identifierLabel?: string,
-  ) {
+  async function save(ownerId: string, raw: unknown, database: Pick<PoolClient, 'query'> = pool) {
     const input = passwordInput.extend({ password: z.string().max(8192) }).parse(raw);
     const origin = savedCredentialOrigin(input.origin);
     const credentialKey = await key();
@@ -556,7 +532,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     });
     if (matching.length === 1) {
       const entry = matching[0];
-      if (!input.password) return metadata(entry);
+      if (!input.password) return metadata(entry, input.username);
       const { rows } = await database.query<EntryRow>(
         'UPDATE vault_entries SET label=$3,ciphertext=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 AND ciphertext=$5 RETURNING *',
         [
@@ -567,7 +543,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           entry.ciphertext,
         ],
       );
-      if (rows[0]) return metadata(rows[0]);
+      if (rows[0]) return metadata(rows[0], input.username);
     }
     const entry = {
       id: randomUUID(),
@@ -577,18 +553,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const ciphertext = sealCredential(credentialKey, entry, input);
     const hint = input.username ? `${input.username.slice(0, 2)}…` : '';
     const { rows } = await database.query<EntryRow>(
-      'INSERT INTO vault_entries (id, owner_id, label, origin, username_hint, ciphertext, identifier_label) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',
-      [
-        entry.id,
-        ownerId,
-        input.label,
-        entry.origin,
-        hint,
-        ciphertext,
-        safeIdentifierLabel(identifierLabel) || inferredIdentifierLabel(input.username),
-      ],
+      'INSERT INTO vault_entries (id, owner_id, label, origin, username_hint, ciphertext) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
+      [entry.id, ownerId, input.label, entry.origin, hint, ciphertext],
     );
-    return metadata(rows[0]);
+    return metadata(rows[0], input.username);
   }
 
   async function update(rawId: string, raw: unknown) {
@@ -618,18 +586,17 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         password: input.password || secret.password,
       });
       const result = await client.query<EntryRow>(
-        'UPDATE vault_entries SET label=$3,username_hint=$4,ciphertext=$5,identifier_label=$6,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',
+        'UPDATE vault_entries SET label=$3,username_hint=$4,ciphertext=$5,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',
         [
           id,
           owner,
           input.label,
           input.username ? `${input.username.slice(0, 2)}…` : '',
           ciphertext,
-          safeIdentifierLabel(entry.identifier_label) || inferredIdentifierLabel(secret.username),
         ],
       );
       await client.query('COMMIT');
-      return metadata(result.rows[0]);
+      return metadata(result.rows[0], input.username);
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -785,7 +752,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       username: string;
       password?: string;
       loginLabel?: string;
-      identifierLabel?: string;
       expiresAt: Date;
       blocked: boolean;
       enteredAt?: number;
@@ -797,9 +763,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       password: value.password ?? '',
     });
     await database.query(
-      `INSERT INTO credential_account_selections(id,root_turn_id,owner_id,origin,entry_id,ciphertext,blocked,expires_at,identifier_label,login_label,credential_entered_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(root_turn_id,owner_id,origin) DO UPDATE
-       SET id=excluded.id,entry_id=excluded.entry_id,ciphertext=excluded.ciphertext,blocked=excluded.blocked,expires_at=excluded.expires_at,identifier_label=excluded.identifier_label,login_label=excluded.login_label,credential_entered_at=excluded.credential_entered_at`,
+      `INSERT INTO credential_account_selections(id,root_turn_id,owner_id,origin,entry_id,ciphertext,blocked,expires_at,login_label,credential_entered_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(root_turn_id,owner_id,origin) DO UPDATE
+       SET id=excluded.id,entry_id=excluded.entry_id,ciphertext=excluded.ciphertext,blocked=excluded.blocked,expires_at=excluded.expires_at,login_label=excluded.login_label,credential_entered_at=excluded.credential_entered_at`,
       [
         entry.id,
         value.rootTurnId,
@@ -809,7 +775,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         ciphertext,
         value.blocked,
         value.expiresAt,
-        safeIdentifierLabel(value.identifierLabel) || inferredIdentifierLabel(value.username),
         value.loginLabel ?? '',
         value.enteredAt === undefined ? null : new Date(value.enteredAt),
       ],
@@ -849,7 +814,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     };
     const inspection: StoredInspection = {
       origin,
-      url: page?.url ?? origin,
       fields: [
         ...(usernameSelector
           ? [
@@ -871,7 +835,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
                 : 'Password',
         },
       ],
-      methods: [{ id: 'credentials', kind: 'credentials', label: 'Secure entry', supported: true }],
     };
     return { input: resolved, inspection };
   }
@@ -996,7 +959,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       label: row.label,
       kind: row.kind,
       fields: row.inspection.fields,
-      methods: row.inspection.methods,
       status: row.status === 'filled' ? 'filled' : pending ? 'pending' : 'expired',
       expiresAt: new Date(row.expires_at).toISOString(),
       ...(savedEntries ? { savedEntries } : {}),
@@ -1004,44 +966,17 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     };
   }
 
-  async function refreshRequest(token: string): Promise<CredentialRequest> {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const row = await lockRequest(client, tokenHash(token));
-      if (!row)
-        throw new VaultError('This Vault link has expired. Return to chat for a new link.', 409);
-      const fresh = await inspectRequest(row.thread_id, row.selectors);
-      await client.query(
-        'UPDATE credential_requests SET kind=$2,selectors=$3,inspection=$4 WHERE id=$1',
-        [row.id, fresh.input.kind, storedSelectors(fresh.input), JSON.stringify(fresh.inspection)],
-      );
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      if (error instanceof VaultError) throw error;
-      throw new VaultError(
-        'The sign-in page could not be checked. Try again or return to chat.',
-        409,
-      );
-    } finally {
-      client.release();
-    }
-    return describe(token);
-  }
-
   async function consume(
     token: string,
     operation: (
       row: RequestRow,
       client: PoolClient,
-    ) => Promise<{ retry: Awaited<ReturnType<typeof inspectRequest>>; error?: string } | void>,
+    ) => Promise<{ retry: Awaited<ReturnType<typeof inspectRequest>>; error: string } | void>,
     hashed = false,
   ) {
     const client = await pool.connect();
     let submittedId: string | undefined;
-    let retryUrl: string | undefined;
-    let retryError: string | undefined;
+    let retried: { url: string; error: string } | undefined;
     const hash = hashed ? token : tokenHash(token);
     try {
       await client.query('BEGIN');
@@ -1058,7 +993,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         [row.id, !result?.retry],
       );
       if (result?.retry) {
-        retryError = result.error;
         const freshToken = randomBytes(32).toString('base64url');
         const { input, inspection } = result.retry;
         await client.query(
@@ -1079,7 +1013,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             JSON.stringify(inspection),
           ],
         );
-        retryUrl = `/vault/${freshToken}`;
+        retried = { url: `/vault/${freshToken}`, error: result.error };
       }
       await client.query('COMMIT');
     } catch (error) {
@@ -1097,12 +1031,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     } finally {
       client.release();
     }
-    if (retryUrl)
-      return {
-        ok: false,
-        retryUrl,
-        error: retryError ?? 'Those sign-in details were not accepted. Please try again.',
-      };
+    if (retried) return { ok: false, retryUrl: retried.url, error: retried.error };
     await resumePending();
     return { ok: true };
   }
@@ -1132,12 +1061,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           values.username ||
           staged ||
           (savedIdentifier && savedIdentifier.expiresAt > Date.now() ? savedIdentifier.value : '');
-        const identifierLabel =
-          (staged !== undefined && safeIdentifierLabel(selected?.identifier_label)) ||
-          (savedIdentifier &&
-            savedIdentifier.expiresAt > Date.now() &&
-            savedIdentifier.identifierLabel) ||
-          inferredIdentifierLabel(username);
         if (row.kind === 'identifier' && !username)
           throw new VaultError('Enter the email, phone number or username.');
         if (row.kind === 'password' && !values.password)
@@ -1151,7 +1074,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         if (row.kind === 'otp' && !values.code)
           throw new VaultError('Enter the verification code.');
         if (row.kind === 'password' || (row.kind === 'identifier' && values.password)) await key();
-        const submission = await options.inject({
+        await options.inject({
           ...input,
           threadId: row.thread_id,
           ...(row.kind === 'otp'
@@ -1164,12 +1087,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
                 }),
         });
         const entry =
-          row.kind === 'identifier' && !values.password && submission?.status !== 'rejected'
+          row.kind === 'identifier' && !values.password
             ? await save(
                 row.owner_id,
                 { label: row.label, origin: row.origin, username, password: '' },
                 client,
-                identifierLabel,
               )
             : undefined;
         if (row.kind !== 'otp')
@@ -1179,16 +1101,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             origin: row.origin,
             entryId: entry?.id ?? null,
             username,
-            ...(row.kind === 'identifier' && values.password && submission?.status !== 'rejected'
+            ...(row.kind === 'identifier' && values.password
               ? { password: values.password, loginLabel: values.label }
               : {}),
-            identifierLabel,
             expiresAt: row.expires_at,
-            blocked: row.kind !== 'identifier' || submission?.status === 'rejected',
-            enteredAt: submission?.status === 'rejected' ? undefined : Date.now(),
+            blocked: row.kind !== 'identifier',
+            enteredAt: Date.now(),
           });
-        if (submission?.status === 'rejected')
-          return { retry: await inspectRequest(row.thread_id, row.selectors) };
         if (row.kind === 'identifier' && values.password)
           await client.query(
             "DELETE FROM credential_autofill_attempts WHERE root_turn_id=$1 AND owner_id=$2 AND origin=$3 AND kind='password'",
@@ -1197,7 +1116,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         if (row.kind === 'identifier')
           identifiers.set(identifierKey(row.root_turn_id, row.owner_id, row.origin), {
             value: username,
-            identifierLabel,
             expiresAt: Date.now() + 10 * 60_000,
           });
         if (row.kind === 'password') {
@@ -1205,7 +1123,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             row.owner_id,
             { label: values.label, origin: row.origin, username, password: values.password },
             client,
-            identifierLabel,
           );
         }
       },
@@ -1237,7 +1154,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           origin: row.origin,
           entryId: null,
           username: staged ?? '',
-          identifierLabel: staged !== undefined ? selected?.identifier_label : undefined,
           expiresAt: row.expires_at,
           blocked: true,
         });
@@ -1265,7 +1181,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
          ON CONFLICT(root_turn_id,owner_id,origin,kind) DO UPDATE SET entry_id=excluded.entry_id,attempted_at=now()`,
         [row.root_turn_id, row.owner_id, row.origin, entry.id, row.kind],
       );
-      const submission = await options.inject({
+      await options.inject({
         ...fresh.input,
         threadId: row.thread_id,
         username:
@@ -1278,16 +1194,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         origin: row.origin,
         entryId: entry.id,
         username: secret.username,
-        identifierLabel:
-          (staged !== undefined && selected?.identifier_label) ||
-          entry.identifier_label ||
-          inferredIdentifierLabel(secret.username),
         expiresAt: row.expires_at,
-        blocked: submission?.status === 'rejected',
-        enteredAt: submission?.status === 'rejected' ? undefined : Date.now(),
+        blocked: false,
+        enteredAt: Date.now(),
       });
-      if (submission?.status === 'rejected')
-        return { retry: await inspectRequest(row.thread_id, row.selectors) };
     });
   }
 
@@ -1393,10 +1303,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           'Choose the saved login that matches the account already entered.',
           409,
         );
-      const identifierLabel =
-        (staged !== undefined && selected?.identifier_label) ||
-        entries.rows[0].identifier_label ||
-        inferredIdentifierLabel(secret.username);
       if (input.kind === 'password' && !secret.password) {
         await rememberSelection(client, {
           rootTurnId: root,
@@ -1404,7 +1310,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           origin,
           entryId: id,
           username: secret.username,
-          identifierLabel,
           expiresAt: selected?.expires_at ?? new Date(Date.now() + 10 * 60_000),
           blocked: false,
           enteredAt: selected?.credential_entered_at?.getTime(),
@@ -1416,7 +1321,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         await client.query('COMMIT');
         return false;
       }
-      const submission = await options.inject({
+      await options.inject({
         ...input,
         threadId: turn.threadId,
         origin,
@@ -1430,24 +1335,17 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         origin,
         entryId: id,
         username: secret.username,
-        identifierLabel,
         expiresAt:
           selected && staged !== undefined
             ? selected.expires_at
             : new Date(Date.now() + 10 * 60_000),
-        blocked: submission?.status === 'rejected',
-        enteredAt: submission?.status === 'rejected' ? undefined : Date.now(),
+        blocked: false,
+        enteredAt: Date.now(),
       });
       await client.query('COMMIT');
-      if (submission?.status === 'rejected')
-        throw new VaultError(
-          'The saved details were not accepted. Enter fresh details in Vault.',
-          409,
-        );
       if (input.kind === 'identifier')
         identifiers.set(identifierKey(root, ownerId, origin), {
           value: secret.username,
-          identifierLabel,
           expiresAt: Date.now() + 10 * 60_000,
         });
       return true;
@@ -1515,16 +1413,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       const verified = await inspectRequest(turn.threadId, fresh.input);
       if (verified.input.kind !== 'password')
         throw new VaultError('The password step changed.', 409);
-      const submission = await options.inject({
+      await options.inject({
         ...verified.input,
         threadId: turn.threadId,
         username: verified.input.usernameSelector ? secret.username : undefined,
         password: secret.password,
       });
-      if (submission?.status === 'rejected') {
-        await client.query('COMMIT');
-        return false;
-      }
       const entry = await save(
         ownerId,
         {
@@ -1534,7 +1428,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           password: secret.password,
         },
         client,
-        selected.identifier_label,
       );
       await rememberSelection(client, {
         rootTurnId: root,
@@ -1542,7 +1435,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         origin,
         entryId: entry.id,
         username: secret.username,
-        identifierLabel: selected.identifier_label,
         expiresAt: selected.expires_at,
         blocked: false,
         enteredAt: Date.now(),
@@ -1609,15 +1501,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           throw new VaultError('This saved login is no longer available.', 409);
       }
       const verified = await inspectRequest(turn.threadId, fresh.input);
-      const submission = await options.inject({
+      await options.inject({
         ...verified.input,
         threadId: turn.threadId,
         username: secret.username,
       });
-      if (submission?.status === 'rejected') {
-        await client.query('COMMIT');
-        return false;
-      }
       await client.query(
         'UPDATE credential_account_selections SET blocked=false,credential_entered_at=now() WHERE id=$1',
         [selected.id],
@@ -1757,13 +1645,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         throw new VaultError('This verification step changed.', 409);
       if (!(await found.current(client)))
         throw new VaultError('This connected mailbox is no longer available.', 409);
-      const submitted = await options.inject({
+      await options.inject({
         ...verified.input,
         threadId: turn.threadId,
         code,
       });
       await client.query('COMMIT');
-      return submitted?.status !== 'rejected';
+      return true;
     } catch {
       await client?.query('ROLLBACK');
       return false;
@@ -1777,7 +1665,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     turnId: string,
     text: string,
     requestId: string,
-  ): Promise<{ status: 'submitted' | 'rejected' | 'invalid' | 'unavailable' }> {
+  ): Promise<{ status: 'submitted' | 'invalid' | 'unavailable' }> {
     if (ownerId !== owner) return { status: 'unavailable' };
     const code = text.trim();
     if (!/^\d{4,8}$/.test(code)) return { status: 'invalid' };
@@ -1789,8 +1677,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         [requestId, turnId, ownerId],
       );
       if (rows.length !== 1) return { status: 'unavailable' };
-      const result = await submit(rows[0].token_hash, { code }, true);
-      return { status: result.ok ? 'submitted' : 'rejected' };
+      await submit(rows[0].token_hash, { code }, true);
+      return { status: 'submitted' };
     } catch {
       return { status: 'unavailable' };
     }
@@ -1954,10 +1842,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       });
       scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>
         describe(request.params.id),
-      );
-      scope.post<{ Params: { id: string } }>(
-        '/api/credential-requests/:id/refresh',
-        async (request) => refreshRequest(request.params.id),
       );
       scope.post<{ Params: { id: string } }>(
         '/api/credential-requests/:id/retry',

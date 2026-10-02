@@ -17,7 +17,7 @@ interface VerificationInput {
   persistOrdinary?: (client: PoolClient) => Promise<void>;
 }
 
-type VerificationStatus = 'submitted' | 'rejected' | 'invalid' | 'unavailable';
+type VerificationStatus = 'submitted' | 'invalid' | 'unavailable';
 const maskedMessage = 'Verification code sent securely.';
 const pendingMessage = 'Verification code received securely.';
 const unavailableMessage =
@@ -207,7 +207,7 @@ export async function createChatVerification(
       client.release();
     }
     options.refresh();
-    let status: 'submitted' | 'rejected' | 'unavailable';
+    let status: 'submitted' | 'unavailable';
     try {
       const result = await options.submitCode(
         options.ownerId,
@@ -215,10 +215,7 @@ export async function createChatVerification(
         code,
         reserved.requestId,
       );
-      status =
-        result.status === 'submitted' || result.status === 'rejected'
-          ? result.status
-          : 'unavailable';
+      status = result.status === 'submitted' ? 'submitted' : 'unavailable';
     } catch {
       status = 'unavailable';
     }
@@ -229,15 +226,16 @@ export async function createChatVerification(
       [input.clientMessageId, status, maskedMessage],
     );
     if (status !== 'submitted') {
-      const message =
-        status === 'rejected'
-          ? 'That code did not work. Reply with a fresh verification code to try again.'
-          : 'The code could not be applied. Check the sign-in step, then send a fresh code when it is ready.';
       await pool.query(
         `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
          SELECT $1,$2,'assistant',$3,u.thread_id,u.id FROM turns u JOIN threads th ON th.id=u.thread_id
          WHERE u.id=$4 AND u.owner_id=$2 AND th.archived_at IS NULL`,
-        [randomUUID(), options.ownerId, message, reserved.turnId],
+        [
+          randomUUID(),
+          options.ownerId,
+          'The code could not be applied. Check the sign-in step, then send a fresh code when it is ready.',
+          reserved.turnId,
+        ],
       );
     }
     options.refresh();

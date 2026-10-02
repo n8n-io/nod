@@ -95,7 +95,7 @@ export interface CredentialInput {
   passwordSelector?: string;
 }
 export interface CredentialSubmission {
-  status: 'submitted' | 'rejected';
+  status: 'submitted';
 }
 export interface Computer {
   currentSession?(): { threadId: string; lastActivityAt: string } | undefined;

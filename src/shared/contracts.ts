@@ -30,7 +30,7 @@ export interface SubmitMessageResponse {
   turnId: string;
   messageId: string;
   messageText?: string;
-  verificationStatus?: 'pending' | 'submitted' | 'rejected' | 'unavailable';
+  verificationStatus?: 'pending' | 'submitted' | 'unavailable';
 }
 export interface VerificationRequest {
   id: string;
@@ -99,13 +99,6 @@ export interface CredentialRequest {
   label: string;
   kind: 'identifier' | 'password' | 'otp';
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
-  methods?: {
-    id: string;
-    label: string;
-    kind: 'credentials' | 'oauth' | 'passkey' | 'manual';
-    supported: boolean;
-    reason?: string;
-  }[];
   status: 'pending' | 'filled' | 'expired';
   expiresAt: string;
   savedEntries?: VaultLoginEntry[];

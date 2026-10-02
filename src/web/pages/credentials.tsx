@@ -55,8 +55,6 @@ function CredentialForm({ id }: { id: string }) {
   const username =
     request?.kind === 'identifier' || fields.some((field) => field.kind === 'identifier');
   const password = request?.kind === 'password';
-  const credentialMethod = request?.methods?.find((method) => method.id === 'credentials');
-  const canFill = credentialMethod?.supported !== false;
   const savedEntries = request?.kind === 'otp' ? [] : (request?.savedEntries ?? []);
   const choosingSaved = savedEntries.length > 0 && !enterNew;
   async function perform<T>(
@@ -89,14 +87,6 @@ function CredentialForm({ id }: { id: string }) {
       if (generation.current === current) setSaving(false);
     }
   }
-  function refreshPage() {
-    return perform<CredentialRequest>(
-      '/refresh',
-      {},
-      setRequest,
-      'The sign-in page could not be checked. Try again or return to chat.',
-    );
-  }
   function retry() {
     return perform(
       '/retry',
@@ -128,11 +118,7 @@ function CredentialForm({ id }: { id: string }) {
     setRequest(null);
     setRetried(false);
     setEnterNew(true);
-    setError(
-      request?.kind === 'otp'
-        ? 'The website did not accept that code. Try again.'
-        : 'The website did not accept those details. Try again.',
-    );
+    setError(result.error ?? '');
     setActiveId(match[1]);
   }
   function useSaved(entryId: string) {
@@ -240,7 +226,7 @@ function CredentialForm({ id }: { id: string }) {
                 </p>
               </div>
             </header>
-            {request && canFill && fields.length > 0 && choosingSaved && (
+            {request && choosingSaved && (
               <div className="credential-accounts">
                 <h2>Choose a login</h2>
                 {savedEntries.map((entry) => (
@@ -263,7 +249,7 @@ function CredentialForm({ id }: { id: string }) {
                 </Button>
               </div>
             )}
-            {request && canFill && fields.length > 0 && !choosingSaved && (
+            {request && !choosingSaved && (
               <form
                 className="form-stack"
                 autoComplete="off"
@@ -353,21 +339,6 @@ function CredentialForm({ id }: { id: string }) {
                   </Button>
                 )}
               </form>
-            )}
-            {credentialMethod?.supported === false && (
-              <>
-                <Notice kind="info">
-                  {credentialMethod.reason ?? 'This sign-in step needs another method.'}
-                </Notice>
-                <Button variant="outline" disabled={saving} onClick={() => void refreshPage()}>
-                  Check the page again
-                </Button>
-              </>
-            )}
-            {request && fields.length === 0 && (
-              <Notice kind="info">
-                This page needs a different sign-in step. Return to chat to continue.
-              </Notice>
             )}
           </>
         )}
