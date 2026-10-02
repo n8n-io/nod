@@ -636,6 +636,15 @@ export async function createDiscoveredConnections(
   }
   async function search(query: string, connectionId?: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
+    const terms = query
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter(Boolean);
+    const words = terms.some((word) => word.length > 2)
+      ? terms.filter((word) => word.length > 2)
+      : terms;
+    const score = (text: string) =>
+      words.filter((word) => text.toLowerCase().includes(word)).length;
     const rows = (
       await pool.query<AccountRow>(
         'SELECT * FROM discovered_connections WHERE owner_id=$1 AND ($2::uuid IS NULL OR id=$2)',
@@ -663,20 +672,18 @@ export async function createDiscoveredConnections(
                 id: path.id,
                 kind: path.kind,
                 endpoint: path.endpoint,
-                ...(row.service.includes(query.toLowerCase()) ||
-                row.name.toLowerCase().includes(query.toLowerCase())
+                ...(score(row.service) || score(row.name)
                   ? {
                       toolNames: available.slice(0, 200).map((tool) => redact(tool.name, token)),
                       toolCount: available.length,
                     }
                   : {}),
                 tools: available
-                  .filter((tool) =>
-                    `${tool.name} ${tool.description ?? ''}`
-                      .toLowerCase()
-                      .includes(query.toLowerCase()),
-                  )
-                  .map((tool) => ({
+                  .map((tool) => ({ tool, score: score(`${tool.name} ${tool.description ?? ''}`) }))
+                  .filter((entry) => entry.score)
+                  .sort((left, right) => right.score - left.score)
+                  .slice(0, 25)
+                  .map(({ tool }) => ({
                     name: redact(tool.name, token),
                     description: redact(tool.description, token),
                     inputSchema: redact(tool.inputSchema, token),

@@ -3422,6 +3422,7 @@ test(
                 inputSchema: { type: 'object' },
                 annotations: { readOnlyHint: true },
               },
+              { name: 'find_user', description: 'Find a user by display name', inputSchema: {} },
             ];
           },
           callTool: async (_endpoint, _headers, _name, _input, signal) => {
@@ -3574,6 +3575,22 @@ test(
         [connectionId],
       );
       assert.deepEqual(catalogs, ['https://fixture.example/mcp']);
+      const sentence = (await integrations.execute(
+        owner,
+        'SEARCH_TOOLS',
+        { query: 'please list the open records' },
+        ref,
+        new AbortController().signal,
+        connectionId,
+      )) as {
+        discovered: Array<{ paths: Array<{ id: string; tools?: Array<{ name: string }> }> }>;
+      };
+      assert.deepEqual(
+        sentence.discovered[0].paths
+          .find((item) => item.id === mcpPath)
+          ?.tools?.map((tool) => tool.name),
+        ['list_records'],
+      );
       await assert.rejects(
         integrations.execute(
           owner,
