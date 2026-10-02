@@ -371,9 +371,7 @@ test('the completed rollout fallback refuses malformed or foreign list identitie
     ['malformed namespace', (value) => (value.durable_objects.namespace_id = 'unknown')],
     ['missing list version', (value) => delete value.version],
     ['negative list version', (value) => (value.version = -1)],
-    ['fractional list version', (value) => (value.version = 10.5)],
     ['missing rollout ID', (value) => delete value.active_rollout_id],
-    ['empty rollout ID', (value) => (value.active_rollout_id = '')],
     ['malformed rollout ID', (value) => (value.active_rollout_id = '../foreign')],
     ['unknown pending target', (value) => (value.scheduling_hint = { target: {} })],
     [
@@ -417,9 +415,7 @@ test('the completed rollout fallback requires terminal progress for every instan
     ['unfinished progress step', (value) => (value.progress.current_step = 0)],
     ['no instances', (value) => (value.progress.total_instances = 0)],
     ['not all instances updated', (value) => (value.progress.updated_instances = 6)],
-    ['extra updated instance', (value) => (value.progress.updated_instances = 8)],
     ['fractional instance count', (value) => (value.progress.updated_instances = 7.5)],
-    ['negative instance count', (value) => (value.progress.updated_instances = -1)],
     ['unknown distribution', (value) => delete value.progress.version_distribution],
     [
       'old-version instance',

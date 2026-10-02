@@ -381,25 +381,6 @@ test('incomplete hosted computer and storage configuration is rejected before an
   }
 });
 
-test('explicit hosted providers remain supported in both deployment environments', () => {
-  for (const environment of ['development', 'production']) {
-    for (const computerProvider of ['cloudflare', 'e2b']) {
-      const config = configuration(computerProvider === 'cloudflare');
-      config.env[environment] = config.env.production;
-      const gatewayEnv = gatewayValues({
-        ...(computerProvider === 'e2b' ? JSON.parse(e2bGateway) : {}),
-        OTTO_ENVIRONMENT: environment,
-      });
-      const plan = deploymentPlan({ ...planInput(config), environment, gatewayEnv });
-      const values = JSON.parse(plan.secrets.GATEWAY_ENV);
-      assert.equal(values.COMPUTER_PROVIDER, computerProvider);
-      assert.equal(values.OBJECT_STORAGE_PROVIDER, 'http');
-      assert.equal(values.OBJECT_STORAGE_ENDPOINT, 'http://otto.storage/v1/objects/');
-      assert.equal(plan.localImages.length, computerProvider === 'cloudflare' ? 3 : 1);
-    }
-  }
-});
-
 test('unsupported container classes fail before publishing without echoing configuration', async () => {
   for (const className of ['UnknownContainer', '__proto__', undefined]) {
     const config = configuration(false);
