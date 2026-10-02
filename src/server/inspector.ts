@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { RuntimeObservation } from '../ports/agent.ts';
 import type { InspectorObservationsResponse, ModelUsage, ToolCall } from '../shared/inspector.ts';
 import { createInspectorRedactor, inspectorPayloadLimit } from './inspector-redaction.ts';
+import { createRetention } from './retention.ts';
 
 export const inspectorRetentionDays = 7;
 export { inspectorPayloadLimit };
@@ -38,24 +39,7 @@ export function createInspectorStore(
   const redact = createInspectorRedactor(options.secrets);
   const pendingFailures = new Set<Promise<void>>();
   let acceptingFailures = true;
-  let lastPruned = 0;
-  let pruning: Promise<void> | undefined;
-  async function prune() {
-    if (pruning) return pruning;
-    if (Date.now() - lastPruned < 60 * 60_000) return;
-    pruning = pool
-      .query(
-        "DELETE FROM inspector_records WHERE owner_id=$1 AND recorded_at < now() - interval '7 days'",
-        [options.ownerId],
-      )
-      .then(() => {
-        lastPruned = Date.now();
-      })
-      .finally(() => {
-        pruning = undefined;
-      });
-    return pruning;
-  }
+  const { prune } = createRetention(pool, options.ownerId, 'inspector_records', 'recorded_at');
   async function record(turnId: string, event: RuntimeObservation) {
     if (!options.enabled()) return;
     z.uuid().parse(turnId);

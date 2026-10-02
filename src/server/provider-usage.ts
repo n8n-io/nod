@@ -5,6 +5,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { ProviderUsageEvent } from '../ports/provider-usage.ts';
 import type { ProviderUsageResponse } from '../shared/provider-usage.ts';
+import { createRetention } from './retention.ts';
 
 const label = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,159}$/);
 const toolName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,99}$/);
@@ -59,26 +60,8 @@ export function createProviderUsageStore(
   }>();
   const pending = new Set<Promise<unknown>>();
   let droppedEvents = 0;
-  let lastPruned = -Infinity;
-  let pruning: Promise<void> | undefined;
-  let retentionTimer: ReturnType<typeof setInterval> | undefined;
+  const retention = createRetention(pool, options.ownerId, 'provider_usage', 'recorded_at');
   let stopped = false;
-  function prune(force = false, database: Pool = pool): Promise<void> {
-    if (pruning) return pruning;
-    if (!force && Date.now() - lastPruned < 3_600_000) return Promise.resolve();
-    pruning = database
-      .query(
-        "DELETE FROM provider_usage WHERE owner_id=$1 AND recorded_at < now()-interval '7 days'",
-        [options.ownerId],
-      )
-      .then(() => {
-        lastPruned = Date.now();
-      })
-      .finally(() => {
-        pruning = undefined;
-      });
-    return pruning;
-  }
   async function initialize(migrationPool: Pool = pool) {
     await migrationPool.query(`CREATE TABLE IF NOT EXISTS provider_usage (
       id uuid PRIMARY KEY, owner_id text NOT NULL, turn_id uuid REFERENCES turns(id) ON DELETE SET NULL,
@@ -90,13 +73,8 @@ export function createProviderUsageStore(
     CREATE INDEX IF NOT EXISTS provider_usage_owner_time_idx ON provider_usage(owner_id,recorded_at);
     CREATE INDEX IF NOT EXISTS provider_usage_tool_idx ON provider_usage(owner_id,tool_call_id) WHERE tool_call_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS provider_usage_turn_idx ON provider_usage(owner_id,turn_id,recorded_at);`);
-    await prune(true, migrationPool);
-    if (!stopped && !retentionTimer) {
-      retentionTimer = setInterval(() => {
-        void prune(true).catch(() => {});
-      }, 3_600_000);
-      retentionTimer.unref();
-    }
+    await retention.prune(true, migrationPool);
+    if (!stopped) retention.schedule();
   }
   function record(input: ProviderUsageEvent) {
     if (stopped || !options.enabled()) return;
@@ -135,7 +113,7 @@ export function createProviderUsageStore(
       }),
     );
     const write = (async () => {
-      await prune();
+      await retention.prune();
       if (!options.enabled()) return;
       await pool.query(
         `INSERT INTO provider_usage(id,owner_id,turn_id,provider,category,operation,model,status,duration_ms,metrics,cost_usd,pricing,tool_call_id,tool_name)
@@ -259,9 +237,8 @@ export function createProviderUsageStore(
     flush: () => Promise.all([...pending]),
     close: async () => {
       stopped = true;
-      if (retentionTimer) clearInterval(retentionTimer);
       await Promise.all([...pending]);
-      await pruning;
+      await retention.stop();
     },
   };
 }

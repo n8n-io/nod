@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { PromptSnapshot } from '../ports/agent.ts';
 import type { InspectorPrompt, InspectorPromptsResponse } from '../shared/inspector-prompts.ts';
 import { createInspectorRedactor } from './inspector-redaction.ts';
+import { createRetention } from './retention.ts';
 
 const redactionVersion = 1;
 const snapshotSchema = z.object({
@@ -37,9 +38,7 @@ export function createPromptInspector(
   const pending = new Set<Promise<void>>();
   let accepting = true;
   let dropped = 0;
-  let lastPruned = -Infinity;
-  let pruning: Promise<void> | undefined;
-  let retentionTimer: ReturnType<typeof setInterval> | undefined;
+  const retention = createRetention(pool, options.ownerId, 'inspector_prompts', 'created_at');
   function safeText(value: string) {
     const result = redact(value);
     return typeof result === 'string' ? result : JSON.stringify(result);
@@ -53,29 +52,8 @@ export function createPromptInspector(
     );
     CREATE INDEX IF NOT EXISTS inspector_prompts_owner ON inspector_prompts(owner_id, created_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS inspector_prompts_turn ON inspector_prompts(owner_id, turn_id, created_at DESC, id DESC);`);
-    await prune(true, migrationPool);
-    if (accepting && !retentionTimer) {
-      retentionTimer = setInterval(() => {
-        void prune(true).catch(() => {});
-      }, 60 * 60_000);
-      retentionTimer.unref();
-    }
-  }
-  async function prune(force = false, database: Pool = pool) {
-    if (pruning) return pruning;
-    if (!force && Date.now() - lastPruned < 60 * 60_000) return;
-    pruning = database
-      .query(
-        "DELETE FROM inspector_prompts WHERE owner_id=$1 AND created_at < now()-interval '7 days'",
-        [options.ownerId],
-      )
-      .then(() => {
-        lastPruned = Date.now();
-      })
-      .finally(() => {
-        pruning = undefined;
-      });
-    return pruning;
+    await retention.prune(true, migrationPool);
+    if (accepting) retention.schedule();
   }
   function record(turnId: string, snapshot: PromptSnapshot): Promise<void> {
     if (!accepting || !options.enabled()) return Promise.resolve();
@@ -93,7 +71,7 @@ export function createPromptInspector(
           system: safeText(parsed.system),
           instruction: safeText(parsed.instruction),
         };
-        await prune();
+        await retention.prune();
         if (!options.enabled()) return;
         await pool.query(
           `INSERT INTO inspector_prompts(id,owner_id,thread_id,turn_id,payload,provider,model,created_at)
@@ -131,7 +109,7 @@ export function createPromptInspector(
       ).rowCount
     )
       return null;
-    await prune();
+    await retention.prune();
     const result = await pool.query(
       `SELECT p.id,p.turn_id AS "turnId",left(COALESCE(m.text,u.prompt),100) AS title,p.payload,p.provider,p.model,p.created_at AS "createdAt"
       FROM inspector_prompts p JOIN turns u ON u.id=p.turn_id AND u.owner_id=p.owner_id
@@ -185,10 +163,8 @@ export function createPromptInspector(
     registerRoutes,
     async close() {
       accepting = false;
-      clearInterval(retentionTimer);
-      retentionTimer = undefined;
       await Promise.allSettled([...pending]);
-      if (pruning) await Promise.allSettled([pruning]);
+      await retention.stop();
     },
   };
 }
