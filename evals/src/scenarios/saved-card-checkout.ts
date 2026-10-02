@@ -2,7 +2,7 @@ import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { escapeHtml, page, redirect, type Site } from '../world/sites.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'shop.cablehub.example.net';
 const card = {
   label: 'Visa ending 4242',

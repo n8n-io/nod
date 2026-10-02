@@ -3,7 +3,7 @@ import { check, judge, scenario } from '../scenario.ts';
 import { createApps, sheets } from '../world/apps.ts';
 import { daysAgo, localTime } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const budget: Record<string, number> = {
   Groceries: 400,
   Dining: 150,

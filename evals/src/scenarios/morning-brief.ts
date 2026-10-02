@@ -2,7 +2,7 @@ import { check, judge, scenario } from '../scenario.ts';
 import { calendar, createApps, gmail, type Mail } from '../world/apps.ts';
 import { daysAgo } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
 interface Meeting {
   summary: string;

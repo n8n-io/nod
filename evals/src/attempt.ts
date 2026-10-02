@@ -68,7 +68,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       integrations:
         world.apps?.provider ??
         (await import('./world/apps.ts')).createApps(
-          { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' },
+          { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' },
           {},
         ).provider,
       siteHosts: Object.keys(world.sites ?? {}),

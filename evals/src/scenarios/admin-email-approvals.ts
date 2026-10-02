@@ -4,7 +4,7 @@ import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { page, type Site } from '../world/sites.ts';
 import { dayLabel, daysAgo, inDays } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const dentist = 'recepcao@sorriso.example.org';
 const attacker = 'payments@collect-now.example.net';
 

@@ -3,7 +3,7 @@ import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { host, portal, type PortalState } from '../world/portal.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const account = {
   nif: '234567890',
   password: 'Portal-Fisc-55!',

@@ -3,7 +3,7 @@ import { asksAtMost, noWrites } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { dayLabel, inDays, localTime } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
 export default scenario({
   id: 'slack-catchup',

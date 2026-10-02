@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
-import { comparisonChart } from './chart.ts';
+import { cards, comparisonChart } from './chart.ts';
+import { renderImages } from './images.ts';
+import { slackMessage } from './writeup.ts';
 import { diagnoseAll } from './diagnose.ts';
 import { cleanup, doctor, printChecks } from './environment.ts';
 import { has, text, whole, type Args } from './options.ts';
@@ -27,6 +29,8 @@ export const help = `Otto capability evals
     refs <a> <b> [...]         run the same suite on several git revisions (a PR against main)
     compare <label> <label>    compare saved runs: pass rate, cost, latency, what got better or worse
     runs                       list saved runs
+    charts <label>... | --prefix <p> [--desktop]   render the comparison as sleek PNG images
+    slack <label>... | --prefix <p>                 draft the Slack summary with the leaderboard
 
   Look closer
     report <label> [--open]    show a saved run (and open its HTML report)
@@ -139,12 +143,31 @@ export async function main(args: Args) {
       process.exitCode = ok ? 0 : 1;
       return;
     }
-    case 'list':
+    case 'list': {
+      const status = (item: (typeof scenarios)[number]) =>
+        item.stance === 'gap'
+          ? 'known gap'
+          : item.calibration === 'pending'
+            ? 'calibrating'
+            : item.tier === 'live'
+              ? 'live web'
+              : 'scored';
+      if (has(args, 'markdown')) {
+        console.log(
+          '| Scenario | Linear | What it checks | Capabilities | Status |\n| --- | --- | --- | --- | --- |',
+        );
+        for (const item of scenarios)
+          console.log(
+            `| \`${item.id}\` | ${item.linear ?? ''} | ${item.title} | ${item.capabilities.join(', ')} | ${status(item)} |`,
+          );
+        return;
+      }
       for (const item of scenarios)
         console.log(
           `${item.id.padEnd(28)} ${item.tier.padEnd(5)} ${item.complexity.padEnd(8)} ${item.stance.padEnd(10)} ${item.capabilities.join(',').padEnd(34)} ${(item.linear ?? '').padEnd(8)} ${item.calibration === 'pending' ? 'calibration pending' : ''}`,
         );
       return;
+    }
     case 'run': {
       const result = await runSuite(runOptions(args));
       const minimum = text(args, 'min-pass');
@@ -183,6 +206,54 @@ export async function main(args: Args) {
         console.log(
           'These two runs used the same model and the same code, so every difference you see is run-to-run noise.\n',
         );
+      return;
+    }
+    case 'charts': {
+      const found = first ? [first, ...others] : [];
+      const prefix = text(args, 'prefix');
+      const labels = prefix
+        ? (await listRuns(root))
+            .map((run) => run.label)
+            .filter((name) => name.startsWith(`${prefix}-`))
+            .sort()
+        : found;
+      if (labels.length < 1)
+        throw new Error('Usage: charts <label> [...]  or  charts --prefix <prefix>');
+      const runs = await Promise.all(labels.map((label) => loadRun(root, label)));
+      const name = prefix ?? labels.join('-vs-').slice(0, 60);
+      const directory = join(root, `${name}-images`);
+      const files = await renderImages(cards(runs), directory);
+      await writeFile(join(root, `${name}.report.html`), comparisonChart(runs));
+      console.log(`Rendered ${files.length} images in ${directory}`);
+      if (has(args, 'desktop')) {
+        const target = join(process.env.HOME ?? '.', 'Desktop', `otto-evals-${name}`);
+        await mkdir(target, { recursive: true });
+        for (const file of files) await copyFile(file, join(target, file.split('/').pop()!));
+        console.log(`Copied to ${target}`);
+      }
+      return;
+    }
+    case 'slack': {
+      const prefix = text(args, 'prefix');
+      const labels = prefix
+        ? (await listRuns(root))
+            .map((run) => run.label)
+            .filter((name) => name.startsWith(`${prefix}-`))
+            .sort()
+        : [first, ...others].filter(Boolean);
+      if (!labels.length)
+        throw new Error('Usage: slack <label> [...]  or  slack --prefix <prefix>');
+      const runs = await Promise.all(labels.map((label) => loadRun(root, label)));
+      const all = scenarios;
+      const message = slackMessage(runs, {
+        total: all.length,
+        frozen: all.filter((item) => item.calibration !== 'pending' && item.stance !== 'gap')
+          .length,
+        pending: all.filter((item) => item.calibration === 'pending' && item.stance !== 'gap')
+          .length,
+        gaps: all.filter((item) => item.stance === 'gap').length,
+      });
+      console.log(message);
       return;
     }
     case 'runs':

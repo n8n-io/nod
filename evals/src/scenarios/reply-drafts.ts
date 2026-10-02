@@ -3,7 +3,7 @@ import { check, judge, scenario } from '../scenario.ts';
 import { calendar, createApps, gmail, type Mail } from '../world/apps.ts';
 import { dayLabel, daysAgo, localTime, nextWeekday } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const me = `Alex Rivera <${owner.email}>`;
 const sofia = 'sofia.almeida@meridiancapital.example.org';
 const daniel = 'daniel.ortiz@fieldnotes.example.net';

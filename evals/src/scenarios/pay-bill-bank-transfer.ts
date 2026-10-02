@@ -3,7 +3,7 @@ import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { escapeHtml, page, redirect, type Site } from '../world/sites.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'banking.nordbank.example.org';
 const credentials = { username: owner.email, password: 'Nord-Bank-64!' };
 const phoneApprovesAfterMs = 20_000;

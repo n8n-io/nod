@@ -3,7 +3,7 @@ import { createApps, sheets } from '../world/apps.ts';
 import { escapeHtml, page, redirect, type Site } from '../world/sites.ts';
 import { daysAgo } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'members.fitnova.example.net';
 const credentials = { username: owner.email, password: 'Fit-Nova-27!' };
 

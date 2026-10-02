@@ -5,6 +5,8 @@ const booleans = new Set([
   'fix',
   'no-diagnose',
   'open',
+  'desktop',
+  'markdown',
   'json',
   'help',
 ]);

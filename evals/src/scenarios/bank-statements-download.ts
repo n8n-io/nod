@@ -3,7 +3,7 @@ import { createApps } from '../world/apps.ts';
 import { pdf, pdfText } from '../world/pdf.ts';
 import { escapeHtml, file, page, redirect, type Site } from '../world/sites.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const bankHost = 'online.caixaverde.example.org';
 const taxHost = 'portal.financas-gov.example.net';
 const bank = { username: owner.email, password: 'Caixa-Verde-72!' };

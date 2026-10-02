@@ -4,7 +4,7 @@ import { createApps, gmail, type Mail } from '../world/apps.ts';
 import { pdf } from '../world/pdf.ts';
 import { daysAgo } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
 const results = [
   ['Haemoglobin', '14.2 g/dL', '13.5 - 17.5', 'Normal'],

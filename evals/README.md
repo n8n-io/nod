@@ -33,6 +33,43 @@ All commands are used as `npm run eval:capability -- <command> [options]`; `help
 
 Results are saved under `.local/capability-evals/<label>/` (`report.html` with every transcript and check, `summary.json`, one JSON per attempt). A label never overwrites an earlier run.
 
+## The suite
+
+Thirty scenarios, each a real task from the Otto capabilities project in Linear, written the way a user would ask. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.
+
+| Scenario                   | Linear  | What it checks                                                                | Capabilities                             | Status      |
+| -------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
+| `admin-email-approvals`    | LAB-394 | Handle the private admin in my email, ask before paying or sending            | approvals, apps, browser                 | scored      |
+| `bank-statements-download` | LAB-392 | Download bank statements and last year's tax assessment into a folder         | files, vault, browser                    | scored      |
+| `book-dinner`              | LAB-393 | Find an Italian table for Friday and book it only when I say go               | approvals, browser, research             | scored      |
+| `cancel-subscription`      | LAB-397 | Cancel a subscription and get this month's refund, keep going until confirmed | browser, vault, approvals, long-running  | scored      |
+| `cart-from-recipes`        | LAB-395 | Fill a supermarket cart from recipe photos and stop before checkout           | browser, files, vault, approvals         | scored      |
+| `chase-unpaid-invoice`     | LAB-375 | Chase an unpaid invoice, but ask me before the second nudge                   | long-running, schedules, approvals, apps | calibrating |
+| `competitor-digest`        | LAB-377 | Weekly competitor digest with screenshots of what changed                     | browser, schedules, memory, files        | scored      |
+| `finance-sheet`            | LAB-380 | Spending by category vs budget from my sheet, then a daily check              | apps, files, schedules, approvals        | scored      |
+| `gym-data-export`          | LAB-384 | Get my workout history out of a gym site with no export, show my progression  | browser, files, vault, schedules         | calibrating |
+| `health-results-pdf`       | LAB-391 | Get my blood test PDF from email, explain it, remind me to re-test            | files, apps, memory, schedules           | scored      |
+| `invoices-overdue`         | LAB-386 | Find who owes me money in my email, keep a sheet, draft reminders             | apps, files, approvals                   | scored      |
+| `login-2fa-metrics`        | LAB-379 | Log in with 2FA and read weekly active users                                  | vault, browser, approvals                | scored      |
+| `memory-across-reset`      | LAB-370 | Remember what I told you and never ask twice                                  | memory, progress                         | scored      |
+| `metrics-week-over-week`   | LAB-385 | What changed in our metrics this week versus last, and what might explain it  | research, browser, vault                 | scored      |
+| `morning-brief`            | LAB-387 | Morning brief: what's on, what's due, what's slipping, top 3 for my goals     | schedules, apps, memory, progress        | calibrating |
+| `pay-bill-bank-transfer`   | LAB-367 | Pay a bill from my bank after I approve, including the phone confirmation     | approvals, vault, browser, long-running  | scored      |
+| `portal-account-choice`    | LAB-444 | Ask which saved login to use when two could apply                             | vault, approvals, browser                | scored      |
+| `portal-nif-signin`        | LAB-444 | Sign in with the method I asked for on a nested login page                    | vault, browser                           | scored      |
+| `price-watch`              | LAB-381 | Watch a booked hotel price and alert only when it really drops                | browser, schedules, memory               | scored      |
+| `prospects-research`       | LAB-378 | Research 10 prospects, find the contact, draft a personal pitch each          | research, files, approvals, apps         | known gap   |
+| `purchase-within-limit`    | LAB-373 | Buy a charger without spending over my limit, shipping included               | approvals, vault, browser                | scored      |
+| `rapid-fire-requests`      | LAB-375 | Three requests sent back to back are all answered once and correctly          | progress, long-running, files            | calibrating |
+| `reply-drafts`             | LAB-382 | Draft replies in my voice to the emails that need one                         | apps, memory, approvals                  | scored      |
+| `saved-card-checkout`      | LAB-367 | Pay with my saved card, but only after I approve                              | vault, approvals, browser                | known gap   |
+| `schedule-meeting-invite`  | LAB-373 | Set up a 30-minute call at a time that works, and send the invite             | apps, approvals                          | scored      |
+| `slack-catchup`            | LAB-376 | Slack catch-up: what did I miss and what needs my reply                       | apps, progress                           | scored      |
+| `steering-mid-task`        | LAB-374 | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
+| `stop-and-continue`        | LAB-445 | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
+| `video-to-three-platforms` | LAB-396 | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
+| `youtube-topics`           | LAB-383 | Recent YouTube videos on a theme, grouped into topics                         | research, progress, files                | calibrating |
+
 ## Reading a report
 
 ```text
@@ -147,14 +184,22 @@ Run it with `--repeat 3` on the reference model. Classify every red as agent (ke
 ## Layout
 
 ```text
-src/cli.ts           parent runner: selection, concurrency, journaling, reports, compare, --ref
+src/cli.ts           entry point; src/commands.ts has every command, src/options.ts parses them
+src/run.ts           runs a suite: selection, concurrency, retries, budget, diagnosis
 src/attempt.ts       one attempt in its own process: boot, play, collect, grade
 src/stack.ts         isolated Otto: schema, containers, createApplication
 src/session.ts       the simulated user and the turn loop
 src/trace.ts         Pi session and database to a Run
+src/grade.ts         task checks, product checks and the judge calls
+src/product.ts       the trust layer, built from Otto's own personality rules
 src/judge.ts         judge, simulator and model client
-src/aggregate.ts     pass@k, intervals, bands, efficiency
-src/report.ts        terminal, compare and HTML output
+src/diagnose.ts      why a failed attempt failed, and whose fault it was
+src/aggregate.ts     pass@k, intervals, bands, efficiency, went-wrong
+src/report.ts        terminal and compare output
+src/chart.ts         the sleek comparison cards; src/images.ts renders them to PNG
+src/writeup.ts       the Slack summary
+src/review.ts        human review and agreement; src/rejudge.ts re-grades with another judge
+src/environment.ts   doctor: Docker, images, database, keys
 src/world/           fake apps, sites, fixture proxy, PDFs, time helpers
 src/scenarios/       the scenarios
 tests/               tests for the harness's own logic

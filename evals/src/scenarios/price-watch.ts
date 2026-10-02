@@ -4,7 +4,7 @@ import { createApps } from '../world/apps.ts';
 import { page, type Site } from '../world/sites.ts';
 import { dayLabel, inDays } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'book.casaluminar.example.org';
 
 interface State {

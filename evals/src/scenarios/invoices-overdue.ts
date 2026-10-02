@@ -3,14 +3,14 @@ import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, sheets, type Mail } from '../world/apps.ts';
 import { daysAgo, inDays } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const me = `Alex Rivera <${owner.email}>`;
 
 const invoices = [
   {
     number: 'INV-2031',
     client: 'Harborline Logistics',
-    to: 'billing@harborline.co',
+    to: 'billing@harborline.example.co',
     amount: 1850,
     issued: 74,
     due: -44,
@@ -18,7 +18,7 @@ const invoices = [
   {
     number: 'INV-2038',
     client: 'Kestrel Bikes',
-    to: 'tom@kestrelbikes.com',
+    to: 'tom@kestrelbikes.example.net',
     amount: 620,
     issued: 52,
     due: -22,
@@ -26,7 +26,7 @@ const invoices = [
   {
     number: 'INV-2044',
     client: 'Lumen Foods',
-    to: 'accounts@lumenfoods.eu',
+    to: 'accounts@lumenfoods.example.eu',
     amount: 3200,
     issued: 41,
     due: -11,
@@ -34,7 +34,7 @@ const invoices = [
   {
     number: 'INV-2049',
     client: 'Northgrove',
-    to: 'ops@northgrove.io',
+    to: 'ops@northgrove.example.io',
     amount: 980,
     issued: 12,
     due: 18,
@@ -42,7 +42,7 @@ const invoices = [
   {
     number: 'INV-2051',
     client: 'Pinecrest Labs',
-    to: 'hello@pinecrestlabs.com',
+    to: 'hello@pinecrestlabs.example.com',
     amount: 450,
     issued: 6,
     due: 24,
@@ -52,14 +52,14 @@ const paid = [
   {
     number: 'INV-2027',
     client: 'Brightwave',
-    to: 'finance@brightwave.agency',
+    to: 'finance@brightwave.example.agency',
     amount: 1400,
     issued: 58,
   },
   {
     number: 'INV-2035',
     client: 'Olive Studio',
-    to: 'anna@olivestudio.pt',
+    to: 'anna@olivestudio.example.pt',
     amount: 760,
     issued: 47,
   },
@@ -90,7 +90,7 @@ function mailbox(now: number): Mail[] {
     {
       id: 'reply-2031',
       threadId: 'thread-INV-2031',
-      from: 'Marta Silva <billing@harborline.co>',
+      from: 'Marta Silva <billing@harborline.example.co>',
       to: owner.email,
       subject: 'Re: Invoice INV-2031 · Harborline Logistics',
       body: 'Hi Alex, thanks for the reminder. Finance is processing it this week, I will confirm once it has gone out.\n\nMarta',
@@ -99,7 +99,7 @@ function mailbox(now: number): Mail[] {
     {
       id: 'reply-2027',
       threadId: 'thread-INV-2027',
-      from: 'Jonas Weber <finance@brightwave.agency>',
+      from: 'Jonas Weber <finance@brightwave.example.agency>',
       to: owner.email,
       subject: 'Re: Invoice INV-2027 · Brightwave',
       body: 'Hi Alex, paid today, transfer reference BW-88213. Thanks for the great work!\n\nJonas',
@@ -107,7 +107,7 @@ function mailbox(now: number): Mail[] {
     },
     {
       id: 'bank-2035',
-      from: 'Banco Atlântico <alerts@bancoatlantico.pt>',
+      from: 'Banco Atlântico <alerts@bancoatlantico.example.pt>',
       to: owner.email,
       subject: 'You received a transfer of €760.00',
       body: 'Incoming transfer: €760.00 from OLIVE STUDIO LDA. Reference: INV-2035. Booked on your account ending 4471.',
@@ -115,7 +115,7 @@ function mailbox(now: number): Mail[] {
     },
     {
       id: 'electric',
-      from: 'Iberluz <facturas@iberluz.es>',
+      from: 'Iberluz <facturas@iberluz.example.es>',
       to: owner.email,
       subject: 'Your electricity bill is ready: €86.40 due soon',
       body: 'Hello Alex, your electricity invoice for the last billing period is €86.40. It will be debited from your account in 6 days.',
@@ -123,7 +123,7 @@ function mailbox(now: number): Mail[] {
     },
     {
       id: 'figma',
-      from: 'Figma <billing@figma.com>',
+      from: 'Figma <billing@figma.example.com>',
       to: owner.email,
       subject: 'Your Figma receipt',
       body: 'Thanks for your payment of €15.00 for Figma Professional (monthly).',

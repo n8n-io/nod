@@ -3,7 +3,7 @@ import { createApps } from '../world/apps.ts';
 import { escapeHtml, page, type Site } from '../world/sites.ts';
 import { dayLabel, nextWeekday } from '../world/time.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'tables.forkful.example.org';
 
 interface Booking {

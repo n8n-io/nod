@@ -1,7 +1,7 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
 export default scenario({
   id: 'stop-and-continue',

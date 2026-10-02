@@ -2,7 +2,7 @@ import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { escapeHtml, page, redirect, type Site } from '../world/sites.ts';
 
-const owner = { name: 'Alex Rivera', email: 'alex.rivera@gmail.com' };
+const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'my.streamly.example.net';
 const credentials = { username: owner.email, password: 'Streamly-Plus-61!' };
 const charge = { id: 'INV-20991', amount: 12.99 };
