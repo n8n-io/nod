@@ -8,6 +8,7 @@ import { createSession } from './session.ts';
 import { prepare } from './setup.ts';
 import { loadEnvironment, parseModel, startStack, type Stack } from './stack.ts';
 import { collect } from './trace.ts';
+import { routeFixtureHosts } from './world/fixture-fetch.ts';
 import { bindAddress, serveSites } from './world/sites.ts';
 
 export interface AttemptSpec {
@@ -62,13 +63,19 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const started = Date.now();
   let taskStarted = started;
   const world = definition.world({ now: () => Date.now() });
-  const sites = await serveSites(world.sites ?? {}, await bindAddress());
+  const address = await bindAddress();
+  const sites = await serveSites(world.sites ?? {}, address);
+  const unroute = routeFixtureHosts(
+    Object.keys(world.sites ?? {}),
+    `http://${address}:${sites.port}`,
+  );
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;
   const release = async () => {
     stack ??= await starting?.catch(() => undefined);
     await stack?.stop().catch(() => {});
     await sites.close().catch(() => {});
+    unroute();
   };
   terminate = release;
   try {

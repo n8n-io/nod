@@ -258,7 +258,7 @@ export async function collect(options: {
           })),
         ...tools.map((call) => ({
           at: call.at,
-          text: `TOOL ${call.name}${call.isError ? ' (error)' : ''}\n  input: ${clip(JSON.stringify(call.input), 1200)}\n  output: ${clip(call.output, 1500)}`,
+          text: `TOOL ${call.name}${call.isError ? ' (error)' : ''}\n  input: ${clip(JSON.stringify(call.input), 1200)}\n  output: ${clip(call.output, 6000)}`,
         })),
       ].sort((a, b) => a.at - b.at);
       return clip(merged.map((item) => item.text).join('\n\n'), limit);

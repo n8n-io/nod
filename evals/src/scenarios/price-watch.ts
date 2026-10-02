@@ -157,7 +157,7 @@ export default scenario({
         (run) => {
           const schedules = run.schedules.filter((item) => item.enabled && item.cron);
           const hours = schedules.flatMap((item) =>
-            (/^\d+ ([\d,]+) \* \* \*$/.exec(item.cron ?? '')?.[1] ?? '')
+            (/^\d+ ([\d,]+) \S+ \S+ \*$/.exec(item.cron ?? '')?.[1] ?? '')
               .split(',')
               .filter(Boolean)
               .map(Number),

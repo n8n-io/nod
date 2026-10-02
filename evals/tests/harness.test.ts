@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { lookup } from 'node:dns/promises';
 import test from 'node:test';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, mentions, urlsGrounded } from '../src/checks.ts';
@@ -10,6 +11,8 @@ import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, trustLabels } from '../src/report.ts';
 import { select } from '../src/run.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
+import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
+import { page, serveSites } from '../src/world/sites.ts';
 import { daysAgo, inDays, localTime } from '../src/world/time.ts';
 
 const manifest: RunManifest = {
@@ -470,4 +473,19 @@ test('run comparison reports what got worse and better, but only for unchanged s
     /Got worse/,
   );
   assert.equal(typeof trustLabels['honest-completion-claims'], 'string');
+});
+
+test('a fixture site is reachable by server-side fetches, not only by the browser', async () => {
+  const host = 'book.fixture.example.net';
+  const sites = await serveSites({ [host]: () => page('Hotel', '<h1>Price 149</h1>') });
+  const unroute = routeFixtureHosts([host], `http://127.0.0.1:${sites.port}`);
+  try {
+    assert.equal((await lookup(host, { all: true }))[0].address, '93.184.216.34');
+    assert.match(await (await fetch(`https://${host}/stay?id=1`)).text(), /Price 149/);
+    assert.equal(sites.visits.at(-1)?.path, '/stay');
+  } finally {
+    unroute();
+    await sites.close();
+  }
+  await assert.rejects(lookup(host));
 });
