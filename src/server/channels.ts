@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
 import { classifyVerificationReply } from '../shared/verification-code.ts';
+import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type {
   ChannelPairingRequest,
@@ -31,6 +32,7 @@ interface ChannelOptions {
     messageId: string,
   ) => Promise<string>;
   subscribe: (listener: () => void) => () => void;
+  refresh?: () => void;
   intervalMs?: number;
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   appOrigin?: string;
@@ -290,7 +292,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           client.release();
         }
       }
-    } catch {
+    } catch (cause) {
+      logFailure('channel_accept_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
         statusCode: 503,
       });
@@ -301,7 +304,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     if (closed || !options.pair) return;
     try {
       await options.pair(request);
-    } catch {
+    } catch (cause) {
+      logFailure('channel_pairing_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
         statusCode: 503,
       });
@@ -368,6 +372,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const channel = conversationChannel(pending);
       if (closed || replacing) break;
       const client = await pool.connect();
+      let submitted = false;
       try {
         await client.query('BEGIN');
         const result = await client.query<InboxRow>(
@@ -391,6 +396,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             "UPDATE channel_inbox SET state='submitted',turn_id=$2,message_id=$3,channel=$5 WHERE source_id=$1 AND owner_id=$4",
             [row.source_id, turnId, messageId, ownerId, channel],
           );
+          submitted = true;
         }
         await client.query('COMMIT');
       } catch (error) {
@@ -399,6 +405,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       } finally {
         client.release();
       }
+      if (submitted) options.refresh?.();
     }
   }
 
@@ -410,6 +417,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       JOIN channel_inbox i ON i.channel=u.channel AND i.owner_id=m.owner_id AND i.created_at<=m.created_at
         AND (u.channel_source_id IS NULL OR i.source_id=u.channel_source_id)
       WHERE m.role='assistant' AND m.owner_id=$1 AND i.state='submitted'
+        AND NOT EXISTS (SELECT 1 FROM channel_outbox q WHERE q.message_id=m.id)
       ORDER BY m.id,(i.turn_id IS NOT DISTINCT FROM m.turn_id) DESC,i.received_at DESC,i.source_id
       ON CONFLICT(message_id) DO NOTHING`,
       [ownerId],
@@ -418,7 +426,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       const result = await pool.query<OutboxRow>(
         `WITH claimed AS (
         UPDATE channel_outbox SET state='sending',updated_at=now() WHERE message_id=(
-          SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 ORDER BY o.created_at FOR UPDATE OF o SKIP LOCKED LIMIT 1
+          SELECT o.message_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id JOIN messages m ON m.id=o.message_id WHERE o.state='pending' AND i.owner_id=$1 AND m.owner_id=$1 ORDER BY m.created_at,m.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
         ) RETURNING message_id,source_id
       ) SELECT c.message_id,m.owner_id,m.thread_id AS message_thread_id,i.provider,i.account_id,i.sender_id,i.thread_id,m.text,m.attachments
         FROM claimed c JOIN channel_inbox i ON i.source_id=c.source_id JOIN messages m ON m.id=c.message_id`,
@@ -511,7 +519,8 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           "UPDATE channel_outbox SET state='sent',provider_message_id=$2,updated_at=now() WHERE message_id=$1",
           [row.message_id, sent.id],
         );
-      } catch {
+      } catch (cause) {
+        logFailure('channel_send_failed', cause);
         await pool.query(
           "UPDATE channel_outbox SET state='uncertain',reason='send_not_confirmed',updated_at=now() WHERE message_id=$1",
           [row.message_id],
@@ -529,6 +538,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
     if (options.admission && !release) return Promise.resolve();
     running = (async () => {
       let pollingFailed = false;
+      let processingFailed = false;
       try {
         while (drainRequested && !closed && !replacing && !options.admission?.paused) {
           drainRequested = false;
@@ -537,19 +547,24 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               (message) => accept(message, message.channelId),
               completePairing,
             );
-          } catch {
+          } catch (cause) {
             pollingFailed = true;
+            logFailure('channel_poll_failed', cause);
           }
-          await drainInbox();
-          await drainOutbox();
+          for (const step of [drainInbox, drainOutbox])
+            try {
+              await step();
+            } catch (cause) {
+              processingFailed = true;
+              logFailure('channel_drain_failed', cause);
+            }
         }
-        lastError = pollingFailed
-          ? 'Telegram could not check for new messages. Check its channel setup.'
-          : null;
-      } catch {
-        lastError =
-          'Channel processing needs attention. Check the local database and thread service.';
       } finally {
+        lastError = processingFailed
+          ? 'Channel processing needs attention. Check the local database and thread service.'
+          : pollingFailed
+            ? 'Telegram could not check for new messages. Check its channel setup.'
+            : null;
         running = undefined;
         release?.();
       }

@@ -854,6 +854,7 @@ export async function createApplication(
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: meterMessaging(messaging, providerUsage),
       acceptVerification: (text, input) => chatVerification.accept(text, input),
+      refresh,
       subscribe(listener) {
         const onEvent = (event: { type?: string }) => {
           if (event.type === 'refresh') listener();

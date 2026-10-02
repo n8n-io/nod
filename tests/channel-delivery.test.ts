@@ -7,7 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import type { ChannelAccountRegistry } from '../src/ports/channel-settings.ts';
-import type { MessagingTransport } from '../src/ports/messaging.ts';
+import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import { createChatSdkTransport } from '../src/providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../src/providers/chat-sdk/settings.ts';
 import { createChannelAccountRegistry } from '../src/server/channel-account-registry.ts';
@@ -1108,6 +1108,202 @@ test(
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
+    }
+  },
+);
+
+async function outboxFixture(t: TestContext) {
+  const schema = `test_channel_outbox_${randomUUID().replaceAll('-', '')}`;
+  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new pg.Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    options: `-c search_path=${schema}`,
+  });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+    await admin.end();
+  });
+  const threadId = await createFixtureTables(pool, 'local-development');
+  const posts: { threadId: string; text: string }[] = [];
+  let incoming: InboundMessage[] = [];
+  let sequence = 0;
+  const transport: MessagingTransport = {
+    channels: [
+      {
+        id: 'telegram',
+        status: 'configured',
+        missing: [],
+        accountId: 'bot',
+        allowedSenderIds: ['111', '222'],
+      },
+    ],
+    poll: async (accept) => {
+      const batch = incoming;
+      incoming = [];
+      for (const message of batch) await accept(message);
+    },
+    receive: async () => ({ status: 200, body: {} }),
+    post: async (input) => {
+      posts.push({ threadId: input.threadId, text: input.text });
+      return { id: `provider-${posts.length}` };
+    },
+    close: async () => {},
+  };
+  const receive = (senderId: string, messageId: string, chat: string) => {
+    incoming.push({
+      channelId: 'telegram',
+      accountId: 'bot',
+      senderId,
+      messageId,
+      threadId: chat,
+      text: `Fixture request ${messageId}`,
+      sentAt: new Date(Date.now() - 60_000 + 1000 * sequence++),
+    });
+  };
+  const turnOf = async (messageId: string) =>
+    (
+      await pool.query('SELECT turn_id,channel FROM channel_inbox WHERE source_id=$1', [
+        `channel:telegram:bot:${messageId}`,
+      ])
+    ).rows[0] as { turn_id: string; channel: string };
+  const reply = async (turnId: string, text: string, id: string, offsetSeconds: number) => {
+    await pool.query(
+      `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at)
+       VALUES($1,'local-development','assistant',$2,$3,$4,now()+make_interval(secs=>$5))`,
+      [id, text, threadId, turnId, offsetSeconds],
+    );
+  };
+  const create = (extra: Partial<Parameters<typeof createChannels>[1]> = {}) =>
+    createChannels(pool, {
+      ownerId: 'local-development',
+      transport,
+      subscribe: () => () => {},
+      intervalMs: 600000,
+      submit: async (_text, sourceId, client, channel) => {
+        const turnId = randomUUID();
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',$2,$3,$4)",
+          [turnId, threadId, sourceId, channel],
+        );
+        return turnId;
+      },
+      ...extra,
+    });
+  return { pool, threadId, posts, receive, turnOf, reply, create };
+}
+
+test(
+  'outbound discovery queues each reply once, sends in creation order and answers the conversation that asked',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, threadId, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    const channels = await create();
+    await pool.query(`CREATE TABLE outbox_attempts(message_id uuid);
+      CREATE FUNCTION count_outbox_attempt() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN INSERT INTO outbox_attempts VALUES(NEW.message_id); RETURN NEW; END $$;
+      CREATE TRIGGER count_outbox_attempt BEFORE INSERT ON channel_outbox
+        FOR EACH ROW EXECUTE FUNCTION count_outbox_attempt()`);
+    try {
+      receive('111', 'a1', 'chat-a1');
+      receive('222', 'b1', 'chat-b1');
+      receive('111', 'a2', 'chat-a2');
+      await channels.drain();
+      const [a1, b1, a2] = [await turnOf('a1'), await turnOf('b1'), await turnOf('a2')];
+      assert.notEqual(a1.channel, b1.channel);
+      assert.equal(a1.channel, a2.channel);
+      const resume = randomUUID();
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,source,channel,channel_source_id) VALUES($1,'local-development',$2,'resume',$3,'channel:telegram:bot:a1')",
+        [resume, threadId, a1.channel],
+      );
+      const background = randomUUID();
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,source,channel) VALUES($1,'local-development',$2,'schedule',$3)",
+        [background, threadId, a1.channel],
+      );
+      await reply(a1.turn_id, 'first', 'ffffffff-0000-4000-8000-000000000001', 1);
+      await reply(b1.turn_id, 'second', 'aaaaaaaa-0000-4000-8000-000000000002', 2);
+      await reply(resume, 'third', '55555555-0000-4000-8000-000000000003', 3);
+      await reply(a2.turn_id, 'fourth', '33333333-0000-4000-8000-000000000004', 4);
+      await reply(background, 'fifth', '00000000-0000-4000-8000-000000000005', 5);
+      await channels.drain();
+      assert.deepEqual(posts, [
+        { threadId: 'chat-a1', text: 'first' },
+        { threadId: 'chat-b1', text: 'second' },
+        { threadId: 'chat-a1', text: 'third' },
+        { threadId: 'chat-a2', text: 'fourth' },
+        { threadId: 'chat-a2', text: 'fifth' },
+      ]);
+      const attempts = (await pool.query('SELECT count(*)::int AS n FROM outbox_attempts')).rows[0]
+        .n;
+      assert.equal(attempts, 5);
+      await channels.drain();
+      await channels.drain();
+      assert.equal(
+        (await pool.query('SELECT count(*)::int AS n FROM outbox_attempts')).rows[0].n,
+        attempts,
+      );
+      assert.equal(posts.length, 5);
+    } finally {
+      await channels.close();
+    }
+  },
+);
+
+test(
+  'a failing inbound message does not stop replies and a committed one is announced to the web chat',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const { pool, posts, receive, turnOf, reply, create } = await outboxFixture(t);
+    let failSubmit = true;
+    const states: Promise<string | undefined>[] = [];
+    const channels = await create({
+      refresh: () => {
+        states.push(
+          pool
+            .query("SELECT state FROM channel_inbox WHERE source_id='channel:telegram:bot:b1'")
+            .then((result) => result.rows[0]?.state),
+        );
+      },
+      submit: async (_text, sourceId, client, channel) => {
+        if (failSubmit) throw new Error('Synthetic submit failure');
+        const turnId = randomUUID();
+        await client.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source_id,channel) VALUES($1,'local-development',(SELECT id FROM threads),$2,$3)",
+          [turnId, sourceId, channel],
+        );
+        return turnId;
+      },
+    });
+    const app = Fastify();
+    channels.registerRoutes(app);
+    try {
+      failSubmit = false;
+      receive('111', 'a1', 'chat-a1');
+      await channels.drain();
+      failSubmit = true;
+      receive('222', 'b1', 'chat-b1');
+      await reply((await turnOf('a1')).turn_id, 'still delivered', randomUUID(), 1);
+      await channels.drain();
+      assert.deepEqual(posts, [{ threadId: 'chat-a1', text: 'still delivered' }]);
+      assert.equal(
+        (
+          await pool.query(
+            "SELECT state FROM channel_inbox WHERE source_id='channel:telegram:bot:b1'",
+          )
+        ).rows[0].state,
+        'pending',
+      );
+      assert.match((await app.inject('/api/channels')).json().error, /needs attention/);
+      failSubmit = false;
+      states.length = 0;
+      await channels.drain();
+      assert.deepEqual(await Promise.all(states), ['submitted']);
+      assert.equal((await app.inject('/api/channels')).json().error, null);
+    } finally {
+      await app.close();
     }
   },
 );
