@@ -3291,7 +3291,7 @@ test(
     };
     const first = await inspected(null);
     assert.equal(first.account_active, false);
-    await delay(50);
+    for (let attempt = 0; attempt < 100 && refreshes < 1; attempt++) await delay(20);
     assert.equal(refreshes, 1);
     await f.pool.query("UPDATE app_connections SET account_checked_at=now()-interval '2 minutes'");
     const stale = (await f.pool.query('SELECT account_checked_at FROM app_connections')).rows[0];

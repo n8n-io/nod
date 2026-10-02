@@ -1074,7 +1074,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             accountEmail,
           }));
         const discovered = await options.discovered?.search(query, connectionId, signal);
-        if (failed.length && !searches.length && !discovered?.accounts.length)
+        if (
+          !searches.length &&
+          !discovered?.accounts.length &&
+          (failed.length || !options.discovered)
+        )
           throw new Error(
             results
               .map((result) =>
