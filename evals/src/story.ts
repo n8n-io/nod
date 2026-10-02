@@ -109,7 +109,7 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
   const chips: Array<[string, string]> = [
     [String(runs.length), 'models compared'],
     [String(attempts), 'real end-to-end attempts'],
-    [String(tasks), 'scored tasks per model'],
+    [String(tasks), 'tasks per model'],
     [`$${Math.round(spent)}`, 'to run them all'],
   ];
   const steps: Array<[string, string]> = [
@@ -136,7 +136,7 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
     })
     .join('');
   const html = `<div class="story">
-<div class="hero"><div class="eyebrow">Otto capability evals</div><h1>${esc(notes.headline ?? 'Can you trust Otto to finish the job?')}</h1><div class="sub">We run real tasks end to end against a fake world, grade what actually happened, and compare models. This is how ${runs.length} of them do on ${tasks} scored tasks.</div><div class="chips">${chips.map(([value, text]) => `<div class="chip"><b>${esc(value)}</b><span>${esc(text)}</span></div>`).join('')}</div></div>
+<div class="hero"><div class="eyebrow">Otto capability evals</div><h1>${esc(notes.headline ?? 'Can you trust Otto to finish the job?')}</h1><div class="sub">We run real tasks end to end against a fake world, grade what actually happened, and compare models. This is how ${runs.length} of them do on ${tasks} tasks.</div><div class="chips">${chips.map(([value, text]) => `<div class="chip"><b>${esc(value)}</b><span>${esc(text)}</span></div>`).join('')}</div></div>
 <div class="how">${steps.map(([title, text]) => `<div class="step"><b>${esc(title)}</b><span>${esc(text)}</span></div>`).join('')}</div>
 ${body}
 <div class="learned"><h2>What we learned</h2><ul>${learned.map((line) => `<li>${esc(line)}</li>`).join('')}</ul></div>
