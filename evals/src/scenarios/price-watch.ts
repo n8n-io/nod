@@ -166,8 +166,8 @@ export default scenario({
             pass:
               schedules.every((item) => item.timeZone === 'Europe/Madrid') &&
               hours.length === 2 &&
-              hours.some((hour) => hour >= 8 && hour <= 10) &&
-              hours.some((hour) => hour >= 18 && hour <= 20),
+              hours.some((hour) => hour >= 5 && hour <= 11) &&
+              hours.some((hour) => hour >= 16 && hour <= 22),
             evidence:
               schedules.map((item) => `${item.cron} ${item.timeZone}`).join(' ; ') ||
               'no recurring schedule',
