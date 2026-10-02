@@ -49,11 +49,6 @@ export function artifactPreview(artifact: Artifact): ImagePreview | null {
   return { ...artifact, downloadUrl: artifact.url };
 }
 
-export function artifactImage(artifact: Artifact): ImagePreview | null {
-  if (!previewableImage(artifact.mimeType) || !ownedArtifactUrl(artifact.url)) return null;
-  return { ...artifact, downloadUrl: artifact.url };
-}
-
 export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
   const kind = attachmentKind(image.mimeType ?? 'image/png');
   if (kind === 'image')

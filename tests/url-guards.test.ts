@@ -12,7 +12,7 @@ import {
   requestPublicPreview,
 } from '../src/providers/public-web/link-preview.ts';
 import { previewableUrl } from '../src/shared/link-preview.ts';
-import { artifactImage, artifactPreview } from '../src/web/components/attachment-images.tsx';
+import { artifactPreview } from '../src/web/components/attachment-images.tsx';
 import { MessageText } from '../src/web/components/message.tsx';
 import type { Artifact } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
@@ -335,7 +335,7 @@ test('approval messages preserve source URLs and render supplied markup as text'
   assert.equal(args.text, body);
 });
 
-test('attachment previews and gallery sources accept only owned artifact URLs and inert types', () => {
+test('attachment previews accept only owned artifact URLs and inert types', () => {
   const picture: Artifact = {
     id: '00000000-0000-4000-8000-000000000000',
     name: 'Picture.png',
@@ -355,12 +355,4 @@ test('attachment previews and gallery sources accept only owned artifact URLs an
     ])
       assert.equal(artifactPreview({ ...picture, mimeType, url }), null);
   }
-  assert.ok(artifactImage(picture));
-  for (const url of [
-    'https://example.com/image.png',
-    'javascript:alert(1)',
-    '/credentials/private',
-    '/api/artifacts/abc?token=private',
-  ])
-    assert.equal(artifactImage({ ...picture, url }), null);
 });
