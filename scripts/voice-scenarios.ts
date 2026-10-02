@@ -15,6 +15,20 @@ export interface VoiceScenario {
   history?: Array<{ role: 'user' | 'assistant'; text: string; hoursAgo: number }>;
   goals?: Array<{ title: string; description: string; nextAction: string }>;
   preferences?: string;
+  profile?: { name: string; location: string; phone: string; preferences: string };
+  memory?: string;
+  personalData?: Record<string, unknown>;
+  timeZone?: string;
+  locale?: string;
+  answer?: {
+    version: number;
+    holdout?: boolean;
+    audit?: boolean;
+    reads?: string[];
+    sourceUrls?: string[];
+    reject?: Array<{ name: string; pattern: string }>;
+    review: string[];
+  };
   apps?: string[];
   data?: Record<string, unknown>;
   search?: Record<string, Array<{ title: string; url: string; snippet: string }>>;
@@ -218,5 +232,305 @@ export const scenarios: VoiceScenario[] = [
       },
     ],
     maxWords: 40,
+  },
+];
+
+const answerProfile = {
+  name: 'Maya Horak',
+  location: 'Prague',
+  phone: '',
+  preferences: 'Concise replies. Use EUR and metric units.',
+};
+
+const workMemory = {
+  path: 'about/work',
+  text: 'Maya is a product designer at Beacon Studio.',
+  status: 'stated',
+};
+
+const preferenceMemory = {
+  path: 'preferences/meetings',
+  text: 'Maya prefers meetings after 10:00 and keeps Friday afternoons free.',
+  status: 'stated',
+};
+
+const answerReview = [
+  'The answer directly resolves the question with supported facts, without unnecessary setup questions.',
+  'No unsolicited tool names, access routes, file paths, read counts or memory-search receipts appear.',
+  'Source links support the adjacent claims; material uncertainty stays visible without generic disclaimers.',
+];
+
+export const answerScenarios: VoiceScenario[] = [
+  {
+    id: 'answer-profile',
+    title: 'Saved profile and remembered work',
+    prompt: 'What do you know about me?',
+    good: 'Names Maya, Prague and her product-design work at Beacon Studio. Does not append a profile or memory-search receipt.',
+    profile: answerProfile,
+    memory: JSON.stringify({ about: ['work'] }),
+    personalData: { memory_find: [workMemory], memory_read: workMemory },
+    maxWords: 100,
+    expect: [
+      { name: 'knowsName', pattern: 'Maya' },
+      { name: 'knowsLocation', pattern: 'Prague' },
+      { name: 'knowsWork', pattern: 'product designer|product design' },
+      { name: 'knowsEmployer', pattern: 'Beacon Studio' },
+    ],
+    answer: { version: 1, reads: ['memory_(find|read)'], review: answerReview },
+  },
+  {
+    id: 'answer-preferences',
+    title: 'Preferences without bookkeeping',
+    prompt: 'What preferences have I asked you to remember?',
+    good: 'Summarizes concise replies, EUR, metric units and meeting preferences. Does not count saved records or searches.',
+    profile: answerProfile,
+    memory: JSON.stringify({ preferences: ['meetings'] }),
+    personalData: { memory_find: [preferenceMemory], memory_read: preferenceMemory },
+    maxWords: 100,
+    expect: [
+      { name: 'concise', pattern: 'concise|short|brief' },
+      { name: 'units', pattern: 'metric' },
+      { name: 'currency', pattern: 'EUR|euros?|€' },
+      { name: 'meetingTime', pattern: '10(?::00)?|ten' },
+      { name: 'fridayFree', pattern: 'Friday' },
+    ],
+    answer: { version: 1, reads: ['memory_(find|read)'], review: answerReview },
+  },
+  {
+    id: 'answer-schedules',
+    title: 'Active and paused schedules',
+    prompt: 'Which reminders are active, and when do they run?',
+    good: 'Reports the active weekday standup reminder at 09:15 Europe/Prague and identifies the invoice review as paused.',
+    personalData: {
+      schedule_list: [
+        {
+          id: 'fixture-standup',
+          title: 'Standup reminder',
+          kind: 'recurring',
+          cron: '15 9 * * 1-5',
+          timeZone: 'Europe/Prague',
+          enabled: true,
+        },
+        {
+          id: 'fixture-invoices',
+          title: 'Invoice review',
+          kind: 'recurring',
+          cron: '0 16 * * 5',
+          timeZone: 'Europe/Prague',
+          enabled: false,
+        },
+      ],
+    },
+    expect: [
+      { name: 'activeReminder', pattern: 'standup' },
+      { name: 'time', pattern: '0?9:15|9[.]15' },
+      { name: 'weekdays', pattern: 'weekday|Monday.{0,20}Friday|Mon.{0,12}Fri' },
+      { name: 'paused', pattern: 'paused|inactive|disabled|off' },
+    ],
+    answer: {
+      version: 1,
+      reads: ['schedule_list'],
+      review: [
+        ...answerReview,
+        'The paused invoice review is not presented as active; local schedule time and zone are accurate.',
+      ],
+    },
+  },
+  {
+    id: 'answer-inbox',
+    title: 'Actionable inbox summary with a source link',
+    prompt: 'What in my inbox needs a decision from me?',
+    good: 'Leads with approving the Atlas print proof by 16:00 on 5 October, links the message and does not report how many emails were read or skipped.',
+    apps: ['gmail'],
+    data: {
+      GMAIL: {
+        messages: [
+          {
+            id: 'atlas-proof',
+            from: 'Leah <leah@atlas.example>',
+            subject: 'Approve the Atlas print proof',
+            snippet:
+              'Please approve the blue cover by 2026-10-05 16:00 Europe/Prague so we can print.',
+            link: 'https://mail.example/messages/atlas-proof',
+          },
+          {
+            id: 'digest',
+            from: 'Digest <digest@example.com>',
+            subject: 'Monthly design digest',
+            snippet: 'News and inspiration. No action needed.',
+          },
+        ],
+      },
+    },
+    maxWords: 90,
+    expect: [
+      { name: 'decision', pattern: 'approv' },
+      { name: 'project', pattern: 'Atlas' },
+      { name: 'deadline', pattern: '16:00|4(?::00)?\\s*p\\.?m' },
+    ],
+    answer: {
+      version: 1,
+      reads: ['GMAIL_FETCH_EMAILS'],
+      sourceUrls: ['https://mail.example/messages/atlas-proof'],
+      review: answerReview,
+    },
+  },
+  {
+    id: 'answer-calendar',
+    title: 'Calendar answer with preparation detail',
+    prompt: 'What is my first meeting on 5 October 2026, and what should I bring?',
+    good: 'Names Atlas design review at 10:30 Europe/Prague, asks her to bring the revised blue-cover mockup, and links the event.',
+    apps: ['googlecalendar'],
+    data: {
+      GOOGLECALENDAR: {
+        events: [
+          {
+            id: 'atlas-review',
+            title: 'Atlas design review',
+            start: '2026-10-05T10:30:00+02:00',
+            end: '2026-10-05T11:00:00+02:00',
+            timeZone: 'Europe/Prague',
+            description: 'Bring the revised blue-cover mockup.',
+            htmlLink: 'https://calendar.example/events/atlas-review',
+          },
+          {
+            id: 'team-sync',
+            title: 'Team sync',
+            start: '2026-10-05T14:00:00+02:00',
+            end: '2026-10-05T14:30:00+02:00',
+          },
+        ],
+      },
+    },
+    expect: [
+      { name: 'firstMeeting', pattern: 'Atlas' },
+      { name: 'startTime', pattern: '10:30' },
+      { name: 'preparation', pattern: 'blue.{0,15}cover|mockup' },
+    ],
+    answer: {
+      version: 1,
+      reads: ['GOOGLECALENDAR_EVENTS_LIST'],
+      sourceUrls: ['https://calendar.example/events/atlas-review'],
+      review: answerReview,
+    },
+  },
+  {
+    id: 'answer-unavailable',
+    title: 'Unavailable inbox remains unknown',
+    prompt: 'Has Leah replied to my Atlas proof email?',
+    apps: ['gmail'],
+    data: {
+      GMAIL: {
+        status: 'unavailable',
+        message: 'The mailbox read timed out. No messages were returned.',
+      },
+    },
+    good: 'Says the mailbox could not be checked and the reply is unconfirmed. Does not turn a failed read into an empty inbox or a yes/no answer.',
+    expect: [
+      {
+        name: 'honestLimitation',
+        pattern: 'couldn.t|can.t|unable|unavailable|timed out|could not|cannot|unconfirmed|can not',
+      },
+    ],
+    answer: {
+      version: 1,
+      reads: ['GMAIL_FETCH_EMAILS'],
+      reject: [
+        {
+          name: 'noUnsupportedNegative',
+          pattern:
+            "Leah (?:has not|hasn't|did not|didn't) repl(?:y|ied)|no reply (?:from Leah|yet)|inbox is empty",
+        },
+      ],
+      review: [
+        ...answerReview,
+        'No claim about whether Leah replied is inferred from the unavailable mailbox; any next step is proportionate.',
+      ],
+    },
+  },
+  {
+    id: 'answer-audit',
+    title: 'Explicit source audit',
+    prompt:
+      'How do you know my meeting preferences? Tell me which saved sources you checked and how many.',
+    profile: answerProfile,
+    memory: JSON.stringify({ preferences: ['meetings'] }),
+    personalData: { memory_find: [preferenceMemory], memory_read: preferenceMemory },
+    good: 'Answers the meeting-preference question and explains the saved source and count, matching the actual trace. Requested audit detail is allowed.',
+    maxWords: 130,
+    expect: [
+      { name: 'meetingPreference', pattern: 'Friday|10(?::00)?' },
+      { name: 'sourceExplanation', pattern: 'saved|remember|memory|preference' },
+      { name: 'requestedCount', pattern: '\\b(?:1|2|3|one|two|three)\\b' },
+    ],
+    answer: {
+      version: 1,
+      audit: true,
+      reads: ['memory_(find|read)'],
+      review: [
+        'Meeting preferences match the saved source.',
+        'Reported sources and counts distinguish the supplied profile, memory entries and tool calls, matching the recorded trace.',
+        'Requested provenance is answered directly without fabricated checks or a refusal to explain.',
+      ],
+    },
+  },
+  {
+    id: 'answer-profile-pt',
+    title: 'Holdout: Portuguese profile with an unconfirmed change',
+    prompt: 'O que sabes sobre mim e sobre onde trabalho?',
+    profile: {
+      name: 'Inês Duarte',
+      location: 'Coimbra',
+      phone: '',
+      preferences: 'Português europeu. Respostas curtas.',
+    },
+    timeZone: 'Europe/Lisbon',
+    locale: 'pt-PT',
+    memory: JSON.stringify({ about: ['work', 'possible-move'] }),
+    personalData: {
+      memory_find: [
+        {
+          path: 'about/work',
+          text: 'Inês trabalha como designer na Maré Studio.',
+          status: 'stated',
+        },
+        {
+          path: 'about/possible-move',
+          text: 'Inês está a ponderar mudar-se para o Porto. Ainda não decidiu.',
+          status: 'tentative',
+        },
+      ],
+      memory_read: {
+        path: 'about',
+        entries: [
+          {
+            path: 'about/work',
+            text: 'Inês trabalha como designer na Maré Studio.',
+            status: 'stated',
+          },
+          {
+            path: 'about/possible-move',
+            text: 'Inês está a ponderar mudar-se para o Porto. Ainda não decidiu.',
+            status: 'tentative',
+          },
+        ],
+      },
+    },
+    maxWords: 100,
+    good: 'Answers in European Portuguese: Inês, Coimbra, designer at Maré Studio. A possible move to Porto stays tentative or is omitted; no internal receipts.',
+    expect: [
+      { name: 'name', pattern: 'Inês' },
+      { name: 'location', pattern: 'Coimbra' },
+      { name: 'work', pattern: 'Maré Studio' },
+    ],
+    answer: {
+      version: 1,
+      holdout: true,
+      reads: ['memory_(find|read)'],
+      review: [
+        ...answerReview,
+        'The reply is European Portuguese and does not claim the tentative move to Porto happened.',
+      ],
+    },
   },
 ];
