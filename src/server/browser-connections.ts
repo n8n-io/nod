@@ -84,12 +84,8 @@ export async function createBrowserConnections(
       label text NOT NULL,
       profile_id uuid NOT NULL UNIQUE,
       state text NOT NULL,
-      token_hash text UNIQUE,
-      expires_at timestamptz,
       thread_id uuid,
-      turn_id uuid,
       checked_at timestamptz,
-      sign_in_started boolean NOT NULL DEFAULT false,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
