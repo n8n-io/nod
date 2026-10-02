@@ -3635,3 +3635,102 @@ test('secure sign-in keeps failed submissions editable and returns to chat only 
     await page.close();
   }
 });
+
+test('Vault preserves the saved card when a replacement contains only whitespace', async () => {
+  const entry: VaultCardEntry = {
+    kind: 'card',
+    id: randomUUID(),
+    label: 'Fixture card',
+    brand: 'Visa',
+    last4: '4242',
+    expiryMonth: 12,
+    expiryYear: 2028,
+    updatedAt: new Date().toISOString(),
+  };
+  const updates: Record<string, unknown>[] = [];
+  let saved = 0;
+  const page = await vaultPage(
+    createElement(VaultDetails, {
+      entry,
+      onClose() {},
+      onSaved() {
+        saved++;
+      },
+      onDeleted() {},
+    }),
+    async (path, init) => {
+      if (path.endsWith('/details'))
+        return Response.json({ ...entry, cardholder: 'Alex Tester', hasSecurityCode: false });
+      assert.equal(init.method, 'PATCH');
+      const update = JSON.parse(String(init.body));
+      updates.push(update);
+      if ('cardNumber' in update)
+        return Response.json({ error: 'Invalid replacement card number' }, { status: 400 });
+      return Response.json({ ...entry, label: update.label });
+    },
+  );
+  try {
+    await act(async () =>
+      page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
+    );
+    const card = page.document.querySelector<HTMLInputElement>('input[name="cardNumber"]')!;
+    card.value = '   ';
+    await act(async () => card.dispatchEvent(new page.window.Event('input', { bubbles: true })));
+    const save = page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    assert.equal(save.disabled, true);
+    const label = page.document.querySelector<HTMLInputElement>('input[name="label"]')!;
+    label.value = 'Renamed fixture card';
+    await act(async () => label.dispatchEvent(new page.window.Event('input', { bubbles: true })));
+    assert.equal(save.disabled, false);
+    await act(async () => save.click());
+    assert.equal(updates.length, 1);
+    assert.equal(Object.hasOwn(updates[0], 'cardNumber'), false);
+    assert.equal(updates[0].label, label.value);
+    assert.equal(saved, 1);
+    assert.equal(page.document.querySelector('form'), null);
+  } finally {
+    await page.close();
+  }
+});
+
+test('Vault keeps intentional whitespace in replacement passwords', async () => {
+  const entry = {
+    kind: 'login' as const,
+    id: randomUUID(),
+    label: 'Fixture account',
+    origin: 'https://example.test',
+    usernameHint: 'te…',
+    updatedAt: new Date().toISOString(),
+  };
+  const passwords: string[] = [];
+  const page = await vaultPage(
+    createElement(VaultDetails, { entry, onClose() {}, onSaved() {}, onDeleted() {} }),
+    async (path, init) => {
+      if (path.endsWith('/details'))
+        return Response.json({ ...entry, username: 'tester@example.test', hasPassword: true });
+      if (path.endsWith('/icon')) return new Response(null, { status: 204 });
+      assert.equal(init.method, 'PATCH');
+      passwords.push(JSON.parse(String(init.body)).password);
+      return Response.json(entry);
+    },
+  );
+  try {
+    for (const value of ['   ', '  synthetic password  ']) {
+      await act(async () =>
+        page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
+      );
+      const password = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+      password.value = value;
+      await act(async () =>
+        password.dispatchEvent(new page.window.Event('input', { bubbles: true })),
+      );
+      const save = page.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      assert.equal(save.disabled, false);
+      await act(async () => save.click());
+      assert.equal(passwords.at(-1), value);
+    }
+    assert.equal(passwords.length, 2);
+  } finally {
+    await page.close();
+  }
+});
