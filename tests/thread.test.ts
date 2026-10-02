@@ -352,7 +352,10 @@ test(
         if (context.attachments.length)
           stagedReads.set(context.prompt, await readFile(context.attachments[0].path, 'utf8'));
         workspaceListings.set(context.prompt, await readdir(context.workspacePath));
-        if (context.prompt === 'runtime-failure') throw new Error('Synthetic runtime failure');
+        if (context.prompt === 'runtime-failure')
+          throw Object.assign(new Error('Synthetic runtime failure for private-fixture'), {
+            code: 'E_SYNTHETIC',
+          });
         if (context.prompt === 'screenshot-during-stop') {
           await context.publishScreenshot!(new Uint8Array([1, 2, 3]), 'atomic.png');
           return { status: 'succeeded' };
@@ -942,12 +945,17 @@ test(
 
       await t.test(
         'a runtime failure ends the turn failed with one message and no retry',
-        async () => {
+        async (t) => {
+          const logged = t.mock.method(console, 'error', () => {});
           const before = (await db.pool.query('SELECT count(*)::int AS count FROM turns')).rows[0]
             .count;
           const failed = await thread.submitUserMessage('runtime-failure', [], { channel: 'web' });
           await waitFor(settled(failed.turnId));
           await delay(1200);
+          const lines = logged.mock.calls.map((call) => String(call.arguments[0]));
+          const failure = lines.find((line) => line.includes(failed.turnId));
+          assert.match(failure ?? '', /Error \| code=E_SYNTHETIC/);
+          assert.doesNotMatch(failure ?? '', /private-fixture/);
           const row = (
             await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [failed.turnId])
           ).rows[0];

@@ -614,6 +614,22 @@ async function finishTurn(
     );
 }
 
+function describeFailure(error: unknown) {
+  if (!(error instanceof Error)) return 'a thrown value that is not an Error';
+  const fields = [error.name];
+  for (const key of ['code', 'statusCode'] as const) {
+    const value = (error as { code?: unknown; statusCode?: unknown })[key];
+    if (typeof value === 'string' || typeof value === 'number')
+      fields.push(`${key}=${String(value).slice(0, 64)}`);
+  }
+  const frames = (error.stack ?? '')
+    .split(/\r?\n/)
+    .filter((line) => /^\s+at /.test(line))
+    .slice(0, 2)
+    .map((line) => line.trim());
+  return [...fields, ...frames].join(' | ');
+}
+
 async function interruptTurn(turnId: string) {
   return transaction(async (client) => {
     await lockThread(client);
@@ -1100,10 +1116,12 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     });
   } catch (error) {
     if (stopping) return;
-    if (await interruptTurn(turnId))
+    if (await interruptTurn(turnId)) {
+      console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
       void Promise.resolve()
         .then(() => dependencies.recordFailure?.(turnId, error))
         .catch(() => {});
+    }
   } finally {
     void Promise.resolve()
       .then(() => dependencies.finishObservationSegment?.(turnId))
