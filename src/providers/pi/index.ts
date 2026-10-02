@@ -95,9 +95,24 @@ export function createPiAgent(options: {
       });
       await runtime.setRuntimeApiKey(options.provider, options.apiKey);
       const modelId = options.model || agentModels[options.provider as keyof typeof agentModels];
-      const model = runtime.getModel(options.provider, modelId);
-      if (!model)
+      const selectedModel = runtime.getModel(options.provider, modelId);
+      if (!selectedModel)
         throw new Error('The configured model is not present in the installed Pi catalog.');
+      const model =
+        selectedModel.provider === 'openai' &&
+        selectedModel.api === 'openai-responses' &&
+        selectedModel.id === agentModels.openai
+          ? {
+              ...selectedModel,
+              samplingParams: {
+                ...selectedModel.samplingParams,
+                text: {
+                  ...(selectedModel.samplingParams?.text as Record<string, unknown> | undefined),
+                  verbosity: 'low',
+                },
+              },
+            }
+          : selectedModel;
       const durable = options.objectStore
         ? await createPiCheckpoint({
             store: options.objectStore,
