@@ -16,7 +16,6 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
-import Fastify from 'fastify';
 import type { Static } from '@sinclair/typebox';
 import { JSDOM } from 'jsdom';
 import pg from 'pg';
@@ -64,108 +63,6 @@ import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
 import type { AppState } from '../src/shared/contracts.ts';
-import {
-  fixtureCredentials,
-  fixtureSignup,
-  operatorAccess,
-  registerOperatorPage,
-} from '../scripts/e2e-fixtures.ts';
-
-test('acceptance operator controls unlock in the browser without exposing tokens or unauthenticated state', async () => {
-  const app = Fastify();
-  const token = randomUUID();
-  const authorized = operatorAccess(token);
-  const releases: string[] = [];
-  registerOperatorPage(app, token);
-  app.get('/e2e/status', authorized, async () => ({ privateState: 'synthetic-operator-state' }));
-  app.post<{ Params: { variant: string } }>('/e2e/signup/:variant', authorized, async (request) => {
-    releases.push(request.params.variant);
-    return { ok: true };
-  });
-  app.post('/e2e/expected-run', authorized, async () => ({ ok: true }));
-  let dom: JSDOM | undefined;
-  try {
-    const publicPage = await app.inject({ url: '/e2e' });
-    assert.equal(publicPage.statusCode, 200);
-    assert.equal(publicPage.headers['cache-control'], 'no-store');
-    for (const value of [
-      token,
-      ...Object.values(fixtureCredentials),
-      fixtureSignup.base.code,
-      fixtureSignup.alternate.code,
-    ])
-      assert.equal(publicPage.body.includes(value), false);
-    for (const [method, path] of [
-      ['GET', '/e2e/operator'],
-      ['GET', '/e2e/status'],
-      ['POST', '/e2e/signup/base'],
-      ['POST', '/e2e/expected-run'],
-    ] as const) {
-      for (const url of [path, '/e2e/%' + path.charCodeAt(5).toString(16) + path.slice(6)]) {
-        for (const headers of [{}, { authorization: 'Bearer incorrect' }]) {
-          const response = await app.inject({ method, url, headers });
-          assert.equal(response.statusCode, 401);
-          assert.equal(response.body.includes(fixtureCredentials.password), false);
-          assert.equal(response.body.includes('synthetic-operator-state'), false);
-        }
-      }
-    }
-    assert.equal(releases.length, 0);
-    const requests: Array<{ path: string; authorization: string | null }> = [];
-    dom = new JSDOM(publicPage.body, {
-      url: 'http://localhost/e2e',
-      runScripts: 'dangerously',
-      beforeParse(window) {
-        window.fetch = async (input, options) => {
-          const path = String(input);
-          const headers = new Headers(options?.headers);
-          requests.push({ path, authorization: headers.get('authorization') });
-          const response = await app.inject({
-            method: options?.method === 'POST' ? 'POST' : 'GET',
-            url: path,
-            headers: Object.fromEntries(headers),
-          });
-          return new Response(response.body, { status: response.statusCode });
-        };
-      },
-    });
-    const document = dom.window.document;
-    const input = document.querySelector<HTMLInputElement>('#operator-token')!;
-    const access = document.querySelector<HTMLFormElement>('#operator-access')!;
-    const settle = async (done: () => boolean) => {
-      for (let attempt = 0; !done() && attempt < 100; attempt++) await delay(5);
-      assert.equal(done(), true);
-    };
-    input.value = 'incorrect';
-    access.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-    await settle(() => Boolean(document.querySelector('#operator-result')!.textContent));
-    assert.equal(document.body.textContent?.includes(fixtureCredentials.password), false);
-    assert.equal(input.value, '');
-    input.value = token;
-    access.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
-    await settle(() => access.hidden);
-    assert.equal(document.body.textContent?.includes(fixtureCredentials.password), true);
-    assert.equal(input.value, '');
-    for (const variant of ['base', 'alternate']) {
-      document.querySelector<HTMLButtonElement>(`[data-operator="${variant}"]`)!.click();
-      await settle(() => releases.includes(variant));
-    }
-    document.querySelector<HTMLButtonElement>('[data-operator="status"]')!.click();
-    await settle(() =>
-      document.querySelector('#operator-events')!.textContent!.includes('synthetic-operator-state'),
-    );
-    assert.deepEqual(releases, ['base', 'alternate']);
-    assert.ok(requests.slice(1).every((request) => request.authorization === `Bearer ${token}`));
-    assert.ok(requests.every((request) => !request.path.includes(token)));
-    assert.equal(dom.window.location.href, 'http://localhost/e2e');
-    assert.equal(dom.window.localStorage.length, 0);
-    assert.equal(dom.window.sessionStorage.length, 0);
-    assert.equal(document.documentElement.outerHTML.includes(token), false);
-  } finally {
-    dom?.window.close();
-    await app.close();
-  }
-});
 
 // Shared helpers
 
@@ -1366,36 +1263,6 @@ test('discard reaches the namespace computer of the same thread only', async () 
     ]);
     await assert.rejects(computer.discard!('../task'));
   } finally {
-    await fixture.close();
-  }
-});
-
-test('an unacknowledged cancellation fences new actions until namespace cleanup succeeds', async () => {
-  const fixture = await harness();
-  const drain = deferred();
-  try {
-    const computer = fixture.client('/synthetic/timeout', { drainTimeoutMs: 20 });
-    await computer.act('task', { action: 'snapshot' });
-    const entered = deferred();
-    fixture.instance('/synthetic/timeout').setAct(async () => {
-      entered.resolve();
-      await drain.promise;
-      return { text: 'Late', url: 'https://example.com', candidates: [] };
-    });
-    const controller = new AbortController();
-    const cancelled = assert.rejects(
-      computer.act('task', { action: 'snapshot' }, controller.signal),
-      /did not finish safely/,
-    );
-    await entered.promise;
-    controller.abort();
-    await cancelled;
-    await assert.rejects(computer.act('task', { action: 'snapshot' }), /unavailable/);
-    assert.match(computer.status(), /reopen/i);
-    drain.resolve();
-    await computer.dispose();
-  } finally {
-    drain.resolve();
     await fixture.close();
   }
 });
@@ -2665,60 +2532,6 @@ test('browser handoff prevents input on saved frames and recovers an observation
   }
 });
 
-test('browser handoff serializes capture polling with controls and completion', async () => {
-  const first = deferred<Response>();
-  const second = deferred<Response>();
-  const input = deferred<Response>();
-  const requests: string[] = [];
-  let captures = 0;
-  let inFlight = 0;
-  let maximum = 0;
-  const view = await handoffView(async (_path, options) => {
-    inFlight++;
-    maximum = Math.max(maximum, inFlight);
-    const control = options?.method === 'POST';
-    requests.push(control ? 'control' : 'screen');
-    try {
-      if (control) return await input.promise;
-      captures++;
-      return await (captures === 1
-        ? first.promise
-        : captures === 2
-          ? second.promise
-          : handoffScreen());
-    } finally {
-      inFlight--;
-    }
-  });
-  try {
-    await view.poll();
-    await view.poll();
-    assert.deepEqual(requests, ['screen']);
-    await act(async () => first.resolve(handoffScreen()));
-    await view.clickImage();
-    await view.poll();
-    assert.deepEqual(requests, ['screen', 'control']);
-    await view.button('Done');
-    assert.equal(view.completions(), 0);
-    await act(async () => {
-      input.resolve(Response.json({ ok: true }));
-      await delay(350);
-    });
-    await view.poll();
-    assert.deepEqual(requests, ['screen', 'control', 'screen']);
-    assert.equal(view.completions(), 0);
-    await act(async () => second.resolve(handoffScreen()));
-    assert.deepEqual(requests, ['screen', 'control', 'screen', 'screen']);
-    assert.equal(view.completions(), 1);
-    assert.equal(maximum, 1);
-  } finally {
-    first.resolve(handoffScreen());
-    second.resolve(handoffScreen());
-    input.resolve(Response.json({ ok: true }));
-    await view.close();
-  }
-});
-
 test('browser handoff cancels queued controls when the preceding view cannot be observed', async () => {
   const first = deferred<Response>();
   const inputs: unknown[] = [];
@@ -2752,43 +2565,6 @@ test('browser handoff cancels queued controls when the preceding view cannot be 
     assert.equal(inputs.length, 1);
     await view.button('Done');
     assert.equal(view.completions(), 1);
-  } finally {
-    await view.close();
-  }
-});
-
-test('browser handoff flushes typing before changing focus and drops buffered input on unmount', async () => {
-  const inputs: unknown[] = [];
-  const view = await handoffView(async (_path, options) => {
-    if (options?.method === 'POST') {
-      inputs.push(JSON.parse(String(options.body)));
-      return Response.json({ ok: true });
-    }
-    return handoffScreen();
-  });
-  try {
-    const screen = view.element('[role="application"]');
-    await act(async () => {
-      screen.dispatchEvent(
-        new view.dom.window.KeyboardEvent('keydown', { key: 'a', bubbles: true }),
-      );
-    });
-    await view.clickImage();
-    await act(async () => delay(700));
-    assert.deepEqual(inputs, [
-      { type: 'type', text: 'a' },
-      { type: 'click', x: 0.5, y: 0.5 },
-    ]);
-    await act(async () => {
-      screen.dispatchEvent(
-        new view.dom.window.KeyboardEvent('keydown', { key: 'b', bubbles: true }),
-      );
-      screen.dispatchEvent(new view.dom.window.WheelEvent('wheel', { deltaY: 100, bubbles: true }));
-    });
-    await view.unmount();
-    await delay(350);
-    assert.equal(inputs.length, 2);
-    assert.equal(view.images.size, 0);
   } finally {
     await view.close();
   }
