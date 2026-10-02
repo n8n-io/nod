@@ -12,6 +12,15 @@ export interface Suite {
   gaps: number;
 }
 
+const others = (runs: ChartRun[], best: ChartRun) => {
+  const rest = runs
+    .filter((run) => run !== best && run.summary.regression.percent !== null)
+    .map((run) => run.summary.regression.percent!);
+  return rest.length
+    ? `The rest finish between ${pct(Math.min(...rest))} and ${pct(Math.max(...rest))}.`
+    : '';
+};
+
 const sections: Array<{ id: string; kicker: string; lead: (runs: ChartRun[]) => string }> = [
   {
     id: '01-scoreboard',
@@ -19,7 +28,7 @@ const sections: Array<{ id: string; kicker: string; lead: (runs: ChartRun[]) => 
     lead: (runs) => {
       const found = insights(runs);
       return found.best
-        ? `${label(found.best.run, runs)} completes the most tasks (${pct(found.best.value)}). Nobody is close to perfect.`
+        ? `${label(found.best.run, runs)} completes the most tasks (${pct(found.best.value)}). ${others(runs, found.best.run)}`
         : 'How often each model finishes the task.';
     },
   },
@@ -109,7 +118,7 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
     [String(runs.length), 'models compared'],
     [String(attempts), 'real end-to-end attempts'],
     [String(tasks), 'tasks per model'],
-    [`$${Math.round(spent)}`, 'to run them all'],
+    [`$${Math.round(spent)}`, `for these ${attempts} attempts`],
   ];
   const steps: Array<[string, string]> = [
     ['Real Otto', 'The real agent, a real model, a Docker workspace and a real Chromium browser.'],

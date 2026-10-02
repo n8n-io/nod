@@ -555,7 +555,10 @@ function capabilities(runs: ChartRun[]): Card {
   };
 }
 
-export function cards(runs: ChartRun[]): Card[] {
+export function cards(input: ChartRun[]): Card[] {
+  const runs = [...input].sort(
+    (a, b) => (b.summary.regression.percent ?? -1) - (a.summary.regression.percent ?? -1),
+  );
   return [
     scoreboard(runs),
     passRate(runs),
