@@ -1566,55 +1566,6 @@ function context(directory: string): RuntimeContext {
   };
 }
 
-test('runtime disposal aborts an active task before releasing computer and workspace', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'otto-abort-'));
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  let finish!: () => void;
-  const stopped = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  const events: string[] = [];
-  const runtime = createAgentRuntime({
-    agent: {
-      open: async () => ({
-        resumed: false,
-        prompt: async () => {
-          entered();
-          await stopped;
-        },
-        abort: () => {
-          events.push('abort');
-          finish();
-        },
-        dispose: () => {
-          events.push('session disposed');
-        },
-      }),
-      dispose: () => {},
-    },
-    computer: fakeComputer({
-      dispose: async () => {
-        events.push('computer disposed');
-      },
-    }),
-    workspace: fakeWorkspace(),
-  });
-  try {
-    const running = assert.rejects(runtime.runTurn(context(directory)), /abort/i);
-    await started;
-    await assert.rejects(runtime.runTurn(context(directory)), /active turn/);
-    await runtime.dispose();
-    await running;
-    assert.equal(runtime.status().activeThreads, 0);
-    assert.ok(events.indexOf('session disposed') < events.indexOf('computer disposed'));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test('stalled observations release active tasks on cancellation and disposal', async (t) => {
   for (const method of ['cancel', 'dispose'] as const) {
     await t.test(method, async () => {
@@ -1736,6 +1687,7 @@ test('runtime shutdown drains tasks and releases every capability after adapter 
   });
   const running = assert.rejects(runtime.runTurn(context(directory)), /abort/i);
   await started;
+  await assert.rejects(runtime.runTurn(context(directory)), /active turn/);
   const disposal = runtime.dispose();
   assert.equal(runtime.dispose(), disposal);
   await assert.rejects(disposal, /Some runtime resources could not close/);
