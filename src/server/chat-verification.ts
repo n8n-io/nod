@@ -133,7 +133,10 @@ export async function createChatVerification(
           turnId: previous.turn_id,
           messageId: input.clientMessageId,
           messageText: previous.status === 'pending' ? pendingMessage : maskedMessage,
-          verificationStatus: previous.status,
+          verificationStatus:
+            previous.status === 'pending' || previous.status === 'submitted'
+              ? previous.status
+              : 'unavailable',
         };
       }
       let turnId: string | undefined;

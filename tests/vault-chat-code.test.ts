@@ -223,6 +223,15 @@ test(
           });
           assert.equal(after.statusCode, 200, after.body);
           assert.equal(after.json().verificationStatus, 'submitted');
+          await db.pool.query(
+            "UPDATE chat_verification_submissions SET status='rejected' WHERE message_id=$1",
+            [clientMessageId],
+          );
+          const legacy = await send('Código: 834725', {
+            clientMessageId,
+            verificationRequestId: request.requestId,
+          });
+          assert.equal(legacy.json().verificationStatus, 'unavailable');
           assert.equal(injected.length, 1);
           assert.deepEqual(ordinary, []);
           assert.equal(
