@@ -295,7 +295,12 @@ function scatter(
   const sy = (y: number) => height - pad.bottom - y * (height - pad.top - pad.bottom);
   const ticks = axis.log
     ? [0.003, 0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100].filter((tick) => tick >= lo && tick <= hi)
-    : Array.from({ length: 5 }, (_, i) => (hi * (i + 1)) / 5);
+    : (() => {
+        const raw = hi / 5;
+        const magnitude = 10 ** Math.floor(Math.log10(raw));
+        const step = ([1, 2, 5, 10].find((f) => f * magnitude >= raw) ?? 10) * magnitude;
+        return Array.from({ length: Math.floor(hi / step) }, (_, i) => step * (i + 1));
+      })();
   const grid =
     [0, 0.25, 0.5, 0.75, 1]
       .map(
@@ -325,10 +330,56 @@ function scatter(
     frontier.length > 1
       ? `<polyline fill="none" stroke="#cbd5e1" stroke-width="3" stroke-dasharray="3 9" stroke-linecap="round" points="${frontier.map((point) => `${sx(point.x)},${sy(point.y)}`).join(' ')}"/>`
       : '';
+  type Rect = { x0: number; y0: number; x1: number; y1: number };
+  const overlaps = (a: Rect, b: Rect) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+  const centers = points.map((point) => ({ x: sx(point.x), y: sy(point.y) }));
+  const taken: Rect[] = centers.map((c) => ({
+    x0: c.x - 19,
+    y0: c.y - 19,
+    x1: c.x + 19,
+    y1: c.y + 19,
+  }));
+  const crowd = (index: number) =>
+    centers.filter((c) => Math.hypot(c.x - centers[index].x, c.y - centers[index].y) < 140).length;
+  const labels = new Map<number, string>();
+  for (const index of points.map((_, i) => i).sort((a, b) => crowd(b) - crowd(a))) {
+    const point = points[index];
+    const c = centers[index];
+    const name = label(point.run, runs);
+    const sub = `${pct(point.y)} · ${axis.format(point.x)}`;
+    const w = Math.max(name.length * 13.5, sub.length * 9);
+    const h = 50;
+    const options = (
+      [
+        ['start', c.x + 26, c.y - 28],
+        ['end', c.x - 26, c.y - 28],
+        ['middle', c.x, c.y - 26 - h],
+        ['middle', c.x, c.y + 26],
+        ['start', c.x + 18, c.y - 30 - h + 14],
+        ['start', c.x + 18, c.y + 24],
+        ['end', c.x - 18, c.y - 30 - h + 14],
+        ['end', c.x - 18, c.y + 24],
+      ] as const
+    ).map(([anchor, x, top]) => {
+      const x0 = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+      return { anchor, x, top, rect: { x0, y0: top, x1: x0 + w, y1: top + h } };
+    });
+    const fits = (rect: Rect) =>
+      rect.x0 >= 4 && rect.x1 <= width - 4 && rect.y0 >= pad.top && rect.y1 <= height - pad.bottom;
+    const best =
+      options.find((o) => fits(o.rect) && !taken.some((other) => overlaps(o.rect, other))) ??
+      options.find((o) => fits(o.rect)) ??
+      options[0];
+    taken.push(best.rect);
+    labels.set(
+      index,
+      `<text x="${best.x}" y="${best.top + 22}" text-anchor="${best.anchor}" font-size="22" font-weight="750" fill="#0f172a">${esc(name)}</text><text x="${best.x}" y="${best.top + 44}" text-anchor="${best.anchor}" font-size="16" fill="#64748b">${esc(sub)}</text>`,
+    );
+  }
   const dots = points
     .map(
-      (point) =>
-        `<circle cx="${sx(point.x)}" cy="${sy(point.y)}" r="15" fill="${colorOf(point.run, runs)}" stroke="#fff" stroke-width="4"/><text x="${sx(point.x) + 26}" y="${sy(point.y) - 4}" font-size="22" font-weight="750" fill="#0f172a">${esc(label(point.run, runs))}</text><text x="${sx(point.x) + 26}" y="${sy(point.y) + 20}" font-size="16" fill="#64748b">${pct(point.y)} · ${esc(axis.format(point.x))}</text>`,
+      (point, index) =>
+        `<circle cx="${centers[index].x}" cy="${centers[index].y}" r="15" fill="${colorOf(point.run, runs)}" stroke="#fff" stroke-width="4"/>${labels.get(index)}`,
     )
     .join('');
   return {
