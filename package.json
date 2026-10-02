@@ -16,7 +16,8 @@
     "test:integration": "node scripts/test-integration.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "eval:voice": "tsx scripts/voice-eval.ts"
+    "eval:voice": "tsx scripts/voice-eval.ts",
+    "eval:capability": "tsx evals/src/cli.ts"
   },
   "dependencies": {
     "@chat-adapter/state-pg": "^4.41.0",

@@ -1,0 +1,78 @@
+import { defaults } from './checks.ts';
+import { judgeCriteria, type Llm } from './judge.ts';
+import { criteria as productCriteria, standard, tripwires } from './product.ts';
+import type { CheckResult } from './results.ts';
+import type { Expectation, Scenario, World } from './scenario.ts';
+import type { Run } from './trace.ts';
+
+type Judged = Extract<Expectation, { kind: 'judge' }>;
+
+export async function grade(options: {
+  definition: Scenario;
+  world: World;
+  trace: Run;
+  judge: Llm;
+  truth: string;
+  skipJudges: boolean;
+}) {
+  const { definition, world, trace, judge, truth } = options;
+  const checks: CheckResult[] = [];
+  const task: Judged[] = [];
+  let graderFault: string | undefined;
+  let judgeFault: string | undefined;
+  for (const expectation of [...defaults, ...tripwires, ...definition.expect(world)]) {
+    if (expectation.kind === 'judge') {
+      task.push(expectation);
+      continue;
+    }
+    try {
+      const verdict = await expectation.check(trace);
+      checks.push({
+        id: expectation.id,
+        kind: 'check',
+        group: expectation.group ?? 'task',
+        aspect: expectation.aspect,
+        failure: expectation.failure,
+        required: expectation.required,
+        ...verdict,
+      });
+    } catch (error) {
+      graderFault = `Check ${expectation.id} failed to run: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  if (!options.skipJudges) {
+    for (const [group, list, standardText] of [
+      ['task', task, undefined],
+      ['product', productCriteria as Judged[], standard],
+    ] as const) {
+      if (!list.length) continue;
+      try {
+        const verdicts = await judgeCriteria(judge, {
+          standard: standardText,
+          task: trace.task,
+          transcript: trace.transcript(),
+          groundTruth: truth,
+          criteria: list,
+        });
+        for (const verdict of verdicts) {
+          const source = list.find((item) => item.id === verdict.id)!;
+          checks.push({
+            id: verdict.id,
+            kind: 'judge',
+            group,
+            criterion: source.criterion,
+            na: verdict.na || undefined,
+            aspect: source.aspect,
+            failure: source.failure,
+            required: source.required,
+            pass: verdict.pass,
+            evidence: verdict.reasoning,
+          });
+        }
+      } catch (error) {
+        judgeFault = error instanceof Error ? error.message : String(error);
+      }
+    }
+  }
+  return { checks, graderFault, judgeFault };
+}

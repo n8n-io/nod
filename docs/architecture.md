@@ -85,6 +85,10 @@ Gmail also checks for inbox changes every five minutes using a persisted history
 
 **Inspector and usage.** A private developer view (Screen, Activity, Tools, Models, Costs, Prompts) backed by masked, bounded records kept seven days. Gated by `DEV_INSPECTOR` and, in hosted mode, `OTTO_DEVELOPER_IDS`. Unknown prices stay null. Chat answers omit elapsed time and cost; provider costs remain recorded in the ledger and visible in the Inspector Costs tab.
 
+## Capability evals
+
+`evals/` is a separate package that measures how often the real harness completes real tasks. Each attempt boots an isolated Otto (own database schema, workspace and browser containers, real Pi and model) against a fake outside world: stateful connected-app fakes behind the integration port and lookalike websites served to the real browser. Graders read the end state of that world and the workspace, a trace-based product layer checks honesty, permission discipline and Otto's own voice rules, and an independent judge model scores what needs judgement. Runs report pass rate with an interval, pass@k, pass^k, latency and cost, and can be compared across models, revisions and judges. It calls live models and is run by hand, never from tests. See [evals/README.md](../evals/README.md).
+
 ## Security boundaries
 
 - Local mode binds to loopback with one fixed owner; it is not public authentication. Public hosting uses the gateway.

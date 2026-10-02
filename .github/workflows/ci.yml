@@ -59,6 +59,10 @@ jobs:
         run: |
           npm --prefix deployment/cloudflare run check
           npm --prefix deployment/cloudflare test
+      - name: Check the capability eval harness
+        run: |
+          npm --prefix evals run check
+          npm --prefix evals test
       - name: Validate both Cloudflare deployment bundles
         working-directory: deployment/cloudflare
         env:

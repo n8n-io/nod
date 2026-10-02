@@ -1,0 +1,246 @@
+import type { Capability } from './scenario.ts';
+import type {
+  AttemptResult,
+  Efficiency,
+  Rates,
+  RunManifest,
+  RunSummary,
+  ScenarioSummary,
+  Trust,
+  WentWrong,
+} from './results.ts';
+
+function choose(n: number, k: number) {
+  if (k < 0 || k > n) return 0;
+  let value = 1;
+  for (let i = 1; i <= k; i++) value = (value * (n - k + i)) / i;
+  return value;
+}
+
+export function passAtK(n: number, c: number, k: number) {
+  if (n < k) return null;
+  return 1 - choose(n - c, k) / choose(n, k);
+}
+
+export function passPowK(n: number, c: number, k: number) {
+  if (n < k) return null;
+  return choose(c, k) / choose(n, k);
+}
+
+export function wilson(passed: number, total: number, z = 1.96) {
+  if (!total) return null;
+  const p = passed / total;
+  const denominator = 1 + (z * z) / total;
+  const center = (p + (z * z) / (2 * total)) / denominator;
+  const margin =
+    (z * Math.sqrt((p * (1 - p)) / total + (z * z) / (4 * total * total))) / denominator;
+  return { low: Math.max(0, center - margin), high: Math.min(1, center + margin) };
+}
+
+export function band(passAt1: number | null, attempts: number) {
+  if (passAt1 === null || attempts < 3) return null;
+  return passAt1 >= 0.95 ? 'anchor' : passAt1 === 0 ? 'frontier' : 'discriminator';
+}
+
+export function percentile(values: number[], fraction: number) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1)];
+}
+
+const mean = (values: Array<number | null>) => {
+  const known = values.filter((value): value is number => value !== null);
+  return known.length ? known.reduce((total, value) => total + value, 0) / known.length : null;
+};
+
+const sum = (values: Array<number | null>) =>
+  values.every((value) => value === null)
+    ? null
+    : values.reduce<number>((total, value) => total + (value ?? 0), 0);
+
+function scenarioSummary(k: number, items: AttemptResult[]): ScenarioSummary {
+  const completed = items.filter((item) => item.status !== 'incomplete');
+  const passed = completed.filter((item) => item.status === 'pass').length;
+  return {
+    scenario: items[0].scenario,
+    title: items[0].title,
+    capabilities: items[0].capabilities,
+    stance: items[0].stance,
+    fingerprint: items[0].fingerprint,
+    attempts: completed.length,
+    passed,
+    incomplete: items.length - completed.length,
+    unitPass: mean(
+      completed.map((item) => {
+        const required = item.checks.filter((check) => check.required);
+        return required.length
+          ? required.filter((check) => check.pass).length / required.length
+          : null;
+      }),
+    ),
+    passAt1: completed.length ? passed / completed.length : null,
+    passAtK: passAtK(completed.length, passed, k),
+    passPowK: passPowK(completed.length, passed, k),
+    seconds: items.reduce((total, item) => total + item.seconds, 0),
+    medianSeconds: percentile(
+      completed.map((item) => item.seconds),
+      0.5,
+    ),
+    costUsd: sum(items.map((item) => item.costUsd)),
+  };
+}
+
+function efficiency(attempts: AttemptResult[]): Efficiency {
+  const done = attempts.filter((item) => item.status !== 'incomplete');
+  const passed = done.filter((item) => item.status === 'pass').length;
+  const cost = sum(done.map((item) => item.costUsd));
+  const toolCalls = done.reduce((total, item) => total + item.toolCalls, 0);
+  return {
+    seconds: {
+      p50: percentile(
+        done.map((item) => item.seconds),
+        0.5,
+      ),
+      p90: percentile(
+        done.map((item) => item.seconds),
+        0.9,
+      ),
+    },
+    firstReplySeconds: {
+      p50: percentile(
+        done.flatMap((item) => (item.firstReplySeconds === null ? [] : [item.firstReplySeconds])),
+        0.5,
+      ),
+      p90: percentile(
+        done.flatMap((item) => (item.firstReplySeconds === null ? [] : [item.firstReplySeconds])),
+        0.9,
+      ),
+    },
+    costPerAttempt: cost !== null && done.length ? cost / done.length : null,
+    costPerPass: cost !== null && passed ? cost / passed : null,
+    tokensPerAttempt: done.length
+      ? done.reduce((total, item) => total + item.tokens, 0) / done.length
+      : null,
+    toolCallsPerAttempt: done.length ? toolCalls / done.length : null,
+    toolErrorRate: toolCalls
+      ? done.reduce((total, item) => total + item.toolErrors, 0) / toolCalls
+      : null,
+    judgeCostUsd: sum(attempts.map((item) => item.judgeCostUsd)),
+  };
+}
+
+function trust(attempts: AttemptResult[]): Trust {
+  const done = attempts.filter(
+    (item) => item.status !== 'incomplete' && item.stance === 'regression',
+  );
+  const ids = [
+    ...new Set(
+      done.flatMap((item) =>
+        item.checks.filter((check) => check.group === 'product').map((check) => check.id),
+      ),
+    ),
+  ];
+  const failedWith = (item: AttemptResult, failure: string) =>
+    item.checks.some((check) => !check.pass && check.required && check.failure === failure);
+  return {
+    lines: ids.map((id) => {
+      const rows = done.flatMap((item) =>
+        item.checks.filter((check) => check.group === 'product' && check.id === id && !check.na),
+      );
+      return {
+        id,
+        applicable: rows.length,
+        rate: rows.length ? rows.filter((check) => check.pass).length / rows.length : null,
+      };
+    }),
+    safetyIncidents: done.filter((item) => failedWith(item, 'unsafe')).length,
+    scopeIncidents: done.filter((item) => failedWith(item, 'scope')).length,
+  };
+}
+
+function wentWrong(attempts: AttemptResult[]): WentWrong {
+  const failed = attempts.filter((item) => item.status === 'fail');
+  const groups = new Map<string, WentWrong['groups'][number]>();
+  for (const item of failed) {
+    const diagnosis = item.diagnosis;
+    if (!diagnosis) continue;
+    const key = `${item.scenario}|${diagnosis.category}|${diagnosis.blame}`;
+    const existing = groups.get(key);
+    if (existing) existing.count++;
+    else
+      groups.set(key, {
+        scenario: item.scenario,
+        category: diagnosis.category,
+        blame: diagnosis.blame,
+        count: 1,
+        rootCause: diagnosis.rootCause,
+        fix: diagnosis.fix,
+      });
+  }
+  return {
+    groups: [...groups.values()].sort((a, b) => b.count - a.count),
+    suspectEval: failed
+      .filter((item) => item.diagnosis && item.diagnosis.blame !== 'agent')
+      .map((item) => ({
+        scenario: item.scenario,
+        attempt: item.attempt,
+        blame: item.diagnosis!.blame,
+        rootCause: item.diagnosis!.rootCause,
+      })),
+    undiagnosed: failed.filter((item) => !item.diagnosis).length,
+  };
+}
+
+function rates(summaries: ScenarioSummary[]): Rates {
+  const total = summaries.reduce((count, item) => count + item.attempts, 0);
+  const passed = summaries.reduce((count, item) => count + item.passed, 0);
+  return {
+    passed,
+    total,
+    incomplete: summaries.reduce((count, item) => count + item.incomplete, 0),
+    percent: total ? passed / total : null,
+    interval: wilson(passed, total),
+    unitPass: mean(summaries.map((item) => item.unitPass)),
+    passAt1: mean(summaries.map((item) => item.passAt1)),
+    passAtK: mean(summaries.map((item) => item.passAtK)),
+    passPowK: mean(summaries.map((item) => item.passPowK)),
+  };
+}
+
+export function summarize(manifest: RunManifest, attempts: AttemptResult[]): RunSummary {
+  const grouped = new Map<string, AttemptResult[]>();
+  for (const attempt of attempts)
+    grouped.set(attempt.scenario, [...(grouped.get(attempt.scenario) ?? []), attempt]);
+  const scenarios = [...grouped.values()].map((items) => scenarioSummary(manifest.k, items));
+  const regression = scenarios.filter((item) => item.stance === 'regression');
+  const names = [...new Set(scenarios.flatMap((item) => item.capabilities))] as Capability[];
+  const failing = attempts
+    .filter((item) => item.status === 'fail')
+    .flatMap((item) => item.checks.filter((check) => !check.pass && check.required));
+  const counts = new Map<string, number>();
+  for (const check of failing) counts.set(check.failure, (counts.get(check.failure) ?? 0) + 1);
+  const infra = attempts.filter((item) => item.status === 'incomplete' && item.blame === 'infra');
+  return {
+    manifest,
+    regression: rates(regression),
+    gap: rates(scenarios.filter((item) => item.stance === 'gap')),
+    contaminated: attempts.length >= 3 && infra.length / attempts.length >= 0.3,
+    efficiency: efficiency(attempts),
+    trust: trust(attempts),
+    wentWrong: wentWrong(attempts),
+    scenarios,
+    capabilities: names.map((capability) => {
+      const matching = regression.filter((item) => item.capabilities.includes(capability));
+      return {
+        capability,
+        passAt1: mean(matching.map((item) => item.passAt1)),
+        scenarios: matching.length,
+      };
+    }),
+    failures: [...counts.entries()]
+      .map(([failure, count]) => ({ failure: failure as never, count }))
+      .sort((a, b) => b.count - a.count),
+    seconds: attempts.reduce((total, item) => total + item.seconds, 0),
+    costUsd: sum(attempts.map((item) => item.costUsd)),
+  };
+}

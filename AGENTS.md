@@ -37,7 +37,7 @@ Setup and commands are in [README](README.md); how the system works is in [archi
 
 ## Validation
 
-Run focused tests while editing, then `npm run check`, `npm run test:integration` and `npm run build`. For deployment changes also run `npm --prefix deployment/cloudflare run check`, `npm --prefix deployment/cloudflare test` and both Wrangler dry runs (see [Cloudflare](deployment/cloudflare/README.md)). Report fixtures, UI checks and live checks separately.
+Run focused tests while editing, then `npm run check`, `npm run test:integration` and `npm run build`. For capability eval changes also run `npm --prefix evals run check` and `npm --prefix evals test`. The evals themselves call live models, so run them manually (see [evals](evals/README.md)). For deployment changes also run `npm --prefix deployment/cloudflare run check`, `npm --prefix deployment/cloudflare test` and both Wrangler dry runs (see [Cloudflare](deployment/cloudflare/README.md)). Report fixtures, UI checks and live checks separately.
 
 ## Tests
 
