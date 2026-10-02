@@ -169,6 +169,7 @@ export function Apps() {
   const discoveryId = new URLSearchParams(window.location.search).get('connect');
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [discoveryError, setDiscoveryError] = useState('');
+  const [discoveryLoadError, setDiscoveryLoadError] = useState('');
   const [savingDiscovery, setSavingDiscovery] = useState(false);
   const [discoverySignIn, setDiscoverySignIn] = useState<{ id: string; url: string } | null>(null);
   const [discoveryVersion, setDiscoveryVersion] = useState(0);
@@ -214,6 +215,7 @@ export function Apps() {
         );
         if (request.signal.aborted) return;
         setDiscovery(value);
+        setDiscoveryLoadError('');
         if (value.oauthStatus === 'connected') {
           const url = new URL(window.location.href);
           if (url.searchParams.get('connect') !== discoveryId) return;
@@ -246,7 +248,7 @@ export function Apps() {
           setDiscovery(null);
           setDiscoverySignIn(null);
         }
-        setDiscoveryError(errorMessage(cause));
+        setDiscoveryLoadError(errorMessage(cause));
       }
     }
     function focus() {
@@ -673,7 +675,9 @@ export function Apps() {
               ))}
             </details>
           )}
-          {discoveryError && <Notice>{discoveryError}</Notice>}
+          {(discoveryError || discoveryLoadError) && (
+            <Notice>{discoveryError || discoveryLoadError}</Notice>
+          )}
           {discovery?.paths[0]?.auth === 'oauth' ? (
             <form onSubmit={(event) => void authorizeDiscovery(event)} autoComplete="off">
               {discovery.paths[0]?.clientIdRequired && (

@@ -220,6 +220,13 @@ async function releaseFixture(t, { isPublic = false, publish = false, plan = fal
       await mkdir(dirname(join(root, path)), { recursive: true });
       await copyFile(join(repository, path), join(root, path));
     }
+    for (const path of ['desktop/package.json', 'desktop/package-lock.json']) {
+      const file = join(root, path);
+      const value = JSON.parse(await readFile(file, 'utf8'));
+      value.version = '0.1.0';
+      if (value.packages) value.packages[''].version = '0.1.0';
+      await writeFile(file, JSON.stringify(value));
+    }
   }
   f.commit();
   await prepareRelease(root, '0.1.0');

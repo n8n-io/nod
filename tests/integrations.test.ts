@@ -5999,6 +5999,8 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   let launches = 0;
   let discoveryStatus: 'pending' | 'cancelled' | 'failed' | 'connected' | undefined;
   let discoveryReads = 0;
+  let failDiscoveryRead = true;
+  let failAuthorization = true;
   let inventoryReads = 0;
   let pauseStatusRead = false;
   let releaseStatusRead: (() => void) | undefined;
@@ -6059,6 +6061,10 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       }
       if (path === `/api/apps/discovery/${id}`) {
         discoveryReads++;
+        if (failDiscoveryRead) {
+          failDiscoveryRead = false;
+          return Response.json({ error: 'Synthetic discovery read failed.' }, { status: 503 });
+        }
         const response = Response.json({
           name: 'Fixture',
           oauthStatus: discoveryStatus,
@@ -6086,6 +6092,10 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       assert.equal(path, `/api/apps/discovery/${id}/authorize`);
       assert.equal(init.method, 'POST');
       assert.deepEqual(JSON.parse(String(init.body)), { clientId: 'fixture-client' });
+      if (failAuthorization) {
+        failAuthorization = false;
+        return Response.json({ error: 'Synthetic authorization failed.' }, { status: 502 });
+      }
       if (discoveryStatus === 'connected')
         return Response.json({ error: 'Already connected.' }, { status: 409 });
       if (discoveryStatus !== 'pending') launches++;
@@ -6114,10 +6124,23 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     pageDataCache.clear();
     await act(async () => root.render(createElement(Apps)));
     await settle();
+    assert.match(dom.window.document.body.textContent!, /Synthetic discovery read failed/);
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.doesNotMatch(dom.window.document.body.textContent!, /Synthetic discovery read failed/);
     const form = dom.window.document.querySelector('.app-discovery-dialog form');
     assert.ok(form, dom.window.document.body.innerHTML);
     const clientId = form.querySelector<HTMLInputElement>('[name="clientId"]')!;
     clientId.value = 'fixture-client';
+    const readsBeforeAuthorization = discoveryReads;
+    await act(async () =>
+      form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })),
+    );
+    await settle();
+    assert.ok(discoveryReads > readsBeforeAuthorization);
+    assert.match(dom.window.document.body.textContent!, /Synthetic authorization failed/);
+    assert.equal(launches, 0);
+    assert.equal(opened.length, 0);
     for (let count = 0; count < 2; count++) {
       await act(async () =>
         form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })),
