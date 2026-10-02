@@ -111,6 +111,7 @@ for (const path of [
   'public',
   'dist/web',
   'package.json',
+  'package-lock.json',
   'tsconfig.json',
   'desktop/runtime',
   'desktop/main/engine.mjs',
@@ -118,8 +119,7 @@ for (const path of [
   await mkdir(dirname(join(engine, path)), { recursive: true });
   await copy(join(root, path), join(engine, path));
 }
-const dependencies = await copyEngineDependencies({ root, target: engine });
-await writeFile(join(engine, 'engine-dependencies.json'), JSON.stringify(dependencies, null, 2));
+await copyEngineDependencies({ root, target: engine });
 for (const path of ['main', 'preload', 'ui'])
   await copy(join(desktop, path), join(appSource, path));
 if (full)
@@ -146,7 +146,7 @@ delete configuration.devDependencies;
 delete configuration.scripts;
 await writeFile(join(appSource, 'package.json'), JSON.stringify(configuration, null, 2));
 if (stageOnly) {
-  console.log(`Desktop engine staged with ${dependencies.packages} runtime packages: ${engine}`);
+  console.log(`Desktop engine staged: ${engine}`);
   process.exit(0);
 }
 

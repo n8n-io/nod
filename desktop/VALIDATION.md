@@ -1,5 +1,15 @@
 # Desktop experiment validation
 
+## Shared product packaging — 2026-10-02
+
+Desktop now uses the unchanged root browser and workspace Dockerfiles and the complete root npm installation. The separate browser manifest and source-import dependency scanner are removed. Runtime reuse includes the full source and root dependency lockfile; CI also builds and exercises the shared local browser image. Historical installer sizes below predate this change.
+
+An isolated staged engine matched the source package, lockfile, server entrypoint and web entry by hash. Electron's embedded Node 24.21.0 loaded the shared server composition, Pi and the Pi web extension outside the checkout. All 12 retained Mach-O files passed ARM64 and minimum-OS checks. The staging directory was removed; no user profile or model was used. The new packaging regression loads a dynamic extension, its data file and its npm binary link after deleting the source checkout.
+
+Type/architecture/format checks, production build and the disposable integration suite passed: **526 passes, six optional skips**. The first desktop run caught two fixture executables inheriting the newly copied root ESM package scope; their own CommonJS scope was made explicit. Both focused cases and the final desktop suite passed: **110 passes, one privileged Linux skip**. Updated-head hosted CI, full DMG/runtime packaging and installation of this revision remain separate release acceptance gates.
+
+Evidence: `.local/desktop-shared-product-validation-checks-summary.json`, `.local/desktop-shared-product-stage.json`, `.local/desktop-shared-product-fixture-recheck.log`, and `.local/desktop-shared-product-desktop-final.log`.
+
 ## Alpha PR review — 2026-10-02
 
 [PR #97](https://github.com/n8n-io/otto/pull/97) includes main at `60bf73ac3777252442f97b54e9b1309a388fd3f8`. Its initial hosted CI passed, including browser recovery and E2B isolation. The following review fixes passed a fresh local combined run: **526 integration passes with six optional skips**, **109 desktop passes with one privileged Linux skip**, type/architecture/format checks, and the production build. The disposable database was removed and source hashes stayed unchanged during that run. Updated-head hosted CI remains the merge gate.

@@ -7,9 +7,9 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const inputs = [
   '.dockerignore',
   'Dockerfile.workspace',
-  'desktop/runtime/Dockerfile.browser',
-  'desktop/runtime/browser/package.json',
-  'desktop/runtime/browser/package-lock.json',
+  'Dockerfile.browser',
+  'package.json',
+  'package-lock.json',
   'desktop/runtime/downloads.json',
   'desktop/scripts/build-lima.mjs',
   'desktop/scripts/check-browser-image.mjs',
@@ -21,11 +21,7 @@ const inputs = [
   'desktop/scripts/runtime-inputs.mjs',
   'desktop/scripts/runtime-pack.mjs',
   'desktop/runtime/assets.mjs',
-  'src/ports',
-  'src/shared',
-  'src/providers/process.ts',
-  'src/providers/agent-browser',
-  'src/providers/container-browser',
+  'src',
 ];
 
 export async function runtimeInputs() {
@@ -67,42 +63,37 @@ export async function runtimeInputs() {
     entries.push(['signing.identity', identity], ['signing.certificateSha256', certificate]);
   }
   entries.push(['signing.mode', signingMode]);
-  for (const [lockPath, name] of [
-    ['package-lock.json', 'tar'],
-    ['package-lock.json', 'tsx'],
-    ['desktop/package-lock.json', '@electron/osx-sign'],
-  ]) {
-    const lock = JSON.parse(await readFile(join(repository, lockPath), 'utf8'));
-    const seen = new Set();
-    function collectPackage(name, parent = '') {
-      let scope = parent;
-      let path;
-      for (;;) {
-        const candidate = `${scope ? `${scope}/` : ''}node_modules/${name}`;
-        if (lock.packages[candidate]) {
-          path = candidate;
-          break;
-        }
-        if (!scope) throw new Error(`A runtime build dependency is absent from ${lockPath}.`);
-        scope = scope.includes('/node_modules/')
-          ? scope.slice(0, scope.lastIndexOf('/node_modules/'))
-          : '';
+  const lockPath = 'desktop/package-lock.json';
+  const signingLock = JSON.parse(await readFile(join(repository, lockPath), 'utf8'));
+  const seen = new Set();
+  function collectPackage(name, parent = '') {
+    let scope = parent;
+    let path;
+    for (;;) {
+      const candidate = `${scope ? `${scope}/` : ''}node_modules/${name}`;
+      if (signingLock.packages[candidate]) {
+        path = candidate;
+        break;
       }
-      if (seen.has(path)) return;
-      seen.add(path);
-      const metadata = lock.packages[path];
-      entries.push([
-        `${lockPath}:${path}`,
-        createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
-      ]);
-      for (const dependency of Object.keys({
-        ...metadata.dependencies,
-        ...metadata.optionalDependencies,
-      }))
-        collectPackage(dependency, path);
+      if (!scope) throw new Error(`A runtime build dependency is absent from ${lockPath}.`);
+      scope = scope.includes('/node_modules/')
+        ? scope.slice(0, scope.lastIndexOf('/node_modules/'))
+        : '';
     }
-    collectPackage(name);
+    if (seen.has(path)) return;
+    seen.add(path);
+    const metadata = signingLock.packages[path];
+    entries.push([
+      `${lockPath}:${path}`,
+      createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
+    ]);
+    for (const dependency of Object.keys({
+      ...metadata.dependencies,
+      ...metadata.optionalDependencies,
+    }))
+      collectPackage(dependency, path);
   }
+  collectPackage('@electron/osx-sign');
   entries.sort(([left], [right]) => left.localeCompare(right));
   const lock = JSON.parse(
     await readFile(join(repository, 'desktop/scripts/runtime-build-lock.json'), 'utf8'),

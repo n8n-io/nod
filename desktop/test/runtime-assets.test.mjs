@@ -20,7 +20,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { create } from 'tar';
-import { copyBundleSource } from '../scripts/engine-dependencies.mjs';
+import { copyBundleSource, copyEngineDependencies } from '../scripts/engine-dependencies.mjs';
 import {
   assetHash,
   ensureRuntimeAssets,
@@ -239,6 +239,7 @@ async function releaseFixture(t, { isPublic = false, publish = false, plan = fal
     mkdir(output, { recursive: true }),
     mkdir(bin),
   ]);
+  await writeFile(join(bin, 'package.json'), '{"type":"commonjs"}');
   const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
   const archive = Buffer.from('Synthetic runtime archive');
   const certificate = Buffer.from('Synthetic public certificate');
@@ -609,6 +610,47 @@ test('bundle copy includes explicit release assets under .local while excluding 
     'runtime-release.json',
     'runtime.tar.gz',
   ]);
+});
+
+test('packaged engine loads dynamic dependencies, nested assets and npm binary links outside the checkout', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-packaged-dependencies-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'checkout');
+  const target = join(root, 'application');
+  const dependency = join(source, 'node_modules', 'synthetic-extension');
+  await mkdir(join(dependency, 'assets'), { recursive: true });
+  await mkdir(join(source, 'node_modules', '.bin'));
+  await writeFile(
+    join(source, 'package-lock.json'),
+    JSON.stringify({ packages: { 'node_modules/synthetic-extension': { version: '1.0.0' } } }),
+  );
+  await writeFile(
+    join(dependency, 'package.json'),
+    JSON.stringify({ name: 'synthetic-extension', type: 'module', exports: './index.mjs' }),
+  );
+  await writeFile(join(dependency, 'assets', 'value.json'), '{"value":42}');
+  await writeFile(
+    join(dependency, 'index.mjs'),
+    'import { readFileSync } from "node:fs"; export default JSON.parse(readFileSync(new URL("./assets/value.json", import.meta.url))).value;',
+  );
+  await writeFile(
+    join(dependency, 'cli.mjs'),
+    'import value from "./index.mjs"; console.log(value);',
+  );
+  await symlink('../synthetic-extension/cli.mjs', join(source, 'node_modules', '.bin', 'probe'));
+  await copyEngineDependencies({ root: source, target });
+  await rm(source, { recursive: true });
+  await writeFile(
+    join(target, 'probe.mjs'),
+    'const name = process.argv[2]; console.log((await import(name)).default);',
+  );
+  for (const args of [['probe.mjs', 'synthetic-extension'], ['node_modules/.bin/probe']]) {
+    const result = await promisify(execFile)(process.execPath, args, {
+      cwd: target,
+      env: { PATH: process.env.PATH },
+    });
+    assert.equal(result.stdout.trim(), '42');
+  }
 });
 
 async function fixture(t, extra) {
@@ -1129,7 +1171,7 @@ test('runtime replaces owned containers even with unchanged images and retains t
   }
 });
 
-test('runtime fingerprints include tsx native dependencies and reject symlinked input roots', async (t) => {
+test('runtime fingerprints include root dependencies and complete source and reject symlinked input roots', async (t) => {
   const { cp, realpath } = await import('node:fs/promises');
   const { runtimeInputs } = await import('../scripts/runtime-inputs.mjs');
   const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-runtime-inputs-')));
@@ -1153,15 +1195,30 @@ test('runtime fingerprints include tsx native dependencies and reject symlinked 
       env: { PATH: process.env.PATH },
     });
   const before = JSON.parse((await run()).stdout).fingerprint;
-  const lockPath = join(root, 'package-lock.json');
-  const lock = JSON.parse(await readFile(lockPath, 'utf8'));
-  const native = input.inputs
-    .find((path) => path.endsWith('node_modules/@esbuild/darwin-arm64'))
-    .slice('package-lock.json:'.length);
-  assert.ok(native);
-  lock.packages[native].integrity = 'synthetic-native-change';
-  await writeFile(lockPath, JSON.stringify(lock));
+  const manifestPath = join(root, 'package.json');
+  const manifestSource = await readFile(manifestPath, 'utf8');
+  const manifest = JSON.parse(manifestSource);
+  manifest.dependencies['agent-browser'] = '0.0.0-synthetic';
+  await writeFile(manifestPath, JSON.stringify(manifest));
   assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
+  await writeFile(manifestPath, manifestSource);
+  const lockPath = join(root, 'package-lock.json');
+  const lockSource = await readFile(lockPath, 'utf8');
+  for (const name of ['agent-browser', '@esbuild/darwin-arm64']) {
+    const lock = JSON.parse(lockSource);
+    lock.packages[`node_modules/${name}`].integrity = 'synthetic-dependency-change';
+    await writeFile(lockPath, JSON.stringify(lock));
+    assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
+  }
+  await writeFile(lockPath, lockSource);
+  for (const path of ['src/server/index.ts', 'src/web/pages/chat.tsx']) {
+    const file = join(root, path);
+    const source = await readFile(file, 'utf8');
+    await writeFile(file, `${source}\nexport const syntheticRuntimeChange = true;\n`);
+    assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
+    await writeFile(file, source);
+  }
+  assert.equal(JSON.parse((await run()).stdout).fingerprint, before);
   const outside = join(root, 'outside');
   await mkdir(outside);
   await writeFile(join(outside, 'must-not-be-hashed'), 'Synthetic outside-checkout content');
@@ -1198,6 +1255,7 @@ test('image preparation replaces a cached PostgreSQL image from the wrong archit
   const bin = join(root, 'bin');
   const archiveRoot = join(root, 'image');
   await mkdir(bin);
+  await writeFile(join(bin, 'package.json'), '{"type":"commonjs"}');
   await mkdir(archiveRoot);
   const imageId = 'a'.repeat(64);
   await writeFile(join(archiveRoot, `${imageId}.json`), '{}');

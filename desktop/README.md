@@ -4,6 +4,8 @@ This experiment packages Otto as an Apple Silicon Mac application. Users open th
 
 The assistant engine, database, workspace, and browser run on the Mac. Model requests still go to the selected provider and incur that provider's API charges. This is local execution with bring-your-own keys, not offline model inference.
 
+Desktop is a wrapper around the same Otto product: it starts `src/server/index.ts`, serves the normal web build, copies dependencies installed from the root lockfile, and builds the existing `Dockerfile.browser` and `Dockerfile.workspace`. Product features stay in the shared server, providers and web code. The desktop layer supplies installation, configuration, credential storage and native window/lifecycle integration. Smaller downloads must not introduce separate product implementations or dependency versions.
+
 ## Trying it
 
 1. Open `Otto Preview-arm64.dmg` and copy **Otto Preview** to Applications.
@@ -72,7 +74,7 @@ npm run desktop:test
 npm run desktop:build
 ```
 
-The lean app, DMG, and matching runtime archive are emitted into `dist/desktop`. `--seed-cache` verifies and installs the prepared runtime on the development Mac, using filesystem clones where available; it is optional for distribution. Prepared assets and the generated release descriptor remain under `.local`. Runtime inputs are pinned in `desktop/runtime/downloads.json` and the generated asset manifest. The build excludes environment files and local application data, copies the engine's dependency closure including required peers, selects native dependencies for macOS arm64, and omits dependency source maps.
+The lean app, DMG, and matching runtime archive are emitted into `dist/desktop`. `--seed-cache` verifies and installs the prepared runtime on the development Mac, using filesystem clones where available; it is optional for distribution. Prepared assets and the generated release descriptor remain under `.local`. Runtime inputs are pinned in `desktop/runtime/downloads.json` and the generated asset manifest. The build copies the root `npm ci` installation and lockfile, including dynamic dependencies, nested packages and assets. It excludes private local files, packages incompatible with macOS arm64, and bundled Intel-only alternatives in Pi and agent-browser. It does not infer dependencies from source imports or maintain a desktop dependency list.
 
 Runtime preparation starts a disposable browser container and verifies its control socket, public navigation, screenshot, and credential/mount boundaries before exporting the image. The check uses the same read-only filesystem and resource restrictions as the app. No provider model or connected account is called.
 
@@ -84,23 +86,23 @@ npm --prefix desktop run build -- --full
 
 That emits `Otto Preview-full-arm64.dmg`. It avoids the separate runtime pack, although first provisioning can still need network access. A lean build can enable automatic runtime acquisition by setting `OTTO_RUNTIME_RELEASE_URL` to the actual HTTPS URL of its immutable archive while running `runtime-pack.mjs`. Publish and verify that archive separately before distributing such a build. Without that variable, the picker is the supported first-install path.
 
-## Measured distribution size
+## Historical distribution size
 
-The current macOS arm64 build measured on 2026-10-02 uses source revision `b5cbdfda8687d6a43ba0c884a07e731535eb6ed2` with the desktop experiment changes and runtime `516ca70c945727e79b553ef9aa910b34a02f312a09de4fc451420e8a6a47b0df`. Its DMG is approximately **84.4% smaller** than the earlier all-in-one preview:
+The earlier macOS arm64 build measured on 2026-10-02 uses source revision `b5cbdfda8687d6a43ba0c884a07e731535eb6ed2` with the desktop experiment changes and runtime `516ca70c945727e79b553ef9aa910b34a02f312a09de4fc451420e8a6a47b0df`. These measurements predate the switch to the full shared dependency installation and browser image. The next release must measure the resulting larger app and runtime again. That earlier DMG was approximately **84.4% smaller** than the original all-in-one preview:
 
 | Artifact                                     |     Size |
 | -------------------------------------------- | -------: |
 | Previous all-in-one preview DMG (historical) |  2.52 GB |
-| Current lean DMG                             | 392.1 MB |
+| Earlier lean DMG                             | 392.1 MB |
 | Matching runtime pack                        |  1.76 GB |
 | Combined first download                      |  2.16 GB |
 | App contents, excluding runtime cache and VM | 643.9 MB |
 
-Sizes use decimal units. The current DMG is exactly 392,107,107 bytes; the runtime archive is 1,759,631,260 bytes, for a combined 2,151,738,367 bytes. App contents total 643,928,109 regular-file bytes in the generated bundle. Artifact identity and hashes are recorded in `dist/desktop/release.json`; this build remains ad-hoc signed and unnotarized. App updates can reuse an unchanged runtime version. A runtime upgrade downloads its new pack separately. Splitting the download does not reduce the private computer's working disk or memory requirements.
+Sizes use decimal units. That DMG is exactly 392,107,107 bytes; its runtime archive is 1,759,631,260 bytes, for a combined 2,151,738,367 bytes. App contents total 643,928,109 regular-file bytes in the generated bundle. Artifact identity and hashes are recorded in `dist/desktop/release.json`; this build remains ad-hoc signed and unnotarized. App updates can reuse an unchanged runtime version. A runtime upgrade downloads its new pack separately. Splitting the download does not reduce the private computer's working disk or memory requirements.
 
 ## Development checks
 
-To inspect the dependency-pruned engine without creating or signing an app, run `npm --prefix desktop run build -- --stage-only`. It writes `dist/desktop-staging/engine`; it does not install or launch Otto.
+To inspect the packaged engine without creating or signing an app, run `npm --prefix desktop run build -- --stage-only`. It writes `dist/desktop-staging/engine`; it does not install or launch Otto.
 
 For an unpackaged development run, use `npm run desktop:dev` after preparing the assets and building the web UI. The native app's settings and profile persist independently of the checkout.
 

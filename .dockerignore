@@ -10,8 +10,3 @@
 !public/**
 !src/
 !src/**
-!desktop/
-!desktop/runtime/
-!desktop/runtime/browser/
-!desktop/runtime/browser/package.json
-!desktop/runtime/browser/package-lock.json

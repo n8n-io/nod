@@ -111,7 +111,7 @@ const imageDefinitions = [
   {
     name: 'browser',
     tag: 'otto-desktop-browser:experiment',
-    dockerfile: 'desktop/runtime/Dockerfile.browser',
+    dockerfile: 'Dockerfile.browser',
   },
   { name: 'postgres', tag: 'postgres:17-alpine' },
 ];
