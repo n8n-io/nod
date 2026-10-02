@@ -27,8 +27,8 @@ const sections: Array<{ id: string; kicker: string; lead: (runs: ChartRun[]) => 
   {
     id: '03-pass-at-k',
     kicker: '2 · Capable is not the same as reliable',
-    lead: () =>
-      'Given three tries, every model gets most tasks right once. Getting them right every time is much harder, and that is what trust needs.',
+    lead: (runs) =>
+      `Given ${runs[0].summary.manifest.k} tries, every model gets most tasks right once. Getting them right every time is much harder, and that is what trust needs.`,
   },
   {
     id: '04-cost-vs-quality',
@@ -82,9 +82,21 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
   const all = new Map(cards(runs).map((card) => [card.id, card]));
   const first = runs[0].summary.manifest;
   const attempts = runs.reduce(
-    (sum, run) => sum + run.summary.regression.total + run.summary.regression.incomplete,
+    (sum, run) =>
+      sum +
+      run.summary.regression.total +
+      run.summary.regression.incomplete +
+      run.summary.gap.total +
+      run.summary.gap.incomplete,
     0,
   );
+  const tasks = Math.max(
+    ...runs.map(
+      (run) => run.summary.scenarios.filter((item) => item.stance === 'regression').length,
+    ),
+  );
+  const k = first.k;
+  const repeat = first.repeat;
   const spent = runs.reduce((sum, run) => sum + (run.summary.costUsd ?? 0), 0);
   const found = insights(runs);
   const learned = notes.learned?.length
@@ -97,10 +109,7 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
   const chips: Array<[string, string]> = [
     [String(runs.length), 'models compared'],
     [String(attempts), 'real end-to-end attempts'],
-    [
-      `${suite.scored}`,
-      `scored tasks (+${suite.calibrating} calibrating, ${suite.gaps} stretch goals)`,
-    ],
+    [String(tasks), 'scored tasks per model'],
     [`$${Math.round(spent)}`, 'to run them all'],
   ];
   const steps: Array<[string, string]> = [
@@ -113,7 +122,10 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
       'Graded on what happened',
       'Emails sent, baskets filled, payments made, files saved. Then an independent judge and Otto’s own rules.',
     ],
-    ['Tried three times', 'pass@3: gets it right at least once. pass^3: gets it right every time.'],
+    [
+      `Tried ${repeat} times`,
+      `pass@${k}: gets it right at least once. pass^${k}: gets it right every time.`,
+    ],
   ];
   const body = sections
     .map((section) => {
@@ -124,11 +136,11 @@ export function storyCard(runs: ChartRun[], suite: Suite, notes: StoryNotes = {}
     })
     .join('');
   const html = `<div class="story">
-<div class="hero"><div class="eyebrow">Otto capability evals</div><h1>${esc(notes.headline ?? 'Can you trust Otto to finish the job?')}</h1><div class="sub">We run real tasks end to end against a fake world, grade what actually happened, and compare models. This is how ${runs.length} of them do on ${suite.scored} scored tasks.</div><div class="chips">${chips.map(([value, text]) => `<div class="chip"><b>${esc(value)}</b><span>${esc(text)}</span></div>`).join('')}</div></div>
+<div class="hero"><div class="eyebrow">Otto capability evals</div><h1>${esc(notes.headline ?? 'Can you trust Otto to finish the job?')}</h1><div class="sub">We run real tasks end to end against a fake world, grade what actually happened, and compare models. This is how ${runs.length} of them do on ${tasks} scored tasks.</div><div class="chips">${chips.map(([value, text]) => `<div class="chip"><b>${esc(value)}</b><span>${esc(text)}</span></div>`).join('')}</div></div>
 <div class="how">${steps.map(([title, text]) => `<div class="step"><b>${esc(title)}</b><span>${esc(text)}</span></div>`).join('')}</div>
 ${body}
 <div class="learned"><h2>What we learned</h2><ul>${learned.map((line) => `<li>${esc(line)}</li>`).join('')}</ul></div>
-<div class="credit">Approach borrowed from n8n’s LangTracer: real scenarios, state-based grading, an independent judge, pass@k and pass^k, failure attribution and human review. Every model ran at Otto’s shipped reasoning setting (high). Judge: ${esc(first.judge.split('/').pop() ?? '')}. Code at ${esc(first.ref ?? first.commit.slice(0, 7))}.</div>
+<div class="credit">Approach borrowed from n8n’s LangTracer: real scenarios, state-based grading, an independent judge, pass@k and pass^k, failure attribution and human review. Every model ran at Otto’s shipped reasoning setting (high). The full suite has ${suite.total} scenarios; ${suite.calibrating} are still being calibrated and ${suite.gaps} are stretch goals Otto cannot do yet. Judge: ${esc(first.judge.split('/').pop() ?? '')}. Code at ${esc(first.ref ?? first.commit.slice(0, 7))}.</div>
 </div><script>document.title=String(document.documentElement.scrollHeight)</script>`;
   return { id: '00-the-story', html: `<style>${extra}</style>${html}`, fit: true };
 }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import test from 'node:test';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
@@ -477,15 +478,28 @@ test('run comparison reports what got worse and better, but only for unchanged s
 
 test('a fixture site is reachable by server-side fetches, not only by the browser', async () => {
   const host = 'book.fixture.example.net';
-  const sites = await serveSites({ [host]: () => page('Hotel', '<h1>Price 149</h1>') });
+  const sites = await serveSites({
+    [host]: ({ request, form }) =>
+      page('Hotel', `<h1>Price 149</h1><p>${request.method} ${form.get('room') ?? ''}</p>`),
+  });
+  const originalLookup = dns.promises.lookup;
+  const originalFetch = globalThis.fetch;
   const unroute = routeFixtureHosts([host], `http://127.0.0.1:${sites.port}`);
   try {
     assert.equal((await lookup(host, { all: true }))[0].address, '93.184.216.34');
     assert.match(await (await fetch(`https://${host}/stay?id=1`)).text(), /Price 149/);
     assert.equal(sites.visits.at(-1)?.path, '/stay');
+    const posted = await fetch(
+      new Request(`https://${host}/book`, {
+        method: 'POST',
+        body: new URLSearchParams({ room: 'double' }),
+      }),
+    );
+    assert.match(await posted.text(), /POST double/);
   } finally {
     unroute();
     await sites.close();
   }
-  await assert.rejects(lookup(host));
+  assert.equal(dns.promises.lookup, originalLookup);
+  assert.equal(globalThis.fetch, originalFetch);
 });
