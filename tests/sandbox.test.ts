@@ -286,7 +286,7 @@ test('cancel waits for the remote process group, including a child ignoring TERM
     controller.abort();
     await rejected;
     assert.ok(Date.now() - started >= 1800);
-    await delay(1100);
+    await delay(1500);
     assert.equal(await exists(join(f.directory, 'late')), false);
     assert.equal((await f.run(['printf', 'ready again'])).stdout.toString(), 'ready again');
   } finally {
