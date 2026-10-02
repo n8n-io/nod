@@ -403,6 +403,11 @@ test(
       });
       assert.equal(response.statusCode, 200);
       assert.equal(attempts, 2);
+      assert.deepEqual((await vault.readCredential(saved.json().id)).secret, {
+        username: 'person',
+        password: 'old-password',
+      });
+      assert.equal((await vault.list()).length, 2);
       const interrupted = await vault.request(taskInterrupted, 'local-development', input);
       await wait(taskInterrupted);
       await app.close();
