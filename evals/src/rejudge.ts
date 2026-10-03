@@ -3,7 +3,7 @@ import { reviewKey } from './review.ts';
 import { criteria as productCriteria, standard } from './product.ts';
 import type { AttemptResult, CheckResult, Reviews } from './results.ts';
 import type { Expectation } from './scenario.ts';
-import { fingerprint, scenarios } from './scenarios/index.ts';
+import { scenarios } from './scenarios/index.ts';
 import type { Model } from './stack.ts';
 
 type Judged = Extract<Expectation, { kind: 'judge' }>;
@@ -110,7 +110,6 @@ export async function rejudge(options: {
     next.push({
       ...attempt,
       checks,
-      fingerprint: fingerprint(attempt.scenario),
       status:
         playFailure || checks.some((check) => check.required && !check.pass) ? 'fail' : 'pass',
       judgeCostUsd: spentSince(),
