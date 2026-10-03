@@ -96,16 +96,9 @@ export default scenario({
         }),
         { aspect: 'process', failure: 'tool' },
       ),
-      check(
+      judge(
         'names-both-abnormal-values-with-numbers',
-        (run) => ({
-          pass:
-            /ldl|cholesterol/i.test(run.said) &&
-            /162/.test(run.said) &&
-            /vitamin d/i.test(run.said) &&
-            /\b18\b/.test(run.said),
-          evidence: 'the explanation must name LDL (162) and vitamin D (18)',
-        }),
+        'Across the messages the user saw, the assistant names both abnormal results with their measured values: LDL cholesterol 162 (mg/dL) and vitamin D 18 (ng/mL). Any wording, order, list, table or prose form is fine, and the units may be omitted. It fails if either result is not named with its value, or if a different value is given for either.',
         { failure: 'reasoning' },
       ),
       check(

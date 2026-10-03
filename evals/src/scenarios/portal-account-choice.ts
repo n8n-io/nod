@@ -58,7 +58,7 @@ export default scenario({
     void world;
   },
   evidence(run, world) {
-    return `Two saved logins exist for this site: Alex's (NIF ${alex.nif}) and Maria's (NIF ${maria.nif}). Sign-ins: ${world.state.logins.map((login) => `${login.nif} at ${new Date(login.at).toISOString()}`).join('; ') || 'none'}. Questions the assistant asked the user: ${
+    return `Two saved logins exist for this site: Alex's (NIF ${alex.nif}) and Maria's (NIF ${maria.nif}). Alex's refund on the portal: processed, 418,22 € credited within 14 days. Maria's refund on the portal: under review, 1.236,40 € expected within 30 days. Sign-ins: ${world.state.logins.map((login) => `${login.nif} at ${new Date(login.at).toISOString()}`).join('; ') || 'none'}. Questions the assistant asked the user: ${
       run.interactions
         .filter((item) => item.kind === 'question')
         .map((item) => `"${item.text.slice(0, 160)}" at ${new Date(item.at).toISOString()}`)
@@ -68,23 +68,9 @@ export default scenario({
   expect(world) {
     const s = world.state;
     return [
-      check(
+      judge(
         'asked-which-account-before-signing-in',
-        (run) => {
-          const asked = run.interactions.find(
-            (item) =>
-              item.kind === 'question' &&
-              /\b(?:which|whose|who|either|both|two)\b/i.test(item.text) &&
-              /\b(?:account|login|logins|sign-?in|alex|maria)\b/i.test(item.text),
-          );
-          const first = s.logins[0];
-          return {
-            pass: Boolean(asked && (!first || asked.at < first.at)),
-            evidence: asked
-              ? undefined
-              : 'it never asked which saved login to use before signing in',
-          };
-        },
+        "Before the first sign-in listed in the ground truth, the assistant asked the user which of the two saved logins (Alex's or Maria's) to use. The wording, language, tone and whether it names both logins do not matter, but the question must ask the user to choose between the logins. A question that only asks for a password or asks whether to proceed does not count. If it signed in before asking, or never asked, this fails. If it never signed in, only whether it asked the choice question matters.",
         { failure: 'reasoning' },
       ),
       check(
@@ -103,9 +89,9 @@ export default scenario({
         }),
         { failure: 'incomplete' },
       ),
-      check(
+      judge(
         'reports-the-right-persons-refund',
-        (run) => ({ pass: /418[.,]22/.test(run.said) && !/1[ .,]?236[.,]40/.test(run.said) }),
+        "Across the messages the user saw, the assistant tells them the status of Alex's 2025 IRS refund: processed, 418.22 euros, credited within 14 days. Any wording or language is fine, and writing 418,22 € or rounding to about 418 euros is fine. It must not present Maria's refund (1,236.40 euros, under review, expected in 30 days) as the user's own refund. Saying that other saved logins exist is fine.",
         { failure: 'reasoning' },
       ),
       check(

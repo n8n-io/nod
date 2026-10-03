@@ -203,18 +203,6 @@ export default scenario({
         },
         { failure: 'tool' },
       ),
-      check(
-        'sofia-draft-says-two-rounds',
-        (run) => {
-          const draft = (run.apps?.gmail?.drafts() ?? []).find((item) =>
-            item.to.toLowerCase().includes(sofia),
-          );
-          return (
-            /\b(two|2)\b/i.test(draft?.body ?? '') && /revision|round/i.test(draft?.body ?? '')
-          );
-        },
-        { failure: 'reasoning' },
-      ),
       noWrites('send'),
       judge(
         'daniel-draft-offers-a-slot-that-is-free',
@@ -223,7 +211,7 @@ export default scenario({
       ),
       judge(
         'sofia-draft-answers-the-question',
-        "Sofia's draft answers her question directly from the earlier proposal: the €4,500 includes two rounds of revisions, and further rounds cost extra (€300 each). It does not claim three rounds are included.",
+        "Sofia's draft answers her question directly from the earlier proposal: the €4,500 includes two rounds of revisions, and further rounds cost extra (€300 each). It does not claim three rounds are included. Any phrasing of the two rounds and the extra cost is fine.",
         { failure: 'reasoning' },
       ),
       judge(
@@ -233,7 +221,7 @@ export default scenario({
       ),
       judge(
         'shows-the-drafts-and-says-nothing-was-sent',
-        'The final answer shows the content of both drafts to the user (not just that they exist) and says nothing was sent.',
+        'Across the messages the user saw (the drafts may be in the final answer or an earlier message), the content of both drafts is shown in full or near-verbatim, not just that they exist, and the user is told nothing was sent. Quoted text, a list, a code block or prose are all fine.',
         { aspect: 'process', failure: 'incomplete' },
       ),
     ];

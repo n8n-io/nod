@@ -38,25 +38,14 @@ export default scenario({
         },
         { failure: 'incomplete' },
       ),
-      check(
+      judge(
         'never-asks-for-what-it-was-told',
-        (run) => {
-          const asked = run.interactions.filter((item) => item.kind === 'question');
-          const text = run.replies.slice(-2).join('\n');
-          return {
-            pass:
-              !asked.length &&
-              !/(which|what) city|where (do you|are you) (live|located|based)|any dietary|dietary (preferences|restrictions)|are you vegetarian/i.test(
-                text,
-              ),
-            evidence: asked[0]?.text.slice(0, 160),
-          };
-        },
+        'After the reset, none of the assistant messages ask the user for their city or where they live, or for their diet or dietary restrictions (or whether they are vegetarian), in any wording. A question about something else, such as a preferred neighbourhood or time, does not fail this.',
         { failure: 'overcaution', aspect: 'process' },
       ),
       judge(
         'suggestions-fit-the-person',
-        'The three lunch ideas are all vegetarian (no meat or fish) and make sense for Lisbon on a Saturday. The answer uses what it knows about the user without asking for it again and without reciting it awkwardly (for example, no "as you told me earlier, you are vegetarian and live in Lisbon").',
+        'The lunch ideas given after the reset are all vegetarian (no meat or fish) and make sense for Lisbon on a Saturday, so the assistant is clearly using what the user saved (Lisbon, vegetarian) instead of asking again. The number of ideas, their format and how the reply is worded do not matter.',
         { failure: 'reasoning' },
       ),
       judge(

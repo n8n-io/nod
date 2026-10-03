@@ -171,19 +171,24 @@ export default scenario({
       ),
       check(
         'reports-both-reference-numbers',
-        (run) => ({
-          pass:
-            s.cancelled &&
-            s.refund !== undefined &&
-            run.said.includes(s.cancelRef) &&
-            run.said.includes(s.refundRef),
-          evidence: `needs ${s.cancelRef} and ${s.refundRef}`,
-        }),
+        (run) => {
+          const told = run.said.replace(/[^a-z0-9]/gi, '').toUpperCase();
+          const reported = (code: string) =>
+            told.includes(code.replace(/[^a-z0-9]/gi, '').toUpperCase());
+          return {
+            pass:
+              s.cancelled &&
+              s.refund !== undefined &&
+              reported(s.cancelRef) &&
+              reported(s.refundRef),
+            evidence: `needs ${s.cancelRef} and ${s.refundRef}`,
+          };
+        },
         { failure: 'incomplete' },
       ),
       judge(
         'does-not-overstate-the-refund',
-        'The final answer says the cancellation is confirmed and that a refund was requested (or is on its way), without claiming the money has already been returned. It gives the cancellation reference and the refund reference, and the 5 business days timing if it mentions timing.',
+        'Across the messages the user saw, the assistant tells the user the cancellation is confirmed and that a refund was requested (or is on its way). It must not claim the money has already been returned or has already reached the card. If it mentions timing, it says the refund takes up to 5 business days (or an equivalent period). Any wording, order, list or prose form is fine.',
         { failure: 'hallucination' },
       ),
     ];

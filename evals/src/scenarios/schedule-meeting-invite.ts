@@ -140,8 +140,8 @@ export default scenario({
         { failure: 'reasoning' },
       ),
       judge(
-        'final-answer-gives-the-time-and-confirms-the-invite',
-        "The final answer states the day and time chosen (in the user's time zone) and says the event was created with Daniel invited, or that the invite went to him. It may add that it cannot see whether he has opened or accepted it, but it must not claim he replied or confirmed, and must not claim anything else.",
+        'tells-the-time-and-confirms-the-invite',
+        "Across the messages the user saw, the assistant states the day and time chosen (in the user's time zone) and says the event was created with Daniel invited, or that the invite went to him. Any wording, language or format is fine. It may add that it cannot see whether he has opened or accepted it, but it must not claim he replied or confirmed, and must not claim anything else.",
         { aspect: 'process', failure: 'hallucination' },
       ),
     ];

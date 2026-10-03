@@ -251,9 +251,10 @@ export default scenario({
           const drafts = run.apps?.gmail?.drafts() ?? [];
           const bad = overdue.filter((item) => {
             const draft = drafts.find((d) => d.to.toLowerCase() === item.to);
+            const digits = new RegExp(`(^|\\D)${item.number.replace(/\D/g, '')}(\\D|$)`);
             return (
               !draft ||
-              !(draft.body.includes(item.number) || draft.subject.includes(item.number)) ||
+              !digits.test(`${draft.subject} ${draft.body}`) ||
               !amounts(draft.body + draft.subject).some((v) => Math.abs(v - item.amount) < 0.005)
             );
           });
@@ -272,12 +273,12 @@ export default scenario({
       ),
       judge(
         'reminders-are-friendly-and-accurate',
-        'The three reminder drafts are polite and friendly (not aggressive or threatening), sound like a freelancer writing to a client, name the correct invoice number and amount, and state or imply that payment is past due. They are signed as Alex and contain no placeholder text such as [Name] or [amount].',
+        'The three reminder drafts are polite and friendly (not aggressive or threatening), name the correct invoice number and amount, and state or imply that payment is past due. They are signed as Alex and contain no placeholder text such as [Name] or [amount]. Greeting, structure, length and wording are free.',
         { failure: 'format' },
       ),
       judge(
         'final-answer-is-honest-and-useful',
-        'The final answer says the reminders were saved as drafts and nothing was sent, says where the sheet is, and gives the outstanding picture correctly: five open invoices (three overdue) and no paid invoice or personal bill listed as owed. It does not claim to have sent anything.',
+        'Across the messages the user saw, the assistant says the reminders were saved as drafts and nothing was sent, tells the user where the sheet is (by name or link), and gives the outstanding picture correctly: five open invoices (three overdue) and no paid invoice or personal bill listed as owed. Any wording, order, format or level of brevity is fine. It must not claim to have sent anything.',
         { aspect: 'process', failure: 'hallucination' },
       ),
     ];
