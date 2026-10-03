@@ -3,7 +3,7 @@ import { reviewKey } from './review.ts';
 import { criteria as productCriteria, standard } from './product.ts';
 import type { AttemptResult, CheckResult, Reviews } from './results.ts';
 import type { Expectation } from './scenario.ts';
-import { scenarios } from './scenarios/index.ts';
+import { fingerprint, scenarios } from './scenarios/index.ts';
 import type { Model } from './stack.ts';
 
 type Judged = Extract<Expectation, { kind: 'judge' }>;
@@ -49,38 +49,34 @@ export async function rejudge(options: {
     try {
       for (const group of ['task', 'product'] as const) {
         const sources = current(attempt.scenario, group, options.at);
-        const old = attempt.checks.filter(
-          (check) =>
-            check.kind === 'judge' &&
-            check.group === group &&
-            check.criterion &&
-            sources.some((item) => item.id === check.id),
-        );
-        if (!old.length) continue;
+        if (!sources.length) continue;
         const verdicts = await judgeCriteria(llm, {
           standard: group === 'product' ? standard : undefined,
           task: attempt.task,
           transcript: attempt.transcript,
           groundTruth: attempt.groundTruth,
-          criteria: old.map((check) => ({
-            id: check.id,
-            criterion: sources.find((item) => item.id === check.id)!.criterion,
-          })),
+          criteria: sources.map((item) => ({ id: item.id, criterion: item.criterion })),
         });
         const review = options.reviews[reviewKey(attempt)];
-        for (const check of old) {
-          const verdict = verdicts.find((item) => item.id === check.id)!;
-          counts.compared++;
-          if (verdict.pass === check.pass) counts.same++;
-          if (review) {
-            const truth = review.wrongChecks.includes(check.id) ? !check.pass : check.pass;
-            counts.total++;
-            if (check.pass === truth) counts.old++;
-            if (verdict.pass === truth) counts.fresh++;
+        for (const source of sources) {
+          const verdict = verdicts.find((item) => item.id === source.id)!;
+          const check = attempt.checks.find(
+            (item) => item.kind === 'judge' && item.group === group && item.id === source.id,
+          );
+          if (check) {
+            counts.compared++;
+            if (verdict.pass === check.pass) counts.same++;
+            if (review) {
+              const truth = review.wrongChecks.includes(check.id) ? !check.pass : check.pass;
+              counts.total++;
+              if (check.pass === truth) counts.old++;
+              if (verdict.pass === truth) counts.fresh++;
+            }
           }
-          const source = sources.find((item) => item.id === check.id)!;
           checks.push({
-            ...check,
+            id: source.id,
+            kind: 'judge',
+            group,
             criterion: source.criterion,
             required: source.required,
             aspect: source.aspect,
@@ -114,6 +110,7 @@ export async function rejudge(options: {
     next.push({
       ...attempt,
       checks,
+      fingerprint: fingerprint(attempt.scenario),
       status:
         playFailure || checks.some((check) => check.required && !check.pass) ? 'fail' : 'pass',
       judgeCostUsd: spentSince(),

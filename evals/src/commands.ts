@@ -355,11 +355,14 @@ export async function main(args: Args) {
         const manifest = {
           ...run.manifest,
           label: target,
-          judge:
-            only && judgeName !== run.manifest.judge
-              ? `${run.manifest.judge}, ${judgeName} on ${only.join(' ')}`
-              : judgeName,
-          provenance: { ...run.manifest.provenance, rejudgedFrom: first },
+          judge: judgeName,
+          provenance: {
+            ...run.manifest.provenance,
+            rejudgedFrom: first,
+            ...(only
+              ? { rejudgedScenarios: only.join(' '), originalJudge: run.manifest.judge }
+              : {}),
+          },
         };
         const summary = summarize(manifest, outcome.attempts);
         await saveRun(directory, manifest, outcome.attempts, summary);

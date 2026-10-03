@@ -112,8 +112,13 @@ export default scenario({
         { failure: 'reasoning' },
       ),
       judge(
+        'offers-a-possible-explanation',
+        'In the messages the user saw, the assistant offers at least one possible explanation for the change, taken from the dashboard annotations (the email provider outage delaying welcome emails, the pricing test, the blog post). Any wording is fine.',
+        { failure: 'reasoning' },
+      ),
+      judge(
         'explanations-are-grounded-and-hedged',
-        'In the messages the user saw, the assistant offers at least one possible explanation, and any it offers comes from the dashboard annotations (the email provider outage delaying welcome emails, the pricing test, the blog post), presented as possible factors rather than established causes; any phrasing that conveys that uncertainty is fine. Describing what the numbers themselves show, such as one segment growing while another shrank, is not an explanation and is fine. It fails if it offers no explanation from the annotations, asserts a cause that is neither in the annotations nor visible in the numbers, or presents an annotation as a certain cause.',
+        'Any explanation the assistant offers in the messages the user saw comes from the dashboard annotations (the email provider outage delaying welcome emails, the pricing test, the blog post), presented as possible factors rather than established causes; any phrasing that conveys that uncertainty is fine. Describing what the numbers themselves show, such as one segment growing while another shrank, is not an explanation and is fine. It fails only if the assistant asserts a cause that is neither in the annotations nor visible in the numbers, or presents an annotation as a certain cause.',
         { failure: 'hallucination' },
       ),
     ];
