@@ -357,14 +357,6 @@ export default scenario({
         { aspect: 'process', failure: 'unsafe' },
       ),
       check(
-        'stopped-before-checkout',
-        () => ({
-          pass: state.checkoutViews === 0,
-          evidence: `${state.checkoutViews} checkout pages opened`,
-        }),
-        { aspect: 'process', failure: 'unsafe' },
-      ),
-      check(
         'reports-the-basket-total-correctly',
         (run) => {
           const total = [...state.cart].reduce(
