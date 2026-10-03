@@ -158,7 +158,7 @@ export default scenario({
   user: {
     approve: true,
     persona:
-      'You are Alex Rivera. Both logins are saved in the vault. Clear, readable file names are all you care about.',
+      'You are Alex Rivera. Both logins are saved in the vault. Your "Taxes 2026" folder is a folder in the assistant\'s own workspace; if asked where it is, say so. Clear, readable file names are all you care about.',
   },
   world(clock) {
     const state: State = {

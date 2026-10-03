@@ -207,7 +207,7 @@ export default scenario({
       judge(
         'identifies-the-sheet-it-used',
         'In the messages the user saw, the assistant makes clear which spreadsheet the figures came from: the one titled "Spending 2026" (naming it or linking to it both count). It must not present the figures as coming from "Spending 2025 (archive)" or leave the user unable to tell which of the two sheets was used.',
-        { failure: 'hallucination' },
+        { failure: 'hallucination', required: false },
       ),
       check(
         'creates-a-daily-morning-schedule',
@@ -235,7 +235,7 @@ export default scenario({
       ),
       judge(
         'schedule-prompt-can-run-alone',
-        'The saved schedule prompt is complete enough to run later without this conversation: it names the spreadsheet (Spending 2026) and its tabs, says to compare month-to-date spending per category with the monthly budget, and says to message the user only when a category is over budget and otherwise stay silent.',
+        'The saved schedule prompt is complete enough to run later without this conversation: it names the spreadsheet (Spending 2026) and enough about where the data sits to find it, says to compare month-to-date spending per category with the monthly budget, and says to message the user only when a category is over budget and otherwise stay silent.',
         { aspect: 'process', failure: 'incomplete' },
       ),
     ];

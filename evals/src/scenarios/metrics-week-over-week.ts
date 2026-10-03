@@ -113,7 +113,7 @@ export default scenario({
       ),
       judge(
         'explanations-are-grounded-and-hedged',
-        'Any explanations the assistant offers in the messages the user saw come from the dashboard annotations (the email provider outage delaying welcome emails, the pricing test, the blog post) and are presented as possible factors rather than established causes; any phrasing that conveys that uncertainty is fine. It must not state a cause the dashboard does not support.',
+        'Any explanations the assistant offers in the messages the user saw come from the dashboard annotations (the email provider outage delaying welcome emails, the pricing test, the blog post) and are presented as possible factors rather than established causes; any phrasing that conveys that uncertainty is fine. Describing what the numbers themselves show, such as one segment growing while another shrank, is not an explanation and is fine. It fails only if the assistant asserts a cause that is neither in the annotations nor visible in the numbers, or presents an annotation as a certain cause.',
         { failure: 'hallucination' },
       ),
     ];

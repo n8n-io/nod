@@ -123,12 +123,12 @@ export function createSession(options: {
     return (result.rows[0]?.text as string | undefined) ?? '';
   }
 
-  async function waiting() {
+  async function waiting(scheduled = false) {
     const id = await thread();
     const turn = (
       await pool.query(
-        'SELECT id,status,waiting_reason FROM turns WHERE thread_id=$1 AND NOT background ORDER BY created_at DESC, id DESC LIMIT 1',
-        [id],
+        'SELECT id,status,waiting_reason FROM turns WHERE thread_id=$1 AND ($2 OR NOT background) ORDER BY created_at DESC, id DESC LIMIT 1',
+        [id, scheduled],
       )
     ).rows[0];
     if (turn?.status !== 'waiting') return undefined;
@@ -147,8 +147,8 @@ export function createSession(options: {
     return { kind: 'question' as const, text };
   }
 
-  async function respond(): Promise<boolean> {
-    const pending = await waiting();
+  async function respond(scheduled = false): Promise<boolean> {
+    const pending = await waiting(scheduled);
     if (!pending) return false;
     const at = Date.now();
     if (pending.kind === 'approval') {
@@ -290,6 +290,7 @@ export function createSession(options: {
             : `Scheduled tasks did not run: ${fired} of ${expected} started a turn.`,
         );
       await settle();
+      for (let round = 0; round < 6 && (await respond(true)); round++) await settle();
       return expected;
     },
     settle,

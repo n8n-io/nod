@@ -1,8 +1,22 @@
 import { createLlm, judgeCriteria } from './judge.ts';
 import { reviewKey } from './review.ts';
-import { standard } from './product.ts';
+import { criteria as productCriteria, standard } from './product.ts';
 import type { AttemptResult, CheckResult, Reviews } from './results.ts';
+import type { Expectation } from './scenario.ts';
+import { scenarios } from './scenarios/index.ts';
 import type { Model } from './stack.ts';
+
+type Judged = Extract<Expectation, { kind: 'judge' }>;
+
+function current(scenario: string, group: 'task' | 'product') {
+  if (group === 'product') return productCriteria as Judged[];
+  const definition = scenarios.find((item) => item.id === scenario);
+  return definition
+    ? definition
+        .expect(definition.world({ now: Date.now }))
+        .filter((item): item is Judged => item.kind === 'judge')
+    : [];
+}
 
 export async function rejudge(options: {
   attempts: AttemptResult[];
@@ -28,8 +42,13 @@ export async function rejudge(options: {
     const counts = { same: 0, compared: 0, old: 0, fresh: 0, total: 0 };
     try {
       for (const group of ['task', 'product'] as const) {
+        const sources = current(attempt.scenario, group);
         const old = attempt.checks.filter(
-          (check) => check.kind === 'judge' && check.group === group && check.criterion,
+          (check) =>
+            check.kind === 'judge' &&
+            check.group === group &&
+            check.criterion &&
+            sources.some((item) => item.id === check.id),
         );
         if (!old.length) continue;
         const verdicts = await judgeCriteria(llm, {
@@ -37,7 +56,10 @@ export async function rejudge(options: {
           task: attempt.task,
           transcript: attempt.transcript,
           groundTruth: attempt.groundTruth,
-          criteria: old.map((check) => ({ id: check.id, criterion: check.criterion! })),
+          criteria: old.map((check) => ({
+            id: check.id,
+            criterion: sources.find((item) => item.id === check.id)!.criterion,
+          })),
         });
         const review = options.reviews[reviewKey(attempt)];
         for (const check of old) {
@@ -50,8 +72,13 @@ export async function rejudge(options: {
             if (check.pass === truth) counts.old++;
             if (verdict.pass === truth) counts.fresh++;
           }
+          const source = sources.find((item) => item.id === check.id)!;
           checks.push({
             ...check,
+            criterion: source.criterion,
+            required: source.required,
+            aspect: source.aspect,
+            failure: source.failure,
             pass: verdict.pass,
             na: verdict.na || undefined,
             evidence: verdict.reasoning,

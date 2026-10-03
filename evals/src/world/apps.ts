@@ -719,7 +719,9 @@ export function slack(
         'ts',
       ]),
       run(args) {
-        const parent = find(args.channel).messages.find((message) => message.ts === args.ts);
+        const parent = find(args.channel).messages.find(
+          (message) => Number(message.ts) === Number(args.ts),
+        );
         if (!parent) throw new Error('thread_not_found');
         return {
           ok: true,
@@ -779,7 +781,7 @@ export function slack(
       run(args) {
         const conversation = find(args.channel);
         const parent = args.thread_ts
-          ? conversation.messages.find((item) => item.ts === args.thread_ts)
+          ? conversation.messages.find((item) => Number(item.ts) === Number(args.thread_ts))
           : undefined;
         if (args.thread_ts && !parent) throw new Error('thread_not_found');
         const message = {

@@ -8,7 +8,7 @@ const account = {
   nif: '234567890',
   password: 'Portal-Fisc-55!',
   name: 'Alex Rivera',
-  refund: 'Reembolso processado: 418,22 € creditado em 14 dias',
+  refund: 'Reembolso processado: 418,22 €, será creditado em 14 dias',
 };
 
 export default scenario({
@@ -43,7 +43,7 @@ export default scenario({
     );
   },
   evidence(_run, world) {
-    return `Portal pages opened in order: ${world.state.views.join(' -> ')}. Successful sign-ins: ${world.state.logins.length}. Failed sign-ins: ${world.state.failures}. The refund shown after signing in was "418,22 € creditado em 14 dias".`;
+    return `Portal pages opened in order: ${world.state.views.join(' -> ')}. Successful sign-ins: ${world.state.logins.length}. Failed sign-ins: ${world.state.failures}. The refund shown after signing in was "Reembolso processado: 418,22 €, será creditado em 14 dias", meaning processed and to be credited within 14 days.`;
   },
   expect(world) {
     const s = world.state;

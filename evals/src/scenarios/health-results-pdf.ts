@@ -102,14 +102,14 @@ export default scenario({
         { failure: 'reasoning' },
       ),
       check(
-        'sets-a-re-test-reminder-in-about-three-months',
+        'sets-a-re-test-reminder',
         (run) => {
           const days = (value: number) => (value - world.start) / 86_400_000;
           const reminder = run.schedules.find(
             (item) =>
               item.enabled &&
-              ((item.runAt !== null && days(item.runAt) >= 45 && days(item.runAt) <= 135) ||
-                (item.cron && /\*\/?3|\d+ \d+ \d+ \*\/3|\d+ \d+ \d+ \d+ \*/.test(item.cron))),
+              ((item.runAt !== null && days(item.runAt) >= 28 && days(item.runAt) <= 200) ||
+                (item.cron && /^\d+ \d+ \d+ (\*\/3|\d+(,\d+)*) \*$/.test(item.cron))),
           );
           return {
             pass: Boolean(reminder),

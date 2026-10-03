@@ -70,7 +70,7 @@ export default scenario({
               {
                 user: 'U03MARCUS',
                 at: after(0.65),
-                text: 'Yes, got it. Sharing the summary in this channel.',
+                text: 'Yes, got it, thanks.',
               },
               {
                 user: 'U02PRIYA',

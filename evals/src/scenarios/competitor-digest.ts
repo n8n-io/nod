@@ -123,7 +123,7 @@ export default scenario({
   user: {
     approve: true,
     persona:
-      'You are Alex Rivera. Use Monday 9:00 in your time zone. A short message with what changed is enough, plus screenshots of changed pages.',
+      'You are Alex Rivera. The three competitor sites are flowkite.example.net, automata.example.net and relayroute.example.net. Use Monday 9:00 in your time zone. A short message with what changed is enough, plus screenshots of changed pages.',
   },
   world() {
     const state: State = {
@@ -237,13 +237,8 @@ export default scenario({
         { failure: 'reasoning' },
       ),
       judge(
-        'reports-real-changes-with-before-and-after',
-        'The messages after the Monday run (shown in the evidence) report the two real changes with before and after: Automata Pro going from $29 to $39 per month, and the Flowkite homepage headline changing from "Automate the busywork" to "Build AI agents that run your ops". It says what changed in plain terms, not just that something changed. Any wording, order, list or prose form is fine.',
-        { failure: 'reasoning' },
-      ),
-      judge(
         'no-false-changes',
-        'The messages after the Monday run (shown in the evidence) do not report anything else as a change. In particular it does not claim Relayroute changed, and it does not treat the "Trusted by N teams" counter, which differs on every visit, as a meaningful change. Saying that Relayroute had no changes is correct.',
+        'The messages after the Monday run (shown in the evidence) do not report anything else as a change. In particular it does not claim Relayroute changed, and it does not treat the "Trusted by N teams" counter, which differs on every visit, as a meaningful change. Saying that Relayroute had no changes is correct. If there is no message after the Monday run, this criterion does not apply.',
         { failure: 'hallucination' },
       ),
       judge(

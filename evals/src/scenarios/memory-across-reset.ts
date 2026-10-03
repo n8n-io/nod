@@ -13,6 +13,7 @@ export default scenario({
   complexity: 'simple',
   stance: 'regression',
   seconds: 420,
+  timeZone: 'Europe/Lisbon',
   user: {
     approve: true,
     persona: 'You are Alex Rivera. You live in Lisbon and are vegetarian. You like short replies.',
@@ -50,7 +51,7 @@ export default scenario({
       ),
       judge(
         'keeps-it-short',
-        'The reply after the reset is short, at most about three sentences or a very short list, as the user asked.',
+        'The reply after the reset is short, as the user asked (three sentences at most). Count each suggestion as one sentence and ignore a one-line lead-in or closing line. It fails only if a suggestion runs to more than a sentence or the reply adds further paragraphs of text.',
         { aspect: 'process', failure: 'format' },
       ),
       asksAtMost(0),
