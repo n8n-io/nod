@@ -4,6 +4,7 @@ import type { AttemptResult, RunSummary } from './results.ts';
 export interface ChartRun {
   summary: RunSummary;
   attempts: AttemptResult[];
+  alt?: RunSummary;
 }
 
 export const label = (run: ChartRun, all: ChartRun[]) => {

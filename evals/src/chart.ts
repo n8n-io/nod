@@ -113,6 +113,18 @@ function takeaways(runs: ChartRun[]) {
   return parts.join('. ') + '.';
 }
 
+const whole = (value: number) => Math.round(value * 100);
+
+function honestRange(run: ChartRun) {
+  const values = [run.summary.trust.trustedRate, run.alt?.trust.trustedRate].filter(
+    (value): value is number => typeof value === 'number',
+  );
+  if (!values.length) return 'n/a';
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  return whole(low) === whole(high) ? pct(low) : `${whole(low)}–${pct(high)}`;
+}
+
 function scoreboard(runs: ChartRun[]): Card {
   const found = insights(runs);
   const k = runs[0].summary.manifest.k;
@@ -128,7 +140,7 @@ function scoreboard(runs: ChartRun[]): Card {
       const color = colorOf(run, runs);
       return `<tr><td style="width:430px"><span class="dot" style="background:${color};display:inline-block;margin-right:14px"></span>${esc(label(run, runs))}<div style="margin:6px 0 0 30px">${badges}</div></td>
 <td style="width:330px"><div style="display:flex;align-items:center;gap:14px"><div class="track" style="height:22px;width:170px;flex:none"><div class="fill" style="width:${(r.percent ?? 0) * 100}%;background:${color}"></div></div><span style="font-size:32px;font-weight:780">${pct(r.percent)}</span></div></td>
-<td>${pct(r.passAtK)}</td><td>${pct(r.passPowK)}</td><td>${money(run.summary.efficiency.costPerPass)}</td><td>${secs(run.summary.efficiency.seconds.p50)}</td><td class="m">${run.summary.trust.safetyIncidents === 0 ? 'none' : String(run.summary.trust.safetyIncidents)}</td></tr>`;
+<td>${honestRange(run)}</td><td>${pct(r.passAtK)}</td><td>${pct(r.passPowK)}</td><td>${money(run.summary.efficiency.costPerPass)}</td><td>${secs(run.summary.efficiency.seconds.p50)}</td><td class="m">${run.summary.trust.safetyIncidents === 0 ? 'none' : String(run.summary.trust.safetyIncidents)}</td></tr>`;
     })
     .join('');
   return {
@@ -137,8 +149,8 @@ function scoreboard(runs: ChartRun[]): Card {
       runs,
       'Which model should run Otto?',
       takeaways(runs),
-      `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>pass@${k}</th><th>pass^${k}</th><th>Cost per success</th><th>Median time</th><th>Safety incidents</th></tr></thead><tbody>${rows}</tbody></table>`,
-      `pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
+      `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>pass@${k}</th><th>pass^${k}</th><th>Cost per success</th><th>Median time</th><th>Safety incidents</th></tr></thead><tbody>${rows}</tbody></table>`,
+      `Honest: share of completed tasks where nothing the assistant claimed was false or unsupported${runs.some((run) => run.alt) ? ', as a range across two independent judges' : ''} · pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
     ),
   };
 }
@@ -560,6 +572,38 @@ function capabilities(runs: ChartRun[]): Card {
   };
 }
 
+function judges(runs: ChartRun[]): Card[] {
+  const compared = runs.filter((run) => run.alt);
+  if (!compared.length) return [];
+  const cell = (first: number | null, second: number | null) => {
+    if (first === null || second === null) return '<td class="m">n/a</td>';
+    const gap = whole(second) - whole(first);
+    const flag =
+      Math.abs(gap) >= 10
+        ? `<span class="pill ${gap < 0 ? 'f' : 'v'}" style="margin-left:12px">${gap > 0 ? '+' : ''}${gap}</span>`
+        : '';
+    return `<td>${pct(first)} <span style="color:#94a3b8;font-weight:500">→</span> ${pct(second)}${flag}</td>`;
+  };
+  const rows = compared
+    .map(
+      (run) =>
+        `<tr><td style="width:430px"><span class="dot" style="background:${colorOf(run, runs)};display:inline-block;margin-right:14px"></span>${esc(label(run, runs))}</td>${cell(run.summary.regression.percent, run.alt!.regression.percent)}${cell(run.summary.trust.trustedRate, run.alt!.trust.trustedRate)}${cell(run.summary.combined.percent, run.alt!.combined.percent)}</tr>`,
+    )
+    .join('');
+  return [
+    {
+      id: '10-two-judges',
+      html: frame(
+        runs,
+        'Do two independent judges agree?',
+        'Each attempt was graded twice, by Claude Sonnet 5.5 and by GPT 6.1 Sol, from the same saved transcripts. Whether the task got done barely depends on the judge. How honest the assistant was does, so read it as a range.',
+        `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>Done and honest</th></tr></thead><tbody>${rows}</tbody></table>`,
+        'First number: Claude Sonnet 5.5 as judge. Second: GPT 6.1 Sol. Badge: gap of 10 points or more.',
+      ),
+    },
+  ];
+}
+
 export function cards(input: ChartRun[]): Card[] {
   const runs = [...input].sort(
     (a, b) => (b.summary.regression.percent ?? -1) - (a.summary.regression.percent ?? -1),
@@ -596,6 +640,7 @@ export function cards(input: ChartRun[]): Card[] {
         log: false,
       },
     ),
+    ...judges(runs),
   ];
 }
 

@@ -22,6 +22,7 @@ export async function rejudge(options: {
   attempts: AttemptResult[];
   reviews: Reviews;
   judge: Model;
+  only?: string[];
 }) {
   const llm = await createLlm(options.judge);
   const next: AttemptResult[] = [];
@@ -29,7 +30,10 @@ export async function rejudge(options: {
   let compared = 0;
   const human = { old: 0, fresh: 0, total: 0 };
   for (const attempt of options.attempts) {
-    if (attempt.status === 'incomplete') {
+    if (
+      attempt.status === 'incomplete' ||
+      (options.only && !options.only.includes(attempt.scenario))
+    ) {
       next.push(attempt);
       continue;
     }

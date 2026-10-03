@@ -220,7 +220,19 @@ export async function main(args: Args) {
         : found;
       if (labels.length < 1)
         throw new Error('Usage: charts <label> [...]  or  charts --prefix <prefix>');
-      const runs = await Promise.all(labels.map((label) => loadRun(root, label)));
+      const judgePrefix = text(args, 'judge-prefix');
+      const runs = await Promise.all(
+        labels.map(async (label) => {
+          const run = await loadRun(root, label);
+          const second =
+            prefix && judgePrefix
+              ? await loadRun(root, `${judgePrefix}-${label.slice(prefix.length + 1)}`).catch(
+                  () => undefined,
+                )
+              : undefined;
+          return second ? { ...run, alt: second.summary } : run;
+        }),
+      );
       const name = prefix ?? labels.join('-vs-').slice(0, 60);
       const directory = join(root, `${name}-images`);
       const notesPath = text(args, 'notes');
@@ -316,7 +328,9 @@ export async function main(args: Args) {
     case 'rejudge': {
       const target = text(args, 'label');
       if (!first || !target)
-        throw new Error('Usage: rejudge <label> --label <new-label> [--judge <provider/model>]');
+        throw new Error(
+          'Usage: rejudge <label> --label <new-label> [--judge <provider/model>] [--scenario <a,b>]',
+        );
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(target))
         throw new Error('Labels must be simple file names.');
       const directory = join(root, target);
@@ -334,6 +348,7 @@ export async function main(args: Args) {
           attempts: run.attempts,
           reviews: run.reviews,
           judge: parseModel(judgeName, environment),
+          only: text(args, 'scenario')?.split(',').filter(Boolean),
         });
         const manifest = {
           ...run.manifest,
