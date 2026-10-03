@@ -57,5 +57,5 @@ export function insights(runs: ChartRun[]) {
   give(value?.run, 'Best value');
   give(fastest?.run, 'Fastest');
   give(reliable?.run, 'Most reliable');
-  return { best, value, cheapest, fastest, reliable, clean, badges, contenders };
+  return { best, value, cheapest, fastest, reliable, clean, badges, contenders, eligible: done };
 }

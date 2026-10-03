@@ -156,18 +156,21 @@ export default scenario({
         'schedule-runs-twice-a-day',
         (run) => {
           const schedules = run.schedules.filter((item) => item.enabled && item.cron);
-          const hours = schedules.flatMap((item) =>
-            (/^\d+ ([\d,]+) \* \* \*$/.exec(item.cron ?? '')?.[1] ?? '')
-              .split(',')
-              .filter(Boolean)
-              .map(Number),
-          );
+          const daily = (cron: string) => {
+            const match = /^\d+ ([\d,]+) (\S+) (\S+) \*$/.exec(cron);
+            if (!match) return [];
+            const [, hours, day, month] = match;
+            const range = /^(\d+)-(\d+)$/.exec(day);
+            const everyDay = day === '*' || (range && Number(range[2]) - Number(range[1]) >= 2);
+            return everyDay && /^(\*|\d+(-\d+)?)$/.test(month) ? hours.split(',').map(Number) : [];
+          };
+          const hours = schedules.flatMap((item) => daily(item.cron ?? ''));
           return {
             pass:
               schedules.every((item) => item.timeZone === 'Europe/Madrid') &&
               hours.length === 2 &&
-              hours.some((hour) => hour >= 8 && hour <= 10) &&
-              hours.some((hour) => hour >= 18 && hour <= 20),
+              hours.some((hour) => hour >= 6 && hour <= 11) &&
+              hours.some((hour) => hour >= 17 && hour <= 21),
             evidence:
               schedules.map((item) => `${item.cron} ${item.timeZone}`).join(' ; ') ||
               'no recurring schedule',

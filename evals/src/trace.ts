@@ -249,19 +249,27 @@ export async function collect(options: {
       return (await session.workspace.read(filePath(path)))?.toString('utf8') ?? '';
     },
     transcript(limit = 60_000) {
-      const merged = [
-        ...messages
-          .filter((m) => m.text.trim())
-          .map((m) => ({
-            at: m.at,
-            text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
+      const build = (outputCap: number) =>
+        [
+          ...messages
+            .filter((m) => m.text.trim())
+            .map((m) => ({
+              at: m.at,
+              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
+            })),
+          ...tools.map((call) => ({
+            at: call.at,
+            text: `TOOL ${call.name}${call.isError ? ' (error)' : ''}\n  input: ${clip(JSON.stringify(call.input), 1200)}\n  output: ${clip(call.output, outputCap)}`,
           })),
-        ...tools.map((call) => ({
-          at: call.at,
-          text: `TOOL ${call.name}${call.isError ? ' (error)' : ''}\n  input: ${clip(JSON.stringify(call.input), 1200)}\n  output: ${clip(call.output, 1500)}`,
-        })),
-      ].sort((a, b) => a.at - b.at);
-      return clip(merged.map((item) => item.text).join('\n\n'), limit);
+        ]
+          .sort((a, b) => a.at - b.at)
+          .map((item) => item.text)
+          .join('\n\n');
+      for (const cap of [6000, 3000, 1500]) {
+        const text = build(cap);
+        if (text.length <= limit) return text;
+      }
+      return clip(build(800), limit);
     },
     groundTruth() {
       const failedTurns = turns.filter((turn) => turn.status !== 'succeeded');

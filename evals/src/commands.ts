@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
 import { cards, comparisonChart } from './chart.ts';
+import { storyCard, type StoryNotes } from './story.ts';
 import { renderImages } from './images.ts';
 import { slackMessage } from './writeup.ts';
 import { diagnoseAll } from './diagnose.ts';
@@ -222,7 +223,18 @@ export async function main(args: Args) {
       const runs = await Promise.all(labels.map((label) => loadRun(root, label)));
       const name = prefix ?? labels.join('-vs-').slice(0, 60);
       const directory = join(root, `${name}-images`);
-      const files = await renderImages(cards(runs), directory);
+      const notesPath = text(args, 'notes');
+      const notes = notesPath
+        ? (JSON.parse(await readFile(notesPath, 'utf8')) as StoryNotes)
+        : undefined;
+      const suite = {
+        total: scenarios.length,
+        calibrating: scenarios.filter(
+          (item) => item.calibration === 'pending' && item.stance !== 'gap',
+        ).length,
+        gaps: scenarios.filter((item) => item.stance === 'gap').length,
+      };
+      const files = await renderImages([storyCard(runs, suite, notes), ...cards(runs)], directory);
       await writeFile(join(root, `${name}.report.html`), comparisonChart(runs));
       console.log(`Rendered ${files.length} images in ${directory}`);
       if (has(args, 'desktop')) {

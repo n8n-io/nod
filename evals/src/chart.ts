@@ -8,15 +8,17 @@ export type { ChartRun } from './insights.ts';
 export interface Card {
   id: string;
   html: string;
+  fit?: boolean;
 }
 
-const esc = (value: string) =>
+export const esc = (value: string) =>
   value.replace(
     /[&<>"]/g,
     (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]!,
   );
-const pct = (value: number | null) => (value === null ? 'n/a' : `${Math.round(value * 100)}%`);
-const money = (value: number | null) =>
+export const pct = (value: number | null) =>
+  value === null ? 'n/a' : `${Math.round(value * 100)}%`;
+export const money = (value: number | null) =>
   value === null ? 'n/a' : value < 0.1 ? `$${value.toFixed(3)}` : `$${value.toFixed(2)}`;
 const secs = (value: number | null) =>
   value === null
@@ -25,7 +27,7 @@ const secs = (value: number | null) =>
       ? `${(value / 60).toFixed(1)} min`
       : `${Math.round(value)} s`;
 
-const css = `*{box-sizing:border-box;margin:0}body{background:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
+export const css = `*{box-sizing:border-box;margin:0}body{background:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
 .card{width:1600px;height:900px;padding:60px 72px 44px;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;flex-direction:column;position:relative;overflow:hidden}
 .eyebrow{font-size:15px;font-weight:700;letter-spacing:.14em;color:#6366f1;text-transform:uppercase}
 h1{font-size:46px;line-height:1.08;font-weight:780;letter-spacing:-.025em;margin-top:10px}
@@ -60,7 +62,7 @@ function frame(runs: ChartRun[], title: string, subtitle: string, body: string, 
   const first = runs[0].summary.manifest;
   const judges = [...new Set(runs.map((run) => run.summary.manifest.judge.split('/').pop()!))];
   const scenarios = Math.max(...runs.map((run) => run.summary.scenarios.length));
-  return `<div class="card"><div><div class="eyebrow">Otto capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · judge ${esc(judges.join(', '))} · ${esc(first.ref ?? first.commit.slice(0, 7))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
+  return `<div class="card"><div><div class="eyebrow">Otto capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
 }
 
 const colorOf = (run: ChartRun, runs: ChartRun[]) =>
@@ -295,7 +297,12 @@ function scatter(
   const sy = (y: number) => height - pad.bottom - y * (height - pad.top - pad.bottom);
   const ticks = axis.log
     ? [0.003, 0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100].filter((tick) => tick >= lo && tick <= hi)
-    : Array.from({ length: 5 }, (_, i) => (hi * (i + 1)) / 5);
+    : (() => {
+        const raw = hi / 5;
+        const magnitude = 10 ** Math.floor(Math.log10(raw));
+        const step = ([1, 2, 5, 10].find((f) => f * magnitude >= raw) ?? 10) * magnitude;
+        return Array.from({ length: Math.floor(hi / step) }, (_, i) => step * (i + 1));
+      })();
   const grid =
     [0, 0.25, 0.5, 0.75, 1]
       .map(
@@ -325,10 +332,56 @@ function scatter(
     frontier.length > 1
       ? `<polyline fill="none" stroke="#cbd5e1" stroke-width="3" stroke-dasharray="3 9" stroke-linecap="round" points="${frontier.map((point) => `${sx(point.x)},${sy(point.y)}`).join(' ')}"/>`
       : '';
+  type Rect = { x0: number; y0: number; x1: number; y1: number };
+  const overlaps = (a: Rect, b: Rect) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+  const centers = points.map((point) => ({ x: sx(point.x), y: sy(point.y) }));
+  const taken: Rect[] = centers.map((c) => ({
+    x0: c.x - 19,
+    y0: c.y - 19,
+    x1: c.x + 19,
+    y1: c.y + 19,
+  }));
+  const crowd = (index: number) =>
+    centers.filter((c) => Math.hypot(c.x - centers[index].x, c.y - centers[index].y) < 140).length;
+  const labels = new Map<number, string>();
+  for (const index of points.map((_, i) => i).sort((a, b) => crowd(b) - crowd(a))) {
+    const point = points[index];
+    const c = centers[index];
+    const name = label(point.run, runs);
+    const sub = `${pct(point.y)} · ${axis.format(point.x)}`;
+    const w = Math.max(name.length * 13.5, sub.length * 9);
+    const h = 50;
+    const options = (
+      [
+        ['start', c.x + 26, c.y - 28],
+        ['end', c.x - 26, c.y - 28],
+        ['middle', c.x, c.y - 26 - h],
+        ['middle', c.x, c.y + 26],
+        ['start', c.x + 18, c.y - 30 - h + 14],
+        ['start', c.x + 18, c.y + 24],
+        ['end', c.x - 18, c.y - 30 - h + 14],
+        ['end', c.x - 18, c.y + 24],
+      ] as const
+    ).map(([anchor, x, top]) => {
+      const x0 = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+      return { anchor, x, top, rect: { x0, y0: top, x1: x0 + w, y1: top + h } };
+    });
+    const fits = (rect: Rect) =>
+      rect.x0 >= 4 && rect.x1 <= width - 4 && rect.y0 >= pad.top && rect.y1 <= height - pad.bottom;
+    const best =
+      options.find((o) => fits(o.rect) && !taken.some((other) => overlaps(o.rect, other))) ??
+      options.find((o) => fits(o.rect)) ??
+      options[0];
+    taken.push(best.rect);
+    labels.set(
+      index,
+      `<text x="${best.x}" y="${best.top + 22}" text-anchor="${best.anchor}" font-size="22" font-weight="750" fill="#0f172a">${esc(name)}</text><text x="${best.x}" y="${best.top + 44}" text-anchor="${best.anchor}" font-size="16" fill="#64748b">${esc(sub)}</text>`,
+    );
+  }
   const dots = points
     .map(
-      (point) =>
-        `<circle cx="${sx(point.x)}" cy="${sy(point.y)}" r="15" fill="${colorOf(point.run, runs)}" stroke="#fff" stroke-width="4"/><text x="${sx(point.x) + 26}" y="${sy(point.y) - 4}" font-size="22" font-weight="750" fill="#0f172a">${esc(label(point.run, runs))}</text><text x="${sx(point.x) + 26}" y="${sy(point.y) + 20}" font-size="16" fill="#64748b">${pct(point.y)} · ${esc(axis.format(point.x))}</text>`,
+      (point, index) =>
+        `<circle cx="${centers[index].x}" cy="${centers[index].y}" r="15" fill="${colorOf(point.run, runs)}" stroke="#fff" stroke-width="4"/>${labels.get(index)}`,
     )
     .join('');
   return {
@@ -502,7 +555,10 @@ function capabilities(runs: ChartRun[]): Card {
   };
 }
 
-export function cards(runs: ChartRun[]): Card[] {
+export function cards(input: ChartRun[]): Card[] {
+  const runs = [...input].sort(
+    (a, b) => (b.summary.regression.percent ?? -1) - (a.summary.regression.percent ?? -1),
+  );
   return [
     scoreboard(runs),
     passRate(runs),

@@ -23,7 +23,9 @@ export default scenario({
       "Remember this about me: I live in Lisbon, I'm vegetarian, and I like short replies, three sentences at most. My dog is called Biscuit.",
     );
     await session.reset();
-    await session.say('Suggest three lunch ideas for this Saturday near me.');
+    await session.say(
+      'Suggest three lunch ideas for this Saturday near me. Just from what you know, no need to look anything up.',
+    );
   },
   evidence: (run) => `Saved memory:\n${run.memory.slice(0, 3000)}`,
   expect() {

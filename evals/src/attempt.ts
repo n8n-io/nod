@@ -8,6 +8,7 @@ import { createSession } from './session.ts';
 import { prepare } from './setup.ts';
 import { loadEnvironment, parseModel, startStack, type Stack } from './stack.ts';
 import { collect } from './trace.ts';
+import { routeFixtureHosts } from './world/fixture-fetch.ts';
 import { bindAddress, serveSites } from './world/sites.ts';
 
 export interface AttemptSpec {
@@ -62,13 +63,19 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const started = Date.now();
   let taskStarted = started;
   const world = definition.world({ now: () => Date.now() });
-  const sites = await serveSites(world.sites ?? {}, await bindAddress());
+  const address = await bindAddress();
+  const sites = await serveSites(world.sites ?? {}, address);
+  const unroute = routeFixtureHosts(
+    Object.keys(world.sites ?? {}),
+    `http://${address}:${sites.port}`,
+  );
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;
   const release = async () => {
     stack ??= await starting?.catch(() => undefined);
     await stack?.stop().catch(() => {});
     await sites.close().catch(() => {});
+    unroute();
   };
   terminate = release;
   try {
@@ -122,28 +129,38 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const modelFault =
       trace.turns.at(-1)?.status !== 'succeeded' ? trace.modelErrors.at(-1) : undefined;
     const providerFault = trace.turns.find((turn) => turn.error && infra.test(turn.error));
+    const refusal = [modelFault, failure].find(
+      (message) =>
+        message &&
+        /violative|usage policy|content (filtering )?policy|safety (filter|system)/i.test(message),
+    );
     const fault =
       graderFault ??
       judgeFault ??
-      (modelFault
+      (modelFault && modelFault !== refusal
         ? `The model provider failed: ${modelFault}`
         : providerFault
           ? providerFault.error!
           : undefined);
-    const hardFailure = failure && blame(failure) !== 'agent' ? failure : undefined;
+    const hardFailure =
+      failure && failure !== refusal && blame(failure) !== 'agent' ? failure : undefined;
     const incomplete = fault ?? hardFailure;
     const result: AttemptResult = {
       ...base,
       task: trace.task,
       status: incomplete
         ? 'incomplete'
-        : checks.every((check) => check.pass || !check.required) && !failure
+        : checks.every((check) => check.pass || !check.required) && !failure && !refusal
           ? 'pass'
           : 'fail',
       ...(incomplete
         ? { blame: graderFault ? ('harness' as const) : blame(incomplete), error: incomplete }
         : {}),
-      ...(failure && !incomplete ? { error: failure } : {}),
+      ...(refusal && !incomplete
+        ? { error: `The model provider refused the task: ${refusal}` }
+        : failure && !incomplete
+          ? { error: failure }
+          : {}),
       checks,
       seconds: trace.seconds,
       toolCalls: trace.tools.length,
