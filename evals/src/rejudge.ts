@@ -8,12 +8,12 @@ import type { Model } from './stack.ts';
 
 type Judged = Extract<Expectation, { kind: 'judge' }>;
 
-function current(scenario: string, group: 'task' | 'product') {
+function current(scenario: string, group: 'task' | 'product', at: number) {
   if (group === 'product') return productCriteria as Judged[];
   const definition = scenarios.find((item) => item.id === scenario);
   return definition
     ? definition
-        .expect(definition.world({ now: Date.now }))
+        .expect(definition.world({ now: () => at }))
         .filter((item): item is Judged => item.kind === 'judge')
     : [];
 }
@@ -23,6 +23,7 @@ export async function rejudge(options: {
   reviews: Reviews;
   judge: Model;
   only?: string[];
+  at: number;
 }) {
   const llm = await createLlm(options.judge);
   const next: AttemptResult[] = [];
@@ -32,6 +33,7 @@ export async function rejudge(options: {
   for (const attempt of options.attempts) {
     if (
       attempt.status === 'incomplete' ||
+      !scenarios.some((item) => item.id === attempt.scenario) ||
       (options.only && !options.only.includes(attempt.scenario))
     ) {
       next.push(attempt);
@@ -46,7 +48,7 @@ export async function rejudge(options: {
     const counts = { same: 0, compared: 0, old: 0, fresh: 0, total: 0 };
     try {
       for (const group of ['task', 'product'] as const) {
-        const sources = current(attempt.scenario, group);
+        const sources = current(attempt.scenario, group, options.at);
         const old = attempt.checks.filter(
           (check) =>
             check.kind === 'judge' &&

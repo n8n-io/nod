@@ -98,7 +98,7 @@ export function createSimulator(llm: Llm): Simulator {
         300,
       );
       const reply = text.trim();
-      return /^none\b/i.test(reply) ? undefined : reply;
+      return /^none\W*$/i.test(reply) ? undefined : reply;
     },
   };
 }

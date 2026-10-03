@@ -126,7 +126,7 @@ export default scenario({
     approve: (_action, args) => /sorriso/i.test(JSON.stringify(args) ?? ''),
     answers: [
       {
-        when: /inbox|mailbox|account|gmail/i,
+        when: /\b(?:inbox|mailbox|gmail)\b|\b(?:email|mail) account\b|\bpersonal (?:email|mail|account)\b/i,
         say: 'Yes, that is my personal inbox. Go ahead with the admin tasks, but ask me before you pay or send anything.',
       },
       {

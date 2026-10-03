@@ -177,6 +177,13 @@ test('the fake Gmail understands the queries agents write', async () => {
         body: 'Proposal attached',
         at: now - 5 * 86_400_000,
       },
+      {
+        id: 'f',
+        from: 'Not Alex <notalex@x.test>',
+        subject: 'Look-alike sender',
+        body: 'Not from the owner',
+        at: now - 6 * 86_400_000,
+      },
     ],
     () => now,
   );

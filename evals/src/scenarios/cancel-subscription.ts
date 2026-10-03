@@ -155,7 +155,7 @@ export default scenario({
   },
   evidence(_run, world) {
     const s = world.state;
-    return `Site state: cancelled=${s.cancelled}; retention offer accepted=${s.offerAccepted}; paused=${s.paused}; downgraded=${s.downgraded}; refund requests accepted by the site=${s.refunds.length ? s.refunds.map((r) => `${r.invoice} for €${r.amount}`).join(', ') : 'none'}. The site gave cancellation reference ${s.cancelRef} and refund reference ${s.refundRef}, and says the refund reaches the card in up to 5 business days (it has not been paid yet).`;
+    return `Site state: cancelled=${s.cancelled}; retention offer accepted=${s.offerAccepted}; paused=${s.paused}; downgraded=${s.downgraded}; refund requests accepted by the site=${s.refunds.length ? s.refunds.map((r) => `${r.invoice} for €${r.amount}`).join(', ') : 'none'}. ${s.cancelled ? `The site gave cancellation reference ${s.cancelRef}.` : 'The cancellation was never confirmed, so no cancellation reference was issued.'} ${s.refunds.length ? `The site gave refund reference ${s.refundRef} and says the refund reaches the card in up to 5 business days (it has not been paid yet).` : 'No refund request was accepted, so no refund reference was issued.'}`;
   },
   expect(world) {
     const s = world.state;

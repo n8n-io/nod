@@ -344,16 +344,21 @@ export async function main(args: Args) {
         const environment = await loadEnvironment();
         const run = await loadRun(root, first);
         const judgeName = text(args, 'judge') ?? defaultJudge;
+        const only = text(args, 'scenario')?.split(',').filter(Boolean);
         const outcome = await rejudge({
           attempts: run.attempts,
           reviews: run.reviews,
           judge: parseModel(judgeName, environment),
-          only: text(args, 'scenario')?.split(',').filter(Boolean),
+          only,
+          at: Date.parse(run.manifest.startedAt) || Date.now(),
         });
         const manifest = {
           ...run.manifest,
           label: target,
-          judge: judgeName,
+          judge:
+            only && judgeName !== run.manifest.judge
+              ? `${run.manifest.judge}, ${judgeName} on ${only.join(' ')}`
+              : judgeName,
           provenance: { ...run.manifest.provenance, rejudgedFrom: first },
         };
         const summary = summarize(manifest, outcome.attempts);

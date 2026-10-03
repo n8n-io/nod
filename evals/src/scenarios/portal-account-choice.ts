@@ -29,7 +29,12 @@ export default scenario({
     approve: true,
     persona:
       "You are Alex Rivera. Your tax login is Alex's (NIF 234567890). Maria Rivera is a relative and her login is not yours.",
-    answers: [{ when: /./, say: "Mine, Alex's." }],
+    answers: [
+      {
+        when: /\b(?:which|whose|who|alex|maria|account|login|profile|sign(?:ed)? in as)\b/i,
+        say: "Mine, Alex's.",
+      },
+    ],
   },
   world() {
     const state: PortalState = { views: [], logins: [], failures: 0 };

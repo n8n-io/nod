@@ -200,6 +200,7 @@ export function createSession(options: {
   }
 
   const answered = new Set<string>();
+  let taskFrom = 0;
 
   async function chat(): Promise<boolean> {
     const text = await lastAssistantText();
@@ -208,7 +209,7 @@ export function createSession(options: {
     const at = Date.now();
     const generated = await options.simulator.followUp(
       user.persona,
-      userMessages[0]?.text ?? '',
+      userMessages[taskFrom]?.text ?? '',
       text,
     );
     if (!generated) return false;
@@ -295,6 +296,7 @@ export function createSession(options: {
     },
     settle,
     async reset() {
+      taskFrom = userMessages.length;
       await post('/api/conversation/reset', {});
       threadId = undefined;
     },

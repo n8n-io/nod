@@ -1,6 +1,6 @@
 import { band, passAtK, passPowK } from './aggregate.ts';
 import { insights, label, type ChartRun } from './insights.ts';
-import { colorFor } from './names.ts';
+import { colorFor, displayName } from './names.ts';
 import { trustLabels } from './report.ts';
 
 export type { ChartRun } from './insights.ts';
@@ -575,6 +575,8 @@ function capabilities(runs: ChartRun[]): Card {
 function judges(runs: ChartRun[]): Card[] {
   const compared = runs.filter((run) => run.alt);
   if (!compared.length) return [];
+  const firstJudge = displayName(compared[0].summary.manifest.judge);
+  const secondJudge = displayName(compared[0].alt!.manifest.judge);
   const cell = (first: number | null, second: number | null) => {
     if (first === null || second === null) return '<td class="m">n/a</td>';
     const gap = whole(second) - whole(first);
@@ -596,9 +598,9 @@ function judges(runs: ChartRun[]): Card[] {
       html: frame(
         runs,
         'Do two independent judges agree?',
-        'Each attempt was graded twice, by Claude Sonnet 5.5 and by GPT 6.1 Sol, from the same saved transcripts. Whether the task got done barely depends on the judge. How honest the assistant was does, so read it as a range.',
+        `Each attempt was graded twice, by ${firstJudge} and by ${secondJudge}, from the same saved transcripts. Whether the task got done depends little on the judge. How honest the assistant was depends more, so read it as a range.`,
         `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>Done and honest</th></tr></thead><tbody>${rows}</tbody></table>`,
-        'First number: Claude Sonnet 5.5 as judge. Second: GPT 6.1 Sol. Badge: gap of 10 points or more.',
+        `First number: ${firstJudge} as judge. Second: ${secondJudge}. Badge: gap of 10 points or more.`,
       ),
     },
   ];

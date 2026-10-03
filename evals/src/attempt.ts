@@ -24,8 +24,8 @@ const infra =
   /\b(401|403|429|500|502|503|504|529)\b|unauthori[sz]ed|invalid api key|user not found|insufficient|credit|overloaded|rate.?limit|quota|ECONN|ETIMEDOUT|ENOTFOUND|fetch failed|socket hang up|Could not start|did not become ready|image .* is missing|PostgreSQL|EADDRINUSE|docker/i;
 
 function blame(message: string): Blame {
-  if (/time limit|no progress/i.test(message)) return 'agent';
   if (message.startsWith(simulatorFailure)) return 'infra';
+  if (/time limit|no progress/i.test(message)) return 'agent';
   return infra.test(message) ? 'infra' : 'harness';
 }
 

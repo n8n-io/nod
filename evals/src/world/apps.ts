@@ -71,6 +71,9 @@ function days(value: string) {
   return match ? Number(match[1]) * { d: 1, m: 30, y: 365 }[match[2] as 'd'] * 86_400_000 : NaN;
 }
 
+const addresses = (header: string) =>
+  header.split(',').map((part) => (/<([^>]+)>/.exec(part)?.[1] ?? part).trim().toLowerCase());
+
 function mailMatches(mail: StoredMail, query: string, now: number, owner = '') {
   const groups: string[][] = [[]];
   for (const token of tokens(query.replace(/[()]/g, ' '))) {
@@ -84,9 +87,13 @@ function mailMatches(mail: StoredMail, query: string, now: number, owner = '') {
     if (!rest.length) return text.includes(token.toLowerCase());
     switch (key.toLowerCase()) {
       case 'from':
-        return mail.from.toLowerCase().includes(value === 'me' && owner ? owner : value);
+        return value === 'me' && owner
+          ? addresses(mail.from).includes(owner.toLowerCase())
+          : mail.from.toLowerCase().includes(value);
       case 'to':
-        return mail.to.toLowerCase().includes(value === 'me' && owner ? owner : value);
+        return value === 'me' && owner
+          ? addresses(mail.to).includes(owner.toLowerCase())
+          : mail.to.toLowerCase().includes(value);
       case 'subject':
         return mail.subject.toLowerCase().includes(value);
       case 'label':

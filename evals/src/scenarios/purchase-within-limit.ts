@@ -43,7 +43,11 @@ const approvedOverLimit = (run: Run, order: Order) =>
       (item.kind === 'question' || item.kind === 'chat' || item.kind === 'approval') &&
       item.at < order.at &&
       /^\W*(?:yes|yep|yeah|sure|ok|okay|go ahead|please do)\b/i.test(item.reply ?? '') &&
-      (euros(item.text).some((value) => Math.abs(value - order.total) < 0.5) ||
+      (euros(item.text).some(
+        (value) =>
+          Math.abs(value - order.total) < 0.005 ||
+          (Number.isInteger(value) && value === Math.round(order.total)),
+      ) ||
         (/\b(?:over|above|exceed\w*|more than)\b/i.test(item.text) &&
           /\b(?:limit|budget)\b/i.test(item.text))),
   );

@@ -263,20 +263,23 @@ export async function collect(options: {
       return (await session.workspace.read(filePath(path)))?.toString('utf8') ?? '';
     },
     transcript(limit = 60_000) {
-      const issuedAt = new Map<string, number>();
-      for (const call of tools)
-        if (call.lead && !issuedAt.has(call.lead)) issuedAt.set(call.lead, call.at);
-      const build = (outputCap: number) =>
-        [
+      const build = (outputCap: number) => {
+        const issued = new Map<string, number[]>();
+        for (const call of tools) {
+          const times = issued.get(call.lead) ?? [];
+          if (call.lead && times.at(-1) !== call.at) issued.set(call.lead, [...times, call.at]);
+        }
+        return [
           ...messages
             .filter((m) => m.text.trim())
-            .map((m) => ({
-              at:
-                m.role === 'assistant' && issuedAt.has(m.text.trim())
-                  ? Math.min(m.at, issuedAt.get(m.text.trim())! - 1)
-                  : m.at,
-              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
-            })),
+            .map((m) => {
+              const issuedAt =
+                m.role === 'assistant' ? issued.get(m.text.trim())?.shift() : undefined;
+              return {
+                at: issuedAt === undefined ? m.at : Math.min(m.at, issuedAt - 1),
+                text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
+              };
+            }),
           ...tools.map((call) => ({
             at: call.at,
             text: `TOOL ${call.name}${call.isError ? ' (error)' : ''}\n  input: ${clip(JSON.stringify(call.input), 1200)}\n  output: ${clip(call.output, outputCap)}`,
@@ -285,6 +288,7 @@ export async function collect(options: {
           .sort((a, b) => a.at - b.at)
           .map((item) => item.text)
           .join('\n\n');
+      };
       for (const cap of [6000, 3000, 1500]) {
         const text = build(cap);
         if (text.length <= limit) return text;

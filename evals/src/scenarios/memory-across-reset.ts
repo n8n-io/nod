@@ -46,12 +46,12 @@ export default scenario({
       ),
       judge(
         'suggestions-fit-the-person',
-        'The lunch ideas given after the reset are all vegetarian (no meat or fish) and make sense for Lisbon on a Saturday, so the assistant is clearly using what the user saved (Lisbon, vegetarian) instead of asking again. The number of ideas, their format and how the reply is worded do not matter.',
+        'The lunch ideas given after the reset are all vegetarian (no meat or fish) and make sense for Lisbon on a Saturday, so the assistant is clearly using what the user saved (Lisbon, vegetarian) instead of asking again. It gives three distinct ideas. Their format and how the reply is worded do not matter.',
         { failure: 'reasoning' },
       ),
       judge(
         'keeps-it-short',
-        'The reply after the reset is short, as the user asked (three sentences at most). Count each suggestion as one sentence and ignore a one-line lead-in or closing line. It fails only if a suggestion runs to more than a sentence or the reply adds further paragraphs of text.',
+        'The reply after the reset is short, as the user asked (three sentences at most). Count each suggestion as one sentence and every other full sentence as one more; a short lead-in ending in a colon is not counted. It fails if the total is more than three.',
         { aspect: 'process', failure: 'format' },
       ),
       asksAtMost(0),

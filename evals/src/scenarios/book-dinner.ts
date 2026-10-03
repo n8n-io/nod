@@ -1,7 +1,7 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { escapeHtml, page, redirect, type Site } from '../world/sites.ts';
-import { dayLabel, localDate, nextWeekday } from '../world/time.ts';
+import { dayLabel, inDays, localDate, nextWeekday } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'tables.forkful.example.org';
@@ -115,7 +115,7 @@ export default scenario({
     answers: [{ when: /which city|what city|where/i, say: 'Lisbon. Show me what you find first.' }],
   },
   world(clock) {
-    const at = clock.now() + nextWeekday(clock.now(), 5, 1, zone) * 86_400_000;
+    const at = inDays(clock.now(), nextWeekday(clock.now(), 5, 1, zone), zone);
     const friday = localDate(at, zone);
     const state: State = { friday, bookings: [], goAt: 0, searches: 0 };
     return {

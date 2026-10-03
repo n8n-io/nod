@@ -214,7 +214,7 @@ export default scenario({
             let found = false;
             for (const path of files) {
               const text = pdfText((await run.read(path)) ?? Buffer.alloc(0));
-              if (text.includes(`${months[month]} ${year}`)) {
+              if (text.includes(`Caixa Verde - Account statement ${months[month]} ${year}`)) {
                 const name = path.split('/').pop()!.toLowerCase();
                 const tokens = [
                   months[month].toLowerCase(),
