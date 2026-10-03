@@ -74,7 +74,7 @@ export interface Simulator {
 }
 
 export const simulatorFailure = 'The simulated user failed';
-export const fallbackSimulator = 'openai/gpt-6.1-sol';
+export const fallbackSimulators = ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'];
 export const providerRefusal =
   /violative|usage policy|content (filtering )?policy|safety (filter|system)/i;
 

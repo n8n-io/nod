@@ -4,7 +4,7 @@ import { grade } from './grade.ts';
 import {
   createLlm,
   createSimulator,
-  fallbackSimulator,
+  fallbackSimulators,
   providerRefusal,
   simulatorFailure,
 } from './judge.ts';
@@ -88,9 +88,14 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   terminate = release;
   try {
     const judgeLlm = await createLlm(judgeModel);
-    const fallbackLlm = await createLlm(parseModel(fallbackSimulator, environment)).catch(
-      () => undefined,
-    );
+    let fallbackLlm: Awaited<ReturnType<typeof createLlm>> | undefined;
+    for (const name of fallbackSimulators)
+      try {
+        const candidate = parseModel(name, environment);
+        if (candidate.provider === judgeModel.provider) continue;
+        fallbackLlm = await createLlm(candidate);
+        break;
+      } catch {}
     stack = await (starting = startStack({
       model,
       integrations:
@@ -185,7 +190,10 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       costUsd: trace.usage.costUsd,
       toolErrors: trace.tools.filter((call) => call.isError).length,
       firstReplySeconds: trace.firstReplySeconds,
-      judgeCostUsd: judgeLlm.spent().costUsd,
+      judgeCostUsd:
+        judgeLlm.spent().costUsd === null
+          ? null
+          : judgeLlm.spent().costUsd! + (fallbackLlm?.spent().costUsd ?? 0),
       final: trace.final,
       transcript: trace.transcript(60_000),
       groundTruth: truth,

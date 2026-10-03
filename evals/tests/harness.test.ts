@@ -617,6 +617,15 @@ test('a simulated user blocked by its provider falls back to a second model', as
     await createSimulator(blocked, backup).reply('You are Alex.', 'OK to pay?'),
     'OK, go ahead.',
   );
+  const alsoBlocked = {
+    complete: async () => {
+      throw new Error('Usage policy block from the second provider');
+    },
+  } as never;
+  await assert.rejects(
+    createSimulator(blocked, alsoBlocked).reply('You are Alex.', 'OK to pay?'),
+    (error: Error) => error.message.startsWith(simulatorFailure),
+  );
   const broken = {
     complete: async () => {
       throw new Error('503 overloaded');
