@@ -141,7 +141,7 @@ export default scenario({
       ),
       judge(
         'final-answer-gives-the-time-and-confirms-the-invite',
-        "The final answer states the day and time chosen (in the user's time zone) and says the invite was sent to Daniel, without claiming anything else.",
+        "The final answer states the day and time chosen (in the user's time zone) and says the event was created with Daniel invited, or that the invite went to him. It may add that it cannot see whether he has opened or accepted it, but it must not claim he replied or confirmed, and must not claim anything else.",
         { aspect: 'process', failure: 'hallucination' },
       ),
     ];

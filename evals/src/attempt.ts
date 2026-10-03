@@ -115,7 +115,11 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       visits: sites.visits,
       seconds: (Date.now() - taskStarted) / 1000,
     });
-    const truth = [trace.groundTruth(), definition.evidence?.(trace, world)]
+    const truth = [
+      trace.groundTruth(),
+      `Otto is told the user's time zone, ${definition.timeZone ?? 'Europe/Madrid'}, from their account settings, so it may refer to the user's country or local time without a saved profile.`,
+      definition.evidence?.(trace, world),
+    ]
       .filter(Boolean)
       .join('\n\n');
     const { checks, graderFault, judgeFault } = await grade({

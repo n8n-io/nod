@@ -32,7 +32,10 @@ export default scenario({
     return [
       check(
         'memory-holds-city-and-diet',
-        (run) => /lisbon/i.test(run.memory) && /vegetarian/i.test(run.memory),
+        (run) => {
+          const saved = `${run.memory} ${run.profile?.location ?? ''} ${run.profile?.preferences ?? ''}`;
+          return /lisbon/i.test(saved) && /vegetarian/i.test(saved);
+        },
         { failure: 'incomplete' },
       ),
       check(
