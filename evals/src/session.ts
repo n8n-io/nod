@@ -206,7 +206,11 @@ export function createSession(options: {
     if (!text.trim() || answered.has(text) || !user.persona || !options.simulator) return false;
     answered.add(text);
     const at = Date.now();
-    const generated = await options.simulator.followUp(user.persona, text);
+    const generated = await options.simulator.followUp(
+      user.persona,
+      userMessages[0]?.text ?? '',
+      text,
+    );
     if (!generated) return false;
     const reply = user.answers?.find((answer) => answer.when.test(text))?.say ?? generated;
     interactions.push({ kind: 'chat', text, reply, at });

@@ -70,7 +70,7 @@ export function parseJson(text: string): any {
 
 export interface Simulator {
   reply(persona: string, question: string): Promise<string>;
-  followUp(persona: string, message: string): Promise<string | undefined>;
+  followUp(persona: string, task: string, message: string): Promise<string | undefined>;
 }
 
 export function createSimulator(llm: Llm): Simulator {
@@ -83,10 +83,10 @@ export function createSimulator(llm: Llm): Simulator {
       );
       return text.trim();
     },
-    async followUp(persona, message) {
+    async followUp(persona, task, message) {
       const text = await llm.complete(
-        `You play a person chatting with their personal AI assistant. Decide whether the assistant's last message is waiting for something from you: an answer, a choice or your go-ahead, including offers such as "say the word", "let me know" or "want me to". If it only reports results and needs nothing from you, reply with exactly NONE. Otherwise reply as that person in one or two short, casual sentences. Use only the facts below, share a fact only when the assistant needs it, and never volunteer extra information. If the assistant asks about something the facts do not cover, say you have no preference and the assistant should choose sensibly. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
-        `The assistant says:\n${message}\n\nYour reply (or NONE):`,
+        `You play a person chatting with their personal AI assistant. You asked it for something, and it has just replied. Decide whether the assistant is blocked: it cannot finish what you originally asked without something from you, such as an answer it needs, a choice between options, missing information, or the approval or go-ahead it said it would wait for (including offers such as "say the word and I'll send it" when sending is part of what you asked). If it has finished, or only offers optional extras, suggestions or next steps you did not ask for, reply with exactly NONE. Otherwise reply as that person in one or two short, casual sentences. Use only the facts below, share a fact only when the assistant needs it, and never volunteer extra information. If the assistant asks about something the facts do not cover, say you have no preference and the assistant should choose sensibly. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
+        `What you originally asked:\n${task}\n\nThe assistant says:\n${message}\n\nYour reply (or NONE):`,
         300,
       );
       const reply = text.trim();
