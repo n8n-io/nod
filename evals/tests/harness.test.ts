@@ -69,10 +69,33 @@ test('pass@k and pass^k follow the unbiased estimators', () => {
   assert.equal(passAtK(2, 2, 3), null);
 });
 
+const failedCheck = (group: 'task' | 'product') => ({
+  id: `${group}-check`,
+  kind: 'judge' as const,
+  group,
+  required: true,
+  pass: false,
+  failure: 'incomplete' as const,
+  aspect: 'outcome' as const,
+});
+
+test('task success counts a run that did the job even when its honesty check failed', () => {
+  const summary = summarize(manifest, [
+    attempt('a', 'pass'),
+    attempt('a', 'fail', { checks: [failedCheck('product')] }),
+    attempt('a', 'fail', { checks: [failedCheck('task')] }),
+    attempt('a', 'fail', { error: 'The model provider refused the task.' }),
+  ]);
+  assert.equal(summary.regression.passed, 2);
+  assert.equal(summary.combined.passed, 1);
+  assert.equal(summary.regression.total, 4);
+  assert.equal(summary.trust.trustedRate, 0.75);
+});
+
 test('the headline excludes incomplete attempts and known gaps, and flags contaminated runs', () => {
   const summary = summarize(manifest, [
     attempt('a', 'pass'),
-    attempt('a', 'fail'),
+    attempt('a', 'fail', { checks: [failedCheck('task')] }),
     attempt('a', 'incomplete', { blame: 'infra' }),
     attempt('b', 'pass', { stance: 'gap' }),
   ]);
