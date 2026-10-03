@@ -293,7 +293,7 @@ export default scenario({
       .map(([id, qty]) => `at least ${qty} × ${catalog.find((p) => p.id === id)?.name}`)
       .join(
         '; ',
-      )}. Pantry items to skip: olive oil, soy sauce, ground cumin, basmati rice, vegetable stock cubes.`;
+      )}. Pantry items to skip: olive oil, soy sauce, ground cumin, basmati rice, vegetable stock cubes.\nThe three recipe photos the user sent show: ${recipes.map((recipe) => `${recipe.title} (serves ${recipe.serves}): ${recipe.items.join(', ')}`).join(' | ')}.`;
   },
   expect(world) {
     const { state } = world;
