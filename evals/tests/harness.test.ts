@@ -138,6 +138,20 @@ test('the fake Gmail understands the queries agents write', async () => {
         at: now - 3_600_000,
         labels: ['INBOX', 'UNREAD'],
       },
+      {
+        id: 'd',
+        from: 'Sofia Almeida <sofia@meridian.test>',
+        subject: 'Quick question',
+        body: 'Two rounds?',
+        at: now - 7_200_000,
+      },
+      {
+        id: 'e',
+        from: 'Alex <alex@x.test>',
+        subject: 'Sent earlier',
+        body: 'Proposal attached',
+        at: now - 5 * 86_400_000,
+      },
     ],
     () => now,
   );
@@ -150,6 +164,9 @@ test('the fake Gmail understands the queries agents write', async () => {
   assert.deepEqual(fetch('invoice -from:news'), ['a']);
   assert.deepEqual(fetch('from:sam OR from:billing').sort(), ['a', 'c']);
   assert.deepEqual(fetch('is:unread'), ['c']);
+  assert.deepEqual(fetch('from:me'), ['e']);
+  assert.ok(fetch('-from:me').includes('d'));
+  assert.ok(!fetch('-from:me').includes('e'));
   assert.deepEqual(fetch('"are you free"'), ['c']);
 });
 

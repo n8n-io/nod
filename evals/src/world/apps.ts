@@ -71,7 +71,7 @@ function days(value: string) {
   return match ? Number(match[1]) * { d: 1, m: 30, y: 365 }[match[2] as 'd'] * 86_400_000 : NaN;
 }
 
-function mailMatches(mail: StoredMail, query: string, now: number) {
+function mailMatches(mail: StoredMail, query: string, now: number, owner = '') {
   const groups: string[][] = [[]];
   for (const token of tokens(query.replace(/[()]/g, ' '))) {
     if (token === 'OR') groups.push([]);
@@ -84,9 +84,9 @@ function mailMatches(mail: StoredMail, query: string, now: number) {
     if (!rest.length) return text.includes(token.toLowerCase());
     switch (key.toLowerCase()) {
       case 'from':
-        return mail.from.toLowerCase().includes(value);
+        return mail.from.toLowerCase().includes(value === 'me' && owner ? owner : value);
       case 'to':
-        return mail.to.toLowerCase().includes(value);
+        return mail.to.toLowerCase().includes(value === 'me' && owner ? owner : value);
       case 'subject':
         return mail.subject.toLowerCase().includes(value);
       case 'label':
@@ -185,7 +185,11 @@ export function gmail(owner: Person, seed: Mail[], now: () => number) {
               (args.label_ids as string[] | undefined)?.every((l) => mail.labels.includes(l)) ??
               true,
           )
-          .filter((mail) => !args.query || mailMatches(mail, String(args.query), now()))
+          .filter(
+            (mail) =>
+              !args.query ||
+              mailMatches(mail, String(args.query), now(), owner.email.toLowerCase()),
+          )
           .sort((a, b) => b.at - a.at);
         const offset = Number(args.page_token ?? 0) || 0;
         const limit = Math.min(Math.max(Number(args.max_results ?? 10), 1), 500);

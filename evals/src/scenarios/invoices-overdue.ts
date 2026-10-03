@@ -1,6 +1,7 @@
 import { amounts, dumpDrafts, dumpSheets, mentions, noWrites } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, sheets, type Mail } from '../world/apps.ts';
+import { pdf } from '../world/pdf.ts';
 import { daysAgo, inDays } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
@@ -82,7 +83,19 @@ function mailbox(now: number): Mail[] {
       body: `Hi,\n\nPlease find invoice ${item.number} for the design work we agreed, ${euro(item.amount)} in total. Payment is due ${new Date(inDays(now, due)).toISOString().slice(0, 10)} by bank transfer.\n\nThanks,\nAlex`,
       at: daysAgo(now, item.issued),
       labels: ['SENT'],
-      attachments: [{ filename: `${item.number}.pdf`, mimeType: 'application/pdf', size: 48_211 }],
+      attachments: [
+        {
+          filename: `${item.number}.pdf`,
+          mimeType: 'application/pdf',
+          size: 1800,
+          bytes: pdf([
+            `Invoice ${item.number}`,
+            `Client: ${item.client}`,
+            `Amount due: ${euro(item.amount)}`,
+            `Payment due ${new Date(inDays(now, due)).toISOString().slice(0, 10)} by bank transfer.`,
+          ]),
+        },
+      ],
     });
   for (const item of invoices) invoice(item, item.due);
   for (const item of paid) invoice(item, -item.issued + 30);
