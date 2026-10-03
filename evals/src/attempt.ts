@@ -104,6 +104,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     let failure: string | undefined;
     try {
       await definition.play(session, world);
+      await session.followUp();
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
     }

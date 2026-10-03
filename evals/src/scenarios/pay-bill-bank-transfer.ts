@@ -158,7 +158,7 @@ export default scenario({
               .filter(
                 (item) =>
                   (item.kind === 'approval' ||
-                    (item.kind === 'question' &&
+                    ((item.kind === 'question' || item.kind === 'chat') &&
                       /pay|authori[sz]e|transfer|iberluz|€|bill/i.test(item.text))) &&
                   /^\W*(?:yes|ok|okay|looks right|go ahead|confirm|please do|sure)\b/i.test(
                     item.reply ?? '',

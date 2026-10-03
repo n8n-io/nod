@@ -6,13 +6,14 @@ import type { UserScript } from './scenario.ts';
 import type { Simulator } from './judge.ts';
 
 export interface Interaction {
-  kind: 'question' | 'approval' | 'secret' | 'unanswered' | 'stalled';
+  kind: 'question' | 'chat' | 'approval' | 'secret' | 'unanswered' | 'stalled';
   text: string;
   reply?: string;
   at: number;
 }
 
 export interface Session {
+  followUp(): Promise<void>;
   say(text: string, options?: { attach?: string[] }): Promise<void>;
   sayDuring(first: string, interjection: string, afterMs: number): Promise<void>;
   interruptAfter(first: string, afterMs: number): Promise<void>;
@@ -198,9 +199,28 @@ export function createSession(options: {
     for (let round = 0; round < 12 && (await respond()); round++) await settle();
   }
 
+  const answered = new Set<string>();
+
+  async function chat(): Promise<boolean> {
+    const text = await lastAssistantText();
+    if (!text.trim() || answered.has(text) || !user.persona || !options.simulator) return false;
+    answered.add(text);
+    const at = Date.now();
+    const generated = await options.simulator.followUp(user.persona, text);
+    if (!generated) return false;
+    const reply = user.answers?.find((answer) => answer.when.test(text))?.say ?? generated;
+    interactions.push({ kind: 'chat', text, reply, at });
+    userMessages.push({ at, text: reply });
+    await post('/api/messages', { text: reply });
+    return true;
+  }
+
   return {
     interactions,
     userMessages,
+    async followUp() {
+      for (let round = 0; round < 3 && (await chat()); round++) await converse();
+    },
     async say(text, sendOptions) {
       userMessages.push({ at: Date.now(), text });
       await post('/api/messages', { text, attachmentIds: sendOptions?.attach ?? [] });

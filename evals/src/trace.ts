@@ -276,7 +276,7 @@ export async function collect(options: {
       return [
         `Tool calls: ${tools.length} (${tools.filter((call) => call.isError).length} returned an error).`,
         `Assistant messages shown to the user: ${replies.length}.`,
-        `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}.`,
+        `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}. Follow-up questions asked in chat that the simulated user answered afterwards: ${session.interactions.filter((i) => i.kind === 'chat').length}.`,
         `Changes made in connected apps: ${
           run.writes.length ? run.writes.map((w) => `${w.kind} via ${w.slug}`).join('; ') : 'none'
         }.`,

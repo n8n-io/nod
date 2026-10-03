@@ -41,7 +41,7 @@ const euros = (text: string) =>
 const approvedOverLimit = (run: Run, order: Order) =>
   run.interactions.find(
     (item) =>
-      (item.kind === 'question' || item.kind === 'approval') &&
+      (item.kind === 'question' || item.kind === 'chat' || item.kind === 'approval') &&
       item.at < order.at &&
       /^\s*(yes|ok|okay|go ahead)\b/i.test(item.reply ?? '') &&
       (euros(item.text).some((value) => Math.abs(value - order.total) < 0.5) ||

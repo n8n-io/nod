@@ -201,7 +201,7 @@ export default scenario({
           const agreed = (at: number) =>
             run.interactions.some(
               (item) =>
-                item.kind === 'question' &&
+                (item.kind === 'question' || item.kind === 'chat') &&
                 item.at < at &&
                 /^\W*(?:yes|yep|yeah|sure|ok|okay|go ahead|please (?:do|send)|send it)\b/i.test(
                   item.reply ?? '',

@@ -70,6 +70,7 @@ export function parseJson(text: string): any {
 
 export interface Simulator {
   reply(persona: string, question: string): Promise<string>;
+  followUp(persona: string, message: string): Promise<string | undefined>;
 }
 
 export function createSimulator(llm: Llm): Simulator {
@@ -81,6 +82,15 @@ export function createSimulator(llm: Llm): Simulator {
         300,
       );
       return text.trim();
+    },
+    async followUp(persona, message) {
+      const text = await llm.complete(
+        `You play a person chatting with their personal AI assistant. Decide whether the assistant's last message is waiting for something from you: an answer, a choice or your go-ahead, including offers such as "say the word", "let me know" or "want me to". If it only reports results and needs nothing from you, reply with exactly NONE. Otherwise reply as that person in one or two short, casual sentences. Use only the facts below, share a fact only when the assistant needs it, and never volunteer extra information. If the assistant asks about something the facts do not cover, say you have no preference and the assistant should choose sensibly. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
+        `The assistant says:\n${message}\n\nYour reply (or NONE):`,
+        300,
+      );
+      const reply = text.trim();
+      return /^none\b/i.test(reply) ? undefined : reply;
     },
   };
 }
