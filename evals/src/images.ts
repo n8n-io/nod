@@ -37,14 +37,11 @@ export async function renderImages(cards: Card[], directory: string) {
     const image = join(directory, `${card.id}.png`);
     await writeFile(page, cardPage(card));
     const url = pathToFileURL(page).href;
-    let height = 900;
-    if (card.fit) {
-      const dom = await run(chrome, [...base, '--window-size=1600,900', '--dump-dom', url], {
-        timeout: 60_000,
-        maxBuffer: 64 * 1024 * 1024,
-      });
-      height = Number(/<title>(\d+)<\/title>/.exec(dom.stdout)?.[1]) || 4000;
-    }
+    const dom = await run(chrome, [...base, '--window-size=1600,900', '--dump-dom', url], {
+      timeout: 60_000,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const height = Math.max(900, Number(/<title>(\d+)<\/title>/.exec(dom.stdout)?.[1]) || 900);
     await run(
       chrome,
       [

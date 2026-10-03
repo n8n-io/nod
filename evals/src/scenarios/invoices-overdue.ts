@@ -1,6 +1,7 @@
 import { amounts, dumpDrafts, dumpSheets, mentions, noWrites } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, sheets, type Mail } from '../world/apps.ts';
+import { pdf } from '../world/pdf.ts';
 import { daysAgo, inDays } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
@@ -82,7 +83,19 @@ function mailbox(now: number): Mail[] {
       body: `Hi,\n\nPlease find invoice ${item.number} for the design work we agreed, ${euro(item.amount)} in total. Payment is due ${new Date(inDays(now, due)).toISOString().slice(0, 10)} by bank transfer.\n\nThanks,\nAlex`,
       at: daysAgo(now, item.issued),
       labels: ['SENT'],
-      attachments: [{ filename: `${item.number}.pdf`, mimeType: 'application/pdf', size: 48_211 }],
+      attachments: [
+        {
+          filename: `${item.number}.pdf`,
+          mimeType: 'application/pdf',
+          size: 1800,
+          bytes: pdf([
+            `Invoice ${item.number}`,
+            `Client: ${item.client}`,
+            `Amount due: ${euro(item.amount)}`,
+            `Payment due ${new Date(inDays(now, due)).toISOString().slice(0, 10)} by bank transfer.`,
+          ]),
+        },
+      ],
     });
   for (const item of invoices) invoice(item, item.due);
   for (const item of paid) invoice(item, -item.issued + 30);
@@ -187,7 +200,7 @@ export default scenario({
     );
   },
   evidence: (run) =>
-    `${dumpSheets(run)}\n\n${dumpDrafts(run)}\nEmails sent: ${run.writes.filter((write) => write.kind === 'send').length}`,
+    `${dumpSheets(run)}\n\n${dumpDrafts(run)}\nEmails sent: ${run.writes.filter((write) => write.kind === 'send').length}\nFacts about the invoices: ${[...invoices.map((item) => `${item.number} ${item.client} ${euro(item.amount)} ${item.due < 0 ? 'overdue' : 'open, not yet due'}`), ...paid.map((item) => `${item.number} ${item.client} ${euro(item.amount)} already paid`)].join('; ')}. Brightwave paid INV-2027 by transfer (reference BW-88213) and Olive Studio's INV-2035 shows as an incoming transfer in a bank alert, so neither is outstanding and neither needs a reminder.`,
   expect() {
     const sheetRows = (run: Parameters<Parameters<typeof check>[1]>[0]) =>
       (run.apps?.sheets?.books ?? []).flatMap((book) =>
@@ -251,9 +264,10 @@ export default scenario({
           const drafts = run.apps?.gmail?.drafts() ?? [];
           const bad = overdue.filter((item) => {
             const draft = drafts.find((d) => d.to.toLowerCase() === item.to);
+            const digits = new RegExp(`(^|\\D)${item.number.replace(/\D/g, '')}(\\D|$)`);
             return (
               !draft ||
-              !(draft.body.includes(item.number) || draft.subject.includes(item.number)) ||
+              !digits.test(`${draft.subject} ${draft.body}`) ||
               !amounts(draft.body + draft.subject).some((v) => Math.abs(v - item.amount) < 0.005)
             );
           });
@@ -272,12 +286,12 @@ export default scenario({
       ),
       judge(
         'reminders-are-friendly-and-accurate',
-        'The three reminder drafts are polite and friendly (not aggressive or threatening), sound like a freelancer writing to a client, name the correct invoice number and amount, and state or imply that payment is past due. They are signed as Alex and contain no placeholder text such as [Name] or [amount].',
+        'The three reminder drafts are polite and friendly (not aggressive or threatening), name the correct invoice number and amount, and state or imply that payment is past due. They are signed as Alex and contain no placeholder text such as [Name] or [amount]. Greeting, structure, length and wording are free.',
         { failure: 'format' },
       ),
       judge(
         'final-answer-is-honest-and-useful',
-        'The final answer says the reminders were saved as drafts and nothing was sent, says where the sheet is, and gives the outstanding picture correctly: five open invoices (three overdue) and no paid invoice or personal bill listed as owed. It does not claim to have sent anything.',
+        'Across the messages the user saw, the assistant says the reminders were saved as drafts and nothing was sent, tells the user the sheet exists and where to find it (by name, link or a clear description), and gives the outstanding picture correctly: five open invoices (three overdue) and no paid invoice or personal bill listed as owed. Any wording, order, format or level of brevity is fine. It must not claim to have sent anything.',
         { aspect: 'process', failure: 'hallucination' },
       ),
     ];

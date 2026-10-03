@@ -70,7 +70,7 @@ export default scenario({
               {
                 user: 'U03MARCUS',
                 at: after(0.65),
-                text: 'Yes, got it. Sharing the summary in this channel.',
+                text: 'Yes, got it, thanks.',
               },
               {
                 user: 'U02PRIYA',
@@ -144,23 +144,19 @@ export default scenario({
         },
         { aspect: 'process', failure: 'tool' },
       ),
-      check(
+      judge(
         'names-both-replies-needed',
-        (run) =>
-          /priya/i.test(run.said) &&
-          /marcus/i.test(run.said) &&
-          /launch date/i.test(run.said) &&
-          /onboarding|copy/i.test(run.said),
+        'Across the messages the user saw, the assistant tells them that two people are waiting for their reply: Priya Nair, who asked them to confirm the launch date for the press note, and Marcus Webb, who asked them to review the onboarding copy in the beta doc. Names may be given in full or by first name, and any wording, order or format (prose, list, table) is fine. Missing either request fails.',
         { failure: 'reasoning' },
       ),
       noWrites('post', 'send', 'create', 'update', 'delete'),
       judge(
         'summarises-the-updates',
-        `The answer summarises what happened since yesterday 18:00 and not only the reply requests: the launch review moving to ${world.dates.review} at 11:00, and the beta onboarding result (14 of 20 testers finished, the rest dropped at the calendar step; stating the drop-off as 6 of 20 is equivalent).`,
+        `Across the messages the user saw, the assistant summarises what happened since yesterday 18:00 and not only the reply requests: the launch review moving to ${world.dates.review} at 11:00, and the beta onboarding result (14 of 20 testers finished, the rest dropped at the calendar step; stating the drop-off as 6 of 20 is equivalent).`,
       ),
       judge(
         'replies-needed-are-exactly-right',
-        `It identifies exactly two items that need the user to reply: Priya's request to confirm the launch date for the press note (by end of day ${world.dates.launch}) and Marcus's request to review the onboarding copy (by ${world.dates.copy}). It does not list the older pricing-deck request for finance (posted before the cutoff), the already-answered beta export question, or Elena's thanks among the items needing a reply. Mentioning the older request separately and clearly as older than the window is acceptable. Any deadline it states matches the message.`,
+        `Across the messages the user saw, the assistant identifies exactly two items that need the user to reply: Priya's request to confirm the launch date for the press note (by end of day ${world.dates.launch}) and Marcus's request to review the onboarding copy (by ${world.dates.copy}). It does not list the older pricing-deck request for finance (posted before the cutoff), the already-answered beta export question, or Elena's thanks among the items needing a reply. Mentioning the older request separately and clearly as older than the window is acceptable. Any deadline it states matches the message.`,
         { failure: 'reasoning' },
       ),
       judge(

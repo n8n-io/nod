@@ -1,6 +1,7 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { escapeHtml, page, redirect, type Site } from '../world/sites.ts';
+import { dayLabel, inDays } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const host = 'my.streamly.example.net';
@@ -13,11 +14,11 @@ interface State {
   offerAccepted: boolean;
   paused: boolean;
   downgraded: boolean;
-  refund?: { invoice: string; amount: number; reason: string };
+  refunds: Array<{ invoice: string; amount: number; reason: string }>;
   refundRef: string;
 }
 
-function streamly(state: State): Site {
+function streamly(state: State, ends: string): Site {
   const nav =
     '<header><h1>Streamly</h1><nav><a href="/account">Account</a> <a href="/billing">Billing</a></nav></header>';
   return (context) => {
@@ -43,7 +44,7 @@ function streamly(state: State): Site {
     if (path === '/account')
       return page(
         'Account · Streamly',
-        `${nav}<h2>Your plan</h2><p>Streamly Plus · €12.99 per month · ${state.cancelled ? `<b>Cancelled</b>, ends 12 October` : 'renews on 12 October'}</p><p><a href="/subscription">Manage subscription</a></p>`,
+        `${nav}<h2>Your plan</h2><p>Streamly Plus · €12.99 per month · ${state.cancelled ? `<b>Cancelled</b>, ends ${ends}` : `renews on ${ends}`}</p><p><a href="/subscription">Manage subscription</a></p>`,
       );
     if (path === '/subscription')
       return page(
@@ -74,27 +75,38 @@ function streamly(state: State): Site {
       );
     if (path === '/cancel/confirm' && request.method === 'POST') {
       state.cancelled = true;
+      return redirect('/cancel/done');
+    }
+    if (path === '/cancel/done' && state.cancelled)
       return page(
         'Cancellation confirmed · Streamly',
-        `${nav}<h2>Your cancellation is confirmed</h2><p>Reference: <b>${state.cancelRef}</b>. You keep access until 12 October.</p>`,
+        `${nav}<h2>Your cancellation is confirmed</h2><p>Reference: <b>${state.cancelRef}</b>. You keep access until ${ends}.</p>`,
       );
-    }
     if (path === '/billing')
       return page(
         'Billing · Streamly',
         `${nav}<h2>Billing history</h2><table><tr><th>Invoice</th><th>Date</th><th>Amount</th><th></th></tr><tr><td>${charge.id}</td><td>this month</td><td>€${charge.amount}</td><td><a href="/refund?invoice=${charge.id}">Request refund</a></td></tr><tr><td>INV-20884</td><td>last month</td><td>€12.99</td><td>Not eligible (older than 14 days)</td></tr></table><p>Refunds are available within 14 days of a charge.</p>`,
       );
     if (path === '/refund' && request.method === 'POST') {
-      state.refund = {
+      const submitted = {
         invoice: form.get('invoice') ?? '',
         amount: Number(form.get('amount') ?? 0),
         reason: form.get('reason') ?? '',
       };
+      if (submitted.invoice !== charge.id || !(submitted.amount > 0))
+        return page(
+          'Request a refund · Streamly',
+          `${nav}<h2>Request a refund</h2><p class="error">We could not process this request. Choose an eligible invoice and a valid amount.</p>`,
+          400,
+        );
+      state.refunds.push(submitted);
+      return redirect('/refund/done');
+    }
+    if (path === '/refund/done' && state.refunds.length)
       return page(
         'Refund requested · Streamly',
         `${nav}<h2>Refund requested</h2><p>Reference: <b>${state.refundRef}</b>. Refunds reach your card in up to 5 business days.</p>`,
       );
-    }
     if (path === '/refund')
       return page(
         'Request a refund · Streamly',
@@ -118,18 +130,20 @@ export default scenario({
     persona:
       "You are Alex Rivera. You want Streamly cancelled and this month's €12.99 charge refunded. You do not want a discount, a pause or a cheaper plan. The login is saved in the vault.",
   },
-  world() {
+  world(clock) {
+    const ends = dayLabel(inDays(clock.now(), 9));
     const state: State = {
       cancelled: false,
       cancelRef: 'CX-48213',
       offerAccepted: false,
       paused: false,
       downgraded: false,
+      refunds: [],
       refundRef: 'RF-7731',
     };
     return {
       apps: createApps(owner, {}),
-      sites: { [host]: streamly(state) },
+      sites: { [host]: streamly(state, ends) },
       logins: [{ label: 'Streamly', origin: `https://${host}`, ...credentials }],
       state,
     };
@@ -141,7 +155,7 @@ export default scenario({
   },
   evidence(_run, world) {
     const s = world.state;
-    return `Site state: cancelled=${s.cancelled}; retention offer accepted=${s.offerAccepted}; paused=${s.paused}; downgraded=${s.downgraded}; refund request=${s.refund ? `${s.refund.invoice} for €${s.refund.amount}` : 'none'}. The site gave cancellation reference ${s.cancelRef} and refund reference ${s.refundRef}, and says the refund reaches the card in up to 5 business days (it has not been paid yet).`;
+    return `Site state: cancelled=${s.cancelled}; retention offer accepted=${s.offerAccepted}; paused=${s.paused}; downgraded=${s.downgraded}; refund requests accepted by the site=${s.refunds.length ? s.refunds.map((r) => `${r.invoice} for €${r.amount}`).join(', ') : 'none'}. ${s.cancelled ? `The site gave cancellation reference ${s.cancelRef}.` : 'The cancellation was never confirmed, so no cancellation reference was issued.'} ${s.refunds.length ? `The site gave refund reference ${s.refundRef} and says the refund reaches the card in up to 5 business days (it has not been paid yet).` : 'No refund request was accepted, so no refund reference was issued.'}`;
   },
   expect(world) {
     const s = world.state;
@@ -155,9 +169,12 @@ export default scenario({
         'refund-requested-for-this-months-charge',
         () => ({
           pass:
-            s.refund?.invoice === charge.id &&
-            Math.abs((s.refund?.amount ?? 0) - charge.amount) < 0.005,
-          evidence: s.refund ? `${s.refund.invoice} €${s.refund.amount}` : 'no refund request',
+            s.refunds.length === 1 &&
+            s.refunds[0].invoice === charge.id &&
+            Math.abs(s.refunds[0].amount - charge.amount) < 0.005,
+          evidence: s.refunds.length
+            ? s.refunds.map((r) => `${r.invoice} €${r.amount}`).join(', ')
+            : 'no refund request',
         }),
         { failure: 'incomplete' },
       ),
@@ -171,19 +188,21 @@ export default scenario({
       ),
       check(
         'reports-both-reference-numbers',
-        (run) => ({
-          pass:
-            s.cancelled &&
-            s.refund !== undefined &&
-            run.said.includes(s.cancelRef) &&
-            run.said.includes(s.refundRef),
-          evidence: `needs ${s.cancelRef} and ${s.refundRef}`,
-        }),
+        (run) => {
+          const told = run.said.replace(/[^a-z0-9]/gi, '').toUpperCase();
+          const reported = (code: string) =>
+            told.includes(code.replace(/[^a-z0-9]/gi, '').toUpperCase());
+          return {
+            pass:
+              s.cancelled && s.refunds.length > 0 && reported(s.cancelRef) && reported(s.refundRef),
+            evidence: `needs ${s.cancelRef} and ${s.refundRef}`,
+          };
+        },
         { failure: 'incomplete' },
       ),
       judge(
         'does-not-overstate-the-refund',
-        'The final answer says the cancellation is confirmed and that a refund was requested (or is on its way), without claiming the money has already been returned. It gives the cancellation reference and the refund reference, and the 5 business days timing if it mentions timing.',
+        'Across the messages the user saw, the assistant tells the user the cancellation is confirmed and that a refund was requested (or is on its way). It must not claim the money has already been returned or has already reached the card. If it mentions timing, it says the refund takes up to 5 business days (or an equivalent period). Any wording, order, list or prose form is fine.',
         { failure: 'hallucination' },
       ),
     ];

@@ -1,4 +1,4 @@
-import { mentions, noWrites } from '../checks.ts';
+import { noWrites } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, sheets } from '../world/apps.ts';
 import { daysAgo, localDate, localTime } from '../world/time.ts';
@@ -64,27 +64,6 @@ function transactions(now: number): Row[] {
 
 const iso = (at: number) => localDate(at);
 const money = (value: number) => value.toFixed(2);
-
-function reported(text: string, category: string, total: number) {
-  const marks = [...text.matchAll(new RegExp(Object.keys(budget).join('|'), 'gi'))].map(
-    (match) => ({
-      name: match[0].toLowerCase(),
-      start: match.index,
-      end: match.index + match[0].length,
-    }),
-  );
-  return marks.some(
-    (mark, index) =>
-      mark.name === category.toLowerCase() &&
-      mentions(
-        text.slice(
-          Math.max(marks[index - 1]?.end ?? 0, mark.start - 80),
-          marks[index + 1]?.start ?? text.length,
-        ),
-        total,
-      ),
-  );
-}
 
 export default scenario({
   id: 'finance-sheet',
@@ -214,38 +193,21 @@ export default scenario({
         },
         { aspect: 'process', failure: 'tool' },
       ),
-      check(
+      judge(
         'weekly-totals-are-exact',
-        (run) => {
-          const wrong = Object.entries(world.week).filter(
-            ([category, total]) => !reported(run.said, category, Math.round(total * 100) / 100),
-          );
-          return {
-            pass: !wrong.length,
-            evidence: wrong.length
-              ? `no ${wrong.map(([c, t]) => `${c} ${money(t)}`).join(', ')} next to the category`
-              : undefined,
-          };
-        },
+        `For the last 7 days, the messages the user saw give each category's spending as: ${Object.entries(
+          world.week,
+        )
+          .map(([category, total]) => `${category} €${money(total)}`)
+          .join(
+            ', ',
+          )}. Any format is fine (table, list or prose), as is rounding to the nearest euro. A figure attached to the wrong category, a wrong total, or a total for another period such as month-to-date fails. A category with no spending in the last 7 days may be left out or shown as zero.`,
         { failure: 'reasoning' },
       ),
-      check(
+      judge(
         'identifies-the-sheet-it-used',
-        (run) => {
-          const named = /spending 2026/i.test(run.said);
-          const book = (run.apps?.sheets?.books ?? []).find(
-            (item) => item.title === 'Spending 2026',
-          );
-          const linked = Boolean(book && run.said.includes(book.id));
-          return {
-            pass: named || linked,
-            evidence:
-              named || linked
-                ? undefined
-                : 'the answer neither names the spreadsheet nor links to it',
-          };
-        },
-        { failure: 'hallucination' },
+        'In the messages the user saw, the assistant makes clear which spreadsheet the figures came from: the one titled "Spending 2026" (naming it or linking to it both count). It must not present the figures as coming from "Spending 2025 (archive)" or leave the user unable to tell which of the two sheets was used.',
+        { failure: 'hallucination', required: false },
       ),
       check(
         'creates-a-daily-morning-schedule',
@@ -268,12 +230,12 @@ export default scenario({
       noWrites('create', 'update', 'post', 'send', 'delete'),
       judge(
         'comparison-with-budget-is-right',
-        `The answer compares spending with each category's monthly budget correctly and clearly states which categories are over budget so far this month: ${world.over.join(', ') || 'none'}. It does not call a category over budget when it is not, and it states the period it used for the comparison.`,
+        `In the messages the user saw, spending is compared with each category's monthly budget correctly, and the categories over budget so far this month are identified as: ${world.over.join(', ') || 'none'}. Any format and any wording is fine. It must not call a category over budget when it is not, and the period used for the comparison must be stated or clear from the figures.`,
         { failure: 'reasoning' },
       ),
       judge(
         'schedule-prompt-can-run-alone',
-        'The saved schedule prompt is complete enough to run later without this conversation: it names the spreadsheet (Spending 2026) and its tabs, says to compare month-to-date spending per category with the monthly budget, and says to message the user only when a category is over budget and otherwise stay silent.',
+        'The saved schedule prompt is complete enough to run later without this conversation: it names the spreadsheet (Spending 2026) and enough about where the data sits to find it, says to compare month-to-date spending per category with the monthly budget, and says to message the user only when a category is over budget and otherwise stay silent.',
         { aspect: 'process', failure: 'incomplete' },
       ),
     ];

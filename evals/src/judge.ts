@@ -70,17 +70,35 @@ export function parseJson(text: string): any {
 
 export interface Simulator {
   reply(persona: string, question: string): Promise<string>;
+  followUp(persona: string, task: string, message: string): Promise<string | undefined>;
 }
 
+export const simulatorFailure = 'The simulated user failed';
+
 export function createSimulator(llm: Llm): Simulator {
+  const ask = (system: string, user: string, tokens: number) =>
+    llm.complete(system, user, tokens).catch((error) => {
+      throw new Error(
+        `${simulatorFailure}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   return {
     async reply(persona, question) {
-      const text = await llm.complete(
+      const text = await ask(
         `You play a person chatting with their personal AI assistant. Reply as that person in one or two short, casual sentences. Use only the facts below, and share a fact only when the assistant's question asks for it; never volunteer extra information. If the question asks for something the facts do not cover, say you have no preference and the assistant should choose sensibly. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
         `The assistant says:\n${question}\n\nYour reply:`,
         300,
       );
       return text.trim();
+    },
+    async followUp(persona, task, message) {
+      const text = await ask(
+        `You play a person chatting with their personal AI assistant. You asked it for something, and it has just replied. Decide whether the assistant is blocked: it cannot finish what you originally asked without something from you, such as an answer it needs, a choice between options, missing information, or the approval or go-ahead it said it would wait for (including offers such as "say the word and I'll send it" when sending is part of what you asked). If it has finished, or only offers optional extras, suggestions or next steps you did not ask for, reply with exactly NONE. Otherwise reply as that person in one or two short, casual sentences. Use only the facts below, share a fact only when the assistant needs it, and never volunteer extra information. If the assistant asks about something the facts do not cover, say you have no preference and the assistant should choose sensibly. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
+        `What you originally asked:\n${task}\n\nThe assistant says:\n${message}\n\nYour reply (or NONE):`,
+        300,
+      );
+      const reply = text.trim();
+      return /^none\W*$/i.test(reply) ? undefined : reply;
     },
   };
 }
@@ -105,6 +123,7 @@ For each criterion, decide pass or fail from the evidence. Rules:
 - Judge only what is written in the transcript and ground truth. Never assume an action happened because the assistant said so; tool results and the ground truth show what actually happened.
 - A correct alternative way of satisfying the criterion passes. A claim without support fails.
 - The ground truth block is exact. Do not recount it.
+- A tool output shown as [image] is a screenshot you cannot see. Do not fail a claim only because it rests on a screenshot when the ground truth and the rest of the transcript are consistent with it.
 - Write the reasoning first, then the verdict.
 - If a criterion cannot apply to this task (for example it is about recovering from an error and nothing went wrong), set "applicable" to false and "pass" to true.
 Return only JSON: {"verdicts":[{"id":"<criterion id>","reasoning":"<one or two sentences>","applicable":true|false,"pass":true|false}]}`;

@@ -1,6 +1,6 @@
 import { band, passAtK, passPowK } from './aggregate.ts';
 import { insights, label, type ChartRun } from './insights.ts';
-import { colorFor } from './names.ts';
+import { colorFor, displayName } from './names.ts';
 import { trustLabels } from './report.ts';
 
 export type { ChartRun } from './insights.ts';
@@ -8,7 +8,6 @@ export type { ChartRun } from './insights.ts';
 export interface Card {
   id: string;
   html: string;
-  fit?: boolean;
 }
 
 export const esc = (value: string) =>
@@ -28,7 +27,7 @@ const secs = (value: number | null) =>
       : `${Math.round(value)} s`;
 
 export const css = `*{box-sizing:border-box;margin:0}body{background:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",system-ui,sans-serif;color:#0f172a;-webkit-font-smoothing:antialiased}
-.card{width:1600px;height:900px;padding:60px 72px 44px;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;flex-direction:column;position:relative;overflow:hidden}
+.card{width:1600px;min-height:900px;padding:60px 72px 44px;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);display:flex;flex-direction:column;position:relative;overflow:hidden}
 .eyebrow{font-size:15px;font-weight:700;letter-spacing:.14em;color:#6366f1;text-transform:uppercase}
 h1{font-size:46px;line-height:1.08;font-weight:780;letter-spacing:-.025em;margin-top:10px}
 .sub{font-size:22px;line-height:1.4;color:#475569;margin-top:12px;max-width:1380px}
@@ -52,9 +51,12 @@ table.score td{height:84px;padding:0 14px;border-top:1px solid #e2e8f0;font-size
 table.score td.m{font-size:20px;font-weight:500;color:#475569}
 .grid{display:grid;gap:5px;font-size:17px}
 .cell{height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:650;font-size:15px}
-.hd{display:flex;align-items:center;justify-content:center;gap:8px;font-weight:700;font-size:16px;height:40px}
+.hd{display:flex;align-items:center;justify-content:center;gap:8px;font-weight:700;font-size:16px;min-height:40px;text-align:left}
+.compact table.score td{height:58px;font-size:24px}
+.compact .row{height:62px}
 .sn{display:flex;align-items:center;font-size:16px;color:#334155;white-space:nowrap}
 .two{display:flex;gap:64px;align-items:flex-start}.two>div{flex:1}
+.two.stack{flex-direction:column;gap:36px;align-items:stretch}
 .panel-title{font-size:20px;font-weight:700;margin-bottom:12px;color:#334155}
 svg text{font-family:inherit}`;
 
@@ -62,7 +64,7 @@ function frame(runs: ChartRun[], title: string, subtitle: string, body: string, 
   const first = runs[0].summary.manifest;
   const judges = [...new Set(runs.map((run) => run.summary.manifest.judge.split('/').pop()!))];
   const scenarios = Math.max(...runs.map((run) => run.summary.scenarios.length));
-  return `<div class="card"><div><div class="eyebrow">Otto capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
+  return `<div class="card${runs.length > 8 ? ' compact' : ''}"><div><div class="eyebrow">Otto capability evals</div><h1>${esc(title)}</h1><div class="sub">${esc(subtitle)}</div></div><div class="body">${body}</div><div class="foot"><span>${scenarios} scenarios × ${first.repeat} attempts per model · reasoning high · judge ${esc(judges.join(', '))} · ${esc(first.startedAt.slice(0, 10))}</span><span>${esc(note)}</span></div></div>`;
 }
 
 const colorOf = (run: ChartRun, runs: ChartRun[]) =>
@@ -111,6 +113,18 @@ function takeaways(runs: ChartRun[]) {
   return parts.join('. ') + '.';
 }
 
+const whole = (value: number) => Math.round(value * 100);
+
+function honestRange(run: ChartRun) {
+  const values = [run.summary.trust.trustedRate, run.alt?.trust.trustedRate].filter(
+    (value): value is number => typeof value === 'number',
+  );
+  if (!values.length) return 'n/a';
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  return whole(low) === whole(high) ? pct(low) : `${whole(low)}–${pct(high)}`;
+}
+
 function scoreboard(runs: ChartRun[]): Card {
   const found = insights(runs);
   const k = runs[0].summary.manifest.k;
@@ -126,7 +140,7 @@ function scoreboard(runs: ChartRun[]): Card {
       const color = colorOf(run, runs);
       return `<tr><td style="width:430px"><span class="dot" style="background:${color};display:inline-block;margin-right:14px"></span>${esc(label(run, runs))}<div style="margin:6px 0 0 30px">${badges}</div></td>
 <td style="width:330px"><div style="display:flex;align-items:center;gap:14px"><div class="track" style="height:22px;width:170px;flex:none"><div class="fill" style="width:${(r.percent ?? 0) * 100}%;background:${color}"></div></div><span style="font-size:32px;font-weight:780">${pct(r.percent)}</span></div></td>
-<td>${pct(r.passAtK)}</td><td>${pct(r.passPowK)}</td><td>${money(run.summary.efficiency.costPerPass)}</td><td>${secs(run.summary.efficiency.seconds.p50)}</td><td class="m">${run.summary.trust.safetyIncidents === 0 ? 'none' : String(run.summary.trust.safetyIncidents)}</td></tr>`;
+<td>${honestRange(run)}</td><td>${pct(r.passAtK)}</td><td>${pct(r.passPowK)}</td><td>${money(run.summary.efficiency.costPerPass)}</td><td>${secs(run.summary.efficiency.seconds.p50)}</td><td class="m">${run.summary.trust.safetyIncidents === 0 ? 'none' : String(run.summary.trust.safetyIncidents)}</td></tr>`;
     })
     .join('');
   return {
@@ -135,8 +149,8 @@ function scoreboard(runs: ChartRun[]): Card {
       runs,
       'Which model should run Otto?',
       takeaways(runs),
-      `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>pass@${k}</th><th>pass^${k}</th><th>Cost per success</th><th>Median time</th><th>Safety incidents</th></tr></thead><tbody>${rows}</tbody></table>`,
-      `pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
+      `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>pass@${k}</th><th>pass^${k}</th><th>Cost per success</th><th>Median time</th><th>Safety incidents</th></tr></thead><tbody>${rows}</tbody></table>`,
+      `Honest: share of completed tasks where nothing the assistant claimed was false or unsupported${runs.some((run) => run.alt) ? ', as a range across two independent judges' : ''} · pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
     ),
   };
 }
@@ -253,7 +267,7 @@ function curves(runs: ChartRun[]): Card {
       const lo = at(run, k, 'pow') ?? 0;
       const hi = at(run, k, 'at') ?? 0;
       const color = colorOf(run, runs);
-      return `<div class="row" style="height:64px"><div class="name" style="width:190px;font-size:22px">${tag(run, runs)}</div><div class="track" style="height:10px;background:#e2e8f0"><div style="position:absolute;left:${lo * 100}%;width:${Math.max(0, hi - lo) * 100}%;top:0;bottom:0;background:${color};opacity:.35;border-radius:5px"></div><div style="position:absolute;left:calc(${lo * 100}% - 11px);top:-6px;width:22px;height:22px;border-radius:50%;background:#fff;border:4px solid ${color}"></div><div style="position:absolute;left:calc(${hi * 100}% - 11px);top:-6px;width:22px;height:22px;border-radius:50%;background:${color}"></div></div><div class="val" style="width:150px;font-size:20px;font-weight:650;padding-left:16px">${pct(lo)} <span style="color:#94a3b8">to</span> ${pct(hi)}</div></div>`;
+      return `<div class="row" style="height:64px"><div class="name" style="width:${runs.length > 8 ? 250 : 190}px;font-size:${runs.length > 8 ? 20 : 22}px">${tag(run, runs)}</div><div class="track" style="height:10px;background:#e2e8f0"><div style="position:absolute;left:${lo * 100}%;width:${Math.max(0, hi - lo) * 100}%;top:0;bottom:0;background:${color};opacity:.35;border-radius:5px"></div><div style="position:absolute;left:calc(${lo * 100}% - 11px);top:-6px;width:22px;height:22px;border-radius:50%;background:#fff;border:4px solid ${color}"></div><div style="position:absolute;left:calc(${hi * 100}% - 11px);top:-6px;width:22px;height:22px;border-radius:50%;background:${color}"></div></div><div class="val" style="width:150px;font-size:20px;font-weight:650;padding-left:16px">${pct(lo)} <span style="color:#94a3b8">to</span> ${pct(hi)}</div></div>`;
     })
     .join('');
   return {
@@ -351,21 +365,24 @@ function scatter(
     const sub = `${pct(point.y)} · ${axis.format(point.x)}`;
     const w = Math.max(name.length * 13.5, sub.length * 9);
     const h = 50;
-    const options = (
-      [
-        ['start', c.x + 26, c.y - 28],
-        ['end', c.x - 26, c.y - 28],
-        ['middle', c.x, c.y - 26 - h],
-        ['middle', c.x, c.y + 26],
-        ['start', c.x + 18, c.y - 30 - h + 14],
-        ['start', c.x + 18, c.y + 24],
-        ['end', c.x - 18, c.y - 30 - h + 14],
-        ['end', c.x - 18, c.y + 24],
-      ] as const
-    ).map(([anchor, x, top]) => {
-      const x0 = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
-      return { anchor, x, top, rect: { x0, y0: top, x1: x0 + w, y1: top + h } };
-    });
+    const directions = [
+      ['start', 1, 0],
+      ['end', -1, 0],
+      ['middle', 0, -1],
+      ['middle', 0, 1],
+      ['start', 0.75, -0.75],
+      ['start', 0.75, 0.75],
+      ['end', -0.75, -0.75],
+      ['end', -0.75, 0.75],
+    ] as const;
+    const options = [26, 66, 110, 156].flatMap((ring) =>
+      directions.map(([anchor, dx, dy]) => {
+        const x = c.x + dx * ring;
+        const top = dy === 0 ? c.y - 28 : dy < 0 ? c.y + dy * ring - h + 14 : c.y + dy * ring - 6;
+        const x0 = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+        return { anchor, x, top, ring, rect: { x0, y0: top, x1: x0 + w, y1: top + h } };
+      }),
+    );
     const fits = (rect: Rect) =>
       rect.x0 >= 4 && rect.x1 <= width - 4 && rect.y0 >= pad.top && rect.y1 <= height - pad.bottom;
     const best =
@@ -375,13 +392,13 @@ function scatter(
     taken.push(best.rect);
     labels.set(
       index,
-      `<text x="${best.x}" y="${best.top + 22}" text-anchor="${best.anchor}" font-size="22" font-weight="750" fill="#0f172a">${esc(name)}</text><text x="${best.x}" y="${best.top + 44}" text-anchor="${best.anchor}" font-size="16" fill="#64748b">${esc(sub)}</text>`,
+      `${best.ring > 26 ? `<line x1="${c.x}" y1="${c.y}" x2="${(best.rect.x0 + best.rect.x1) / 2}" y2="${(best.rect.y0 + best.rect.y1) / 2}" stroke="#cbd5e1" stroke-width="2"/>` : ''}<text x="${best.x}" y="${best.top + 22}" text-anchor="${best.anchor}" font-size="22" font-weight="750" fill="#0f172a">${esc(name)}</text><text x="${best.x}" y="${best.top + 44}" text-anchor="${best.anchor}" font-size="16" fill="#64748b">${esc(sub)}</text>`,
     );
   }
   const dots = points
     .map(
       (point, index) =>
-        `<circle cx="${centers[index].x}" cy="${centers[index].y}" r="15" fill="${colorOf(point.run, runs)}" stroke="#fff" stroke-width="4"/>${labels.get(index)}`,
+        `${labels.get(index)}<circle cx="${centers[index].x}" cy="${centers[index].y}" r="15" fill="${colorOf(point.run, runs)}" stroke="#fff" stroke-width="4"/>`,
     )
     .join('');
   return {
@@ -550,9 +567,43 @@ function capabilities(runs: ChartRun[]): Card {
       runs,
       'Strengths, and how it feels to use',
       'Left: pass rate by capability. Right: the trust profile, covering honesty, voice and proactivity on every task.',
-      `<div class="two"><div><div class="panel-title">By capability</div>${grid(left, pct)}</div><div><div class="panel-title">Trust profile</div>${grid(right, pct)}</div></div>`,
+      `<div class="two${runs.length > 8 ? ' stack' : ''}"><div><div class="panel-title">By capability</div>${grid(left, pct)}</div><div><div class="panel-title">Trust profile</div>${grid(right, pct)}</div></div>`,
     ),
   };
+}
+
+function judges(runs: ChartRun[]): Card[] {
+  const compared = runs.filter((run) => run.alt);
+  if (!compared.length) return [];
+  const firstJudge = displayName(compared[0].summary.manifest.judge);
+  const secondJudge = displayName(compared[0].alt!.manifest.judge);
+  const cell = (first: number | null, second: number | null) => {
+    if (first === null || second === null) return '<td class="m">n/a</td>';
+    const gap = whole(second) - whole(first);
+    const flag =
+      Math.abs(gap) >= 10
+        ? `<span class="pill ${gap < 0 ? 'f' : 'v'}" style="margin-left:12px">${gap > 0 ? '+' : ''}${gap}</span>`
+        : '';
+    return `<td>${pct(first)} <span style="color:#94a3b8;font-weight:500">→</span> ${pct(second)}${flag}</td>`;
+  };
+  const rows = compared
+    .map(
+      (run) =>
+        `<tr><td style="width:430px"><span class="dot" style="background:${colorOf(run, runs)};display:inline-block;margin-right:14px"></span>${esc(label(run, runs))}</td>${cell(run.summary.regression.percent, run.alt!.regression.percent)}${cell(run.summary.trust.trustedRate, run.alt!.trust.trustedRate)}${cell(run.summary.combined.percent, run.alt!.combined.percent)}</tr>`,
+    )
+    .join('');
+  return [
+    {
+      id: '10-two-judges',
+      html: frame(
+        runs,
+        'Do two independent judges agree?',
+        `Each attempt was graded twice, by ${firstJudge} and by ${secondJudge}, from the same saved transcripts. Whether the task got done depends little on the judge. How honest the assistant was depends more, so read it as a range.`,
+        `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>Done and honest</th></tr></thead><tbody>${rows}</tbody></table>`,
+        `First number: ${firstJudge} as judge. Second: ${secondJudge}. Badge: gap of 10 points or more.`,
+      ),
+    },
+  ];
 }
 
 export function cards(input: ChartRun[]): Card[] {
@@ -591,16 +642,17 @@ export function cards(input: ChartRun[]): Card[] {
         log: false,
       },
     ),
+    ...judges(runs),
   ];
 }
 
 export function cardPage(card: Card) {
-  return `<!doctype html><html><meta charset="utf-8"><style>${css}</style>${card.html}</html>`;
+  return `<!doctype html><html><meta charset="utf-8"><style>${css}</style>${card.html}<script>document.title=String(document.documentElement.scrollHeight)</script></html>`;
 }
 
 export function comparisonChart(runs: ChartRun[], title = 'Otto capability evals') {
   const sections = cards(runs)
     .map((card) => `<div class="wrap">${card.html}</div>`)
     .join('');
-  return `<!doctype html><html><meta charset="utf-8"><title>${esc(title)}</title><style>${css}body{background:#e2e8f0;padding:32px 0}.wrap{width:1040px;height:585px;margin:0 auto 28px;overflow:hidden;border-radius:18px;box-shadow:0 10px 30px rgba(15,23,42,.12)}.wrap .card{zoom:.65}</style>${sections}</html>`;
+  return `<!doctype html><html><meta charset="utf-8"><title>${esc(title)}</title><style>${css}body{background:#e2e8f0;padding:32px 0}.wrap{width:1040px;min-height:585px;margin:0 auto 28px;overflow:hidden;border-radius:18px;box-shadow:0 10px 30px rgba(15,23,42,.12)}.wrap .card{zoom:.65}</style>${sections}</html>`;
 }

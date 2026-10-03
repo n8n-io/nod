@@ -71,7 +71,10 @@ function days(value: string) {
   return match ? Number(match[1]) * { d: 1, m: 30, y: 365 }[match[2] as 'd'] * 86_400_000 : NaN;
 }
 
-function mailMatches(mail: StoredMail, query: string, now: number) {
+const addresses = (header: string) =>
+  header.split(',').map((part) => (/<([^>]+)>/.exec(part)?.[1] ?? part).trim().toLowerCase());
+
+function mailMatches(mail: StoredMail, query: string, now: number, owner = '') {
   const groups: string[][] = [[]];
   for (const token of tokens(query.replace(/[()]/g, ' '))) {
     if (token === 'OR') groups.push([]);
@@ -84,9 +87,13 @@ function mailMatches(mail: StoredMail, query: string, now: number) {
     if (!rest.length) return text.includes(token.toLowerCase());
     switch (key.toLowerCase()) {
       case 'from':
-        return mail.from.toLowerCase().includes(value);
+        return value === 'me' && owner
+          ? addresses(mail.from).includes(owner.toLowerCase())
+          : mail.from.toLowerCase().includes(value);
       case 'to':
-        return mail.to.toLowerCase().includes(value);
+        return value === 'me' && owner
+          ? addresses(mail.to).includes(owner.toLowerCase())
+          : mail.to.toLowerCase().includes(value);
       case 'subject':
         return mail.subject.toLowerCase().includes(value);
       case 'label':
@@ -185,7 +192,11 @@ export function gmail(owner: Person, seed: Mail[], now: () => number) {
               (args.label_ids as string[] | undefined)?.every((l) => mail.labels.includes(l)) ??
               true,
           )
-          .filter((mail) => !args.query || mailMatches(mail, String(args.query), now()))
+          .filter(
+            (mail) =>
+              !args.query ||
+              mailMatches(mail, String(args.query), now(), owner.email.toLowerCase()),
+          )
           .sort((a, b) => b.at - a.at);
         const offset = Number(args.page_token ?? 0) || 0;
         const limit = Math.min(Math.max(Number(args.max_results ?? 10), 1), 500);
@@ -715,7 +726,9 @@ export function slack(
         'ts',
       ]),
       run(args) {
-        const parent = find(args.channel).messages.find((message) => message.ts === args.ts);
+        const parent = find(args.channel).messages.find(
+          (message) => Number(message.ts) === Number(args.ts),
+        );
         if (!parent) throw new Error('thread_not_found');
         return {
           ok: true,
@@ -775,7 +788,7 @@ export function slack(
       run(args) {
         const conversation = find(args.channel);
         const parent = args.thread_ts
-          ? conversation.messages.find((item) => item.ts === args.thread_ts)
+          ? conversation.messages.find((item) => Number(item.ts) === Number(args.thread_ts))
           : undefined;
         if (args.thread_ts && !parent) throw new Error('thread_not_found');
         const message = {

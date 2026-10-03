@@ -4,7 +4,7 @@ import { check, type Expectation } from './scenario.ts';
 export const finished = check(
   'finished',
   (run) => {
-    const last = run.turns.at(-1);
+    const last = run.turns.filter((turn) => !turn.background).at(-1);
     const stuck = run.interactions.filter(
       (item) => item.kind === 'unanswered' || item.kind === 'stalled',
     );

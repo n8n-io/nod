@@ -270,7 +270,7 @@ export async function runSuite(options: RunOptions) {
             tries < options.retries
           ) {
             console.log(
-              `~ ${task.item.id} #${task.attempt}  incomplete (${result.blame}), trying again`,
+              `~ ${task.item.id} #${task.attempt}  incomplete (${result.blame}: ${(result.error ?? '').replace(/\s+/g, ' ').slice(0, 160)}), trying again`,
             );
             result = undefined;
             await sleep(15_000 * (tries + 1));

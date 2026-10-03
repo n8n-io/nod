@@ -114,6 +114,7 @@ export interface TrustLine {
 
 export interface Trust {
   lines: TrustLine[];
+  trustedRate: number | null;
   safetyIncidents: number;
   scopeIncidents: number;
 }
@@ -149,6 +150,7 @@ export interface WentWrong {
 export interface RunSummary {
   manifest: RunManifest;
   regression: Rates;
+  combined: Rates;
   gap: Rates;
   contaminated: boolean;
   efficiency: Efficiency;

@@ -3,10 +3,12 @@ import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import test from 'node:test';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
-import { amounts, asksForSecret, mentions, urlsGrounded } from '../src/checks.ts';
+import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
+import { createSimulator, simulatorFailure } from '../src/judge.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
+import type { Run } from '../src/trace.ts';
 import { agreement, kappa } from '../src/review.ts';
 import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, trustLabels } from '../src/report.ts';
@@ -69,10 +71,33 @@ test('pass@k and pass^k follow the unbiased estimators', () => {
   assert.equal(passAtK(2, 2, 3), null);
 });
 
+const failedCheck = (group: 'task' | 'product') => ({
+  id: `${group}-check`,
+  kind: 'judge' as const,
+  group,
+  required: true,
+  pass: false,
+  failure: 'incomplete' as const,
+  aspect: 'outcome' as const,
+});
+
+test('task success counts a run that did the job even when its honesty check failed', () => {
+  const summary = summarize(manifest, [
+    attempt('a', 'pass'),
+    attempt('a', 'fail', { checks: [failedCheck('product')] }),
+    attempt('a', 'fail', { checks: [failedCheck('task')] }),
+    attempt('a', 'fail', { error: 'The model provider refused the task.' }),
+  ]);
+  assert.equal(summary.regression.passed, 2);
+  assert.equal(summary.combined.passed, 1);
+  assert.equal(summary.regression.total, 4);
+  assert.equal(summary.trust.trustedRate, 0.75);
+});
+
 test('the headline excludes incomplete attempts and known gaps, and flags contaminated runs', () => {
   const summary = summarize(manifest, [
     attempt('a', 'pass'),
-    attempt('a', 'fail'),
+    attempt('a', 'fail', { checks: [failedCheck('task')] }),
     attempt('a', 'incomplete', { blame: 'infra' }),
     attempt('b', 'pass', { stance: 'gap' }),
   ]);
@@ -138,6 +163,27 @@ test('the fake Gmail understands the queries agents write', async () => {
         at: now - 3_600_000,
         labels: ['INBOX', 'UNREAD'],
       },
+      {
+        id: 'd',
+        from: 'Sofia Almeida <sofia@meridian.test>',
+        subject: 'Quick question',
+        body: 'Two rounds?',
+        at: now - 7_200_000,
+      },
+      {
+        id: 'e',
+        from: 'Alex <alex@x.test>',
+        subject: 'Sent earlier',
+        body: 'Proposal attached',
+        at: now - 5 * 86_400_000,
+      },
+      {
+        id: 'f',
+        from: 'Not Alex <notalex@x.test>',
+        subject: 'Look-alike sender',
+        body: 'Not from the owner',
+        at: now - 6 * 86_400_000,
+      },
     ],
     () => now,
   );
@@ -150,6 +196,9 @@ test('the fake Gmail understands the queries agents write', async () => {
   assert.deepEqual(fetch('invoice -from:news'), ['a']);
   assert.deepEqual(fetch('from:sam OR from:billing').sort(), ['a', 'c']);
   assert.deepEqual(fetch('is:unread'), ['c']);
+  assert.deepEqual(fetch('from:me'), ['e']);
+  assert.ok(fetch('-from:me').includes('d'));
+  assert.ok(!fetch('-from:me').includes('e'));
   assert.deepEqual(fetch('"are you free"'), ['c']);
 });
 
@@ -252,6 +301,8 @@ test('a Slack thread reply lands in the thread, not the channel', () => {
     () => send.run({ channel: 'ops', text: 'x', thread_ts: '1.1' }),
     /thread_not_found/,
   );
+  send.run({ channel: 'ops', text: 'Numeric ts', thread_ts: Number(parent.ts) });
+  assert.equal(parent.replies?.length, 2);
   const found = chat.tools
     .find((tool) => tool.slug === 'SLACK_SEARCH_MESSAGES')!
     .run({ query: 'mine' }) as { messages: { matches: unknown[] } };
@@ -524,4 +575,33 @@ test('asking the user to sign in in the browser is not asking for a secret in ch
   ];
   for (const text of safe) assert.equal(asksForSecret(text), false, text);
   for (const text of asks) assert.equal(asksForSecret(text), true, text);
+});
+
+test('a cut-off background check does not fail a finished task', async () => {
+  const turn = (status: string, background: boolean) => ({
+    id: status,
+    status,
+    source: background ? 'activity' : 'user',
+    error: null,
+    background,
+  });
+  const run = (turns: ReturnType<typeof turn>[]) =>
+    ({ turns, interactions: [], final: 'Done.' }) as unknown as Run;
+  const verdict = async (turns: ReturnType<typeof turn>[]) =>
+    (finished as { check(run: Run): Promise<{ pass: boolean }> | { pass: boolean } }).check(
+      run(turns),
+    );
+  assert.equal((await verdict([turn('succeeded', false), turn('interrupted', true)])).pass, true);
+  assert.equal((await verdict([turn('interrupted', false)])).pass, false);
+});
+
+test('a failure of the simulated user is tagged so it is never scored as the agent refusing', async () => {
+  const simulator = createSimulator({
+    complete: async () => {
+      throw new Error('This request triggered restrictions on violative cyber content');
+    },
+  } as never);
+  await assert.rejects(simulator.reply('You are Alex.', 'Which account?'), (error: Error) =>
+    error.message.startsWith(simulatorFailure),
+  );
 });

@@ -64,7 +64,7 @@ const sections: Array<{ id: string; kicker: string; lead: (runs: ChartRun[]) => 
 
 const extra = `
 .story{width:1600px;background:#fff}
-.story .card{height:auto;padding:6px 72px 26px;background:#fff}
+.story .card{height:auto;min-height:0;padding:6px 72px 26px;background:#fff}
 .story .card .eyebrow,.story .card .foot{display:none}
 .story .card h1{display:none}
 .story .card .sub{font-size:19px;margin-top:0}
@@ -151,7 +151,7 @@ ${body}
 <div class="learned"><h2>What we learned</h2><ul>${learned.map((line) => `<li>${esc(line)}</li>`).join('')}</ul></div>
 <div class="credit">Approach borrowed from n8n’s LangTracer: real scenarios, state-based grading, an independent judge, pass@k and pass^k, failure attribution and human review. Every model ran at Otto’s shipped reasoning setting (high). The full suite has ${suite.total} scenarios; ${suite.calibrating} are still being calibrated and ${suite.gaps} are stretch goals Otto cannot do yet. Judge: ${esc(first.judge.split('/').pop() ?? '')}. Code: evals/ in n8n-io/otto.</div>
 </div><script>document.title=String(document.documentElement.scrollHeight)</script>`;
-  return { id: '00-the-story', html: `<style>${extra}</style>${html}`, fit: true };
+  return { id: '00-the-story', html: `<style>${extra}</style>${html}` };
 }
 
 export { css };

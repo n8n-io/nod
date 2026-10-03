@@ -12,6 +12,7 @@ export interface ToolCall {
   output: string;
   isError: boolean;
   at: number;
+  lead: string;
 }
 
 export interface ChatMessage {
@@ -28,7 +29,13 @@ export interface Run {
   final: string;
   said: string;
   tools: ToolCall[];
-  turns: Array<{ id: string; status: string; source: string; error: string | null }>;
+  turns: Array<{
+    id: string;
+    status: string;
+    source: string;
+    error: string | null;
+    background: boolean;
+  }>;
   interactions: Interaction[];
   userMessages: Array<{ at: number; text: string }>;
   writes: Write[];
@@ -134,6 +141,10 @@ export async function collect(options: {
         cost += message.usage.cost.total;
         costKnown = true;
       }
+      const lead = (message.content ?? [])
+        .map((block: any) => (block.type === 'text' ? block.text : ''))
+        .join('')
+        .trim();
       for (const block of message.content ?? [])
         if (block.type === 'toolCall') {
           const call: ToolCall = {
@@ -142,6 +153,7 @@ export async function collect(options: {
             output: '',
             isError: false,
             at: Date.parse(entry.timestamp),
+            lead,
           };
           calls.set(block.id, call);
           tools.push(call);
@@ -167,7 +179,9 @@ export async function collect(options: {
     turnId: row.turn_id,
   }));
   const turns = (
-    await stack.pool.query('SELECT id,status,source,error FROM turns ORDER BY created_at, id')
+    await stack.pool.query(
+      'SELECT id,status,source,error,background FROM turns ORDER BY created_at, id',
+    )
   ).rows;
   const schedules = (
     await stack.pool.query(
@@ -249,14 +263,23 @@ export async function collect(options: {
       return (await session.workspace.read(filePath(path)))?.toString('utf8') ?? '';
     },
     transcript(limit = 60_000) {
-      const build = (outputCap: number) =>
-        [
+      const build = (outputCap: number) => {
+        const issued = new Map<string, number[]>();
+        for (const call of tools) {
+          const times = issued.get(call.lead) ?? [];
+          if (call.lead && times.at(-1) !== call.at) issued.set(call.lead, [...times, call.at]);
+        }
+        return [
           ...messages
             .filter((m) => m.text.trim())
-            .map((m) => ({
-              at: m.at,
-              text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
-            })),
+            .map((m) => {
+              const issuedAt =
+                m.role === 'assistant' ? issued.get(m.text.trim())?.shift() : undefined;
+              return {
+                at: issuedAt === undefined ? m.at : Math.min(m.at, issuedAt - 1),
+                text: `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.text}`,
+              };
+            }),
           ...tools.map((call) => ({
             at: call.at,
             text: `TOOL ${call.name}${call.isError ? ' (error)' : ''}\n  input: ${clip(JSON.stringify(call.input), 1200)}\n  output: ${clip(call.output, outputCap)}`,
@@ -265,6 +288,7 @@ export async function collect(options: {
           .sort((a, b) => a.at - b.at)
           .map((item) => item.text)
           .join('\n\n');
+      };
       for (const cap of [6000, 3000, 1500]) {
         const text = build(cap);
         if (text.length <= limit) return text;
@@ -276,7 +300,7 @@ export async function collect(options: {
       return [
         `Tool calls: ${tools.length} (${tools.filter((call) => call.isError).length} returned an error).`,
         `Assistant messages shown to the user: ${replies.length}.`,
-        `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}.`,
+        `Questions the assistant asked the user: ${session.interactions.filter((i) => i.kind === 'question').length}. Follow-up questions asked in chat that the simulated user answered afterwards: ${session.interactions.filter((i) => i.kind === 'chat').length}.`,
         `Changes made in connected apps: ${
           run.writes.length ? run.writes.map((w) => `${w.kind} via ${w.slug}`).join('; ') : 'none'
         }.`,

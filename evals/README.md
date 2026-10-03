@@ -116,16 +116,18 @@ For each attempt you see the task, what Otto finally said and every check. You a
 
 ## What is real and what is mocked
 
-| Layer                                                                                      |                                                                                                               |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| Model, Pi, tools, turn engine, memory, schedules (pg-boss), approvals, Vault, secure forms | real                                                                                                          |
-| Workspace container and files, Chromium browser, downloads, uploads                        | real                                                                                                          |
-| Connected apps (Gmail, Calendar, Sheets, Slack)                                            | stateful fakes at the `IntegrationProvider` port, with Composio-style tool names and result shapes            |
-| Websites with logins, two-step codes, carts, bookings                                      | lookalike sites served from the host, reached by the real browser under invented hostnames                    |
-| Browser traffic to anything else                                                           | blocked in hermetic scenarios                                                                                 |
-| Public web research                                                                        | real, in `live` scenarios only                                                                                |
-| Time                                                                                       | real clock. Scenario data is built relative to it, and scheduled runs are fired by moving the real job to now |
-| The user                                                                                   | scripted answers, approvals and secrets, plus a persona that an LLM voices for unplanned questions            |
+| Layer                                                                                      |                                                                                                                                         |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Model, Pi, tools, turn engine, memory, schedules (pg-boss), approvals, Vault, secure forms | real                                                                                                                                    |
+| Workspace container and files, Chromium browser, downloads, uploads                        | real                                                                                                                                    |
+| Connected apps (Gmail, Calendar, Sheets, Slack)                                            | stateful fakes at the `IntegrationProvider` port, with Composio-style tool names and result shapes                                      |
+| Websites with logins, two-step codes, carts, bookings                                      | lookalike sites served from the host, reached by the real browser under invented hostnames                                              |
+| Browser traffic to anything else                                                           | blocked in hermetic scenarios                                                                                                           |
+| Public web research                                                                        | real, in `live` scenarios only                                                                                                          |
+| Pi web tools (`web_search`, `fetch_content`)                                               | live in every scenario, because they run server-side. Only `fetch_content` reaches the fake hostnames                                   |
+| Shell network in the workspace container                                                   | the fake hostnames do not resolve there. An agent that probes a site with `curl` before using the browser can conclude the site is down |
+| Time                                                                                       | real clock. Scenario data is built relative to it, and scheduled runs are fired by moving the real job to now                           |
+| The user                                                                                   | scripted answers, approvals and secrets, plus a persona that an LLM voices for unplanned questions                                      |
 
 The fakes are hand-written approximations of Composio's responses, not recordings. They are the main fidelity risk; check a result against a real account before trusting it for a connector.
 
@@ -173,9 +175,12 @@ These come from how n8n's LangTracer suites are built.
 3. Use absolute dates and anchor all seeded data to the run clock and the user's time zone, never to a weekday word.
 4. Negative checks ("nothing was sent", "stayed quiet") are only meaningful if the precondition happened. Pair them with a check that the agent looked, or that the scheduled run fired.
 5. Add traps that real tasks have: a decoy that looks right, noise that changes on every visit, an old item outside the window, an instruction hidden in an email.
-6. Hardening means realistic complications, never stricter graders. At most two scenarios per mechanism.
-7. Give the judge the exact end state through `evidence`, and one criterion per judgement.
-8. Keep all data synthetic. Never put real names, accounts, keys or private content in a scenario.
+6. Never script a user answer that contradicts what the product shows, such as naming a list position the site does not use. A persona answers questions the script does not cover; give it the facts the brief leaves out, such as the city.
+7. A fake site behaves like a real one: redirect after a form post so a reload cannot repeat it, show state changes in the next page, and reject an invalid form instead of recording it.
+8. A failure of the simulated user or the judge model is an infrastructure fault and makes the attempt incomplete. It is never scored as the agent refusing.
+9. Hardening means realistic complications, never stricter graders. At most two scenarios per mechanism.
+10. Give the judge the exact end state through `evidence`, and one criterion per judgement.
+11. Keep all data synthetic. Never put real names, accounts, keys or private content in a scenario.
 
 ### Calibrating a new scenario
 

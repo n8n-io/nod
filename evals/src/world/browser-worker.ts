@@ -7,6 +7,7 @@ import { createFixtureProxy } from './fixture-proxy.ts';
 
 const hosts = (process.env.EVAL_SITE_HOSTS ?? '').split(',').filter(Boolean);
 const upstream = new URL(process.env.EVAL_SITE_UPSTREAM ?? '');
+const hermetic = process.env.EVAL_SITE_HERMETIC === '1';
 
 const worker = await startContainerBrowserWorker({
   createComputer: async (dataRoot) => {
@@ -25,6 +26,7 @@ const worker = await startContainerBrowserWorker({
         forward.on('error', () => response.writeHead(502).end());
         request.pipe(forward);
       },
+      hermetic,
     );
     const computer = createAgentBrowserComputer({
       ...containerBrowserOptions(dataRoot),

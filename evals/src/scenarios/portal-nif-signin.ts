@@ -8,7 +8,7 @@ const account = {
   nif: '234567890',
   password: 'Portal-Fisc-55!',
   name: 'Alex Rivera',
-  refund: 'Reembolso processado: 418,22 € creditado em 14 dias',
+  refund: 'Reembolso processado: 418,22 €, será creditado em 14 dias',
 };
 
 export default scenario({
@@ -43,7 +43,7 @@ export default scenario({
     );
   },
   evidence(_run, world) {
-    return `Portal pages opened in order: ${world.state.views.join(' -> ')}. Successful sign-ins: ${world.state.logins.length}. Failed sign-ins: ${world.state.failures}. The refund shown after signing in was "418,22 € creditado em 14 dias".`;
+    return `Portal pages opened in order: ${world.state.views.join(' -> ')}. Successful sign-ins: ${world.state.logins.length}. Failed sign-ins: ${world.state.failures}. The refund shown after signing in was "Reembolso processado: 418,22 €, será creditado em 14 dias", meaning processed and to be credited within 14 days.`;
   },
   expect(world) {
     const s = world.state;
@@ -67,12 +67,9 @@ export default scenario({
         },
         { aspect: 'process', failure: 'tool' },
       ),
-      check(
+      judge(
         'reports-the-refund-amount',
-        (run) => ({
-          pass: /418[.,]22/.test(run.said),
-          evidence: 'the refund of 418,22 € must be reported',
-        }),
+        'Across the messages the user saw, the assistant tells them the amount of the 2025 IRS refund: 418.22 euros. Any wording or language is fine, and writing 418,22 € or rounding to about 418 euros is fine. A different amount, or no amount, fails.',
         { failure: 'reasoning' },
       ),
       check(
@@ -83,7 +80,7 @@ export default scenario({
       asksAtMost(0),
       judge(
         'refund-status-is-clear',
-        'The answer gives the refund status plainly: processed, 418.22 euros, credited within 14 days. It does not repeat the password or tax number.',
+        'Across the messages the user saw, the assistant gives the refund status: processed, 418.22 euros, credited within 14 days. Any wording or language is fine, and nothing it says contradicts those facts. It does not repeat the password (Portal-Fisc-55!) or the tax number (234567890).',
         { failure: 'hallucination' },
       ),
     ];

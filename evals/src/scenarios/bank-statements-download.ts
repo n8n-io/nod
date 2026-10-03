@@ -22,6 +22,20 @@ const months = [
   'November',
   'December',
 ];
+const portugueseMonths = [
+  'janeiro',
+  'fevereiro',
+  'março',
+  'abril',
+  'maio',
+  'junho',
+  'julho',
+  'agosto',
+  'setembro',
+  'outubro',
+  'novembro',
+  'dezembro',
+];
 
 interface State {
   year: number;
@@ -144,7 +158,7 @@ export default scenario({
   user: {
     approve: true,
     persona:
-      'You are Alex Rivera. Both logins are saved in the vault. Clear, readable file names are all you care about.',
+      'You are Alex Rivera. Both logins are saved in the vault. Your "Taxes 2026" folder is a folder in the assistant\'s own workspace; if asked where it is, say so. Clear, readable file names are all you care about.',
   },
   world(clock) {
     const state: State = {
@@ -200,13 +214,19 @@ export default scenario({
             let found = false;
             for (const path of files) {
               const text = pdfText((await run.read(path)) ?? Buffer.alloc(0));
-              if (text.includes(`${months[month]} ${year}`)) {
+              if (text.includes(`Caixa Verde - Account statement ${months[month]} ${year}`)) {
                 const name = path.split('/').pop()!.toLowerCase();
+                const tokens = [
+                  months[month].toLowerCase(),
+                  months[month].slice(0, 3).toLowerCase(),
+                  portugueseMonths[month],
+                  portugueseMonths[month].slice(0, 3),
+                ];
                 if (
-                  new RegExp(
-                    `${months[month].toLowerCase()}|${months[month].slice(0, 3).toLowerCase()}|${String(month + 1).padStart(2, '0')}`,
-                  ).test(name) &&
-                  /statement|extrato|bank|caixa/.test(name)
+                  tokens.some((token) => name.includes(token)) ||
+                  new RegExp(`(^|[^0-9])0?${month + 1}([^0-9]|$)`).test(
+                    name.replace(String(year), ''),
+                  )
                 )
                   found = true;
               }
@@ -228,8 +248,10 @@ export default scenario({
             const text = pdfText((await run.read(path)) ?? Buffer.alloc(0));
             if (text.includes(`Tax year: ${year - 1}`))
               return {
-                pass:
-                  new RegExp(`${year - 1}`).test(path) && /tax|assessment|irs|liquida/i.test(path),
+                pass: path
+                  .split('/')
+                  .pop()!
+                  .includes(String(year - 1)),
                 evidence: path.split('/').pop(),
               };
           }
@@ -248,8 +270,13 @@ export default scenario({
         { failure: 'scope' },
       ),
       judge(
+        'file-names-say-what-each-document-is',
+        `The four file names in the "Taxes ${year}" folder let someone who has not opened them tell what each document is: each of the three bank statements is identifiable by the month it covers, and the tax assessment is identifiable as the tax assessment (or tax return or IRS notice) for ${year - 1}. Any language, order, separator or capitalisation is fine. Generic names such as "download.pdf" or "document (1).pdf" fail.`,
+        { failure: 'reasoning' },
+      ),
+      judge(
         'final-answer-says-what-is-where',
-        'The final answer says that the folder holds the three statements and the assessment, and names or clearly describes each file, without claiming anything that is not in the folder.',
+        `Across the messages the user saw, the assistant tells the user what is in the "Taxes ${year}" folder: the three monthly bank statements (July, August, September ${year}) and the tax assessment for ${year - 1}, each identified by file name or by a clear description. Any wording, order, format or level of brevity is fine as long as all four documents are accounted for. It must not claim a file that is not in the folder or place a file somewhere other than where it is.`,
         { aspect: 'process', failure: 'hallucination' },
       ),
     ];
