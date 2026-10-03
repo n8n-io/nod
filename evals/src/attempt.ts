@@ -1,7 +1,13 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { grade } from './grade.ts';
-import { createLlm, createSimulator, simulatorFailure } from './judge.ts';
+import {
+  createLlm,
+  createSimulator,
+  fallbackSimulator,
+  providerRefusal,
+  simulatorFailure,
+} from './judge.ts';
 import type { Blame, AttemptResult, CheckResult } from './results.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
 import { createSession } from './session.ts';
@@ -82,6 +88,9 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   terminate = release;
   try {
     const judgeLlm = await createLlm(judgeModel);
+    const fallbackLlm = await createLlm(parseModel(fallbackSimulator, environment)).catch(
+      () => undefined,
+    );
     stack = await (starting = startStack({
       model,
       integrations:
@@ -100,7 +109,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const session = createSession({
       stack,
       user: definition.user,
-      simulator: definition.user.persona ? createSimulator(judgeLlm) : undefined,
+      simulator: definition.user.persona ? createSimulator(judgeLlm, fallbackLlm) : undefined,
       deadline: taskStarted + definition.seconds * 1000,
       world,
     });
@@ -139,9 +148,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const providerFault = trace.turns.find((turn) => turn.error && infra.test(turn.error));
     const refusal = [modelFault, failure].find(
       (message) =>
-        message &&
-        !message.startsWith(simulatorFailure) &&
-        /violative|usage policy|content (filtering )?policy|safety (filter|system)/i.test(message),
+        message && !message.startsWith(simulatorFailure) && providerRefusal.test(message),
     );
     const fault =
       graderFault ??

@@ -605,3 +605,25 @@ test('a failure of the simulated user is tagged so it is never scored as the age
     error.message.startsWith(simulatorFailure),
   );
 });
+
+test('a simulated user blocked by its provider falls back to a second model', async () => {
+  const blocked = {
+    complete: async () => {
+      throw new Error('This request triggered restrictions on violative cyber content');
+    },
+  } as never;
+  const backup = { complete: async () => ' OK, go ahead. ' } as never;
+  assert.equal(
+    await createSimulator(blocked, backup).reply('You are Alex.', 'OK to pay?'),
+    'OK, go ahead.',
+  );
+  const broken = {
+    complete: async () => {
+      throw new Error('503 overloaded');
+    },
+  } as never;
+  await assert.rejects(
+    createSimulator(broken, backup).reply('You are Alex.', 'OK to pay?'),
+    (error: Error) => error.message.startsWith(simulatorFailure),
+  );
+});

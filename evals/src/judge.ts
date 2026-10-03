@@ -74,14 +74,24 @@ export interface Simulator {
 }
 
 export const simulatorFailure = 'The simulated user failed';
+export const fallbackSimulator = 'openai/gpt-6.1-sol';
+export const providerRefusal =
+  /violative|usage policy|content (filtering )?policy|safety (filter|system)/i;
 
-export function createSimulator(llm: Llm): Simulator {
-  const ask = (system: string, user: string, tokens: number) =>
-    llm.complete(system, user, tokens).catch((error) => {
-      throw new Error(
-        `${simulatorFailure}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+export function createSimulator(llm: Llm, fallback?: Llm): Simulator {
+  const fail = (error: unknown) =>
+    new Error(`${simulatorFailure}: ${error instanceof Error ? error.message : String(error)}`);
+  const ask = async (system: string, user: string, tokens: number) => {
+    try {
+      return await llm.complete(system, user, tokens);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!fallback || !providerRefusal.test(message)) throw fail(error);
+      return fallback.complete(system, user, tokens).catch((second) => {
+        throw fail(second);
+      });
+    }
+  };
   return {
     async reply(persona, question) {
       const text = await ask(
