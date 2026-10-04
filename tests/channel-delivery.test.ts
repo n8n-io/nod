@@ -1646,11 +1646,11 @@ test(
           });
         assert.match(
           target,
-          /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document)$/,
+          /^https:\/\/api\.telegram\.org\/bot987:fixture-not-live\/send(?:Photo|Document|Video)$/,
         );
         assert.ok(init?.body instanceof FormData);
         const body = init.body;
-        const media = body.get('photo') ?? body.get('document');
+        const media = body.get('photo') ?? body.get('document') ?? body.get('video');
         assert.ok(media instanceof File);
         const method = target.split('/').at(-1)!;
         sent.push({
@@ -1798,6 +1798,14 @@ test(
       assert.deepEqual(Buffer.from(sent[3].file), fileBytes);
       assert.equal(sent[2].caption, '');
       assert.equal(sent[3].caption, '');
+      const videoBytes = Buffer.from('mp4 video fixture');
+      const video = await storeArtifact(videoBytes, 'clip.mp4', 'video/mp4', threadId);
+      filePaths.push(join(dataRoot, 'artifacts', video.id));
+      const clip = await addReply(turnId, [video], '');
+      await channels.drain();
+      assert.equal((await state(clip)).state, 'sent');
+      assert.equal(sent.at(-1)!.method, 'sendVideo');
+      assert.deepEqual(Buffer.from(sent.at(-1)!.file), videoBytes);
 
       failDocument = true;
       const uncertain = await addReply(turnId, [image, document]);

@@ -35,7 +35,7 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 ## The suite
 
-Thirty scenarios, each a real task from the Otto capabilities project in Linear, written the way a user would ask. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.
+Thirty-one scenarios, each a real task from the Otto capabilities project in Linear, written the way a user would ask. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.
 
 | Scenario                   | Linear  | What it checks                                                                | Capabilities                             | Status      |
 | -------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
@@ -67,6 +67,7 @@ Thirty scenarios, each a real task from the Otto capabilities project in Linear,
 | `slack-catchup`            | LAB-376 | Slack catch-up: what did I miss and what needs my reply                       | apps, progress                           | scored      |
 | `steering-mid-task`        | LAB-374 | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
 | `stop-and-continue`        | LAB-445 | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
+| `video-links`              |         | Download videos from X, TikTok, YouTube, Instagram and Reddit links           | files, research                          | calibrating |
 | `video-to-three-platforms` | LAB-396 | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
 | `youtube-topics`           | LAB-383 | Recent YouTube videos on a theme, grouped into topics                         | research, progress, files                | calibrating |
 

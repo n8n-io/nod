@@ -86,6 +86,7 @@ export async function prepareE2BContext(options: { role: E2BTemplateRole; root?:
     }
     if (options.role !== 'browser') {
       await add('workspace-command.py', Buffer.from(workspaceCommandProgram));
+      await add('save-video', await read('src/providers/docker/save-video.py'));
     }
     if (options.role === 'computer')
       await add('deployment/e2b/computer-guard.py', await read('deployment/e2b/computer-guard.py'));

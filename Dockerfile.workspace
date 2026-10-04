@@ -1,6 +1,7 @@
 FROM node:24.21.0-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python-is-python3 python3-pip python3-venv python3-requests python3-bs4 pipx ffmpeg poppler-utils jq tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu tesseract-ocr-por tesseract-ocr-spa tesseract-ocr-fra ca-certificates curl git unzip ripgrep && rm -rf /var/lib/apt/lists/*
-RUN python3 -m venv /opt/yt-dlp && /opt/yt-dlp/bin/pip install --no-cache-dir yt-dlp==2026.8.19 && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
+RUN python3 -m venv /opt/yt-dlp && /opt/yt-dlp/bin/pip install --no-cache-dir "yt-dlp[pin,pin-curl-cffi,pin-deno]==2026.8.19" && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
+COPY --chmod=555 src/providers/docker/save-video.py /usr/local/bin/save-video
 RUN python3 -m venv --system-site-packages /opt/otto-artifacts && /opt/otto-artifacts/bin/pip install --no-cache-dir reportlab==5.0.1 matplotlib==3.11.2 openpyxl==3.1.5 python-docx==1.2.0 python-pptx==1.0.2 pillow==12.3.0 pandas==3.0.6 pdfplumber==0.11.10 pillow-heif==1.8.0
 RUN mkdir -p /workspace /home/node/.local/bin && chown -R node:node /workspace /home/node
 RUN groupadd --gid 1002 otto-connected && useradd --uid 1002 --gid 1002 --create-home --shell /usr/sbin/nologin otto-connected && chmod 700 /home/otto-connected

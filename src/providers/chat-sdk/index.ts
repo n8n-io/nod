@@ -390,7 +390,9 @@ export function createChatSdkTransport(
                 ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType) &&
                 file.bytes.byteLength <= 10 * 1024 * 1024
                   ? 'image'
-                  : 'file',
+                  : file.mimeType === 'video/mp4'
+                    ? 'video'
+                    : 'file',
               data: Buffer.from(file.bytes),
               name: file.name,
               mimeType: file.mimeType,

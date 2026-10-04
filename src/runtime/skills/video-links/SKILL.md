@@ -1,0 +1,5 @@
+# Video links
+
+To download or save a video from a link (X, TikTok, Instagram, YouTube, Reddit, Facebook, LinkedIn, Bluesky and most other sites), run `save-video URL` in bash right away, without manage_apps list, the browser or sign-in checks. It saves an H.264/AAC MP4 that plays everywhere and fits the 15 MB file limit, and prints one JSON line per file. Call share_file for each file, then reply in one short sentence that names the video; mention a note, such as compression, only when the output has one. Pass yt-dlp options after the URL when needed, such as `--download-sections "*1:00-2:30"` for part of a long video or `--playlist-items 2` for one video of a post. For audio only, run `yt-dlp -x --audio-format mp3 -o "%(title).60B.%(ext)s" URL` and share the file.
+
+If it fails, give the reason in one sentence. Private, deleted, age-restricted, region-blocked or DRM-protected videos cannot be saved, and a post without a video has nothing to save. For a long video or a broadcast, offer to save a section. If the site is unsupported, open the page in the browser, read the video's direct media URL and run save-video on it once. Do not repeat a failed command.

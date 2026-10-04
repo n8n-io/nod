@@ -25,7 +25,7 @@ export async function prepareE2BTemplate(role: E2BTemplateRole) {
           ? template
               .setUser('root')
               .runCmd(
-                'test -x /usr/bin/chromium && test -x /usr/bin/Xvfb && test -x /usr/sbin/nft && test -x /usr/sbin/ip && test -x /usr/bin/setpriv && test -r /app/src/providers/container-browser/bridge.ts && test -r /opt/otto/workspace-command.py && test -x /usr/bin/pdftotext && test -x /usr/bin/tesseract && test -x /usr/bin/jq && test -x /usr/local/bin/yt-dlp',
+                'test -x /usr/bin/chromium && test -x /usr/bin/Xvfb && test -x /usr/sbin/nft && test -x /usr/sbin/ip && test -x /usr/bin/setpriv && test -r /app/src/providers/container-browser/bridge.ts && test -r /opt/otto/workspace-command.py && test -x /usr/bin/pdftotext && test -x /usr/bin/tesseract && test -x /usr/bin/jq && test -x /usr/local/bin/yt-dlp && test -x /usr/local/bin/save-video',
               )
               .setStartCmd(
                 'exec python3 /opt/otto/computer-guard.py start',
@@ -33,7 +33,7 @@ export async function prepareE2BTemplate(role: E2BTemplateRole) {
               )
           : template
               .runCmd(
-                'python3 -c "import ast; ast.parse(open(\'/opt/otto/workspace-command.py\').read())" && test -w /workspace && test -x /usr/local/bin/node && test -x /usr/bin/python3 && test -x /usr/bin/pipx && test -x /usr/bin/ffmpeg && test -x /usr/bin/pdftotext && test -x /usr/bin/tesseract && test -x /usr/bin/jq && test -x /usr/local/bin/yt-dlp',
+                'python3 -c "import ast; ast.parse(open(\'/opt/otto/workspace-command.py\').read())" && test -w /workspace && test -x /usr/local/bin/node && test -x /usr/bin/python3 && test -x /usr/bin/pipx && test -x /usr/bin/ffmpeg && test -x /usr/bin/pdftotext && test -x /usr/bin/tesseract && test -x /usr/bin/jq && test -x /usr/local/bin/yt-dlp && test -x /usr/local/bin/save-video',
               )
               .setReadyCmd('test -r /opt/otto/workspace-command.py && test -w /workspace');
     const description = await Template.toJSON(final);
