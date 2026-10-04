@@ -4,7 +4,7 @@ import { lookup } from 'node:dns/promises';
 import test from 'node:test';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
-import { createSimulator, simulatorFailure, withFallback } from '../src/judge.ts';
+import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
@@ -635,4 +635,30 @@ test('a simulated user blocked by its provider falls back to a second model', as
     createSimulator(withFallback(broken, backup)).reply('You are Alex.', 'OK to pay?'),
     (error: Error) => error.message.startsWith(simulatorFailure),
   );
+});
+
+test('a judge that cannot return every verdict at once is asked one criterion at a time', async () => {
+  const llm = {
+    complete: async (_system: string, input: string) => {
+      const ids = [...input.matchAll(/^- ([\w-]+):/gm)].map((match) => match[1]);
+      if (ids.length > 1) return 'not json';
+      return JSON.stringify({
+        verdicts: [{ id: ids[0], reasoning: 'ok', applicable: true, pass: true }],
+      });
+    },
+  } as never;
+  const verdicts = await judgeCriteria(llm, {
+    task: 't',
+    transcript: 'x',
+    groundTruth: 'g',
+    criteria: [
+      { id: 'first-check', criterion: 'A' },
+      { id: 'second-check', criterion: 'B' },
+    ],
+  });
+  assert.deepEqual(
+    verdicts.map((verdict) => verdict.id),
+    ['first-check', 'second-check'],
+  );
+  assert.ok(verdicts.every((verdict) => verdict.pass));
 });

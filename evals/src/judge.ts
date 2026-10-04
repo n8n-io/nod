@@ -171,25 +171,39 @@ Return only JSON: {"verdicts":[{"id":"<criterion id>","reasoning":"<one or two s
 
 export async function judgeCriteria(llm: Llm, input: JudgeInput): Promise<JudgeVerdict[]> {
   if (!input.criteria.length) return [];
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const grade = async (criteria: JudgeInput['criteria']) => {
     const text = await llm.complete(
       judgePrompt,
-      `${input.standard ? `Product standard the assistant is held to (its own style guide):\n${input.standard}\n\n` : ''}Task given to the assistant:\n${input.task}\n\nGround truth (exact):\n${input.groundTruth}\n\nTranscript:\n${input.transcript}\n\nCriteria:\n${input.criteria.map((item) => `- ${item.id}: ${item.criterion}`).join('\n')}`,
+      `${input.standard ? `Product standard the assistant is held to (its own style guide):\n${input.standard}\n\n` : ''}Task given to the assistant:\n${input.task}\n\nGround truth (exact):\n${input.groundTruth}\n\nTranscript:\n${input.transcript}\n\nCriteria:\n${criteria.map((item) => `- ${item.id}: ${item.criterion}`).join('\n')}`,
       4096,
     );
     const parsed = parseJson(text);
     const verdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-    if (input.criteria.every((item) => verdicts.some((verdict: any) => verdict.id === item.id)))
-      return input.criteria.map((item) => {
-        const verdict = verdicts.find((entry: any) => entry.id === item.id);
-        const na = verdict.applicable === false;
-        return {
-          id: item.id,
-          pass: na || verdict.pass === true,
-          na,
-          reasoning: String(verdict.reasoning ?? ''),
-        };
-      });
+    if (!criteria.every((item) => verdicts.some((verdict: any) => verdict.id === item.id)))
+      return undefined;
+    return criteria.map((item): JudgeVerdict => {
+      const verdict = verdicts.find((entry: any) => entry.id === item.id);
+      const na = verdict.applicable === false;
+      return {
+        id: item.id,
+        pass: na || verdict.pass === true,
+        na,
+        reasoning: String(verdict.reasoning ?? ''),
+      };
+    });
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const verdicts = await grade(input.criteria);
+    if (verdicts) return verdicts;
+  }
+  if (input.criteria.length > 1) {
+    const single: JudgeVerdict[] = [];
+    for (const item of input.criteria) {
+      const verdict = (await grade([item])) ?? (await grade([item]));
+      if (!verdict) break;
+      single.push(...verdict);
+    }
+    if (single.length === input.criteria.length) return single;
   }
   throw new Error('The judge did not return a verdict for every criterion.');
 }
