@@ -20,7 +20,7 @@ import type { Static } from '@sinclair/typebox';
 import type { Editor } from '@tiptap/core';
 import { JSDOM } from 'jsdom';
 import pg from 'pg';
-import { act, createElement, StrictMode } from 'react';
+import { act, createElement, StrictMode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
   Agent,
@@ -64,6 +64,7 @@ import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
 import { SetupNotice } from '../src/web/components/setup-notice.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
+import { Composer } from '../src/web/components/composer.tsx';
 import type { AppState, Message } from '../src/shared/contracts.ts';
 
 // Shared helpers
@@ -2992,19 +2993,38 @@ test('browser handoff cancels queued controls when the preceding view cannot be 
 });
 
 test('desktop restart guard preserves chat drafts, attachments, pending sends and secondary-page forms', async () => {
-  const state = requestedChatState();
+  let state = requestedChatState();
   const upload = deferred<Response>();
   const sent = deferred<Response>();
   const checks = new Set<() => boolean>();
   let submission: { clientMessageId: string } | undefined;
-  const chat = (visible = true) =>
-    createElement(Chat, {
+  const commits: boolean[] = [];
+  function RestartProbe({ visible }: { visible: boolean }) {
+    useLayoutEffect(() => {
+      commits.push(checks.size > 0 && [...checks].every((check) => check()));
+    }, [visible]);
+    return createElement(Chat, {
       state,
       streams: {},
       visible,
       refresh: async () => {},
       resetConversation: async () => state.threadId,
     });
+  }
+  function RestoredDraftProbe({ text }: { text: string }) {
+    useLayoutEffect(() => {
+      commits.push(checks.size > 0 && [...checks].every((check) => check()));
+    }, [text]);
+    return createElement(Composer, {
+      ready: true,
+      text,
+      setText: () => {},
+      replyTo: null,
+      clearReply: () => {},
+      onSend: async () => ({ sent: true as const }),
+    });
+  }
+  const chat = (visible = true) => createElement(RestartProbe, { visible });
   const view = await handoffView(async (path, options) => {
     if (path === '/api/apps') return Response.json([]);
     if (path === '/api/uploads') return upload.promise;
@@ -3031,6 +3051,7 @@ test('desktop restart guard preserves chat drafts, attachments, pending sends an
     assert.equal(canRestart(), true);
     await view.render(chat(false));
     assert.equal(canRestart(), false);
+    assert.equal(commits.at(-1), false);
     await view.render(chat());
     const dialog = view.dom.window.document.createElement('div');
     dialog.setAttribute('role', 'dialog');
@@ -3071,16 +3092,25 @@ test('desktop restart guard preserves chat drafts, attachments, pending sends an
     assert.ok(submission);
     assert.equal(editor.getMarkdown(), '');
     assert.equal(canRestart(), false);
+    const sentThread = state.threadId;
+    state = requestedChatState();
+    await view.render(chat());
+    assert.equal(canRestart(), false);
     await act(async () =>
       sent.resolve(
         Response.json({
           messageId: submission!.clientMessageId,
-          threadId: state.threadId,
+          threadId: sentThread,
           turnId: randomUUID(),
         }),
       ),
     );
     assert.equal(canRestart(), true);
+    await view.render(createElement(RestoredDraftProbe, { text: '' }));
+    assert.equal(canRestart(), true);
+    await view.render(createElement(RestoredDraftProbe, { text: 'Synthetic restored draft' }));
+    assert.equal(canRestart(), false);
+    assert.equal(commits.at(-1), false);
     await view.unmount();
     assert.equal(checks.size, 0);
   } finally {

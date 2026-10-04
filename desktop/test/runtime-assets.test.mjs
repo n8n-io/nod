@@ -1497,8 +1497,17 @@ else if (args[0] !== 'pull') throw new Error('Unexpected Docker command');
   await writeFile(statePath, JSON.stringify(saved));
   await promisify(execFile)(process.execPath, args, { env: environment, timeout: 20_000 });
   assert.equal(
-    JSON.parse(await readFile(statePath, 'utf8')).calls.some((call) => call[0] === 'pull'),
+    JSON.parse(await readFile(statePath, 'utf8')).calls.some((call) =>
+      ['pull', 'save'].includes(call[0]),
+    ),
     false,
+  );
+  await writeFile(join(root, 'assets/images/workspace.tar.gz.id'), `sha256:${imageId}`);
+  await writeFile(statePath, JSON.stringify({ ...saved, calls: [] }));
+  await promisify(execFile)(process.execPath, args, { env: environment, timeout: 20_000 });
+  assert.deepEqual(
+    JSON.parse(await readFile(statePath, 'utf8')).calls.filter((call) => call[0] === 'save'),
+    [['save', 'otto-desktop-workspace:experiment']],
   );
 });
 
@@ -1524,17 +1533,37 @@ test('remote runtime preparation rejects forged content IDs and changed installe
     ),
     /without changing its ID/,
   );
+  assert.equal(
+    await prepareRuntimeUpdate(
+      { ...f.release, url: 'https://updates.example.invalid/replaced' },
+      options,
+    ),
+    installed,
+  );
+  await writeFile(
+    join(f.resourcesPath, 'runtime-release.json'),
+    JSON.stringify({ ...f.release, url: 'https://updates.example.invalid/original' }),
+  );
+  assert.equal(
+    await prepareRuntimeUpdate(
+      { ...f.release, url: 'https://updates.example.invalid/replaced' },
+      options,
+    ),
+    installed,
+  );
+  assert.equal(await prepareRuntimeUpdate(f.release, options), installed);
+  assert.equal(await prepareRuntimeUpdate(f.release, options), installed);
+  assert.deepEqual(await readFile(join(installed, 'lima/bin/limactl')), before);
+  assert.deepEqual(await readFile(join(installed, '.ready.json')), marker);
+  assert.deepEqual(await readdir(f.cacheRoot), [f.release.id]);
+  await writeFile(join(installed, 'lima/bin/limactl'), 'Changed synthetic executable');
   await assert.rejects(
     prepareRuntimeUpdate(
       { ...f.release, url: 'https://updates.example.invalid/replaced' },
       options,
     ),
-    /without changing its ID/,
+    /installed runtime could not be verified/,
   );
-  assert.equal(await prepareRuntimeUpdate(f.release, options), installed);
-  assert.deepEqual(await readFile(join(installed, 'lima/bin/limactl')), before);
-  assert.deepEqual(await readFile(join(installed, '.ready.json')), marker);
-  assert.deepEqual(await readdir(f.cacheRoot), [f.release.id]);
 });
 
 test('a different verified runtime downloads into its own cache, survives corrupt downloads, and is reused without starting a VM', async (t) => {

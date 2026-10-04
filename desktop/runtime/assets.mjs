@@ -407,7 +407,7 @@ export async function prepareRuntimeUpdate(release, options) {
   validateRuntimeRelease(release);
   const current = await runtimeRelease(options.resourcesPath);
   if (current?.id === release.id) {
-    if (!isDeepStrictEqual(current, release))
+    if (!isDeepStrictEqual({ ...current, url: undefined }, { ...release, url: undefined }))
       throw new Error(
         'The update changed the installed runtime descriptor without changing its ID.',
       );

@@ -1,4 +1,12 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { ArrowUp, Paperclip, X, FileText, LoaderCircle, CornerUpLeft, Square } from 'lucide-react';
 import type { Artifact, Message } from '../../shared/contracts';
@@ -103,11 +111,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       focus();
   }
   useImperativeHandle(ref, () => ({ focus }), [editor]);
-  useEffect(
+  useLayoutEffect(
     () =>
       onPrepareDesktopUpdate(
         () =>
           Boolean(editor && !editor.isDestroyed) &&
+          !text.trim() &&
           !editor!.getMarkdown().trim() &&
           !attachmentValues.current.length &&
           !uploads.current.size &&
@@ -117,7 +126,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           !document.querySelector('[role="dialog"], dialog[open]') &&
           (canRestart?.() ?? true),
       ),
-    [editor, replyTo, canRestart],
+    [editor, text, replyTo, canRestart],
   );
   useEffect(() => {
     mounted.current = true;

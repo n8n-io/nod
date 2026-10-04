@@ -16,6 +16,7 @@ const assets = resolve(
 const imagesOnly = process.argv.includes('--images-only');
 const hostOnly = process.argv.includes('--host-only');
 const prebuiltImages = process.argv.includes('--prebuilt-images');
+const imageCompressionLevel = 6;
 if (imagesOnly && hostOnly) throw new Error('Choose either image preparation or host preparation.');
 if (!imagesOnly && (process.platform !== 'darwin' || process.arch !== 'arm64'))
   throw new Error('Host runtime preparation requires an Apple Silicon Mac.');
@@ -168,11 +169,12 @@ if (hostOnly) {
     const file = `images/${item.name}.tar.gz`;
     const target = join(assets, file);
     const stamp = `${target}.id`;
+    const stampValue = `${inspection.Id}:gzip${imageCompressionLevel}`;
     let existing = '';
     try {
       existing = (await readFile(stamp, 'utf8')).trim();
     } catch {}
-    if (existing !== inspection.Id) {
+    if (existing !== stampValue) {
       const child = spawn('docker', ['save', item.tag], {
         cwd: repository,
         stdio: ['ignore', 'pipe', 'inherit'],
@@ -184,11 +186,15 @@ if (hostOnly) {
         );
       });
       await Promise.all([
-        pipeline(child.stdout, createGzip({ level: 1 }), createWriteStream(`${target}.tmp`)),
+        pipeline(
+          child.stdout,
+          createGzip({ level: imageCompressionLevel }),
+          createWriteStream(`${target}.tmp`),
+        ),
         exited,
       ]);
       await rename(`${target}.tmp`, target);
-      await writeFile(stamp, inspection.Id);
+      await writeFile(stamp, stampValue);
     }
     const archiveManifest = JSON.parse(
       await run('/usr/bin/tar', ['-xOzf', target, 'manifest.json']),

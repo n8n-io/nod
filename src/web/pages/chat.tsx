@@ -120,6 +120,7 @@ export function Chat({
   const sendQueue = useRef(Promise.resolve(true));
   const sendCount = useRef(0);
   const pendingSends = useRef(0);
+  const outstandingSends = useRef(0);
   const retry = useRef<{ id: string; threadId: string; signature: string } | null>(null);
   const handledRequest = useRef<string | null>(null);
   const requestedSends = useRef<Array<{ text: string; result?: ComposerSendResult }>>([]);
@@ -360,6 +361,7 @@ export function Chat({
     });
     const sequence = ++sendCount.current;
     pendingSends.current++;
+    outstandingSends.current++;
     let failed = false;
     if (reply) setReplyTo(null);
     const message: Message = {
@@ -460,6 +462,7 @@ export function Chat({
       );
       return { sent: false, restoreText: !privateVerification };
     } finally {
+      outstandingSends.current--;
       finished(!failed);
       if (failed && reply && sequence === sendCount.current)
         setReplyTo((current) => current ?? reply);
@@ -877,7 +880,7 @@ export function Chat({
         )}
         <SetupNotice configuration={state.configuration} capability="assistant" />
         <Composer
-          canRestart={() => visible && !pendingSends.current && !resetLock.current}
+          canRestart={() => visible && !outstandingSends.current && !resetLock.current}
           key={threadId}
           ref={composer}
           ready={state.configuration.llmReady && !resetting && !welcoming}
