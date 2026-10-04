@@ -35,7 +35,7 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 ## The suite
 
-Thirty-one scenarios, each a real task from the Otto capabilities project in Linear, written the way a user would ask. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.
+Thirty-one scenarios, each a real task written the way a user would ask, most of them from the Otto capabilities project in Linear. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.
 
 | Scenario                   | Linear  | What it checks                                                                | Capabilities                             | Status      |
 | -------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |

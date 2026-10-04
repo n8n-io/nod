@@ -1,8 +1,3 @@
-import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { check, judge, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
 import { createApps } from '../world/apps.ts';
@@ -34,10 +29,14 @@ const detours = new Set([
 ]);
 
 function turns(run: Run) {
-  const asked = run.messages.filter((message) => message.role === 'user');
+  const asked = requests.map(
+    (request) =>
+      run.messages.find((message) => message.role === 'user' && message.text === request.text)
+        ?.at ?? Infinity,
+  );
   return requests.map((request, index) => {
-    const start = asked[index]?.at ?? Infinity;
-    const end = asked[index + 1]?.at ?? Infinity;
+    const start = asked[index];
+    const end = asked[index + 1] ?? Infinity;
     const replies = run.messages.filter(
       (message) => message.role === 'assistant' && message.at >= start && message.at < end,
     );
@@ -50,15 +49,62 @@ function turns(run: Run) {
   });
 }
 
-function faststart(bytes: Buffer) {
-  for (let offset = 0; offset + 8 <= bytes.length;) {
-    const size = bytes.readUInt32BE(offset);
-    const type = bytes.toString('latin1', offset + 4, offset + 8);
-    if (type === 'moov') return true;
-    if (type === 'mdat' || size < 8) return false;
+interface Box {
+  type: string;
+  start: number;
+  end: number;
+}
+
+function boxes(bytes: Buffer, start = 0, end = bytes.length) {
+  const found: Box[] = [];
+  for (let offset = start; offset + 8 <= end;) {
+    const large = bytes.readUInt32BE(offset) === 1;
+    const header = large ? 16 : 8;
+    const size = large
+      ? Number(bytes.readBigUInt64BE(offset + 8))
+      : bytes.readUInt32BE(offset) || end - offset;
+    if (size < header || offset + size > end) break;
+    found.push({
+      type: bytes.toString('latin1', offset + 4, offset + 8),
+      start: offset + header,
+      end: offset + size,
+    });
     offset += size;
   }
-  return false;
+  return found;
+}
+
+function inside(bytes: Buffer, box: Box | undefined, path: string[]) {
+  return path.reduce<Box | undefined>(
+    (current, type) =>
+      current && boxes(bytes, current.start, current.end).find((item) => item.type === type),
+    box,
+  );
+}
+
+function describe(bytes: Buffer) {
+  const top = boxes(bytes);
+  const moov = top.find((box) => box.type === 'moov');
+  const entries = boxes(bytes, moov?.start, moov?.end)
+    .filter((box) => box.type === 'trak')
+    .map((trak) => {
+      const stsd = inside(bytes, trak, ['mdia', 'minf', 'stbl', 'stsd']);
+      return stsd && boxes(bytes, stsd.start + 8, stsd.end)[0];
+    })
+    .filter((entry): entry is Box => Boolean(entry));
+  const video = entries.find((entry) =>
+    ['avc1', 'avc3', 'hvc1', 'hev1', 'vp09', 'av01', 'mp4v'].includes(entry.type),
+  );
+  const avc = video?.type.startsWith('avc')
+    ? boxes(bytes, video.start + 78, video.end).find((box) => box.type === 'avcC')
+    : undefined;
+  return {
+    faststart: Boolean(moov) && top.indexOf(moov!) < top.findIndex((box) => box.type === 'mdat'),
+    video: video?.type,
+    profile: avc ? bytes[avc.start + 1] : undefined,
+    audio: entries.find((entry) => ['mp4a', 'Opus', 'ac-3', 'ec-3', 'fLaC'].includes(entry.type))
+      ?.type,
+  };
 }
 
 async function playable(run: Run, path: string) {
@@ -66,32 +112,14 @@ async function playable(run: Run, path: string) {
   const found = run.files.find((file) => file === path || file.endsWith(`/${relative}`));
   const bytes = found && (await run.read(found));
   if (!bytes) return `${path} is missing`;
-  if (!path.endsWith('.mp4') || bytes.length > 15 * 1024 * 1024 || !faststart(bytes))
+  const file = describe(bytes);
+  if (!path.endsWith('.mp4') || bytes.length > 15 * 1024 * 1024 || !file.faststart)
     return `${path} is not a fast-start MP4 within 15 MB`;
-  const directory = await mkdtemp(join(tmpdir(), 'otto-video-'));
-  try {
-    await writeFile(join(directory, 'video.mp4'), bytes);
-    const { stdout } = await promisify(execFile)('ffprobe', [
-      '-v',
-      'error',
-      '-show_entries',
-      'stream=codec_type,codec_name,pix_fmt',
-      '-of',
-      'json',
-      join(directory, 'video.mp4'),
-    ]);
-    const streams: Array<{ codec_type: string; codec_name: string; pix_fmt?: string }> =
-      JSON.parse(stdout).streams;
-    const video = streams.find((stream) => stream.codec_type === 'video');
-    const audio = streams.find((stream) => stream.codec_type === 'audio');
-    return video?.codec_name === 'h264' &&
-      video.pix_fmt === 'yuv420p' &&
-      (!audio || audio.codec_name === 'aac')
-      ? undefined
-      : `${path} is ${video?.codec_name}/${audio?.codec_name ?? 'silent'}`;
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  return file.video?.startsWith('avc') &&
+    [66, 77, 88, 100].includes(file.profile ?? 0) &&
+    (!file.audio || file.audio === 'mp4a')
+    ? undefined
+    : `${path} is ${file.video ?? 'no video'} profile ${file.profile ?? '-'} with ${file.audio ?? 'no audio'}`;
 }
 
 export default scenario({

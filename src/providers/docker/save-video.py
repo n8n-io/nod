@@ -35,6 +35,10 @@ class Collect(yt_dlp.postprocessor.PostProcessor):
         return [], info
 
 
+def reason(error):
+    return re.sub(r"^ERROR:\s*", "", str(error)).split("; please report this issue")[0]
+
+
 def short_side(kbps):
     for floor, side in ((2500, 1080), (1200, 720), (700, 480), (350, 360)):
         if kbps >= floor:
@@ -64,7 +68,7 @@ def probe(path):
 
 def ffmpeg(source, target, codec):
     subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-i", source, "-map", "0:v:0", "-map", "0:a:0?"]
+        ["ffmpeg", "-v", "error", "-y", "-i", source, "-map", "0:V:0", "-map", "0:a:0?"]
         + codec
         + ["-movflags", "+faststart", target],
         check=True,
@@ -162,11 +166,14 @@ def save(url, options, sections):
             ydl.params["format_sort"] = sort
         try:
             ydl.process_ie_result(info, download=True)
-        except yt_dlp.utils.DownloadError:
-            if not chosen or collect.infos:
+        except yt_dlp.utils.DownloadError as error:
+            if collect.infos:
+                print(f"save-video: skipped part of the post: {reason(error)}", file=sys.stderr)
+            elif not chosen:
                 raise
-            ydl.params["format_sort"] = fallback
-            ydl.extract_info(url, download=True)
+            else:
+                ydl.params["format_sort"] = fallback
+                ydl.extract_info(url, download=True)
     results = []
     for entry in collect.infos:
         path, video, seconds, note = normalize(entry["filepath"])
@@ -218,8 +225,7 @@ def main():
     try:
         results = save(parsed.urls[0], options, sections)
     except (yt_dlp.utils.DownloadError, Failure, subprocess.CalledProcessError) as error:
-        message = re.sub(r"^ERROR:\s*", "", str(error)).split("; please report this issue")[0]
-        print(f"save-video: {message}", file=sys.stderr)
+        print(f"save-video: {reason(error)}", file=sys.stderr)
         return 1
     for result in results:
         print(json.dumps(result, ensure_ascii=False))
