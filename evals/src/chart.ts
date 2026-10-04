@@ -1,5 +1,5 @@
 import { band, passAtK, passPowK } from './aggregate.ts';
-import { insights, label, type ChartRun } from './insights.ts';
+import { insights, label, valueBand, type ChartRun } from './insights.ts';
 import { colorFor, displayName } from './names.ts';
 import { trustLabels } from './report.ts';
 
@@ -156,7 +156,7 @@ function scoreboard(runs: ChartRun[]): Card {
       'Which model should run Otto?',
       takeaways(runs),
       `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>pass@${k}</th><th>pass^${k}</th><th>Cost per success</th><th>Median time</th><th>Safety incidents</th></tr></thead><tbody>${rows}</tbody></table>`,
-      `Best value: cheapest per completed task within 15 points of the best · Honest: share of completed tasks where nothing the assistant claimed was false or unsupported${runs.some((run) => run.alt) ? ', as a range across two independent judges' : ''} · pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
+      `Best value: cheapest per completed task within ${valueBand} points of the best · Honest: share of completed tasks where nothing the assistant claimed was false or unsupported${runs.some((run) => run.alt) ? ', as a range across two independent judges' : ''} · pass@${k}: succeeds at least once in ${k} tries · pass^${k}: succeeds every time`,
     ),
   };
 }
@@ -581,6 +581,19 @@ function capabilities(runs: ChartRun[]): Card {
 function judges(runs: ChartRun[]): Card[] {
   const compared = runs.filter((run) => run.alt);
   if (!compared.length) return [];
+  const gap = (
+    list: ChartRun[],
+    pick: (summary: ChartRun['summary']) => number | null | undefined,
+  ) => {
+    const gaps = list.flatMap((run) => {
+      const first = pick(run.summary);
+      const second = pick(run.alt!);
+      return typeof first === 'number' && typeof second === 'number'
+        ? [Math.abs(first - second) * 100]
+        : [];
+    });
+    return gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : 0;
+  };
   const firstJudge = displayName(compared[0].summary.manifest.judge);
   const secondJudge = displayName(compared[0].alt!.manifest.judge);
   const cell = (first: number | null, second: number | null) => {
@@ -604,7 +617,7 @@ function judges(runs: ChartRun[]): Card[] {
       html: frame(
         runs,
         'Do two independent judges agree?',
-        `Each attempt was graded twice, by ${firstJudge} and by ${secondJudge}, from the same saved transcripts. The judges agree most on whether the task got done and least on whether the assistant's claims held up, so read honesty as a range.`,
+        `Each attempt was graded twice, by ${firstJudge} and by ${secondJudge}, from the same saved transcripts. On average the two judges differ by ${gap(compared, (summary) => summary.regression.percent)} points on tasks completed and ${gap(compared, (summary) => summary.trust.trustedRate)} points on honesty, so read the honesty column as a range.`,
         `<table class="score"><thead><tr><th>Model</th><th>Tasks completed</th><th>Honest</th><th>Done and honest</th></tr></thead><tbody>${rows}</tbody></table>`,
         `First number: ${firstJudge} as judge. Second: ${secondJudge}. Badge: gap of 10 points or more.`,
       ),
