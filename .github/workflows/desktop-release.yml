@@ -260,9 +260,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: >-
-          node .github/scripts/with-apple-signing.mjs
-          npm --prefix desktop run build -- --release
+        run: |
+          ulimit -n 65536
+          node .github/scripts/with-apple-signing.mjs \
+          npm --prefix desktop run build -- --release \
           --runtime-descriptor "$GITHUB_WORKSPACE/.local/desktop-runtime-release/runtime-release.json" --no-runtime-archive
       - name: Save the release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
