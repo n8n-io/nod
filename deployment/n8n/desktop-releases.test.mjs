@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import { createDesktopUpdater, createUpdateSource } from '../../desktop/main/updates.mjs';
 import {
@@ -246,6 +248,67 @@ test('N8ND-REDIRECT: archive resolution exposes only an exact HTTPS GitHub downl
   );
 });
 
+test('N8ND-METADATA200: bounded JSON bytes and digest are verified before direct delivery', () => {
+  const body = JSON.stringify({ name: 'Otto \u00e1', version: '0.2.0' });
+  const digest = (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
+  const metadataAsset = {
+    ...asset(101, 'release.json'),
+    size: Buffer.byteLength(body),
+    digest: digest(body),
+  };
+  const input = { params: { releaseId: '42', assetId: '101', filename: 'release.json' } };
+  const plan = read(release({ assets: [metadataAsset] }), input);
+  assert.deepEqual(checkRedirect({ statusCode: 200, body }, plan.metadata), {
+    status: 200,
+    body: JSON.parse(body),
+  });
+  assert.equal(plan.metadata.bytes, Buffer.byteLength(body));
+  assert.equal(plan.metadata.digest, digest(body));
+  const nodes = workflowNodes();
+  const method = (value) =>
+    new Function(
+      '$json',
+      `return ${nodes.find((entry) => entry.name === 'Read GitHub asset redirect').parameters.method.slice(3, -2)}`,
+    )(value);
+  assert.equal(method(plan), 'GET');
+  const code = nodes.find((entry) => entry.name === 'Check GitHub redirect').parameters.jsCode;
+  const execute = (response, request = plan) =>
+    new Function('$input', '$', 'require', code)(
+      { first: () => ({ json: response }) },
+      () => ({ first: () => ({ json: request }) }),
+      createRequire(import.meta.url),
+    )[0].json;
+  assert.deepEqual(execute({ statusCode: 200, body }).body, JSON.parse(body));
+  for (const response of [
+    { statusCode: 200, body: `${body} ` },
+    { statusCode: 200, body: body.replace('0.2.0', '0.9.0') },
+    { statusCode: 200, body: JSON.parse(body) },
+  ])
+    assert.equal(execute(response).status, 503);
+  assert.equal(
+    execute({ statusCode: 200, body: '{' }, { metadata: { bytes: 1, digest: digest('{') } }).status,
+    503,
+  );
+  const archive = read(release(), {
+    params: { releaseId: '42', assetId: '102', filename: 'Otto-Preview-arm64.zip' },
+  });
+  assert.equal(method(archive), 'HEAD');
+  assert.equal(execute({ statusCode: 200, body }, archive).status, 503);
+  const oversized = read(
+    release({ assets: [{ ...metadataAsset, size: 2 * 1024 * 1024 + 1 }] }),
+    input,
+  );
+  assert.equal(oversized.status, 503);
+  assert.equal(oversized.assetUrl, undefined);
+  assert.equal(
+    execute({
+      statusCode: 302,
+      headers: { location: 'https://release-assets.githubusercontent.com/fixture/metadata' },
+    }).status,
+    302,
+  );
+});
+
 test('N8ND-CONFIG: actual embedded request pipeline gates credentialed metadata and HEAD requests', () => {
   const nodes = workflowNodes();
   const requestNode = nodes.find((entry) => entry.name === 'Check desktop request');
@@ -265,10 +328,6 @@ test('N8ND-CONFIG: actual embedded request pipeline gates credentialed metadata 
     assert.equal(entry.parameters.options.sendCredentialsOnCrossOriginRedirect, false);
     assert.equal(entry.parameters.authentication, 'predefinedCredentialType');
   }
-  assert.equal(
-    nodes.find((entry) => entry.name === 'Read GitHub asset redirect').parameters.method,
-    'HEAD',
-  );
   assert.equal(settings.saveDataErrorExecution, 'none');
   assert.equal(settings.saveDataSuccessExecution, 'none');
   assert.equal(settings.saveManualExecutions, false);

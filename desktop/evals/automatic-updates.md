@@ -25,3 +25,9 @@ One case passes only when all of its applicable checks pass in the same attempt.
 | UPD-CLEANUP  | Both native cases | Owned application processes stop, local server closes, and the temporary keychain and fixture files are removed.                             | Cleanup receipt; code.                                           |
 
 The native fixtures establish Electron/Squirrel signing, installation and relaunch behavior with the pinned framework. They do not prove the full Otto UI, live n8n/PAT access, model/account behavior, notarized distribution, or a fresh user’s Gatekeeper experience. The restart/runtime/delivery contract cases cover the production orchestration separately. A real update from one released Otto version to the next remains a distinct receiving-user acceptance check; version 0.1.0 has no updater and requires a manual first upgrade.
+
+## Native result
+
+The first [macOS acceptance run](https://github.com/n8n-io/otto/actions/runs/37220336375) passed both frozen cases on 2026-10-04. Tested PR merge commit: `3ce8a8ca15de161151779416160329be64b7cd3d`, containing updater head `8d22e3ab922b1d8acb1add7386b1b0cd0794095b`. Fixture SHA-256: `79ef4d2f3d2a3c7f9333d4936418114a35d111fa1fd63f84c5a0069f30e65268`.
+
+The correctly signed ZIP was requested, installed and relaunched as 1.0.1 at the original application path with identical saved profile bytes. The different-signer ZIP was requested and rejected by the native signature requirement; version 1.0.0 and its saved profile remained intact. Scope and cleanup checks passed in the same attempt. The run used Electron 44.5.0 on a disposable macOS runner and took 167 seconds including fixture packaging. The downloaded JSON receipt is retained under ignored `.local/desktop-update-validation/native-8d22e3a/` and in that run's `native-update-acceptance` artifact.

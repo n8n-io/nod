@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export const base = 'https://internal.users.n8n.cloud/webhook/otto-desktop';
 
 export function checkRequest(input) {
@@ -186,10 +188,17 @@ export function releaseResponse(pages, request, baseUrl) {
     if (request.operation === 'metadata') return { status: 200, body: release };
     const asset = release.assets.find((entry) => entry.id === request.assetId);
     if (!asset) return missing();
-    if (request.operation === 'asset')
-      return asset.name === request.filename
-        ? { assetUrl: `https://api.github.com/repos/n8n-io/otto/releases/assets/${asset.id}` }
-        : missing();
+    if (request.operation === 'asset') {
+      if (asset.name !== request.filename) return missing();
+      const result = {
+        assetUrl: `https://api.github.com/repos/n8n-io/otto/releases/assets/${asset.id}`,
+      };
+      if (['release.json', 'runtime-release.json', 'update.json'].includes(asset.name)) {
+        if (asset.size > 2 * 1024 * 1024) return unavailable();
+        result.metadata = { bytes: asset.size, digest: asset.digest };
+      }
+      return result;
+    }
     if (
       request.operation !== 'feed' ||
       !desktopTag(release.tag_name) ||
@@ -211,11 +220,29 @@ export function releaseResponse(pages, request, baseUrl) {
   }
 }
 
-export function checkRedirect(response) {
+export function checkRedirect(response, metadata) {
   const unavailable = () => ({
     status: 503,
     body: { error: 'Desktop downloads are unavailable. Try again later.' },
   });
+  if (response?.statusCode === 200) {
+    if (
+      !metadata ||
+      !Number.isSafeInteger(metadata.bytes) ||
+      metadata.bytes < 1 ||
+      metadata.bytes > 2 * 1024 * 1024 ||
+      typeof response.body !== 'string' ||
+      response.body.length > 2 * 1024 * 1024 ||
+      Buffer.byteLength(response.body) !== metadata.bytes ||
+      `sha256:${createHash('sha256').update(response.body).digest('hex')}` !== metadata.digest
+    )
+      return unavailable();
+    try {
+      return { status: 200, body: JSON.parse(response.body) };
+    } catch {
+      return unavailable();
+    }
+  }
   if (
     !response ||
     response.statusCode !== 302 ||
@@ -363,7 +390,7 @@ export function workflowNodes() {
         language: 'javaScript',
         jsCode: `return [{json:(${releaseResponse.toString()})($input.all().map(item=>item.json),$('Check desktop request').first().json,${JSON.stringify(base)})}];`,
       },
-      output: [{ json: { status: 200, body: [], assetUrl: '' } }],
+      output: [{ json: { status: 200, body: [], assetUrl: '', metadata: null } }],
     },
     {
       name: 'Resolve asset redirect',
@@ -379,7 +406,7 @@ export function workflowNodes() {
       credentials,
       onError: 'continueRegularOutput',
       parameters: {
-        method: 'HEAD',
+        method: "={{ $json.metadata ? 'GET' : 'HEAD' }}",
         url: '={{ $json.assetUrl }}',
         authentication: 'predefinedCredentialType',
         nodeCredentialType: 'githubApi',
@@ -416,7 +443,7 @@ export function workflowNodes() {
       parameters: {
         mode: 'runOnceForAllItems',
         language: 'javaScript',
-        jsCode: `return [{json:(${checkRedirect.toString()})($input.first().json)}];`,
+        jsCode: `const {createHash}=require('crypto'); return [{json:(${checkRedirect.toString()})($input.first().json,$('Build desktop response').first().json.metadata)}];`,
       },
       output: [
         {
