@@ -51,7 +51,7 @@ The app and DMG contain no provider keys. A local, one-time development import c
 - This locally built preview is ad-hoc signed. It is not notarized or ready for public distribution. A public DMG needs Apple Developer ID signing and notarization.
 - macOS can request Keychain approval after the preview is re-signed. Approve that request in the OS dialog; never put the Mac password in Otto chat.
 - First installation exposed an intermittent guest login-service delay; the measured first setup took about five minutes. See the [validation record](VALIDATION.md) for measured restart behavior and remaining checks.
-- No automatic updates, cloud migration, multi-device synchronization, or idle-computer suspension yet.
+- Version 0.1.0 requires a manual first upgrade to an updater-enabled build. Cloud migration, multi-device synchronization and idle-computer suspension are not implemented.
 - The first runtime installation remains large. This preview ships a companion archive until a real release-download endpoint is available; the app does not point to a placeholder URL. Old runtime versions are retained; automatic cache eviction is not implemented.
 - Direct webhook delivery to a laptop is not provided. External channels that need a publicly reachable callback require a later relay or server deployment.
 - The preview uses isolated test identity and data. Optional provider and integration setup still depends on the provider's API permissions and configuration.
@@ -59,6 +59,8 @@ The app and DMG contain no provider keys. A local, one-time development import c
 ## Release automation
 
 The [release guide](RELEASING.md) describes the version/changelog PR, signed release workflow, required GitHub environment, runtime reuse, and acceptance gates. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The installed development preview below remains ad-hoc signed.
+
+Updater-enabled builds check at startup and through **Check for Updates…**. Otto verifies the matching runtime before staging the signed application, then offers **Restart** or **Later**. Restart waits for active work and unfinished input. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); live delivery requires the saved GitHub credential's repository access.
 
 ## Building the experiment
 
