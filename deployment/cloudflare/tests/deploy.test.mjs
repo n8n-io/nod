@@ -66,8 +66,15 @@ function configuration(computers = true) {
 
 function deploy(environment, environmentVariables, dependencies) {
   return deployRelease(environment, environmentVariables, {
-    request: async () => workerSettings(),
     ...dependencies,
+    request: async (url, options) => {
+      if (url.endsWith('/containers/image-preparations'))
+        return Response.json({
+          success: true,
+          result: { image: JSON.parse(options.body).image, status: 'ready' },
+        });
+      return dependencies.request?.(url, options) ?? workerSettings();
+    },
   });
 }
 
@@ -490,6 +497,164 @@ test('deployment publishes all images before uploading code and secrets, cleans 
   assert.equal(reports.join(' ').includes('synthetic'), false);
   await assert.rejects(stat(temporaryConfig), { code: 'ENOENT' });
   await assert.rejects(stat(secretPath), { code: 'ENOENT' });
+});
+
+test('pending image preparation keeps admission open until every unique pinned image is ready', async () => {
+  const images = [
+    `registry.cloudflare.com/${accountId}/otto-production@sha256:${'d'.repeat(64)}`,
+    `registry.cloudflare.com/${accountId}/otto-production-browser@sha256:${'d'.repeat(64)}`,
+    `registry.cloudflare.com/${accountId}/otto-production-workspace@sha256:${'d'.repeat(64)}`,
+  ];
+  const ready = new Set();
+  const calls = new Map();
+  const events = [];
+  let elapsed = 0;
+  const control = lifecycle(events);
+  control.prepare = async () => {
+    assert.deepEqual([...ready].sort(), [...images].sort());
+    events.push('prepare');
+  };
+  await deployRelease('production', variables, {
+    config: configuration(),
+    deploymentControl: control,
+    imageDigest,
+    report() {},
+    now: () => elapsed,
+    wait: async (duration) => {
+      assert.equal(events.includes('prepare'), false);
+      assert.equal(events.includes('deploy'), false);
+      elapsed += duration;
+    },
+    command: async (args) => {
+      events.push(args[0] === 'deploy' ? 'deploy' : 'push');
+    },
+    request: async (url, options) => {
+      if (url.endsWith('/workers/scripts/otto/settings')) return workerSettings();
+      assert.equal(
+        url,
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/containers/image-preparations`,
+      );
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.authorization, `Bearer ${variables.CLOUDFLARE_API_TOKEN}`);
+      assert.equal(options.headers['content-type'], 'application/json');
+      assert.equal(options.redirect, 'error');
+      assert.equal(options.cache, 'no-store');
+      assert.ok(options.signal instanceof AbortSignal);
+      const { image } = JSON.parse(options.body);
+      assert.ok(images.includes(image));
+      assert.deepEqual(JSON.parse(options.body), { image });
+      assert.equal(events.includes('prepare'), false);
+      const count = (calls.get(image) ?? 0) + 1;
+      calls.set(image, count);
+      const prepared = count >= images.indexOf(image) + 1;
+      if (prepared) ready.add(image);
+      return Response.json(
+        { success: true, result: { image, status: prepared ? 'ready' : 'pending' } },
+        { status: prepared ? 200 : 202 },
+      );
+    },
+    smoke: async () => events.push('smoke'),
+  });
+  assert.deepEqual(
+    [...calls],
+    images.map((image, index) => [image, index + 1]),
+  );
+  assert.deepEqual(events, [
+    'push',
+    'push',
+    'push',
+    'prepare',
+    'activate',
+    'deploy',
+    'verifyRollouts',
+    'smoke',
+    'initialize',
+    'complete',
+  ]);
+  assert.ok(elapsed > 0 && elapsed < 15 * 60_000);
+});
+
+test('unavailable image preparation cannot close admission or publish Worker code', async (t) => {
+  const prepared = (image, changes = {}) => ({
+    success: true,
+    result: { image, status: 'ready', ...changes },
+  });
+  for (const [name, response] of [
+    ['terminal error', (image) => Response.json(prepared(image, { status: 'error' }))],
+    ['unknown status', (image) => Response.json(prepared(image, { status: 'unknown' }))],
+    ['missing status', (image) => Response.json(prepared(image, { status: undefined }))],
+    ['foreign image', () => Response.json(prepared('registry.cloudflare.com/foreign'))],
+    ['missing result', () => Response.json({ success: true })],
+    ['failed envelope', (image) => Response.json({ ...prepared(image), success: false })],
+    [
+      'nonempty errors',
+      (image) => Response.json({ ...prepared(image), errors: [{ message: 'private-api-error' }] }),
+    ],
+    ['denied', () => new Response('private-api-error', { status: 403 })],
+    [
+      'redirect',
+      () => new Response(null, { status: 302, headers: { location: 'https://foreign.test/' } }),
+    ],
+    ['accepted but not ready', (image) => Response.json(prepared(image), { status: 202 })],
+    ['invalid JSON', () => new Response('private-invalid-json')],
+    [
+      'oversized declared body',
+      (image) => Response.json(prepared(image), { headers: { 'content-length': '8193' } }),
+    ],
+    [
+      'oversized streamed body',
+      (image) => Response.json(prepared(image, { reason: 'x'.repeat(8192) })),
+    ],
+    ['empty body', () => new Response(null)],
+    [
+      'network failure',
+      () => {
+        throw new Error('private-network-error');
+      },
+    ],
+    [
+      'pending past deadline',
+      (image) => Response.json(prepared(image, { status: 'pending' }), { status: 202 }),
+    ],
+  ]) {
+    await t.test(name, async () => {
+      const events = [];
+      let elapsed = 0;
+      let requests = 0;
+      await assert.rejects(
+        deployRelease('production', variables, {
+          config: configuration(),
+          deploymentControl: lifecycle(events),
+          imageDigest,
+          report() {},
+          now: () => elapsed,
+          wait: async (duration) => {
+            assert.equal(events.includes('prepare'), false);
+            elapsed += duration;
+          },
+          command: async (args) => events.push(args[0] === 'deploy' ? 'deploy' : 'push'),
+          request: async (url, options) => {
+            assert.ok(url.endsWith('/containers/image-preparations'));
+            requests += 1;
+            return response(JSON.parse(options.body).image);
+          },
+          smoke: async () => assert.fail('An unprepared image must not reach smoke checks.'),
+        }),
+        (error) => {
+          assert.equal(/private-|synthetic-cloudflare-credential/.test(error.message), false);
+          return true;
+        },
+      );
+      assert.deepEqual(events, ['push', 'push', 'push', 'abort']);
+      if (name === 'pending past deadline') {
+        assert.equal(elapsed, 15 * 60_000);
+        assert.ok(requests > 3);
+      } else {
+        assert.equal(elapsed, 0);
+        assert.equal(requests, 1);
+      }
+    });
+  }
 });
 
 test('changed gateway configuration cannot publish Worker secrets under the running release', async () => {

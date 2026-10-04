@@ -3,11 +3,75 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
 import ts from 'typescript';
 import { verifyDeployment } from './smoke.mjs';
 import { createDeploymentClient, inspectImageDigest, pinDeploymentImages } from './drain.mjs';
 
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+async function apiResult(response, limit = 512 * 1024) {
+  if (!response.body) throw new Error();
+  const length = response.headers.get('content-length');
+  if (length !== null && (!/^\d+$/.test(length) || Number(length) > limit)) throw new Error();
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.byteLength;
+    if (size > limit) throw new Error();
+    chunks.push(chunk);
+  }
+  const value = JSON.parse(
+    new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)),
+  );
+  if (
+    value?.success !== true ||
+    (value.errors !== undefined && (!Array.isArray(value.errors) || value.errors.length !== 0))
+  )
+    throw new Error();
+  return value.result;
+}
+
+async function prepareImages(
+  plan,
+  environment,
+  token,
+  { request = fetch, now = Date.now, wait = sleep } = {},
+) {
+  const pending = new Set(plan.config.env[environment].containers.map(({ image }) => image));
+  const deadline = now() + 15 * 60_000;
+  try {
+    while (pending.size) {
+      for (const image of pending) {
+        const remaining = deadline - now();
+        if (remaining <= 0) throw new Error();
+        const response = await request(
+          `https://api.cloudflare.com/client/v4/accounts/${plan.config.account_id}/containers/image-preparations`,
+          {
+            method: 'POST',
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ image }),
+            cache: 'no-store',
+            redirect: 'error',
+            signal: AbortSignal.timeout(Math.min(10_000, remaining)),
+          },
+        );
+        if (![200, 202].includes(response.status)) throw new Error();
+        const result = await apiResult(response, 8192);
+        if (now() >= deadline || result?.image !== image) throw new Error();
+        if (result.status === 'ready' && response.status === 200) pending.delete(image);
+        else if (result.status !== 'pending') throw new Error();
+      }
+      if (pending.size) {
+        const remaining = deadline - now();
+        if (remaining <= 0) throw new Error();
+        await wait(Math.min(2000, remaining));
+      }
+    }
+  } catch {
+    throw new Error('Cloudflare container images are not ready for deployment.');
+  }
+}
 
 function storageTarget(config, environment) {
   const selected = config.env?.[environment];
@@ -41,28 +105,10 @@ export async function verifyStorageBinding(plan, environment, token, request = f
         signal: AbortSignal.timeout(10_000),
       },
     );
-    if (response.status !== 200 || !response.body) throw new Error();
-    const length = response.headers.get('content-length');
-    const limit = 512 * 1024;
-    if (length !== null && (!/^\d+$/.test(length) || Number(length) > limit)) throw new Error();
-    const chunks = [];
-    let size = 0;
-    for await (const chunk of response.body) {
-      size += chunk.byteLength;
-      if (size > limit) throw new Error();
-      chunks.push(chunk);
-    }
-    const settings = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)),
-    );
-    if (
-      settings?.success !== true ||
-      (settings.errors !== undefined &&
-        (!Array.isArray(settings.errors) || settings.errors.length !== 0)) ||
-      !Array.isArray(settings.result?.bindings)
-    )
-      throw new Error();
-    const bindings = settings.result.bindings.filter((binding) => binding?.name === 'TENANT_FILES');
+    if (response.status !== 200) throw new Error();
+    const settings = await apiResult(response);
+    if (!Array.isArray(settings?.bindings)) throw new Error();
+    const bindings = settings.bindings.filter((binding) => binding?.name === 'TENANT_FILES');
     if (
       bindings.length !== 1 ||
       bindings[0].type !== 'r2_bucket' ||
@@ -296,6 +342,8 @@ export async function deploy(environment, variables = process.env, dependencies 
     report('Verifying the published image digests.');
     await pinDeploymentImages(plan, environment, childEnvironment, digest);
     await writeFile(configPath, JSON.stringify(plan.config), { mode: 0o600 });
+    report('Waiting for Cloudflare container images to be ready.');
+    await prepareImages(plan, environment, variables.CLOUDFLARE_API_TOKEN, dependencies);
     report('Pausing admission and waiting for clean tenant checkpoints.');
     await lifecycle.prepare();
     await lifecycle.activate();
