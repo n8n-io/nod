@@ -64,6 +64,17 @@ if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
 if (signed && version !== configuration.version)
   throw new Error('Prepare the desktop package version before its signed release.');
 configuration.version = version;
+const repository = process.env.GITHUB_REPOSITORY || 'n8n-io/otto';
+if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository))
+  throw new Error('The desktop release repository is invalid.');
+const updateSourceUrl = process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL;
+if (updateSourceUrl) {
+  if (!URL.canParse(updateSourceUrl))
+    throw new Error('The desktop update source must be a credential-free HTTPS URL.');
+  const url = new URL(updateSourceUrl);
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+    throw new Error('The desktop update source must be a credential-free HTTPS URL.');
+}
 const electronVersion = configuration.devDependencies.electron;
 let release;
 let minimumSystemVersion;
@@ -141,6 +152,7 @@ configuration.ottoBuild = {
   builtAt: new Date().toISOString(),
   modified: Boolean(await run('/usr/bin/git', ['-C', root, 'status', '--porcelain'])),
   ...(release ? { runtime: release.id } : {}),
+  ...(updateSourceUrl ? { updateSourceUrl } : {}),
 };
 delete configuration.devDependencies;
 delete configuration.scripts;
@@ -224,6 +236,19 @@ if (signing) {
 }
 await verifyApplicationRuntime(application, electronVersion);
 console.log(`Application ready: ${application}`);
+const updateArchive = join(output, full ? 'Otto-Preview-full-arm64.zip' : 'Otto-Preview-arm64.zip');
+await rm(updateArchive, { force: true });
+await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, updateArchive], {
+  timeout: 10 * 60_000,
+});
+await run('/usr/bin/unzip', ['-tq', updateArchive], { timeout: 10 * 60_000 });
+if ((await stat(updateArchive)).size >= 2 * 1024 ** 3)
+  throw new Error('The application ZIP exceeds GitHub’s per-asset release limit.');
+const update = {
+  file: basename(updateArchive),
+  bytes: (await stat(updateArchive)).size,
+  sha256: await assetHash(updateArchive),
+};
 const diskStage = join(stage, 'disk');
 await mkdir(diskStage, { recursive: true });
 await run('/bin/cp', ['-cR', application, join(diskStage, 'Otto Preview.app')]);
@@ -278,7 +303,22 @@ const disk = {
   sha256: await assetHash(diskImage),
 };
 await writeFile(`${diskImage}.sha256`, `${disk.sha256}  ${disk.file}\n`);
-await writeFile(join(output, 'SHA256SUMS'), `${disk.sha256}  ${disk.file}\n`);
+await writeFile(
+  join(output, 'SHA256SUMS'),
+  `${disk.sha256}  ${disk.file}\n${update.sha256}  ${update.file}\n`,
+);
+await writeFile(
+  join(output, 'update.json'),
+  JSON.stringify(
+    {
+      url: `https://github.com/${repository}/releases/download/desktop-v${version}/${update.file}`,
+      name: `Otto ${version}`,
+      pub_date: configuration.ottoBuild.builtAt.replace(/\.\d{3}Z$/, 'Z'),
+    },
+    null,
+    2,
+  ) + '\n',
+);
 if (release) {
   await copy(runtimeRelease, join(output, 'runtime-release.json'));
   if ((await assetHash(join(output, 'runtime-release.json'))) !== (await assetHash(runtimeRelease)))
@@ -301,6 +341,7 @@ await writeFile(
       nativeBinaries,
       cdHash: detail.match(/^CDHash=(\w+)/m)?.[1],
       disk,
+      update,
       runtime: release
         ? {
             fingerprint: release.fingerprint,

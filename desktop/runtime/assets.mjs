@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { isDeepStrictEqual } from 'node:util';
 import { createGunzip } from 'node:zlib';
 import { extract } from 'tar';
 
@@ -54,7 +55,12 @@ export async function runtimeRelease(resourcesPath) {
     if (error.code === 'ENOENT') return undefined;
     throw new Error('The Otto runtime release information is damaged. Reinstall this app.');
   }
+  return validateRuntimeRelease(release);
+}
+
+export function validateRuntimeRelease(release) {
   if (
+    !release ||
     release.version !== 1 ||
     release.platform !== 'darwin-arm64' ||
     !hashPattern.test(release.id) ||
@@ -84,6 +90,8 @@ export async function runtimeRelease(resourcesPath) {
   }
   if (total > maximumBytes || criticalFiles.some((path) => !paths.has(path)))
     throw new Error('The Otto runtime file manifest is incomplete.');
+  if (createHash('sha256').update(JSON.stringify(release.files)).digest('hex') !== release.id)
+    throw new Error('The Otto runtime content identifier does not match its files.');
   if (release.url) {
     const url = new URL(release.url);
     if (url.protocol !== 'https:' || url.username || url.password)
@@ -123,8 +131,8 @@ async function verifiedCache(release, signal, cacheRoot) {
   }
 }
 
-export async function findRuntimeAssets({ resourcesPath, signal, cacheRoot }) {
-  const release = await runtimeRelease(resourcesPath);
+export async function findRuntimeAssets({ resourcesPath, signal, cacheRoot, release: supplied }) {
+  const release = supplied ? validateRuntimeRelease(supplied) : await runtimeRelease(resourcesPath);
   if (release) return verifiedCache(release, signal, cacheRoot);
   for (const root of [
     process.env.OTTO_RUNTIME_ASSETS,
@@ -246,8 +254,9 @@ export async function installRuntimeArchive({
   signal,
   cacheRoot,
   inspectDisk,
+  release: supplied,
 }) {
-  const release = await runtimeRelease(resourcesPath);
+  const release = supplied ? validateRuntimeRelease(supplied) : await runtimeRelease(resourcesPath);
   if (!release) throw new Error('This build has no managed runtime release.');
   const key = runtimeCacheRoot(release, cacheRoot);
   if (pending.has(key)) return pending.get(key);
@@ -318,14 +327,21 @@ async function downloadRuntime(release, options) {
     ...(signal ? [signal] : []),
     AbortSignal.timeout(30 * 60_000),
   ]);
-  let url = release.url;
+  let url = options.downloadUrl || release.url;
+  const address = new URL(url);
+  if (address.protocol !== 'https:' || address.username || address.password)
+    throw new Error('The Otto runtime download address is invalid.');
   try {
     downloadSignal.throwIfAborted();
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await requireDiskSpace(release, directory, inspectDisk, true);
     let response;
     for (let redirects = 0; redirects <= 3; redirects++) {
-      response = await fetch(url, { signal: downloadSignal, redirect: 'manual' });
+      response = await (options.fetch || fetch)(url, {
+        signal: downloadSignal,
+        redirect: 'manual',
+        headers: { accept: 'application/octet-stream' },
+      });
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       const next = new URL(response.headers.get('location') || '', url);
       await response.body?.cancel();
@@ -366,6 +382,7 @@ async function downloadRuntime(release, options) {
       signal: downloadSignal,
       cacheRoot,
       inspectDisk,
+      release,
     });
   } catch (error) {
     throw installationError(error);
@@ -377,9 +394,26 @@ async function downloadRuntime(release, options) {
 export async function ensureRuntimeAssets(options) {
   const found = await findRuntimeAssets(options);
   if (found) return found;
-  const release = await runtimeRelease(options.resourcesPath);
-  if (release?.url) return downloadRuntime(release, options);
+  const release = options.release
+    ? validateRuntimeRelease(options.release)
+    : await runtimeRelease(options.resourcesPath);
+  if (release && (options.downloadUrl || release.url)) return downloadRuntime(release, options);
   throw Object.assign(new Error('Choose the Otto Runtime pack to finish setting up this Mac.'), {
     code: 'RUNTIME_ARCHIVE_REQUIRED',
   });
+}
+
+export async function prepareRuntimeUpdate(release, options) {
+  validateRuntimeRelease(release);
+  const current = await runtimeRelease(options.resourcesPath);
+  if (current?.id === release.id) {
+    if (!isDeepStrictEqual(current, release))
+      throw new Error(
+        'The update changed the installed runtime descriptor without changing its ID.',
+      );
+    const found = await verifiedCache(current, options.signal, options.cacheRoot);
+    if (!found) throw new Error('The installed runtime could not be verified.');
+    return found;
+  }
+  return ensureRuntimeAssets({ ...options, release });
 }

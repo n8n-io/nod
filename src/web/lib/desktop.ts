@@ -9,6 +9,7 @@ export type DesktopPreferences = {
 
 type DesktopWindow = Window & {
   ottoDesktop?: {
+    onPrepareUpdate?(check: () => boolean): () => void;
     openSettings(section?: 'general' | 'providers' | 'preferences'): Promise<void>;
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
@@ -31,6 +32,10 @@ type DesktopWindow = Window & {
     setChatReadCursor?(ownerId: string, threadId: string, cursor: ChatReadCursor): Promise<void>;
   };
 };
+
+export function onPrepareDesktopUpdate(check: () => boolean) {
+  return (window as DesktopWindow).ottoDesktop?.onPrepareUpdate?.(check) ?? (() => {});
+}
 
 export function desktopSettingsAvailable() {
   return typeof (window as DesktopWindow).ottoDesktop?.openSettings === 'function';

@@ -1,0 +1,48 @@
+name: Desktop update acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/scripts/with-apple-signing.mjs'
+      - '.github/workflows/desktop-updates.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-updates:
+    name: Signed update and profile preservation
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install locked desktop dependencies
+        run: npm --prefix desktop ci
+      - name: Verify native installation and signature rejection with synthetic profiles
+        run: node desktop/scripts/check-native-updates.mjs
+      - name: Clean signing material after interruption
+        if: always()
+        run: node .github/scripts/with-apple-signing.mjs --cleanup
+      - name: Save acceptance receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-update-acceptance
+          path: .local/native-update-acceptance/*.json
+          if-no-files-found: error
+          retention-days: 7

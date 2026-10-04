@@ -1,0 +1,395 @@
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import test from 'node:test';
+import { createDesktopUpdater, createUpdateSource } from '../../desktop/main/updates.mjs';
+import {
+  base,
+  checkRedirect,
+  checkRequest,
+  releaseResponse,
+  settings,
+  workflowNodes,
+} from './desktop-releases.mjs';
+
+const asset = (id, name) => ({
+  id,
+  name,
+  size: 1234,
+  state: 'uploaded',
+  digest: `sha256:${'a'.repeat(64)}`,
+  content_type: 'application/octet-stream',
+  url: 'https://untrusted.invalid/private',
+  uploader: { secret: 'synthetic-private-field' },
+});
+const release = (overrides = {}) => ({
+  id: 42,
+  tag_name: 'desktop-v0.2.0',
+  draft: false,
+  prerelease: true,
+  published_at: '2026-10-04T12:00:00Z',
+  assets: [
+    asset(101, 'release.json'),
+    asset(102, 'Otto-Preview-arm64.zip'),
+    asset(103, 'Otto-Preview-arm64.dmg'),
+  ],
+  author: { secret: 'synthetic-private-field' },
+  ...overrides,
+});
+const read = (body, input = { params: { releaseId: '42' } }) =>
+  releaseResponse([{ statusCode: 200, body }], checkRequest(input), base);
+
+test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request shapes are accepted', () => {
+  assert.equal(
+    checkRequest({}).apiUrl,
+    'https://api.github.com/repos/n8n-io/otto/releases?per_page=100',
+  );
+  assert.equal(
+    checkRequest({ params: { releaseId: '42' } }).apiUrl,
+    'https://api.github.com/repos/n8n-io/otto/releases/42',
+  );
+  const tag = `runtime-darwin-arm64-${'b'.repeat(64)}`;
+  assert.equal(
+    checkRequest({ params: { tag } }).apiUrl,
+    `https://api.github.com/repos/n8n-io/otto/releases/tags/${tag}`,
+  );
+  assert.equal(
+    read(
+      release({
+        tag_name: tag,
+        assets: [asset(104, `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`)],
+      }),
+      { params: { tag } },
+    ).status,
+    200,
+  );
+  for (const input of [
+    { query: { url: 'https://attacker.invalid' } },
+    { params: { releaseId: ['42'] } },
+    { params: { releaseId: '42', assetId: '102', filename: '../private' } },
+    { params: { releaseId: '42', assetId: '102', filename: 'https://attacker.invalid' } },
+    { params: { releaseId: '9007199254740993' } },
+    { params: { tag: 'v0.2.0' } },
+    { params: { tag: 'desktop-v01.2.0' } },
+    {
+      params: { releaseId: '42', assetId: '102' },
+      query: { version: '0.1.0', platform: 'darwin-x64' },
+    },
+  ])
+    assert.equal(checkRequest(input).status, 400);
+});
+
+test('N8ND-PUBLISHED: broker omits drafts, legacy tags, unknown assets and private API fields', () => {
+  const result = read(
+    [
+      release(),
+      release({ id: 43, draft: true }),
+      release({ id: 44, tag_name: 'v9.0.0' }),
+      release({ id: 45, assets: [asset(105, 'secret-source.tar.gz')] }),
+    ],
+    {},
+  );
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    result.body.map((entry) => entry.id),
+    [42, 45],
+  );
+  assert.equal(result.body[1].assets.length, 0);
+  assert.equal(
+    result.body[0].assets[1].browser_download_url,
+    `${base}/releases/42/assets/102/Otto-Preview-arm64.zip`,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /synthetic-private-field|untrusted\.invalid|secret-source/,
+  );
+  assert.equal(read(release({ draft: true })).status, 404);
+  assert.equal(read(release({ tag_name: 'v0.2.0' })).status, 404);
+});
+
+test('N8ND-PIN: asset resolution binds release, asset ID and filename including replacement races', () => {
+  const input = { params: { releaseId: '42', assetId: '102', filename: 'Otto-Preview-arm64.zip' } };
+  assert.deepEqual(read(release(), input), {
+    assetUrl: 'https://api.github.com/repos/n8n-io/otto/releases/assets/102',
+  });
+  assert.equal(read(release({ id: 43 }), input).status, 404);
+  assert.equal(
+    read(release(), { params: { ...input.params, filename: 'Otto-Preview-arm64.dmg' } }).status,
+    404,
+  );
+  assert.equal(
+    read(release({ assets: [asset(200, 'Otto-Preview-arm64.zip')] }), input).status,
+    404,
+  );
+  assert.equal(
+    read(
+      release({
+        assets: [asset(102, 'Otto-Preview-arm64.zip'), asset(200, 'Otto-Preview-arm64.zip')],
+      }),
+      input,
+    ).status,
+    503,
+  );
+  assert.equal(
+    read(release({ assets: [asset(102, 'secret-source.tar.gz')] }), {
+      params: { ...input.params, filename: 'secret-source.tar.gz' },
+    }).status,
+    404,
+  );
+  assert.equal(
+    read(
+      release({
+        assets: [
+          asset(102, 'Otto-Preview-arm64.zip'),
+          { ...asset(200, 'release.json'), digest: null },
+        ],
+      }),
+      input,
+    ).status,
+    503,
+  );
+});
+
+test('N8ND-UPSTREAM: denied, missing, malformed and truncated sources fail without disclosing provider errors', () => {
+  const request = checkRequest({ params: { releaseId: '42' } });
+  assert.equal(
+    releaseResponse(
+      [{ statusCode: 403, body: { message: 'synthetic-secret-provider-error' } }],
+      request,
+      base,
+    ).status,
+    503,
+  );
+  assert.equal(releaseResponse([{ statusCode: 404, body: {} }], request, base).status, 404);
+  assert.equal(
+    releaseResponse([{ error: { message: 'synthetic-secret-provider-error' } }], request, base)
+      .status,
+    503,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(
+      releaseResponse(
+        [{ statusCode: 403, body: { message: 'synthetic-secret-provider-error' } }],
+        request,
+        base,
+      ),
+    ),
+    /synthetic-secret/,
+  );
+  assert.equal(
+    releaseResponse([{ statusCode: 200, body: {} }], checkRequest({}), base).status,
+    503,
+  );
+  const full = Array.from({ length: 5 }, () => ({
+    statusCode: 200,
+    body: Array.from({ length: 100 }, () => release()),
+  }));
+  assert.equal(releaseResponse(full, checkRequest({}), base).status, 503);
+});
+
+test('N8ND-FEED: native feed uses the exact newer app ZIP and handles version ordering', () => {
+  const input = (version) => ({
+    params: { releaseId: '42', assetId: '102' },
+    query: { version, platform: 'darwin-arm64' },
+  });
+  const result = read(release(), input('0.1.0'));
+  assert.deepEqual(result, {
+    status: 200,
+    body: {
+      url: `${base}/releases/42/assets/102/Otto-Preview-arm64.zip`,
+      name: 'Otto 0.2.0',
+      pub_date: '2026-10-04T12:00:00Z',
+    },
+  });
+  assert.equal(read(release(), input('0.2.0')).status, 204);
+  assert.equal(read(release(), input('0.3.0')).status, 204);
+  assert.equal(
+    read(release({ tag_name: 'desktop-v0.2.0-alpha.2' }), input('0.2.0-alpha.10')).status,
+    204,
+  );
+  assert.equal(
+    read(release({ tag_name: 'desktop-v0.2.0-alpha.10' }), input('0.2.0-alpha.2')).status,
+    200,
+  );
+  assert.equal(read(release({ tag_name: 'desktop-v0.2.0-alpha' }), input('0.2.0')).status, 204);
+  assert.equal(
+    read(release({ assets: [asset(102, 'Otto-Preview-arm64.dmg')] }), input('0.1.0')).status,
+    404,
+  );
+  assert.equal(
+    read(release({ tag_name: `runtime-darwin-arm64-${'b'.repeat(64)}` }), input('0.1.0')).status,
+    404,
+  );
+});
+
+test('N8ND-REDIRECT: archive resolution exposes only an exact HTTPS GitHub download redirect', () => {
+  const valid = 'https://release-assets.githubusercontent.com/fixture/asset?signature=synthetic';
+  assert.deepEqual(checkRedirect({ statusCode: 302, headers: { location: valid } }), {
+    status: 302,
+    body: '',
+    location: valid,
+  });
+  for (const location of [
+    'http://release-assets.githubusercontent.com/a',
+    'https://attacker.invalid/a',
+    'https://release-assets.githubusercontent.com.attacker.invalid/a',
+    'https://user@release-assets.githubusercontent.com/a',
+    `${valid}#fragment`,
+    `${valid}\nLocation: https://attacker.invalid`,
+    '//release-assets.githubusercontent.com/a',
+  ])
+    assert.equal(checkRedirect({ statusCode: 302, headers: { location } }).status, 503);
+  assert.equal(checkRedirect({ statusCode: 301, headers: { location: valid } }).status, 503);
+  assert.equal(checkRedirect({ statusCode: 200, headers: { location: valid } }).status, 503);
+  assert.equal(
+    checkRedirect({ statusCode: 302, headers: { location: valid, Location: valid } }).status,
+    503,
+  );
+});
+
+test('N8ND-CONFIG: actual embedded request pipeline gates credentialed metadata and HEAD requests', () => {
+  const nodes = workflowNodes();
+  const requestNode = nodes.find((entry) => entry.name === 'Check desktop request');
+  const responseNode = nodes.find((entry) => entry.name === 'Build desktop response');
+  const input = { params: { releaseId: '42', assetId: '102', filename: 'Otto-Preview-arm64.zip' } };
+  const request = new Function('$input', requestNode.parameters.jsCode)({
+    first: () => ({ json: input }),
+  })[0].json;
+  const result = new Function('$input', '$', responseNode.parameters.jsCode)(
+    { all: () => [{ json: { statusCode: 200, body: release() } }] },
+    () => ({ first: () => ({ json: request }) }),
+  )[0].json;
+  assert.equal(result.assetUrl, 'https://api.github.com/repos/n8n-io/otto/releases/assets/102');
+  for (const entry of nodes.filter((value) => value.credentials)) {
+    assert.equal(entry.type, 'n8n-nodes-base.httpRequest');
+    assert.equal(entry.parameters.options.redirect.redirect.followRedirects, false);
+    assert.equal(entry.parameters.options.sendCredentialsOnCrossOriginRedirect, false);
+    assert.equal(entry.parameters.authentication, 'predefinedCredentialType');
+  }
+  assert.equal(
+    nodes.find((entry) => entry.name === 'Read GitHub asset redirect').parameters.method,
+    'HEAD',
+  );
+  assert.equal(settings.saveDataErrorExecution, 'none');
+  assert.equal(settings.saveDataSuccessExecution, 'none');
+  assert.equal(settings.saveManualExecutions, false);
+});
+
+test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an older runtime tag', async () => {
+  const fingerprint = 'b'.repeat(64);
+  const archive = {
+    file: `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`,
+    bytes: 1234,
+    sha256: 'a'.repeat(64),
+  };
+  const runtime = { id: 'c'.repeat(64), fingerprint, archive };
+  const appRelease = release({
+    assets: [
+      asset(101, 'release.json'),
+      asset(102, 'Otto-Preview-arm64.zip'),
+      asset(104, 'runtime-release.json'),
+    ],
+  });
+  const runtimeRelease = release({
+    id: 70,
+    tag_name: `runtime-darwin-arm64-${fingerprint}`,
+    assets: [asset(105, archive.file)],
+  });
+  const manifest = {
+    version: '0.2.0',
+    platform: 'darwin-arm64',
+    source: 'd'.repeat(40),
+    signing: { mode: 'self-signed' },
+    update: { file: 'Otto-Preview-arm64.zip', bytes: 1234, sha256: 'a'.repeat(64) },
+    runtime,
+  };
+  const unrelated = Array.from({ length: 100 }, (_, index) =>
+    release({
+      id: 1000 + index,
+      tag_name: `runtime-darwin-arm64-${index.toString(16).padStart(64, '0')}`,
+      assets: [],
+    }),
+  );
+  const list = [appRelease, ...unrelated];
+  const requests = [];
+  const metadata = new Map([
+    [101, manifest],
+    [104, runtime],
+  ]);
+  const request = async (address) => {
+    const url = new URL(address);
+    requests.push(url.href);
+    if (url.origin === 'https://release-assets.githubusercontent.com') {
+      const content = metadata.get(Number(url.pathname.slice(1)));
+      assert.ok(content, 'Only synthetic metadata assets may be read.');
+      return Response.json(content);
+    }
+    assert.equal(url.origin, new URL(base).origin);
+    const path = url.pathname.slice(new URL(base).pathname.length + 1).split('/');
+    const params =
+      path[0] === 'tags'
+        ? { tag: path[1] }
+        : path.length === 1
+          ? {}
+          : path.length === 2
+            ? { releaseId: path[1] }
+            : { releaseId: path[1], assetId: path[3], filename: path[4] };
+    const checked = checkRequest({ params, query: Object.fromEntries(url.searchParams) });
+    if (checked.status) return Response.json(checked.body, { status: checked.status });
+    const pages =
+      checked.operation === 'list'
+        ? [list.slice(0, 100), list.slice(100)].map((body) => ({ statusCode: 200, body }))
+        : [{ statusCode: 200, body: checked.tag ? runtimeRelease : appRelease }];
+    const result = releaseResponse(pages, checked, base);
+    if (result.assetUrl) {
+      const redirect = checkRedirect({
+        statusCode: 302,
+        headers: { location: `https://release-assets.githubusercontent.com/${checked.assetId}` },
+      });
+      return new Response(null, {
+        status: redirect.status,
+        headers: { location: redirect.location },
+      });
+    }
+    return Response.json(result.body, { status: result.status });
+  };
+  const native = new EventEmitter();
+  let feed;
+  let runtimePrepared = false;
+  native.setFeedURL = ({ url }) => {
+    const address = new URL(url);
+    const path = address.pathname.split('/');
+    const checked = checkRequest({
+      params: { releaseId: path.at(-3), assetId: path.at(-1) },
+      query: Object.fromEntries(address.searchParams),
+    });
+    const result = releaseResponse([{ statusCode: 200, body: appRelease }], checked, base);
+    assert.equal(result.status, 200);
+    feed = result.body;
+  };
+  native.checkForUpdates = () => {
+    assert.equal(runtimePrepared, true);
+    queueMicrotask(() =>
+      native.emit('update-downloaded', {}, '', feed.name, new Date(feed.pub_date), feed.url),
+    );
+  };
+  const updater = createDesktopUpdater({
+    source: createUpdateSource({ sourceUrl: base, fetch: request }),
+    currentVersion: '0.1.0',
+    native,
+    prepareRuntime: async (candidate) => {
+      assert.equal(candidate.runtime.id, runtime.id);
+      runtimePrepared = true;
+    },
+  });
+  const candidate = await updater.check();
+  await updater.dispose();
+  assert.equal(requests[0], `${base}/releases`);
+  assert.ok(requests.includes(`${base}/tags/runtime-darwin-arm64-${fingerprint}`));
+  assert.equal(candidate.version, '0.2.0');
+  assert.equal(
+    candidate.feedUrl,
+    `${base}/releases/42/feed/102?version=0.1.0&platform=darwin-arm64`,
+  );
+  assert.equal(candidate.downloadUrl, `${base}/releases/70/assets/105/${archive.file}`);
+  assert.equal(candidate.runtime.id, runtime.id);
+});

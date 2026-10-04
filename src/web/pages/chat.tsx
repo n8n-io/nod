@@ -877,6 +877,7 @@ export function Chat({
         )}
         <SetupNotice configuration={state.configuration} capability="assistant" />
         <Composer
+          canRestart={() => visible && !pendingSends.current && !resetLock.current}
           key={threadId}
           ref={composer}
           ready={state.configuration.llmReady && !resetting && !welcoming}

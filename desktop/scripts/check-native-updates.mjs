@@ -1,0 +1,384 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { createHash, randomBytes, randomUUID, X509Certificate } from 'node:crypto';
+import { createReadStream, existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { packager } from '@electron/packager';
+import { withAppleSigning } from '../../.github/scripts/with-apple-signing.mjs';
+import { run, signApplication, signingConfiguration } from './release-tools.mjs';
+
+const source = fileURLToPath(import.meta.url);
+const repository = resolve(dirname(source), '../..');
+const configuration = JSON.parse(await readFile(join(repository, 'desktop/package.json')));
+const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+
+assert.equal(process.platform, 'darwin', 'This acceptance case requires macOS.');
+assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Use a disposable GitHub runner.');
+assert.equal(process.env.RUNNER_OS, 'macOS', 'Use a disposable macOS runner.');
+const runner = await realpath(process.env.RUNNER_TEMP);
+
+async function packageFixtures(planPath) {
+  assert.equal(dirname(dirname(planPath)), runner, 'The plan must belong to this runner.');
+  const plan = JSON.parse(await readFile(planPath));
+  for (const fixture of plan) {
+    const directory = join(dirname(planPath), `source-${fixture.name}-${fixture.version}`);
+    await mkdir(directory);
+    await writeFile(
+      join(directory, 'package.json'),
+      JSON.stringify({
+        name: fixture.name,
+        version: fixture.version,
+        main: 'main.cjs',
+      }),
+    );
+    await writeFile(
+      join(directory, 'main.cjs'),
+      `
+const { app, autoUpdater } = require('electron');
+const { appendFileSync, readFileSync } = require('node:fs');
+const { createHash } = require('node:crypto');
+const fixture = ${JSON.stringify(fixture)};
+app.setPath('userData', fixture.profile);
+const receipt = (event, fields = {}) => appendFileSync(fixture.events,
+  JSON.stringify({ event, version: app.getVersion(), at: Date.now(), executable: process.execPath,
+    dataHash: createHash('sha256').update(readFileSync(fixture.data)).digest('hex'), ...fields }) + '\\n');
+app.whenReady().then(() => {
+  receipt('ready');
+  if (app.getVersion() === '1.0.1') return setTimeout(() => app.quit(), 500);
+  autoUpdater.on('error', (error) => {
+    receipt('error', { message: String(error.message).slice(0, 2000) });
+    app.quit();
+  });
+  autoUpdater.on('update-downloaded', () => {
+    receipt('downloaded');
+    autoUpdater.quitAndInstall();
+  });
+  autoUpdater.on('update-not-available', () => { receipt('unavailable'); app.quit(); });
+  autoUpdater.setFeedURL({ url: fixture.feed });
+  autoUpdater.checkForUpdates();
+});
+`,
+    );
+    const [application] = await packager({
+      dir: directory,
+      out: join(dirname(planPath), `build-${fixture.name}-${fixture.version}`),
+      name: fixture.name,
+      executableName: fixture.name,
+      appBundleId: fixture.identifier,
+      appVersion: fixture.version,
+      buildVersion: fixture.version,
+      electronVersion: configuration.devDependencies.electron,
+      platform: 'darwin',
+      arch: process.arch,
+      asar: false,
+      extendInfo: { NSAppTransportSecurity: { NSAllowsArbitraryLoads: true } },
+    });
+    const bundle = join(application, `${fixture.name}.app`);
+    await signApplication(bundle, configuration.devDependencies.electron, signingConfiguration());
+    if (fixture.version === '1.0.0') await run('/bin/mv', [bundle, fixture.application]);
+    else await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', bundle, fixture.archive]);
+  }
+}
+
+async function certificate(root, name) {
+  const identity = `Otto Update Fixture ${randomUUID()}`;
+  const base = join(root, name);
+  const password = randomBytes(32).toString('hex');
+  await writeFile(`${base}.password`, password, { mode: 0o600 });
+  await writeFile(
+    `${base}.conf`,
+    `[req]\ndistinguished_name=dn\nx509_extensions=signing\nprompt=no\n[dn]\nCN=${identity}\n[signing]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n`,
+  );
+  await run('/usr/bin/openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-nodes',
+    '-days',
+    '1',
+    '-config',
+    `${base}.conf`,
+    '-keyout',
+    `${base}.key`,
+    '-out',
+    `${base}.pem`,
+  ]);
+  await run('/usr/bin/openssl', [
+    'pkcs12',
+    '-export',
+    '-inkey',
+    `${base}.key`,
+    '-in',
+    `${base}.pem`,
+    '-out',
+    `${base}.p12`,
+    '-passout',
+    `file:${base}.password`,
+  ]);
+  return {
+    ...process.env,
+    APPLE_CERTIFICATE: (await readFile(`${base}.p12`)).toString('base64'),
+    APPLE_CERTIFICATE_PASSWORD: password,
+    APPLE_SIGNING_IDENTITY: identity,
+    APPLE_CERTIFICATE_SHA256: new X509Certificate(await readFile(`${base}.pem`)).fingerprint256
+      .replaceAll(':', '')
+      .toLowerCase(),
+    OTTO_SIGNING_MODE: 'self-signed',
+  };
+}
+
+async function ownedProcesses(root, identifiers) {
+  return (await run('/bin/ps', ['-axo', 'pid=,uid=,command='], { output: 'stdout' }))
+    .split('\n')
+    .flatMap((line) => {
+      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
+      return match &&
+        Number(match[2]) === process.getuid() &&
+        (match[3].includes(root) || identifiers.some((id) => match[3].includes(id)))
+        ? [Number(match[1])]
+        : [];
+    });
+}
+
+async function main() {
+  process.umask(0o077);
+  const root = await mkdtemp(join(runner, 'otto-native-updates-'));
+  const output = join(repository, '.local/native-update-acceptance');
+  await mkdir(output, { recursive: true });
+  const report = {
+    source: (await run('git', ['rev-parse', 'HEAD'], { cwd: repository })).trim(),
+    fixtureHash: sha256(await readFile(source)),
+    electron: configuration.devDependencies.electron,
+    startedAt: new Date().toISOString(),
+    root,
+    cases: [],
+    requests: [],
+    checks: [],
+  };
+  const routes = new Map();
+  const server = createServer((request, response) => {
+    const route = routes.get(request.url);
+    if (request.method !== 'GET' || !route) return response.writeHead(404).end();
+    const receipt = { path: request.url, at: Date.now(), completed: false };
+    report.requests.push(receipt);
+    response.on('finish', () => {
+      receipt.completed = true;
+    });
+    if (route.file) {
+      response.writeHead(200, { 'content-type': 'application/zip', 'content-length': route.bytes });
+      createReadStream(route.file).pipe(response);
+    } else {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(route));
+    }
+  });
+  const fixtures = [];
+  let failure;
+  try {
+    await new Promise((accept) => server.listen(0, '127.0.0.1', accept));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    for (const kind of ['install', 'reject']) {
+      const fixture = {
+        name: `OttoFixture-${kind}`,
+        identifier: `dev.otto.updatefixture.${randomUUID()}.${kind}`,
+        profile: join(root, `${kind}-profile`),
+        events: join(root, `${kind}.jsonl`),
+        data: join(root, `${kind}-profile`, 'saved.json'),
+        application: join(root, `OttoFixture-${kind}.app`),
+        archive: join(root, `${kind}.zip`),
+        feed: `${origin}/${kind}/feed`,
+        kind,
+      };
+      fixture.caches = [fixture.identifier, `${fixture.identifier}.ShipIt`].map((id) =>
+        join(homedir(), 'Library/Caches', id),
+      );
+      for (const cache of fixture.caches)
+        assert.equal(existsSync(cache), false, `Fixture cache already exists: ${cache}`);
+      await mkdir(fixture.profile);
+      await writeFile(
+        fixture.data,
+        JSON.stringify({ saved: 'Synthetic update fixture', id: fixture.identifier }),
+      );
+      fixtures.push(fixture);
+    }
+    const plan = join(root, 'different-signer.json');
+    await writeFile(plan, JSON.stringify([{ ...fixtures[1], version: '1.0.1' }]));
+    await withAppleSigning(process.execPath, [source, '--package', plan], {
+      env: await certificate(root, 'different'),
+    });
+    assert.equal(existsSync(join(runner, 'otto-apple-signing-state.json')), false);
+    await writeFile(
+      plan,
+      JSON.stringify([
+        ...fixtures.map((fixture) => ({ ...fixture, version: '1.0.0' })),
+        { ...fixtures[0], version: '1.0.1' },
+      ]),
+    );
+    await withAppleSigning(process.execPath, [source, '--package', plan], {
+      env: await certificate(root, 'current'),
+    });
+    assert.equal(existsSync(join(runner, 'otto-apple-signing-state.json')), false);
+    report.checks.push({
+      id: 'UPD-SCOPE',
+      pass: true,
+      identifiers: fixtures.map((fixture) => fixture.identifier),
+    });
+    for (const fixture of fixtures) {
+      const before = sha256(await readFile(fixture.data));
+      const installedSignature = sha256(
+        await readFile(join(fixture.application, 'Contents/_CodeSignature/CodeResources')),
+      );
+      const archive = await readFile(fixture.archive);
+      const entry = {
+        id: fixture.kind === 'install' ? 'UPD-NATIVE.v1' : 'UPD-SIGNATURE.v1',
+        startedAt: new Date().toISOString(),
+        archive: { bytes: archive.length, sha256: sha256(archive) },
+        checks: [],
+      };
+      report.cases.push(entry);
+      routes.set(`/${fixture.kind}/archive.zip`, { file: fixture.archive, bytes: archive.length });
+      routes.set(`/${fixture.kind}/feed`, {
+        url: `${origin}/${fixture.kind}/archive.zip`,
+        name: '1.0.1',
+        pub_date: '2026-10-04T00:00:00Z',
+      });
+      const executable = join(fixture.application, 'Contents/MacOS', fixture.name);
+      const child = spawn(executable, [], { stdio: 'ignore' });
+      child.on('error', (error) => {
+        entry.launchError = error.message;
+      });
+      const deadline = Date.now() + (fixture.kind === 'install' ? 300_000 : 120_000);
+      let events = [];
+      while (Date.now() < deadline) {
+        events = (await readFile(fixture.events, 'utf8').catch(() => ''))
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map(JSON.parse);
+        if (
+          events.some(
+            (event) =>
+              event.event === 'error' || event.event === 'unavailable' || event.version === '1.0.1',
+          )
+        )
+          break;
+        if (entry.launchError) break;
+        await delay(500);
+      }
+      entry.events = events;
+      const check = (id, pass) => entry.checks.push({ id, pass });
+      check(
+        'UPD-BASE',
+        events.some(
+          (event) =>
+            event.event === 'ready' && event.version === '1.0.0' && event.dataHash === before,
+        ),
+      );
+      check(
+        'UPD-DOWNLOAD',
+        ['feed', 'archive.zip'].every((path) =>
+          report.requests.some(
+            (request) => request.path === `/${fixture.kind}/${path}` && request.completed,
+          ),
+        ),
+      );
+      const version = await run('/usr/libexec/PlistBuddy', [
+        '-c',
+        'Print :CFBundleShortVersionString',
+        join(fixture.application, 'Contents/Info.plist'),
+      ]);
+      if (fixture.kind === 'install') {
+        check(
+          'UPD-INSTALL',
+          version === '1.0.1' &&
+            events.some((event) => event.event === 'downloaded') &&
+            events.some(
+              (event) =>
+                event.version === '1.0.1' &&
+                event.event === 'ready' &&
+                event.executable === executable,
+            ),
+        );
+      } else {
+        check(
+          'UPD-REJECT',
+          version === '1.0.0' &&
+            events.some(
+              (event) =>
+                event.event === 'error' &&
+                /sign|signature|requirement|validation/i.test(event.message),
+            ) &&
+            !events.some((event) => event.event === 'downloaded') &&
+            installedSignature ===
+              sha256(
+                await readFile(join(fixture.application, 'Contents/_CodeSignature/CodeResources')),
+              ),
+        );
+      }
+      check(
+        'UPD-DATA',
+        sha256(await readFile(fixture.data)) === before &&
+          events.every((event) => event.dataHash === before),
+      );
+      await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', fixture.application]);
+      entry.finishedAt = new Date().toISOString();
+      if (entry.checks.some((check) => !check.pass))
+        failure ??= new Error(`${entry.id} failed; inspect its receipt.`);
+    }
+  } catch (error) {
+    failure = error;
+    report.error = { message: error.message, diagnostic: error.diagnostic };
+  } finally {
+    server.closeAllConnections();
+    await new Promise((accept) => server.close(accept));
+    const identifiers = fixtures.map((fixture) => fixture.identifier);
+    try {
+      for (const fixture of fixtures)
+        await run('/bin/launchctl', ['remove', `${fixture.identifier}.ShipIt`]).catch(() => {});
+      for (const signal of ['SIGTERM', 'SIGKILL']) {
+        for (const pid of await ownedProcesses(root, identifiers)) {
+          try {
+            process.kill(pid, signal);
+          } catch (error) {
+            if (error.code !== 'ESRCH') throw error;
+          }
+        }
+        await delay(1000);
+        if (!(await ownedProcesses(root, identifiers)).length) break;
+      }
+      assert.deepEqual(
+        await ownedProcesses(root, identifiers),
+        [],
+        'Owned application processes must stop before cleanup.',
+      );
+      assert.equal(
+        existsSync(join(runner, 'otto-apple-signing-state.json')),
+        false,
+        'The signing keychain must be removed.',
+      );
+      for (const fixture of fixtures)
+        for (const cache of fixture.caches) await rm(cache, { recursive: true, force: true });
+      await rm(root, { recursive: true });
+      report.checks.push({ id: 'UPD-CLEANUP', pass: !existsSync(root) });
+    } catch (error) {
+      failure ??= error;
+      report.checks.push({ id: 'UPD-CLEANUP', pass: false, error: error.message });
+    }
+    report.finishedAt = new Date().toISOString();
+    report.pass = !failure && report.cases.length === 2;
+    await writeFile(join(output, `${Date.now()}.json`), JSON.stringify(report, null, 2));
+  }
+  if (failure) throw failure;
+  process.stdout.write(
+    'Native update installation, signature rejection and profile preservation passed.\n',
+  );
+}
+
+if (process.argv[2] === '--package') await packageFixtures(resolve(process.argv[3]));
+else await main();

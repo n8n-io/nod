@@ -13,6 +13,12 @@ import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { validateProviderKey } from '../main/validate-provider.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
+import {
+  createDesktopUpdater,
+  createUpdateSource,
+  guardUpdateRenderers,
+  restartDesktopUpdate,
+} from '../main/updates.mjs';
 
 function deferred() {
   let resolve;
@@ -2069,4 +2075,536 @@ test('empty-key onboarding validates the provider and commits preferences before
       assert.equal(await reopened.revealKey(other), '');
       assert.ok(!(await readFile(storage.path, 'utf8')).includes(key));
     });
+});
+
+function updateReleaseFixture(sourceUrl) {
+  const archive = {
+    file: `Otto-Runtime-darwin-arm64-${'b'.repeat(12)}.tar.gz`,
+    bytes: 180,
+    sha256: 'c'.repeat(64),
+  };
+  const runtime = { id: 'b'.repeat(64), fingerprint: 'd'.repeat(64), archive };
+  const item = (id, name, size) => ({
+    id,
+    name,
+    size,
+    state: 'uploaded',
+    digest: `sha256:${name.endsWith('.zip') ? 'e'.repeat(64) : 'c'.repeat(64)}`,
+  });
+  const release = {
+    id: 12,
+    tag_name: 'desktop-v0.2.0',
+    draft: false,
+    prerelease: true,
+    assets: [
+      item(101, 'release.json', 300),
+      item(103, 'Otto-Preview-arm64.zip', 1000),
+      item(102, 'runtime-release.json', 500),
+      item(104, 'update.json', 150),
+    ],
+  };
+  const pack = {
+    id: 18,
+    tag_name: `runtime-darwin-arm64-${runtime.fingerprint}`,
+    draft: false,
+    assets: [item(201, archive.file, archive.bytes)],
+  };
+  const manifest = {
+    version: '0.2.0',
+    platform: 'darwin-arm64',
+    source: 'a'.repeat(40),
+    signing: { mode: 'self-signed' },
+    runtime,
+    update: { file: 'Otto-Preview-arm64.zip', bytes: 1000, sha256: 'e'.repeat(64) },
+  };
+  const base = sourceUrl || 'https://api.github.com/repos/n8n-io/otto';
+  const assetPath = (owner, entry) =>
+    sourceUrl
+      ? `${base}/releases/${owner.id}/assets/${entry.id}/${entry.name}`
+      : `${base}/releases/assets/${entry.id}`;
+  const values = new Map([
+    [
+      `${base}/releases${sourceUrl ? '' : '?per_page=100'}`,
+      [
+        { ...release, id: 11, tag_name: 'desktop-v0.1.0' },
+        { ...release, id: 13, tag_name: 'desktop-v9.0.0', draft: true },
+        { ...release, id: 14, tag_name: 'runtime-darwin-arm64-irrelevant' },
+        release,
+      ],
+    ],
+    [`${base}/releases/12`, release],
+    [`${base}/${sourceUrl ? 'tags' : 'releases/tags'}/${pack.tag_name}`, pack],
+    [assetPath(release, release.assets[0]), manifest],
+    [assetPath(release, release.assets[2]), runtime],
+    [
+      assetPath(release, release.assets[3]),
+      {
+        url: 'https://github.com/n8n-io/otto/releases/download/desktop-v0.2.0/Otto-Preview-arm64.zip',
+        name: 'Otto 0.2.0',
+      },
+    ],
+  ]);
+  const calls = [];
+  const source = createUpdateSource({
+    sourceUrl,
+    fetch: async (url, options) => {
+      calls.push(url);
+      assert.equal(options.headers.authorization, undefined);
+      assert.ok(values.has(url), `Unexpected release request ${url}`);
+      return Response.json(values.get(url));
+    },
+  });
+  return { source, calls, values, release, pack, runtime, manifest, base };
+}
+
+test('desktop updates bind newer published releases and both source adapters to exact app and runtime assets', async () => {
+  for (const sourceUrl of [undefined, 'https://updates.example.invalid/otto-desktop']) {
+    const f = updateReleaseFixture(sourceUrl);
+    const candidate = await f.source.latest('0.1.0');
+    assert.equal(candidate.version, '0.2.0');
+    assert.equal(candidate.runtime.archive.sha256, f.runtime.archive.sha256);
+    assert.equal(
+      candidate.downloadUrl,
+      sourceUrl
+        ? `${sourceUrl}/releases/18/assets/201/${f.runtime.archive.file}`
+        : 'https://api.github.com/repos/n8n-io/otto/releases/assets/201',
+    );
+    assert.equal(
+      candidate.feedUrl,
+      sourceUrl
+        ? `${sourceUrl}/releases/12/feed/103?version=0.1.0&platform=darwin-arm64`
+        : 'https://github.com/n8n-io/otto/releases/download/desktop-v0.2.0/update.json',
+    );
+    f.calls.length = 0;
+    assert.equal(await f.source.latest('0.2.0'), undefined);
+    assert.equal(f.calls.length, 1);
+    f.manifest.runtime = { ...f.runtime, id: 'f'.repeat(64) };
+    await assert.rejects(f.source.latest('0.1.0'), /runtime does not match/);
+    f.manifest.runtime = f.runtime;
+    f.pack.assets[0].size++;
+    await assert.rejects(f.source.latest('0.1.0'), /archive size does not match/);
+    f.pack.assets[0].size--;
+    f.release.assets[1].digest = `sha256:${'0'.repeat(64)}`;
+    await assert.rejects(f.source.latest('0.1.0'), /archive digest does not match/);
+    f.release.assets[1].digest = `sha256:${f.manifest.update.sha256}`;
+    f.release.assets.push({ ...f.release.assets[0], id: 999 });
+    await assert.rejects(f.source.latest('0.1.0'), /incomplete/);
+  }
+});
+
+test('desktop staging waits for runtime preparation and a native downloaded event, and retries preparation only explicitly', async () => {
+  const candidate = {
+    version: '0.2.0',
+    source: 'a'.repeat(40),
+    feedUrl: 'https://updates.example.invalid/releases/12/feed/103',
+  };
+  const native = new EventEmitter();
+  const prepared = deferred();
+  const started = deferred();
+  const events = [];
+  native.setFeedURL = ({ url }) => events.push(url);
+  native.checkForUpdates = () => events.push('stage');
+  let attempts = 0;
+  const updater = createDesktopUpdater({
+    source: { latest: async () => candidate },
+    currentVersion: '0.1.0',
+    native,
+    prepareRuntime: async () => {
+      attempts++;
+      started.resolve();
+      await prepared.promise;
+      events.push('runtime verified');
+    },
+    restart: async () => events.push('restart'),
+  });
+  const check = updater.check();
+  assert.equal(check, updater.check());
+  await started.promise;
+  assert.deepEqual(events, []);
+  prepared.reject(new Error('Corrupt runtime archive'));
+  await assert.rejects(check, /Corrupt runtime/);
+  assert.equal(attempts, 1);
+  assert.equal(updater.ready, undefined);
+  const readyRuntime = deferred();
+  const next = createDesktopUpdater({
+    source: { latest: async () => candidate },
+    currentVersion: '0.1.0',
+    native,
+    prepareRuntime: async () => {
+      events.push('runtime verified');
+      readyRuntime.resolve();
+    },
+    restart: async () => events.push('restart'),
+  });
+  const staged = next.check();
+  await readyRuntime.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ['runtime verified', candidate.feedUrl, 'stage']);
+  assert.equal(next.ready, undefined);
+  native.emit('update-downloaded', {}, '', 'Otto 0.2.0');
+  assert.equal(await staged, candidate);
+  assert.equal(await next.check(), candidate);
+  assert.equal(events.includes('restart'), false);
+  await next.restart();
+  assert.equal(events.at(-1), 'restart');
+  updater.dispose();
+  next.dispose();
+});
+
+test('desktop no-update checks and failed native downloads never restart', async () => {
+  const native = new EventEmitter();
+  native.setFeedURL = () => {};
+  native.checkForUpdates = () =>
+    queueMicrotask(() => native.emit('error', new Error('Download failed')));
+  let candidate;
+  let prepared = 0;
+  const updater = createDesktopUpdater({
+    source: { latest: async () => candidate },
+    currentVersion: '0.1.0',
+    native,
+    prepareRuntime: async () => {
+      prepared++;
+    },
+    restart: async () => assert.fail('Unexpected restart'),
+  });
+  assert.equal(await updater.check(), undefined);
+  assert.equal(prepared, 0);
+  candidate = { version: '0.2.0', feedUrl: 'https://updates.example.invalid/pinned' };
+  await assert.rejects(updater.check(), /Download failed/);
+  assert.equal(updater.ready, undefined);
+  await assert.rejects(updater.restart(), /No desktop update/);
+  updater.dispose();
+});
+
+test('desktop restart fences drafts and active work, resumes failed drains, and closes the existing lifecycle before install', async () => {
+  const candidate = { source: 'a'.repeat(40) };
+  for (const scenario of [
+    'draft',
+    'busy',
+    'drain failed',
+    'flush failed',
+    'shutdown failed',
+    'ready',
+  ]) {
+    const events = [];
+    const transitions = [];
+    const lifecycle = createDesktopLifecycle({
+      prepareRuntime: async () => ({ close: async () => events.push('runtime closed') }),
+      validateStart: async () => {},
+      startEngine: async () => {},
+      stopEngine: async () => events.push('engine stopped'),
+      onRuntimeStatus: () => {},
+    });
+    await lifecycle.start();
+    const options = {
+      candidate,
+      guard: async () => {
+        events.push('guard');
+        if (scenario === 'draft') throw new Error('Draft');
+        return () => events.push('renderer resumed');
+      },
+      request: async (path, options) => {
+        events.push(path);
+        if (path.endsWith('/status')) return Response.json({ activeWork: scenario === 'busy' });
+        transitions.push(JSON.parse(options.body));
+        if (path.endsWith('/drain')) return Response.json({ drained: scenario !== 'drain failed' });
+        return Response.json({ resumed: true });
+      },
+      flush: async () => {
+        events.push('cursors flushed');
+        if (scenario === 'flush failed') throw new Error('Disk unavailable');
+      },
+      shutdown: async () => {
+        await lifecycle.close();
+        if (scenario === 'shutdown failed') throw new Error('Native install unavailable');
+        events.push('native install');
+      },
+    };
+    if (scenario === 'ready') {
+      await restartDesktopUpdate(options);
+      assert.deepEqual(events, [
+        'guard',
+        '/api/desktop/status',
+        '/api/runtime/drain',
+        'cursors flushed',
+        'engine stopped',
+        'runtime closed',
+        'native install',
+      ]);
+      assert.equal(transitions[0].targetRelease, candidate.source);
+    } else {
+      await assert.rejects(restartDesktopUpdate(options));
+      assert.equal(events.includes('native install'), false);
+      assert.equal(events.includes('engine stopped'), scenario === 'shutdown failed');
+      if (scenario === 'draft') assert.deepEqual(events, ['guard']);
+      if (scenario === 'busy')
+        assert.deepEqual(events, ['guard', '/api/desktop/status', 'renderer resumed']);
+      if (scenario === 'flush failed') {
+        assert.equal(events.at(-1), 'renderer resumed');
+        assert.deepEqual(transitions[0], transitions[1]);
+      }
+      if (scenario === 'shutdown failed') {
+        assert.equal(events.includes('renderer resumed'), false);
+        assert.equal(events.includes('/api/runtime/resume'), false);
+        assert.equal(transitions.length, 1);
+      }
+      if (scenario === 'drain failed') {
+        assert.deepEqual(events, [
+          'guard',
+          '/api/desktop/status',
+          '/api/runtime/drain',
+          '/api/runtime/resume',
+          'renderer resumed',
+        ]);
+        assert.deepEqual(transitions[0], transitions[1]);
+      }
+      await lifecycle.close();
+    }
+  }
+});
+
+test('trusted preload blocks unknown or dirty renderers and restores interaction after a canceled restart', async () => {
+  const ipc = new EventEmitter();
+  const renderer = new EventEmitter();
+  const document = { documentElement: { inert: false } };
+  let bridge;
+  let dirty = true;
+  let forged = false;
+  const frame = {};
+  const window = {
+    isDestroyed: () => false,
+    webContents: Object.assign(new EventEmitter(), {
+      mainFrame: frame,
+      send: (channel, token) => renderer.emit(channel, {}, token),
+    }),
+  };
+  runInNewContext(await readFile(new URL('../preload/engine.cjs', import.meta.url), 'utf8'), {
+    document,
+    require: () => ({
+      contextBridge: {
+        exposeInMainWorld: (_name, value) => {
+          bridge = value;
+        },
+      },
+      ipcRenderer: {
+        on: (channel, receive) => renderer.on(channel, receive),
+        send: (channel, value) =>
+          ipc.emit(
+            channel,
+            { sender: window.webContents, senderFrame: forged ? {} : frame },
+            value,
+          ),
+      },
+    }),
+  });
+  const guard = () =>
+    guardUpdateRenderers({
+      windows: [window],
+      ipc,
+      timeout: 20,
+      trusted: (event) => event.sender === window.webContents && event.senderFrame === frame,
+    });
+  await assert.rejects(guard(), /draft/);
+  const stop = bridge.onPrepareUpdate(() => !dirty);
+  await assert.rejects(guard(), /draft/);
+  assert.equal(document.documentElement.inert, false);
+  dirty = false;
+  forged = true;
+  await assert.rejects(guard(), /draft/);
+  assert.equal(document.documentElement.inert, false);
+  forged = false;
+  const release = await guard();
+  assert.equal(document.documentElement.inert, true);
+  window.webContents.emit('did-start-navigation');
+  assert.throws(release.validate, /window changed/);
+  renderer.emit('otto:update:resume', {}, randomUUID());
+  assert.equal(document.documentElement.inert, true);
+  release();
+  assert.equal(document.documentElement.inert, false);
+  stop();
+  await assert.rejects(guard(), /draft/);
+  assert.equal(ipc.listenerCount('otto:update:prepared'), 0);
+});
+
+test('native download attempts remain exclusive until their terminal event and reject a different release', async () => {
+  let selections = 0;
+  const native = new EventEmitter();
+  const staged = deferred();
+  native.setFeedURL = () => {};
+  native.checkForUpdates = () => staged.resolve();
+  const updater = createDesktopUpdater({
+    source: {
+      latest: async () => {
+        selections++;
+        return {
+          version: selections === 1 ? '0.2.0' : '0.3.0',
+          feedUrl: 'https://updates.example.invalid/pinned',
+        };
+      },
+    },
+    currentVersion: '0.1.0',
+    native,
+    prepareRuntime: async () => {},
+    restart: async () => {},
+  });
+  const first = updater.check();
+  await staged.promise;
+  assert.equal(updater.check(), first);
+  assert.equal(selections, 1);
+  native.emit('update-downloaded', {}, '', 'Otto 0.2.0');
+  assert.equal((await first).version, '0.2.0');
+  assert.equal((await updater.check()).version, '0.2.0');
+  assert.equal(selections, 1);
+  updater.dispose();
+  const wrongNative = new EventEmitter();
+  wrongNative.setFeedURL = () => {};
+  wrongNative.checkForUpdates = () =>
+    queueMicrotask(() => wrongNative.emit('update-downloaded', {}, '', 'Otto 0.1.0'));
+  const wrong = createDesktopUpdater({
+    source: {
+      latest: async () => ({ version: '0.2.0', feedUrl: 'https://updates.example.invalid/pinned' }),
+    },
+    currentVersion: '0.1.0',
+    native: wrongNative,
+    prepareRuntime: async () => {},
+    restart: async () => assert.fail('Wrong version must not restart'),
+  });
+  await assert.rejects(wrong.check(), /does not match the selected version/);
+  assert.equal(wrong.ready, undefined);
+  wrong.dispose();
+});
+
+test('post-drain shutdown and native install failures retry the same closed lifecycle without restoring the engine', async () => {
+  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+  const body = source.slice(
+    source.indexOf('async function finishQuit('),
+    source.indexOf('async function validateStart('),
+  );
+  const events = [];
+  let closes = 0;
+  let installs = 0;
+  const lifecycle = createDesktopLifecycle({
+    prepareRuntime: async () => ({
+      close: async () => {
+        events.push('runtime close');
+        if (++closes === 1) throw new Error('Synthetic runtime stop failed');
+      },
+    }),
+    validateStart: async () => {},
+    startEngine: async () => {},
+    stopEngine: async () => events.push('engine stopped'),
+    onRuntimeStatus: () => {},
+  });
+  await lifecycle.start();
+  const context = {
+    lifecycle,
+    writeDiagnostic: async () => {},
+    dialog: {
+      showMessageBox: async () => {
+        events.push('retry offered');
+        return { response: 0 };
+      },
+    },
+    app: { exit: () => assert.fail('No forced quit') },
+  };
+  runInNewContext(`${body}\nglobalThis.finish = finishQuit;`, context);
+  await context.finish(async () => {
+    events.push('install');
+    if (++installs === 1) throw new Error('Synthetic native install failed');
+  });
+  assert.deepEqual(events, [
+    'engine stopped',
+    'runtime close',
+    'retry offered',
+    'engine stopped',
+    'runtime close',
+    'install',
+    'retry offered',
+    'install',
+  ]);
+  assert.throws(() => lifecycle.start(), /closing/);
+});
+
+test('late renderer acknowledgements cannot authorize another update restart', async () => {
+  const ipc = new EventEmitter();
+  let token;
+  const contents = Object.assign(new EventEmitter(), {
+    send: (channel, value) => {
+      if (channel === 'otto:update:prepare') token = value;
+    },
+  });
+  const window = { isDestroyed: () => false, webContents: contents };
+  const options = {
+    windows: [window],
+    ipc,
+    timeout: 20,
+    trusted: (event) => event.sender === contents,
+  };
+  await assert.rejects(guardUpdateRenderers(options), /draft/);
+  const expired = token;
+  const pending = guardUpdateRenderers(options);
+  let settled = false;
+  pending.then(() => {
+    settled = true;
+  });
+  ipc.emit('otto:update:prepared', { sender: contents }, { token: expired, blocked: false });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  ipc.emit('otto:update:prepared', { sender: contents }, { token, blocked: false });
+  const release = await pending;
+  release();
+  assert.equal(ipc.listenerCount('otto:update:prepared'), 0);
+  assert.equal(contents.listenerCount('did-start-navigation'), 0);
+});
+
+test('main update restart preserves the renderer navigation fence through its quitting wrapper', async () => {
+  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+  const body = source.slice(
+    source.indexOf('async function restartForUpdate('),
+    source.indexOf('async function finishQuit('),
+  );
+  const ipc = new EventEmitter();
+  const events = [];
+  const contents = Object.assign(new EventEmitter(), {
+    send: (channel, token) => {
+      if (channel === 'otto:update:prepare')
+        ipc.emit('otto:update:prepared', { sender: contents }, { token, blocked: false });
+      else events.push(channel);
+    },
+  });
+  const window = { isDestroyed: () => false, webContents: contents };
+  const context = {
+    restartDesktopUpdate,
+    guardUpdateRenderers,
+    quitting: false,
+    engine: {},
+    status: { phase: 'ready' },
+    lifecycle: { engineStarting: false },
+    setupWindow: undefined,
+    engineWindows: new Set([window]),
+    ipcMain: ipc,
+    isEngine: (event) => event.sender === contents,
+    engineRequest: async (path) => {
+      events.push(path);
+      if (path.endsWith('/status')) return Response.json({ activeWork: false });
+      if (path.endsWith('/drain')) {
+        contents.emit('did-start-navigation');
+        return Response.json({ drained: true });
+      }
+      return Response.json({ resumed: true });
+    },
+    chatReadCursors: { flush: async () => events.push('flushed') },
+    updateReadinessNotice: () => assert.fail('Navigation must prevent shutdown'),
+  };
+  runInNewContext(`${body}\nglobalThis.restart = restartForUpdate;`, context);
+  await assert.rejects(context.restart({ source: 'a'.repeat(40) }), /window changed/);
+  assert.equal(context.quitting, false);
+  assert.deepEqual(events, [
+    '/api/desktop/status',
+    '/api/runtime/drain',
+    'flushed',
+    '/api/runtime/resume',
+    'otto:update:resume',
+  ]);
+  assert.equal(contents.listenerCount('did-start-navigation'), 0);
 });

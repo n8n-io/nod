@@ -228,10 +228,25 @@ async function plan() {
   });
 }
 
+function releaseTarget(repository, release) {
+  const target =
+    repository === sourceRepository ? process.env.GITHUB_SHA : release?.target_commitish;
+  const source = shaPattern.test(target)
+    ? target
+    : typeof target === 'string' && target
+      ? api(`repos/${repository}/commits/${encodeURIComponent(target)}`, repository)?.sha
+      : undefined;
+  if (!shaPattern.test(source)) throw new Error('The release target could not be resolved.');
+  return source;
+}
+
 async function uploadDraft({ repository, tag, title, notes, marker, files }) {
   let release = releaseByTag(repository, tag);
   if (release && (!release.draft || !release.body?.includes(marker)))
     throw new Error('Refusing to replace a published or unrelated release.');
+  const id = release?.id;
+  const target =
+    release || repository === sourceRepository ? releaseTarget(repository, release) : undefined;
   const notesPath = join(process.env.RUNNER_TEMP || root, `otto-${tag}-notes.md`);
   await writeFile(notesPath, notes);
   if (!release)
@@ -261,6 +276,10 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
         tag,
         '--repo',
         repository,
+        '--tag',
+        tag,
+        '--target',
+        target,
         '--prerelease',
         '--latest=false',
         '--title',
@@ -276,7 +295,13 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
     gh(['release', 'upload', tag, file, '--repo', repository, '--clobber'], repository);
   }
   release = releaseByTag(repository, tag);
-  if (!release?.draft) throw new Error('Release draft was not created.');
+  if (
+    !release?.draft ||
+    release.tag_name !== tag ||
+    (id !== undefined && release.id !== id) ||
+    (target !== undefined && release.target_commitish !== target)
+  )
+    throw new Error('Release draft identity does not match its tag and source.');
   for (const file of files) {
     const asset = release.assets.find((entry) => entry.name === basename(file));
     if (asset?.digest !== `sha256:${await hash(file)}` || asset.size !== (await stat(file)).size)
@@ -286,6 +311,10 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
 }
 
 function publishRelease(repository, tag) {
+  const release = releaseByTag(repository, tag);
+  if (!release?.draft || release.tag_name !== tag)
+    throw new Error('The release draft is unavailable.');
+  const target = releaseTarget(repository, release);
   gh(
     [
       'release',
@@ -293,12 +322,25 @@ function publishRelease(repository, tag) {
       tag,
       '--repo',
       repository,
+      '--tag',
+      tag,
+      '--target',
+      target,
       '--draft=false',
       '--prerelease',
       '--latest=false',
     ],
     repository,
   );
+  const published = releaseByTag(repository, tag);
+  if (
+    !published ||
+    published.draft ||
+    published.id !== release.id ||
+    published.tag_name !== tag ||
+    published.target_commitish !== target
+  )
+    throw new Error('Published release identity does not match its tag and source.');
 }
 
 async function draftRuntime() {
@@ -388,17 +430,23 @@ async function draftApp() {
   await writeFile(join(output, 'CHANGELOG.md'), changes + '\n');
   const names = (await readdir(output)).filter(
     (name) =>
-      /\.dmg$/.test(name) ||
+      /\.(?:dmg|zip)$/.test(name) ||
       [
         'SHA256SUMS',
         'release.json',
         'runtime-release.json',
+        'update.json',
         'CHANGELOG.md',
         'signing.cer',
       ].includes(name),
   );
-  if (names.filter((name) => name.endsWith('.dmg')).length !== 1 || !names.includes('SHA256SUMS'))
-    throw new Error('Expected one signed DMG and its checksums.');
+  if (
+    names.filter((name) => name.endsWith('.dmg')).length !== 1 ||
+    names.filter((name) => name.endsWith('.zip')).length !== 1 ||
+    !names.includes('SHA256SUMS') ||
+    !names.includes('update.json')
+  )
+    throw new Error('Expected one signed DMG, application ZIP, update feed and checksums.');
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
   const runtime = JSON.parse(await readFile(join(output, 'runtime-release.json'), 'utf8'));
   const runtimeTag = `runtime-darwin-arm64-${runtime.fingerprint}`;
@@ -427,19 +475,45 @@ async function draftApp() {
   )
     throw new Error('The uploaded runtime does not match the packaged app.');
   if (
+    metadata.runtime?.fingerprint !== runtime.fingerprint ||
     metadata.runtime?.id !== runtime.id ||
-    metadata.runtime?.archive?.sha256 !== runtime.archive.sha256
+    !isDeepStrictEqual(metadata.runtime?.archive, runtime.archive)
   )
     throw new Error('Packaged app and runtime descriptor do not match.');
   const disk = names.find((name) => name.endsWith('.dmg'));
+  const zip = names.find((name) => name.endsWith('.zip'));
+  for (const [file, entry] of [
+    [disk, metadata.disk],
+    [zip, metadata.update],
+  ]) {
+    if (
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.(?:dmg|zip)$/.test(file) ||
+      entry?.file !== file ||
+      !Number.isSafeInteger(entry.bytes) ||
+      entry.bytes <= 0 ||
+      entry.bytes >= maximumAssetBytes ||
+      !hashPattern.test(entry.sha256) ||
+      entry.sha256 !== (await hash(join(output, file))) ||
+      entry.bytes !== (await stat(join(output, file))).size
+    )
+      throw new Error('Packaged application assets do not match the release metadata.');
+  }
   if (
-    metadata.disk?.file !== disk ||
-    metadata.disk.sha256 !== (await hash(join(output, disk))) ||
-    metadata.disk.bytes !== (await stat(join(output, disk))).size ||
+    zip !== disk.replace(/\.dmg$/, '.zip') ||
     (await readFile(join(output, 'SHA256SUMS'), 'utf8')).trim() !==
-      `${metadata.disk.sha256}  ${disk}`
+      `${metadata.disk.sha256}  ${disk}\n${metadata.update.sha256}  ${zip}`
   )
-    throw new Error('Packaged DMG and checksums do not match the release metadata.');
+    throw new Error('Packaged DMG, application ZIP and checksums do not match.');
+  const feed = JSON.parse(await readFile(join(output, 'update.json'), 'utf8'));
+  if (
+    feed.url !== `https://github.com/${releaseRepository}/releases/download/${tag}/${zip}` ||
+    feed.name !== `Otto ${version}` ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(feed.pub_date) ||
+    !Number.isFinite(Date.parse(feed.pub_date)) ||
+    new Date(feed.pub_date).toISOString().replace(/\.\d{3}Z$/, 'Z') !== feed.pub_date ||
+    Object.keys(feed).sort().join(',') !== 'name,pub_date,url'
+  )
+    throw new Error('The native update feed does not match the packaged release.');
   const releaseNotes = () => {
     const runtimeLink = runtimeRelease.draft
       ? runtimeRelease.html_url
@@ -466,24 +540,28 @@ async function draftApp() {
   });
   const downloadDirectory = join(process.env.RUNNER_TEMP || root, `otto-download-check-${version}`);
   await mkdir(downloadDirectory, { recursive: true });
-  const dmg = names.find((name) => name.endsWith('.dmg'));
-  gh(
-    [
-      'release',
-      'download',
-      tag,
-      '--repo',
+  for (const file of [disk, zip]) {
+    gh(
+      [
+        'release',
+        'download',
+        tag,
+        '--repo',
+        releaseRepository,
+        '--pattern',
+        file,
+        '--dir',
+        downloadDirectory,
+        '--clobber',
+      ],
       releaseRepository,
-      '--pattern',
-      dmg,
-      '--dir',
-      downloadDirectory,
-      '--clobber',
-    ],
-    releaseRepository,
-  );
-  if ((await hash(join(downloadDirectory, dmg))) !== (await hash(join(output, dmg))))
-    throw new Error('Downloaded release DMG failed its checksum.');
+    );
+    if (
+      (await hash(join(downloadDirectory, file))) !== (await hash(join(output, file))) ||
+      (await stat(join(downloadDirectory, file))).size !== (await stat(join(output, file))).size
+    )
+      throw new Error(`Downloaded release ${file === disk ? 'DMG' : 'ZIP'} failed its checksum.`);
+  }
   if (publish) {
     if (runtimeRelease.draft) publishRelease(runtimeRepository, runtimeTag);
     runtimeRelease = releaseByTag(runtimeRepository, runtimeTag);

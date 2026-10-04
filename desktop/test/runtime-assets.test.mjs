@@ -249,7 +249,10 @@ test('runtime public verification uses a bounded GET when HEAD is unsupported or
   }
 });
 
-async function releaseFixture(t, { isPublic = false, publish = false, plan = false } = {}) {
+async function releaseFixture(
+  t,
+  { isPublic = false, publish = false, plan = false, runtimeRepository = 'synthetic/otto' } = {},
+) {
   const f = await releaseRepository(t);
   const root = f.root;
   const scripts = join(root, '.github/scripts');
@@ -336,14 +339,22 @@ async function releaseFixture(t, { isPublic = false, publish = false, plan = fal
       : {}),
   };
   const disk = Buffer.from('Synthetic signed disk image');
-  const diskName = 'Otto-0.1.0-arm64.dmg';
+  const diskName = 'Otto-Preview-arm64.dmg';
+  const update = Buffer.from('Synthetic signed application ZIP');
+  const updateName = 'Otto-Preview-arm64.zip';
+  const feed = {
+    url: `https://github.com/synthetic/otto/releases/download/${appTag}/${updateName}`,
+    name: 'Otto 0.1.0',
+    pub_date: '2026-10-04T12:00:00Z',
+  };
   const metadata = {
     version: '0.1.0',
     source,
     signing: release.signing,
     notarized: isPublic,
-    runtime: { id: release.id, archive: release.archive },
+    runtime: { fingerprint, id: release.id, archive: release.archive },
     disk: { file: diskName, bytes: disk.length, sha256: digest(disk) },
+    update: { file: updateName, bytes: update.length, sha256: digest(update) },
   };
   await Promise.all([
     writeFile(join(assets, name), archive),
@@ -351,9 +362,14 @@ async function releaseFixture(t, { isPublic = false, publish = false, plan = fal
     writeFile(join(assets, 'SHA256SUMS'), `${digest(archive)}  ${name}\n`),
     writeFile(join(assets, 'signing.cer'), certificate),
     writeFile(join(output, diskName), disk),
+    writeFile(join(output, updateName), update),
+    writeFile(join(output, 'update.json'), JSON.stringify(feed)),
     writeFile(join(output, 'release.json'), JSON.stringify(metadata)),
     writeFile(join(output, 'runtime-release.json'), JSON.stringify(release)),
-    writeFile(join(output, 'SHA256SUMS'), `${digest(disk)}  ${diskName}\n`),
+    writeFile(
+      join(output, 'SHA256SUMS'),
+      `${digest(disk)}  ${diskName}\n${digest(update)}  ${updateName}\n`,
+    ),
     writeFile(join(output, 'signing.cer'), certificate),
   ]);
   const statePath = join(root, 'github.json');
@@ -361,6 +377,7 @@ async function releaseFixture(t, { isPublic = false, publish = false, plan = fal
   const writeState = (state) => writeFile(statePath, JSON.stringify(state));
   await writeState({
     private: !isPublic,
+    runtimeRepository,
     releases: {},
     created: 0,
     calls: [],
@@ -390,7 +407,8 @@ const missing = () => { save(); process.stderr.write('Not Found (HTTP 404)'); pr
 const output = (value) => { save(); process.stdout.write(JSON.stringify(value)); process.exit(0); };
 const flag = (name) => args[args.indexOf(name) + 1];
 if (args[0] === 'api') {
-  if (args[1] === 'repos/synthetic/otto') output({ private: state.private });
+  if (args[1] === 'repos/synthetic/otto' || args[1] === 'repos/' + state.runtimeRepository) output({ private: state.private });
+  if (args[1] === 'repos/' + state.runtimeRepository + '/commits/main') output({ sha: 'f'.repeat(40) });
   if (args[1].includes('/actions/workflows/')) output({ workflow_runs: state.runs });
   if (args[1] === 'graphql') {
     const tag = args.find(value => value.startsWith('tag=')).slice(4);
@@ -401,7 +419,7 @@ if (args[0] === 'api') {
     const release = state.releases[args[1].split('/').at(-1)];
     if (release && !release.draft) output(release);
   }
-  const release = Object.values(state.releases).find(value => args[1] === 'repos/synthetic/otto/releases/' + value.id);
+  const release = Object.values(state.releases).find(value => args[1] === 'repos/synthetic/otto/releases/' + value.id || args[1] === 'repos/' + state.runtimeRepository + '/releases/' + value.id);
   if (release) output(release);
   missing();
 }
@@ -410,11 +428,18 @@ const tag = args[2];
 if (args[1] === 'create') {
   if (state.releases[tag]) throw new Error('Duplicate release');
   const id = ++state.created;
-  state.releases[tag] = { id, draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), body: readFileSync(flag('--notes-file'), 'utf8'), html_url: 'https://github.com/synthetic/otto/releases/tag/untagged-' + id, assets: [] };
+  state.releases[tag] = { id, tag_name: tag, target_commitish: args.includes('--target') ? flag('--target') : 'main', draft: args.includes('--draft'), prerelease: args.includes('--prerelease'), body: readFileSync(flag('--notes-file'), 'utf8'), html_url: 'https://github.com/synthetic/otto/releases/tag/untagged-' + id, assets: [] };
 } else {
   const release = state.releases[tag];
   if (!release) missing();
   if (args[1] === 'edit') {
+    const nextTag = args.includes('--tag') ? flag('--tag') : 'untagged-' + release.id;
+    if (nextTag !== tag) {
+      delete state.releases[tag];
+      state.releases[nextTag] = release;
+    }
+    release.tag_name = nextTag;
+    if (args.includes('--target')) release.target_commitish = flag('--target');
     if (args.includes('--draft=false')) {
       release.draft = false;
       release.html_url = 'https://github.com/synthetic/otto/releases/tag/' + tag;
@@ -430,7 +455,7 @@ if (args[1] === 'create') {
     const name = flag('--pattern');
     if (!state.contents[tag + '/' + name]) missing();
     mkdirSync(flag('--dir'), { recursive: true });
-    writeFileSync(join(flag('--dir'), name), state.corruptDmg && name.endsWith('.dmg') ? 'Corrupted disk image' : Buffer.from(state.contents[tag + '/' + name], 'base64'));
+    writeFileSync(join(flag('--dir'), name), (state.corruptDmg && name.endsWith('.dmg')) || (state.corruptZip && name.endsWith('.zip')) ? 'Corrupted application' : Buffer.from(state.contents[tag + '/' + name], 'base64'));
   } else throw new Error('Unexpected release operation');
 }
 save();
@@ -467,6 +492,8 @@ globalThis.fetch = async (url, options = {}) => {
         FIXTURE_STATE: statePath,
         NODE_OPTIONS: `--import=${network}`,
         GH_TOKEN: 'synthetic-fixture-token',
+        RELEASE_TOKEN: 'synthetic-fixture-token',
+        OTTO_RUNTIME_REPO: runtimeRepository,
         GITHUB_REPOSITORY: 'synthetic/otto',
         GITHUB_SHA: source,
         GITHUB_REF: 'refs/heads/main',
@@ -478,7 +505,19 @@ globalThis.fetch = async (url, options = {}) => {
       },
       timeout: 30_000,
     });
-  return { invoke, readState, writeState, release, assets, output, runtimeTag, appTag, digest };
+  return {
+    invoke,
+    readState,
+    writeState,
+    release,
+    assets,
+    output,
+    runtimeTag,
+    appTag,
+    digest,
+    metadata,
+    feed,
+  };
 }
 
 test('runtime and app drafts handle pending tags and retries without publishing either release', async (t) => {
@@ -493,12 +532,77 @@ test('runtime and app drafts handle pending tags and retries without publishing 
   await f.invoke('draft');
   const state = await f.readState();
   assert.equal(state.created, 2);
-  for (const release of Object.values(state.releases)) {
+  for (const [tag, release] of Object.entries(state.releases)) {
+    assert.equal(release.tag_name, tag);
+    assert.equal(release.target_commitish, f.metadata.source);
     assert.equal(release.draft, true);
     assert.equal(release.prerelease, true);
   }
   assert(state.releases[f.appTag].body.includes(state.releases[f.runtimeTag].html_url));
+  for (const name of [f.metadata.update.file, 'update.json', 'SHA256SUMS']) {
+    const bytes = await readFile(join(f.output, name));
+    assert.equal(state.contents[f.appTag + '/' + name], bytes.toString('base64'));
+  }
   assert(!state.calls.some((call) => call.includes('--draft=false')));
+});
+
+test('foreign runtime draft edits retain their resolved repository target', async (t) => {
+  const f = await releaseFixture(t, { runtimeRepository: 'synthetic/runtime', publish: true });
+  await f.invoke('draft-runtime');
+  await f.invoke('draft-runtime');
+  await f.invoke('draft');
+  const state = await f.readState();
+  assert.equal(state.releases[f.runtimeTag].target_commitish, 'f'.repeat(40));
+  assert.equal(state.releases[f.appTag].target_commitish, f.metadata.source);
+  assert.equal(state.releases[f.runtimeTag].tag_name, f.runtimeTag);
+  assert.equal(state.releases[f.appTag].tag_name, f.appTag);
+  assert(Object.values(state.releases).every((release) => !release.draft));
+});
+
+test('app upload rejects mismatched update artifacts, feed and provenance', async (t) => {
+  const f = await releaseFixture(t);
+  await f.invoke('draft-runtime');
+  const metadataPath = join(f.output, 'release.json');
+  const feedPath = join(f.output, 'update.json');
+  const checksumsPath = join(f.output, 'SHA256SUMS');
+  const updatePath = join(f.output, f.metadata.update.file);
+  const original = new Map(
+    await Promise.all(
+      [metadataPath, feedPath, checksumsPath, updatePath].map(async (path) => [
+        path,
+        await readFile(path),
+      ]),
+    ),
+  );
+  const cases = [
+    ['ZIP contents', () => writeFile(updatePath, 'Different application')],
+    ['ZIP size', (metadata) => (metadata.update.bytes += 1)],
+    ['ZIP filename', (metadata) => (metadata.update.file = '../outside.zip')],
+    ['ZIP limit', (metadata) => (metadata.update.bytes = 2 * 1024 ** 3)],
+    ['source', (metadata) => (metadata.source = '0'.repeat(40))],
+    ['certificate', (metadata) => (metadata.signing.certificateSha256 = '0'.repeat(64))],
+    ['runtime', (metadata) => (metadata.runtime.archive.bytes += 1)],
+    ['feed release', (_metadata, feed) => (feed.url = feed.url.replace('v0.1.0', 'v0.2.0'))],
+    ['feed date', (_metadata, feed) => (feed.pub_date = '2026-99-99T12:00:00Z')],
+    [
+      'missing ZIP checksum',
+      () => writeFile(checksumsPath, `${f.metadata.disk.sha256}  ${f.metadata.disk.file}\n`),
+    ],
+  ];
+  for (const [name, mutate] of cases) {
+    await t.test(name, async () => {
+      for (const [path, bytes] of original) await writeFile(path, bytes);
+      const metadata = structuredClone(f.metadata);
+      const feed = structuredClone(f.feed);
+      await mutate(metadata, feed);
+      await writeFile(metadataPath, JSON.stringify(metadata));
+      await writeFile(feedPath, JSON.stringify(feed));
+      await assert.rejects(f.invoke('draft'));
+      const state = await f.readState();
+      assert.equal(state.releases[f.appTag], undefined);
+      assert(!state.calls.some((call) => call.includes('--draft=false')));
+    });
+  }
 });
 
 test('new public runtime drafts omit anonymous download URLs and support signed manual import', async (t) => {
@@ -607,6 +711,13 @@ test('runtime publication waits for checked app bytes and retries reuse an alrea
   assert(Object.values(state.releases).every((release) => release.draft));
   assert(!state.calls.some((call) => call.includes('--draft=false')));
   state.corruptDmg = false;
+  state.corruptZip = true;
+  await f.writeState(state);
+  await assert.rejects(f.invoke('draft'), /Downloaded release ZIP failed/);
+  state = await f.readState();
+  assert(Object.values(state.releases).every((release) => release.draft));
+  assert(!state.calls.some((call) => call.includes('--draft=false')));
+  state.corruptZip = false;
   state.failPublicDownload = true;
   await f.writeState(state);
   await assert.rejects(f.invoke('draft'), /publicly downloadable/);
@@ -624,7 +735,10 @@ test('runtime publication waits for checked app bytes and retries reuse an alrea
     [f.runtimeTag, f.appTag],
   );
   const downloadedApp = state.calls.findIndex(
-    (call) => call[1] === 'download' && call.includes('Otto-0.1.0-arm64.dmg'),
+    (call) => call[1] === 'download' && call.includes(f.metadata.disk.file),
+  );
+  const downloadedUpdate = state.calls.findIndex(
+    (call) => call[1] === 'download' && call.includes(f.metadata.update.file),
   );
   const publishedRuntime = state.calls.findIndex((call) => call.includes('--draft=false'));
   const checkedPublicRuntime = state.calls.findIndex(
@@ -632,11 +746,18 @@ test('runtime publication waits for checked app bytes and retries reuse an alrea
   );
   const publishedApp = state.calls.findLastIndex((call) => call.includes('--draft=false'));
   assert(
-    downloadedApp < publishedRuntime &&
+    downloadedApp >= 0 &&
+      downloadedUpdate >= 0 &&
+      downloadedApp < publishedRuntime &&
+      downloadedUpdate < publishedRuntime &&
       publishedRuntime < checkedPublicRuntime &&
       checkedPublicRuntime < publishedApp,
   );
   assert(!state.releases[f.appTag].body.includes('/untagged-'));
+  for (const [tag, release] of Object.entries(state.releases)) {
+    assert.equal(release.tag_name, tag);
+    assert.equal(release.target_commitish, f.metadata.source);
+  }
   await assert.rejects(
     f.invoke('draft-runtime'),
     /Refusing to replace a published or unrelated release/,
@@ -1094,6 +1215,9 @@ test('runtime cache reuse rejects same-size noncritical changes and executable-m
     mode: 0o755,
     sha256: createHash('sha256').update(original).digest('hex'),
   });
+  options.release.id = createHash('sha256')
+    .update(JSON.stringify(options.release.files))
+    .digest('hex');
   await create(
     { cwd: options.source, file: options.archivePath, portable: true, noMtime: true, gzip: true },
     options.release.files.map((file) => file.path),
@@ -1375,5 +1499,93 @@ else if (args[0] !== 'pull') throw new Error('Unexpected Docker command');
   assert.equal(
     JSON.parse(await readFile(statePath, 'utf8')).calls.some((call) => call[0] === 'pull'),
     false,
+  );
+});
+
+test('remote runtime preparation rejects forged content IDs and changed installed descriptors without touching the current cache', async (t) => {
+  const { prepareRuntimeUpdate } = await import('../runtime/assets.mjs');
+  const f = await fixture(t);
+  const installed = await installRuntimeArchive(f);
+  const before = await readFile(join(installed, 'lima/bin/limactl'));
+  const marker = await readFile(join(installed, '.ready.json'));
+  const options = {
+    ...f,
+    downloadUrl: 'https://updates.example.invalid/runtime',
+    fetch: () => assert.fail('A rejected descriptor must not download'),
+  };
+  await assert.rejects(
+    prepareRuntimeUpdate({ ...f.release, id: '0'.repeat(64) }, options),
+    /identifier does not match/,
+  );
+  await assert.rejects(
+    prepareRuntimeUpdate(
+      { ...f.release, archive: { ...f.release.archive, sha256: 'a'.repeat(64) } },
+      options,
+    ),
+    /without changing its ID/,
+  );
+  await assert.rejects(
+    prepareRuntimeUpdate(
+      { ...f.release, url: 'https://updates.example.invalid/replaced' },
+      options,
+    ),
+    /without changing its ID/,
+  );
+  assert.equal(await prepareRuntimeUpdate(f.release, options), installed);
+  assert.deepEqual(await readFile(join(installed, 'lima/bin/limactl')), before);
+  assert.deepEqual(await readFile(join(installed, '.ready.json')), marker);
+  assert.deepEqual(await readdir(f.cacheRoot), [f.release.id]);
+});
+
+test('a different verified runtime downloads into its own cache, survives corrupt downloads, and is reused without starting a VM', async (t) => {
+  const { prepareRuntimeUpdate } = await import('../runtime/assets.mjs');
+  const current = await fixture(t);
+  const installed = await installRuntimeArchive(current);
+  const next = await fixture(t);
+  const executable = join(next.source, 'lima/bin/limactl');
+  await writeFile(executable, 'Synthetic second runtime');
+  const file = next.release.files.find((entry) => entry.path === 'lima/bin/limactl');
+  file.bytes = (await stat(executable)).size;
+  file.sha256 = await assetHash(executable);
+  next.release.id = createHash('sha256').update(JSON.stringify(next.release.files)).digest('hex');
+  await create(
+    { cwd: next.source, file: next.archivePath, portable: true, noMtime: true, gzip: true },
+    next.release.files.map((entry) => entry.path),
+  );
+  next.release.archive = {
+    bytes: (await stat(next.archivePath)).size,
+    sha256: await assetHash(next.archivePath),
+  };
+  const bytes = await readFile(next.archivePath);
+  let downloads = 0;
+  let corrupt = true;
+  const options = {
+    ...current,
+    downloadUrl: 'https://updates.example.invalid/runtime',
+    fetch: async (url, options) => {
+      assert.equal(url, 'https://updates.example.invalid/runtime');
+      assert.equal(options.headers.accept, 'application/octet-stream');
+      downloads++;
+      const content = Buffer.from(bytes);
+      if (corrupt) content[30] ^= 1;
+      return new Response(content);
+    },
+  };
+  await assert.rejects(prepareRuntimeUpdate(next.release, options), /does not match/);
+  assert.equal(await findRuntimeAssets(current), installed);
+  assert.deepEqual(await readdir(current.cacheRoot), [current.release.id]);
+  corrupt = false;
+  const prepared = await prepareRuntimeUpdate(next.release, options);
+  assert.notEqual(prepared, installed);
+  assert.equal(
+    await readFile(join(prepared, 'lima/bin/limactl'), 'utf8'),
+    'Synthetic second runtime',
+  );
+  assert.equal(await prepareRuntimeUpdate(next.release, options), prepared);
+  assert.equal(downloads, 2);
+  assert.equal(await findRuntimeAssets(current), installed);
+  assert.deepEqual(
+    (await readdir(current.cacheRoot)).sort(),
+    [current.release.id, next.release.id].sort(),
   );
 });

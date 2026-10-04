@@ -1,5 +1,6 @@
 import {
   app,
+  autoUpdater,
   BrowserWindow,
   dialog,
   ipcMain,
@@ -30,6 +31,12 @@ import {
 import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from './lifecycle.mjs';
+import {
+  createDesktopUpdater,
+  createUpdateSource,
+  guardUpdateRenderers,
+  restartDesktopUpdate,
+} from './updates.mjs';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const engineRoot = app.isPackaged
@@ -60,6 +67,10 @@ let onboardingCompleted = false;
 let providerConfigured = false;
 let guidedStartup = false;
 let quitting = false;
+let installingUpdate = false;
+let updates;
+let checkingUpdates;
+let checkedUpdatesAtStartup = false;
 let closingEngine = false;
 let tray;
 let engineOrigin = '';
@@ -367,6 +378,7 @@ function protectWindow(window, origin) {
   for (const event of ['blur', 'hide', 'closed'])
     window.on(event, () => setTimeout(updateReadinessNotice, 100));
   window.webContents.setWindowOpenHandler(({ url }) => {
+    if (quitting) return { action: 'deny' };
     if (origin && trustedAppURL(url))
       return {
         action: 'allow',
@@ -391,6 +403,7 @@ function protectWindow(window, origin) {
     child.on('closed', () => engineWindows.delete(child));
   });
   window.webContents.on('will-navigate', (event, url) => {
+    if (quitting) return event.preventDefault();
     if ((!origin && isSetupURL(url)) || (origin && trustedAppURL(url))) return;
     event.preventDefault();
     void openExternal(url).catch(() => {});
@@ -403,6 +416,7 @@ function protectWindow(window, origin) {
 }
 
 function showSettings(section = 'general', _mode, reset = false) {
+  if (quitting) return;
   const mode = desktopSetupMode({
     completed: onboardingCompleted,
     providerConfigured,
@@ -443,6 +457,7 @@ function showSettings(section = 'general', _mode, reset = false) {
 }
 
 function showEngine() {
+  if (quitting) return;
   if (
     !onboardingCompleted ||
     !providerConfigured ||
@@ -572,7 +587,140 @@ async function finishEnginePreparation() {
     if (foregroundWindow()) showEngine();
     setupWindow?.destroy();
   }
+  if (updates && !checkedUpdatesAtStartup) {
+    checkedUpdatesAtStartup = true;
+    void checkForUpdates(false);
+  }
   return status;
+}
+
+async function checkForUpdates(manual = true) {
+  if (!updates || quitting || checkingUpdates) return;
+  checkingUpdates = (async () => {
+    try {
+      const candidate = await updates.check();
+      if (quitting) return;
+      if (!candidate) {
+        if (manual)
+          await dialog.showMessageBox({ message: 'Otto is up to date.', buttons: ['OK'] });
+        return;
+      }
+      const { response } = await dialog.showMessageBox({
+        message: `Otto ${candidate.version} is ready.`,
+        buttons: ['Restart', 'Later'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (response === 0 && !quitting) await updates.restart();
+    } catch (error) {
+      if (quitting) return;
+      await writeDiagnostic(error.message).catch(() => {});
+      if (manual || updates.ready)
+        await dialog.showMessageBox({
+          type: 'warning',
+          message: updates.ready
+            ? 'Otto could not restart yet.'
+            : 'Otto could not check for updates.',
+          detail: bounded(error.message),
+          buttons: ['OK'],
+        });
+    }
+  })().finally(() => {
+    checkingUpdates = undefined;
+  });
+  return checkingUpdates;
+}
+
+async function restartForUpdate(candidate) {
+  return restartDesktopUpdate({
+    candidate,
+    guard: async () => {
+      if (
+        quitting ||
+        !engine ||
+        status.phase !== 'ready' ||
+        lifecycle.engineStarting ||
+        (setupWindow && !setupWindow.isDestroyed())
+      )
+        throw new Error('Finish setup and close Settings before restarting Otto.');
+      quitting = true;
+      try {
+        const release = await guardUpdateRenderers({
+          windows: [...engineWindows].filter((window) => !window.isDestroyed()),
+          ipc: ipcMain,
+          trusted: isEngine,
+        });
+        const resume = () => {
+          release();
+          quitting = false;
+        };
+        resume.validate = release.validate;
+        return resume;
+      } catch (error) {
+        quitting = false;
+        throw error;
+      }
+    },
+    request: engineRequest,
+    flush: () => chatReadCursors.flush(),
+    shutdown: async () => {
+      updateReadinessNotice();
+      stopNotifications?.();
+      for (const notification of displayedNotifications) notification.close();
+      await finishQuit(
+        () =>
+          new Promise((resolve, reject) => {
+            const cleanup = () => {
+              autoUpdater.removeListener('error', failed);
+              app.removeListener('before-quit', accepted);
+            };
+            const failed = (error) => {
+              cleanup();
+              installingUpdate = false;
+              reject(error);
+            };
+            const accepted = () => {
+              cleanup();
+              resolve();
+            };
+            autoUpdater.once('error', failed);
+            app.once('before-quit', accepted);
+            installingUpdate = true;
+            try {
+              autoUpdater.quitAndInstall();
+            } catch (error) {
+              failed(error);
+            }
+          }),
+      );
+    },
+  });
+}
+
+async function finishQuit(complete) {
+  while (true) {
+    try {
+      await lifecycle.close();
+      await complete();
+      return;
+    } catch (error) {
+      await writeDiagnostic(error.message).catch(() => {});
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        message: 'Otto could not finish shutting down.',
+        detail: 'Try again to finish quitting.',
+        buttons: ['Try again', 'Quit anyway'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (response === 1) {
+        app.exit();
+        return;
+      }
+    }
+  }
 }
 
 async function validateStart() {
@@ -831,41 +979,42 @@ else {
   app.on('activate', () => showEngine());
   app.on('window-all-closed', () => {});
   app.on('before-quit', (event) => {
+    if (installingUpdate) return;
     event.preventDefault();
     if (quitting) return;
     quitting = true;
+    const stoppingUpdates = updates?.dispose();
     updateReadinessNotice();
     stopNotifications?.();
     for (const notification of displayedNotifications) notification.close();
     void (async () => {
-      while (true) {
-        try {
-          await lifecycle.close();
-          await chatReadCursors.flush().catch(() => {});
-          app.exit();
-          return;
-        } catch (error) {
-          await writeDiagnostic(error.message).catch(() => {});
-          const { response } = await dialog.showMessageBox({
-            type: 'warning',
-            message: 'Otto could not finish shutting down.',
-            detail: 'Its computer may still be running. Try again to stop it before quitting.',
-            buttons: ['Try again', 'Quit anyway'],
-            defaultId: 0,
-            cancelId: 0,
-            noLink: true,
-          });
-          if (response === 1) {
-            app.exit();
-            return;
-          }
-        }
-      }
+      await stoppingUpdates;
+      await chatReadCursors.flush().catch(() => {});
+      await finishQuit(() => app.exit());
     })().catch((error) => void writeDiagnostic(error.message).catch(() => {}));
   });
   void app
     .whenReady()
     .then(async () => {
+      if (app.isPackaged && process.platform === 'darwin' && process.arch === 'arm64') {
+        const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+        updates = createDesktopUpdater({
+          source: createUpdateSource({ sourceUrl: ottoBuild?.updateSourceUrl }),
+          currentVersion: app.getVersion(),
+          native: autoUpdater,
+          prepareRuntime: async (candidate, signal) => {
+            const { prepareRuntimeUpdate } = await import(
+              pathToFileURL(join(engineRoot, 'desktop/runtime/assets.mjs')).href
+            );
+            await prepareRuntimeUpdate(candidate.runtime, {
+              resourcesPath: engineRoot,
+              downloadUrl: candidate.downloadUrl,
+              signal,
+            });
+          },
+          restart: restartForUpdate,
+        });
+      }
       nativeTheme.on('updated', publishPreferences);
       const appSession = session.fromPartition('persist:otto-app');
       appSession.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -910,6 +1059,11 @@ else {
             submenu: [
               { role: 'about' },
               { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showSettings() },
+              {
+                label: 'Check for Updates…',
+                enabled: Boolean(updates),
+                click: () => void checkForUpdates(),
+              },
               {
                 label: 'Replay onboarding…',
                 click: replayOnboarding,

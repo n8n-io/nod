@@ -216,6 +216,7 @@ jobs:
     env:
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
       OTTO_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
+      OTTO_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.OTTO_DESKTOP_UPDATE_SOURCE_URL }}
       OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
       OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
       OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
@@ -270,8 +271,10 @@ jobs:
           name: desktop-macos-arm64
           path: |
             dist/desktop/*.dmg
+            dist/desktop/*.zip
             dist/desktop/SHA256SUMS
             dist/desktop/release.json
+            dist/desktop/update.json
             dist/desktop/runtime-release.json
             dist/desktop/signing.cer
           compression-level: 0
@@ -309,7 +312,7 @@ jobs:
         with:
           name: desktop-macos-arm64
           path: dist/desktop
-      - name: Verify GitHub asset digests and download the DMG again
+      - name: Verify GitHub asset digests and download the DMG and ZIP again
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
