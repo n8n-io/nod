@@ -60,6 +60,7 @@ function boxes(bytes: Buffer, start = 0, end = bytes.length) {
   for (let offset = start; offset + 8 <= end;) {
     const large = bytes.readUInt32BE(offset) === 1;
     const header = large ? 16 : 8;
+    if (offset + header > end) break;
     const size = large
       ? Number(bytes.readBigUInt64BE(offset + 8))
       : bytes.readUInt32BE(offset) || end - offset;
@@ -85,25 +86,29 @@ function inside(bytes: Buffer, box: Box | undefined, path: string[]) {
 function describe(bytes: Buffer) {
   const top = boxes(bytes);
   const moov = top.find((box) => box.type === 'moov');
-  const entries = boxes(bytes, moov?.start, moov?.end)
+  const tracks = boxes(bytes, moov?.start, moov?.end)
     .filter((box) => box.type === 'trak')
     .map((trak) => {
+      const handler = inside(bytes, trak, ['mdia', 'hdlr']);
       const stsd = inside(bytes, trak, ['mdia', 'minf', 'stbl', 'stsd']);
-      return stsd && boxes(bytes, stsd.start + 8, stsd.end)[0];
-    })
-    .filter((entry): entry is Box => Boolean(entry));
-  const video = entries.find((entry) =>
-    ['avc1', 'avc3', 'hvc1', 'hev1', 'vp09', 'av01', 'mp4v'].includes(entry.type),
-  );
+      return {
+        kind:
+          handler && handler.start + 12 <= handler.end
+            ? bytes.toString('latin1', handler.start + 8, handler.start + 12)
+            : '',
+        entry: stsd && boxes(bytes, stsd.start + 8, stsd.end)[0],
+      };
+    });
+  const video = tracks.find((track) => track.kind === 'vide')?.entry;
+  const audio = tracks.find((track) => track.kind === 'soun');
   const avc = video?.type.startsWith('avc')
     ? boxes(bytes, video.start + 78, video.end).find((box) => box.type === 'avcC')
     : undefined;
   return {
     faststart: Boolean(moov) && top.indexOf(moov!) < top.findIndex((box) => box.type === 'mdat'),
     video: video?.type,
-    profile: avc ? bytes[avc.start + 1] : undefined,
-    audio: entries.find((entry) => ['mp4a', 'Opus', 'ac-3', 'ec-3', 'fLaC'].includes(entry.type))
-      ?.type,
+    profile: avc && avc.start + 1 < avc.end ? bytes[avc.start + 1] : undefined,
+    audio: audio && (audio.entry?.type ?? 'unknown'),
   };
 }
 
