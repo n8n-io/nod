@@ -12,6 +12,7 @@ import { choice, has, number, text, whole, type Args } from './options.ts';
 import { compareTable, html, runsTable, terminal } from './report.ts';
 import { rejudge } from './rejudge.ts';
 import { reviewRun } from './review.ts';
+import { fallbackLlm } from './judge.ts';
 import { defaultJudge, runSuite, slug, type RunOptions } from './run.ts';
 import { scenarios } from './scenarios/index.ts';
 import { loadEnvironment, parseModel } from './stack.ts';
@@ -351,6 +352,7 @@ export async function main(args: Args) {
           judge: parseModel(judgeName, environment),
           only,
           at: Date.parse(run.manifest.startedAt) || Date.now(),
+          fallback: await fallbackLlm(environment, parseModel(judgeName, environment).provider),
         });
         const manifest = {
           ...run.manifest,

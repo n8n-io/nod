@@ -4,9 +4,10 @@ import { grade } from './grade.ts';
 import {
   createLlm,
   createSimulator,
-  fallbackSimulators,
+  fallbackLlm,
   providerRefusal,
   simulatorFailure,
+  withFallback,
 } from './judge.ts';
 import type { Blame, AttemptResult, CheckResult } from './results.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
@@ -87,15 +88,10 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   };
   terminate = release;
   try {
-    const judgeLlm = await createLlm(judgeModel);
-    let fallbackLlm: Awaited<ReturnType<typeof createLlm>> | undefined;
-    for (const name of fallbackSimulators)
-      try {
-        const candidate = parseModel(name, environment);
-        if (candidate.provider === judgeModel.provider) continue;
-        fallbackLlm = await createLlm(candidate);
-        break;
-      } catch {}
+    const judgeLlm = withFallback(
+      await createLlm(judgeModel),
+      await fallbackLlm(environment, judgeModel.provider),
+    );
     stack = await (starting = startStack({
       model,
       integrations:
@@ -114,7 +110,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const session = createSession({
       stack,
       user: definition.user,
-      simulator: definition.user.persona ? createSimulator(judgeLlm, fallbackLlm) : undefined,
+      simulator: definition.user.persona ? createSimulator(judgeLlm) : undefined,
       deadline: taskStarted + definition.seconds * 1000,
       world,
     });
@@ -190,10 +186,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       costUsd: trace.usage.costUsd,
       toolErrors: trace.tools.filter((call) => call.isError).length,
       firstReplySeconds: trace.firstReplySeconds,
-      judgeCostUsd:
-        judgeLlm.spent().costUsd === null
-          ? null
-          : judgeLlm.spent().costUsd! + (fallbackLlm?.spent().costUsd ?? 0),
+      judgeCostUsd: judgeLlm.spent().costUsd,
       final: trace.final,
       transcript: trace.transcript(60_000),
       groundTruth: truth,

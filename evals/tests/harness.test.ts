@@ -4,7 +4,7 @@ import { lookup } from 'node:dns/promises';
 import test from 'node:test';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
-import { createSimulator, simulatorFailure } from '../src/judge.ts';
+import { createSimulator, simulatorFailure, withFallback } from '../src/judge.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
@@ -614,7 +614,7 @@ test('a simulated user blocked by its provider falls back to a second model', as
   } as never;
   const backup = { complete: async () => ' OK, go ahead. ' } as never;
   assert.equal(
-    await createSimulator(blocked, backup).reply('You are Alex.', 'OK to pay?'),
+    await createSimulator(withFallback(blocked, backup)).reply('You are Alex.', 'OK to pay?'),
     'OK, go ahead.',
   );
   const alsoBlocked = {
@@ -623,7 +623,7 @@ test('a simulated user blocked by its provider falls back to a second model', as
     },
   } as never;
   await assert.rejects(
-    createSimulator(blocked, alsoBlocked).reply('You are Alex.', 'OK to pay?'),
+    createSimulator(withFallback(blocked, alsoBlocked)).reply('You are Alex.', 'OK to pay?'),
     (error: Error) => error.message.startsWith(simulatorFailure),
   );
   const broken = {
@@ -632,7 +632,7 @@ test('a simulated user blocked by its provider falls back to a second model', as
     },
   } as never;
   await assert.rejects(
-    createSimulator(broken, backup).reply('You are Alex.', 'OK to pay?'),
+    createSimulator(withFallback(broken, backup)).reply('You are Alex.', 'OK to pay?'),
     (error: Error) => error.message.startsWith(simulatorFailure),
   );
 });

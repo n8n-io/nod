@@ -1,4 +1,4 @@
-import { createLlm, judgeCriteria } from './judge.ts';
+import { createLlm, judgeCriteria, withFallback, type Llm } from './judge.ts';
 import { reviewKey } from './review.ts';
 import { criteria as productCriteria, standard } from './product.ts';
 import type { AttemptResult, CheckResult, Reviews } from './results.ts';
@@ -24,8 +24,9 @@ export async function rejudge(options: {
   judge: Model;
   only?: string[];
   at: number;
+  fallback?: Llm;
 }) {
-  const llm = await createLlm(options.judge);
+  const llm = withFallback(await createLlm(options.judge), options.fallback);
   const next: AttemptResult[] = [];
   let same = 0;
   let compared = 0;

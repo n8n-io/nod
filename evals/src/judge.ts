@@ -1,6 +1,6 @@
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import type { Model } from './stack.ts';
+import { parseModel, type Model } from './stack.ts';
 
 export interface Llm {
   model: Model;
@@ -74,24 +74,55 @@ export interface Simulator {
 }
 
 export const simulatorFailure = 'The simulated user failed';
-export const fallbackSimulators = ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'];
+export const fallbackModels = ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'];
 export const providerRefusal =
   /violative|usage policy|content (filtering )?policy|safety (filter|system)/i;
 
-export function createSimulator(llm: Llm, fallback?: Llm): Simulator {
-  const fail = (error: unknown) =>
-    new Error(`${simulatorFailure}: ${error instanceof Error ? error.message : String(error)}`);
-  const ask = async (system: string, user: string, tokens: number) => {
+export async function fallbackLlm(
+  environment: Record<string, string | undefined>,
+  provider: string,
+): Promise<Llm | undefined> {
+  for (const name of fallbackModels)
     try {
-      return await llm.complete(system, user, tokens);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!fallback || !providerRefusal.test(message)) throw fail(error);
-      return fallback.complete(system, user, tokens).catch((second) => {
-        throw fail(second);
-      });
-    }
+      const model = parseModel(name, environment);
+      if (model.provider !== provider) return await createLlm(model);
+    } catch {}
+  return undefined;
+}
+
+export function withFallback(primary: Llm, fallback?: Llm): Llm {
+  if (!fallback) return primary;
+  const total = (pick: (spent: ReturnType<Llm['spent']>) => number | null) => {
+    const values = [pick(primary.spent()), pick(fallback.spent())];
+    return values.every((value) => value === null)
+      ? null
+      : values.reduce<number>((a, b) => a + (b ?? 0), 0);
   };
+  return {
+    model: primary.model,
+    spent: () => ({
+      tokens: total((spent) => spent.tokens) ?? 0,
+      costUsd: total((spent) => spent.costUsd),
+    }),
+    async complete(system, input, maxTokens) {
+      try {
+        return await primary.complete(system, input, maxTokens);
+      } catch (error) {
+        if (!providerRefusal.test(error instanceof Error ? error.message : String(error)))
+          throw error;
+        return fallback.complete(system, input, maxTokens);
+      }
+    },
+  };
+}
+
+export function createSimulator(llm: Llm): Simulator {
+  const ask = (system: string, user: string, tokens: number) =>
+    llm.complete(system, user, tokens).catch((error) => {
+      throw new Error(
+        `${simulatorFailure}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   return {
     async reply(persona, question) {
       const text = await ask(
