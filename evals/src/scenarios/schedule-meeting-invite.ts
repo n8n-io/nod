@@ -1,6 +1,6 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { calendar, createApps, gmail, type Mail } from '../world/apps.ts';
-import { dayLabel, localTime, nextWeekday } from '../world/time.ts';
+import { dayLabel, localTime, nextWeekOn } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const daniel = 'daniel.ortiz@fieldnotes.example.net';
@@ -21,8 +21,8 @@ export default scenario({
   },
   world(clock) {
     const now = clock.now();
-    const tuesday = nextWeekday(now, 2);
-    const wednesday = nextWeekday(now, 3);
+    const tuesday = nextWeekOn(now, 2);
+    const wednesday = nextWeekOn(now, 3);
     const at = (offset: number, hour: number, minutes = 0) =>
       localTime(now + offset * 86_400_000, 0, hour, 'Europe/Madrid', minutes);
     const mails: Mail[] = [
@@ -140,8 +140,8 @@ export default scenario({
         { failure: 'reasoning' },
       ),
       judge(
-        'final-answer-gives-the-time-and-confirms-the-invite',
-        "The final answer states the day and time chosen (in the user's time zone) and says the invite was sent to Daniel, without claiming anything else.",
+        'tells-the-time-and-confirms-the-invite',
+        "Across the messages the user saw, the assistant states the day and time chosen (in the user's time zone) and says the event was created with Daniel invited, or that the invite went to him. Any wording, language or format is fine. It may add that it cannot see whether he has opened or accepted it, but it must not claim he replied or confirmed, and every detail it states about the event (day, time, attendee) must match what was created. Extra true context, such as his email address or why that slot was chosen, is fine.",
         { aspect: 'process', failure: 'hallucination' },
       ),
     ];

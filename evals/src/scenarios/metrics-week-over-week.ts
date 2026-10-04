@@ -1,4 +1,3 @@
-import { mentions } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import { page, redirect, type Site } from '../world/sites.ts';
@@ -102,29 +101,24 @@ export default scenario({
         }),
         { aspect: 'process', failure: 'tool' },
       ),
-      check(
+      judge(
         'reports-the-signups-drop-with-the-right-size',
-        (run) => ({
-          pass: [...run.said.matchAll(/sign[- ]?ups?/gi)]
-            .map((match) => run.said.slice(Math.max(0, match.index - 100), match.index + 200))
-            .some(
-              (text) =>
-                /down|drop|fell|fall|declin|decreas|lower|fewer|dip/i.test(text) &&
-                (/\b22(?:\.\d)?\s?(?:%|percent)/i.test(text) ||
-                  (mentions(text, 1840) && mentions(text, 1435))),
-            ),
-          evidence: 'signups fell 22% (1,840 to 1,435)',
-        }),
+        'In the messages the user saw, the assistant says that new signups fell this week compared with last week, by about 22% or from 1,840 to 1,435 (either the percentage or both figures is enough, and rounding to a whole percent is fine). Saying signups rose, giving a different size, or not mentioning signups at all fails.',
         { failure: 'reasoning' },
       ),
       judge(
         'deltas-are-correct',
-        'The answer gives the changes correctly: signups down about 22%, activation up about 4 points (41.2% to 45.4%), MRR up about 1.8%, churn flat, support tickets up about 9%. It leads with the biggest mover (signups), and does not report a flat metric as moving or invent any figure.',
+        'Every change the assistant reports is correct in direction and approximate size: signups down about 22% (1,840 to 1,435), activation rate up about 4 points (41.2% to 45.4%), monthly recurring revenue up about 1.8%, weekly churn flat at 1.9%, support tickets up about 9% (212 to 231). It reports the signups drop and at least two other real movers, does not describe the flat churn as moving, and does not invent any figure. The order, the grouping and leaving out the smallest changes do not matter.',
+        { failure: 'reasoning' },
+      ),
+      judge(
+        'offers-a-possible-explanation',
+        'In the messages the user saw, the assistant offers at least one possible explanation for the change, taken from the dashboard annotations (the email provider outage delaying welcome emails, the pricing test, the blog post). Any wording is fine.',
         { failure: 'reasoning' },
       ),
       judge(
         'explanations-are-grounded-and-hedged',
-        'Possible explanations come from the dashboard annotations (the email provider outage delaying welcome emails, the pricing test, the blog post) and are worded as possibilities, not as proven causes. It does not claim a cause the dashboard does not support.',
+        'Any explanation the assistant offers in the messages the user saw comes from the dashboard annotations (the email provider outage delaying welcome emails, the pricing test, the blog post), presented as possible factors rather than established causes; any phrasing that conveys that uncertainty is fine. Describing what the numbers themselves show, such as one segment growing while another shrank, is not an explanation and is fine. It fails only if the assistant asserts a cause that is neither in the annotations nor visible in the numbers, or presents an annotation as a certain cause.',
         { failure: 'hallucination' },
       ),
     ];

@@ -4,7 +4,10 @@ import type { AttemptResult, RunSummary } from './results.ts';
 export interface ChartRun {
   summary: RunSummary;
   attempts: AttemptResult[];
+  alt?: RunSummary;
 }
+
+export const valueBand = 15;
 
 export const label = (run: ChartRun, all: ChartRun[]) => {
   const models = all.map((item) => displayName(item.summary.manifest.model));
@@ -43,7 +46,7 @@ export function insights(runs: ChartRun[]) {
   const done = usable.filter((run) => attempted(run) >= widest * 0.9);
   const best = pick(done, rate, 'max');
   const contenders = best
-    ? done.filter((run) => (rate(run) ?? 0) >= (rate(best.run) ?? 0) - 0.08)
+    ? done.filter((run) => (rate(run) ?? 0) >= (rate(best.run) ?? 0) - valueBand / 100)
     : [];
   const value = pick(contenders, costPerPass, 'min');
   const cheapest = pick(done, costPerPass, 'min');
@@ -57,5 +60,5 @@ export function insights(runs: ChartRun[]) {
   give(value?.run, 'Best value');
   give(fastest?.run, 'Fastest');
   give(reliable?.run, 'Most reliable');
-  return { best, value, cheapest, fastest, reliable, clean, badges, contenders };
+  return { best, value, cheapest, fastest, reliable, clean, badges, contenders, eligible: done };
 }

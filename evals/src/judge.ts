@@ -1,11 +1,12 @@
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import type { Model } from './stack.ts';
+import { parseModel, type Model } from './stack.ts';
 
 export interface Llm {
   model: Model;
   complete(system: string, input: string, maxTokens?: number): Promise<string>;
   spent(): { tokens: number; costUsd: number | null };
+  fallbackCalls?(): number;
 }
 
 const transient =
@@ -70,17 +71,79 @@ export function parseJson(text: string): any {
 
 export interface Simulator {
   reply(persona: string, question: string): Promise<string>;
+  followUp(persona: string, task: string, message: string): Promise<string | undefined>;
+}
+
+export const simulatorFailure = 'The simulated user failed';
+export const fallbackModels = ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'];
+export const providerRefusal =
+  /violative|usage policy|content (filtering )?policy|safety (filter|system)/i;
+
+export async function fallbackLlm(
+  environment: Record<string, string | undefined>,
+  provider: string,
+): Promise<Llm | undefined> {
+  for (const name of fallbackModels)
+    try {
+      const model = parseModel(name, environment);
+      if (model.provider !== provider) return await createLlm(model);
+    } catch {}
+  return undefined;
+}
+
+export function withFallback(primary: Llm, fallback?: Llm): Llm {
+  if (!fallback) return primary;
+  const total = (pick: (spent: ReturnType<Llm['spent']>) => number | null) => {
+    const values = [pick(primary.spent()), pick(fallback.spent())];
+    return values.every((value) => value === null)
+      ? null
+      : values.reduce<number>((a, b) => a + (b ?? 0), 0);
+  };
+  let used = 0;
+  return {
+    model: primary.model,
+    fallbackCalls: () => used,
+    spent: () => ({
+      tokens: total((spent) => spent.tokens) ?? 0,
+      costUsd: total((spent) => spent.costUsd),
+    }),
+    async complete(system, input, maxTokens) {
+      try {
+        return await primary.complete(system, input, maxTokens);
+      } catch (error) {
+        if (!providerRefusal.test(error instanceof Error ? error.message : String(error)))
+          throw error;
+        used++;
+        return fallback.complete(system, input, maxTokens);
+      }
+    },
+  };
 }
 
 export function createSimulator(llm: Llm): Simulator {
+  const ask = (system: string, user: string, tokens: number) =>
+    llm.complete(system, user, tokens).catch((error) => {
+      throw new Error(
+        `${simulatorFailure}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   return {
     async reply(persona, question) {
-      const text = await llm.complete(
+      const text = await ask(
         `You play a person chatting with their personal AI assistant. Reply as that person in one or two short, casual sentences. Use only the facts below, and share a fact only when the assistant's question asks for it; never volunteer extra information. If the question asks for something the facts do not cover, say you have no preference and the assistant should choose sensibly. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
         `The assistant says:\n${question}\n\nYour reply:`,
         300,
       );
       return text.trim();
+    },
+    async followUp(persona, task, message) {
+      const text = await ask(
+        `You play a person chatting with their personal AI assistant. You asked it for something, and it has just replied. Decide whether the assistant is blocked: it cannot finish what you originally asked without something from you, such as an answer it needs, a choice between options, missing information, or the approval or go-ahead it said it would wait for (including offers such as "say the word and I'll send it" when sending is part of what you asked). If it has finished, or only offers optional extras, suggestions or next steps you did not ask for, reply with exactly NONE. Otherwise reply as that person in one or two short, casual sentences. Use only the facts below, share a fact only when the assistant needs it, and never volunteer extra information. If the assistant asks about something the facts do not cover, say you have no preference and the assistant should choose sensibly. Never mention that you are a simulation.\n\nFacts about you:\n${persona}`,
+        `What you originally asked:\n${task}\n\nThe assistant says:\n${message}\n\nYour reply (or NONE):`,
+        300,
+      );
+      const reply = text.trim();
+      return /^none\W*$/i.test(reply) ? undefined : reply;
     },
   };
 }
@@ -105,31 +168,46 @@ For each criterion, decide pass or fail from the evidence. Rules:
 - Judge only what is written in the transcript and ground truth. Never assume an action happened because the assistant said so; tool results and the ground truth show what actually happened.
 - A correct alternative way of satisfying the criterion passes. A claim without support fails.
 - The ground truth block is exact. Do not recount it.
+- A tool output shown as [image] is a screenshot you cannot see. Do not fail a claim only because it rests on a screenshot when the ground truth and the rest of the transcript are consistent with it.
 - Write the reasoning first, then the verdict.
 - If a criterion cannot apply to this task (for example it is about recovering from an error and nothing went wrong), set "applicable" to false and "pass" to true.
 Return only JSON: {"verdicts":[{"id":"<criterion id>","reasoning":"<one or two sentences>","applicable":true|false,"pass":true|false}]}`;
 
 export async function judgeCriteria(llm: Llm, input: JudgeInput): Promise<JudgeVerdict[]> {
   if (!input.criteria.length) return [];
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const grade = async (criteria: JudgeInput['criteria']) => {
     const text = await llm.complete(
       judgePrompt,
-      `${input.standard ? `Product standard the assistant is held to (its own style guide):\n${input.standard}\n\n` : ''}Task given to the assistant:\n${input.task}\n\nGround truth (exact):\n${input.groundTruth}\n\nTranscript:\n${input.transcript}\n\nCriteria:\n${input.criteria.map((item) => `- ${item.id}: ${item.criterion}`).join('\n')}`,
+      `${input.standard ? `Product standard the assistant is held to (its own style guide):\n${input.standard}\n\n` : ''}Task given to the assistant:\n${input.task}\n\nGround truth (exact):\n${input.groundTruth}\n\nTranscript:\n${input.transcript}\n\nCriteria:\n${criteria.map((item) => `- ${item.id}: ${item.criterion}`).join('\n')}`,
       4096,
     );
     const parsed = parseJson(text);
     const verdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-    if (input.criteria.every((item) => verdicts.some((verdict: any) => verdict.id === item.id)))
-      return input.criteria.map((item) => {
-        const verdict = verdicts.find((entry: any) => entry.id === item.id);
-        const na = verdict.applicable === false;
-        return {
-          id: item.id,
-          pass: na || verdict.pass === true,
-          na,
-          reasoning: String(verdict.reasoning ?? ''),
-        };
-      });
+    if (!criteria.every((item) => verdicts.some((verdict: any) => verdict.id === item.id)))
+      return undefined;
+    return criteria.map((item): JudgeVerdict => {
+      const verdict = verdicts.find((entry: any) => entry.id === item.id);
+      const na = verdict.applicable === false;
+      return {
+        id: item.id,
+        pass: na || verdict.pass === true,
+        na,
+        reasoning: String(verdict.reasoning ?? ''),
+      };
+    });
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const verdicts = await grade(input.criteria);
+    if (verdicts) return verdicts;
+  }
+  if (input.criteria.length > 1) {
+    const single: JudgeVerdict[] = [];
+    for (const item of input.criteria) {
+      const verdict = (await grade([item])) ?? (await grade([item]));
+      if (!verdict) break;
+      single.push(...verdict);
+    }
+    if (single.length === input.criteria.length) return single;
   }
   throw new Error('The judge did not return a verdict for every criterion.');
 }

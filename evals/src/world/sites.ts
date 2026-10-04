@@ -97,7 +97,9 @@ export async function serveSites(sites: Record<string, Site>, address = '127.0.0
   const sessions = new Map<string, object>();
   const visits: Visit[] = [];
   const server = createServer(async (request, response: ServerResponse) => {
-    const host = (request.headers.host ?? '').split(':')[0].toLowerCase();
+    const host = String(request.headers['x-fixture-host'] ?? request.headers.host ?? '')
+      .split(':')[0]
+      .toLowerCase();
     const site = sites[host];
     if (!site) return void response.writeHead(404).end('Not found');
     const url = new URL(request.url ?? '/', `https://${host}`);

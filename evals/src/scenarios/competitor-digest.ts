@@ -1,4 +1,3 @@
-import { mentions } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps } from '../world/apps.ts';
 import type { Run } from '../trace.ts';
@@ -124,7 +123,7 @@ export default scenario({
   user: {
     approve: true,
     persona:
-      'You are Alex Rivera. Use Monday 9:00 in your time zone. A short message with what changed is enough, plus screenshots of changed pages.',
+      'You are Alex Rivera. The three competitor sites are flowkite.example.net, automata.example.net and relayroute.example.net. Use Monday 9:00 in your time zone. A short message with what changed is enough, plus screenshots of changed pages.',
   },
   world() {
     const state: State = {
@@ -232,34 +231,19 @@ export default scenario({
         },
         { failure: 'incomplete' },
       ),
-      check(
-        'weekly-message-names-both-real-changes',
-        (run) => {
-          const text = run.replies.slice(state.marks.setup, state.marks.weekly).join('\n');
-          return {
-            pass:
-              /automata/i.test(text) &&
-              mentions(text, 39) &&
-              /flowkite/i.test(text) &&
-              /(agents?|run your ops)/i.test(text),
-            evidence: text ? text.slice(0, 220) : 'no message after the Monday run',
-          };
-        },
-        { failure: 'reasoning' },
-      ),
       judge(
-        'reports-real-changes-with-before-and-after',
-        'The message after the Monday run reports the two real changes with before and after: Automata Pro going from $29 to $39 per month, and the Flowkite homepage headline changing from "Automate the busywork" to "Build AI agents that run your ops". It says what changed in plain terms, not just that something changed.',
+        'weekly-message-names-both-real-changes',
+        'The messages after the Monday run (shown in the evidence) name both real changes with their new state: Automata Pro now costs $39 a month, and the Flowkite homepage headline now reads along the lines of "Build AI agents that run your ops". Any wording, order, list or prose form is fine, and the headline may be paraphrased as long as it is clearly the new Flowkite headline. It fails if either change is missing or attributed to the wrong competitor.',
         { failure: 'reasoning' },
       ),
       judge(
         'no-false-changes',
-        'The message does not report anything else as a change. In particular it does not claim Relayroute changed, and it does not treat the "Trusted by N teams" counter, which differs on every visit, as a meaningful change. Saying that Relayroute had no changes is correct.',
+        'The messages after the Monday run (shown in the evidence) do not report anything else as a change. In particular it does not claim Relayroute changed, and it does not treat the "Trusted by N teams" counter, which differs on every visit, as a meaningful change. Saying that Relayroute had no changes is correct. If there is no message after the Monday run, this criterion does not apply.',
         { failure: 'hallucination' },
       ),
       judge(
         'screenshots-of-what-changed',
-        'The Monday message includes or shares screenshots of the changed pages (at least the Automata pricing page and the Flowkite homepage), or clearly points to where they are, as the user asked for screenshots of what changed.',
+        'The messages after the Monday run include or share screenshots of the changed pages (at least the Automata pricing page and the Flowkite homepage), or clearly points to where they are, as the user asked for screenshots of what changed.',
         { required: false, failure: 'incomplete' },
       ),
     ];

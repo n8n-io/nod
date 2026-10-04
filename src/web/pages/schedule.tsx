@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { PageTitle } from '../components/page-title';
 import { CalendarClock, ChevronDown, MessageCircle } from 'lucide-react';
-import type { AppState, Schedule, ScheduleHistory, ScheduleRun } from '../../shared/contracts';
+import type { Schedule, ScheduleHistory, ScheduleRun } from '../../shared/contracts';
 import { Button, Loading, Notice } from '../components/ui';
 import { activeStatuses, StatusIcon, statusLabels } from '../components/turn-status';
 import { usePageData } from '../hooks/use-page-data';
@@ -17,10 +17,10 @@ const historyPath = '/api/schedule-runs?limit=20';
 
 export function ScheduleRow({
   schedule,
-  conversation = null,
+  onAsk,
 }: {
   schedule: Schedule;
-  conversation?: AppState | null;
+  onAsk(text: string): void;
 }) {
   const dateFormat = useDateFormat();
   const canResume =
@@ -59,7 +59,7 @@ export function ScheduleRow({
             : ''
         }
         remove={<DeletePlan kind="schedule" id={schedule.id} title={schedule.title} />}
-        conversation={conversation}
+        onAsk={onAsk}
       />
     </article>
   );
@@ -275,7 +275,7 @@ function ScheduleHistoryView() {
   );
 }
 
-export function SchedulePage({ conversation = null }: { conversation?: AppState | null }) {
+export function SchedulePage({ onAsk }: { onAsk(text: string): void }) {
   const {
     data: schedules,
     error,
@@ -301,7 +301,7 @@ export function SchedulePage({ conversation = null }: { conversation?: AppState 
           <p>Your scheduled tasks.</p>
         </div>
         <div className="secondary-heading-actions">
-          <NewPlan kind="schedule" conversation={conversation} />
+          <NewPlan kind="schedule" onAsk={onAsk} />
         </div>
       </header>
       <div
@@ -369,11 +369,7 @@ export function SchedulePage({ conversation = null }: { conversation?: AppState 
                 {upcoming.length ? (
                   <div className="saved-plan-list">
                     {upcoming.map((schedule) => (
-                      <ScheduleRow
-                        key={schedule.id}
-                        schedule={schedule}
-                        conversation={conversation}
-                      />
+                      <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
                     ))}
                   </div>
                 ) : (
@@ -389,11 +385,7 @@ export function SchedulePage({ conversation = null }: { conversation?: AppState 
                     </summary>
                     <div className="saved-plan-list">
                       {inactive.map((schedule) => (
-                        <ScheduleRow
-                          key={schedule.id}
-                          schedule={schedule}
-                          conversation={conversation}
-                        />
+                        <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
                       ))}
                     </div>
                   </details>

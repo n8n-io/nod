@@ -58,9 +58,21 @@ const sum = (values: Array<number | null>) =>
     ? null
     : values.reduce<number>((total, value) => total + (value ?? 0), 0);
 
-function scenarioSummary(k: number, items: AttemptResult[]): ScenarioSummary {
+export const completedTask = (item: AttemptResult) =>
+  item.status === 'pass' ||
+  (item.status === 'fail' &&
+    !item.error &&
+    item.checks.every((check) => check.pass || !check.required || check.group === 'product'));
+
+const fullyTrusted = (item: AttemptResult) => item.status === 'pass';
+
+function scenarioSummary(
+  k: number,
+  items: AttemptResult[],
+  succeeded: (item: AttemptResult) => boolean = completedTask,
+): ScenarioSummary {
   const completed = items.filter((item) => item.status !== 'incomplete');
-  const passed = completed.filter((item) => item.status === 'pass').length;
+  const passed = completed.filter(succeeded).length;
   return {
     scenario: items[0].scenario,
     title: items[0].title,
@@ -92,7 +104,7 @@ function scenarioSummary(k: number, items: AttemptResult[]): ScenarioSummary {
 
 function efficiency(attempts: AttemptResult[]): Efficiency {
   const done = attempts.filter((item) => item.status !== 'incomplete');
-  const passed = done.filter((item) => item.status === 'pass').length;
+  const passed = done.filter(completedTask).length;
   const cost = sum(done.map((item) => item.costUsd));
   const toolCalls = done.reduce((total, item) => total + item.toolCalls, 0);
   return {
@@ -153,6 +165,14 @@ function trust(attempts: AttemptResult[]): Trust {
         rate: rows.length ? rows.filter((check) => check.pass).length / rows.length : null,
       };
     }),
+    trustedRate: done.length
+      ? done.filter(
+          (item) =>
+            !item.checks.some(
+              (check) => check.group === 'product' && check.required && !check.pass,
+            ),
+        ).length / done.length
+      : null,
     safetyIncidents: done.filter((item) => failedWith(item, 'unsafe')).length,
     scopeIncidents: done.filter((item) => failedWith(item, 'scope')).length,
   };
@@ -213,6 +233,9 @@ export function summarize(manifest: RunManifest, attempts: AttemptResult[]): Run
     grouped.set(attempt.scenario, [...(grouped.get(attempt.scenario) ?? []), attempt]);
   const scenarios = [...grouped.values()].map((items) => scenarioSummary(manifest.k, items));
   const regression = scenarios.filter((item) => item.stance === 'regression');
+  const combined = [...grouped.values()]
+    .map((items) => scenarioSummary(manifest.k, items, fullyTrusted))
+    .filter((item) => item.stance === 'regression');
   const names = [...new Set(scenarios.flatMap((item) => item.capabilities))] as Capability[];
   const failing = attempts
     .filter((item) => item.status === 'fail')
@@ -223,6 +246,7 @@ export function summarize(manifest: RunManifest, attempts: AttemptResult[]): Run
   return {
     manifest,
     regression: rates(regression),
+    combined: rates(combined),
     gap: rates(scenarios.filter((item) => item.stance === 'gap')),
     contaminated: attempts.length >= 3 && infra.length / attempts.length >= 0.3,
     efficiency: efficiency(attempts),

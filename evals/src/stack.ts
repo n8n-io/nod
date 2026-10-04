@@ -84,6 +84,7 @@ export async function startStack(options: {
   integrations: IntegrationProvider;
   siteHosts: string[];
   siteUpstreamPort: number;
+  hermetic: boolean;
   environment: Record<string, string | undefined>;
 }): Promise<Stack> {
   const { model, environment } = options;
@@ -212,6 +213,8 @@ export async function startStack(options: {
       `EVAL_SITE_HOSTS=${(options.siteHosts.length ? options.siteHosts : ['unused.example.org']).join(',')}`,
       '--env',
       `EVAL_SITE_UPSTREAM=http://host.docker.internal:${options.siteUpstreamPort}`,
+      '--env',
+      `EVAL_SITE_HERMETIC=${options.hermetic ? '1' : '0'}`,
       '--mount',
       `type=bind,source=${worker},target=/app/evals,readonly`,
       '--mount',

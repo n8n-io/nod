@@ -1,19 +1,13 @@
 import { PageTitle } from '../components/page-title';
 import { useId, useState } from 'react';
-import type { AppState, Goal } from '../../shared/contracts';
+import type { Goal } from '../../shared/contracts';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
 import { DeletePlan } from '../components/delete-plan';
 import { NewPlan, PlanFooter, PlanToast } from '../components/plan-controls';
 import { formatCalendarDate, useDateFormat } from '../lib/date-format';
 
-export function GoalRow({
-  goal,
-  conversation = null,
-}: {
-  goal: Goal;
-  conversation?: AppState | null;
-}) {
+export function GoalRow({ goal, onAsk }: { goal: Goal; onAsk(text: string): void }) {
   const headingId = useId();
   const dateFormat = useDateFormat();
   return (
@@ -41,13 +35,13 @@ export function GoalRow({
         canPause={goal.status !== 'completed'}
         meta={goal.targetDate ? `Target ${formatCalendarDate(goal.targetDate, dateFormat)}` : ''}
         remove={<DeletePlan kind="goal" id={goal.id} title={goal.title} />}
-        conversation={conversation}
+        onAsk={onAsk}
       />
     </article>
   );
 }
 
-export function Goals({ conversation = null }: { conversation?: AppState | null }) {
+export function Goals({ onAsk }: { onAsk(text: string): void }) {
   const { data: goals, error, loading, refreshing, refresh } = usePageData<Goal[]>('/api/goals');
   const [view, setView] = useState<'active' | 'completed'>('active');
   const tabsId = useId();
@@ -63,7 +57,7 @@ export function Goals({ conversation = null }: { conversation?: AppState | null 
           <p>Your goals and next steps.</p>
         </div>
         <div className="secondary-heading-actions">
-          <NewPlan kind="goal" conversation={conversation} />
+          <NewPlan kind="goal" onAsk={onAsk} />
         </div>
       </header>
       <div
@@ -135,7 +129,7 @@ export function Goals({ conversation = null }: { conversation?: AppState | null 
               completed.length ? (
                 <div className="saved-plan-list">
                   {completed.map((goal) => (
-                    <GoalRow key={goal.id} goal={goal} conversation={conversation} />
+                    <GoalRow key={goal.id} goal={goal} onAsk={onAsk} />
                   ))}
                 </div>
               ) : (
@@ -149,7 +143,7 @@ export function Goals({ conversation = null }: { conversation?: AppState | null 
                 {active.length ? (
                   <div className="saved-plan-list">
                     {active.map((goal) => (
-                      <GoalRow key={goal.id} goal={goal} conversation={conversation} />
+                      <GoalRow key={goal.id} goal={goal} onAsk={onAsk} />
                     ))}
                   </div>
                 ) : (
@@ -169,7 +163,7 @@ export function Goals({ conversation = null }: { conversation?: AppState | null 
                     </summary>
                     <div className="saved-plan-list">
                       {paused.map((goal) => (
-                        <GoalRow key={goal.id} goal={goal} conversation={conversation} />
+                        <GoalRow key={goal.id} goal={goal} onAsk={onAsk} />
                       ))}
                     </div>
                   </details>

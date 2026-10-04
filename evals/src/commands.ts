@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { summarize } from './aggregate.ts';
 import { cards, comparisonChart } from './chart.ts';
+import { storyCard, type StoryNotes } from './story.ts';
 import { renderImages } from './images.ts';
 import { slackMessage } from './writeup.ts';
 import { diagnoseAll } from './diagnose.ts';
@@ -11,6 +12,7 @@ import { choice, has, number, text, whole, type Args } from './options.ts';
 import { compareTable, html, runsTable, terminal } from './report.ts';
 import { rejudge } from './rejudge.ts';
 import { reviewRun } from './review.ts';
+import { fallbackLlm } from './judge.ts';
 import { defaultJudge, runSuite, slug, type RunOptions } from './run.ts';
 import { scenarios } from './scenarios/index.ts';
 import { loadEnvironment, parseModel } from './stack.ts';
@@ -219,10 +221,33 @@ export async function main(args: Args) {
         : found;
       if (labels.length < 1)
         throw new Error('Usage: charts <label> [...]  or  charts --prefix <prefix>');
-      const runs = await Promise.all(labels.map((label) => loadRun(root, label)));
+      const judgePrefix = text(args, 'judge-prefix');
+      const runs = await Promise.all(
+        labels.map(async (label) => {
+          const run = await loadRun(root, label);
+          const second =
+            prefix && judgePrefix
+              ? await loadRun(root, `${judgePrefix}-${label.slice(prefix.length + 1)}`).catch(
+                  () => undefined,
+                )
+              : undefined;
+          return second ? { ...run, alt: second.summary } : run;
+        }),
+      );
       const name = prefix ?? labels.join('-vs-').slice(0, 60);
       const directory = join(root, `${name}-images`);
-      const files = await renderImages(cards(runs), directory);
+      const notesPath = text(args, 'notes');
+      const notes = notesPath
+        ? (JSON.parse(await readFile(notesPath, 'utf8')) as StoryNotes)
+        : undefined;
+      const suite = {
+        total: scenarios.length,
+        calibrating: scenarios.filter(
+          (item) => item.calibration === 'pending' && item.stance !== 'gap',
+        ).length,
+        gaps: scenarios.filter((item) => item.stance === 'gap').length,
+      };
+      const files = await renderImages([storyCard(runs, suite, notes), ...cards(runs)], directory);
       await writeFile(join(root, `${name}.report.html`), comparisonChart(runs));
       console.log(`Rendered ${files.length} images in ${directory}`);
       if (has(args, 'desktop')) {
@@ -304,7 +329,9 @@ export async function main(args: Args) {
     case 'rejudge': {
       const target = text(args, 'label');
       if (!first || !target)
-        throw new Error('Usage: rejudge <label> --label <new-label> [--judge <provider/model>]');
+        throw new Error(
+          'Usage: rejudge <label> --label <new-label> [--judge <provider/model>] [--scenario <a,b>]',
+        );
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(target))
         throw new Error('Labels must be simple file names.');
       const directory = join(root, target);
@@ -318,16 +345,26 @@ export async function main(args: Args) {
         const environment = await loadEnvironment();
         const run = await loadRun(root, first);
         const judgeName = text(args, 'judge') ?? defaultJudge;
+        const only = text(args, 'scenario')?.split(',').filter(Boolean);
         const outcome = await rejudge({
           attempts: run.attempts,
           reviews: run.reviews,
           judge: parseModel(judgeName, environment),
+          only,
+          at: Date.parse(run.manifest.startedAt) || Date.now(),
+          fallback: await fallbackLlm(environment, parseModel(judgeName, environment).provider),
         });
         const manifest = {
           ...run.manifest,
           label: target,
           judge: judgeName,
-          provenance: { ...run.manifest.provenance, rejudgedFrom: first },
+          provenance: {
+            ...run.manifest.provenance,
+            rejudgedFrom: first,
+            ...(only
+              ? { rejudgedScenarios: only.join(' '), originalJudge: run.manifest.judge }
+              : {}),
+          },
         };
         const summary = summarize(manifest, outcome.attempts);
         await saveRun(directory, manifest, outcome.attempts, summary);

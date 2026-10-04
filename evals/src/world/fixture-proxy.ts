@@ -10,6 +10,7 @@ export async function createFixtureProxy(
   directory: string,
   hosts: string[],
   handler: RequestListener,
+  hermetic = false,
 ) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const key = join(directory, 'fixture.key');
@@ -44,7 +45,7 @@ export async function createFixtureProxy(
   };
   let upstream: URL | undefined;
   const proxy = createServer((request, response) => {
-    if (!upstream) return void response.writeHead(503).end();
+    if (!upstream || hermetic) return void response.writeHead(hermetic ? 403 : 503).end();
     const forward = httpRequest(
       upstream,
       { method: request.method, path: request.url, headers: request.headers },
@@ -64,7 +65,7 @@ export async function createFixtureProxy(
       https.emit('connection', socket);
       return;
     }
-    if (!upstream) return socket.destroy();
+    if (!upstream || hermetic) return socket.destroy();
     const forward = httpRequest(upstream, {
       method: 'CONNECT',
       path: request.url,

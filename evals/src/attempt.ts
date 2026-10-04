@@ -1,13 +1,22 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { grade } from './grade.ts';
-import { createLlm, createSimulator } from './judge.ts';
+import {
+  createLlm,
+  createSimulator,
+  fallbackLlm,
+  providerRefusal,
+  simulatorFailure,
+  withFallback,
+} from './judge.ts';
 import type { Blame, AttemptResult, CheckResult } from './results.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
 import { createSession } from './session.ts';
 import { prepare } from './setup.ts';
 import { loadEnvironment, parseModel, startStack, type Stack } from './stack.ts';
 import { collect } from './trace.ts';
+import { routeFixtureHosts } from './world/fixture-fetch.ts';
+import { dayLabel, localDate } from './world/time.ts';
 import { bindAddress, serveSites } from './world/sites.ts';
 
 export interface AttemptSpec {
@@ -19,9 +28,10 @@ export interface AttemptSpec {
 }
 
 const infra =
-  /\b(401|403|429|500|502|503|504|529)\b|unauthori[sz]ed|invalid api key|user not found|insufficient|credit|overloaded|rate.?limit|quota|ECONN|ETIMEDOUT|ENOTFOUND|fetch failed|socket hang up|Could not start|did not become ready|image .* is missing|PostgreSQL|EADDRINUSE|docker/i;
+  /\b(401|403|429|500|502|503|504|529)\b|unauthori[sz]ed|invalid api key|user not found|insufficient|credit|overloaded|rate.?limit|quota|ECONN|ETIMEDOUT|ENOTFOUND|fetch failed|connection error|socket hang up|Could not start|did not become ready|image .* is missing|PostgreSQL|EADDRINUSE|docker/i;
 
 function blame(message: string): Blame {
+  if (message.startsWith(simulatorFailure)) return 'infra';
   if (/time limit|no progress/i.test(message)) return 'agent';
   return infra.test(message) ? 'infra' : 'harness';
 }
@@ -62,17 +72,26 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   const started = Date.now();
   let taskStarted = started;
   const world = definition.world({ now: () => Date.now() });
-  const sites = await serveSites(world.sites ?? {}, await bindAddress());
+  const address = await bindAddress();
+  const sites = await serveSites(world.sites ?? {}, address);
+  const unroute = routeFixtureHosts(
+    Object.keys(world.sites ?? {}),
+    `http://${address}:${sites.port}`,
+  );
   let stack: Stack | undefined;
   let starting: Promise<Stack> | undefined;
   const release = async () => {
     stack ??= await starting?.catch(() => undefined);
     await stack?.stop().catch(() => {});
     await sites.close().catch(() => {});
+    unroute();
   };
   terminate = release;
   try {
-    const judgeLlm = await createLlm(judgeModel);
+    const judgeLlm = withFallback(
+      await createLlm(judgeModel),
+      await fallbackLlm(environment, judgeModel.provider),
+    );
     stack = await (starting = startStack({
       model,
       integrations:
@@ -83,6 +102,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
         ).provider,
       siteHosts: Object.keys(world.sites ?? {}),
       siteUpstreamPort: sites.port,
+      hermetic: definition.tier !== 'live',
       environment,
     }));
     await prepare(stack, world, definition.timeZone ?? 'Europe/Madrid');
@@ -97,6 +117,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     let failure: string | undefined;
     try {
       await definition.play(session, world);
+      await session.followUp();
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
     }
@@ -108,7 +129,11 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
       visits: sites.visits,
       seconds: (Date.now() - taskStarted) / 1000,
     });
-    const truth = [trace.groundTruth(), definition.evidence?.(trace, world)]
+    const truth = [
+      trace.groundTruth(),
+      `Otto is told the user's time zone, ${definition.timeZone ?? 'Europe/Madrid'}, from their account settings, so it may refer to the user's country or local time without a saved profile. Today is ${dayLabel(started, definition.timeZone)} (${localDate(started, definition.timeZone)}) in that time zone.`,
+      definition.evidence?.(trace, world),
+    ]
       .filter(Boolean)
       .join('\n\n');
     const { checks, graderFault, judgeFault } = await grade({
@@ -122,28 +147,37 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const modelFault =
       trace.turns.at(-1)?.status !== 'succeeded' ? trace.modelErrors.at(-1) : undefined;
     const providerFault = trace.turns.find((turn) => turn.error && infra.test(turn.error));
+    const refusal = [modelFault, failure].find(
+      (message) =>
+        message && !message.startsWith(simulatorFailure) && providerRefusal.test(message),
+    );
     const fault =
       graderFault ??
       judgeFault ??
-      (modelFault
+      (modelFault && modelFault !== refusal
         ? `The model provider failed: ${modelFault}`
         : providerFault
           ? providerFault.error!
           : undefined);
-    const hardFailure = failure && blame(failure) !== 'agent' ? failure : undefined;
+    const hardFailure =
+      failure && failure !== refusal && blame(failure) !== 'agent' ? failure : undefined;
     const incomplete = fault ?? hardFailure;
     const result: AttemptResult = {
       ...base,
       task: trace.task,
       status: incomplete
         ? 'incomplete'
-        : checks.every((check) => check.pass || !check.required) && !failure
+        : checks.every((check) => check.pass || !check.required) && !failure && !refusal
           ? 'pass'
           : 'fail',
       ...(incomplete
         ? { blame: graderFault ? ('harness' as const) : blame(incomplete), error: incomplete }
         : {}),
-      ...(failure && !incomplete ? { error: failure } : {}),
+      ...(refusal && !incomplete
+        ? { error: `The model provider refused the task: ${refusal}` }
+        : failure && !incomplete
+          ? { error: failure }
+          : {}),
       checks,
       seconds: trace.seconds,
       toolCalls: trace.tools.length,
