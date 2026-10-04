@@ -66,6 +66,26 @@ export function nextWeekday(
   throw new Error('No matching weekday.');
 }
 
+export function nextWeekOn(now: number, weekday: number, timeZone = 'Europe/Madrid') {
+  const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6)
+    throw new Error(`Weekday must be 0 to 6, not ${weekday}.`);
+  let offset = 1;
+  while (
+    new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone }).format(
+      inDays(now, offset, timeZone),
+    ) !== 'Monday'
+  )
+    offset++;
+  while (
+    new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone }).format(
+      inDays(now, offset, timeZone),
+    ) !== names[weekday]
+  )
+    offset++;
+  return offset;
+}
+
 export function mondayOf(now: number, timeZone = 'Europe/Madrid') {
   for (let back = 0; back < 7; back++) {
     const at = localTime(now, back, 0, timeZone);

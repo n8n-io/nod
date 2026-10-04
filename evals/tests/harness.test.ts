@@ -4,7 +4,7 @@ import { lookup } from 'node:dns/promises';
 import test from 'node:test';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
-import { createSimulator, simulatorFailure } from '../src/judge.ts';
+import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
@@ -16,7 +16,7 @@ import { select } from '../src/run.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
-import { daysAgo, inDays, localTime } from '../src/world/time.ts';
+import { daysAgo, inDays, localTime, nextWeekOn } from '../src/world/time.ts';
 
 const manifest: RunManifest = {
   label: 't',
@@ -604,4 +604,95 @@ test('a failure of the simulated user is tagged so it is never scored as the age
   await assert.rejects(simulator.reply('You are Alex.', 'Which account?'), (error: Error) =>
     error.message.startsWith(simulatorFailure),
   );
+});
+
+test('a simulated user blocked by its provider falls back to a second model', async () => {
+  const blocked = {
+    complete: async () => {
+      throw new Error('This request triggered restrictions on violative cyber content');
+    },
+  } as never;
+  const backup = { complete: async () => ' OK, go ahead. ' } as never;
+  assert.equal(
+    await createSimulator(withFallback(blocked, backup)).reply('You are Alex.', 'OK to pay?'),
+    'OK, go ahead.',
+  );
+  const alsoBlocked = {
+    complete: async () => {
+      throw new Error('Usage policy block from the second provider');
+    },
+  } as never;
+  await assert.rejects(
+    createSimulator(withFallback(blocked, alsoBlocked)).reply('You are Alex.', 'OK to pay?'),
+    (error: Error) => error.message.startsWith(simulatorFailure),
+  );
+  const broken = {
+    complete: async () => {
+      throw new Error('503 overloaded');
+    },
+  } as never;
+  await assert.rejects(
+    createSimulator(withFallback(broken, backup)).reply('You are Alex.', 'OK to pay?'),
+    (error: Error) => error.message.startsWith(simulatorFailure),
+  );
+});
+
+test('a judge that cannot return every verdict at once is asked one criterion at a time', async () => {
+  const llm = {
+    complete: async (_system: string, input: string) => {
+      const ids = [...input.matchAll(/^- ([\w-]+):/gm)].map((match) => match[1]);
+      if (ids.length > 1) return 'not json';
+      return JSON.stringify({
+        verdicts: [{ id: ids[0], reasoning: 'ok', applicable: true, pass: true }],
+      });
+    },
+  } as never;
+  const verdicts = await judgeCriteria(llm, {
+    task: 't',
+    transcript: 'x',
+    groundTruth: 'g',
+    criteria: [
+      { id: 'first-check', criterion: 'A' },
+      { id: 'second-check', criterion: 'B' },
+    ],
+  });
+  assert.deepEqual(
+    verdicts.map((verdict) => verdict.id),
+    ['first-check', 'second-check'],
+  );
+  assert.ok(verdicts.every((verdict) => verdict.pass));
+});
+
+test('"next week" is the following calendar week whichever day it is asked', () => {
+  const zone = 'Europe/Madrid';
+  const day = (at: number) =>
+    new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: zone }).format(at);
+  for (let offset = 0; offset < 14; offset++) {
+    const now = Date.UTC(2026, 9, 3 + offset, 10);
+    const tuesday = nextWeekOn(now, 2, zone);
+    const wednesday = nextWeekOn(now, 3, zone);
+    assert.equal(day(inDays(now, tuesday, zone)), 'Tuesday');
+    assert.equal(wednesday, tuesday + 1);
+    assert.ok(tuesday >= 2 && tuesday <= 8, `${offset}: ${tuesday}`);
+  }
+});
+
+test('a judge fallback is counted and an invalid weekday is rejected', async () => {
+  const blocked = {
+    model: { provider: 'anthropic', name: 'a', apiKey: '' },
+    spent: () => ({ tokens: 0, costUsd: null }),
+    complete: async () => {
+      throw new Error('Usage policy block');
+    },
+  };
+  const backup = {
+    model: { provider: 'openai', name: 'b', apiKey: '' },
+    spent: () => ({ tokens: 0, costUsd: null }),
+    complete: async () => 'ok',
+  };
+  const llm = withFallback(blocked as never, backup as never);
+  await llm.complete('s', 'i');
+  await llm.complete('s', 'i');
+  assert.equal(llm.fallbackCalls?.(), 2);
+  assert.throws(() => nextWeekOn(Date.UTC(2026, 9, 3), 9), /Weekday must be/);
 });

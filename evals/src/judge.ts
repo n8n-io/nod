@@ -1,11 +1,12 @@
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import type { Model } from './stack.ts';
+import { parseModel, type Model } from './stack.ts';
 
 export interface Llm {
   model: Model;
   complete(system: string, input: string, maxTokens?: number): Promise<string>;
   spent(): { tokens: number; costUsd: number | null };
+  fallbackCalls?(): number;
 }
 
 const transient =
@@ -74,6 +75,50 @@ export interface Simulator {
 }
 
 export const simulatorFailure = 'The simulated user failed';
+export const fallbackModels = ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'];
+export const providerRefusal =
+  /violative|usage policy|content (filtering )?policy|safety (filter|system)/i;
+
+export async function fallbackLlm(
+  environment: Record<string, string | undefined>,
+  provider: string,
+): Promise<Llm | undefined> {
+  for (const name of fallbackModels)
+    try {
+      const model = parseModel(name, environment);
+      if (model.provider !== provider) return await createLlm(model);
+    } catch {}
+  return undefined;
+}
+
+export function withFallback(primary: Llm, fallback?: Llm): Llm {
+  if (!fallback) return primary;
+  const total = (pick: (spent: ReturnType<Llm['spent']>) => number | null) => {
+    const values = [pick(primary.spent()), pick(fallback.spent())];
+    return values.every((value) => value === null)
+      ? null
+      : values.reduce<number>((a, b) => a + (b ?? 0), 0);
+  };
+  let used = 0;
+  return {
+    model: primary.model,
+    fallbackCalls: () => used,
+    spent: () => ({
+      tokens: total((spent) => spent.tokens) ?? 0,
+      costUsd: total((spent) => spent.costUsd),
+    }),
+    async complete(system, input, maxTokens) {
+      try {
+        return await primary.complete(system, input, maxTokens);
+      } catch (error) {
+        if (!providerRefusal.test(error instanceof Error ? error.message : String(error)))
+          throw error;
+        used++;
+        return fallback.complete(system, input, maxTokens);
+      }
+    },
+  };
+}
 
 export function createSimulator(llm: Llm): Simulator {
   const ask = (system: string, user: string, tokens: number) =>
@@ -130,25 +175,39 @@ Return only JSON: {"verdicts":[{"id":"<criterion id>","reasoning":"<one or two s
 
 export async function judgeCriteria(llm: Llm, input: JudgeInput): Promise<JudgeVerdict[]> {
   if (!input.criteria.length) return [];
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const grade = async (criteria: JudgeInput['criteria']) => {
     const text = await llm.complete(
       judgePrompt,
-      `${input.standard ? `Product standard the assistant is held to (its own style guide):\n${input.standard}\n\n` : ''}Task given to the assistant:\n${input.task}\n\nGround truth (exact):\n${input.groundTruth}\n\nTranscript:\n${input.transcript}\n\nCriteria:\n${input.criteria.map((item) => `- ${item.id}: ${item.criterion}`).join('\n')}`,
+      `${input.standard ? `Product standard the assistant is held to (its own style guide):\n${input.standard}\n\n` : ''}Task given to the assistant:\n${input.task}\n\nGround truth (exact):\n${input.groundTruth}\n\nTranscript:\n${input.transcript}\n\nCriteria:\n${criteria.map((item) => `- ${item.id}: ${item.criterion}`).join('\n')}`,
       4096,
     );
     const parsed = parseJson(text);
     const verdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-    if (input.criteria.every((item) => verdicts.some((verdict: any) => verdict.id === item.id)))
-      return input.criteria.map((item) => {
-        const verdict = verdicts.find((entry: any) => entry.id === item.id);
-        const na = verdict.applicable === false;
-        return {
-          id: item.id,
-          pass: na || verdict.pass === true,
-          na,
-          reasoning: String(verdict.reasoning ?? ''),
-        };
-      });
+    if (!criteria.every((item) => verdicts.some((verdict: any) => verdict.id === item.id)))
+      return undefined;
+    return criteria.map((item): JudgeVerdict => {
+      const verdict = verdicts.find((entry: any) => entry.id === item.id);
+      const na = verdict.applicable === false;
+      return {
+        id: item.id,
+        pass: na || verdict.pass === true,
+        na,
+        reasoning: String(verdict.reasoning ?? ''),
+      };
+    });
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const verdicts = await grade(input.criteria);
+    if (verdicts) return verdicts;
+  }
+  if (input.criteria.length > 1) {
+    const single: JudgeVerdict[] = [];
+    for (const item of input.criteria) {
+      const verdict = (await grade([item])) ?? (await grade([item]));
+      if (!verdict) break;
+      single.push(...verdict);
+    }
+    if (single.length === input.criteria.length) return single;
   }
   throw new Error('The judge did not return a verdict for every criterion.');
 }

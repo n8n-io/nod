@@ -1,4 +1,4 @@
-import { insights, label, type ChartRun } from './insights.ts';
+import { insights, label, valueBand, type ChartRun } from './insights.ts';
 import { displayName } from './names.ts';
 
 const pct = (value: number | null) => (value === null ? 'n/a' : `${Math.round(value * 100)}%`);
@@ -35,7 +35,7 @@ export function facts(runs: ChartRun[]) {
     );
   if (found.value)
     out.push(
-      `*Best value:* ${name(found.value.run)}, ${money(found.value.value)} per completed task${found.value.run === found.best?.run ? '' : ` while staying within 8 points of the leader`}.`,
+      `*Best value:* ${name(found.value.run)}, ${money(found.value.value)} per completed task${found.value.run === found.best?.run ? '' : ` while staying within ${valueBand} points of the leader`}.`,
     );
   if (found.cheapest && found.cheapest.run !== found.value?.run)
     out.push(

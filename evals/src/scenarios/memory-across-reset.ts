@@ -51,7 +51,7 @@ export default scenario({
       ),
       judge(
         'keeps-it-short',
-        'The reply after the reset is short, as the user asked (three sentences at most). Count each suggestion as one sentence and every other full sentence as one more; a short lead-in ending in a colon is not counted. It fails if the total is more than three.',
+        'The reply after the reset is short, as the user asked (three sentences at most). Count the sentences as written: each bullet or numbered item counts as one sentence, and a short lead-in ending in a colon is not counted. Several ideas inside one sentence are still one sentence. It fails if the total is more than three.',
         { aspect: 'process', failure: 'format' },
       ),
       asksAtMost(0),

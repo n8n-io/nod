@@ -1,7 +1,14 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { grade } from './grade.ts';
-import { createLlm, createSimulator, simulatorFailure } from './judge.ts';
+import {
+  createLlm,
+  createSimulator,
+  fallbackLlm,
+  providerRefusal,
+  simulatorFailure,
+  withFallback,
+} from './judge.ts';
 import type { Blame, AttemptResult, CheckResult } from './results.ts';
 import { fingerprint, scenarios } from './scenarios/index.ts';
 import { createSession } from './session.ts';
@@ -21,7 +28,7 @@ export interface AttemptSpec {
 }
 
 const infra =
-  /\b(401|403|429|500|502|503|504|529)\b|unauthori[sz]ed|invalid api key|user not found|insufficient|credit|overloaded|rate.?limit|quota|ECONN|ETIMEDOUT|ENOTFOUND|fetch failed|socket hang up|Could not start|did not become ready|image .* is missing|PostgreSQL|EADDRINUSE|docker/i;
+  /\b(401|403|429|500|502|503|504|529)\b|unauthori[sz]ed|invalid api key|user not found|insufficient|credit|overloaded|rate.?limit|quota|ECONN|ETIMEDOUT|ENOTFOUND|fetch failed|connection error|socket hang up|Could not start|did not become ready|image .* is missing|PostgreSQL|EADDRINUSE|docker/i;
 
 function blame(message: string): Blame {
   if (message.startsWith(simulatorFailure)) return 'infra';
@@ -81,7 +88,10 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
   };
   terminate = release;
   try {
-    const judgeLlm = await createLlm(judgeModel);
+    const judgeLlm = withFallback(
+      await createLlm(judgeModel),
+      await fallbackLlm(environment, judgeModel.provider),
+    );
     stack = await (starting = startStack({
       model,
       integrations:
@@ -121,7 +131,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     });
     const truth = [
       trace.groundTruth(),
-      `Otto is told the user's time zone, ${definition.timeZone ?? 'Europe/Madrid'}, from their account settings, so it may refer to the user's country or local time without a saved profile. Today is ${dayLabel(Date.now(), definition.timeZone)} (${localDate(Date.now(), definition.timeZone)}) in that time zone.`,
+      `Otto is told the user's time zone, ${definition.timeZone ?? 'Europe/Madrid'}, from their account settings, so it may refer to the user's country or local time without a saved profile. Today is ${dayLabel(started, definition.timeZone)} (${localDate(started, definition.timeZone)}) in that time zone.`,
       definition.evidence?.(trace, world),
     ]
       .filter(Boolean)
@@ -139,9 +149,7 @@ async function run(spec: AttemptSpec): Promise<AttemptResult> {
     const providerFault = trace.turns.find((turn) => turn.error && infra.test(turn.error));
     const refusal = [modelFault, failure].find(
       (message) =>
-        message &&
-        !message.startsWith(simulatorFailure) &&
-        /violative|usage policy|content (filtering )?policy|safety (filter|system)/i.test(message),
+        message && !message.startsWith(simulatorFailure) && providerRefusal.test(message),
     );
     const fault =
       graderFault ??

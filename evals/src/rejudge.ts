@@ -1,4 +1,4 @@
-import { createLlm, judgeCriteria } from './judge.ts';
+import { createLlm, judgeCriteria, withFallback, type Llm } from './judge.ts';
 import { reviewKey } from './review.ts';
 import { criteria as productCriteria, standard } from './product.ts';
 import type { AttemptResult, CheckResult, Reviews } from './results.ts';
@@ -24,8 +24,9 @@ export async function rejudge(options: {
   judge: Model;
   only?: string[];
   at: number;
+  fallback?: Llm;
 }) {
-  const llm = await createLlm(options.judge);
+  const llm = withFallback(await createLlm(options.judge), options.fallback);
   const next: AttemptResult[] = [];
   let same = 0;
   let compared = 0;
@@ -48,7 +49,11 @@ export async function rejudge(options: {
     const counts = { same: 0, compared: 0, old: 0, fresh: 0, total: 0 };
     try {
       for (const group of ['task', 'product'] as const) {
-        const sources = current(attempt.scenario, group, options.at);
+        const stamp = /Today is [^(]*\((\d{4})-(\d{2})-(\d{2})\)/.exec(attempt.groundTruth);
+        const ranAt = stamp
+          ? Date.UTC(Number(stamp[1]), Number(stamp[2]) - 1, Number(stamp[3]), 12)
+          : options.at;
+        const sources = current(attempt.scenario, group, ranAt);
         if (!sources.length) continue;
         const verdicts = await judgeCriteria(llm, {
           standard: group === 'product' ? standard : undefined,
@@ -119,6 +124,9 @@ export async function rejudge(options: {
     total ? `${Math.round((value / total) * 100)}%` : 'n/a';
   const report = [
     `Re-judged ${compared} judge verdicts with ${options.judge.provider}/${options.judge.name}: ${pct(same, compared)} match the original judge.`,
+    llm.fallbackCalls?.()
+      ? `${llm.fallbackCalls()} judge calls were answered by ${options.fallback?.model.provider}/${options.fallback?.model.name} after a provider refusal.`
+      : '',
     human.total
       ? `Against your reviews (${human.total} judge verdicts): original judge ${pct(human.old, human.total)}, this judge ${pct(human.fresh, human.total)}.`
       : 'No human reviews yet, so there is nothing to measure the judges against. Run --review first.',

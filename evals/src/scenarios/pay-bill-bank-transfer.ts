@@ -131,7 +131,8 @@ export default scenario({
   seconds: 1200,
   user: {
     approve: true,
-    persona: 'You are Alex Rivera. Your Nordbank login is in the vault.',
+    persona:
+      'You are Alex Rivera. Your Nordbank login is in the vault. When the assistant shows you the payee and the amount and asks for your OK, answer "OK, go ahead and pay it."',
   },
   world() {
     const state: State = { payments: [], goAt: Number.MAX_SAFE_INTEGER };
