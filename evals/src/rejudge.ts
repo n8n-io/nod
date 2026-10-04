@@ -124,6 +124,9 @@ export async function rejudge(options: {
     total ? `${Math.round((value / total) * 100)}%` : 'n/a';
   const report = [
     `Re-judged ${compared} judge verdicts with ${options.judge.provider}/${options.judge.name}: ${pct(same, compared)} match the original judge.`,
+    llm.fallbackCalls?.()
+      ? `${llm.fallbackCalls()} judge calls were answered by ${options.fallback?.model.provider}/${options.fallback?.model.name} after a provider refusal.`
+      : '',
     human.total
       ? `Against your reviews (${human.total} judge verdicts): original judge ${pct(human.old, human.total)}, this judge ${pct(human.fresh, human.total)}.`
       : 'No human reviews yet, so there is nothing to measure the judges against. Run --review first.',

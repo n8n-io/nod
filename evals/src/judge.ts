@@ -6,6 +6,7 @@ export interface Llm {
   model: Model;
   complete(system: string, input: string, maxTokens?: number): Promise<string>;
   spent(): { tokens: number; costUsd: number | null };
+  fallbackCalls?(): number;
 }
 
 const transient =
@@ -98,8 +99,10 @@ export function withFallback(primary: Llm, fallback?: Llm): Llm {
       ? null
       : values.reduce<number>((a, b) => a + (b ?? 0), 0);
   };
+  let used = 0;
   return {
     model: primary.model,
+    fallbackCalls: () => used,
     spent: () => ({
       tokens: total((spent) => spent.tokens) ?? 0,
       costUsd: total((spent) => spent.costUsd),
@@ -110,6 +113,7 @@ export function withFallback(primary: Llm, fallback?: Llm): Llm {
       } catch (error) {
         if (!providerRefusal.test(error instanceof Error ? error.message : String(error)))
           throw error;
+        used++;
         return fallback.complete(system, input, maxTokens);
       }
     },

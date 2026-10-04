@@ -21,7 +21,13 @@ const saidGo = (run: Run, scripted: number) =>
     scripted,
     ...run.userMessages
       .slice(1)
-      .filter((message) => /go ahead|go with|book (?:it|that|this|alba)/i.test(message.text))
+      .filter(
+        (message) =>
+          /go ahead|go with|book (?:it|that|this|alba)/i.test(message.text) &&
+          !/\b(?:don'?t|do not|not|never|wait|before)\b[^.!?]{0,40}(?:go ahead|go with|book)/i.test(
+            message.text,
+          ),
+      )
       .map((message) => message.at),
   );
 

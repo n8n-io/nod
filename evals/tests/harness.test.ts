@@ -676,3 +676,23 @@ test('"next week" is the following calendar week whichever day it is asked', () 
     assert.ok(tuesday >= 2 && tuesday <= 8, `${offset}: ${tuesday}`);
   }
 });
+
+test('a judge fallback is counted and an invalid weekday is rejected', async () => {
+  const blocked = {
+    model: { provider: 'anthropic', name: 'a', apiKey: '' },
+    spent: () => ({ tokens: 0, costUsd: null }),
+    complete: async () => {
+      throw new Error('Usage policy block');
+    },
+  };
+  const backup = {
+    model: { provider: 'openai', name: 'b', apiKey: '' },
+    spent: () => ({ tokens: 0, costUsd: null }),
+    complete: async () => 'ok',
+  };
+  const llm = withFallback(blocked as never, backup as never);
+  await llm.complete('s', 'i');
+  await llm.complete('s', 'i');
+  assert.equal(llm.fallbackCalls?.(), 2);
+  assert.throws(() => nextWeekOn(Date.UTC(2026, 9, 3), 9), /Weekday must be/);
+});
