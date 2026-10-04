@@ -48,7 +48,9 @@
         const service = /^[a-z]{1,40}$/.test(query.get('service') ?? '')
           ? query.get('service')
           : null;
-        const connection = ['connected', 'cancelled', 'failed', 'expired'].includes(result)
+        const connection = ['connected', 'continued', 'cancelled', 'failed', 'expired'].includes(
+          result,
+        )
           ? result
           : 'failed';
         const attempt = query.get('attempt');

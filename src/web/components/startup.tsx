@@ -4,6 +4,8 @@ import { BrandMark } from './brand';
 import { Skeleton } from './ui';
 import { navigationItems } from '../lib/navigation';
 import { readUiPreference } from '../lib/ui-preferences';
+import { desktopSettingsAvailable } from '../lib/desktop';
+import { DesktopToolbar } from './desktop-toolbar';
 
 function useElapsed(afterMs: number) {
   const [passed, setPassed] = useState(false);
@@ -32,9 +34,11 @@ export function ChatSkeleton({
   const conversation = readUiPreference('otto.chat-layout') === 'conversation';
   return (
     <div className="chat-page chat-skeleton" aria-busy="true">
-      <div className="chat-report-action" aria-hidden="true">
-        <span className="chat-title">Chat</span>
-      </div>
+      {!desktopSettingsAvailable() && (
+        <div className="chat-report-action" aria-hidden="true">
+          <span className="chat-title">Chat</span>
+        </div>
+      )}
       <div className="conversation-scroll">
         <div className="conversation-column" aria-hidden="true">
           {conversation ? (
@@ -96,12 +100,15 @@ function StartupShell({ children }: { children: ReactNode }) {
     <div
       className={`app-shell startup-shell ${readUiPreference('otto.sidebar') !== 'expanded' ? 'sidebar-collapsed' : ''}`}
     >
+      {desktopSettingsAvailable() && (
+        <DesktopToolbar collapsed={readUiPreference('otto.sidebar') !== 'expanded'} />
+      )}
       <aside className="sidebar" aria-hidden="true" inert>
         <span className="brand">
           <BrandMark />
           <span>otto</span>
         </span>
-        <nav className="main-nav">
+        <nav className="main-nav" id="sidebar-navigation">
           <ul>
             {navigationItems.map((item) => (
               <li key={item.path}>

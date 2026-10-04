@@ -1,0 +1,22 @@
+{
+  "lima": {
+    "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-2.2.0-Darwin-arm64.tar.gz",
+    "sha256": "bbdef91774885a0d05f7b048c4eb89ae2bcf3a0c252ae7ca7934e63df76d93c3"
+  },
+  "guestagents": {
+    "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-additional-guestagents-2.2.0-Darwin-arm64.tar.gz",
+    "sha256": "3aff4453eb3c359eb4f3b458056db24f2c5c15019232531292f49e04050554ed"
+  },
+  "dockerHost": {
+    "url": "https://download.docker.com/mac/static/stable/aarch64/docker-28.5.1.tgz",
+    "sha256": "40f9c37f3d397fcaeb3ca68b6578d86698349c7475cebff30c843f056c2c22eb"
+  },
+  "dockerGuest": {
+    "url": "https://download.docker.com/linux/static/stable/aarch64/docker-28.5.1.tgz",
+    "sha256": "de54e37157f45a43f42f6271302372d95c0eb992cc35ecaee74989bb14058c94"
+  },
+  "guest": {
+    "url": "https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-arm64.img",
+    "sha256": "1d6bffe64b848468ac97f821d369a4846d983de1800ccf6b5ec8853e85cefc55"
+  }
+}

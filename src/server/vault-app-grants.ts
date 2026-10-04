@@ -50,10 +50,10 @@ export async function createAppGrantVault(
     );
     if (!result.rowCount) throw new Error('This app grant is unavailable.');
   }
-  async function read(id: string) {
+  async function read(id: string, client: Pool | PoolClient = pool) {
     const validId = z.uuid().parse(id);
     const row = (
-      await pool.query<{ ciphertext: string; version: number }>(
+      await client.query<{ ciphertext: string; version: number }>(
         'SELECT ciphertext,version FROM vault_app_grants WHERE id=$1 AND owner_id=$2 AND (expires_at IS NULL OR expires_at>now())',
         [validId, owner],
       )

@@ -1,6 +1,5 @@
-import { resolve } from 'node:path';
 import { pool } from './db.ts';
-import { port, ownerId, runtimeMode, runtimeGeneration } from './config.ts';
+import { desktopMode, port, ownerId, runtimeMode, runtimeGeneration, webRoot } from './config.ts';
 import {
   createApplication,
   createDefaultAdapters,
@@ -27,7 +26,7 @@ const { app } =
     : await createApplication(createDefaultAdapters());
 closeApplication = () => app.close();
 lease?.register(app);
-if (runtimeMode !== 'tenant' && process.env.NODE_ENV !== 'production') {
+if (runtimeMode !== 'tenant' && !desktopMode && process.env.NODE_ENV !== 'production') {
   const { createServer } = await import('vite');
   const vite = await createServer({
     server: {
@@ -59,7 +58,7 @@ if (runtimeMode !== 'tenant' && process.env.NODE_ENV !== 'production') {
   });
 } else if (runtimeMode !== 'tenant') {
   await app.register((await import('@fastify/static')).default, {
-    root: resolve('dist/web'),
+    root: webRoot,
     index: 'index.html',
     wildcard: false,
   });
@@ -90,7 +89,7 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
   void shutdown();
 });
-if (runtimeMode === 'tenant')
+if (runtimeMode === 'tenant' || desktopMode)
   process.on('disconnect', () => {
     void shutdown(true);
   });
@@ -108,4 +107,5 @@ if (runtimeMode === 'tenant')
     ownerId,
     generation: runtimeGeneration,
   });
+else if (desktopMode) process.send?.({ type: 'otto-ready', port: listeningPort });
 else console.log(`Otto is ready at http://localhost:${listeningPort}`);

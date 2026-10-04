@@ -594,6 +594,100 @@ test('codemode scripts reach only workspace and web tools, each call through the
   }
 });
 
+test(
+  'codemode full output is readable in the workspace before the guard records it',
+  { timeout: 20_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-codemode-output-'));
+    const sdkTemporary = join(directory, 'sdk-temporary');
+    const workspacePath = join(directory, 'workspace');
+    await mkdir(sdkTemporary);
+    await mkdir(workspacePath);
+    const temporaryEnvironment = ['TMPDIR', 'TMP', 'TEMP'].map(
+      (key) => [key, process.env[key]] as const,
+    );
+    for (const [key] of temporaryEnvironment) process.env[key] = sdkTemporary;
+    const expected = 'Synthetic full-output line for the workspace.\n'.repeat(5_000);
+    let definition: ToolDefinition | undefined;
+    let guardedWorkspacePath = false;
+    const agent = createPiAgent({
+      provider: 'openai',
+      apiKey: 'fixture-key',
+      sessionRoot: join(directory, 'sessions'),
+      createSession: async (options) => {
+        definition = options!
+          .resourceLoader!.getExtensions()
+          .extensions.find((extension) => extension.tools.has('codemode'))!
+          .tools.get('codemode')!.definition;
+        return createAgentSession(options);
+      },
+    });
+    try {
+      await agent.open({
+        threadId: randomUUID(),
+        turnId: randomUUID(),
+        systemPrompt: 'Synthetic fixture',
+        workspace: {
+          path: workspacePath,
+          instructions: 'Disposable synthetic workspace',
+          exec: (script, options) =>
+            new Promise((accept, reject) => {
+              const child = spawn('/bin/sh', ['-c', script], {
+                cwd: workspacePath,
+                env: { PATH: '/usr/bin:/bin' },
+                stdio: ['pipe', 'pipe', 'pipe'],
+              });
+              child.stdout.on('data', (chunk) => options?.onData?.(chunk));
+              child.stderr.resume();
+              child.once('error', reject);
+              child.once('close', (code) => accept({ exitCode: code ?? 1 }));
+              child.stdin.end(options?.input);
+            }),
+        },
+        runTool: async (_name, _params, run) => {
+          const result = await run();
+          const path = (result.details as { fullOutputPath?: string }).fullOutputPath;
+          guardedWorkspacePath =
+            typeof path === 'string' &&
+            path.startsWith(workspacePath + '/') &&
+            !JSON.stringify(result).includes(sdkTemporary);
+          return result;
+        },
+        tools: [],
+        shouldStop: () => false,
+        onEvent: () => {},
+      });
+      const result = await definition!.execute(
+        'overflow-fixture',
+        { code: `return ${JSON.stringify(expected)}` },
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      const path = (result.details as { fullOutputPath: string }).fullOutputPath;
+      assert.deepEqual(
+        {
+          ownedReadableOutput:
+            path.startsWith(workspacePath + '/') && (await readFile(path, 'utf8')) === expected,
+          guardedWorkspacePath,
+          sdkTemporaryRemoved: !(await readdir(sdkTemporary)).some((name) =>
+            name.startsWith('pi-codemode-'),
+          ),
+        },
+        { ownedReadableOutput: true, guardedWorkspacePath: true, sdkTemporaryRemoved: true },
+        JSON.stringify(await readdir(sdkTemporary)),
+      );
+    } finally {
+      await agent.dispose();
+      for (const [key, value] of temporaryEnvironment) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 // Durable Pi checkpoints: rebase, stale writers, dangling tool calls, restore.
 
 async function fixture() {
@@ -2022,6 +2116,145 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
     }).curate({ task: 'search', instructions: 'Return JSON.', input: {} }),
     /catalog/,
   );
+});
+
+test('codemode heldout output preserves UTF-8 bytes and fails closed through the guard', async (t) => {
+  const expected =
+    Array.from(
+      { length: 731 },
+      (_, index) => `${String(index).padStart(4, '0')}|nível-π-🙂|${'abcXYZ09'.repeat(23)}\n`,
+    ).join('') + 'END-OF-HELDOUT-OUTPUT';
+  for (const mode of ['success', 'guard-refused', 'transfer-cleanup-failed'] as const)
+    for (let repetition = 0; repetition < 3; repetition += 1)
+      await t.test(`${mode} ${repetition + 1}`, { timeout: 20_000 }, async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'otto-codemode-holdout-'));
+        const sdkTemporary = join(directory, 'sdk-temporary');
+        const workspacePath = join(directory, 'workspace');
+        await mkdir(sdkTemporary);
+        await mkdir(workspacePath);
+        const temporaryEnvironment = ['TMPDIR', 'TMP', 'TEMP'].map(
+          (key) => [key, process.env[key]] as const,
+        );
+        for (const [key] of temporaryEnvironment) process.env[key] = sdkTemporary;
+        let definition: ToolDefinition | undefined;
+        let guardedRuns = 0;
+        let recordedResults = 0;
+        let workspaceCommands = 0;
+        let transferAttempts = 0;
+        let cleanupAttempts = 0;
+        let observedSpill = false;
+        const guardError = new Error('Synthetic owned turn guard refused execution.');
+        const spills = async () =>
+          (await readdir(sdkTemporary)).filter((name) => name.startsWith('pi-codemode-'));
+        const agent = createPiAgent({
+          provider: 'openai',
+          apiKey: 'fixture-key',
+          sessionRoot: join(directory, 'sessions'),
+          createSession: async (options) => {
+            definition = options!
+              .resourceLoader!.getExtensions()
+              .extensions.find((extension) => extension.tools.has('codemode'))!
+              .tools.get('codemode')!.definition;
+            return createAgentSession(options);
+          },
+        });
+        try {
+          await agent.open({
+            threadId: randomUUID(),
+            turnId: randomUUID(),
+            systemPrompt: 'Independent synthetic fixture',
+            workspace: {
+              path: workspacePath,
+              instructions: 'Disposable workspace',
+              exec: async (script, options) => {
+                workspaceCommands += 1;
+                if ((await spills()).length) observedSpill = true;
+                if (script.startsWith('base64 -d ')) {
+                  transferAttempts += 1;
+                  if (mode === 'transfer-cleanup-failed') return { exitCode: 73 };
+                }
+                if (script.startsWith('rm -f --')) {
+                  cleanupAttempts += 1;
+                  if (mode === 'transfer-cleanup-failed')
+                    throw new Error('Synthetic workspace cleanup failure.');
+                }
+                return new Promise((accept, reject) => {
+                  const child = spawn('/bin/sh', ['-c', script], {
+                    cwd: workspacePath,
+                    env: { PATH: '/usr/bin:/bin' },
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                  });
+                  child.stdout.on('data', (chunk) => options?.onData?.(chunk));
+                  child.stderr.resume();
+                  child.once('error', reject);
+                  child.once('close', (code) => accept({ exitCode: code ?? 1 }));
+                  child.stdin.end(options?.input);
+                });
+              },
+            },
+            runTool: async (name, _params, run) => {
+              assert.equal(name, 'codemode');
+              if (mode === 'guard-refused') throw guardError;
+              guardedRuns += 1;
+              const result = await run();
+              recordedResults += 1;
+              const path = (result.details as { fullOutputPath: string }).fullOutputPath;
+              assert.ok(path.startsWith(workspacePath + '/.otto/outputs/'));
+              assert.equal(await readFile(path, 'utf8'), expected);
+              assert.ok(!JSON.stringify(result).includes(sdkTemporary));
+              assert.deepEqual(await spills(), []);
+              return result;
+            },
+            tools: [],
+            shouldStop: () => false,
+            onEvent: () => {},
+          });
+          const execute = () =>
+            definition!.execute(
+              'independent-overflow-fixture',
+              { code: `return ${JSON.stringify(expected)}` },
+              undefined,
+              undefined,
+              undefined as never,
+            );
+          if (mode === 'success') {
+            const result = await execute();
+            const path = (result.details as { fullOutputPath: string }).fullOutputPath;
+            assert.equal(await readFile(path, 'utf8'), expected);
+            assert.equal(guardedRuns, 1);
+            assert.equal(recordedResults, 1);
+            assert.equal(transferAttempts, 1);
+            assert.equal(observedSpill, true);
+          } else if (mode === 'guard-refused') {
+            await assert.rejects(execute, (error) => error === guardError);
+            assert.equal(guardedRuns, 0);
+            assert.equal(workspaceCommands, 0);
+            assert.equal(recordedResults, 0);
+            assert.equal(observedSpill, false);
+          } else {
+            await assert.rejects(execute, (error: Error) => {
+              assert.ok(error.message.length <= 160);
+              assert.ok(!error.message.includes(sdkTemporary));
+              assert.ok(!error.message.includes(workspacePath));
+              assert.ok(!error.message.includes('Synthetic workspace cleanup'));
+              return true;
+            });
+            assert.equal(guardedRuns, 1);
+            assert.equal(transferAttempts, 1);
+            assert.equal(cleanupAttempts, 1);
+            assert.equal(recordedResults, 0);
+            assert.equal(observedSpill, true);
+          }
+          assert.deepEqual(await spills(), []);
+        } finally {
+          await agent.dispose();
+          for (const [key, value] of temporaryEnvironment) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+          }
+          await rm(directory, { recursive: true, force: true });
+        }
+      });
 });
 
 test('every Otto tool schema reaches a model provider as a root object with its properties', () => {

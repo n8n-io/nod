@@ -3,8 +3,9 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { AlertCircle, Check, Link2, LoaderCircle, Plus } from 'lucide-react';
 import type { Configuration, Connection } from '../../shared/contracts';
 import { SetupNotice } from '../components/setup-notice';
-import { api, errorMessage } from '../lib/api';
+import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
+import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import {
   connectionGroups,
   connectionIdentity,
@@ -26,6 +27,8 @@ import {
 
 type Discovery = {
   name: string;
+  oauthStatus?: 'pending' | 'connected' | 'cancelled' | 'failed' | null;
+  authorizationUrl?: string;
   callbackUrl?: string;
   setupUrl?: string;
   setupText?: string;
@@ -167,12 +170,16 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
   const discoveryId = new URLSearchParams(window.location.search).get('connect');
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [discoveryError, setDiscoveryError] = useState('');
+  const [discoveryLoadError, setDiscoveryLoadError] = useState('');
   const [savingDiscovery, setSavingDiscovery] = useState(false);
+  const [discoverySignIn, setDiscoverySignIn] = useState<{ id: string; url: string } | null>(null);
+  const [discoveryVersion, setDiscoveryVersion] = useState(0);
   const page = useRef<HTMLDivElement>(null);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const dialogService = useRef('');
   const discoveryTitle = useRef<HTMLHeadingElement>(null);
   const actionRequest = useRef<AbortController | null>(null);
+  const discoveryRequest = useRef<AbortController | null>(null);
   const groups = connectionGroups(connections ?? []);
   const managed = groups.find((group) => group.service.slug === manageService);
   const connected = groups.filter((group) => group.accounts.length);
@@ -194,18 +201,69 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
   useEffect(() => () => actionRequest.current?.abort(), []);
   useEffect(() => {
     if (!discoveryId) return;
-    const request = new AbortController();
-    void api<Discovery>(`/api/apps/discovery/${encodeURIComponent(discoveryId)}`, {
-      signal: request.signal,
-    })
-      .then((value) => {
-        if (!request.signal.aborted) setDiscovery(value);
-      })
-      .catch((cause) => {
-        if (!request.signal.aborted) setDiscoveryError(errorMessage(cause));
-      });
-    return () => request.abort();
-  }, [discoveryId]);
+    let timer: number | undefined;
+    let checks = 0;
+    async function check() {
+      window.clearTimeout(timer);
+      discoveryRequest.current?.abort();
+      if (actionRequest.current) return;
+      const request = new AbortController();
+      discoveryRequest.current = request;
+      try {
+        const value = await api<Discovery>(
+          `/api/apps/discovery/${encodeURIComponent(discoveryId!)}`,
+          { signal: request.signal },
+        );
+        if (request.signal.aborted) return;
+        setDiscovery(value);
+        setDiscoveryLoadError('');
+        if (value.oauthStatus === 'connected') {
+          const url = new URL(window.location.href);
+          if (url.searchParams.get('connect') !== discoveryId) return;
+          url.searchParams.delete('connect');
+          window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+          setDiscovery(null);
+          setDiscoverySignIn(null);
+          void refresh();
+          return;
+        }
+        setDiscoverySignIn(
+          value.authorizationUrl
+            ? {
+                id: discoveryId!,
+                url: connectionUrl(value.authorizationUrl, window.location.origin),
+              }
+            : null,
+        );
+        if (value.oauthStatus === 'cancelled' || value.oauthStatus === 'failed')
+          setDiscoveryError(
+            value.oauthStatus === 'cancelled'
+              ? 'Connection cancelled. Try again.'
+              : 'The app could not connect. Try again.',
+          );
+        if (value.oauthStatus === 'pending' && checks++ < 12)
+          timer = window.setTimeout(() => void check(), 5000);
+      } catch (cause) {
+        if (request.signal.aborted) return;
+        if (cause instanceof ApiError && cause.status === 404) {
+          setDiscovery(null);
+          setDiscoverySignIn(null);
+        }
+        setDiscoveryLoadError(errorMessage(cause));
+      }
+    }
+    function focus() {
+      checks = 0;
+      void check();
+    }
+    focus();
+    window.addEventListener('focus', focus);
+    return () => {
+      window.clearTimeout(timer);
+      discoveryRequest.current?.abort();
+      window.removeEventListener('focus', focus);
+    };
+  }, [discoveryId, discoveryVersion, refresh]);
   async function saveDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!discoveryId || savingDiscovery) return;
@@ -232,8 +290,12 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
   }
   async function authorizeDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!discoveryId || savingDiscovery) return;
-    const values = new FormData(event.currentTarget);
+    if (!discoveryId || savingDiscovery || actionRequest.current) return;
+    const clientId =
+      event.currentTarget.querySelector<HTMLInputElement>('[name="clientId"]')?.value;
+    const request = new AbortController();
+    actionRequest.current = request;
+    discoveryRequest.current?.abort();
     setSavingDiscovery(true);
     setDiscoveryError('');
     try {
@@ -241,15 +303,23 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
         `/api/apps/discovery/${encodeURIComponent(discoveryId)}/authorize`,
         {
           method: 'POST',
-          body: JSON.stringify({
-            ...(values.get('clientId') ? { clientId: values.get('clientId') } : {}),
-          }),
+          body: JSON.stringify({ ...(clientId ? { clientId } : {}) }),
+          signal: request.signal,
         },
       );
-      window.location.assign(connectionUrl(result.url, window.location.origin));
+      if (request.signal.aborted) return;
+      const url = connectionUrl(result.url, window.location.origin);
+      setDiscoverySignIn({ id: discoveryId, url });
+      await openConnection(url);
     } catch (cause) {
+      if (request.signal.aborted) return;
       setDiscoveryError(errorMessage(cause));
-      setSavingDiscovery(false);
+    } finally {
+      if (actionRequest.current === request) actionRequest.current = null;
+      if (!request.signal.aborted) {
+        setSavingDiscovery(false);
+        setDiscoveryVersion((value) => value + 1);
+      }
     }
   }
   async function connect(connection: Connection, addAccount = false) {
@@ -281,7 +351,7 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
         {
           method: 'POST',
           body: JSON.stringify({
-            returnTo: 'apps',
+            returnTo: desktopLinksAvailable() ? 'window' : 'apps',
             ...(connection.accessPaths?.some((path) => path.kind !== 'browser')
               ? { connectionId: connection.connectionId }
               : {}),
@@ -290,7 +360,8 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
         },
       );
       if (request.signal.aborted) return;
-      window.location.assign(connectionUrl(result.url, window.location.origin));
+      await openConnection(connectionUrl(result.url, window.location.origin));
+      if (desktopLinksAvailable()) setBusy('');
     } catch (cause) {
       if (request.signal.aborted) return;
       setError(errorMessage(cause));
@@ -606,17 +677,29 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
               ))}
             </details>
           )}
-          {discoveryError && <Notice>{discoveryError}</Notice>}
+          {(discoveryError || discoveryLoadError) && (
+            <Notice>{discoveryError || discoveryLoadError}</Notice>
+          )}
           {discovery?.paths[0]?.auth === 'oauth' ? (
             <form onSubmit={(event) => void authorizeDiscovery(event)} autoComplete="off">
               {discovery.paths[0]?.clientIdRequired && (
                 <Field label="Client ID">
-                  <Input name="clientId" required maxLength={500} autoComplete="off" />
+                  <Input
+                    name="clientId"
+                    required
+                    maxLength={500}
+                    autoComplete="off"
+                    disabled={savingDiscovery || discoverySignIn?.id === discoveryId}
+                  />
                 </Field>
               )}
               {discovery.callbackUrl && <p>Set the app callback URL to {discovery.callbackUrl}.</p>}
               <Button type="submit" disabled={savingDiscovery}>
-                {savingDiscovery ? 'Opening sign-in…' : `Continue to ${discovery.name}`}
+                {savingDiscovery
+                  ? 'Opening sign-in…'
+                  : discoverySignIn?.id === discoveryId
+                    ? 'Continue sign-in'
+                    : `Continue to ${discovery.name}`}
               </Button>
             </form>
           ) : discovery ? (

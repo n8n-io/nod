@@ -1,0 +1,63 @@
+name: Prepare desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable version for the release PR, for example 0.1.0
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-desktop-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+      - name: Prepare versions and changelog
+        id: version
+        env:
+          OTTO_RELEASE_VERSION: ${{ inputs.version }}
+        run: node .github/scripts/prepare-desktop-release.mjs
+      - name: Open or update the release PR
+        id: pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
+        with:
+          branch: release/desktop
+          base: main
+          title: 'chore(release): Otto desktop ${{ steps.version.outputs.version }}'
+          commit-message: 'chore(release): Otto desktop ${{ steps.version.outputs.version }}'
+          body: |
+            Updates the desktop version and generated changelog for review.
+
+            After merging and passing CI, run Build desktop release from main. It creates a draft release by default and reuses the matching runtime when its inputs have not changed.
+          add-paths: |
+            desktop/package.json
+            desktop/package-lock.json
+            desktop/release.json
+            desktop/CHANGELOG.md
+      - name: Run CI for the bot-created release branch
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --ref release/desktop

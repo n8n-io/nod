@@ -1,0 +1,19 @@
+{
+  "name": "otto-desktop-experiment",
+  "productName": "Otto Preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main/main.mjs",
+  "description": "Otto local desktop experiment",
+  "scripts": {
+    "start": "electron .",
+    "build": "node scripts/build-app.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@electron/osx-sign": "2.7.1",
+    "@electron/packager": "20.3.0",
+    "electron": "44.5.0"
+  }
+}

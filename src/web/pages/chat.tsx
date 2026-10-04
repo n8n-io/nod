@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowDown, Bug, Check, Trash2 } from 'lucide-react';
 import type {
   AppState,
@@ -24,6 +25,7 @@ import {
   Skeleton,
 } from '../components/ui';
 import { SetupNotice } from '../components/setup-notice';
+import { desktopBuildInfo, desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
 import {
@@ -62,6 +64,9 @@ export function Chat({
   refresh,
   resetConversation,
   initialFocusMessageId,
+  toolbarActions,
+  visible = true,
+  onReadLatest,
   requestedMessage,
   onRequestHandled,
 }: {
@@ -70,6 +75,9 @@ export function Chat({
   refresh(): Promise<void>;
   resetConversation(threadId: string): Promise<string>;
   initialFocusMessageId?: string;
+  toolbarActions?: HTMLElement | null;
+  visible?: boolean;
+  onReadLatest?(threadId: string): void;
   requestedMessage?: { id: string; text: string };
   onRequestHandled?(id: string): void;
 }) {
@@ -201,7 +209,23 @@ export function Chat({
     if (stickToBottom.current)
       bottom.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
     else updateAway();
-  }, [state.messages, streams, sending, resetting, optimistic]);
+    reportRead();
+  }, [state.messages, streams, sending, resetting, optimistic, visible, focusTarget]);
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(reportRead);
+    };
+    update();
+    window.addEventListener('focus', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('focus', update);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, [visible, threadId, onReadLatest, focusTarget]);
   useEffect(() => {
     const ids = new Set(state.messages.map((message) => message.id));
     setOptimistic((current) => {
@@ -284,13 +308,13 @@ export function Chat({
       scroll.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [],
     ).find((element) => element.dataset.messageId === focusTarget.id);
     if (target) {
-      setFocusTarget(null);
       stickToBottom.current = false;
       requestAnimationFrame(() => {
-        target.scrollIntoView({ block: 'center', behavior: scrollBehavior() });
+        target.scrollIntoView({ block: 'center', behavior: 'instant' });
         target.focus({ preventScroll: true });
         target.classList.add('message-focused');
-        setTimeout(() => target.classList.remove('message-focused'), 2400);
+        setTimeout(() => target.classList.remove('message-focused'), 1600);
+        setFocusTarget(null);
       });
       return;
     }
@@ -518,6 +542,27 @@ export function Chat({
   function cancelReturn() {
     returning.current = 0;
   }
+  function reportRead() {
+    const element = scroll.current;
+    if (
+      !visible ||
+      focusTarget ||
+      !element ||
+      !element.clientHeight ||
+      !element.getClientRects().length ||
+      document.visibilityState !== 'visible' ||
+      !document.hasFocus()
+    )
+      return;
+    if (
+      Array.from(
+        document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"]'),
+      ).some((dialog) => dialog.getClientRects().length)
+    )
+      return;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight <= 2)
+      onReadLatest?.(threadId);
+  }
   function updateAway() {
     const element = scroll.current;
     if (!element) return;
@@ -531,6 +576,7 @@ export function Chat({
       const shown = Boolean(current?.shown) || distance > element.clientHeight;
       return current?.shown === shown ? current : { since: current?.since ?? since, shown };
     });
+    reportRead();
   }
   function updateActiveTurn() {
     const element = scroll.current;
@@ -551,6 +597,7 @@ export function Chat({
     const current =
       turns.filter((turn) => turn.getBoundingClientRect().top <= anchor).at(-1) ?? turns[0];
     setActiveTurn(current?.dataset.messageId ?? null);
+    reportRead();
   }
   useEffect(() => {
     const frame = requestAnimationFrame(updateActiveTurn);
@@ -564,7 +611,7 @@ export function Chat({
       observer?.disconnect();
       window.removeEventListener('resize', updateActiveTurn);
     };
-  }, [state.messages, historyPage, streams, optimistic]);
+  }, [state.messages, historyPage, streams, optimistic, visible, onReadLatest, focusTarget]);
   async function clearMessages() {
     if (resetLock.current || !resetTarget || !state.configuration.conversationResetEnabled) return;
     resetLock.current = true;
@@ -608,13 +655,18 @@ export function Chat({
     setReportStatus('copying');
     setError('');
     try {
-      const report = await api<{ threadId: string }>('/api/conversation/bug-report');
+      const [report, desktop] = await Promise.all([
+        api<{ threadId: string }>('/api/conversation/bug-report'),
+        desktopBuildInfo(),
+      ]);
       if (threadRef.current !== requestedThread) return;
       if (report.threadId !== requestedThread) {
         setReportStatus('idle');
         return;
       }
-      await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+      await navigator.clipboard.writeText(
+        JSON.stringify({ ...report, ...(desktop ? { desktop } : {}) }, null, 2),
+      );
       if (threadRef.current === requestedThread) setReportStatus('copied');
     } catch (cause) {
       if (threadRef.current === requestedThread) {
@@ -623,39 +675,52 @@ export function Chat({
       }
     }
   }
-  return (
-    <div className="chat-page">
-      <header className="chat-report-action">
-        <h1 className="chat-title">Chat</h1>
-        {import.meta.env?.DEV === true && state.configuration.conversationResetEnabled && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={resetting || sending || welcoming}
-            onClick={() => setResetTarget(threadId)}
-          >
-            <Trash2 size={14} aria-hidden="true" />
-            Clear messages
-          </Button>
-        )}
+  const chatActions = (
+    <>
+      {import.meta.env?.DEV === true && state.configuration.conversationResetEnabled && (
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => void copyBugReport()}
-          disabled={reportStatus === 'copying'}
-          aria-label={reportStatus === 'copied' ? 'Bug report copied' : 'Copy bug report'}
-          title="Copy conversation and trace as JSON"
+          disabled={resetting || sending || welcoming}
+          onClick={() => setResetTarget(threadId)}
         >
-          {reportStatus === 'copied' ? <Check size={15} /> : <Bug size={15} />}
-          {reportStatus === 'copying'
-            ? 'Copying…'
-            : reportStatus === 'copied'
-              ? 'Copied'
-              : 'Copy bug report'}
+          <Trash2 size={14} aria-hidden="true" />
+          Clear messages
         </Button>
-      </header>
+      )}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="chat-report-button"
+        onClick={() => void copyBugReport()}
+        disabled={reportStatus === 'copying'}
+        aria-label={reportStatus === 'copied' ? 'Bug report copied' : 'Copy bug report'}
+        title="Copy conversation and trace as JSON"
+      >
+        {reportStatus === 'copied' ? <Check size={15} /> : <Bug size={15} />}
+        {reportStatus === 'copying'
+          ? 'Copying…'
+          : reportStatus === 'copied'
+            ? 'Copied'
+            : 'Copy bug report'}
+      </Button>
+    </>
+  );
+  return (
+    <div className="chat-page">
+      {desktopSettingsAvailable() ? (
+        <>
+          <h1 className="sr-only">Chat</h1>
+          {toolbarActions && createPortal(chatActions, toolbarActions)}
+        </>
+      ) : (
+        <header className="chat-report-action">
+          <h1 className="chat-title">Chat</h1>
+          {chatActions}
+        </header>
+      )}
       <ChatTurnRail
         messages={allMessages}
         activeId={activeTurn}

@@ -9,10 +9,12 @@ import { Inspector } from './pages/inspector';
 import { Goals } from './pages/goals';
 import { SchedulePage } from './pages/schedule';
 import { useAppState } from './hooks/use-app-state';
+import { useChatUnread } from './hooks/use-chat-unread';
 import { prefetchPageData } from './hooks/use-page-data';
 import { Button, Loading, Notice } from './components/ui';
 import { ChatSkeleton, Splash } from './components/startup';
 import { Sidebar } from './components/sidebar';
+import { DesktopToolbar } from './components/desktop-toolbar';
 import { navigationItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
@@ -26,6 +28,11 @@ import type { AccountControls, AccountTab } from './components/account-menu';
 import { usePageData } from './hooks/use-page-data';
 import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
 import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
+import {
+  desktopSettingsAvailable,
+  openDesktopSettings,
+  subscribeDesktopFocusMessage,
+} from './lib/desktop';
 
 function navigate(path: string) {
   window.history.pushState(null, '', path);
@@ -78,6 +85,7 @@ function Workspace({
   const { state, streams, error, connected, refresh, resetConversation } = useAppState(
     session.user!.id,
   );
+  const unread = useChatUnread(session.user!.id, state);
   useSavedDateFormat();
   useBrowserTimeZone();
   const [inspector, setInspector] = useState(
@@ -85,7 +93,12 @@ function Workspace({
       path === '/dev' || (window.innerWidth > 720 && readUiPreference('otto.inspector') === 'open'),
   );
   const [collapsed, setCollapsed] = useState(() => readUiPreference('otto.sidebar') !== 'expanded');
+  const [toolbarActions, setToolbarActions] = useState<HTMLDivElement | null>(null);
   const [pendingMessageFocus, setPendingMessageFocus] = useState<string>();
+  const [notificationTarget, setNotificationTarget] = useState<{
+    threadId: string;
+    messageId: string;
+  } | null>();
   const [chatRequests, setChatRequests] = useState<Array<{ id: string; text: string }>>([]);
   const askInChat = (text: string) => {
     setChatRequests((current) => [...current, { id: crypto.randomUUID(), text }]);
@@ -93,10 +106,33 @@ function Workspace({
   };
   const [inspectionFocus, setInspectionFocus] = useState<{ messageId: string; turnId: string }>();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<AccountTab>('Profile');
+  const [settingsTab, setSettingsTab] = useState<AccountTab>(
+    session.auth.mode === 'local' ? 'Appearance' : 'Profile',
+  );
+  const [settingsError, setSettingsError] = useState('');
   const settingsTrigger = useRef<HTMLElement | null>(null);
   const developer = session.capabilities.developer;
+  useEffect(() => subscribeDesktopFocusMessage(setNotificationTarget), []);
+  useEffect(() => {
+    if (notificationTarget === undefined || (notificationTarget && !state)) return;
+    setNotificationTarget(undefined);
+    if (notificationTarget && notificationTarget.threadId !== state?.threadId) return;
+    navigate('/');
+    if (notificationTarget)
+      window.dispatchEvent(
+        new CustomEvent('otto:focus-message', {
+          detail: { messageId: notificationTarget.messageId },
+        }),
+      );
+  }, [notificationTarget, state]);
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
+    if (desktopSettingsAvailable()) {
+      setSettingsError('');
+      void openDesktopSettings().catch(() =>
+        setSettingsError('Settings could not be opened. Try again.'),
+      );
+      return;
+    }
     settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
     setSettingsTab(tab === 'Profile' && session.auth.mode === 'local' ? 'Appearance' : tab);
     setSettingsOpen(true);
@@ -114,13 +150,17 @@ function Workspace({
         event.defaultPrevented
       )
         return;
-      if (document.querySelector('[role="dialog"]') && !settingsOpen) return;
+      if (
+        document.querySelector('[role="dialog"], [role="alertdialog"], dialog[open]') &&
+        !settingsOpen
+      )
+        return;
       event.preventDefault();
-      if (!settingsOpen) openSettings('Profile');
+      if (!settingsOpen) openSettings(session.auth.mode === 'local' ? 'Appearance' : 'Profile');
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
-  }, [settingsOpen]);
+  }, [settingsOpen, session.auth.mode]);
   useEffect(() => {
     const focusMessage = (event: Event) => {
       const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
@@ -188,6 +228,7 @@ function Workspace({
     : null;
   const account: AccountControls = {
     user: session.user!,
+    local: session.auth.mode === 'local',
     theme: session.settings!.theme,
     saving,
     canLogout: session.auth.mode === 'google',
@@ -202,8 +243,17 @@ function Workspace({
       <a href="#workspace" className="skip-link">
         Skip to content
       </a>
+      {desktopSettingsAvailable() && (
+        <DesktopToolbar
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((value) => !value)}
+          actionsRef={setToolbarActions}
+        />
+      )}
       <Sidebar
         path={currentPath}
+        unreadCount={unread.count}
+        unreadPending={unread.pending}
         collapsed={collapsed}
         onToggle={() => setCollapsed((value) => !value)}
         inspectorEnabled={inspectorEnabled}
@@ -215,6 +265,7 @@ function Workspace({
       <div className="workspace-frame">
         <div className="workspace-body">
           <main id="workspace" className="main-workspace" tabIndex={-1}>
+            {settingsError && <Notice>{settingsError}</Notice>}
             <div
               className={`chat-route ${handoff ? 'chat-entering' : ''}`}
               hidden={currentPath !== '/'}
@@ -226,6 +277,9 @@ function Workspace({
                   refresh={refresh}
                   resetConversation={resetConversation}
                   initialFocusMessageId={pendingMessageFocus}
+                  toolbarActions={currentPath === '/' ? toolbarActions : null}
+                  visible={currentPath === '/'}
+                  onReadLatest={unread.markRead}
                   requestedMessage={chatRequests[0]}
                   onRequestHandled={(id) =>
                     setChatRequests((current) => current.filter((request) => request.id !== id))
@@ -284,7 +338,9 @@ function Workspace({
             : document.querySelector<HTMLElement>(
                 window.innerWidth <= 640
                   ? '[aria-label="Navigation menu"]'
-                  : '[aria-label="Account menu"]',
+                  : account.local
+                    ? '[aria-label="Settings"]'
+                    : '[aria-label="Account menu"]',
               )
         }
       />
@@ -405,5 +461,10 @@ export function App() {
     window.addEventListener('popstate', update);
     return () => window.removeEventListener('popstate', update);
   }, []);
-  return /^\/privacy\/?$/.test(path) ? <Privacy /> : <AccountApp path={path} setPath={setPath} />;
+  return (
+    <>
+      {desktopSettingsAvailable() && <div className="desktop-titlebar" aria-hidden="true" />}
+      {/^\/privacy\/?$/.test(path) ? <Privacy /> : <AccountApp path={path} setPath={setPath} />}
+    </>
+  );
 }

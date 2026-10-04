@@ -45,8 +45,22 @@ jobs:
         with:
           node-version: '24.21.0'
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
       - name: Install locked dependencies
         run: npm ci
+      - name: Install desktop build tooling without downloading Electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm --prefix desktop ci
+      - name: Check desktop lifecycle, storage and release contracts
+        run: npm run desktop:test
+      - name: Check desktop network isolation during restart
+        run: >-
+          sudo env OTTO_TEST_RUNTIME_NETWORK=1 "$(command -v node)"
+          --test --test-name-pattern='workload firewall refresh'
+          desktop/test/runtime-assets.test.mjs
       - name: Check types, boundaries and formatting
         run: npm run check
       - name: Build the client
@@ -73,6 +87,9 @@ jobs:
           docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile --tag otto-ci .
           docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile.browser --tag otto-ci-browser .
           docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile.workspace --tag otto-ci-workspace .
+          docker build --platform linux/amd64 --file Dockerfile.browser --tag otto-ci-local-browser .
+      - name: Verify the shared local and desktop browser image
+        run: node --import tsx desktop/scripts/check-browser-image.mjs otto-ci-local-browser
       - name: Run all integration tests with PostgreSQL and Chromium
         run: >-
           docker run --rm --network host --shm-size=1g

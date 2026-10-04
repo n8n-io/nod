@@ -9,6 +9,10 @@
   "scripts": {
     "dev": "node scripts/start.mjs",
     "dev:server": "tsx watch src/server/index.ts",
+    "desktop:dev": "npm --prefix desktop start",
+    "desktop:prepare": "node desktop/scripts/prepare-runtime.mjs",
+    "desktop:build": "npm --prefix desktop run build",
+    "desktop:test": "npm --prefix desktop test",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit && node scripts/check-architecture.mjs && npm run format:check",
     "test": "tsx --test tests/*.test.ts",
@@ -70,6 +74,7 @@
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.2",
     "tailwind-merge": "^3.3.1",
+    "tar": "7.5.22",
     "tldts": "7.4.15",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0",

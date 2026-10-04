@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { pool } from './db.ts';
 import {
   configuration,
+  desktopAccess,
   ownerId,
   port,
   runtimeMode,
@@ -100,12 +101,12 @@ export async function createApp(dependencies: AppDependencies = {}) {
           generation: runtimeGeneration,
         })
       : undefined;
-  if (!runtimeAccess) registerLocalAccess(app, port);
-  if (runtimeAccess && dependencies.admission && dependencies.deploymentDrain)
+  if (!runtimeAccess) registerLocalAccess(app, port, desktopAccess);
+  if ((runtimeAccess || desktopAccess) && dependencies.admission && dependencies.deploymentDrain)
     registerTenantDrain(app, {
       admission: dependencies.admission,
       drain: dependencies.deploymentDrain,
-      generation: runtimeGeneration,
+      generation: desktopAccess ? 'desktop' : runtimeGeneration,
     });
   const uploads = createMultipartReader({
     maxFileSize,
@@ -130,6 +131,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const release = process.env.OTTO_IMAGE_RELEASE || process.env.OTTO_RELEASE;
     return { ok: true, ...(release ? { release } : {}) };
   });
+  if (desktopAccess)
+    app.get('/api/desktop/status', async () => {
+      const result = await pool.query<{ active: boolean }>(
+        "SELECT EXISTS (SELECT 1 FROM turns WHERE owner_id=$1 AND status IN ('queued','running')) AS active",
+        [ownerId],
+      );
+      return { activeWork: result.rows[0].active || (dependencies.admission?.pending ?? 0) > 1 };
+    });
   const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",(NOT u.background OR u.source_id=$2) AS "showTyping"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {
     if (!ids.length) return [];

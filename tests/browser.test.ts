@@ -62,6 +62,7 @@ import { createBrowserFixture } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
+import { SetupNotice } from '../src/web/components/setup-notice.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
 import type { AppState, Message } from '../src/shared/contracts.ts';
 
@@ -1892,19 +1893,21 @@ test(
       await act({ action: 'click', ...point(300, 130), durationMs: 120 });
       for (const key of ['ArrowLeft', 'ArrowRight', 'Space'] as const)
         await act({ action: 'press', key });
-      const readResult = async () => {
-        const observation = await act({
-          action: 'evaluate',
-          script: "JSON.parse(document.querySelector('#result').textContent)",
-        });
-        return JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1));
-      };
-      let actual = await readResult();
-      for (const deadline = Date.now() + 2000; actual.keys.length < 3 && Date.now() < deadline;) {
-        await delay(20);
-        actual = await readResult();
-      }
-      assert.deepEqual(actual, {
+      const observation = await act({
+        action: 'evaluate',
+        script: `new Promise(resolve => {
+          const read = () => {
+            const state = JSON.parse(document.querySelector('#result').textContent || 'null');
+            if (state?.keys.length >= 3) {
+              removeEventListener('message', read);
+              resolve(state);
+            }
+          };
+          addEventListener('message', read);
+          read();
+        })`,
+      });
+      assert.deepEqual(JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1)), {
         selected: true,
         dragged: true,
         held: true,
@@ -2411,6 +2414,40 @@ function requestedChatState(): AppState {
     },
   };
 }
+
+test('missing-key setup opens native Providers and can retry a rejected settings request', async () => {
+  const requests: string[] = [];
+  const view = await handoffView(async () => {
+    throw new Error('Unexpected setup network request.');
+  }, createElement('div'));
+  Object.assign(view.dom.window, {
+    ottoDesktop: {
+      openSettings: async (section: string) => {
+        requests.push(section);
+        if (requests.length === 1) throw new Error('Synthetic settings rejection.');
+      },
+    },
+  });
+  const notice = (integrationsReady: boolean) =>
+    createElement(SetupNotice, {
+      configuration: { ...requestedChatState().configuration, integrationsReady },
+      capability: 'apps',
+    });
+  try {
+    await view.render(notice(false));
+    await act(async () => view.element<HTMLButtonElement>('button').click());
+    assert.deepEqual(requests, ['providers']);
+    assert.ok(view.element('[role="alert"]'));
+    await act(async () => view.element<HTMLButtonElement>('button').click());
+    assert.deepEqual(requests, ['providers', 'providers']);
+    assert.equal(view.dom.window.document.querySelector('[role="alert"]'), null);
+    await view.render(notice(true));
+    assert.equal(view.dom.window.document.querySelector('button'), null);
+    assert.deepEqual(requests, ['providers', 'providers']);
+  } finally {
+    await view.close();
+  }
+});
 
 test('chat request submits once under StrictMode and keeps the pending message visible', async () => {
   const state = requestedChatState();

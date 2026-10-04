@@ -23,6 +23,8 @@ import {
 
 export function Sidebar({
   path,
+  unreadCount = 0,
+  unreadPending = false,
   collapsed,
   onToggle,
   onNavigate,
@@ -33,6 +35,8 @@ export function Sidebar({
   account,
 }: {
   path: string;
+  unreadCount?: number;
+  unreadPending?: boolean;
   collapsed: boolean;
   onToggle(): void;
   onNavigate(path: string): void;
@@ -45,6 +49,27 @@ export function Sidebar({
   const [hints, setHints] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
+  const unreadLabel =
+    unreadCount > 99
+      ? 'More than 99 unread messages'
+      : unreadPending
+        ? unreadCount
+          ? `${unreadCount} or more unread messages`
+          : 'Checking unread messages'
+        : `${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`;
+  const chatLabel = unreadCount || unreadPending ? `Chat, ${unreadLabel}` : 'Chat';
+  const unreadBadge =
+    unreadCount || unreadPending ? (
+      <span className="chat-unread-badge" aria-hidden="true">
+        {unreadCount > 99
+          ? '99+'
+          : unreadPending
+            ? unreadCount
+              ? `${unreadCount}+`
+              : '…'
+            : unreadCount}
+      </span>
+    ) : null;
   const mobileTrigger = useRef<HTMLButtonElement>(null);
   const mobileSheet = useRef<HTMLDialogElement>(null);
   const theme = useSyncExternalStore(subscribeTheme, currentTheme, () => 'light');
@@ -227,7 +252,7 @@ export function Sidebar({
               <li key={item.path}>
                 <a
                   href={item.path}
-                  aria-label={item.label}
+                  aria-label={item.path === '/' ? chatLabel : item.label}
                   aria-current={path === item.path ? 'page' : undefined}
                   aria-keyshortcuts={
                     item.key
@@ -235,7 +260,7 @@ export function Sidebar({
                       : undefined
                   }
                   title={label ? `${item.label} (${label})` : item.label}
-                  className={`nav-link ${path === item.path ? 'nav-link-active' : ''}`}
+                  className={`nav-link ${path === item.path ? 'nav-link-active' : ''} ${item.path === '/' && unreadBadge ? 'has-chat-unread' : ''}`}
                   onClick={(event) => {
                     if (
                       event.metaKey ||
@@ -251,6 +276,7 @@ export function Sidebar({
                 >
                   <Icon size={26} strokeWidth={1.8} aria-hidden="true" />
                   <span className="nav-label">{item.label}</span>
+                  {item.path === '/' && unreadBadge}
                   {item.key && (
                     <kbd className="nav-shortcut" aria-hidden="true">
                       {item.key.toUpperCase()}
@@ -266,7 +292,7 @@ export function Sidebar({
         <a
           href="/"
           className="mobile-chat-link"
-          aria-label="Chat"
+          aria-label={chatLabel}
           aria-current={path === '/' ? 'page' : undefined}
           onClick={(event) => {
             if (
@@ -283,6 +309,7 @@ export function Sidebar({
           }}
         >
           <BrandMark />
+          {unreadBadge}
         </a>
         <button
           type="button"
@@ -293,7 +320,7 @@ export function Sidebar({
           aria-expanded={mobileMenuOpen}
           onClick={() => setMobileMenuOpen(true)}
         >
-          {account ? (
+          {account && !account.local ? (
             <AccountAvatar user={account.user} />
           ) : (
             <LayoutGrid size={22} aria-hidden="true" />
@@ -317,6 +344,7 @@ export function Sidebar({
                     key={item.path}
                     href={item.path}
                     className="mobile-section"
+                    aria-label={item.path === '/' ? chatLabel : item.label}
                     aria-current={path === item.path ? 'page' : undefined}
                     onClick={(event) => {
                       if (
@@ -334,6 +362,7 @@ export function Sidebar({
                   >
                     <Icon size={24} strokeWidth={1.8} aria-hidden="true" />
                     <span>{item.label}</span>
+                    {item.path === '/' && unreadBadge}
                   </a>
                 );
               })}

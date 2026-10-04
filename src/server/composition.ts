@@ -58,6 +58,7 @@ import { createChannelSettings } from './channel-settings.ts';
 import {
   configuration,
   dataRoot,
+  desktopMode,
   ownerId,
   publicOrigin,
   runtimeGeneration,
@@ -328,7 +329,9 @@ export async function createApplication(
     : localArtifacts;
   const inspectorDatabase = createInspectorPool();
   const inspectorSecrets = Object.entries(process.env)
-    .filter(([key]) => /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN)$/.test(key))
+    .filter(([key]) =>
+      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN)$/.test(key),
+    )
     .flatMap(([, value]) => (value ? [value] : []));
   if (process.env.DATABASE_URL) {
     inspectorSecrets.push(process.env.DATABASE_URL);
@@ -563,6 +566,7 @@ export async function createApplication(
     wake: triage.triageEvent,
     refresh,
     baseUrl: publicOrigin,
+    callbackReturnTo: desktopMode ? 'window' : undefined,
     discovered,
     browserAccounts: () => vault.list(ownerId),
     removeBrowserAccount: (id) => vault.removeLogin(id),

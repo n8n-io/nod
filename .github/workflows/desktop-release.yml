@@ -1,0 +1,318 @@
+name: Build desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish checked app and runtime drafts as preview releases
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Check release prerequisites
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: mac-release
+    env:
+      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source: ${{ steps.plan.outputs.source }}
+      version: ${{ steps.plan.outputs.version }}
+      runtime_tag: ${{ steps.plan.outputs.runtime_tag }}
+      runtime_fingerprint: ${{ steps.plan.outputs.runtime_fingerprint }}
+      runtime_base_url: ${{ steps.plan.outputs.runtime_base_url }}
+      runtime_reused: ${{ steps.plan.outputs.runtime_reused }}
+      runtime_public: ${{ steps.plan.outputs.runtime_public }}
+    steps:
+      - name: Check out the requested main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+      - name: Require tested source, signing configuration and runtime integrity
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
+          OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+          APPLE_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && vars.APPLE_SIGNING_IDENTITY != '' && vars.APPLE_CERTIFICATE_SHA256 != '' && ((vars.OTTO_SIGNING_MODE || 'self-signed') == 'self-signed' || (secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && vars.APPLE_TEAM_ID != '')) }}
+        run: node .github/scripts/desktop-release.mjs plan
+      - name: Save the reusable runtime descriptor
+        if: steps.plan.outputs.runtime_reused == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: desktop-runtime-descriptor
+          path: .local/desktop-runtime-release/runtime-release.json
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+
+  images:
+    name: Build changed runtime images on Linux ARM
+    needs: plan
+    if: needs.plan.outputs.runtime_reused != 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    environment: mac-release
+    env:
+      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
+      OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.plan.outputs.source }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: npm
+      - name: Install validation dependencies
+        run: npm ci
+      - name: Set up Docker build cache
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build the workspace image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: Dockerfile.workspace
+          platforms: linux/arm64
+          load: true
+          tags: otto-desktop-workspace:experiment
+          cache-from: type=gha,scope=desktop-workspace-arm64
+          cache-to: type=gha,scope=desktop-workspace-arm64,mode=max
+      - name: Build the browser image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: Dockerfile.browser
+          platforms: linux/arm64
+          load: true
+          tags: otto-desktop-browser:experiment
+          cache-from: type=gha,scope=desktop-browser-arm64
+          cache-to: type=gha,scope=desktop-browser-arm64,mode=max
+      - name: Verify and export the native ARM images
+        run: node desktop/scripts/prepare-runtime.mjs --images-only --prebuilt-images
+      - name: Transfer compressed image archives
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: desktop-runtime-images
+          path: |
+            .local/desktop-runtime-assets/images/*.tar.gz
+            .local/desktop-runtime-assets/images-manifest.json
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  runtime:
+    name: Sign and prepare the runtime release
+    needs: [plan, images]
+    if: needs.plan.outputs.runtime_reused != 'true'
+    runs-on: macos-15
+    timeout-minutes: 40
+    environment: mac-release
+    permissions:
+      contents: write
+    outputs:
+      descriptor_sha256: ${{ steps.runtime.outputs.runtime_descriptor_sha256 }}
+    env:
+      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
+      OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      OTTO_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
+      OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
+      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ inputs.publish && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_base_url || '' }}
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.plan.outputs.source }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - name: Install locked dependencies without signing credentials
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          npm ci
+          npm --prefix desktop ci
+      - name: Download image archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: desktop-runtime-images
+          path: .local/desktop-runtime-assets
+      - name: Cache verified runtime downloads and Go compilation
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .local/desktop-runtime-downloads
+          key: desktop-host-arm64-${{ hashFiles('desktop/runtime/downloads.json', 'desktop/scripts/runtime-build-lock.json', 'desktop/scripts/build-lima.mjs', 'desktop/scripts/prepare-runtime.mjs') }}
+      - name: Prepare compatible runtime host tools
+        run: node desktop/scripts/prepare-runtime.mjs --host-only
+      - name: Sign and package runtime binaries
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: node .github/scripts/with-apple-signing.mjs node desktop/scripts/runtime-pack.mjs --release
+      - name: Upload and verify the content-addressed runtime
+        id: runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
+          OTTO_PUBLISH_RELEASE: ${{ inputs.publish }}
+        run: node .github/scripts/desktop-release.mjs draft-runtime
+      - name: Save the checked runtime descriptor
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: desktop-runtime-descriptor
+          path: .local/desktop-runtime-release/runtime-release.json
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+      - name: Clean signing material after interruption
+        if: always()
+        run: node .github/scripts/with-apple-signing.mjs --cleanup
+
+  mac:
+    name: Package and check the Mac app
+    needs: [plan, runtime]
+    if: always() && needs.plan.result == 'success' && (needs.runtime.result == 'success' || (needs.runtime.result == 'skipped' && needs.plan.outputs.runtime_reused == 'true'))
+    runs-on: macos-15
+    timeout-minutes: 30
+    environment: mac-release
+    env:
+      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
+      OTTO_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}
+      OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
+      OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.plan.outputs.source }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - name: Cache Electron download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/Library/Caches/electron
+          key: desktop-electron-arm64-${{ hashFiles('desktop/package-lock.json') }}
+      - name: Install and build without signing credentials
+        run: |
+          npm ci
+          npm --prefix desktop ci
+          npm run desktop:test
+          npm run build
+      - name: Download the verified runtime descriptor
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: desktop-runtime-descriptor
+          path: .local/desktop-runtime-release
+      - name: Sign, package and verify the app
+        env:
+          OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: ${{ inputs.publish && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_reused != 'true' && needs.runtime.outputs.descriptor_sha256 || '' }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: >-
+          node .github/scripts/with-apple-signing.mjs
+          npm --prefix desktop run build -- --release
+          --runtime-descriptor "$GITHUB_WORKSPACE/.local/desktop-runtime-release/runtime-release.json" --no-runtime-archive
+      - name: Save the release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: desktop-macos-arm64
+          path: |
+            dist/desktop/*.dmg
+            dist/desktop/SHA256SUMS
+            dist/desktop/release.json
+            dist/desktop/runtime-release.json
+            dist/desktop/signing.cer
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Clean signing material after interruption
+        if: always()
+        run: node .github/scripts/with-apple-signing.mjs --cleanup
+
+  release:
+    name: Verify uploaded assets and prepare the release
+    needs: [plan, mac]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: mac-release
+    env:
+      OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
+      OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
+      OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.plan.outputs.source }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+      - name: Download the checked app assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: desktop-macos-arm64
+          path: dist/desktop
+      - name: Verify GitHub asset digests and download the DMG again
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
+          OTTO_PUBLISH_RELEASE: ${{ inputs.publish }}
+        run: node .github/scripts/desktop-release.mjs draft

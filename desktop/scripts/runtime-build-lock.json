@@ -1,0 +1,35 @@
+{
+  "minimumSystemVersion": "14.0",
+  "dockerVersion": "28.5.1",
+  "notices": [
+    {
+      "file": "licenses/docker-cli/LICENSE",
+      "url": "https://raw.githubusercontent.com/docker/cli/e180ab8ab82d22b7895a3e6e110cf6dd5c45f1d7/LICENSE",
+      "sha256": "2d81ea060825006fc8f3fe28aa5dc0ffeb80faf325b612c955229157b8c10dc0"
+    },
+    {
+      "file": "licenses/docker-cli/NOTICE",
+      "url": "https://raw.githubusercontent.com/docker/cli/e180ab8ab82d22b7895a3e6e110cf6dd5c45f1d7/NOTICE",
+      "sha256": "a8c869fbda819afb8d80e0ac19bac52e766bc6c19cb38cf94f52d64c4be2aab6"
+    },
+    {
+      "file": "licenses/docker-engine/LICENSE",
+      "url": "https://raw.githubusercontent.com/moby/moby/f8215cc266744ef195a50a70d427c345da2acdbb/LICENSE",
+      "sha256": "7c87873291f289713ac5df48b1f2010eb6963752bbd6b530416ab99fc37914a8"
+    },
+    {
+      "file": "licenses/docker-engine/NOTICE",
+      "url": "https://raw.githubusercontent.com/moby/moby/f8215cc266744ef195a50a70d427c345da2acdbb/NOTICE",
+      "sha256": "b40ec5b16182103ef1cd69d42a21c98369e35bd483b3973902da4807c0755446"
+    }
+  ],
+  "limaVersion": "2.2.0",
+  "limaSource": {
+    "url": "https://github.com/lima-vm/lima/archive/refs/tags/v2.2.0.tar.gz",
+    "sha256": "cdba3804df7d8c00a2af674a3fe0b24c19673a0e846e5f75ac9badf227ce52f5"
+  },
+  "go": {
+    "url": "https://go.dev/dl/go1.26.8.darwin-arm64.tar.gz",
+    "sha256": "a012b25b571bd0138a03dcd25375ceba866fe5ca822f426d2c66a4de56fd3f4b"
+  }
+}

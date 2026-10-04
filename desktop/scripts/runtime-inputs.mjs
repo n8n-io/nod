@@ -1,0 +1,111 @@
+import { createHash } from 'node:crypto';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const inputs = [
+  '.dockerignore',
+  'Dockerfile.workspace',
+  'Dockerfile.browser',
+  'package.json',
+  'package-lock.json',
+  'desktop/runtime/downloads.json',
+  'desktop/scripts/build-lima.mjs',
+  'desktop/scripts/check-browser-image.mjs',
+  'desktop/scripts/empty-entitlements.plist',
+  'desktop/scripts/lima-entitlements.plist',
+  'desktop/scripts/prepare-runtime.mjs',
+  'desktop/scripts/release-tools.mjs',
+  'desktop/scripts/runtime-build-lock.json',
+  'desktop/scripts/runtime-inputs.mjs',
+  'desktop/scripts/runtime-pack.mjs',
+  'desktop/runtime/assets.mjs',
+  'src',
+];
+
+export async function runtimeInputs() {
+  const entries = [];
+  async function collect(path) {
+    const full = join(repository, path);
+    const metadata = await lstat(full);
+    if ((!metadata.isFile() && !metadata.isDirectory()) || (await realpath(full)) !== full)
+      throw new Error('Runtime inputs cannot contain symbolic links.');
+    if (metadata.isFile()) {
+      entries.push([
+        path,
+        createHash('sha256')
+          .update(await readFile(full))
+          .digest('hex'),
+      ]);
+      return;
+    }
+    const children = await readdir(full, { withFileTypes: true });
+    for (const child of children.sort((a, b) => a.name.localeCompare(b.name)))
+      await collect(`${path}/${child.name}`);
+  }
+  for (const input of inputs) await collect(input);
+  const configuration = JSON.parse(
+    await readFile(join(repository, 'desktop/package.json'), 'utf8'),
+  );
+  entries.push(['@electron/osx-sign', configuration.devDependencies['@electron/osx-sign']]);
+  const signingMode =
+    process.env.OTTO_SIGNING_MODE || (process.env.OTTO_SIGNING_IDENTITY ? 'self-signed' : 'ad-hoc');
+  if (!['ad-hoc', 'self-signed', 'developer-id'].includes(signingMode))
+    throw new Error('Unknown runtime signing mode.');
+  if (signingMode !== 'ad-hoc') {
+    const identity = process.env.OTTO_SIGNING_IDENTITY?.trim();
+    const certificate = process.env.OTTO_SIGNING_CERTIFICATE_SHA256?.toLowerCase();
+    if (!identity || /[\r\n\0]/.test(identity) || !/^[a-f0-9]{64}$/.test(certificate || ''))
+      throw new Error(
+        'Signed runtime inputs require the permanent identity and certificate SHA256.',
+      );
+    entries.push(['signing.identity', identity], ['signing.certificateSha256', certificate]);
+  }
+  entries.push(['signing.mode', signingMode]);
+  const lockPath = 'desktop/package-lock.json';
+  const signingLock = JSON.parse(await readFile(join(repository, lockPath), 'utf8'));
+  const seen = new Set();
+  function collectPackage(name, parent = '') {
+    let scope = parent;
+    let path;
+    for (;;) {
+      const candidate = `${scope ? `${scope}/` : ''}node_modules/${name}`;
+      if (signingLock.packages[candidate]) {
+        path = candidate;
+        break;
+      }
+      if (!scope) throw new Error(`A runtime build dependency is absent from ${lockPath}.`);
+      scope = scope.includes('/node_modules/')
+        ? scope.slice(0, scope.lastIndexOf('/node_modules/'))
+        : '';
+    }
+    if (seen.has(path)) return;
+    seen.add(path);
+    const metadata = signingLock.packages[path];
+    entries.push([
+      `${lockPath}:${path}`,
+      createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
+    ]);
+    for (const dependency of Object.keys({
+      ...metadata.dependencies,
+      ...metadata.optionalDependencies,
+    }))
+      collectPackage(dependency, path);
+  }
+  collectPackage('@electron/osx-sign');
+  entries.sort(([left], [right]) => left.localeCompare(right));
+  const lock = JSON.parse(
+    await readFile(join(repository, 'desktop/scripts/runtime-build-lock.json'), 'utf8'),
+  );
+  const fingerprint = createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+  return {
+    fingerprint,
+    platform: 'darwin-arm64',
+    minimumSystemVersion: lock.minimumSystemVersion,
+    inputs: entries.map(([path]) => path),
+  };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+  console.log(JSON.stringify(await runtimeInputs()));

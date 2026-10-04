@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
+    <title>Otto</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./setup.js" defer></script>
+    <script src="./preferences.js" defer></script>
+  </head>
+  <body class="onboarding">
+    <div class="shell" id="shell">
+      <aside id="sidebar" hidden>
+        <div class="brand">
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4" />
+            <circle cx="25" cy="6" r="4" fill="#ff91ac" /></svg
+          ><span>otto</span>
+        </div>
+        <nav aria-label="Settings">
+          <button class="nav-item" data-section="general">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="M3 5h14M3 10h14M3 15h14M7 3v4m6 1v4m-7 1v4"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              /></svg
+            >General
+          </button>
+          <button class="nav-item" data-section="providers">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="m10 2 2.2 5.8L18 10l-5.8 2.2L10 18l-2.2-5.8L2 10l5.8-2.2L10 2Z"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linejoin="round"
+              /></svg
+            >Providers
+          </button>
+          <button class="nav-item" data-section="preferences">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5" />
+              <path
+                d="M10 6v4l3 2"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              /></svg
+            >Preferences
+          </button>
+        </nav>
+      </aside>
+      <main>
+        <header class="page-header">
+          <div class="onboarding-brand" id="onboarding-brand" hidden>
+            <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <circle cx="16" cy="16" r="10" stroke="currentColor" stroke-width="4" />
+              <circle cx="25" cy="6" r="4" fill="#ff91ac" /></svg
+            ><span>otto</span><span class="step" id="step">1 of 3</span>
+          </div>
+          <h1 id="heading" tabindex="-1">Welcome to Otto</h1>
+          <p id="intro" hidden></p>
+        </header>
+        <div class="scroll-area" id="scroll-area">
+          <form id="settings-form">
+            <section id="providers-panel" hidden aria-label="Providers">
+              <fieldset class="provider-picker">
+                <legend>AI provider</legend>
+                <div class="provider-options">
+                  <label class="provider-option"
+                    ><input type="radio" name="provider" value="openai" checked /><span
+                      class="provider-logo openai"
+                      aria-hidden="true"
+                    ></span
+                    ><span class="provider-name"><strong>OpenAI</strong><small>GPT</small></span
+                    ><span class="radio-mark" aria-hidden="true"></span
+                  ></label>
+                  <label class="provider-option"
+                    ><input type="radio" name="provider" value="anthropic" /><span
+                      class="provider-logo anthropic"
+                      aria-hidden="true"
+                    ></span
+                    ><span class="provider-name"
+                      ><strong>Anthropic</strong><small>Claude</small></span
+                    ><span class="radio-mark" aria-hidden="true"></span
+                  ></label>
+                </div>
+              </fieldset>
+              <div id="provider-key-field" class="key-field"></div>
+              <div class="setting-row model-row" id="model-row">
+                <span>Model</span><span id="model" class="model-value"></span>
+              </div>
+              <section class="integration-section">
+                <div class="section-heading">
+                  <h2>App connections <span class="optional">Optional</span></h2>
+                </div>
+                <p class="section-description">
+                  Add a Composio key to connect apps like Gmail, Slack and Notion.
+                </p>
+                <div id="composio-key-field" class="key-field"></div>
+              </section>
+            </section>
+            <section id="general-panel" aria-label="General">
+              <div id="appearance-home">
+                <div id="appearance-section">
+                  <h2>Appearance</h2>
+                  <fieldset class="theme-picker">
+                    <legend class="sr-only">Color theme</legend>
+                    <label class="theme-option"
+                      ><input type="radio" name="theme" value="system" checked /><span
+                        class="theme-sample system"
+                        ><i></i><b></b></span
+                      ><span>System</span></label
+                    >
+                    <label class="theme-option"
+                      ><input type="radio" name="theme" value="light" /><span
+                        class="theme-sample light"
+                        ><i></i><b></b></span
+                      ><span>Light</span></label
+                    >
+                    <label class="theme-option"
+                      ><input type="radio" name="theme" value="dark" /><span
+                        class="theme-sample dark"
+                        ><i></i><b></b></span
+                      ><span>Dark</span></label
+                    >
+                  </fieldset>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <label for="launch-at-login">Open at login</label>
+                </div>
+                <label class="switch"
+                  ><input type="checkbox" id="launch-at-login" /><span aria-hidden="true"></span
+                ></label>
+              </div>
+              <div class="setting-row">
+                <div>
+                  <label for="notifications">Desktop notifications</label>
+                </div>
+                <label class="switch"
+                  ><input type="checkbox" id="notifications" /><span aria-hidden="true"></span
+                ></label>
+              </div>
+            </section>
+            <section id="preferences-panel" hidden aria-label="Preferences">
+              <h2>Date and time</h2>
+              <div class="setting-row">
+                <label for="preference-region">Region</label
+                ><select id="preference-region"></select>
+              </div>
+              <div class="setting-row">
+                <label for="preference-clock">Clock</label
+                ><select id="preference-clock">
+                  <option value="auto">Automatic</option>
+                  <option value="h12">12-hour</option>
+                  <option value="h23">24-hour</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <label for="preference-time-zone">Time zone</label
+                ><select id="preference-time-zone"></select>
+              </div>
+              <p id="preferences-example" class="hint date-example"></p>
+              <div class="setting-row">
+                <label for="preference-quiet-hours">Quiet hours</label
+                ><label class="switch"
+                  ><input type="checkbox" id="preference-quiet-hours" /><span
+                    aria-hidden="true"
+                  ></span
+                ></label>
+              </div>
+              <div id="preference-quiet-times" class="quiet-times" hidden>
+                <label>From<input type="time" id="preference-quiet-start" /></label
+                ><label>Until<input type="time" id="preference-quiet-end" /></label>
+              </div>
+              <p id="preferences-status" class="hint" role="status" aria-live="polite"></p>
+              <p id="preferences-error" class="error" role="alert" hidden></p>
+            </section>
+            <p id="error" class="error" role="alert" hidden></p>
+            <button id="retry-settings" type="button" class="secondary" hidden>
+              Try opening Otto again
+            </button>
+          </form>
+          <section id="preparation" hidden aria-labelledby="heading">
+            <p class="section-description" id="preparation-description">
+              Setting up your local workspace and browser. The first launch can take a few minutes.
+            </p>
+            <div class="progress-track"><div id="progress-value" class="progress-value"></div></div>
+            <p id="status" class="hint" role="status" aria-live="polite">Preparing…</p>
+            <p id="preparation-error" class="error" role="alert" hidden></p>
+            <div class="recovery-actions">
+              <button type="button" id="retry" class="primary" hidden>Try again</button
+              ><button type="button" id="import-runtime" class="secondary" hidden>
+                Choose runtime file</button
+              ><button type="button" id="edit-settings" class="secondary" hidden>
+                Review setup
+              </button>
+            </div>
+          </section>
+        </div>
+        <p id="keychain-notice" class="hint keychain-notice" hidden>
+          macOS may ask for your keychain password to store or use your API keys.
+        </p>
+        <footer class="action-bar" id="action-bar">
+          <p id="save-status" role="status" aria-live="polite"></p>
+          <button type="button" class="secondary" id="back" hidden>Back</button>
+          <button type="submit" form="settings-form" class="primary" id="continue">
+            Save changes
+          </button>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

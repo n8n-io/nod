@@ -1,6 +1,7 @@
-import { existsSync, statSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { constants, existsSync, statSync } from 'node:fs';
+import { mkdir, open, unlink } from 'node:fs/promises';
+import { basename, join, posix, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Type, type TObject } from '@sinclair/typebox';
@@ -16,6 +17,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { Agent, AgentEvent } from '../../ports/agent.ts';
+import type { WorkspaceSession } from '../../ports/computer.ts';
 import type { PrivateObjectStore } from '../../ports/object-storage.ts';
 import {
   closeInterruptedCalls,
@@ -56,6 +58,66 @@ function resources(
     extendResources: () => {},
     reload: async () => {},
   };
+}
+
+async function workspaceCodemodeOutput(
+  result: Awaited<ReturnType<ToolDefinition['execute']>>,
+  workspace: WorkspaceSession,
+  writer: ToolDefinition,
+  signal?: AbortSignal,
+) {
+  const details = result.details as { fullOutputPath?: unknown } | undefined;
+  if (!details?.fullOutputPath) return result;
+  const path = details.fullOutputPath;
+  try {
+    if (
+      typeof path !== 'string' ||
+      !/^pi-codemode-[a-f0-9]{16}\.txt$/.test(basename(path)) ||
+      path !== join(tmpdir(), basename(path))
+    )
+      throw new Error();
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    let owned = false;
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.nlink !== 1 || (process.getuid && info.uid !== process.getuid()))
+        throw new Error();
+      owned = true;
+      if (info.size > 16 * 1024 * 1024) throw new Error();
+      const bytes = Buffer.alloc(info.size + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      if (length !== info.size) throw new Error();
+      signal?.throwIfAborted();
+      const output = posix.join(workspace.path, '.otto/outputs', `codemode-${randomUUID()}.txt`);
+      await writer.execute(
+        randomUUID(),
+        { path: output, content: bytes.subarray(0, length).toString('utf8') },
+        signal,
+        undefined,
+        undefined as never,
+      );
+      return {
+        ...result,
+        details: { ...details, fullOutputPath: output },
+        content: result.content.map((item) =>
+          item.type === 'text' ? { ...item, text: item.text.replaceAll(path, output) } : item,
+        ),
+      };
+    } finally {
+      try {
+        await file.close();
+      } finally {
+        if (owned) await unlink(path);
+      }
+    }
+  } catch {
+    throw new Error('The full script output could not be saved in the workspace.');
+  }
 }
 
 export function createPiAgent(options: {
@@ -134,8 +196,9 @@ export function createPiAgent(options: {
         if (durable) completedEvents.push(event);
         else input.onEvent(event);
       };
+      const sandboxTools = createSandbox(input.workspace, input.timeZone);
       const tools: ToolDefinition[] = [
-        ...createSandbox(input.workspace, input.timeZone).map((definition): ToolDefinition => ({
+        ...sandboxTools.map((definition): ToolDefinition => ({
           ...definition,
           execute: async (id, params, signal, onUpdate, context) => {
             await checkpoint();
@@ -195,9 +258,23 @@ export function createPiAgent(options: {
                 const args = search
                   ? { ...(params as Record<string, unknown>), workflow: 'none' }
                   : params;
-                const result = await input.runTool(name, args, () =>
-                  registered.definition.execute(id, args, signal, onUpdate, context),
-                );
+                const result = await input.runTool(name, args, async () => {
+                  const output = await registered.definition.execute(
+                    id,
+                    args,
+                    signal,
+                    onUpdate,
+                    context,
+                  );
+                  return name === 'codemode'
+                    ? workspaceCodemodeOutput(
+                        output,
+                        input.workspace,
+                        sandboxTools.find((tool) => tool.name === 'write')!,
+                        signal,
+                      )
+                    : output;
+                });
                 return { ...result, details: result.details ?? {} };
               },
             },

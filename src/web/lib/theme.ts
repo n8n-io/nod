@@ -1,3 +1,11 @@
+import {
+  desktopPreferences,
+  desktopSettingsAvailable,
+  setDesktopTheme,
+  subscribeDesktopPreferences,
+  type DesktopPreferences,
+} from './desktop';
+
 export type Theme = 'light' | 'dark';
 export type ThemePreference = Theme | 'system';
 
@@ -5,9 +13,12 @@ const storageKey = 'otto.theme';
 const changeEvent = 'otto:theme';
 let chosenTheme: Theme | undefined;
 let accountTheme: ThemePreference | undefined;
+let desktopTheme: Theme | undefined;
 
 function resolvedTheme(): Theme {
-  const preference = accountTheme ?? chosenTheme;
+  const preference = desktopSettingsAvailable()
+    ? (desktopTheme ?? chosenTheme)
+    : (accountTheme ?? chosenTheme);
   return preference === 'light' || preference === 'dark'
     ? preference
     : window.matchMedia?.('(prefers-color-scheme: dark)').matches
@@ -37,7 +48,21 @@ function applyTheme(theme: Theme) {
   window.dispatchEvent(new Event(changeEvent));
 }
 
-export function setTheme(theme: ThemePreference) {
+function applyDesktopPreferences(preferences: DesktopPreferences) {
+  desktopTheme = preferences.resolvedTheme;
+  chosenTheme = preferences.theme === 'system' ? undefined : preferences.theme;
+  try {
+    window.localStorage.setItem(storageKey, preferences.theme);
+  } catch {}
+  applyTheme(resolvedTheme());
+}
+
+export async function setTheme(theme: ThemePreference) {
+  if (desktopSettingsAvailable()) {
+    const preferences = await setDesktopTheme(theme);
+    if (preferences) applyDesktopPreferences(preferences);
+    return;
+  }
   chosenTheme = theme === 'system' ? undefined : theme;
   try {
     window.localStorage.setItem(storageKey, theme);
@@ -58,17 +83,33 @@ export function subscribeTheme(listener: () => void) {
 export function initializeTheme() {
   const system = window.matchMedia?.('(prefers-color-scheme: dark)');
   accountTheme = undefined;
+  desktopTheme = undefined;
+  if (desktopSettingsAvailable()) document.documentElement.dataset.desktop = 'true';
   const update = () => applyTheme(resolvedTheme());
   chosenTheme = savedTheme();
   update();
+  let active = true;
+  let revision = 0;
+  const unsubscribe = subscribeDesktopPreferences((preferences) => {
+    revision++;
+    if (active) applyDesktopPreferences(preferences);
+  });
+  void desktopPreferences()
+    ?.then((preferences) => {
+      if (active && revision === 0) applyDesktopPreferences(preferences);
+    })
+    .catch(() => {});
   const storage = (event: StorageEvent) => {
     if (event.key !== storageKey && event.key !== null) return;
+    if (desktopSettingsAvailable()) return;
     chosenTheme = savedTheme();
     update();
   };
   system?.addEventListener('change', update);
   window.addEventListener('storage', storage);
   return () => {
+    active = false;
+    unsubscribe();
     system?.removeEventListener('change', update);
     window.removeEventListener('storage', storage);
   };

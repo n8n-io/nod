@@ -29,6 +29,24 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createLocalRuntimeTransport } from '../src/providers/runtime-host/local.ts';
+import { registerLocalAccess } from '../src/server/access.ts';
+
+async function bounded<T>(promise: Promise<T>) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Fixture did not reach the expected boundary.')),
+          2_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 describe('runtime host', () => {
   function deferred<T = void>() {
@@ -39,23 +57,6 @@ describe('runtime host', () => {
       reject = no;
     });
     return { promise, resolve, reject };
-  }
-
-  async function bounded<T>(promise: Promise<T>) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        promise,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error('Fixture did not reach the expected boundary.')),
-            2_000,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   function fixture(t: TestContext, heartbeatMs = 15_000) {
@@ -671,7 +672,10 @@ describe('tenant drain', () => {
     return { promise, resolve };
   }
 
-  function fixture(computer?: { pause(): Promise<void>; resume(): Promise<void> }) {
+  function fixture(
+    computer?: { pause(): Promise<void>; resume(): Promise<void> },
+    desktop = false,
+  ) {
     const app = Fastify();
     const identity = {
       secret: randomBytes(32).toString('base64url'),
@@ -682,24 +686,32 @@ describe('tenant drain', () => {
     const admission = createWorkAdmission();
     const consumers = createWorkConsumers();
     const drain = createTenantDrain({ admission, consumers, computer });
-    registerRuntimeAccess(app, identity);
+    if (desktop) registerLocalAccess(app, 4310, { token: identity.secret });
+    else registerRuntimeAccess(app, identity);
     registerTenantDrain(app, { admission, drain, generation: identity.generation });
     app.setErrorHandler((error, _request, reply) => {
       const status = (error as { statusCode?: number }).statusCode ?? 503;
       reply.code(status).send({ error: 'The request could not be completed.' });
     });
     app.post('/api/runtime/lease', async () => ({ ok: true }));
-    const headers = (path: string, body: string, kind: RuntimeClaims['kind'] = 'user') => ({
-      'content-type': 'application/json',
-      'x-otto-runtime': signRuntimeRequest({
-        ...identity,
-        method: 'POST',
-        target: path,
-        body: Buffer.from(body),
-        developer: false,
-        kind,
-      }),
-    });
+    const headers = (path: string, body: string, kind: RuntimeClaims['kind'] = 'user') =>
+      desktop
+        ? {
+            host: '127.0.0.1:4310',
+            'content-type': 'application/json',
+            'x-otto-desktop-token': identity.secret,
+          }
+        : {
+            'content-type': 'application/json',
+            'x-otto-runtime': signRuntimeRequest({
+              ...identity,
+              method: 'POST',
+              target: path,
+              body: Buffer.from(body),
+              developer: false,
+              kind,
+            }),
+          };
     const request = (path: string, body: unknown = {}, kind: RuntimeClaims['kind'] = 'user') => {
       const payload = JSON.stringify(body);
       return app.inject({
@@ -711,6 +723,76 @@ describe('tenant drain', () => {
     };
     return { app, identity, admission, consumers, drain, headers, request };
   }
+
+  test('desktop restart drains admitted work and workers before acknowledging and requires its launch token', async () => {
+    const f = fixture(undefined, true);
+    const started = gate();
+    const finish = gate();
+    const stopping = gate();
+    const workerFinished = gate();
+    let effects = 0;
+    let received = false;
+    await f.consumers.register({
+      async start() {
+        return 'synthetic-worker';
+      },
+      async stop() {
+        stopping.resolve();
+        await workerFinished.promise;
+      },
+    });
+    f.app.post('/api/work', async () => {
+      effects++;
+      started.resolve();
+      await finish.promise;
+      return { ok: true };
+    });
+    const input = {
+      nonce: randomUUID(),
+      targetRelease: '0'.repeat(40),
+      deadline: Date.now() + 5000,
+    };
+    try {
+      for (const url of ['/api/runtime/drain', '/api/runtime/resume'])
+        assert.equal(
+          (
+            await f.app.inject({
+              method: 'POST',
+              url,
+              payload: input,
+              headers: { host: '127.0.0.1:4310' },
+            })
+          ).statusCode,
+          401,
+        );
+      assert.equal(f.admission.paused, false);
+      const working = f.request('/api/work');
+      await bounded(started.promise);
+      const preparing = f.request('/api/runtime/drain', input);
+      void preparing.then(() => {
+        received = true;
+      });
+      await bounded(stopping.promise);
+      assert.equal(f.admission.paused, true);
+      assert.equal(received, false);
+      assert.equal((await f.request('/api/work')).statusCode, 503);
+      finish.resolve();
+      assert.equal((await bounded(working)).statusCode, 200);
+      assert.equal(received, false);
+      workerFinished.resolve();
+      const receipt = await bounded(preparing);
+      assert.equal(receipt.statusCode, 200, receipt.body);
+      assert.equal(receipt.json().drained, true);
+      assert.equal(effects, 1);
+      assert.equal((await f.request('/api/runtime/resume', input)).statusCode, 200);
+      assert.equal((await f.request('/api/work')).statusCode, 200);
+      assert.equal(effects, 2);
+    } finally {
+      finish.resolve();
+      workerFinished.resolve();
+      await f.app.close();
+    }
+  });
 
   test('signed deployment drain waits for admitted HTTP work, blocks new work and preserves lease renewal', async () => {
     const f = fixture();
