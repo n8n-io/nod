@@ -2,7 +2,7 @@
 
 ## 0.1.0 - 2026-10-04
 
-Source: `011fef9d2bb432c6836260ea657e6cb1eec5ba87`
+Source: `3162f0cdcbb775c5c412c1ce4ed1fdb2a47fcb66`
 Previous release: none
 
 - Add macOS alpha with onboarding and integration improvements (#97) (011fef9)
