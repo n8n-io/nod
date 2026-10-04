@@ -35,6 +35,8 @@ import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
 import { createSandbox } from '../src/providers/pi/sandbox.ts';
 import type { runProcess } from '../src/providers/process.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
+import { inspectToolCatalog, rootObject } from '../src/runtime/tools.ts';
+import { Type } from '@sinclair/typebox';
 import { createBrowserFlows } from '../src/runtime/browser-flows.ts';
 import { createBrowserFixture as createAgentBrowserComputer } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
@@ -2020,4 +2022,21 @@ test('the memory curator runs on the configured Pi provider, parses JSON and ref
     }).curate({ task: 'search', instructions: 'Return JSON.', input: {} }),
     /catalog/,
   );
+});
+
+test('every Otto tool schema reaches a model provider as a root object with its properties', () => {
+  for (const tool of inspectToolCatalog()) {
+    const schema = tool.parameters as { type?: string; anyOf?: unknown; properties?: object };
+    assert.equal(schema.type, 'object', tool.name);
+    assert.equal(schema.anyOf, undefined, tool.name);
+    assert.ok(schema.properties, tool.name);
+  }
+  const merged = rootObject(
+    Type.Union([
+      Type.Object({ id: Type.String(), origin: Type.String() }),
+      Type.Object({ origin: Type.String(), kind: Type.Literal('otp') }),
+    ]),
+  ) as unknown as { properties: Record<string, unknown>; required: string[] };
+  assert.deepEqual(Object.keys(merged.properties).sort(), ['id', 'kind', 'origin']);
+  assert.deepEqual(merged.required, ['origin']);
 });
