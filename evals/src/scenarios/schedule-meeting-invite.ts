@@ -1,6 +1,6 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { calendar, createApps, gmail, type Mail } from '../world/apps.ts';
-import { dayLabel, localTime, nextWeekday } from '../world/time.ts';
+import { dayLabel, localTime, nextWeekOn } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 const daniel = 'daniel.ortiz@fieldnotes.example.net';
@@ -21,8 +21,8 @@ export default scenario({
   },
   world(clock) {
     const now = clock.now();
-    const tuesday = nextWeekday(now, 2);
-    const wednesday = nextWeekday(now, 3);
+    const tuesday = nextWeekOn(now, 2);
+    const wednesday = nextWeekOn(now, 3);
     const at = (offset: number, hour: number, minutes = 0) =>
       localTime(now + offset * 86_400_000, 0, hour, 'Europe/Madrid', minutes);
     const mails: Mail[] = [

@@ -99,6 +99,11 @@ function streamly(state: State, ends: string): Site {
           `${nav}<h2>Request a refund</h2><p class="error">We could not process this request. Choose an eligible invoice and a valid amount.</p>`,
           400,
         );
+      if (state.refunds.some((item) => item.invoice === submitted.invoice))
+        return page(
+          'Refund requested · Streamly',
+          `${nav}<h2>Refund already requested</h2><p>Reference: <b>${state.refundRef}</b>. Refunds reach your card in up to 5 business days.</p>`,
+        );
       state.refunds.push(submitted);
       return redirect('/refund/done');
     }

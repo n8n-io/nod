@@ -16,7 +16,7 @@ import { select } from '../src/run.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
-import { daysAgo, inDays, localTime } from '../src/world/time.ts';
+import { daysAgo, inDays, localTime, nextWeekOn } from '../src/world/time.ts';
 
 const manifest: RunManifest = {
   label: 't',
@@ -661,4 +661,18 @@ test('a judge that cannot return every verdict at once is asked one criterion at
     ['first-check', 'second-check'],
   );
   assert.ok(verdicts.every((verdict) => verdict.pass));
+});
+
+test('"next week" is the following calendar week whichever day it is asked', () => {
+  const zone = 'Europe/Madrid';
+  const day = (at: number) =>
+    new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: zone }).format(at);
+  for (let offset = 0; offset < 14; offset++) {
+    const now = Date.UTC(2026, 9, 3 + offset, 10);
+    const tuesday = nextWeekOn(now, 2, zone);
+    const wednesday = nextWeekOn(now, 3, zone);
+    assert.equal(day(inDays(now, tuesday, zone)), 'Tuesday');
+    assert.equal(wednesday, tuesday + 1);
+    assert.ok(tuesday >= 2 && tuesday <= 8, `${offset}: ${tuesday}`);
+  }
 });
