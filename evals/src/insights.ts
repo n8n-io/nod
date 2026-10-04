@@ -44,7 +44,7 @@ export function insights(runs: ChartRun[]) {
   const done = usable.filter((run) => attempted(run) >= widest * 0.9);
   const best = pick(done, rate, 'max');
   const contenders = best
-    ? done.filter((run) => (rate(run) ?? 0) >= (rate(best.run) ?? 0) - 0.08)
+    ? done.filter((run) => (rate(run) ?? 0) >= (rate(best.run) ?? 0) - 0.15)
     : [];
   const value = pick(contenders, costPerPass, 'min');
   const cheapest = pick(done, costPerPass, 'min');
