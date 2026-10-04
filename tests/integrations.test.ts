@@ -3730,15 +3730,15 @@ test('a discovered MCP server can register, sign in and refresh without service 
     if (url.pathname === '/.well-known/oauth-protected-resource/mcp')
       return Response.json({
         resource: 'https://example.com/mcp',
-        authorization_servers: ['https://example.org'],
+        authorization_servers: ['https://93.184.216.34'],
         scopes_supported: ['read', 'write'],
       });
     if (url.pathname === '/.well-known/oauth-authorization-server')
       return Response.json({
-        issuer: 'https://example.org',
-        authorization_endpoint: 'https://example.org/authorize',
-        token_endpoint: 'https://example.org/token',
-        registration_endpoint: 'https://example.org/register',
+        issuer: 'https://93.184.216.34',
+        authorization_endpoint: 'https://93.184.216.34/authorize',
+        token_endpoint: 'https://93.184.216.34/token',
+        registration_endpoint: 'https://93.184.216.34/register',
         response_types_supported: ['code'],
         grant_types_supported: ['authorization_code', 'refresh_token'],
         code_challenge_methods_supported: ['S256'],
@@ -3770,7 +3770,7 @@ test('a discovered MCP server can register, sign in and refresh without service 
     'read write',
   );
   const authorize = new URL(started.url);
-  assert.equal(authorize.origin, 'https://example.org');
+  assert.equal(authorize.origin, 'https://93.184.216.34');
   assert.equal(authorize.searchParams.get('state'), 'fixture-state');
   assert.equal(authorize.searchParams.get('scope'), 'read write');
   const finished = await oauth.finish('https://example.com/mcp', started.saved, 'fixture-code');

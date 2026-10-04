@@ -1891,11 +1891,19 @@ test(
       await act({ action: 'click', ...point(300, 130), durationMs: 120 });
       for (const key of ['ArrowLeft', 'ArrowRight', 'Space'] as const)
         await act({ action: 'press', key });
-      const observation = await act({
-        action: 'evaluate',
-        script: "JSON.parse(document.querySelector('#result').textContent)",
-      });
-      assert.deepEqual(JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1)), {
+      const readResult = async () => {
+        const observation = await act({
+          action: 'evaluate',
+          script: "JSON.parse(document.querySelector('#result').textContent)",
+        });
+        return JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1));
+      };
+      let actual = await readResult();
+      for (const deadline = Date.now() + 2000; actual.keys.length < 3 && Date.now() < deadline;) {
+        await delay(20);
+        actual = await readResult();
+      }
+      assert.deepEqual(actual, {
         selected: true,
         dragged: true,
         held: true,

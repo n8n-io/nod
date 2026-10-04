@@ -64,8 +64,10 @@ Ctrl-C stops the server; `docker compose stop` stops the containers. Data stays 
 ```sh
 npm run check             # types, import boundaries, formatting
 npm test                  # deterministic tests (database cases skip without TEST_DATABASE_URL)
-npm run test:integration  # all tests against the local PostgreSQL
+npm run test:integration  # all tests in Linux with disposable PostgreSQL and Chromium
 npm run build             # types and web bundle
 ```
+
+The integration command builds the client and browser image, runs every test in an isolated Docker network, and removes its test containers afterward. It fails on skipped tests and does not use your local database or credentials.
 
 Hosted deployment: [deployment/cloudflare/README.md](deployment/cloudflare/README.md). Rules for coding agents: [AGENTS.md](AGENTS.md).

@@ -232,10 +232,14 @@ async function execute(session: WorkspaceSession, command: string) {
   return output;
 }
 
-async function local() {
+async function local(programPrefix = '') {
   const directory = await mkdtemp('/tmp/otto-command-');
   const launch: WorkspaceCommandLauncher = (_command, args, options) =>
-    spawn('python3', ['-u', '-c', args.at(-1)!], { ...options, cwd: directory, stdio: 'pipe' });
+    spawn('python3', ['-u', '-c', programPrefix + args.at(-1)!], {
+      ...options,
+      cwd: directory,
+      stdio: 'pipe',
+    });
   return {
     directory,
     run: (args: string[], options: Partial<Parameters<typeof runWorkspaceCommand>[0]> = {}) =>
@@ -293,6 +297,51 @@ test('cancel waits for the remote process group, including a child ignoring TERM
     controller.abort();
     await f.close();
   }
+});
+
+test('process-group probes wait through transient permission errors and fence persistent uncertainty', async (t) => {
+  for (const persistent of [false, true])
+    await t.test(persistent ? 'persistent denial' : 'transient denial', async () => {
+      const f = await local(`import os,errno
+probe_calls=0
+original_killpg=os.killpg
+original_isdir=os.path.isdir
+def probe(group,value):
+ global probe_calls
+ if value==0:
+  probe_calls+=1
+  with open('probes','a') as file: file.write('x')
+  if ${persistent ? 'True' : 'probe_calls==1'}: raise PermissionError(errno.EPERM,'Synthetic process-group denial')
+ return original_killpg(group,value)
+os.killpg=probe
+os.path.isdir=lambda path: False if path=='/proc' else original_isdir(path)
+`);
+      const controller = new AbortController();
+      try {
+        const operation = f.run(
+          [
+            'python3',
+            '-c',
+            'import time;open("ready","w").close();time.sleep(0.5);open("late","w").close()',
+          ],
+          { signal: controller.signal, drainTimeoutMs: 1000 },
+        );
+        const rejected = assert.rejects(
+          operation,
+          (error: unknown) =>
+            error instanceof WorkspaceCommandError && error.uncertain === persistent,
+        );
+        await ready(join(f.directory, 'ready'));
+        controller.abort();
+        await rejected;
+        assert.ok((await readFile(join(f.directory, 'probes'), 'utf8')).length >= 2);
+        await delay(600);
+        assert.equal(await exists(join(f.directory, 'late')), false);
+      } finally {
+        controller.abort();
+        await f.close();
+      }
+    });
 });
 
 test(

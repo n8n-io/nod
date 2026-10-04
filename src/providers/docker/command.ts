@@ -77,6 +77,7 @@ def group_running():
  if os.path.isdir('/proc'): return bool(members())
  try: os.killpg(p.pid,0);return True
  except ProcessLookupError: return False
+ except PermissionError: return True
 threading.Thread(target=input_data,daemon=True).start()
 while True:
  now=time.monotonic()
