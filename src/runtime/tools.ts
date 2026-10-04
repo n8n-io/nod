@@ -40,12 +40,54 @@ function literals<const T extends readonly string[]>(values: T) {
   return Type.Union(values.map((value) => Type.Literal(value)) as TLiteral<T[number]>[]);
 }
 
+type ObjectSchema = { properties: Record<string, TSchema>; required?: string[] };
+
+function unionOfObjects(schema: TSchema) {
+  const members = (schema as { anyOf?: ObjectSchema[] }).anyOf;
+  return members?.length && members.every((member) => member.properties) ? members : undefined;
+}
+
+export function rootObject<P extends TSchema>(schema: P): P {
+  const members = unionOfObjects(schema);
+  if (!members) return schema;
+  const keys = [...new Set(members.flatMap((member) => Object.keys(member.properties)))];
+  const required = new Set(
+    keys.filter((key) => members.every((member) => member.required?.includes(key))),
+  );
+  const properties = Object.fromEntries(
+    keys.map((key) => {
+      const variants = members.flatMap((member) =>
+        member.properties[key] ? [member.properties[key]] : [],
+      );
+      const distinct = variants.filter(
+        (variant, index) =>
+          variants.findIndex((other) => JSON.stringify(other) === JSON.stringify(variant)) ===
+          index,
+      );
+      const value = distinct.length === 1 ? distinct[0] : Type.Union(distinct);
+      return [key, required.has(key) ? value : Type.Optional(value)];
+    }),
+  );
+  return Type.Object(properties, { additionalProperties: false }) as unknown as P;
+}
+
+function validForms(schema: TSchema) {
+  return (unionOfObjects(schema) ?? [])
+    .map(
+      (member) =>
+        `{${Object.keys(member.properties)
+          .map((key) => (member.required?.includes(key) ? key : `${key}?`))
+          .join(', ')}}`,
+    )
+    .join(' or ');
+}
+
 function defineTool<const N extends string, P extends TSchema>(
   name: N,
   description: string,
   parameters: P,
 ) {
-  return { name, description, parameters };
+  return { name, description, parameters: rootObject(parameters), strict: parameters };
 }
 
 export const scheduleObservation = Type.Union([
@@ -324,10 +366,21 @@ export interface OttoTool<P extends TSchema = TSchema> {
 }
 
 function bind<P extends TSchema>(
-  definition: { name: string; description: string; parameters: P },
+  definition: { name: string; description: string; parameters: P; strict: TSchema },
   execute: (params: Static<P>) => Promise<unknown>,
 ): OttoTool {
-  return { ...definition, execute } as OttoTool;
+  const { strict, ...tool } = definition;
+  const forms = validForms(strict);
+  return {
+    ...tool,
+    execute: forms
+      ? async (params: Static<P>) => {
+          if (!Value.Check(strict, params))
+            throw new Error(`Invalid ${tool.name} input. Valid forms: ${forms}.`);
+          return execute(params);
+        }
+      : execute,
+  } as OttoTool;
 }
 
 export function ottoTools(
@@ -502,5 +555,7 @@ export function ottoTools(
 }
 
 export function inspectToolCatalog(): AgentToolMetadata[] {
-  return Object.values(toolDefinitions).map((tool) => structuredClone(tool));
+  return Object.values(toolDefinitions).map(({ name, description, parameters }) =>
+    structuredClone({ name, description, parameters }),
+  );
 }
