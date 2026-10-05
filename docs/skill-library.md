@@ -4,7 +4,7 @@ Otto uses progressive disclosure: metadata at session start, instructions when a
 
 Otto loads task guidance when the model needs it. The system prompt contains the task skill names and descriptions. It also contains the core guides for connected apps, schedules, artifacts and video links. The research guide is now a task skill.
 
-The model selects a guide by the task, constraints and required result. The server does not select skills with keyword rules or a second model request. It calls `skills` with `action: "read"` and the skill name. It reads a linked reference only when the guide says that reference applies. It can read the guide again after compaction. `action: "list"` returns names and descriptions.
+The model selects a guide by the task, constraints and required result. The model calls `skills` with `action: "read"` and the skill name. It reads a linked reference only when the guide says that reference applies. It can read the guide again after compaction. `action: "list"` returns names and descriptions.
 
 ## Included guides
 
