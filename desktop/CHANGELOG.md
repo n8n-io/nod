@@ -1,5 +1,20 @@
 # Desktop changelog
 
+## 0.1.3 - 2026-10-05
+
+Source: `4a191997bfefaa409f702ca41d16f88ce3540566`
+Previous release: `desktop-v0.1.2`
+
+- Add masked session recordings and product analytics (#123) (4a19199)
+- fix: scope public PostHog token exception (#124) (271799f)
+- fix(web): Make the enlarged browser handoff a modal dialog and fix handoff tests (982e1c2)
+- fix(models): keep OpenRouter routers with variable pricing (459dfc2)
+- fix: allow inference-only OpenAI keys during setup (#121) (fece5b1)
+- feat(web): Let the browser handoff open in a larger view (34de90f)
+- fix(models): skip OpenRouter models with variable pricing instead of failing the list (cf598bd)
+- feat: load trusted task skills on demand (#115) (33d3997)
+- feat: Add a trust layer for outside app actions and untrusted results (#119) (523a0be)
+
 ## 0.1.2 - 2026-10-05
 
 Source: `0662e781e357b932f49b0914c0b531f9dab1d1c0`
