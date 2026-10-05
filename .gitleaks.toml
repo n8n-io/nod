@@ -8,3 +8,11 @@ description = "This exact SQL match captures the waiting_reason field name, not 
 targetRules = ["generic-api-key"]
 regexTarget = "match"
 regexes = ["^waiting_credentials',waiting_reason='$"]
+
+[[allowlists]]
+description = "PostHog project tokens are public browser configuration, not credentials."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)src/shared/analytics\.ts$''']
+regexTarget = "secret"
+regexes = ['''^phc_[A-Za-z0-9]{44}$''']
