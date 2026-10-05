@@ -83,6 +83,45 @@ async function turnChain(client: PoolClient, turn: TurnRow) {
   return undefined;
 }
 
+async function scheduleAuthority(client: PoolClient, turnId: string) {
+  if (
+    !(await client.query("SELECT to_regclass('schedule_runs') AS table_name")).rows[0]?.table_name
+  )
+    return undefined;
+  return (
+    await client.query<{
+      authority_instruction: string | null;
+      authority_source_message_id: string | null;
+    }>(
+      'SELECT authority_instruction,authority_source_message_id FROM schedule_runs WHERE turn_id=$1 AND owner_id=$2',
+      [turnId, ownerId],
+    )
+  ).rows[0];
+}
+
+const readOnlyChain = (chain: TurnRow[]) =>
+  chain.some((item) => item.read_only || item.source_id?.startsWith('onboarding:'));
+
+export async function turnOrigin(turnId: string) {
+  const client = await pool.connect();
+  try {
+    const current = await turnRow(client, turnId);
+    const chain = current && (await turnChain(client, current));
+    const origin = chain?.at(-1);
+    if (!chain || !origin) return undefined;
+    return {
+      source: origin.source,
+      readOnly: readOnlyChain(chain),
+      scheduleInstruction:
+        origin.source === 'schedule'
+          ? ((await scheduleAuthority(client, origin.id))?.authority_instruction ?? undefined)
+          : undefined,
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function resumeKind(client: PoolClient, turn: TurnRow) {
   if (turn.source !== 'resume') return null;
   const confirmation = await confirmedBy(client, turn);
@@ -147,7 +186,7 @@ export async function createApprovals(
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { confirm?: boolean } = {},
+    options: { confirm?: boolean; question?: string } = {},
   ) {
     const encoded = JSON.stringify(args);
     if (!encoded || encoded.length > 32768) throw new Error('The action is too large.');
@@ -159,7 +198,7 @@ export async function createApprovals(
       const chain = await turnChain(client, current);
       const origin = chain?.at(-1);
       if (!chain || !origin) throw new Error('This action needs a direct request from the user.');
-      if (chain.some((item) => item.read_only || item.source_id?.startsWith('onboarding:')))
+      if (readOnlyChain(chain))
         throw new Error(
           'This action needs a direct request from the user; this turn is read-only.',
         );
@@ -181,16 +220,7 @@ export async function createApprovals(
         authorInstruction = '';
         authorMessageId = null;
       } else if (origin.source === 'schedule') {
-        const exists = (await client.query("SELECT to_regclass('schedule_runs') AS table_name"))
-          .rows[0]?.table_name;
-        const grant = exists
-          ? (
-              await client.query(
-                'SELECT authority_instruction,authority_source_message_id FROM schedule_runs WHERE turn_id=$1 AND owner_id=$2',
-                [origin.id, ownerId],
-              )
-            ).rows[0]
-          : undefined;
+        const grant = await scheduleAuthority(client, origin.id);
         authorInstruction = grant?.authority_instruction ?? '';
         authorMessageId = grant?.authority_source_message_id ?? null;
       } else {
@@ -213,7 +243,13 @@ export async function createApprovals(
       const kind = await resumeKind(client, current);
       const resumedSource =
         requestsConnectedSchedule(action, authorInstruction) && kind === 'connection';
-      if (!background && !currentSource && !resumedSource && !(revision && kind !== null))
+      if (
+        !options.question &&
+        !background &&
+        !currentSource &&
+        !resumedSource &&
+        !(revision && kind !== null)
+      )
         throw new Error('This action needs a direct request from the user.');
       await preflight?.(action, snapshot);
       const previous = (
@@ -232,7 +268,11 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
-      const direct = !options.confirm && !review && (isReversiblePlanAction(action) || explicit);
+      const direct =
+        !options.confirm &&
+        !options.question &&
+        !review &&
+        (isReversiblePlanAction(action) || explicit);
       const id = randomUUID();
       let targetTitle: string | undefined;
       if (!direct && typeof snapshot.id === 'string') {
@@ -250,7 +290,9 @@ export async function createApprovals(
             ])
           ).rows[0]?.title;
       }
-      const question = direct ? undefined : actionConfirmation(action, snapshot, targetTitle);
+      const question = direct
+        ? undefined
+        : (options.question ?? actionConfirmation(action, snapshot, targetTitle));
       if (question && question.length > 6000)
         throw new Error('This action is too large to confirm clearly. Use a smaller action.');
       const messageId = question ? randomUUID() : null;

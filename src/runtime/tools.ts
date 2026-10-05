@@ -506,7 +506,7 @@ export function ottoTools(
       if (!(integrationDownloadActions as readonly string[]).includes(p.action)) {
         const result = await context.integration(p.action, p.args, signal);
         signal.throwIfAborted();
-        return result;
+        return confirm(result);
       }
       if (!context.downloadIntegrationFile) throw new Error('App file delivery is unavailable.');
       return context.downloadIntegrationFile(p.action, p.args);

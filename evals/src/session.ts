@@ -297,7 +297,7 @@ export function createSession(options: {
     settle,
     async reset() {
       taskFrom = userMessages.length;
-      await post('/api/conversation/reset', {});
+      await stack.resetConversation();
       threadId = undefined;
     },
     lastReply: lastAssistantText,
