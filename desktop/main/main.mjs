@@ -789,11 +789,13 @@ async function startEngine({ runtime, signal, validateStop }) {
         throw new Error('Otto is still finishing work. Try again shortly.');
       validateStop?.();
     } catch {
-      await engineRequest('/api/runtime/resume', {
+      const resumed = await engineRequest('/api/runtime/resume', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(transition),
-      }).catch(() => {});
+      }).catch(() => undefined);
+      if (!resumed?.ok || (await resumed.json().catch(() => undefined))?.ok !== true)
+        throw new Error('Otto could not resume its work. Quit and reopen Otto to recover.');
       throw Object.assign(new Error('Otto is still finishing work. Try again shortly.'), {
         code: 'OTTO_RESTART_DEFERRED',
       });

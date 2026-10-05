@@ -1,8 +1,8 @@
 # Otto desktop experiment
 
-This experiment packages Otto as an Apple Silicon Mac application. Users open the DMG, drag **Otto** to Applications, open it, and enter a provider API key. They do not install Node, pnpm, Homebrew, Docker Desktop, or PostgreSQL. The default build separates the app from a verified, reusable Otto Runtime pack to keep app downloads and updates small.
+This experiment packages Otto as an Apple Silicon Mac application. Users open the DMG, drag **Otto** to Applications, open it, and connect a supported provider API key or ChatGPT plan. They do not install Node, pnpm, Homebrew, Docker Desktop, or PostgreSQL. The default build separates the app from a verified, reusable Otto Runtime pack to keep app downloads and updates small.
 
-The assistant engine, database, workspace, and browser run on the Mac. Model requests still go to the selected provider and incur that provider's API charges. This is local execution with bring-your-own keys, not offline model inference.
+The assistant engine, database, workspace, and browser run on the Mac. Model requests go to the selected provider using the connected API account or ChatGPT plan. Local execution still requires that model connection; models do not run offline on the Mac.
 
 Desktop is a wrapper around the same Otto product: it starts `src/server/index.ts`, serves the normal web build, copies dependencies installed from the root lockfile, and builds the existing `Dockerfile.browser` and `Dockerfile.workspace`. Product features stay in the shared server, providers and web code. The desktop layer supplies installation, configuration, credential storage and native window/lifecycle integration. Smaller downloads must not introduce separate product implementations or dependency versions.
 

@@ -34,7 +34,7 @@ Before distributing private updater-enabled builds, publish and verify the [n8n 
 5. Inspect the app and runtime drafts and complete the physical-Mac acceptance checks below. The app draft includes the DMG, signed application ZIP, exact-version update feed, checksums, public signing certificate, app/runtime metadata, and the current changelog section. Its notes link to the matching runtime draft's release page. Draft access requires repository write access. Download draft assets from their GitHub release pages or with `gh release download <tag> --repo <owner/repository>`.
 6. When approved, publish the verified runtime draft first, then the app draft through GitHub. Future runs can enable **publish** to publish both previews after the uploaded runtime and downloaded DMG/ZIP pass verification. The final job publishes the runtime, checks public download access when applicable, then publishes the app. Published versions are never overwritten; prepare a new version for changes. Draft runtimes are rebuilt on a new workflow run; only published runtime packs qualify for reuse.
 
-Private releases use the configured n8n download service for automatic first-run setup and updates. The GitHub credential stays in n8n; testers need only the DMG link and their provider key. Publish the matching runtime before distributing the app. A previously verified local runtime is reused without network access. Builds without a release source or public immutable runtime URL retain manual import as a fallback.
+Private releases use the configured n8n download service for automatic first-run setup and updates. The GitHub credential stays in n8n; testers need the DMG link and a supported provider API key or ChatGPT plan. Publish the matching runtime before distributing the app. A previously verified local runtime is reused without network access. Builds without a release source or public immutable runtime URL retain manual import as a fallback.
 
 ## Private-alpha installation and recovery
 
@@ -82,7 +82,7 @@ Container images and JavaScript dependencies are built before certificate secret
 
 GitHub-hosted Mac runners do not support nested virtualization. These workflows can verify native binaries and packaging, but cannot prove that Otto's private computer boots on a user's Mac. Before wider distribution, test the downloaded assets on a physical Apple Silicon Mac:
 
-- Fresh profile: drag to Applications, handle the self-signed first-launch gate, enter a test provider key, complete onboarding, and verify automatic runtime preparation and actual workspace/browser operation.
+- Fresh profile: drag to Applications, handle the self-signed first-launch gate, connect a supported provider API key or ChatGPT plan, complete onboarding, and verify automatic runtime preparation and actual workspace/browser operation.
 - Upgrade: start from the previous signed release, let it discover and prepare the update, exercise Later and Restart, and verify the new version opens with existing encrypted settings, conversations, workspace and browser state intact. Verify an unchanged runtime is reused. Start this check from 0.1.2 or later; the Otto Preview identity is intentionally not migrated.
 - Confirm login startup, notification text/click behavior, app quit, and explicit retry after interrupted installation.
 - Exercise the oldest advertised macOS version. A binary's minimum-OS load command is a compatibility check, not a physical macOS 14 acceptance result.

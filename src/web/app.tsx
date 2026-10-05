@@ -73,15 +73,13 @@ function useSavedDateFormat() {
 function Workspace({
   path,
   session,
-  saving,
-  onAccountUpdate,
-  onLogout,
+  account,
+  settingsError,
 }: {
   path: string;
   session: SessionResponse;
-  saving: boolean;
-  onAccountUpdate(change: AccountUpdate): Promise<void>;
-  onLogout(): void;
+  account: AccountControls;
+  settingsError: string;
 }) {
   const { state, streams, error, connected, refresh, resetConversation } = useAppState(
     session.user!.id,
@@ -106,17 +104,6 @@ function Workspace({
     navigate('/');
   };
   const [inspectionFocus, setInspectionFocus] = useState<{ messageId: string; turnId: string }>();
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsRequest, setSettingsRequest] = useState(0);
-  const [settingsTab, setSettingsTab] = useState<AccountTab>(
-    desktopSettingsAvailable()
-      ? 'General'
-      : session.auth.mode === 'local'
-        ? 'Appearance'
-        : 'Profile',
-  );
-  const [settingsError, setSettingsError] = useState('');
-  const settingsTrigger = useRef<HTMLElement | null>(null);
   const developer = session.capabilities.developer;
   useEffect(() => subscribeDesktopFocusMessage(setNotificationTarget), []);
   useEffect(() => {
@@ -131,68 +118,6 @@ function Workspace({
         }),
       );
   }, [notificationTarget, state]);
-  const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
-    setSettingsError('');
-    setSettingsRequest((current) => current + 1);
-    settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
-    setSettingsTab(
-      desktopSettingsAvailable() && (tab === 'Appearance' || tab === 'Profile')
-        ? 'General'
-        : tab === 'Profile' && session.auth.mode === 'local'
-          ? 'Appearance'
-          : tab,
-    );
-    setSettingsOpen(true);
-  };
-  useEffect(
-    () =>
-      subscribeDesktopSettings((section) =>
-        openSettings(
-          section === 'models' ? 'Models' : section === 'preferences' ? 'Preferences' : 'General',
-        ),
-      ),
-    [session.auth.mode],
-  );
-  useEffect(() => {
-    const apply = () => {
-      setSettingsError('');
-      setSettingsOpen(false);
-    };
-    const failed = (event: Event) => {
-      const message = (event as CustomEvent<unknown>).detail;
-      if (typeof message === 'string') setSettingsError(message);
-    };
-    window.addEventListener('otto:apply-settings', apply);
-    window.addEventListener('otto:settings-error', failed);
-    return () => {
-      window.removeEventListener('otto:apply-settings', apply);
-      window.removeEventListener('otto:settings-error', failed);
-    };
-  }, []);
-  useEffect(() => {
-    const shortcut = (event: KeyboardEvent) => {
-      const modifier = /Mac|iPhone|iPad/.test(navigator.platform) ? event.metaKey : event.ctrlKey;
-      if (
-        !modifier ||
-        event.key !== ',' ||
-        event.altKey ||
-        event.shiftKey ||
-        event.repeat ||
-        event.isComposing ||
-        event.defaultPrevented
-      )
-        return;
-      if (
-        document.querySelector('[role="dialog"], [role="alertdialog"], dialog[open]') &&
-        !settingsOpen
-      )
-        return;
-      event.preventDefault();
-      if (!settingsOpen) openSettings(session.auth.mode === 'local' ? 'Appearance' : 'Profile');
-    };
-    window.addEventListener('keydown', shortcut);
-    return () => window.removeEventListener('keydown', shortcut);
-  }, [settingsOpen, session.auth.mode]);
   useEffect(() => {
     const focusMessage = (event: Event) => {
       const detail = (event as CustomEvent<{ messageId?: unknown }>).detail;
@@ -258,16 +183,6 @@ function Workspace({
   const visibleState = state
     ? { ...state, configuration: { ...state.configuration, inspectorEnabled } }
     : null;
-  const account: AccountControls = {
-    user: session.user!,
-    local: session.auth.mode === 'local',
-    theme: session.settings!.theme,
-    saving,
-    canLogout: session.auth.mode === 'google',
-    onSettings: openSettings,
-    onTheme: (theme) => onAccountUpdate({ theme }),
-    onLogout,
-  };
   return (
     <div
       className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${inspectorOpen ? 'with-inspector' : ''} ${entering ? 'shell-entering' : ''}`}
@@ -358,6 +273,133 @@ function Workspace({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+function AuthenticatedApp({
+  path,
+  session,
+  saving,
+  onAccountUpdate,
+  onLogout,
+}: {
+  path: string;
+  session: SessionResponse;
+  saving: boolean;
+  onAccountUpdate(change: AccountUpdate): Promise<void>;
+  onLogout(): void;
+}) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsRequest, setSettingsRequest] = useState(0);
+  const [settingsTab, setSettingsTab] = useState<AccountTab>(
+    desktopSettingsAvailable()
+      ? 'General'
+      : session.auth.mode === 'local'
+        ? 'Appearance'
+        : 'Profile',
+  );
+  const [settingsError, setSettingsError] = useState('');
+  const settingsTrigger = useRef<HTMLElement | null>(null);
+  const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
+    setSettingsError('');
+    setSettingsRequest((current) => current + 1);
+    settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
+    setSettingsTab(
+      desktopSettingsAvailable() && (tab === 'Appearance' || tab === 'Profile')
+        ? 'General'
+        : tab === 'Profile' && session.auth.mode === 'local'
+          ? 'Appearance'
+          : tab,
+    );
+    setSettingsOpen(true);
+  };
+  useEffect(
+    () =>
+      subscribeDesktopSettings((section) =>
+        openSettings(
+          section === 'models' ? 'Models' : section === 'preferences' ? 'Preferences' : 'General',
+        ),
+      ),
+    [session.auth.mode],
+  );
+  useEffect(() => {
+    const apply = () => {
+      setSettingsError('');
+      setSettingsOpen(false);
+    };
+    const failed = (event: Event) => {
+      const message = (event as CustomEvent<unknown>).detail;
+      if (typeof message === 'string') setSettingsError(message);
+    };
+    window.addEventListener('otto:apply-settings', apply);
+    window.addEventListener('otto:settings-error', failed);
+    return () => {
+      window.removeEventListener('otto:apply-settings', apply);
+      window.removeEventListener('otto:settings-error', failed);
+    };
+  }, []);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      const modifier = /Mac|iPhone|iPad/.test(navigator.platform) ? event.metaKey : event.ctrlKey;
+      if (
+        !modifier ||
+        event.key !== ',' ||
+        event.altKey ||
+        event.shiftKey ||
+        event.repeat ||
+        event.isComposing ||
+        event.defaultPrevented
+      )
+        return;
+      if (
+        document.querySelector('[role="dialog"], [role="alertdialog"], dialog[open]') &&
+        !settingsOpen
+      )
+        return;
+      event.preventDefault();
+      if (!settingsOpen) openSettings(session.auth.mode === 'local' ? 'Appearance' : 'Profile');
+    };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  }, [settingsOpen, session.auth.mode]);
+  const account: AccountControls = {
+    user: session.user!,
+    local: session.auth.mode === 'local',
+    theme: session.settings!.theme,
+    saving,
+    canLogout: session.auth.mode === 'google',
+    onSettings: openSettings,
+    onTheme: (theme) => onAccountUpdate({ theme }),
+    onLogout,
+  };
+  const allowed = !['/browser', '/dev'].includes(path) || session.capabilities.developer;
+  const match = /^\/(?:vault|credentials)\/([^/]+)\/?$/.exec(path);
+  const workspace =
+    allowed && path !== '/browser' && !match && session.settings!.onboardingCompleted;
+  return (
+    <>
+      {!allowed ? (
+        <main className="empty-state">
+          <h1>This page isn’t here.</h1>
+          <Button variant="outline" onClick={() => navigate('/')}>
+            Back to chat
+          </Button>
+        </main>
+      ) : path === '/browser' ? (
+        <BrowserWindow />
+      ) : match ? (
+        <Credentials key={match[1]} id={match[1]} />
+      ) : !session.settings!.onboardingCompleted ? (
+        <Onboarding
+          user={session.user!}
+          canLogout={account.canLogout}
+          onLogout={onLogout}
+          onComplete={() => onAccountUpdate({ onboardingCompleted: true })}
+        />
+      ) : (
+        <Workspace path={path} session={session} account={account} settingsError={settingsError} />
+      )}
+      {settingsError && !workspace && <Notice>{settingsError}</Notice>}
       <AccountSettings
         account={account}
         open={settingsOpen}
@@ -377,7 +419,7 @@ function Workspace({
               )
         }
       />
-    </div>
+    </>
   );
 }
 function AccountApp({ path, setPath }: { path: string; setPath(path: string): void }) {
@@ -451,32 +493,8 @@ function AccountApp({ path, setPath }: { path: string; setPath(path: string): vo
       setPath('/login');
     });
   };
-  if (path === '/browser' || path === '/dev') {
-    if (!session.capabilities.developer)
-      return (
-        <main className="empty-state">
-          <h1>This page isn’t here.</h1>
-          <Button variant="outline" onClick={() => navigate('/')}>
-            Back to chat
-          </Button>
-        </main>
-      );
-    if (path === '/browser') return <BrowserWindow key={key} />;
-  }
-  const match = /^\/(?:vault|credentials)\/([^/]+)\/?$/.exec(path);
-  if (match) return <Credentials key={`${key}:${match[1]}`} id={match[1]} />;
-  if (!session.settings.onboardingCompleted)
-    return (
-      <Onboarding
-        key={key}
-        user={session.user}
-        canLogout={session.auth.mode === 'google'}
-        onLogout={logout}
-        onComplete={() => sessionState.update({ onboardingCompleted: true })}
-      />
-    );
   return (
-    <Workspace
+    <AuthenticatedApp
       key={key}
       path={legacyBrowserLink ? '/apps' : path === '/login' || path === '/onboarding' ? '/' : path}
       session={session}

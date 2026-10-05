@@ -358,9 +358,15 @@ export function AccountSettings({
   const [composioDirty, setComposioDirty] = useState(false);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
-  const pending = useRef(false);
-  pending.current = composioDirty || modelDirty || preferencesDirty || native.busy;
   const [name, setName] = useState(account.user.name);
+  const pending = useRef(false);
+  pending.current =
+    composioDirty ||
+    modelDirty ||
+    preferencesDirty ||
+    native.busy ||
+    account.saving ||
+    name.trim() !== account.user.name;
   const [error, setError] = useState('');
   const active = useRef(false);
   const id = useId();

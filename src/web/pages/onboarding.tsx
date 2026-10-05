@@ -75,10 +75,11 @@ export function Onboarding({
         () =>
           !saving &&
           !composioDirty &&
+          !modelDirty &&
           Object.keys(pending).length === 0 &&
           actions.current.size === 0,
       ),
-    [saving, composioDirty, pending],
+    [saving, composioDirty, modelDirty, pending],
   );
   useEffect(() => {
     active.current = true;

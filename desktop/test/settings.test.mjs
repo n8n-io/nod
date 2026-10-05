@@ -544,7 +544,7 @@ test('settings restart resumes the running engine when a renderer navigates or o
           return Response.json({ drained: true });
         }
         assert.equal(path, '/api/runtime/resume');
-        return Response.json({ resumed: true });
+        return Response.json({ ok: true });
       },
       { allowStart: true },
     );
@@ -577,6 +577,75 @@ test('settings restart resumes the running engine when a renderer navigates or o
     assert.equal(guarded[0][0], 'otto:update:prepare');
     assert.equal(guarded[1][0], 'otto:update:resume');
     assert.equal(guarded[1][1], guarded[0][1]);
+  }
+});
+
+test('a canceled settings restart stays in recovery until runtime resume is confirmed', async (t) => {
+  const responses = [
+    { confirmed: true, send: () => Response.json({ ok: true }) },
+    { send: () => Response.json({ ok: true }, { status: 503 }) },
+    { send: () => Response.json({ ok: false }) },
+    { send: () => Response.json({ resumed: true }) },
+    { send: () => Response.json({ ok: 'true' }) },
+    { send: () => new Response('{') },
+    {
+      send: () => {
+        throw new Error('synthetic-private-transport-detail');
+      },
+    },
+  ];
+  for (const drained of [false, true]) {
+    for (const response of responses) {
+      let f;
+      let current;
+      let progress;
+      const requests = [];
+      f = await runningDesktop(
+        t,
+        async (url, options = {}) => {
+          const path = new URL(url).pathname;
+          if (path === '/api/health') return Response.json({ ok: true });
+          requests.push({ path, body: options.body });
+          if (path === '/api/desktop/status') return Response.json({ activeWork: false });
+          if (path === '/api/runtime/drain') {
+            progress = f.windows.find((window) => window.path && !window.isDestroyed());
+            assert.ok(progress?.visible);
+            if (drained) current.webContents.emit('did-start-navigation');
+            return Response.json({ drained }, { status: drained ? 200 : 503 });
+          }
+          assert.equal(path, '/api/runtime/resume');
+          return response.send();
+        },
+        { allowStart: true },
+      );
+      f.crash();
+      await f.prepare();
+      f.showEngine();
+      current = f.windows.at(-1);
+      f.setRestartRequired(true);
+      await assert.rejects(
+        f.handlers.get('otto:settings:apply')({
+          sender: current.webContents,
+          senderFrame: current.webContents.mainFrame,
+        }),
+        (error) => !error.message.includes('synthetic-private-transport-detail'),
+      );
+      assert.equal(f.status().phase, response.confirmed ? 'ready' : 'error');
+      assert.equal(f.status().restartRequired, true);
+      assert.equal(progress.isDestroyed(), response.confirmed === true);
+      assert.equal(progress.visible, !response.confirmed);
+      assert.equal(f.children[0].killed, undefined);
+      assert.equal(f.children.length, 1);
+      assert.equal(current.isDestroyed(), false);
+      assert.equal(current.webContents.listenerCount('did-start-navigation'), 0);
+      assert.deepEqual(
+        requests.map(({ path }) => path),
+        ['/api/desktop/status', '/api/runtime/drain', '/api/runtime/resume'],
+      );
+      assert.equal(requests[2].body, requests[1].body);
+      await new Promise(setImmediate);
+      assert.equal(requests.length, 3);
+    }
   }
 });
 

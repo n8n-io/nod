@@ -3136,3 +3136,83 @@ test('desktop restart guard preserves chat drafts, attachments, pending sends an
     await view.close();
   }
 });
+
+test('native Settings preserves the active credential form and keeps its restart fence', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', {
+        url: 'http://localhost/credentials/synthetic-form',
+        pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+      });
+      const requests = [];
+      globalThis.fetch = async path => {
+        requests.push(path);
+        if (path === '/api/session') return Response.json({
+          auth: { mode: 'local', googleAvailable: false },
+          user: { id: 'synthetic-owner', name: 'Fixture', email: null, avatarUrl: null },
+          settings: { theme: 'system', onboardingCompleted: true },
+          capabilities: { developer: true },
+        });
+        if (path === '/api/credential-requests/synthetic-form') return Response.json({
+          kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
+        });
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      const preferences = { theme: 'system', resolvedTheme: 'light', launchAtLogin: false, notifications: false };
+      const checks = new Set();
+      let openSettings;
+      dom.window.ottoDesktop = {
+        getSettings: async () => ({ ...preferences, hasComposioKey: false, keys: { composioApiKey: { suffix: null } }, restartRequired: false }),
+        getPreferences: async () => preferences,
+        onPreferences: () => () => {},
+        onOpenSettings: listener => {
+          openSettings = listener;
+          return () => { openSettings = undefined; };
+        },
+        onPrepareUpdate: check => { checks.add(check); return () => checks.delete(check); },
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { App } = await import('./src/web/app.tsx');
+      const root = createRoot(document.querySelector('#root'));
+      try {
+        await act(async () => root.render(createElement(App)));
+        const password = document.querySelector('input[name="password"]');
+        assert.ok(password);
+        password.value = 'synthetic-unsaved-password';
+        password.focus();
+        assert.ok(openSettings);
+        assert.equal(checks.size, 1);
+        assert.equal([...checks][0](), false);
+        await act(async () => openSettings('general'));
+        assert.ok(document.querySelector('[role="dialog"]'));
+        assert.equal(window.location.pathname, '/credentials/synthetic-form');
+        assert.equal(document.querySelector('input[name="password"]'), password);
+        assert.equal(password.value, 'synthetic-unsaved-password');
+        await act(async () => document.querySelector('[aria-label="Close"]').click());
+        assert.equal(document.querySelector('[role="dialog"]'), null);
+        assert.equal(document.querySelector('input[name="password"]'), password);
+        assert.equal(password.value, 'synthetic-unsaved-password');
+        assert.equal(document.activeElement, password);
+        assert.equal([...checks][0](), false);
+        assert.deepEqual(requests, ['/api/session', '/api/credential-requests/synthetic-form']);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+      process.exit(0);
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
