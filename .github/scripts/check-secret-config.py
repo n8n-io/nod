@@ -58,9 +58,10 @@ code, findings = scan(analytics, analytics_path)
 if code != 0 or findings:
     raise SystemExit("The public PostHog ingestion token must pass secret scanning.")
 
-code, findings = scan(f'{analytics}\napi_key = "{candidate}"', analytics_path)
-if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
-    raise SystemExit("A generated secret beside the public token must fail secret scanning.")
+for secret in ["phx_" + candidate[:44], "phs_" + candidate[:44], "phc_" + candidate[:44], candidate]:
+    code, findings = scan(f'{analytics}\napi_key = "{secret}"', analytics_path)
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit("Other tokens beside the public token must fail secret scanning.")
 
 for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
     code, findings = scan(analytics, filename)
