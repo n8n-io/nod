@@ -12,14 +12,14 @@ Desktop is a wrapper around the same Otto product: it starts `src/server/index.t
 2. Open **Otto Preview** and choose OpenAI or Anthropic.
 3. Add the provider API key and, optionally, a Composio key for app connections.
 4. Choose whether to open at login and show notifications. Otto detects date/time defaults and follows the system appearance; customize these later in Settings.
-5. Otto prepares its computer and browser in the background during these steps. The final step shows actual readiness and any recovery action. On a new Mac, choose the matching `Otto-Runtime-darwin-arm64-….tar.gz` when prompted. Leave the archive compressed; Otto checks and installs it automatically. An existing verified runtime is reused.
+5. Otto downloads and prepares its matching computer and browser in the background during these steps. The final step shows actual readiness and any recovery action. An existing verified runtime is reused without contacting the release service.
 6. Open Otto. After setup, change provider keys through **Settings → Providers**, the **Otto → Settings…** menu, or **⌘,**.
 
 **General** contains appearance, launch-at-login, and notification settings. **Preferences** contains region, clock, timezone, and quiet hours; edits made while the engine is unavailable are queued and applied when it returns. **Otto → Replay onboarding** reopens the introduction without resetting the profile or its provider keys.
 
 Onboarding has three guided steps with Back and Continue; the Settings sidebar is available after setup. Replaying onboarding retains keys and conversations. The assistant engine starts only after setup is completed with a configured AI provider. Preparing the computer in the background does not send a model request. If notifications are enabled and setup finishes while Otto is in the background, a readiness notification brings you back without automatically focusing the app. Quiet hours still apply; normal app launches do not send readiness notifications.
 
-This local preview has no published runtime-download endpoint. Distribute both the DMG and its matching runtime pack when trying it on a new Mac. The development Mac has a verified runtime already installed. Automatic first-launch download is implemented, but a build must include a real HTTPS release URL before that becomes the normal installation flow. Splitting the files reduces the app download; it does not remove the first installation's computer-image download or disk usage.
+First-launch downloads use the same configured release source as app updates. Private releases use the n8n download service; users do not need a GitHub account or token. Publish the matching runtime before distributing the app, because draft runtime packs are not served. Builds without a release source or an archive URL still offer manual import of the compressed matching `Otto-Runtime-darwin-arm64-….tar.gz`. Splitting the files reduces the app download; it does not remove the first installation's computer-image download or disk usage.
 
 Closing the window keeps Otto running in the menu bar. **Quit Otto** stops its engine and private computer. Launch at login is optional. Tasks cannot run while the Mac is asleep or the app is quit.
 
@@ -52,7 +52,7 @@ The app and DMG contain no provider keys. A local, one-time development import c
 - macOS can request Keychain approval after the preview is re-signed. Approve that request in the OS dialog; never put the Mac password in Otto chat.
 - First installation exposed an intermittent guest login-service delay; the measured first setup took about five minutes. See the [validation record](VALIDATION.md) for measured restart behavior and remaining checks.
 - Version 0.1.0 requires a manual first upgrade to an updater-enabled build. Cloud migration, multi-device synchronization and idle-computer suspension are not implemented.
-- The first runtime installation remains large. This preview ships a companion archive until a real release-download endpoint is available; the app does not point to a placeholder URL. Old runtime versions are retained; automatic cache eviction is not implemented.
+- The first runtime installation remains large and requires a network connection or manual import of its matching archive. Old runtime versions are retained; automatic cache eviction is not implemented.
 - Direct webhook delivery to a laptop is not provided. External channels that need a publicly reachable callback require a later relay or server deployment.
 - The preview uses isolated test identity and data. Optional provider and integration setup still depends on the provider's API permissions and configuration.
 
@@ -86,7 +86,7 @@ For a full installer that embeds the runtime assets, run:
 npm --prefix desktop run build -- --full
 ```
 
-That emits `Otto-Preview-full-arm64.dmg`. It avoids the separate runtime pack, although first provisioning can still need network access. A lean build can enable automatic runtime acquisition by setting `OTTO_RUNTIME_RELEASE_URL` to the actual HTTPS URL of its immutable archive while running `runtime-pack.mjs`. Publish and verify that archive separately before distributing such a build. Without that variable, the picker is the supported first-install path.
+That emits `Otto-Preview-full-arm64.dmg`. It avoids the separate runtime pack, although first provisioning can still need network access. A lean build uses `OTTO_DESKTOP_UPDATE_SOURCE_URL`, set during app packaging, for automatic first-launch downloads and updates. Alternatively, set `OTTO_RUNTIME_RELEASE_URL` to the actual HTTPS URL of its immutable archive while running `runtime-pack.mjs`. Publish and verify the matching archive before distributing the app. Without either source, the picker is the supported first-install path.
 
 ## Historical distribution size
 
