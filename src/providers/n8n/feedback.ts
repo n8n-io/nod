@@ -71,10 +71,15 @@ export function createN8nFeedback(options: {
         issueUrl = url.href;
       }
       if (['submitted', 'partial'].includes(receipt.status) && !issueUrl) return unknown;
+      const message =
+        typeof receipt.message === 'string' && receipt.message.length <= 1000
+          ? receipt.message.trim()
+          : undefined;
       return {
         submissionId: input.submissionId,
         status: receipt.status,
         ...(issueUrl && { issueUrl }),
+        ...(message && { message }),
       };
     } catch {
       return unknown;

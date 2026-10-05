@@ -85,6 +85,8 @@ export async function registerFeedback(
   const reports = new Map<string, FeedbackReport>();
   const repairs = new Map<string, { envelope: FeedbackEnvelope; expiresAt: number }>();
   const pending = new Set<string>();
+  const rejectionClaim = (row: { status: string; request_hash: string; payload_hash: string }) =>
+    row.status === 'rejected' && row.request_hash === '' && row.payload_hash === '';
   const sweep = () => {
     for (const [id, report] of reports)
       if (Date.parse(report.expiresAt) <= Date.now()) reports.delete(id);
@@ -127,7 +129,6 @@ export async function registerFeedback(
   });
   app.post('/api/feedback/report', async (_request, reply) => {
     sweep();
-    if (reports.size >= 5) reports.delete(reports.keys().next().value!);
     const content = await options.buildReport();
     if (Buffer.byteLength(content) > feedbackLimits.reportBytes)
       throw fail('The diagnostic report is too large.', 413);
@@ -136,6 +137,7 @@ export async function registerFeedback(
       content,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     };
+    if (reports.size >= 5) reports.delete(reports.keys().next().value!);
     reports.set(report.id, report);
     reply.header('Cache-Control', 'no-store');
     return report;
@@ -151,7 +153,7 @@ export async function registerFeedback(
       [options.ownerId, input.submissionId],
     );
     if (previous.rows[0]) {
-      if (previous.rows[0].request_hash !== requestHash)
+      if (previous.rows[0].request_hash !== requestHash && !rejectionClaim(previous.rows[0]))
         throw fail('This submission already has different content.', 409);
       return receipt(previous.rows[0]);
     }
@@ -205,7 +207,7 @@ export async function registerFeedback(
         'SELECT * FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
         [options.ownerId, input.submissionId],
       );
-      if (winner.rows[0].request_hash !== requestHash)
+      if (winner.rows[0].request_hash !== requestHash && !rejectionClaim(winner.rows[0]))
         throw fail('This submission already has different content.', 409);
       return receipt(winner.rows[0]);
     }
@@ -225,13 +227,17 @@ export async function registerFeedback(
   app.get<{ Params: { id: string } }>('/api/feedback/:id', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const id = uuid.parse(request.params.id);
+    await options.pool.query(
+      `INSERT INTO feedback_submissions(owner_id,id,request_hash,payload_hash,status)
+       VALUES($1,$2,'','','rejected') ON CONFLICT DO NOTHING`,
+      [options.ownerId, id],
+    );
     const result = await options.pool.query(
       'SELECT * FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
       [options.ownerId, id],
     );
     const row = result.rows[0];
     sweep();
-    if (!row) return { submissionId: id, status: 'rejected' } satisfies FeedbackReceipt;
     if (row.status === 'submitted' || row.status === 'rejected' || pending.has(id))
       return receipt(row);
     if (row.status === 'unknown' && Date.now() - new Date(row.created_at).getTime() < 300_000)

@@ -3221,7 +3221,7 @@ async function feedbackFixture(t: TestContext) {
     source: 'desktop' as const,
     appModified: false,
   };
-  const open = async (ownerId = randomUUID()) => {
+  const open = async (ownerId = randomUUID(), buildReport?: () => Promise<string>) => {
     const app = Fastify();
     apps.push(app);
     await registerFeedback(app, {
@@ -3231,7 +3231,7 @@ async function feedbackFixture(t: TestContext) {
       delivery,
       buildReport: async () => {
         state.builds++;
-        return state.content;
+        return buildReport ? buildReport() : state.content;
       },
     });
     return { app, ownerId };
@@ -3247,6 +3247,90 @@ async function feedbackFixture(t: TestContext) {
   });
   return { pool, state, open, submission };
 }
+
+async function waitForBlockedFeedbackClaim(pool: pg.Pool, blocker: number) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const waiting = await pool.query(
+      'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+      [blocker],
+    );
+    if (waiting.rows[0]) return waiting.rows[0].pid as number;
+    await delay(10);
+  }
+  assert.fail('The feedback claim did not reach its database lock.');
+}
+
+async function blockFeedbackClaim(pool: pg.Pool, phase: 'BEFORE' | 'AFTER') {
+  const lock = randomUUID();
+  await pool.query(`CREATE FUNCTION pause_feedback_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN PERFORM pg_advisory_xact_lock(hashtext('${lock}')); RETURN NEW; END;
+    $$;
+    CREATE TRIGGER feedback_claim_pause ${phase} INSERT ON feedback_submissions
+    FOR EACH ROW WHEN (NEW.status='unknown') EXECUTE FUNCTION pause_feedback_claim()`);
+  const client = await pool.connect();
+  const result = await client.query(
+    'SELECT pg_backend_pid() AS pid,pg_advisory_lock(hashtext($1))',
+    [lock],
+  );
+  let released = false;
+  return {
+    pid: result.rows[0].pid as number,
+    async release() {
+      if (released) return;
+      released = true;
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lock]);
+      } finally {
+        client.release();
+      }
+    },
+  };
+}
+
+test(
+  'feedback retains at most five reports when concurrent builds finish together',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    let release!: () => void;
+    let allStarted!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      allStarted = resolve;
+    });
+    const { app } = await f.open(undefined, async () => {
+      if (f.state.builds === 8) allStarted();
+      await blocked;
+      return f.state.content;
+    });
+    const builds = Array.from({ length: 8 }, () =>
+      app.inject({ method: 'POST', url: '/api/feedback/report' }),
+    );
+    const completed = Promise.all(builds);
+    await started;
+    release();
+    const snapshots = await completed;
+    assert.ok(snapshots.every((response) => response.statusCode === 200));
+    const submissions = await Promise.all(
+      snapshots.map((response) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/feedback',
+          payload: f.submission({ reportId: response.json().id }),
+        }),
+      ),
+    );
+    assert.equal(submissions.filter((response) => response.statusCode === 410).length, 3);
+    assert.equal(
+      submissions.filter((response) => response.json().status === 'submitted').length,
+      5,
+    );
+    assert.equal(f.state.envelopes.length, 5);
+  },
+);
 
 test(
   'feedback preserves the reviewed snapshot, isolates owners and never resubmits uncertain delivery',
@@ -3321,8 +3405,13 @@ test(
     await first.app.inject({ url: `/api/feedback/${input.submissionId}` });
     assert.equal(f.state.statusRequests.length, 1);
     const stored = (await f.pool.query('SELECT * FROM feedback_submissions')).rows;
-    assert.equal(stored.length, 1);
-    assert.equal(stored[0].owner_id, first.ownerId);
+    assert.equal(stored.length, 2);
+    assert.equal(stored.find((row) => row.owner_id === first.ownerId).status, 'submitted');
+    const foreign = stored.find((row) => row.owner_id === second.ownerId);
+    assert.equal(foreign.status, 'rejected');
+    assert.equal(foreign.request_hash, '');
+    assert.equal(foreign.payload_hash, '');
+    assert.equal(foreign.issue_url, null);
     assert.ok(!JSON.stringify(stored).includes(input.feedback));
     assert.ok(!JSON.stringify(stored).includes(snapshot.content));
   },
@@ -3544,23 +3633,81 @@ test(
 );
 
 test(
+  'feedback status rejects a delayed unclaimed submission without allowing it to send later',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const gate = await blockFeedbackClaim(f.pool, 'BEFORE');
+    const input = f.submission();
+    const sent = app
+      .inject({ method: 'POST', url: '/api/feedback', payload: input })
+      .then((value) => value);
+    try {
+      await waitForBlockedFeedbackClaim(f.pool, gate.pid);
+      const status = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+      assert.equal(status.json().status, 'rejected');
+      assert.equal(f.state.envelopes.length, 0);
+      assert.equal(f.state.statusRequests.length, 0);
+    } finally {
+      await gate.release();
+    }
+    const delayed = await sent;
+    assert.equal(delayed.statusCode, 200);
+    assert.equal(delayed.json().status, 'rejected');
+    const repeated = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(repeated.json().status, 'rejected');
+    assert.equal(f.state.envelopes.length, 0);
+    const stored = await f.pool.query(
+      'SELECT status,request_hash,payload_hash FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+      [ownerId, input.submissionId],
+    );
+    assert.deepEqual(stored.rows, [{ status: 'rejected', request_hash: '', payload_hash: '' }]);
+  },
+);
+
+test(
+  'feedback status preserves an in-flight submission that claimed its row first',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app } = await f.open();
+    const gate = await blockFeedbackClaim(f.pool, 'AFTER');
+    const input = f.submission();
+    const sent = app
+      .inject({ method: 'POST', url: '/api/feedback', payload: input })
+      .then((value) => value);
+    let status!: Promise<Awaited<typeof sent>>;
+    try {
+      const claimingPid = await waitForBlockedFeedbackClaim(f.pool, gate.pid);
+      status = app.inject({ url: `/api/feedback/${input.submissionId}` }).then((value) => value);
+      await waitForBlockedFeedbackClaim(f.pool, claimingPid);
+    } finally {
+      await gate.release();
+    }
+    const [submitted, checked] = await Promise.all([sent, status]);
+    assert.equal(submitted.json().status, 'submitted');
+    assert.ok(['unknown', 'submitted'].includes(checked.json().status));
+    assert.equal(f.state.envelopes.length, 1);
+    assert.equal(f.state.statusRequests.length, 0);
+    const confirmed = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(confirmed.json().status, 'submitted');
+  },
+);
+
+test(
   'feedback abandoned before a delayed database claim never reaches external delivery',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
     const { app, ownerId } = await f.open();
-    await f.pool
-      .query(`CREATE FUNCTION pause_feedback_claim() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END;
-    $$;
-    CREATE TRIGGER feedback_claim_pause BEFORE INSERT ON feedback_submissions
-      FOR EACH ROW EXECUTE FUNCTION pause_feedback_claim()`);
-    let markStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve;
+    const gate = await blockFeedbackClaim(f.pool, 'BEFORE');
+    let markClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      markClosed = resolve;
     });
-    app.addHook('onRequest', async () => {
-      markStarted();
+    app.addHook('onRequest', async (_request, reply) => {
+      reply.raw.once('close', markClosed);
     });
     const origin = await app.listen({ host: '127.0.0.1', port: 0 });
     const controller = new AbortController();
@@ -3572,10 +3719,14 @@ test(
       signal: controller.signal,
     });
     const aborted = assert.rejects(sent, (error: Error) => error.name === 'AbortError');
-    await started;
-    await delay(50);
-    controller.abort();
-    await aborted;
+    try {
+      await waitForBlockedFeedbackClaim(f.pool, gate.pid);
+      controller.abort();
+      await aborted;
+      await closed;
+    } finally {
+      await gate.release();
+    }
     const deadline = Date.now() + 5000;
     let status: string | undefined;
     while (Date.now() < deadline) {
@@ -3677,6 +3828,27 @@ test('feedback intake accepts only matching Linear receipts and never retries a 
     request: async () => Response.json(valid),
   });
   assert.deepEqual(await delivery.submit(input), valid);
+  await t.test(
+    'delivery preserves bounded explanations without trusting malformed messages',
+    async () => {
+      for (const status of ['rejected', 'partial', 'unknown'] as const) {
+        const receipt = { ...valid, status, message: 'Synthetic recovery instruction.' };
+        const provider = createN8nFeedback({
+          url: 'https://feedback.example.test/intake',
+          request: async () =>
+            Response.json(receipt, { status: status === 'rejected' ? 400 : 200 }),
+        });
+        assert.deepEqual(await provider.submit(input), receipt);
+      }
+      for (const message of [null, {}, 123, 'x'.repeat(1001)]) {
+        const provider = createN8nFeedback({
+          url: 'https://feedback.example.test/intake',
+          request: async () => Response.json({ ...valid, message }),
+        });
+        assert.deepEqual(await provider.submit(input), valid);
+      }
+    },
+  );
   await t.test('direct webhook reconciles only a matching HTTP 400 rejection', async () => {
     for (const [status, body, expected] of [
       [400, { submissionId: input.submissionId, status: 'rejected' }, 'rejected'],
@@ -3766,6 +3938,17 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
   assert.ok(report.includes('Diagnostic context [redacted]'));
   assert.ok(report.includes('Mirrored [redacted]'));
   assert.ok(!report.includes(password));
+  await assert.rejects(
+    buildFeedbackReport({
+      pool,
+      ownerId,
+      captureEnabled: () => true,
+      sessionEntries: async () => {
+        throw new Error('Synthetic session unavailable');
+      },
+    }),
+    /Synthetic session unavailable/,
+  );
 });
 
 test('feedback diagnostics recover bounded private tool activity when inspector capture is unavailable', async () => {
