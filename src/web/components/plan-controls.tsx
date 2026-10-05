@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ArrowUp, LoaderCircle, Sparkles } from 'lucide-react';
-import type { Schedule, Task } from '../../shared/contracts';
+import type { Schedule } from '../../shared/contracts';
 import { Button, Field, Input, Notice, Switch } from './ui';
 import { SearchPicker, TimeZonePicker, type PickerOption } from './time-zone-picker';
 import { api, errorMessage } from '../lib/api';
@@ -14,22 +14,14 @@ import {
   type ScheduleFrequency,
 } from '../lib/schedules';
 
-type Kind = 'task' | 'schedule';
-type Subject = { kind: Kind; title?: string };
+type Subject = { title?: string };
 
 function subjectPrefix(subject: Subject) {
-  if (!subject.title) return subject.kind === 'task' ? 'New task: ' : 'New schedule: ';
-  return `About the ${subject.kind} ${JSON.stringify(subject.title)}: `;
+  return subject.title ? `About the schedule ${JSON.stringify(subject.title)}: ` : 'New schedule: ';
 }
 
 const suggestions = {
-  task: ['How is it going?', 'Check on it now', 'Stop working on it'],
   schedule: ['Move it to 8:00 on weekdays', 'Run it every Monday', 'Add the weather'],
-  newTask: [
-    'Get three quotes for a plumber',
-    'Chase my missing refund',
-    'Find a table for Saturday',
-  ],
   newSchedule: ['Remind me to stretch at 16:00', 'Summarize my inbox each Friday'],
 };
 
@@ -46,24 +38,18 @@ function AskOtto({
   const input = useRef<HTMLInputElement>(null);
   const id = useId();
   useEffect(() => input.current?.focus(), []);
-  const chips = subject.title
-    ? suggestions[subject.kind]
-    : subject.kind === 'task'
-      ? suggestions.newTask
-      : suggestions.newSchedule;
+  const chips = subject.title ? suggestions.schedule : suggestions.newSchedule;
   const submit = (value: string) => {
     if (!value.trim()) return;
     onAsk(`${subjectPrefix(subject)}${value.trim()}`);
   };
   const placeholder = subject.title
     ? `What should change in ${subject.title}?`
-    : subject.kind === 'task'
-      ? 'What should Otto take care of?'
-      : 'What should Otto do, and when?';
+    : 'What should Otto do, and when?';
   return (
     <div className="ask-otto" role="group" aria-labelledby={`${id}-label`}>
       <span className="sr-only" id={`${id}-label`}>
-        Ask Otto {subject.title ? `about ${subject.title}` : `for a new ${subject.kind}`}
+        Ask Otto {subject.title ? `about ${subject.title}` : 'for a new schedule'}
       </span>
       <form
         className="ask-otto-field"
@@ -464,15 +450,13 @@ function ScheduleTiming({
 }
 
 export function PlanFooter({
-  kind,
   item,
   meta,
   remove,
   canPause,
   onAsk,
 }: {
-  kind: Kind;
-  item: Task | Schedule;
+  item: Schedule;
   meta: ReactNode;
   remove: ReactNode;
   canPause: boolean;
@@ -481,7 +465,7 @@ export function PlanFooter({
   const [open, setOpen] = useState(false);
   return (
     <>
-      {kind === 'schedule' && <ScheduleControls schedule={item as Schedule} canPause={canPause} />}
+      <ScheduleControls schedule={item} canPause={canPause} />
       <div className="saved-plan-footer">
         <span>{meta}</span>
         <div className="saved-plan-actions">
@@ -499,27 +483,23 @@ export function PlanFooter({
         </div>
       </div>
       {open && (
-        <AskOtto
-          subject={{ kind, title: item.title }}
-          onAsk={onAsk}
-          onClose={() => setOpen(false)}
-        />
+        <AskOtto subject={{ title: item.title }} onAsk={onAsk} onClose={() => setOpen(false)} />
       )}
     </>
   );
 }
 
-export function NewPlan({ kind, onAsk }: { kind: Kind; onAsk(text: string): void }) {
+export function NewPlan({ onAsk }: { onAsk(text: string): void }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
         <Sparkles size={14} aria-hidden="true" />
-        {kind === 'task' ? 'New task' : 'New schedule'}
+        New schedule
       </Button>
       {open && (
         <div className="connection-menu-options menu new-plan-card">
-          <AskOtto subject={{ kind }} onAsk={onAsk} onClose={() => setOpen(false)} />
+          <AskOtto subject={{}} onAsk={onAsk} onClose={() => setOpen(false)} />
         </div>
       )}
     </>

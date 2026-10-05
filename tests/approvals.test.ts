@@ -328,7 +328,9 @@ test(
       );
       messages = thread.createUserMessageService({ confirmAction: approvals.acceptChat });
       personal.registerRoutes(app);
-      createTasks({ boss: thread.boss }).registerRoutes(app);
+      const tasks = createTasks({ pool: db.pool, ownerId });
+      await tasks.initialize();
+      tasks.registerRoutes(app);
       app.get('/api/fixture-error', async () => {
         throw new Error('fixture-private-key');
       });
@@ -1698,11 +1700,6 @@ test(
             [foreignTask],
           );
           assert.deepEqual((await request('GET', '/api/tasks')).json(), []);
-          assert.equal((await request('DELETE', `/api/tasks/${foreignTask}`)).statusCode, 404);
-          assert.equal(
-            (await db.pool.query('SELECT id FROM tasks WHERE id=$1', [foreignTask])).rowCount,
-            1,
-          );
           const foreignThread = await thread.activeThread(db.pool, 'another-owner');
           await db.pool.query(
             'INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,$3,$4,$5)',

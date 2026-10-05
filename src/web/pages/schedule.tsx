@@ -50,7 +50,6 @@ export function ScheduleRow({
         </p>
       )}
       <PlanFooter
-        kind="schedule"
         item={schedule}
         canPause={schedule.enabled || canResume}
         meta={
@@ -58,7 +57,7 @@ export function ScheduleRow({
             ? `Next ${scheduleDate(schedule.nextRun, schedule.timeZone, dateFormat)}`
             : ''
         }
-        remove={<DeletePlan kind="schedule" id={schedule.id} title={schedule.title} />}
+        remove={<DeletePlan id={schedule.id} title={schedule.title} />}
         onAsk={onAsk}
       />
     </article>
@@ -301,7 +300,7 @@ export function SchedulePage({ onAsk }: { onAsk(text: string): void }) {
           <p>Your scheduled tasks.</p>
         </div>
         <div className="secondary-heading-actions">
-          <NewPlan kind="schedule" onAsk={onAsk} />
+          <NewPlan onAsk={onAsk} />
         </div>
       </header>
       <div

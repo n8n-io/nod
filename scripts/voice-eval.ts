@@ -262,7 +262,7 @@ async function runScenario(
     doneWhen: task.doneWhen,
     status: 'scheduled' as const,
     waitingFor: [],
-    checkAt: '2026-10-14T09:00:00.000Z',
+    nextCheck: '2026-10-14T09:00:00.000Z',
     question: null,
   }));
   const directory = await mkdtemp(join(tmpdir(), 'otto-voice-'));
@@ -299,7 +299,6 @@ async function runScenario(
         preferences: scenario.preferences ?? '',
       },
     },
-    tasks,
     memory: scenario.memory,
     workspacePath: directory,
     signal: AbortSignal.timeout(scenario.answer ? 90_000 : 240_000),

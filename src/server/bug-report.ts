@@ -235,7 +235,7 @@ export function registerBugReport(
         values,
       ),
       options.pool.query(
-        `SELECT id,source,prompt,channel,status,waiting_reason,background,read_only,task_id,error,created_at,started_at,finished_at
+        `SELECT id,source,prompt,channel,status,waiting_reason,background,read_only,error,created_at,started_at,finished_at
            FROM turns WHERE owner_id=$1 AND thread_id=$2 ORDER BY created_at,id`,
         values,
       ),
@@ -270,7 +270,7 @@ export function registerBugReport(
       ),
       options.pool.query('SELECT data FROM profiles WHERE owner_id=$1', [options.ownerId]),
       options.pool.query(
-        'SELECT id,title,done_when,now_text,state,result,waiting_for,check_at,idle_checks,created_at,updated_at,closed_at FROM tasks WHERE owner_id=$1 ORDER BY created_at,id',
+        'SELECT id,turn_id,title,done_when,now_text,state,result,waiting_for,next_check,created_at,updated_at,closed_at FROM tasks WHERE owner_id=$1 ORDER BY created_at,id',
         [options.ownerId],
       ),
       options.pool.query(

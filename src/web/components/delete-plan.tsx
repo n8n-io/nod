@@ -12,15 +12,7 @@ import {
 import { api } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
 
-export function DeletePlan({
-  kind,
-  id,
-  title,
-}: {
-  kind: 'task' | 'schedule';
-  id: string;
-  title: string;
-}) {
+export function DeletePlan({ id, title }: { id: string; title: string }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -32,7 +24,7 @@ export function DeletePlan({
     request.current = controller;
     setBusy(true);
     setError('');
-    const path = `/api/${kind}s`;
+    const path = '/api/schedules';
     try {
       await api(`${path}/${encodeURIComponent(id)}`, {
         method: 'DELETE',
@@ -49,7 +41,7 @@ export function DeletePlan({
       );
     } catch {
       if (!controller.signal.aborted) {
-        setError(`Could not delete this ${kind}. Try again.`);
+        setError('Could not delete this schedule. Try again.');
         void pageDataCache.refresh(path, true);
       }
     } finally {
@@ -65,7 +57,7 @@ export function DeletePlan({
         <Button
           variant="ghost"
           size="sm"
-          aria-label={`Delete ${kind} ${title}`}
+          aria-label={`Delete schedule ${title}`}
           onClick={() => {
             setError('');
           }}
@@ -81,22 +73,18 @@ export function DeletePlan({
           document.querySelector<HTMLButtonElement>('[data-keep-plan]')?.focus();
         }}
       >
-        <DialogTitle>Delete {kind}?</DialogTitle>
+        <DialogTitle>Delete schedule?</DialogTitle>
         <DialogDescription>
           {title}
-          <span>
-            {kind === 'schedule'
-              ? 'Future runs will stop. Past runs stay in History.'
-              : 'Otto will stop working on it and its checks will stop.'}
-          </span>
+          <span>Future runs will stop. Past runs stay in History.</span>
         </DialogDescription>
         {error && <Notice>{error}</Notice>}
         <div className="delete-plan-actions">
           <Button variant="ghost" data-keep-plan disabled={busy} onClick={() => setOpen(false)}>
-            Keep {kind}
+            Keep schedule
           </Button>
           <Button variant="destructive" disabled={busy} onClick={() => void remove()}>
-            {busy ? 'Deleting…' : `Delete ${kind}`}
+            {busy ? 'Deleting…' : 'Delete schedule'}
           </Button>
         </div>
       </DialogContent>

@@ -156,8 +156,6 @@ export type TaskStatus =
 export interface TaskWait {
   who: string;
   via: string;
-  address: string | null;
-  since: string | null;
 }
 export interface Task {
   id: string;
@@ -168,7 +166,7 @@ export interface Task {
   status: TaskStatus;
   question: string | null;
   waitingFor: TaskWait[];
-  checkAt: string | null;
+  nextCheck: string | null;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;

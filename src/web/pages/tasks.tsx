@@ -12,8 +12,6 @@ import type { Task, TaskStatus } from '../../shared/contracts';
 import { PageTitle } from '../components/page-title';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
-import { DeletePlan } from '../components/delete-plan';
-import { NewPlan, PlanFooter, PlanToast } from '../components/plan-controls';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
 
 const labels: Record<TaskStatus, string> = {
@@ -48,7 +46,7 @@ function headline(task: Task) {
   return task.now;
 }
 
-export function TaskCard({ task, onAsk }: { task: Task; onAsk(text: string): void }) {
+export function TaskCard({ task }: { task: Task }) {
   const headingId = useId();
   const format = useDateFormat();
   const Icon = icons[task.status];
@@ -73,13 +71,12 @@ export function TaskCard({ task, onAsk }: { task: Task; onAsk(text: string): voi
             <li key={`${wait.who}:${wait.via}`}>
               <span>Waiting on</span>
               {wait.who} · {wait.via}
-              {wait.since && ` · since ${when(wait.since)}`}
             </li>
           ))}
-          {task.checkAt && (
+          {task.nextCheck && (
             <li>
               <span>Next check</span>
-              {when(task.checkAt)}
+              {when(task.nextCheck)}
             </li>
           )}
           <li>
@@ -88,23 +85,16 @@ export function TaskCard({ task, onAsk }: { task: Task; onAsk(text: string): voi
           </li>
         </ul>
       )}
-      <PlanFooter
-        kind="task"
-        item={task}
-        canPause={false}
-        meta={
-          task.closedAt
-            ? `Finished ${formatDateTime(task.closedAt, format)}`
-            : `Started ${formatDateTime(task.createdAt, format)}`
-        }
-        remove={<DeletePlan kind="task" id={task.id} title={task.title} />}
-        onAsk={onAsk}
-      />
+      <p className="saved-plan-footer">
+        {task.closedAt
+          ? `Finished ${formatDateTime(task.closedAt, format)}`
+          : `Started ${formatDateTime(task.createdAt, format)}`}
+      </p>
     </article>
   );
 }
 
-export function Tasks({ onAsk }: { onAsk(text: string): void }) {
+export function Tasks() {
   const { data: tasks, error, loading, refreshing, refresh } = usePageData<Task[]>('/api/tasks');
   const [view, setView] = useState<'open' | 'closed'>('open');
   const tabsId = useId();
@@ -118,14 +108,10 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
   const shown = view === 'open' ? open : finished;
   return (
     <div className="content-page secondary-page tasks-page">
-      <PlanToast />
       <header className="page-heading secondary-heading">
         <div>
           <PageTitle path="/tasks" />
           <p>What Otto is working on, and how it’s going.</p>
-        </div>
-        <div className="secondary-heading-actions">
-          <NewPlan kind="task" onAsk={onAsk} />
         </div>
       </header>
       <div
@@ -192,7 +178,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
         ) : shown.length ? (
           <div className="saved-plan-list">
             {shown.map((task) => (
-              <TaskCard key={task.id} task={task} onAsk={onAsk} />
+              <TaskCard key={task.id} task={task} />
             ))}
           </div>
         ) : view === 'open' ? (

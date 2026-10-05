@@ -251,7 +251,7 @@ function Workspace({
             {currentPath === '/vault' && <Vault />}
             {currentPath === '/apps' && <Apps configuration={state?.configuration} />}
             {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
-            {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+            {currentPath === '/tasks' && <Tasks />}
             {currentPath === '/schedule' && <SchedulePage onAsk={askInChat} />}
             {!navigationItems.some((item) => item.path === currentPath) && (
               <div className="empty-state">

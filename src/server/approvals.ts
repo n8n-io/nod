@@ -373,7 +373,6 @@ export async function createApprovals(
         input.sourceId ?? `confirmation:${approval.id}:${approved ? 'accepted' : 'declined'}`,
       channel: input.channel,
       background: false,
-      taskFrom: approval.turn_id,
       client,
     });
     const messageId = input.clientMessageId ?? randomUUID();
