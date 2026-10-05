@@ -17,6 +17,7 @@ import { copyBundleSource as copy, copyEngineDependencies } from './engine-depen
 import { assetHash, runtimeRelease as readRuntimeRelease } from '../runtime/assets.mjs';
 import { runtimeInputs } from './runtime-inputs.mjs';
 import { buildDesktopUI } from './build-ui.mjs';
+import { checkRelease } from '../../.github/scripts/prepare-desktop-release.mjs';
 import {
   exportCertificate,
   minimumSystemVersion as supportedMinimumSystemVersion,
@@ -72,7 +73,8 @@ const configuration = JSON.parse(await readFile(join(desktop, 'package.json'), '
 const version = process.env.OTTO_DESKTOP_VERSION || configuration.version;
 if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
   throw new Error('The desktop version is invalid.');
-if (signed && version !== configuration.version)
+if (signed && process.env.OTTO_RELEASE_PLAN) await checkRelease(root, version);
+else if (signed && version !== configuration.version)
   throw new Error('Prepare the desktop package version before its signed release.');
 configuration.version = version;
 const repository = process.env.GITHUB_REPOSITORY || 'n8n-io/otto';

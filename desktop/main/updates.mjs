@@ -283,6 +283,39 @@ export function createDesktopUpdater({
   };
 }
 
+export function startDesktopUpdateChecks({ check, powerMonitor, interval = 6 * 60 * 60 * 1000 }) {
+  let timer;
+  let pending = false;
+  let stopped = false;
+  let due = 0;
+  const run = async () => {
+    if (stopped || pending) return;
+    pending = true;
+    clearTimeout(timer);
+    try {
+      await check();
+    } catch {
+    } finally {
+      pending = false;
+      due = Date.now() + interval;
+      if (!stopped) {
+        timer = setTimeout(run, interval);
+        timer.unref?.();
+      }
+    }
+  };
+  const resume = () => {
+    if (Date.now() >= due) void run();
+  };
+  powerMonitor.on('resume', resume);
+  void run();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    powerMonitor.removeListener('resume', resume);
+  };
+}
+
 export async function restartDesktopUpdate({
   candidate,
   guard,

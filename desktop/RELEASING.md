@@ -1,6 +1,6 @@
 # Desktop releases
 
-The current distribution target is an internal, self-signed Apple Silicon preview. The workflows prepare a version/changelog PR, require CI on the exact main revision, build a signed DMG and application ZIP, and verify the uploaded bytes before publishing. The app and any new runtime release stay drafts unless the workflow's publish option is enabled. Both are marked as prereleases, including the first `0.1.0` alpha. Published runtime packs are immutable and can be reused by subsequent app releases.
+The current distribution target is an internal, self-signed Apple Silicon preview. **Build desktop release** runs daily in GitHub Actions at **07:17 UTC**. When main has changes since the last published desktop release, it requires successful CI on that exact revision, chooses the next patch version, generates release notes, builds the signed DMG and application ZIP, verifies uploaded bytes, and publishes the app and matching runtime as prereleases. Days without changes skip packaging. Published assets are immutable; unchanged runtime packs are reused.
 
 Self-signing does not satisfy Gatekeeper's Developer ID and notarization requirements. A new Mac may require **System Settings → Privacy & Security → Open Anyway**. Otto explains its separate Keychain prompt before accessing saved API keys. Keeping the same certificate across builds gives the app a stable signing identity; it does not guarantee that macOS will never ask for Keychain approval. See [Electron signing guidance](https://www.electronjs.org/docs/latest/tutorial/code-signing) and [Apple distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/).
 
@@ -25,7 +25,15 @@ Repository Actions settings must permit GitHub Actions to create pull requests. 
 
 Before distributing private updater-enabled builds, publish and verify the [n8n release workflow](../deployment/n8n/README.md) with the saved **Otto Releases** credential approved for this repository's **Contents: read**. Set the update-source variable above; no token enters the app. When the repository becomes public, distribute a build with that variable unset through the existing workflow, and keep the workflow available until older clients migrate.
 
-## Release sequence
+## Daily releases
+
+The scheduled run includes changes merged before its main checkout. Later merges go into the following release. GitHub can delay scheduled runs; this is a daily cadence, not a guaranteed delivery time. Failed or pending source CI prevents publication.
+
+Automatic versioning generates release metadata as a build artifact bound to the source revision. It does not commit generated package versions to main or require a daily metadata PR. Release tags, manifests and notes record the actual version and source. A retry reuses a matching unfinished draft instead of consuming another version. Release builds are serialized.
+
+To ship sooner or inspect a draft, manually run **Build desktop release** with automatic versioning enabled. Leave **publish** disabled for a draft; enable it to publish after verification. Drafts are excluded from the installer and updater. The app checks at startup, every six hours while open, and after waking if due. Users can check immediately from the Otto menu; prepared updates retain **Restart / Later**, and restarting remains blocked by unfinished work or drafts.
+
+## Manual version and changelog review
 
 1. Merge the reviewed desktop implementation into main and let normal CI pass.
 2. Run **Prepare desktop release** from main with a stable version such as `0.1.0`. It opens or updates `release/desktop`, changing only the desktop package, lockfile, release manifest, and changelog. Review the generated commit summaries and edit them into user-facing release notes as needed.
@@ -48,7 +56,7 @@ The runtime includes `licenses/COMPONENTS.md` and the pinned Docker CLI/Engine l
 
 ```mermaid
 flowchart LR
-  P[Version and changelog PR] --> C[Exact main CI passes]
+  P[Daily schedule or manual dispatch] --> C[Exact main CI passes]
   C --> R{Runtime inputs changed?}
   R -->|Yes| I[Linux ARM image build]
   I --> H[Mac host tools and runtime signing]
@@ -64,7 +72,7 @@ flowchart LR
 ## Build time and cost
 
 - The shared server, UI and desktop contracts run on Linux. Desktop pull requests also run the [native update acceptance](evals/automatic-updates.md) on macOS with disposable apps and signing identities; production signing credentials are not used.
-- Packaging runs only on manual release dispatches. It consumes successful main CI instead of rerunning the full database/browser suite on Mac.
+- The daily Linux planner skips unchanged main revisions before starting Mac jobs. Packaging consumes successful main CI instead of rerunning the full database/browser suite on Mac.
 - A runtime fingerprint covers the shared Dockerfiles, root package and lockfile, complete `src` tree, pinned downloads, runtime preparation/signing code, build dependencies, and permanent certificate identity. The root browser image copies all `src`, so changes there require a new runtime, including web source changes. Desktop shell changes and desktop version bumps reuse a published runtime when those inputs are unchanged.
 - New container images build natively on Linux ARM with separate BuildKit caches. Mac runners prepare only the Mac host tools and sign/package artifacts. Lima is rebuilt from pinned source with a macOS 14 deployment target; prebuilt upstream tools are not assumed to match the app's minimum OS.
 - npm, Electron downloads, verified runtime downloads, and Go compilation have separate caches. Already-compressed runtime images and DMGs use artifact compression level zero. Runtime transfer artifacts expire after one day, app artifacts after three; published release assets remain available.
@@ -101,6 +109,6 @@ New public runtime drafts use manual import when **publish** is disabled. With *
 
 The reference was [otto-grokbot-experiment](https://github.com/n8n-io/otto-grokbot-experiment) at `aa1df9901c5e0e9bb05580f417f1a02dee5be4d3`. Its internal release used a self-signed `Otto Internal` certificate. Its terminal installer verified the download and then removed quarantine from the installed app; that is separate from Apple's notarized installation flow. This pipeline does not strip quarantine or add a globally trusted certificate.
 
-Reused ideas: a reviewable version/changelog PR, pinned actions, native ARM image builds, temporary signing keychains, cached tool downloads, cheap artifact transfer, and verification of downloaded release assets. The Electron experiment retains its own packaging and resource-signing requirements. It does not copy the reference's Tauri updater keys or multi-architecture build matrix.
+The reference's release workflows were still manually dispatched when inspected on 2026-10-05. Reused ideas include the no-empty-release gate, serialized builds, pinned actions, native ARM image builds, temporary signing keychains, cached tool downloads, cheap artifact transfer, and verification of downloaded release assets. Otto adds daily automatic patch selection while keeping manual version/changelog review available. It retains Electron packaging and resource-signing requirements instead of the reference's Tauri updater keys or multi-architecture matrix.
 
 Local checks and installed-app observations are recorded in [VALIDATION.md](VALIDATION.md). Hosted workflow execution and physical-Mac installation of a CI-produced self-signed release remain distinct acceptance gates.

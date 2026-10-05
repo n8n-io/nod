@@ -1,8 +1,14 @@
 name: Build desktop release
 
 on:
+  schedule:
+    - cron: '17 7 * * *'
   workflow_dispatch:
     inputs:
+      automatic:
+        description: Select the next patch from tested main without a release metadata PR
+        type: boolean
+        default: false
       publish:
         description: Publish checked app and runtime drafts as preview releases
         type: boolean
@@ -25,9 +31,11 @@ jobs:
     env:
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
     permissions:
-      contents: read
+      contents: write
       actions: read
     outputs:
+      release_needed: ${{ steps.plan.outputs.release_needed }}
+      metadata_sha256: ${{ steps.plan.outputs.metadata_sha256 }}
       source: ${{ steps.plan.outputs.source }}
       version: ${{ steps.plan.outputs.version }}
       runtime_tag: ${{ steps.plan.outputs.runtime_tag }}
@@ -54,7 +62,17 @@ jobs:
           OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
           OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
           APPLE_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && vars.APPLE_SIGNING_IDENTITY != '' && vars.APPLE_CERTIFICATE_SHA256 != '' && ((vars.OTTO_SIGNING_MODE || 'self-signed') == 'self-signed' || (secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && vars.APPLE_TEAM_ID != '')) }}
+          OTTO_AUTOMATIC_RELEASE: ${{ github.event_name == 'schedule' || inputs.automatic }}
         run: node .github/scripts/desktop-release.mjs plan
+      - name: Save source-bound release metadata
+        if: steps.plan.outputs.metadata_sha256 != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: desktop-release-plan
+          path: .local/desktop-release-plan.json
+          include-hidden-files: true
+          retention-days: 3
+          if-no-files-found: error
       - name: Save the reusable runtime descriptor
         if: steps.plan.outputs.runtime_reused == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -68,7 +86,7 @@ jobs:
   images:
     name: Build changed runtime images on Linux ARM
     needs: plan
-    if: needs.plan.outputs.runtime_reused != 'true'
+    if: needs.plan.outputs.release_needed == 'true' && needs.plan.outputs.runtime_reused != 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
     environment: mac-release
@@ -128,7 +146,7 @@ jobs:
   runtime:
     name: Sign and prepare the runtime release
     needs: [plan, images]
-    if: needs.plan.outputs.runtime_reused != 'true'
+    if: needs.plan.outputs.release_needed == 'true' && needs.plan.outputs.runtime_reused != 'true'
     runs-on: macos-15
     timeout-minutes: 40
     environment: mac-release
@@ -142,7 +160,7 @@ jobs:
       OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
       OTTO_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
       OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
-      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ inputs.publish && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_base_url || '' }}
+      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ (github.event_name == 'schedule' || inputs.publish) && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_base_url || '' }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -192,7 +210,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
-          OTTO_PUBLISH_RELEASE: ${{ inputs.publish }}
+          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'schedule' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft-runtime
       - name: Save the checked runtime descriptor
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -209,7 +227,7 @@ jobs:
   mac:
     name: Package and check the Mac app
     needs: [plan, runtime]
-    if: always() && needs.plan.result == 'success' && (needs.runtime.result == 'success' || (needs.runtime.result == 'skipped' && needs.plan.outputs.runtime_reused == 'true'))
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.release_needed == 'true' && (needs.runtime.result == 'success' || (needs.runtime.result == 'skipped' && needs.plan.outputs.runtime_reused == 'true'))
     runs-on: macos-15
     timeout-minutes: 30
     environment: mac-release
@@ -251,9 +269,17 @@ jobs:
         with:
           name: desktop-runtime-descriptor
           path: .local/desktop-runtime-release
+      - name: Download source-bound release metadata
+        if: needs.plan.outputs.metadata_sha256 != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: desktop-release-plan
+          path: .local
       - name: Sign, package and verify the app
         env:
-          OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: ${{ inputs.publish && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_reused != 'true' && needs.runtime.outputs.descriptor_sha256 || '' }}
+          OTTO_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
+          OTTO_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
+          OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: ${{ (github.event_name == 'schedule' || inputs.publish) && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_reused != 'true' && needs.runtime.outputs.descriptor_sha256 || '' }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -295,6 +321,8 @@ jobs:
       OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
       OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
       OTTO_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.OTTO_DESKTOP_UPDATE_SOURCE_URL }}
+      OTTO_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
+      OTTO_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
     permissions:
       contents: write
     steps:
@@ -313,10 +341,16 @@ jobs:
         with:
           name: desktop-macos-arm64
           path: dist/desktop
+      - name: Download source-bound release metadata
+        if: needs.plan.outputs.metadata_sha256 != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: desktop-release-plan
+          path: .local
       - name: Verify GitHub asset digests and download the DMG and ZIP again
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
-          OTTO_PUBLISH_RELEASE: ${{ inputs.publish }}
+          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'schedule' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft

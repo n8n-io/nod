@@ -27,7 +27,12 @@ import {
   findRuntimeAssets,
   installRuntimeArchive,
 } from '../runtime/assets.mjs';
-import { checkRelease, prepareRelease } from '../../.github/scripts/prepare-desktop-release.mjs';
+import {
+  automaticRelease,
+  checkRelease,
+  checkReleasePlan,
+  prepareRelease,
+} from '../../.github/scripts/prepare-desktop-release.mjs';
 import { cleanupAppleSigning } from '../../.github/scripts/with-apple-signing.mjs';
 import { verifyRuntimeDownload, verifyRuntimeRelease } from '../scripts/release-tools.mjs';
 
@@ -112,6 +117,110 @@ test('release gate rejects malformed metadata, uncommitted notes and source drif
   await assert.rejects(
     checkRelease(f.root, '0.1.0'),
     /Source changes landed after release preparation/,
+  );
+});
+
+test('automatic patches skip unchanged product trees and bind generated notes to clean source', async (t) => {
+  const f = await releaseRepository(t);
+  await prepareRelease(f.root, '0.1.0');
+  f.commit();
+  f.git('tag', 'desktop-v0.1.0');
+  const releases = [{ tag_name: 'desktop-v0.1.0', draft: false }];
+  assert.equal(automaticRelease(f.root, releases, 'synthetic/otto'), undefined);
+  await mkdir(join(f.root, 'desktop/test'));
+  await writeFile(join(f.root, 'desktop/test/fixture.mjs'), 'export const fixture = true;\n');
+  await writeFile(join(f.root, 'desktop/README.md'), 'Synthetic documentation update.\n');
+  for (const file of ['desktop/package.json', 'desktop/package-lock.json']) {
+    const path = join(f.root, file);
+    const value = JSON.parse(await readFile(path, 'utf8'));
+    value.version = '0.1.1';
+    if (value.packages) value.packages[''].version = '0.1.1';
+    await writeFile(path, JSON.stringify(value));
+  }
+  const unchanged = f.commit();
+  assert.equal(automaticRelease(f.root, releases, 'synthetic/otto'), undefined);
+  for (const file of [
+    'public/otto-logo.png',
+    'index.html',
+    'vite.config.ts',
+    'tsconfig.json',
+    'src/skills/example/SKILL.md',
+  ]) {
+    await mkdir(dirname(join(f.root, file)), { recursive: true });
+    await writeFile(join(f.root, file), 'Synthetic packaged input change.\n');
+    const changed = f.commit();
+    assert.equal(automaticRelease(f.root, releases, 'synthetic/otto').source, changed, file);
+    f.git('reset', '--hard', unchanged);
+  }
+  await writeFile(join(f.root, 'desktop/main.mjs'), 'export const updated = true;\n');
+  const source = f.commit();
+  const plan = automaticRelease(f.root, releases, 'synthetic/otto');
+  assert.equal(plan.version, '0.1.1');
+  assert.equal(plan.source, source);
+  assert.equal(plan.previousTag, 'desktop-v0.1.0');
+  assert.equal(f.git('status', '--porcelain'), '');
+  const path = join(f.root, 'release-plan.json');
+  const bytes = JSON.stringify(plan);
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  await writeFile(path, bytes);
+  assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
+  const tampered = JSON.stringify({ ...plan, notes: plan.notes.replace('Synthetic', 'Altered') });
+  await writeFile(path, tampered);
+  await assert.rejects(checkReleasePlan(f.root, plan.version, path, digest), /checksum/);
+  await assert.rejects(
+    checkReleasePlan(
+      f.root,
+      plan.version,
+      path,
+      createHash('sha256').update(tampered).digest('hex'),
+    ),
+    /notes do not match/,
+  );
+  await writeFile(path, bytes);
+  await writeFile(join(f.root, 'desktop/main.mjs'), 'export const dirty = true;\n');
+  await assert.rejects(checkReleasePlan(f.root, plan.version, path, digest), /clean tested source/);
+  f.git('add', 'desktop/main.mjs');
+  f.git('commit', '-m', 'Synthetic late change');
+  await assert.rejects(checkReleasePlan(f.root, plan.version, path, digest), /clean tested source/);
+});
+
+test('automatic patches resume the matching draft and never reuse an occupied or published version', async (t) => {
+  const f = await releaseRepository(t);
+  await prepareRelease(f.root, '0.1.0');
+  f.commit();
+  f.git('tag', 'desktop-v0.1.0');
+  await writeFile(join(f.root, 'desktop/main.mjs'), 'export const updated = true;\n');
+  const source = f.commit();
+  const published = { tag_name: 'desktop-v0.1.0', draft: false };
+  const pending = {
+    tag_name: 'desktop-v0.1.1',
+    draft: true,
+    target_commitish: source,
+    body: `Source: https://github.com/synthetic/otto/commit/${source}`,
+  };
+  assert.equal(automaticRelease(f.root, [published, pending], 'synthetic/otto').version, '0.1.1');
+  assert.throws(
+    () =>
+      automaticRelease(
+        f.root,
+        [published, { ...pending, body: 'Unrelated draft' }],
+        'synthetic/otto',
+      ),
+    /pending desktop release/,
+  );
+  const stale = { ...pending, target_commitish: '0'.repeat(40) };
+  assert.equal(automaticRelease(f.root, [published, stale], 'synthetic/otto').version, '0.1.2');
+  f.git('tag', 'desktop-v0.1.2');
+  assert.equal(automaticRelease(f.root, [published, stale], 'synthetic/otto').version, '0.1.3');
+  f.git('tag', 'desktop-v0.1.1');
+  assert.equal(
+    automaticRelease(f.root, [published, { ...pending, draft: false }], 'synthetic/otto'),
+    undefined,
+  );
+  assert.throws(
+    () =>
+      automaticRelease(f.root, [{ tag_name: 'desktop-v9.0.0', draft: false }], 'synthetic/otto'),
+    /latest published desktop tag/,
   );
 });
 
@@ -258,6 +367,7 @@ async function releaseFixture(
     runtimeRepository = 'synthetic/otto',
     diskName = 'Otto-arm64.dmg',
     updateSourceUrl,
+    automatic = false,
   } = {},
 ) {
   const f = await releaseRepository(t);
@@ -293,7 +403,13 @@ async function releaseFixture(
   }
   f.commit();
   await prepareRelease(root, '0.1.0');
-  const source = f.commit();
+  let source = f.commit();
+  const baseline = source;
+  if (automatic) {
+    f.git('tag', 'desktop-v0.1.0');
+    await writeFile(join(root, 'desktop/main.mjs'), 'export const next = true;\n');
+    source = f.commit();
+  }
   const assets = join(root, '.local/desktop-runtime-release');
   const output = join(root, 'dist/desktop');
   const bin = join(root, 'bin');
@@ -323,7 +439,8 @@ async function releaseFixture(
       ).fingerprint
     : digest('Synthetic runtime inputs');
   const runtimeTag = `runtime-darwin-arm64-${fingerprint}`;
-  const appTag = 'desktop-v0.1.0';
+  const version = automatic ? '0.1.1' : '0.1.0';
+  const appTag = `desktop-v${version}`;
   const name = `Otto-Runtime-darwin-arm64-${digest(archive).slice(0, 12)}.tar.gz`;
   const release = {
     version: 1,
@@ -350,11 +467,11 @@ async function releaseFixture(
   const updateName = 'Otto-arm64.zip';
   const feed = {
     url: `https://github.com/synthetic/otto/releases/download/${appTag}/${updateName}`,
-    name: 'Otto 0.1.0',
+    name: `Otto ${version}`,
     pub_date: '2026-10-04T12:00:00Z',
   };
   const metadata = {
-    version: '0.1.0',
+    version,
     source,
     ...(updateSourceUrl ? { updateSourceUrl } : {}),
     signing: release.signing,
@@ -385,7 +502,17 @@ async function releaseFixture(
   await writeState({
     private: !isPublic,
     runtimeRepository,
-    releases: {},
+    releases: automatic
+      ? {
+          'desktop-v0.1.0': {
+            id: 100,
+            tag_name: 'desktop-v0.1.0',
+            target_commitish: baseline,
+            draft: false,
+            assets: [],
+          },
+        }
+      : {},
     created: 0,
     calls: [],
     contents: {},
@@ -417,6 +544,11 @@ if (args[0] === 'api') {
   if (args[1] === 'repos/synthetic/otto' || args[1] === 'repos/' + state.runtimeRepository) output({ private: state.private });
   if (args[1] === 'repos/' + state.runtimeRepository + '/commits/main') output({ sha: 'f'.repeat(40) });
   if (args[1].includes('/actions/workflows/')) output({ workflow_runs: state.runs });
+  if (args[1] === 'repos/synthetic/otto/releases?per_page=100') {
+    save();
+    process.stdout.write(Object.values(state.releases).map(release => JSON.stringify(release)).join('\n'));
+    process.exit(0);
+  }
   if (args[1] === 'graphql') {
     const tag = args.find(value => value.startsWith('tag=')).slice(4);
     const release = state.releases[tag];
@@ -491,7 +623,7 @@ globalThis.fetch = async (url, options = {}) => {
   const script = fileURLToPath(
     new URL('../../.github/scripts/desktop-release.mjs', import.meta.url),
   );
-  const invoke = (command, requestPublish = publish) =>
+  const invoke = (command, requestPublish = publish, environment = {}) =>
     promisify(execFile)(process.execPath, [script, command], {
       cwd: root,
       env: {
@@ -504,16 +636,22 @@ globalThis.fetch = async (url, options = {}) => {
         GITHUB_REPOSITORY: 'synthetic/otto',
         GITHUB_SHA: source,
         GITHUB_REF: 'refs/heads/main',
+        GITHUB_ACTIONS: 'true',
         APPLE_CONFIGURED: 'true',
         ...signingEnv,
         OTTO_RUNTIME_FINGERPRINT: fingerprint,
         OTTO_EXPECTED_RUNTIME_FINGERPRINT: fingerprint,
         OTTO_PUBLISH_RELEASE: String(requestPublish),
+        OTTO_AUTOMATIC_RELEASE: String(automatic),
         ...(updateSourceUrl ? { OTTO_DESKTOP_UPDATE_SOURCE_URL: updateSourceUrl } : {}),
+        ...environment,
       },
       timeout: 30_000,
     });
   return {
+    root,
+    source,
+    git: f.git,
     invoke,
     readState,
     writeState,
@@ -527,6 +665,57 @@ globalThis.fetch = async (url, options = {}) => {
     feed,
   };
 }
+
+test('automatic delivery requires current exact-main CI and publishes only its checked metadata', async (t) => {
+  const f = await releaseFixture(t, { automatic: true, plan: true, publish: true });
+  const initial = await f.readState();
+  const successful = initial.runs[0];
+  for (const runs of [
+    [],
+    [{ ...successful, head_sha: '0'.repeat(40) }],
+    [{ ...successful, head_branch: 'feature' }],
+    [{ ...successful, head_repository: { full_name: 'synthetic/fork' } }],
+    [{ ...successful, event: 'pull_request' }],
+    [{ ...successful, conclusion: 'failure' }, successful],
+    [{ ...successful, conclusion: null }, successful],
+  ]) {
+    await f.writeState({ ...initial, runs });
+    await assert.rejects(f.invoke('plan'), /exact main revision must pass CI/);
+    assert.equal((await f.readState()).created, 0);
+  }
+  await f.writeState(initial);
+  const plan = JSON.parse((await f.invoke('plan')).stdout);
+  assert.equal(plan.release_needed, 'true');
+  assert.equal(plan.version, '0.1.1');
+  assert.equal(plan.source, f.source);
+  assert.equal(JSON.parse(await readFile(join(f.root, 'desktop/package.json'))).version, '0.1.0');
+  assert.equal(f.git('status', '--porcelain', '--untracked-files=no'), '');
+  const environment = {
+    OTTO_RELEASE_PLAN: join(f.root, '.local/desktop-release-plan.json'),
+    OTTO_RELEASE_PLAN_SHA256: plan.metadata_sha256,
+  };
+  await f.invoke('draft-runtime');
+  await assert.rejects(
+    f.invoke('draft', true, { ...environment, OTTO_RELEASE_PLAN_SHA256: '0'.repeat(64) }),
+    /checksum/,
+  );
+  await assert.rejects(
+    f.invoke('draft', true, { ...environment, GITHUB_ACTIONS: 'false' }),
+    /only accepted in GitHub Actions/,
+  );
+  assert.equal((await f.readState()).releases[f.appTag], undefined);
+  await f.invoke('draft', true, environment);
+  const published = await f.readState();
+  assert.equal(published.releases[f.appTag].draft, false);
+  assert.equal(published.releases[f.appTag].target_commitish, f.source);
+  assert.equal(published.releases[f.runtimeTag].draft, false);
+  assert.equal(published.created, 2);
+  assert.deepEqual(published.releases['desktop-v0.1.0'], initial.releases['desktop-v0.1.0']);
+  f.git('tag', f.appTag);
+  const repeated = JSON.parse((await f.invoke('plan', true, { APPLE_CONFIGURED: 'false' })).stdout);
+  assert.equal(repeated.release_needed, 'false');
+  assert.equal((await f.readState()).created, 2);
+});
 
 test('runtime and app drafts handle pending tags and retries without publishing either release', async (t) => {
   const f = await releaseFixture(t);

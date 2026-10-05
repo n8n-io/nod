@@ -1,12 +1,13 @@
 # Desktop release delivery
 
-The dedicated **Otto Desktop Releases** workflow serves the fixed `n8n-io/otto` repository through `https://internal.users.n8n.cloud/webhook/otto-desktop`. The existing Tauri install, release and asset workflows stay unchanged.
+The **Otto Desktop Releases** workflow serves the fixed `n8n-io/otto` repository through `https://internal.users.n8n.cloud/webhook/otto-desktop`. **Otto Install** serves the current desktop installer at the existing `/webhook/otto/install` address. The legacy release and asset workflows are unchanged.
 
 The GitHub credential stays in n8n. These routes follow the existing public download model: the repository stays private, but anyone with a download URL can fetch an allowed published asset. The workflow never returns repository source, accepts arbitrary upstream URLs, or streams archives through n8n.
 
 | GET route                                                                  | Result                                                                                                     |
 | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `/releases`                                                                | Bounded GitHub-shaped list of published desktop and runtime releases                                       |
+| `/releases?installer=true`                                                 | Highest published desktop version, pinned release ID, DMG URL/hash/bytes and manifest URL                  |
 | `/releases/:releaseId`                                                     | Published release metadata and allowed asset metadata                                                      |
 | `/tags/:tag`                                                               | Exact published desktop or runtime release; supports old runtime packs outside the list window             |
 | `/releases/:releaseId/assets/:assetId/:filename`                           | Verified JSON metadata or a fresh GitHub asset redirect after exact release membership and filename checks |
@@ -15,6 +16,30 @@ The GitHub credential stays in n8n. These routes follow the existing public down
 Desktop tags use `desktop-vSEMVER`; runtime tags use `runtime-darwin-arm64-` followed by 64 lowercase hex characters. Drafts, legacy releases and unknown assets are not served. Feed URLs bind a release ID and ZIP asset ID, so publishing a newer release cannot change the selected update. The client validates the ZIP's declared hash and size against release metadata and prepares the verified runtime before invoking the native updater. It does not separately hash the downloaded app ZIP; the native updater verifies the app's signing identity.
 
 GitHub permits [direct 200 responses as well as redirects](https://docs.github.com/en/rest/releases/assets#get-a-release-asset). The broker fetches `release.json`, `runtime-release.json` and `update.json` only when GitHub advertises at most 2 MiB; a direct response must match its exact UTF-8 byte count and SHA-256 before JSON parsing. Other assets use HEAD and require a validated download redirect. A healthy directly served archive cannot be delivered by this redirect-only broker; verify the real archive redirect before publication.
+
+## Command-line installation
+
+After publishing the reviewed installer and broker versions, users can paste this into Terminal:
+
+```sh
+(
+  installer="$(mktemp)" || exit
+  trap 'rm -f "$installer"' EXIT
+  curl --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
+)
+```
+
+Downloading the entire script before running it avoids executing a partial response. The HTTPS n8n endpoint is the bootstrap trust boundary. No GitHub token, Node, Python, Homebrew or administrator access is required. Otto must be closed. The installer supports Apple Silicon on macOS 14 or later, installs only to `~/Applications/Otto.app`, and leaves keys, conversations and the workspace intact. Open Otto from that folder after installation; its native updater handles subsequent releases.
+
+The script chooses the highest published `desktop-vSEMVER`, including published alpha prereleases, and fixes that release and its asset IDs for the whole transaction. An incomplete latest release fails instead of silently selecting an older version. An already newer installed app is kept. It rejects another app at the destination, symbolic links, concurrent installers and destination changes during download.
+
+The DMG must match GitHub's size and SHA-256 and the release manifest. The DMG, mounted app and staged app must pass strict code-signature verification using the embedded public Otto Internal certificate fingerprint `bbfeebcf52e27c2294bd037f1a4d7eb4e31816f1eed385fa56db7340029346a7`. The app's bundle ID, version, source revision, architecture and update service must also match. The certificate pin is not learned from the download. The old app is kept until the verified copy is ready, and a failed replacement restores it. A failed disk-image detach preserves its temporary folder for manual ejection.
+
+This remains a self-signed alpha, not an Apple-notarized release. The installer neither removes quarantine nor changes Keychain trust. Terminal downloads may behave differently from browser downloads; if macOS blocks opening Otto, use **System Settings → Privacy & Security → Open Anyway**. The installer does not claim that no approval will be needed.
+
+Source is in `install.sh`; `install-workflow.mjs` embeds those exact bytes into the existing [Otto Install](https://internal.users.n8n.cloud/workflow/8xPKHTCl57er0udZ) workflow. `desktop-releases.mjs` generates [Otto Desktop Releases](https://internal.users.n8n.cloud/workflow/yHes8g8CIyObW0Zh). Publish the broker before the installer. Before replacing a workflow, save its full current export and active version; rollback republishes those previous versions. Keep workflow execution retention disabled and preserve its saved GitHub credential.
+
+Run `node --test deployment/n8n/*.test.mjs`. Installer fixtures run the real shell transaction with disposable home directories and synthetic download/OS adapters; they exercise rejection, staging failure, rollback, a changed destination, version ordering and failed detach. They assert the specific failure boundary as well as unchanged app/profile data. They do not establish real macOS signing, a physical install, onboarding or auto-update acceptance. A stock-tool physical installation from the hosted endpoint remains a separate acceptance case.
 
 ## Frozen validation — N8ND01.v1
 

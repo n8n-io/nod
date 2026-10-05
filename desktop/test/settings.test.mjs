@@ -22,6 +22,7 @@ import {
   createUpdateSource,
   guardUpdateRenderers,
   restartDesktopUpdate,
+  startDesktopUpdateChecks,
 } from '../main/updates.mjs';
 
 function deferred() {
@@ -1736,6 +1737,53 @@ test('first installation resolves its exact published runtime without a newer ap
   }
 });
 
+test('desktop update discovery repeats after failures without overlapping timer and wake checks', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000 });
+  const powerMonitor = new EventEmitter();
+  const pending = deferred();
+  let attempts = 0;
+  const stop = startDesktopUpdateChecks({
+    interval: 1_000,
+    powerMonitor,
+    check: async () => {
+      attempts++;
+      if (attempts === 1) await pending.promise;
+      if (attempts === 2) throw new Error('Network unavailable');
+    },
+  });
+  t.after(stop);
+  assert.equal(attempts, 1);
+  t.mock.timers.tick(5_000);
+  powerMonitor.emit('resume');
+  assert.equal(attempts, 1);
+  pending.resolve();
+  await new Promise(setImmediate);
+  powerMonitor.emit('resume');
+  t.mock.timers.tick(999);
+  assert.equal(attempts, 1);
+  t.mock.timers.tick(1);
+  powerMonitor.emit('resume');
+  assert.equal(attempts, 2);
+  await new Promise(setImmediate);
+  t.mock.timers.setTime(20_000);
+  powerMonitor.emit('resume');
+  powerMonitor.emit('resume');
+  assert.equal(attempts, 3);
+  await new Promise(setImmediate);
+  t.mock.timers.tick(1_000);
+  assert.equal(attempts, 4);
+  await new Promise(setImmediate);
+  t.mock.method(Date, 'now', () => 5_000);
+  t.mock.timers.tick(1_000);
+  assert.equal(attempts, 5);
+  stop();
+  await new Promise(setImmediate);
+  t.mock.timers.tick(10_000);
+  powerMonitor.emit('resume');
+  assert.equal(attempts, 5);
+  assert.equal(powerMonitor.listenerCount('resume'), 0);
+});
+
 test('desktop staging waits for runtime preparation and a native downloaded event, and retries preparation only explicitly', async () => {
   const candidate = {
     version: '0.2.0',
@@ -2099,6 +2147,48 @@ test('late renderer acknowledgements cannot authorize another update restart', a
   release();
   assert.equal(ipc.listenerCount('otto:update:prepared'), 0);
   assert.equal(contents.listenerCount('did-start-navigation'), 0);
+});
+
+test('choosing Later keeps restart available without repeated background prompts', async () => {
+  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+  const body = source.slice(
+    source.indexOf('async function checkForUpdates('),
+    source.indexOf('async function restartForUpdate('),
+  );
+  const candidate = { version: '0.2.0' };
+  let checks = 0;
+  let prompts = 0;
+  let restarts = 0;
+  const updates = {
+    ready: undefined,
+    check: async () => {
+      checks++;
+      updates.ready = candidate;
+      return candidate;
+    },
+    restart: async () => restarts++,
+  };
+  const context = {
+    updates,
+    quitting: false,
+    checkingUpdates: undefined,
+    dialog: {
+      showMessageBox: async () => ({ response: ++prompts === 1 ? 1 : 0 }),
+    },
+    refreshUpdateMenu: () => {},
+    writeDiagnostic: async () => {},
+    bounded: String,
+  };
+  runInNewContext(`${body}\nglobalThis.check = checkForUpdates;`, context);
+  await context.check(false);
+  assert.equal(prompts, 1);
+  assert.equal(restarts, 0);
+  await context.check(false);
+  assert.equal(checks, 1);
+  assert.equal(prompts, 1);
+  await context.check();
+  assert.equal(prompts, 2);
+  assert.equal(restarts, 1);
 });
 
 test('main update restart preserves the renderer navigation fence through its quitting wrapper', async () => {

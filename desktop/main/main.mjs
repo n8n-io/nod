@@ -8,6 +8,7 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
+  powerMonitor,
   safeStorage,
   session,
   shell,
@@ -40,6 +41,7 @@ import {
   createUpdateSource,
   guardUpdateRenderers,
   restartDesktopUpdate,
+  startDesktopUpdateChecks,
 } from './updates.mjs';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -73,7 +75,7 @@ let updateSource;
 let updates;
 let checkingUpdates;
 let updatePhase = 'idle';
-let checkedUpdatesAtStartup = false;
+let stopUpdateChecks;
 let closingEngine = false;
 let tray;
 let engineOrigin = '';
@@ -604,10 +606,11 @@ async function finishEnginePreparation() {
     setupWindow = undefined;
     await completeDesktopSetup(completedWindow);
   }
-  if (updates && !checkedUpdatesAtStartup) {
-    checkedUpdatesAtStartup = true;
-    void checkForUpdates(false);
-  }
+  if (updates && !stopUpdateChecks)
+    stopUpdateChecks = startDesktopUpdateChecks({
+      check: () => checkForUpdates(false),
+      powerMonitor,
+    });
   return status;
 }
 
@@ -642,7 +645,7 @@ function refreshUpdateMenu() {
 }
 
 async function checkForUpdates(manual = true) {
-  if (!updates || quitting || checkingUpdates) return;
+  if (!updates || quitting || checkingUpdates || (!manual && updates.ready)) return;
   checkingUpdates = (async () => {
     try {
       const candidate = await updates.check();
@@ -1046,6 +1049,7 @@ else {
     event.preventDefault();
     if (quitting) return;
     quitting = true;
+    stopUpdateChecks?.();
     const stoppingUpdates = updates?.dispose();
     updateReadinessNotice();
     stopNotifications?.();

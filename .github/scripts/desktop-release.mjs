@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { basename, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { verifyRuntimeDownload } from '../../desktop/scripts/release-tools.mjs';
+import { automaticRelease, configuredRelease } from './prepare-desktop-release.mjs';
 
 const root = process.cwd();
 const runtimeDirectory = join(root, '.local/desktop-runtime-release');
@@ -159,26 +160,49 @@ async function plan() {
   repositoryName(runtimeRepository);
   if (!['self-signed', 'developer-id'].includes(signingMode))
     throw new Error('Invalid signing mode.');
+  const source = run('git', ['rev-parse', 'HEAD']);
+  if (!shaPattern.test(source) || source !== process.env.GITHUB_SHA)
+    throw new Error('Release checkout does not match the workflow revision.');
+  const automatic = process.env.OTTO_AUTOMATIC_RELEASE === 'true';
+  const release = automatic
+    ? automaticRelease(
+        root,
+        gh([
+          'api',
+          `repos/${releaseRepository}/releases?per_page=100`,
+          '--paginate',
+          '--jq',
+          '.[] | {id, tag_name, target_commitish, draft, body: (if .draft then .body else null end)}',
+        ])
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line)),
+        sourceRepository,
+      )
+    : await configuredRelease(root);
+  if (!release) {
+    await outputValues({
+      source,
+      release_needed: 'false',
+      reason: 'No product changes since the latest published desktop release.',
+    });
+    return;
+  }
   if (process.env.APPLE_CONFIGURED !== 'true')
     throw new Error(
       'Configure signing credentials and public certificate metadata in mac-release.',
     );
-  run(process.execPath, ['.github/scripts/prepare-desktop-release.mjs', '--check']);
-  const source = run('git', ['rev-parse', 'HEAD']);
-  if (!shaPattern.test(source) || source !== process.env.GITHUB_SHA)
-    throw new Error('Release checkout does not match the workflow revision.');
   const runs = api(
-    `repos/${sourceRepository}/actions/workflows/ci.yml/runs?head_sha=${source}&status=success&per_page=20`,
+    `repos/${sourceRepository}/actions/workflows/ci.yml/runs?head_sha=${source}&per_page=20`,
   );
   if (
-    !runs?.workflow_runs.some(
+    runs?.workflow_runs.find(
       (entry) =>
         entry.head_sha === source &&
         entry.head_branch === 'main' &&
         entry.head_repository?.full_name === sourceRepository &&
-        ['push', 'workflow_dispatch'].includes(entry.event) &&
-        entry.conclusion === 'success',
-    )
+        ['push', 'workflow_dispatch'].includes(entry.event),
+    )?.conclusion !== 'success'
   )
     throw new Error('The exact main revision must pass CI before packaging a release.');
   const appRepo = api(`repos/${releaseRepository}`, releaseRepository);
@@ -189,10 +213,16 @@ async function plan() {
     throw new Error('Self-signed builds are restricted to private distribution repositories.');
   if (signingMode === 'developer-id' && runtimeRepo.private)
     throw new Error('Developer ID releases require a public runtime download destination.');
-  const release = JSON.parse(await readFile('desktop/release.json', 'utf8'));
   const tag = `desktop-v${release.version}`;
-  const existing = api(`repos/${releaseRepository}/releases/tags/${tag}`, releaseRepository);
+  const existing = releaseByTag(releaseRepository, tag);
   if (existing && !existing.draft) throw new Error('This desktop version is already published.');
+  let metadataSha256 = '';
+  if (automatic) {
+    const path = join(root, '.local/desktop-release-plan.json');
+    await mkdir(join(root, '.local'), { recursive: true });
+    await writeFile(path, JSON.stringify(release, null, 2) + '\n');
+    metadataSha256 = await hash(path);
+  }
   const inputs = JSON.parse(run(process.execPath, ['desktop/scripts/runtime-inputs.mjs']));
   if (!hashPattern.test(inputs.fingerprint)) throw new Error('Invalid runtime fingerprint.');
   const runtimeTag = `runtime-darwin-arm64-${inputs.fingerprint}`;
@@ -218,6 +248,8 @@ async function plan() {
   }
   await outputValues({
     source,
+    release_needed: 'true',
+    metadata_sha256: metadataSha256,
     version: release.version,
     tag,
     runtime_tag: runtimeTag,
@@ -402,8 +434,8 @@ async function draftApp() {
   repositoryName(releaseRepository);
   repositoryName(runtimeRepository);
   const publish = process.env.OTTO_PUBLISH_RELEASE === 'true';
-  run(process.execPath, ['.github/scripts/prepare-desktop-release.mjs', '--check']);
-  const version = JSON.parse(await readFile('desktop/release.json', 'utf8')).version;
+  const prepared = await configuredRelease(root);
+  const version = prepared.version;
   const tag = `desktop-v${version}`;
   const source = process.env.GITHUB_SHA;
   if (!shaPattern.test(source) || run('git', ['rev-parse', 'HEAD']) !== source)
@@ -440,7 +472,7 @@ async function draftApp() {
     )
       throw new Error('The packaged update source must be a credential-free HTTPS URL.');
   }
-  const changes = run(process.execPath, ['.github/scripts/prepare-desktop-release.mjs', '--notes']);
+  const changes = prepared.notes.trimEnd();
   await writeFile(join(output, 'CHANGELOG.md'), changes + '\n');
   const names = (await readdir(output)).filter(
     (name) =>

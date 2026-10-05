@@ -24,6 +24,8 @@ export function checkRequest(input) {
   const queryKeys = Object.keys(query).sort().join(',');
   const api = 'https://api.github.com/repos/n8n-io/otto/releases';
   if (!keys && !queryKeys) return { operation: 'list', apiUrl: `${api}?per_page=100` };
+  if (!keys && queryKeys === 'installer' && query.installer === 'true')
+    return { operation: 'installer', apiUrl: `${api}?per_page=100` };
   if (
     keys === 'tag' &&
     !queryKeys &&
@@ -160,21 +162,38 @@ export function releaseResponse(pages, request, baseUrl) {
   try {
     if (!Array.isArray(pages) || !pages.length || pages.length > 5) return unavailable();
     if (pages.some((page) => page.statusCode !== 200))
-      return pages.length === 1 && pages[0].statusCode === 404 && request.operation !== 'list'
+      return pages.length === 1 &&
+        pages[0].statusCode === 404 &&
+        !['list', 'installer'].includes(request.operation)
         ? missing()
         : unavailable();
-    if (request.operation === 'list') {
+    if (['list', 'installer'].includes(request.operation)) {
       if (
         pages.some((page) => !Array.isArray(page.body) || page.body.length > 100) ||
         (pages.length === 5 && pages[4].body.length === 100)
       )
         return unavailable();
+      const releases = pages
+        .flatMap((page) => page.body)
+        .map(normalize)
+        .filter(Boolean);
+      if (request.operation === 'list') return { status: 200, body: releases };
+      const latest = releases
+        .filter((release) => desktopTag(release.tag_name))
+        .sort((a, b) => compare(b.tag_name.slice(9), a.tag_name.slice(9)))[0];
+      if (!latest) return missing();
+      const disk = latest.assets.find((asset) => asset.name === 'Otto-arm64.dmg');
+      const manifest = latest.assets.find((asset) => asset.name === 'release.json');
+      if (!disk || !manifest || manifest.size > 2 * 1024 * 1024) return unavailable();
       return {
         status: 200,
-        body: pages
-          .flatMap((page) => page.body)
-          .map(normalize)
-          .filter(Boolean),
+        body: {
+          schema: 1,
+          version: latest.tag_name.slice(9),
+          releaseId: latest.id,
+          disk: { url: disk.url, bytes: disk.size, sha256: disk.digest.slice(7) },
+          manifestUrl: manifest.url,
+        },
       };
     }
     if (pages.length !== 1) return unavailable();
@@ -372,7 +391,7 @@ export function workflowNodes() {
               },
               paginationCompleteWhen: 'other',
               completeExpression:
-                "={{ $('Check desktop request').first().json.operation !== 'list' || $response.statusCode !== 200 || !Array.isArray($response.body) || $response.body.length < 100 }}",
+                "={{ !['list','installer'].includes($('Check desktop request').first().json.operation) || $response.statusCode !== 200 || !Array.isArray($response.body) || $response.body.length < 100 }}",
               limitPagesFetched: true,
               maxRequests: 5,
             },

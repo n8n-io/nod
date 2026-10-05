@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 const releaseFiles = [
   'desktop/package.json',
@@ -11,6 +13,23 @@ const releaseFiles = [
 ];
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const maximumNotesBytes = 64 * 1024;
+const productPaths = [
+  'src',
+  'desktop',
+  'public',
+  'index.html',
+  'vite.config.ts',
+  'tsconfig.json',
+  'package.json',
+  'package-lock.json',
+  'Dockerfile.workspace',
+  'Dockerfile.browser',
+  '.dockerignore',
+  '.github/scripts/with-apple-signing.mjs',
+  ':(exclude)desktop/test',
+  ':(exclude)desktop/*.md',
+  ':(exclude)desktop/release.json',
+];
 
 export function releaseVersion(value) {
   if (typeof value !== 'string' || value.length > 64 || !versionPattern.test(value))
@@ -117,6 +136,150 @@ export function currentNotes(changelog, version) {
   return notes;
 }
 
+function productChanged(root, previousTag, source) {
+  const changed = git(root, [
+    'diff',
+    '--name-only',
+    '-z',
+    previousTag,
+    source,
+    '--',
+    ...productPaths,
+  ])
+    .split('\0')
+    .filter(Boolean);
+  return changed.some((file) => {
+    if (
+      ![
+        'package.json',
+        'package-lock.json',
+        'desktop/package.json',
+        'desktop/package-lock.json',
+      ].includes(file)
+    )
+      return true;
+    const withoutVersion = (ref) => {
+      const value = JSON.parse(git(root, ['show', `${ref}:${file}`]));
+      delete value.version;
+      if (value.packages?.['']) delete value.packages[''].version;
+      return value;
+    };
+    return !isDeepStrictEqual(withoutVersion(previousTag), withoutVersion(source));
+  });
+}
+
+function automaticNotes(root, version, previousTag, source) {
+  const date = new Date(git(root, ['show', '-s', '--format=%cI', source]).trim())
+    .toISOString()
+    .slice(0, 10);
+  const commits = releaseCommits(root, previousTag, source);
+  const notes = [
+    `## ${version} - ${date}`,
+    '',
+    `Source: \`${source}\``,
+    `Previous release: \`${previousTag}\``,
+    '',
+    ...commits.slice(0, 100).map(({ sha, subject }) => `- ${subject} (${sha.slice(0, 7)})`),
+    ...(commits.length > 100
+      ? ['', 'More commits are included; review the full Git history.']
+      : []),
+    '',
+  ].join('\n');
+  if (Buffer.byteLength(notes) > maximumNotesBytes)
+    throw new Error('The desktop release notes exceed 64 KiB.');
+  return notes;
+}
+
+export function automaticRelease(root, releases, sourceRepository) {
+  const source = repository(root);
+  if (git(root, ['status', '--porcelain', '--untracked-files=no']).trim())
+    throw new Error('Automatic releases require clean tested source.');
+  if (!Array.isArray(releases)) throw new Error('Desktop release history is unavailable.');
+  const desktop = releases
+    .filter((release) =>
+      /^desktop-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(release.tag_name),
+    )
+    .sort((a, b) => compareVersions(b.tag_name.slice(9), a.tag_name.slice(9)));
+  const previous = desktop.find((release) => release.draft === false);
+  if (!previous) throw new Error('Automatic releases require a published desktop baseline.');
+  const previousTag = previous.tag_name;
+  if (
+    !tagExists(root, previousTag) ||
+    git(root, ['merge-base', '--is-ancestor', previousTag, source], true) === null
+  )
+    throw new Error('The latest published desktop tag must belong to this source history.');
+  if (!productChanged(root, previousTag, source)) return;
+  const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
+  const pending = desktop.find(
+    (release) => release.draft === true && release.target_commitish === source,
+  );
+  let version;
+  if (pending) {
+    if (
+      !pending.body?.includes(marker) ||
+      compareVersions(pending.tag_name.slice(9), previousTag.slice(9)) <= 0
+    )
+      throw new Error('The pending desktop release does not match this source and version.');
+    version = pending.tag_name.slice(9);
+  } else {
+    const [major, minor, patch] = previousTag.slice(9).split('.');
+    const reserved = new Set([
+      ...desktop.map((release) => release.tag_name),
+      ...git(root, ['tag', '--list', 'desktop-v*']).trim().split('\n'),
+    ]);
+    let next = BigInt(patch) + 1n;
+    while (reserved.has(`desktop-v${major}.${minor}.${next}`)) next++;
+    version = releaseVersion(`${major}.${minor}.${next}`);
+  }
+  return {
+    version,
+    previousTag,
+    source,
+    notes: automaticNotes(root, version, previousTag, source),
+  };
+}
+
+export async function checkReleasePlan(root, input, path, digest) {
+  const bytes = await readFile(resolve(root, path));
+  if (
+    !/^[a-f0-9]{64}$/.test(digest ?? '') ||
+    createHash('sha256').update(bytes).digest('hex') !== digest
+  )
+    throw new Error('The release plan failed its checksum.');
+  if (bytes.length > maximumNotesBytes + 1024)
+    throw new Error('The desktop release plan is too large.');
+  const plan = JSON.parse(bytes.toString('utf8'));
+  const source = repository(root);
+  if (
+    Object.keys(plan).sort().join(',') !== 'notes,previousTag,source,version' ||
+    plan.version !== releaseVersion(input) ||
+    plan.source !== source ||
+    !/^desktop-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(plan.previousTag) ||
+    compareVersions(plan.version, plan.previousTag.slice(9)) <= 0 ||
+    !tagExists(root, plan.previousTag) ||
+    git(root, ['merge-base', '--is-ancestor', plan.previousTag, source], true) === null ||
+    git(root, ['status', '--porcelain', '--untracked-files=no']).trim()
+  )
+    throw new Error('The release plan does not match the clean tested source.');
+  if (
+    !productChanged(root, plan.previousTag, source) ||
+    plan.notes !== automaticNotes(root, plan.version, plan.previousTag, source)
+  )
+    throw new Error('The release plan notes do not match the source changes.');
+  if (
+    tagExists(root, `desktop-v${plan.version}`) &&
+    git(root, ['rev-parse', `refs/tags/desktop-v${plan.version}^{commit}`]).trim() !== source
+  )
+    throw new Error('The desktop release tag already points to another commit.');
+  return plan;
+}
+
+export async function configuredRelease(root) {
+  const path = process.env.OTTO_RELEASE_PLAN || releaseFiles[2];
+  const manifest = await readJson(root, path);
+  return checkRelease(root, process.env.OTTO_RELEASE_VERSION || manifest.version);
+}
+
 export async function prepareRelease(root, input) {
   const version = releaseVersion(input);
   const source = repository(root);
@@ -181,6 +344,16 @@ export async function prepareRelease(root, input) {
 
 export async function checkRelease(root, input) {
   const version = releaseVersion(input);
+  if (process.env.OTTO_RELEASE_PLAN) {
+    if (process.env.GITHUB_ACTIONS !== 'true')
+      throw new Error('Generated release plans are only accepted in GitHub Actions.');
+    return checkReleasePlan(
+      root,
+      version,
+      process.env.OTTO_RELEASE_PLAN,
+      process.env.OTTO_RELEASE_PLAN_SHA256,
+    );
+  }
   const head = repository(root);
   for (const file of releaseFiles) {
     const committed = git(root, ['show', `HEAD:${file}`]);
@@ -239,7 +412,7 @@ async function main() {
   const root = process.cwd();
   const version = releaseVersion(
     process.env.OTTO_RELEASE_VERSION ??
-      (args.length ? (await readJson(root, releaseFiles[2])).version : undefined),
+      (args.length ? (await configuredRelease(root)).version : undefined),
   );
   if (!args.length) {
     const manifest = await prepareRelease(root, version);

@@ -62,6 +62,9 @@ test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request sh
   );
   for (const input of [
     { query: { url: 'https://attacker.invalid' } },
+    { query: { installer: 'false' } },
+    { query: { installer: 'true', url: 'https://attacker.invalid' } },
+    { params: { releaseId: '42' }, query: { installer: 'true' } },
     { params: { releaseId: ['42'] } },
     { params: { releaseId: '42', assetId: '102', filename: '../private' } },
     { params: { releaseId: '42', assetId: '102', filename: 'https://attacker.invalid' } },
@@ -102,6 +105,51 @@ test('N8ND-PUBLISHED: broker omits drafts, legacy tags, unknown assets and priva
   );
   assert.equal(read(release({ draft: true })).status, 404);
   assert.equal(read(release({ tag_name: 'v0.2.0' })).status, 404);
+});
+
+test('N8ND-INSTALLER: latest metadata pins the highest published current desktop release and fails closed when incomplete', () => {
+  const input = { query: { installer: 'true' } };
+  const result = read(
+    [
+      release({ tag_name: 'desktop-v0.9.0' }),
+      release({ id: 43, tag_name: 'desktop-v0.10.0' }),
+      release({ id: 44, tag_name: 'desktop-v0.10.0-beta.1' }),
+      release({ id: 45, tag_name: 'desktop-v9.0.0', draft: true }),
+      release({ id: 46, tag_name: 'v99.0.0' }),
+      release({ id: 47, tag_name: `runtime-darwin-arm64-${'b'.repeat(64)}` }),
+    ],
+    input,
+  );
+  assert.deepEqual(result, {
+    status: 200,
+    body: {
+      schema: 1,
+      version: '0.10.0',
+      releaseId: 43,
+      disk: {
+        url: `${base}/releases/43/assets/103/Otto-arm64.dmg`,
+        bytes: 1234,
+        sha256: 'a'.repeat(64),
+      },
+      manifestUrl: `${base}/releases/43/assets/101/release.json`,
+    },
+  });
+  assert.equal(read([], input).status, 404);
+  assert.equal(
+    read([release(), release({ id: 43, tag_name: 'desktop-v1.0.0', assets: [] })], input).status,
+    503,
+  );
+  assert.equal(read([release({ assets: [asset(103, 'Otto-arm64.dmg')] })], input).status, 503);
+  const pages = [
+    { statusCode: 200, body: [release()] },
+    { statusCode: 200, body: [release({ id: 43, tag_name: 'desktop-v0.3.0' })] },
+  ];
+  assert.equal(releaseResponse(pages, checkRequest(input), base).body.version, '0.3.0');
+  const full = Array.from({ length: 5 }, () => ({
+    statusCode: 200,
+    body: Array.from({ length: 100 }, () => release()),
+  }));
+  assert.equal(releaseResponse(full, checkRequest(input), base).status, 503);
 });
 
 test('N8ND-PIN: asset resolution binds release, asset ID and filename including replacement races', () => {

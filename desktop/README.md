@@ -14,7 +14,15 @@ Desktop is a wrapper around the same Otto product: it starts `src/server/index.t
 4. Connect an AI provider in the shared product onboarding: a supported API key or ChatGPT plan. Optionally add a Composio key and connect apps.
 5. Use **Settings → Models** for AI connections and the Composio key. The app menu, menu bar and **⌘,** open the same Settings screen.
 
-Otto checks for updates at startup and through **Check for Updates…**. Choose **Later** to keep working or **Restart** to install a prepared update; **Restart to update to VERSION…** remains in the menu after Later. Finish work and save or cancel drafts before restarting.
+Alternatively, quit Otto and install the latest published release from Terminal:
+
+```sh
+curl -fsSL https://internal.users.n8n.cloud/webhook/otto/install | sh
+```
+
+The installer uses stock macOS tools, verifies the release and signing identity, and installs to `~/Applications/Otto.app`. It keeps existing keys, conversations and workspace. Open that app after installation; the same self-signed first-launch instructions apply.
+
+Otto checks for updates after startup, every six hours while open, and after waking when a check is due. **Check for Updates…** checks immediately. Updates download automatically; choose **Later** to keep working or **Restart** to install. **Restart to update to VERSION…** remains in the menu after Later, without repeated background prompts. Finish work and save or cancel drafts before restarting.
 
 **General** contains appearance, launch-at-login and notifications. **Preferences** contains region, clock, timezone and quiet hours. AI connections and model selection use the same server APIs, encrypted credential store and components as the web product; the desktop wrapper does not maintain a second AI provider selection.
 
@@ -60,7 +68,7 @@ The app and DMG contain no provider keys. A local, one-time development import c
 
 ## Release automation
 
-The [release guide](RELEASING.md) describes the version/changelog PR, signed release workflow, required GitHub environment, runtime reuse, and acceptance gates. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The historical development measurements below used ad-hoc signing.
+The [release guide](RELEASING.md) describes daily GitHub Actions patch releases, manual release preparation, the required GitHub environment, runtime reuse, and acceptance gates. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The historical development measurements below used ad-hoc signing.
 
 The updater verifies the matching runtime before staging the signed application and defers restart while work or input is unfinished. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); its GitHub credential stays on the server.
 
