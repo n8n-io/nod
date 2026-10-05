@@ -44,6 +44,7 @@ ipcRenderer.on('otto:settings:focus', (_event, section) => {
 });
 
 contextBridge.exposeInMainWorld('ottoDesktop', {
+  getAnalyticsConfiguration: () => ipcRenderer.invoke('otto:analytics:configuration'),
   onPrepareUpdate: (check) => {
     if (typeof check !== 'function') throw new TypeError('A restart check is required.');
     restartChecks.add(check);

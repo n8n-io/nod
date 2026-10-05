@@ -205,7 +205,7 @@ export function Sidebar({
           }}
         >
           <BrandMark />
-          <span>otto</span>
+          <span data-analytics-public>otto</span>
         </a>
         <button
           type="button"
@@ -224,7 +224,12 @@ export function Sidebar({
           )}
         </button>
       </div>
-      <nav className="main-nav" aria-label="Main navigation" id="sidebar-navigation">
+      <nav
+        className="main-nav"
+        aria-label="Main navigation"
+        id="sidebar-navigation"
+        data-analytics-public
+      >
         <ul
           onKeyDown={(event) => {
             if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
@@ -336,7 +341,7 @@ export function Sidebar({
           }}
         >
           <div className="mobile-sheet-body" tabIndex={-1}>
-            <nav className="mobile-sections" aria-label="Sections">
+            <nav className="mobile-sections" aria-label="Sections" data-analytics-public>
               {navigationItems.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -479,7 +484,9 @@ export function Sidebar({
               onClick={(event) => account.onSettings('Appearance', event.currentTarget)}
             >
               <Settings size={22} aria-hidden="true" />
-              <span className="nav-label">Settings</span>
+              <span className="nav-label" data-analytics-public>
+                Settings
+              </span>
             </button>
           ))}
       </div>

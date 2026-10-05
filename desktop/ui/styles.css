@@ -201,14 +201,14 @@ button {
   overflow: hidden;
   margin: 26px 0 12px;
 }
-#progress-value {
+.progress-value {
   height: 100%;
   width: 30%;
   background: var(--pink);
   border-radius: inherit;
   animation: progress 1.6s ease-in-out infinite;
 }
-#progress-value.determinate {
+.progress-value.determinate {
   animation: none;
 }
 @keyframes progress {

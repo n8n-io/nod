@@ -4,16 +4,21 @@ import test from 'node:test';
 import { createTenantLifecycle } from '../src/lifecycle.ts';
 import { bootstrap, boundedBody, type TenantIdentity } from '../src/protocol.ts';
 
-function configuration(ownerId = randomUUID(), version = '1', expiresAt = Date.now() + 60_000) {
+function configuration(
+  ownerId = randomUUID(),
+  version = '1',
+  expiresAt = Date.now() + 60_000,
+  environment = 'development',
+) {
   const suffix = createHash('sha256')
-    .update(JSON.stringify(['otto-tenant-v1', 'development', ownerId]))
+    .update(JSON.stringify(['otto-tenant-v1', environment, ownerId]))
     .digest('hex')
     .slice(0, 32);
   return {
     ownerId,
     env: {
       OTTO_OWNER_ID: ownerId,
-      OTTO_ENVIRONMENT: 'development',
+      OTTO_ENVIRONMENT: environment,
       OTTO_MODE: 'tenant',
       OTTO_RUNTIME_GENERATION: version,
       OTTO_RUNTIME_SECRET: 's'.repeat(43),
@@ -98,6 +103,8 @@ test('tenant bootstrap binds the SQL namespace, runtime identity and environment
     'development',
   );
   assert.equal(result.env.NODE_ENV, 'production');
+  assert.equal(result.env.OTTO_ANALYTICS_ENABLED, 'false');
+  assert.equal(result.env.OTTO_ANALYTICS_ENVIRONMENT, 'development');
   assert.equal(result.env.OTTO_DATA_ROOT, '/data');
   assert.equal(result.env.HOST, '0.0.0.0');
   assert.equal(result.env.OTTO_BIND_HOST, '0.0.0.0');
@@ -113,8 +120,42 @@ test('tenant bootstrap binds the SQL namespace, runtime identity and environment
     { DATABASE_URL: 'postgresql://admin:synthetic@db.example.test/otto' },
     { PGBOSS_SCHEMA: 'public' },
     { OTTO_OWNER_ID: randomUUID() },
+    { OTTO_ANALYTICS_ENABLED: 'yes' },
+    { OTTO_ANALYTICS_ENVIRONMENT: 'private-account@example.test' },
   ])
     await assert.rejects(bootstrap({ ...input, env: { ...input.env, ...change } }, 'development'));
+});
+
+test('tenant bootstrap preserves telemetry opt-out and isolates staging events despite production Node mode', async () => {
+  for (const environment of ['production', 'staging']) {
+    const input = configuration(randomUUID(), '1', Date.now() + 60_000, environment);
+    const initial = await bootstrap(input, environment);
+    assert.equal(initial.env.NODE_ENV, 'production');
+    assert.equal(initial.env.OTTO_ANALYTICS_ENABLED, String(environment === 'production'));
+    assert.equal(
+      initial.env.OTTO_ANALYTICS_ENVIRONMENT,
+      environment === 'production' ? 'production' : 'development',
+    );
+    const disabled = await bootstrap(
+      { ...input, env: { ...input.env, OTTO_ANALYTICS_ENABLED: 'false' } },
+      environment,
+    );
+    assert.equal(disabled.env.OTTO_ANALYTICS_ENABLED, 'false');
+    const observed = await bootstrap(
+      {
+        ...input,
+        env: {
+          ...input.env,
+          OTTO_ANALYTICS_ENABLED: 'true',
+          OTTO_ANALYTICS_ENVIRONMENT: 'development',
+        },
+      },
+      environment,
+    );
+    assert.equal(observed.env.OTTO_ANALYTICS_ENABLED, 'true');
+    assert.equal(observed.env.OTTO_ANALYTICS_ENVIRONMENT, 'development');
+    assert.notEqual(disabled.identity.configurationHash, observed.identity.configurationHash);
+  }
 });
 
 test('tenant bootstrap binds its computer provider and forces the private E2B stop callback', async () => {

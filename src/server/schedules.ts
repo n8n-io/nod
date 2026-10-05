@@ -11,6 +11,7 @@ import type {
 } from '../shared/contracts.ts';
 import { activeThreadSql, type enqueueTurn } from './thread.ts';
 import type { WorkConsumers } from './work-admission.ts';
+import type { CaptureAnalytics } from './analytics.ts';
 
 const queue = 'scheduled-task';
 const timingSchema = z.object({
@@ -57,6 +58,7 @@ const columns =
   'id,title,prompt,kind,cron,run_at AS "runAt",time_zone AS "timeZone",enabled,revision,next_run_at AS "nextRun",job_id AS "jobId",delivery_channel AS "deliveryChannel",channel_source_id AS "channelSourceId",authority_instruction AS "authorityInstruction",authority_source_message_id AS "authoritySourceMessageId",baseline_observation AS "baselineObservation"';
 
 export interface ScheduleDependencies {
+  analytics?: CaptureAnalytics;
   consumers?: WorkConsumers;
   pool: Pool;
   ownerId: string;
@@ -620,6 +622,10 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       return enqueue(client, saved, nextOccurrence(saved));
     });
     refresh();
+    dependencies.analytics?.({
+      event: 'otto_schedule_changed',
+      properties: { operation: 'create' },
+    });
     return value(row);
   }
 
@@ -679,6 +685,10 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       );
     });
     refresh();
+    dependencies.analytics?.({
+      event: 'otto_schedule_changed',
+      properties: { operation: 'update' },
+    });
     return value(row);
   }
 
@@ -696,6 +706,10 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       await client.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [id, ownerId]);
     });
     refresh();
+    dependencies.analytics?.({
+      event: 'otto_schedule_changed',
+      properties: { operation: 'delete' },
+    });
     return { ok: true };
   }
 

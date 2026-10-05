@@ -12,6 +12,7 @@ import {
   runtimeRoutingGeneration,
 } from './runtime-forwarding.ts';
 import {
+  analyticsEnvironment,
   computerProvider,
   controlBody,
   environmentName,
@@ -384,6 +385,7 @@ export class GatewayContainer extends Container<Bindings> {
     const configured = environmentValues(JSON.parse(this.env.GATEWAY_ENV));
     this.envVars = {
       ...configured,
+      ...analyticsEnvironment(this.env.OTTO_ENVIRONMENT, configured),
       OTTO_MODE: 'gateway',
       OTTO_ENVIRONMENT: environmentName(this.env.OTTO_ENVIRONMENT),
       OTTO_PUBLIC_URL: publicOrigin(this.env),

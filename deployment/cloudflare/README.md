@@ -48,6 +48,8 @@ Each environment has one `GATEWAY_ENV` Worker secret: compact JSON of the gatewa
 
 Privacy notice: operators write their own public Markdown notice to `public/privacy-notice.md` (the build copies it to `dist/web/privacy-notice.md`) and set `OTTO_PRIVACY_NOTICE_FILE=dist/web/privacy-notice.md` in `GATEWAY_ENV`. It is served at `/privacy`. Without the setting there is no notice; an unreadable or invalid file fails startup. Verify `/privacy` signed out and set it as the Google OAuth privacy-policy URL before inviting users.
 
+PostHog product analytics and masked session recordings use the public project key embedded in the app. They default to enabled for the `production` deployment and disabled for other environments, including staging. Set `OTTO_ANALYTICS_ENABLED=false` in `GATEWAY_ENV` to disable both browser recording and server events, or `true` to inspect a development deployment. `OTTO_ANALYTICS_ENVIRONMENT` optionally overrides the `production` or `development` event label. The gateway passes both settings to every tenant. Changes require a release rollout. Include these practices in the operator privacy notice; see [Analytics](../../docs/analytics.md) for captured events and masking boundaries.
+
 ## Storage bootstrap
 
 Each environment needs exactly one private EU R2 bucket bound as `TENANT_FILES`. Create it once with a separate operator token (`CLOUDFLARE_R2_OPERATOR_TOKEN`, Workers R2 Storage Edit):

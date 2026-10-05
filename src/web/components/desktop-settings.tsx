@@ -82,7 +82,7 @@ export function DesktopOptions({
         ] as const
       ).map(([key, label, Icon]) => (
         <div className="account-preference-row" key={key}>
-          <span>
+          <span data-analytics-public>
             <Icon size={18} aria-hidden="true" />
             {label}
           </span>
@@ -207,12 +207,12 @@ export function ComposioSettings({
   const busy = state.busy || working;
   return (
     <section className="composio-settings" data-desktop-settings-pending={dirty || undefined}>
-      <div className="composio-settings-heading">
+      <div className="composio-settings-heading" data-analytics-public>
         <span className="composio-logo" aria-hidden="true" />
         <h4>App connections</h4>
         <span>Optional</span>
       </div>
-      <p>Add a Composio key to connect Gmail, Slack and other apps.</p>
+      <p data-analytics-public>Add a Composio key to connect Gmail, Slack and other apps.</p>
       {!saved ? (
         state.loading ? (
           <Loading />

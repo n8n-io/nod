@@ -78,6 +78,15 @@ export function environmentValues(value: unknown): Record<string, string> {
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+export function analyticsEnvironment(environment: string, env: Record<string, string>) {
+  const production = environmentName(environment) === 'production';
+  const enabled = env.OTTO_ANALYTICS_ENABLED || String(production);
+  const name = env.OTTO_ANALYTICS_ENVIRONMENT || (production ? 'production' : 'development');
+  if (!['true', 'false'].includes(enabled) || !['development', 'production'].includes(name))
+    throw new RuntimeControlError();
+  return { OTTO_ANALYTICS_ENABLED: enabled, OTTO_ANALYTICS_ENVIRONMENT: name };
+}
+
 async function hash(value: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -121,6 +130,7 @@ export async function bootstrap(value: unknown, environment: string, now: () => 
     throw new RuntimeControlError();
   const configured: Record<string, string> = {
     ...env,
+    ...analyticsEnvironment(environment, env),
     OTTO_CONTROL_URL: 'http://otto.control',
     OTTO_DATA_ROOT: '/data',
     OTTO_BIND_HOST: '0.0.0.0',

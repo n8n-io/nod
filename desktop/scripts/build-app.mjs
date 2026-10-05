@@ -16,6 +16,7 @@ import { packager } from '@electron/packager';
 import { copyBundleSource as copy, copyEngineDependencies } from './engine-dependencies.mjs';
 import { assetHash, runtimeRelease as readRuntimeRelease } from '../runtime/assets.mjs';
 import { runtimeInputs } from './runtime-inputs.mjs';
+import { buildDesktopUI } from './build-ui.mjs';
 import {
   exportCertificate,
   minimumSystemVersion as supportedMinimumSystemVersion,
@@ -141,8 +142,8 @@ for (const path of [
   await copy(join(root, path), join(engine, path));
 }
 await copyEngineDependencies({ root, target: engine });
-for (const path of ['main', 'preload', 'ui'])
-  await copy(join(desktop, path), join(appSource, path));
+for (const path of ['main', 'preload']) await copy(join(desktop, path), join(appSource, path));
+await buildDesktopUI(join(appSource, 'ui'));
 if (full)
   await cp(runtimeAssets, join(engine, 'runtime-assets'), {
     recursive: true,

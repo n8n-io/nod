@@ -19,6 +19,8 @@ import { createMemoryLearning } from '../src/server/memory-learning.ts';
 import { createMemoryService } from '../src/server/memory.ts';
 import { areaEntries, digest } from '../src/server/memory-tree.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
+import type { ProductAnalytics } from '../src/ports/analytics.ts';
+import { createAnalytics } from '../src/server/analytics.ts';
 
 test(
   'one thread runs every turn in order on the same session and workspace',
@@ -73,7 +75,16 @@ test(
 
     await db.initializeDatabase();
     await thread.initializeThreads();
+    const analyticsEvents: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => analyticsEvents.push(event), shutdown: async () => {} },
+      deployment: 'local',
+      environment: 'development',
+      dataRoot: root,
+    });
+    const captureAnalytics = analytics.forOwner(ownerId);
     const personal = createPersonalService({
+      analytics: captureAnalytics,
       pool: db.pool,
       ownerId,
       scheduler: thread.boss,
@@ -108,6 +119,7 @@ test(
     const userMessages = thread.createUserMessageService({ confirmAction: approvals.acceptChat });
     const discarded: string[] = [];
     const app = await createApp({
+      analytics: captureAnalytics,
       computer: fakeComputer({
         discard: async (threadId) => {
           discarded.push(threadId);
@@ -237,6 +249,7 @@ test(
     let failRelease = 0;
 
     const dependencies: ThreadDependencies = {
+      analytics: captureAnalytics,
       connectedApps: readConnectedApps,
       activityCheck: async (turn) => activityLookup?.(turn),
       speech: {
@@ -621,6 +634,7 @@ test(
       );
 
       await t.test('consecutive messages run as turns on the same thread', async () => {
+        const before = analyticsEvents.length;
         const first = await thread.submitUserMessage('first message', [], { channel: 'web' });
         await waitFor(settled(first.turnId));
         const second = await thread.submitUserMessage('second message', [], {
@@ -645,6 +659,28 @@ test(
           1,
         );
         firstThreadId = first.threadId;
+        const captured = analyticsEvents.slice(before);
+        assert.equal(captured.filter((event) => event.event === 'otto_turn_started').length, 2);
+        assert.equal(
+          captured.filter(
+            (event) =>
+              event.event === 'otto_turn_completed' && event.properties.outcome === 'succeeded',
+          ).length,
+          2,
+        );
+        assert.ok(
+          captured.every(
+            (event) => event.properties.source === 'user' && event.properties.channel === 'web',
+          ),
+        );
+        assert.ok(
+          captured.every(
+            (event) => event.distinctId === analytics.configuration(ownerId).distinctId,
+          ),
+        );
+        assert.ok(!JSON.stringify(captured).includes('first message'));
+        assert.ok(!JSON.stringify(captured).includes(first.threadId));
+        assert.ok(!JSON.stringify(captured).includes(first.turnId));
       });
 
       await t.test('turns retain owned manual and automatic region preferences', async () => {
@@ -2257,6 +2293,47 @@ test(
         const rebased = (await request('GET', '/api/conversation/bug-report')).json();
         assert.ok(!JSON.stringify(rebased).includes('orphaned-fixture-password'));
       });
+      await t.test(
+        'turn and schedule analytics keep outcomes while excluding prompts, raw failures and private identifiers',
+        async () => {
+          const completed = analyticsEvents.filter(
+            (event) => event.event === 'otto_turn_completed',
+          );
+          for (const outcome of ['succeeded', 'failed', 'cancelled'])
+            assert.ok(
+              completed.some((event) => event.properties.outcome === outcome),
+              outcome,
+            );
+          assert.ok(
+            analyticsEvents.some(
+              (event) =>
+                event.event === 'otto_schedule_changed' && event.properties.operation === 'create',
+            ),
+          );
+          for (const event of completed) {
+            assert.deepEqual(Object.keys(event.properties).sort(), [
+              'analytics_schema',
+              'background',
+              'capture_source',
+              'channel',
+              'deployment',
+              'duration_ms',
+              'environment',
+              'outcome',
+              'source',
+            ]);
+            assert.ok(Number(event.properties.duration_ms) >= 0);
+          }
+          for (const privateValue of [
+            'runtime-failure',
+            'fixture-secret',
+            'fixture-token',
+            'first message',
+            root,
+          ])
+            assert.ok(!JSON.stringify(analyticsEvents).includes(privateValue));
+        },
+      );
     } finally {
       for (const resolve of gates.values()) resolve();
       releaseFence();

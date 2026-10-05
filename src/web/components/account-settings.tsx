@@ -29,6 +29,7 @@ import {
 } from './ui';
 import { usePageData } from '../hooks/use-page-data';
 import { errorMessage } from '../lib/api';
+import { captureAnalytics } from '../lib/analytics';
 import { SearchPicker, TimeZonePicker } from './time-zone-picker';
 import {
   dateFormatFrom,
@@ -125,9 +126,11 @@ function LanguageAndRegion({
   }
   return (
     <section className="account-region" aria-labelledby={heading}>
-      <h4 id={heading}>Date and time</h4>
+      <h4 id={heading} data-analytics-public>
+        Date and time
+      </h4>
       <div className="account-preference-row account-picker-row">
-        <span id={regionLabel}>
+        <span id={regionLabel} data-analytics-public>
           <MapPin size={18} aria-hidden="true" />
           Region
         </span>
@@ -143,7 +146,7 @@ function LanguageAndRegion({
         />
       </div>
       <div className="account-preference-row account-clock-row">
-        <span id={clockLabel}>
+        <span id={clockLabel} data-analytics-public>
           <Clock3 size={18} aria-hidden="true" />
           Clock
         </span>
@@ -166,7 +169,7 @@ function LanguageAndRegion({
         </div>
       </div>
       <div className="account-preference-row account-picker-row account-time-zone">
-        <span id={timeZoneLabel}>
+        <span id={timeZoneLabel} data-analytics-public>
           <Globe size={18} aria-hidden="true" />
           Time zone
         </span>
@@ -369,6 +372,15 @@ export function AccountSettings({
     name.trim() !== account.user.name;
   const [error, setError] = useState('');
   const active = useRef(false);
+  const recordedTab = useRef<string | null>(null);
+  function recordTab(value: AccountTab) {
+    const key = `${openRequest}:${value}`;
+    if (recordedTab.current === key) return;
+    recordedTab.current = key;
+    captureAnalytics('otto_settings_viewed', {
+      tab: value.toLowerCase() as 'general' | 'profile' | 'appearance' | 'preferences' | 'models',
+    });
+  }
   const id = useId();
   useEffect(() => {
     active.current = true;
@@ -383,6 +395,7 @@ export function AccountSettings({
         return;
       }
       setTab(selectedTab);
+      recordTab(selectedTab);
       setName(account.user.name);
       setError('');
     }
@@ -404,6 +417,7 @@ export function AccountSettings({
       return false;
     }
     setTab(value);
+    recordTab(value);
     setError('');
     return true;
   }
@@ -432,9 +446,16 @@ export function AccountSettings({
           }
         }}
       >
-        <DialogTitle className="sr-only">Settings</DialogTitle>
+        <DialogTitle className="sr-only" data-analytics-public>
+          Settings
+        </DialogTitle>
         <div className="account-settings-layout">
-          <nav role="tablist" aria-label="Settings" aria-orientation="vertical">
+          <nav
+            role="tablist"
+            aria-label="Settings"
+            aria-orientation="vertical"
+            data-analytics-public
+          >
             {tabs.map((value, index) => {
               const Icon =
                 value === 'Models'
@@ -485,7 +506,7 @@ export function AccountSettings({
             role="tabpanel"
             aria-labelledby={`${id}-${tab}`}
           >
-            <header className="account-settings-header">
+            <header className="account-settings-header" data-analytics-public>
               <h3>{tab}</h3>
             </header>
             <div key={tab} className="account-settings-body" tabIndex={0}>
@@ -546,7 +567,12 @@ export function AccountSettings({
                       )}
                     </Notice>
                   )}
-                  <div className="account-theme-previews" role="group" aria-label="Theme">
+                  <div
+                    className="account-theme-previews"
+                    role="group"
+                    aria-label="Theme"
+                    data-analytics-public
+                  >
                     {(['light', 'dark', 'system'] as AccountTheme[]).map((value) => {
                       const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor;
                       const label = value[0].toUpperCase() + value.slice(1);

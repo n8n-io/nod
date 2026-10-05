@@ -7,6 +7,7 @@ import type { DeploymentInput, DeploymentReceipt } from '../ports/deployment.ts'
 import type { createTenantStore, TenantLease } from './tenants.ts';
 import { deriveRuntimeSecret, runtimeHeader, signRuntimeRequest } from './runtime-auth.ts';
 import { channelWebhookToken } from './hosted-webhooks.ts';
+import { analyticsEnabled, analyticsEnvironment } from './analytics.ts';
 import {
   DeploymentControlError,
   deploymentInputSchema,
@@ -208,6 +209,8 @@ export function createTenantRuntimeHost(options: {
         PGBOSS_SCHEMA: configuration.jobsSchema,
         PORT: '4310',
         NODE_ENV: 'production',
+        OTTO_ANALYTICS_ENABLED: String(analyticsEnabled(options.operatorEnvironment)),
+        OTTO_ANALYTICS_ENVIRONMENT: analyticsEnvironment(options.operatorEnvironment),
         DEV_INSPECTOR: String(
           options.operatorEnvironment.DEV_INSPECTOR === 'true' &&
             (options.developerIds?.has(ownerId) ?? false),

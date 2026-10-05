@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
+import { runProcess } from '../src/providers/process.ts';
 import { VaultDetails } from '../src/web/components/vault-details.tsx';
 import { Credentials } from '../src/web/pages/credentials.tsx';
 import { Composio } from '@composio/core';
@@ -3599,4 +3600,96 @@ test('Vault keeps intentional whitespace in replacement passwords', async () => 
   } finally {
     await page.close();
   }
+});
+
+test('session replay masks private DOM and analytics transport separates owners without exposing content', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: String.raw`
+import assert from 'node:assert/strict';
+import {gunzipSync} from 'node:zlib';
+import { JSDOM } from 'jsdom';
+const dom = new JSDOM('<!doctype html><html data-theme="dark"><head><title>synthetic-private-title</title><style>.visible { color: red }</style></head><body><nav data-analytics-public>Settings</nav><div class="visible">synthetic-private-chat</div><div class="message-text"><span data-analytics-public>synthetic-private-markup</span></div><div class="vault-inset-value">synthetic-private-vault</div><input value="synthetic-private-input"><input type="hidden" value="synthetic-private-hidden"><input type="file"><img src="https://private.invalid/synthetic-private-image"><iframe src="https://private.invalid/synthetic-private-frame"></iframe><div id="mutable" title="synthetic-private-tooltip" data-owner="synthetic-private-owner" style="background-image: url(https://private.invalid/synthetic-private-css)">synthetic-private-name</div><a href="/credentials/synthetic-private-id?token=synthetic-private-token">synthetic-private-link</a><div contenteditable="true">synthetic-private-composer</div><figure class="telegram-pairing-qr"><svg><path d="M12345678 87654321h1v1h-1z"></path></svg></figure></body></html>', { url: 'https://otto.fixture.invalid/credentials/synthetic-private-request?token=synthetic-private-query#synthetic-private-hash', pretendToBeVisual: true });
+for (const name of ['window','document','Node','NodeFilter','Element','HTMLElement','HTMLInputElement','HTMLFormElement','HTMLIFrameElement','HTMLImageElement','HTMLLinkElement','HTMLStyleElement','HTMLMediaElement','HTMLVideoElement','HTMLAudioElement','HTMLCanvasElement','SVGElement','Document','DocumentFragment','ShadowRoot','CSSStyleSheet','CSSStyleDeclaration','MutationObserver','Event','CustomEvent']) Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? dom.window : name === 'document' ? dom.window.document : dom.window[name] });
+Object.defineProperty(globalThis, 'navigator', {configurable:true,value:dom.window.navigator});
+globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+globalThis.location = window.location;
+const requests=[];
+window.XMLHttpRequest = undefined;
+globalThis.XMLHttpRequest = undefined;
+window.fetch = globalThis.fetch = async (url, init={}) => { requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body}); return Response.json({sessionRecording:false,hasFeatureFlags:false,featureFlags:{},supportedCompression:[]}); };
+const { recordingOptions } = await import('./src/web/lib/analytics-privacy.ts');
+await import('posthog-js/dist/posthog-recorder.js');
+const events = [];
+const record = window.__PosthogExtensions__.rrweb.record;
+const stop = record({...recordingOptions, emit: e => events.push(e)});
+assert.ok(stop);
+document.querySelector('#mutable').textContent = 'synthetic-private-mutated-text';
+document.querySelector('#mutable').setAttribute('title', 'synthetic-private-mutated-tooltip');
+document.querySelector('input').value = 'synthetic-private-mutated-input';
+document.querySelector('input').dispatchEvent(new window.Event('input', {bubbles:true}));
+await new Promise(resolve => setTimeout(resolve, 60));
+stop();
+const content = JSON.stringify(events.filter(e => e.type === 2 || e.type === 3));
+assert.match(content, /Settings/);
+assert.match(content, /visible/);
+assert.match(content, /data-theme.*dark/);
+assert.doesNotMatch(content, /M12345678 87654321h1v1h-1z/);
+assert.match(content, /https:\/\/otto.invalid\/credentials/);
+assert.doesNotMatch(content, /synthetic-private/);
+
+const analytics = await import('./src/web/lib/analytics-client.ts');
+const { posthog: sdk } = await import('posthog-js/no-external');
+analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',deployment:'hosted',environment:'production'},'web');
+sdk.set_config({request_batching:false,disable_compression:true,api_transport:'fetch'});
+await new Promise(resolve => setTimeout(resolve,80));
+analytics.capturePageview('/credentials/synthetic-private-request?token=synthetic-private-query');
+analytics.capturePageview('/credentials/synthetic-private-other?token=synthetic-private-query');
+sdk.capture('otto_settings_viewed', {tab:'models', secret:'synthetic-private-event'}, {
+  $set: { email: 'synthetic-private-email' }, $set_once: { name: 'synthetic-private-person' },
+});
+const { analyticsForCurrentSession } = await import('./src/web/lib/analytics.ts');
+const pendingActionCapture = analyticsForCurrentSession();
+analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',deployment:'hosted',environment:'production'},'web');
+pendingActionCapture('otto_chat_stop_requested');
+const firstSession = sdk.get_session_id();
+analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-b',deployment:'hosted',environment:'production'},'web');
+pendingActionCapture('otto_ui_error', {area:'chat',action:'send'});
+analytics.capturePageview('/');
+assert.notEqual(sdk.get_session_id(),firstSession);
+analytics.configureAnalytics(undefined,'web');
+analytics.captureAnalytics('otto_ui_error', {area:'chat',action:'send'});
+await new Promise(resolve => setTimeout(resolve, 60));
+const captured = requests.filter(request => request.body).flatMap(request => JSON.parse(request.body).batch);
+assert.deepEqual(captured.map(event => event.event), ['$pageview','otto_settings_viewed','otto_chat_stop_requested','$pageview']);
+assert.deepEqual(captured.map(event => event.properties.distinct_id), ['hosted:fixture-owner-a','hosted:fixture-owner-a','hosted:fixture-owner-a','hosted:fixture-owner-b']);
+assert.equal(captured[0].properties.route, '/credentials');
+assert.equal(captured[1].properties.tab, 'models');
+assert.equal(captured[3].properties.route, '/');
+assert.notEqual(captured[0].properties.$session_id, captured[3].properties.$session_id);
+assert.doesNotMatch(JSON.stringify(requests), /synthetic-private|\$set|\$identify|\$referrer|\$initial/);
+assert.ok(captured.every(event => event.properties.$process_person_profile === false));
+const { setAnalyticsClient } = await import('./src/web/lib/analytics.ts');
+const failure = () => { throw new Error('Synthetic unavailable telemetry'); };
+setAnalyticsClient({ stopSessionRecording() {}, reset() {}, set_config() {}, capture: failure, startSessionRecording: failure });
+assert.doesNotThrow(() => analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-c',deployment:'hosted',environment:'production'},'web'));
+assert.doesNotThrow(() => analytics.captureAnalytics('otto_chat_message_sent', {has_attachments:false,is_reply:false}));
+assert.doesNotThrow(() => analytics.capturePageview('/'));
+await new Promise(resolve => setTimeout(resolve, 30));
+setAnalyticsClient({ stopSessionRecording: failure });
+assert.doesNotThrow(() => analytics.configureAnalytics(undefined,'web'));
+assert.doesNotThrow(() => analytics.captureAnalytics('otto_chat_stop_requested'));
+const freshAnalytics = await import('./src/web/lib/analytics.ts?failure=initialization');
+let failedInitializations = 0;
+freshAnalytics.setAnalyticsClient({init() {failedInitializations++; failure();}, stopSessionRecording: failure});
+assert.doesNotThrow(() => freshAnalytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-d',deployment:'hosted',environment:'production'},'web'));
+assert.equal(failedInitializations, 1);
+assert.doesNotThrow(() => freshAnalytics.capturePageview('/'));
+dom.window.close();
+process.exit(0);
+
+`,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
 });

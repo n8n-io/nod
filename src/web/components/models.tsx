@@ -156,7 +156,7 @@ export function ModelSettings({
   const busy = models.busy || signingIn || !!signIn;
   return (
     <div className="model-settings" data-desktop-settings-pending={dirty || undefined}>
-      <p className="model-intro">
+      <p className="model-intro" data-analytics-public>
         Connect as many services as you want. All their models appear in one list.
       </p>
       {data.connections.some(
@@ -174,7 +174,7 @@ export function ModelSettings({
             key={provider}
             aria-label={modelProviderNames[provider]}
           >
-            <div className="model-service-heading">
+            <div className="model-service-heading" data-analytics-public>
               <div>
                 <h4>{modelProviderNames[provider]}</h4>
                 <p>

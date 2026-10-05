@@ -1,0 +1,228 @@
+import type { CaptureResult, PostHog } from 'posthog-js';
+import { posthogConfig, type AnalyticsConfiguration } from '../../shared/analytics';
+import { desktopSettingsAvailable } from './desktop';
+import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
+
+type AnalyticsEvents = {
+  otto_onboarding_step_viewed: { step: 'models' | 'apps' };
+  otto_settings_viewed: { tab: 'general' | 'profile' | 'appearance' | 'preferences' | 'models' };
+  otto_chat_message_sent: { has_attachments: boolean; is_reply: boolean };
+  otto_chat_stop_requested: undefined;
+  otto_ui_error: {
+    area: 'application' | 'onboarding' | 'chat' | 'settings' | 'apps' | 'models';
+    action: 'load' | 'save' | 'send' | 'connect' | 'prepare' | 'stop' | 'render';
+  };
+  otto_desktop_setup_step_viewed: { step: 'preferences' | 'preparing' | 'ready' | 'error' };
+  otto_desktop_setup_completed: undefined;
+};
+
+const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
+  otto_onboarding_step_viewed: { step: ['models', 'apps'] },
+  otto_settings_viewed: { tab: ['general', 'profile', 'appearance', 'preferences', 'models'] },
+  otto_chat_message_sent: { has_attachments: [true, false], is_reply: [true, false] },
+  otto_chat_stop_requested: {},
+  otto_ui_error: {
+    area: ['application', 'onboarding', 'chat', 'settings', 'apps', 'models'],
+    action: ['load', 'save', 'send', 'connect', 'prepare', 'stop', 'render'],
+  },
+  otto_desktop_setup_step_viewed: { step: ['preferences', 'preparing', 'ready', 'error'] },
+  otto_desktop_setup_completed: {},
+};
+
+let configuration: AnalyticsConfiguration | undefined;
+let posthog: PostHog | undefined;
+let initialized = false;
+let identity: string | null | undefined;
+let surface: 'web' | 'desktop' = 'web';
+let lastPage: string | undefined;
+let recordingFrame: number | undefined;
+let generation = 0;
+
+export function setAnalyticsClient(client: PostHog) {
+  posthog = client;
+}
+
+const sdkProperties = [
+  'token',
+  'distinct_id',
+  '$session_id',
+  '$window_id',
+  '$lib',
+  '$lib_version',
+  '$browser',
+  '$browser_version',
+  '$os',
+  '$os_version',
+  '$device_type',
+  '$screen_height',
+  '$screen_width',
+  '$viewport_height',
+  '$viewport_width',
+  '$time',
+  '$snapshot_data',
+  '$snapshot_bytes',
+  '$snapshot_source',
+];
+
+function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
+  if (!event || !configuration?.enabled) return null;
+  const allowed = eventProperties[event.event as keyof AnalyticsEvents];
+  if (event.event !== '$snapshot' && event.event !== '$pageview' && !allowed) return null;
+  const properties = Object.fromEntries(
+    sdkProperties
+      .filter((key) => key in event.properties)
+      .map((key) => [key, event.properties[key]]),
+  );
+  for (const [key, values] of Object.entries(allowed ?? {}))
+    if (values.includes(event.properties[key])) properties[key] = event.properties[key];
+  const route = analyticsRoute(
+    String(event.properties.route ?? lastPage ?? window.location.pathname),
+  );
+  return {
+    uuid: event.uuid,
+    event: event.event,
+    timestamp: event.timestamp,
+    properties: {
+      ...properties,
+      analytics_schema: posthogConfig.schemaVersion,
+      deployment: configuration.deployment,
+      environment: configuration.environment,
+      surface,
+      route,
+      $current_url: sanitizedAnalyticsUrl(route),
+      $pathname: route,
+      $host: 'otto.invalid',
+      $process_person_profile: false,
+      $geoip_disable: true,
+    },
+  };
+}
+
+export function configureAnalytics(
+  next: AnalyticsConfiguration | undefined,
+  nextSurface: 'web' | 'desktop' = typeof window !== 'undefined' && desktopSettingsAvailable()
+    ? 'desktop'
+    : 'web',
+) {
+  try {
+    applyConfiguration(next, nextSurface);
+  } catch {
+    generation++;
+    configuration = undefined;
+    identity = undefined;
+    lastPage = undefined;
+    try {
+      posthog?.stopSessionRecording();
+    } catch {}
+  }
+}
+
+function applyConfiguration(
+  next: AnalyticsConfiguration | undefined,
+  nextSurface: 'web' | 'desktop',
+) {
+  if (!posthog) return;
+  if (!next?.enabled) {
+    generation++;
+    if (recordingFrame !== undefined) cancelAnimationFrame(recordingFrame);
+    if (initialized && configuration?.enabled) {
+      posthog.stopSessionRecording();
+      posthog.reset(true);
+      posthog.set_config({ opt_out_capturing_by_default: true });
+    }
+    configuration = undefined;
+    identity = undefined;
+    lastPage = undefined;
+    return;
+  }
+  surface = nextSurface;
+  const changed = identity !== next.distinctId;
+  if (changed) generation++;
+  if (initialized && changed) posthog.stopSessionRecording();
+  configuration = next;
+  if (!initialized) {
+    posthog.init(posthogConfig.key, {
+      api_host: posthogConfig.host,
+      ui_host: 'https://eu.posthog.com',
+      persistence: 'memory',
+      autocapture: false,
+      capture_pageview: false,
+      capture_pageleave: false,
+      capture_exceptions: false,
+      capture_dead_clicks: false,
+      capture_heatmaps: false,
+      rageclick: false,
+      capture_performance: false,
+      enable_recording_console_log: false,
+      logs: { captureConsoleLogs: false, beforeSend: () => null },
+      metrics: { network: false },
+      disable_session_recording: true,
+      disable_surveys: true,
+      disable_product_tours: true,
+      disable_conversations: true,
+      disable_web_experiments: true,
+      disable_external_dependency_loading: true,
+      advanced_disable_feature_flags: true,
+      person_profiles: 'never',
+      save_referrer: false,
+      save_campaign_params: false,
+      ip: false,
+      session_recording: {
+        ...recordingOptions,
+        maskCapturedNetworkRequestFn: (request) => {
+          const masked = recordingOptions.maskCapturedNetworkRequestFn!(request);
+          return masked && surface === 'desktop' && window.location.protocol === 'file:'
+            ? { ...masked, name: sanitizedAnalyticsUrl('/desktop/setup') }
+            : masked;
+        },
+      },
+      bootstrap: next.distinctId ? { distinctID: next.distinctId, isIdentifiedID: true } : {},
+      before_send: sanitizeEvent,
+      get_current_url: sanitizedAnalyticsUrl,
+    });
+    initialized = true;
+  } else if (changed) {
+    posthog.reset({
+      resetDeviceID: true,
+      bootstrap: next.distinctId ? { distinctID: next.distinctId, isIdentifiedID: true } : {},
+    });
+    posthog.set_config({ opt_out_capturing_by_default: false });
+  }
+  if (changed) {
+    identity = next.distinctId;
+    lastPage = undefined;
+    if (recordingFrame !== undefined) cancelAnimationFrame(recordingFrame);
+    recordingFrame = requestAnimationFrame(() => {
+      recordingFrame = undefined;
+      try {
+        if (configuration?.enabled) posthog?.startSessionRecording();
+      } catch {}
+    });
+  }
+}
+
+export function captureAnalytics<Event extends keyof AnalyticsEvents>(
+  event: Event,
+  ...args: AnalyticsEvents[Event] extends undefined ? [] : [AnalyticsEvents[Event]]
+) {
+  try {
+    if (configuration?.enabled) posthog?.capture(event, args[0]);
+  } catch {}
+}
+
+export function analyticsForCurrentSession(): typeof captureAnalytics {
+  const current = generation;
+  return (event, ...args) => {
+    if (current === generation) captureAnalytics(event, ...args);
+  };
+}
+
+export function capturePageview(path: string) {
+  if (!configuration?.enabled) return;
+  const route = analyticsRoute(path);
+  if (route === lastPage) return;
+  lastPage = route;
+  try {
+    posthog?.capture('$pageview', { route });
+  } catch {}
+}

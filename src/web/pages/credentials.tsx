@@ -166,7 +166,11 @@ function CredentialForm({ id }: { id: string }) {
         <BrandMark />
         <span>otto</span>
       </a>
-      <div className="credential-card" aria-busy={saving || (!request && !error)}>
+      <div
+        className="credential-card"
+        aria-busy={saving || (!request && !error)}
+        data-analytics-private
+      >
         {saving ? (
           <div className="credential-complete" role="status" aria-live="polite">
             <h1>{request?.kind === 'otp' ? 'Checking your code…' : 'Continuing sign-in…'}</h1>

@@ -418,6 +418,14 @@ test('gateway forces the actual Node bind setting and safely restarts after beco
   const request = () => new Request('https://otto.example.test/api/health');
   assert.equal((await worker.fetch(request(), current.publicEnv)).status, 200);
   assert.equal((current.instance.envVars as Record<string, string>).OTTO_BIND_HOST, '0.0.0.0');
+  assert.equal(
+    (current.instance.envVars as Record<string, string>).OTTO_ANALYTICS_ENABLED,
+    'false',
+  );
+  assert.equal(
+    (current.instance.envVars as Record<string, string>).OTTO_ANALYTICS_ENVIRONMENT,
+    'development',
+  );
   assert.deepEqual(current.counts(), { starts: 1, forwards: 1 });
   current.stop();
   assert.equal((await worker.fetch(request(), current.publicEnv)).status, 200);
@@ -431,6 +439,25 @@ test('gateway forces the actual Node bind setting and safely restarts after beco
     error: 'This request could not be completed. Try again.',
   });
   assert.deepEqual(current.counts(), { starts: 3, forwards: 2 });
+});
+
+test('gateway startup passes explicit telemetry settings and rejects malformed controls before starting', async () => {
+  const enabled = processFixture('gateway');
+  enabled.env.GATEWAY_ENV = JSON.stringify({
+    OTTO_ANALYTICS_ENABLED: 'true',
+    OTTO_ANALYTICS_ENVIRONMENT: 'development',
+  });
+  const request = () => new Request('https://otto.example.test/api/health');
+  assert.equal((await worker.fetch(request(), enabled.publicEnv)).status, 200);
+  assert.equal((enabled.instance.envVars as Record<string, string>).OTTO_ANALYTICS_ENABLED, 'true');
+  assert.equal(
+    (enabled.instance.envVars as Record<string, string>).OTTO_ANALYTICS_ENVIRONMENT,
+    'development',
+  );
+  const invalid = processFixture('gateway');
+  invalid.env.GATEWAY_ENV = JSON.stringify({ OTTO_ANALYTICS_ENABLED: 'on' });
+  assert.equal((await worker.fetch(request(), invalid.publicEnv)).status, 400);
+  assert.deepEqual(invalid.counts(), { starts: 0, forwards: 0 });
 });
 
 test('E2B stop acknowledgement is owner and generation bound and required after physical shutdown', async () => {

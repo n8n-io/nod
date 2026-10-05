@@ -2,6 +2,8 @@ import { Component, StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app';
 import { initializeTheme } from './lib/theme';
+import { captureAnalytics, configureAnalytics } from './lib/analytics-client';
+import { sessionStore } from './lib/session';
 import './styles.css';
 import './pages/chat.css';
 import './theme.css';
@@ -28,6 +30,9 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
   static getDerivedStateFromError() {
     return { failed: true };
   }
+  componentDidCatch() {
+    captureAnalytics('otto_ui_error', { area: 'application', action: 'render' });
+  }
   render() {
     if (this.state.failed)
       return (
@@ -47,6 +52,14 @@ class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }
 }
 
 initializeTheme();
+sessionStore.subscribe(() => {
+  const { session, signingOut } = sessionStore.getSnapshot();
+  configureAnalytics(
+    !signingOut && (session?.user || session?.analytics?.distinctId === null)
+      ? session?.analytics
+      : undefined,
+  );
+});
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

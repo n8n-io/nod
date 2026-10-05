@@ -46,7 +46,7 @@ export function SignIn({
   return (
     <main className="sign-in-page">
       <div className="sign-in-main">
-        <div className="sign-in-brand">
+        <div className="sign-in-brand" data-analytics-public>
           <BrandMark />
           <span>otto</span>
         </div>
@@ -54,8 +54,8 @@ export function SignIn({
           <span className="sign-in-mark">
             <BrandMark />
           </span>
-          <h1>Sign in to Otto</h1>
-          <p>
+          <h1 data-analytics-public>Sign in to Otto</h1>
+          <p data-analytics-public>
             Hand off the work you keep putting off.
             <br />
             Otto gets it done while you sleep.
@@ -65,6 +65,7 @@ export function SignIn({
             <Button
               variant="outline"
               className="google-sign-in"
+              data-analytics-public
               disabled={busy}
               onClick={() => void login()}
             >
@@ -80,11 +81,11 @@ export function SignIn({
             </div>
           )}
         </div>
-        <a className="sign-in-privacy" href="/privacy">
+        <a className="sign-in-privacy" href="/privacy" data-analytics-public>
           Privacy
         </a>
       </div>
-      <aside className="sign-in-story" aria-label="What Otto can help with">
+      <aside className="sign-in-story" aria-label="What Otto can help with" data-analytics-public>
         <div className="sign-in-note">
           <span className="sign-in-note-time">Today, 07:30</span>
           <h2>

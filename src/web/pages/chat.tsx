@@ -28,6 +28,7 @@ import { ModelPicker, ModelSetup } from '../components/models';
 import { desktopBuildInfo, desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
+import { analyticsForCurrentSession } from '../lib/analytics';
 import {
   collapseScreenshotMessages,
   hasVisibleChatActivity,
@@ -52,7 +53,7 @@ function scrollBehavior(): ScrollBehavior {
 }
 function Welcome() {
   return (
-    <div className="welcome">
+    <div className="welcome" data-analytics-public>
       <BrandMark />
       <h2>What’s on your mind?</h2>
     </div>
@@ -333,6 +334,7 @@ export function Chat({
     reply: Message | null = replyTo,
   ): Promise<ComposerSendResult> {
     if (resetLock.current || welcoming) return { sent: false, restoreText: true };
+    const captureAnalytics = analyticsForCurrentSession();
     const sentThread = threadId;
     const verificationRequests = (state.verificationRequests ?? []).filter(
       (request) => !reply || request.turnId === reply.turnId,
@@ -420,6 +422,11 @@ export function Chat({
       if (result.messageId !== id || typeof result.turnId !== 'string')
         throw new Error('The message could not be confirmed. Try sending it again.');
       const turnId = result.turnId;
+      if (!privateVerification)
+        captureAnalytics('otto_chat_message_sent', {
+          has_attachments: attachments.length > 0,
+          is_reply: Boolean(replyId),
+        });
       const messageText =
         typeof result.messageText === 'string'
           ? result.messageText
@@ -460,6 +467,7 @@ export function Chat({
             : verificationFailure(verificationStatus, verificationRequests.length > 1)
           : errorMessage(cause),
       );
+      captureAnalytics('otto_ui_error', { area: 'chat', action: 'send' });
       return { sent: false, restoreText: !privateVerification };
     } finally {
       outstandingSends.current--;
@@ -640,14 +648,17 @@ export function Chat({
   }
   async function stop() {
     if (stopping) return;
+    const captureAnalytics = analyticsForCurrentSession();
     const stoppedThread = threadId;
     setStopping(true);
     setError('');
     try {
       await post('/api/thread/stop');
+      captureAnalytics('otto_chat_stop_requested');
       await refresh();
     } catch (cause) {
       if (threadRef.current === stoppedThread) setError(errorMessage(cause));
+      captureAnalytics('otto_ui_error', { area: 'chat', action: 'stop' });
     } finally {
       if (threadRef.current === stoppedThread) setStopping(false);
     }
