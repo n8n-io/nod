@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import test from 'node:test';
+import type { TestContext } from 'node:test';
+import Fastify from 'fastify';
 import pg from 'pg';
+import type { FeedbackEnvelope } from '../src/ports/feedback.ts';
+import { createN8nFeedback } from '../src/providers/n8n/feedback.ts';
+import { registerFeedback } from '../src/server/feedback.ts';
+import {
+  feedbackLimits,
+  type FeedbackReceipt,
+  type FeedbackSubmission,
+} from '../src/shared/feedback.ts';
 import type { Agent, RuntimeContext } from '../src/ports/agent.ts';
 import type { ConnectedApp } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
@@ -60,7 +72,6 @@ test(
     const db = await import('../src/server/db.ts');
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
-    const { registerBugReport } = await import('../src/server/bug-report.ts');
     const { createPromptInspector } = await import('../src/server/inspector-prompts.ts');
     const { configuration, dataRoot, ownerId, port } = await import('../src/server/config.ts');
     const { localArtifacts, storeArtifact } = await import('../src/server/artifacts.ts');
@@ -130,17 +141,6 @@ test(
       configuration: () => ({ ...configuration(), llmReady: true }),
       onboard: (_timeZone, threadId) => thread.restartOnboarding(threadId),
       startOnboarding: thread.startOnboarding,
-    });
-    let savedPiEntries: unknown[] = [];
-    let reportedPiThread = '';
-    registerBugReport(app, {
-      pool: db.pool,
-      ownerId,
-      captureEnabled: () => true,
-      sessionEntries: async (threadId) => {
-        reportedPiThread = threadId;
-        return savedPiEntries;
-      },
     });
     const tasks = createTasks({ pool: db.pool, ownerId });
     await tasks.initialize();
@@ -2297,151 +2297,6 @@ test(
           }
         },
       );
-      await t.test('bug report includes the active thread and masks saved secrets', async () => {
-        savedPiEntries = [
-          {
-            type: 'message',
-            id: 'pi-assistant',
-            parentId: null,
-            timestamp: '2026-01-01T00:00:00.000Z',
-            message: {
-              role: 'assistant',
-              model: 'fixture',
-              content: [
-                {
-                  type: 'thinking',
-                  thinking:
-                    'The page gave me fixture-login-value, so I should inspect the next step.',
-                  thinkingSignature: 'opaque-fixture-signature',
-                },
-                {
-                  type: 'toolCall',
-                  id: 'credential-call',
-                  name: 'get_credential',
-                  arguments: { id: 'fixture-account', origin: 'https://example.test' },
-                },
-              ],
-            },
-          },
-          {
-            type: 'message',
-            id: 'pi-result',
-            parentId: 'pi-assistant',
-            timestamp: '2026-01-01T00:00:01.000Z',
-            message: {
-              role: 'toolResult',
-              toolCallId: 'credential-call',
-              toolName: 'get_credential',
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    username: 'fixture-login-user',
-                    password: 'fixture-login-value',
-                  }),
-                },
-              ],
-              details: { password: 'fixture-login-value' },
-            },
-          },
-          {
-            type: 'compaction',
-            id: 'pi-compaction',
-            parentId: 'pi-result',
-            timestamp: '2026-01-01T00:00:02.000Z',
-            summary: 'The assistant chose the saved account.',
-            tokensBefore: 1000,
-            systemMessage: { content: 'Saved fixture system instruction' },
-          },
-          {
-            type: 'context_edit',
-            id: 'pi-credential-edit',
-            parentId: 'pi-compaction',
-            timestamp: '2026-01-01T00:00:03.000Z',
-            targetId: 'pi-result',
-            replacement: { content: 'fixture-login-value' },
-          },
-          {
-            type: 'context_edit',
-            id: 'pi-safe-edit',
-            parentId: 'pi-credential-edit',
-            timestamp: '2026-01-01T00:00:04.000Z',
-            targetId: 'pi-assistant',
-            replacement: { content: 'Safe context update' },
-          },
-        ];
-        const turnId = randomUUID();
-        await db.pool.query(
-          "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Inspect this action','succeeded')",
-          [turnId, ownerId, freshThread],
-        );
-        await db.pool.query(
-          "INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'user','password=fixture-secret',$3,$4)",
-          [randomUUID(), ownerId, freshThread, turnId],
-        );
-        await db.pool.query(
-          "INSERT INTO inspector_records(id,owner_id,thread_id,turn_id,kind,name,status,input,started_at) VALUES($1,$2,$3,$4,'tool','browser','succeeded',$5,now())",
-          [randomUUID(), ownerId, freshThread, turnId, { token: 'fixture-token', step: 'read' }],
-        );
-        await db.pool.query(
-          'INSERT INTO inspector_prompts(id,owner_id,thread_id,turn_id,payload,provider,model) VALUES($1,$2,$3,$4,$5,$6,$7)',
-          [
-            randomUUID(),
-            ownerId,
-            freshThread,
-            turnId,
-            { system: 'Fixture system' },
-            'fixture',
-            'fixture',
-          ],
-        );
-        const result = await request('GET', '/api/conversation/bug-report');
-        assert.equal(result.statusCode, 200);
-        assert.equal(result.headers['cache-control'], 'no-store');
-        const report = result.json<{
-          threadId: string;
-          messages: Array<{ text: string }>;
-          turns: Array<{ id: string }>;
-          trace: Array<{ name: string; input: { token: string } }>;
-          prompts: Array<{ turn_id: string }>;
-          piSession: {
-            available: boolean;
-            entries: Array<{ type: string; message?: unknown; summaryOmitted?: boolean }>;
-          };
-        }>();
-        assert.equal(report.threadId, freshThread);
-        assert.equal(reportedPiThread, freshThread);
-        assert.equal(report.piSession.available, true);
-        assert.ok(report.piSession.entries.some((entry) => entry.summaryOmitted === true));
-        assert.match(JSON.stringify(report.piSession), /inspect the next step/);
-        assert.match(JSON.stringify(report.piSession), /credential-call/);
-        assert.ok(!JSON.stringify(report.piSession).includes('Saved fixture system instruction'));
-        assert.match(JSON.stringify(report.piSession), /Safe context update/);
-        assert.ok(report.turns.some((turn) => turn.id === turnId));
-        assert.ok(report.trace.some((record) => record.name === 'browser'));
-        assert.ok(report.prompts.some((prompt) => prompt.turn_id === turnId));
-        assert.ok(report.messages.length > 60);
-        assert.ok(!JSON.stringify(report).includes('fixture-secret'));
-        assert.ok(!JSON.stringify(report).includes('fixture-token'));
-        assert.ok(!JSON.stringify(report).includes('fixture-login-value'));
-        assert.ok(!JSON.stringify(report).includes('fixture-login-user'));
-        assert.ok(!JSON.stringify(report).includes('opaque-fixture-signature'));
-        assert.ok(!JSON.stringify(report).includes('private content'));
-        assert.ok(!JSON.stringify(report).includes('Late old answer'));
-        savedPiEntries = [
-          {
-            type: 'compaction',
-            id: 'rebased-summary',
-            parentId: null,
-            timestamp: '2026-01-01T00:00:00.000Z',
-            summary: 'The old login was orphaned-fixture-password.',
-            details: { summary: 'orphaned-fixture-password' },
-            systemMessage: { content: 'orphaned-fixture-password' },
-          },
-        ];
-        const rebased = (await request('GET', '/api/conversation/bug-report')).json();
-        assert.ok(!JSON.stringify(rebased).includes('orphaned-fixture-password'));
-      });
       await t.test(
         'turn and schedule analytics keep outcomes while excluding prompts, raw failures and private identifiers',
         async () => {
@@ -3299,3 +3154,1197 @@ test(
     }
   },
 );
+
+async function feedbackFixture(t: TestContext) {
+  const schema = `test_feedback_${randomUUID().replaceAll('-', '')}`;
+  const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  await admin.query(`CREATE SCHEMA ${schema}`);
+  const pool = new pg.Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    options: `-c search_path=${schema}`,
+  });
+  const apps: ReturnType<typeof Fastify>[] = [];
+  t.after(async () => {
+    await Promise.all(apps.map((app) => app.close()));
+    await pool.end();
+    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+    await admin.end();
+  });
+  const state = {
+    content: JSON.stringify({ messages: ['Synthetic reviewed conversation'] }),
+    builds: 0,
+    dropResponse: false,
+    submitStatus: 'submitted' as FeedbackReceipt['status'],
+    statusOverride: undefined as FeedbackReceipt['status'] | undefined,
+    envelopes: [] as FeedbackEnvelope[],
+    statusRequests: [] as Array<{ action: 'status'; submissionId: string; payloadHash: string }>,
+  };
+  const accepted = new Map<string, { payloadHash: string; receipt: FeedbackReceipt }>();
+  const delivery = createN8nFeedback({
+    url: 'https://feedback.example.test/intake',
+    request: async (_url, options) => {
+      assert.equal(options?.redirect, 'error');
+      const input = JSON.parse(String(options?.body));
+      if (input.action === 'status') {
+        state.statusRequests.push(input);
+        const saved = accepted.get(input.submissionId);
+        assert.equal(input.payloadHash, saved?.payloadHash);
+        return Response.json({
+          ...saved?.receipt,
+          ...(state.statusOverride && { status: state.statusOverride }),
+        });
+      }
+      state.envelopes.push(input);
+      const previous = accepted.get(input.submissionId);
+      if (input.action === 'repair') {
+        assert.ok(previous);
+        assert.equal(input.payloadHash, previous.payloadHash);
+      }
+      const receipt: FeedbackReceipt = {
+        submissionId: input.submissionId,
+        status: state.submitStatus,
+        issueUrl:
+          previous?.receipt.issueUrl ??
+          `https://linear.app/n8n/issue/LAB-${1000 + accepted.size}/synthetic-feedback`,
+      };
+      accepted.set(input.submissionId, { payloadHash: input.payloadHash, receipt });
+      if (state.dropResponse) throw new Error('Synthetic connection closed after accepting.');
+      return Response.json(receipt);
+    },
+  });
+  const context = {
+    computerName: 'Synthetic Mac',
+    appVersion: '1.2.3',
+    appRelease: 'a'.repeat(40),
+    platform: 'darwin',
+    development: true,
+    source: 'desktop' as const,
+    appModified: false,
+  };
+  const open = async (ownerId = randomUUID(), buildReport?: () => Promise<string>) => {
+    const app = Fastify();
+    apps.push(app);
+    await registerFeedback(app, {
+      pool,
+      ownerId,
+      context,
+      delivery,
+      buildReport: async () => {
+        state.builds++;
+        return buildReport ? buildReport() : state.content;
+      },
+    });
+    return { app, ownerId };
+  };
+  const submission = (input: Partial<FeedbackSubmission> = {}): FeedbackSubmission => ({
+    ...context,
+    submissionId: randomUUID(),
+    category: 'bug',
+    feedback: 'Synthetic chat stopped responding.',
+    reportId: null,
+    attachments: [],
+    ...input,
+  });
+  return { pool, state, open, submission };
+}
+
+async function waitForBlockedFeedbackClaim(pool: pg.Pool, blocker: number) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const waiting = await pool.query(
+      'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+      [blocker],
+    );
+    if (waiting.rows[0]) return waiting.rows[0].pid as number;
+    await delay(10);
+  }
+  assert.fail('The feedback claim did not reach its database lock.');
+}
+
+async function blockFeedbackClaim(pool: pg.Pool, phase: 'BEFORE' | 'AFTER') {
+  const lock = randomUUID();
+  await pool.query(`CREATE FUNCTION pause_feedback_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN PERFORM pg_advisory_xact_lock(hashtext('${lock}')); RETURN NEW; END;
+    $$;
+    CREATE TRIGGER feedback_claim_pause ${phase} INSERT ON feedback_submissions
+    FOR EACH ROW WHEN (NEW.status='unknown') EXECUTE FUNCTION pause_feedback_claim()`);
+  const client = await pool.connect();
+  const result = await client.query(
+    'SELECT pg_backend_pid() AS pid,pg_advisory_lock(hashtext($1))',
+    [lock],
+  );
+  let released = false;
+  return {
+    pid: result.rows[0].pid as number,
+    async release() {
+      if (released) return;
+      released = true;
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lock]);
+      } finally {
+        client.release();
+      }
+    },
+  };
+}
+
+test(
+  'feedback retains at most five reports when concurrent builds finish together',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    let release!: () => void;
+    let allStarted!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      allStarted = resolve;
+    });
+    const { app } = await f.open(undefined, async () => {
+      if (f.state.builds === 8) allStarted();
+      await blocked;
+      return f.state.content;
+    });
+    const builds = Array.from({ length: 8 }, () =>
+      app.inject({ method: 'POST', url: '/api/feedback/report' }),
+    );
+    const completed = Promise.all(builds);
+    await started;
+    release();
+    const snapshots = await completed;
+    assert.ok(snapshots.every((response) => response.statusCode === 200));
+    const submissions = await Promise.all(
+      snapshots.map((response) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/feedback',
+          payload: f.submission({ reportId: response.json().id }),
+        }),
+      ),
+    );
+    assert.equal(submissions.filter((response) => response.statusCode === 410).length, 3);
+    assert.equal(
+      submissions.filter((response) => response.json().status === 'submitted').length,
+      5,
+    );
+    assert.equal(f.state.envelopes.length, 5);
+  },
+);
+
+test(
+  'feedback preserves the reviewed snapshot, isolates owners and never resubmits uncertain delivery',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const first = await f.open();
+    const second = await f.open();
+    const snapshotResponse = await first.app.inject({
+      method: 'POST',
+      url: '/api/feedback/report',
+    });
+    assert.equal(snapshotResponse.statusCode, 200);
+    assert.equal(snapshotResponse.headers['cache-control'], 'no-store');
+    const snapshot = snapshotResponse.json<{ id: string; content: string }>();
+    f.state.content = JSON.stringify({ messages: ['Synthetic later conversation'] });
+    const input = f.submission({ reportId: snapshot.id });
+    const crossOwner = await second.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: input,
+    });
+    assert.equal(crossOwner.statusCode, 410);
+    assert.equal(f.state.envelopes.length, 0);
+    f.state.dropResponse = true;
+    const dropped = await first.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: input,
+    });
+    assert.equal(dropped.statusCode, 200);
+    assert.equal(dropped.json().status, 'unknown');
+    assert.equal(f.state.builds, 1);
+    assert.equal(f.state.envelopes.length, 1);
+    const delivered = f.state.envelopes[0];
+    assert.equal(Buffer.from(delivered.report!.data, 'base64').toString(), snapshot.content);
+    assert.ok(!JSON.stringify(delivered).includes('Synthetic later conversation'));
+    const repeated = await first.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: input,
+    });
+    assert.equal(repeated.json().status, 'unknown');
+    assert.equal(f.state.envelopes.length, 1);
+    const changed = await first.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: { ...input, feedback: 'Different feedback' },
+    });
+    assert.equal(changed.statusCode, 409);
+    const foreignStatus = await second.app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(foreignStatus.json().status, 'rejected');
+    assert.equal(f.state.statusRequests.length, 0);
+    const early = await first.app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(early.json().status, 'unknown');
+    assert.equal(f.state.statusRequests.length, 0);
+    await f.pool.query(
+      "UPDATE feedback_submissions SET created_at=now()-interval '6 minutes' WHERE owner_id=$1 AND id=$2",
+      [first.ownerId, input.submissionId],
+    );
+    const status = await first.app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(status.json().status, 'submitted');
+    assert.equal(f.state.statusRequests.length, 1);
+    assert.equal(f.state.statusRequests[0].payloadHash, delivered.payloadHash);
+    const confirmed = await first.app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: input,
+    });
+    assert.equal(confirmed.json().status, 'submitted');
+    assert.equal(f.state.envelopes.length, 1);
+    await first.app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(f.state.statusRequests.length, 1);
+    const stored = (await f.pool.query('SELECT * FROM feedback_submissions')).rows;
+    assert.equal(stored.length, 2);
+    assert.equal(stored.find((row) => row.owner_id === first.ownerId).status, 'submitted');
+    const foreign = stored.find((row) => row.owner_id === second.ownerId);
+    assert.equal(foreign.status, 'rejected');
+    assert.equal(foreign.request_hash, '');
+    assert.equal(foreign.payload_hash, '');
+    assert.equal(foreign.issue_url, null);
+    assert.ok(!JSON.stringify(stored).includes(input.feedback));
+    assert.ok(!JSON.stringify(stored).includes(snapshot.content));
+  },
+);
+
+test(
+  'feedback partial delivery repairs only the retained original and cannot lose its issue receipt',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const other = await f.open();
+    const snapshot = (await app.inject({ method: 'POST', url: '/api/feedback/report' })).json();
+    const input = f.submission({
+      reportId: snapshot.id,
+      attachments: [
+        {
+          name: 'synthetic.png',
+          mimeType: 'image/png',
+          data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64'),
+        },
+      ],
+    });
+    f.state.submitStatus = 'partial';
+    const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    const initial = first.json<FeedbackReceipt>();
+    assert.equal(initial.status, 'partial');
+    assert.equal(initial.canRetryAttachments, true);
+    const original = f.state.envelopes[0];
+    f.state.content = 'The conversation changed after the first submission.';
+    const foreign = await other.app.inject({
+      method: 'POST',
+      url: `/api/feedback/${input.submissionId}/retry`,
+      payload: {},
+    });
+    assert.equal(foreign.statusCode, 409);
+    for (const status of ['unknown', 'rejected'] as const) {
+      f.state.statusOverride = status;
+      const checked = (
+        await app.inject({ url: `/api/feedback/${input.submissionId}` })
+      ).json<FeedbackReceipt>();
+      assert.equal(checked.status, 'partial');
+      assert.equal(checked.issueUrl, initial.issueUrl);
+      assert.equal(checked.canRetryAttachments, true);
+      f.state.submitStatus = status;
+      const retried = (
+        await app.inject({
+          method: 'POST',
+          url: `/api/feedback/${input.submissionId}/retry`,
+          payload: {},
+        })
+      ).json<FeedbackReceipt>();
+      assert.equal(retried.status, 'partial');
+      assert.equal(retried.issueUrl, initial.issueUrl);
+      assert.equal(retried.canRetryAttachments, true);
+    }
+    f.state.statusOverride = undefined;
+    f.state.submitStatus = 'submitted';
+    const repaired = await Promise.all(
+      [0, 1].map(() =>
+        app.inject({
+          method: 'POST',
+          url: `/api/feedback/${input.submissionId}/retry`,
+          payload: {},
+        }),
+      ),
+    );
+    assert.ok(repaired.some((response) => response.json().status === 'submitted'));
+    assert.equal(f.state.envelopes.length, 4);
+    for (const envelope of f.state.envelopes.slice(1)) {
+      const { action, ...payload } = envelope;
+      assert.equal(action, 'repair');
+      assert.deepEqual(payload, original);
+    }
+    assert.equal(f.state.builds, 1);
+    const after = await app.inject({
+      method: 'POST',
+      url: `/api/feedback/${input.submissionId}/retry`,
+      payload: {},
+    });
+    assert.equal(after.statusCode, 409);
+    assert.equal(f.state.envelopes.length, 4);
+    const stored = await f.pool.query(
+      'SELECT status,issue_url FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+      [ownerId, input.submissionId],
+    );
+    assert.equal(stored.rows[0].status, 'submitted');
+    assert.equal(stored.rows[0].issue_url, initial.issueUrl);
+  },
+);
+
+test(
+  'feedback partial delivery stays reviewable after restart without recreating lost attachment bytes',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const first = await f.open();
+    const snapshot = (
+      await first.app.inject({ method: 'POST', url: '/api/feedback/report' })
+    ).json();
+    f.state.submitStatus = 'partial';
+    const input = f.submission({ reportId: snapshot.id });
+    const initial = (
+      await first.app.inject({ method: 'POST', url: '/api/feedback', payload: input })
+    ).json<FeedbackReceipt>();
+    await first.app.close();
+    const { app } = await f.open(first.ownerId);
+    const restored = (
+      await app.inject({ url: `/api/feedback/${input.submissionId}` })
+    ).json<FeedbackReceipt>();
+    assert.equal(restored.status, 'partial');
+    assert.equal(restored.issueUrl, initial.issueUrl);
+    assert.equal(restored.canRetryAttachments, false);
+    const retry = await app.inject({
+      method: 'POST',
+      url: `/api/feedback/${input.submissionId}/retry`,
+      payload: {},
+    });
+    assert.equal(retry.statusCode, 410);
+    assert.equal(f.state.envelopes.length, 1);
+    assert.equal(f.state.builds, 1);
+  },
+);
+
+test(
+  'feedback retains version metadata without a report and rejects invalid screenshots before delivery',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app } = await f.open();
+    const snapshot = (await app.inject({ method: 'POST', url: '/api/feedback/report' })).json();
+    for (const metadata of [
+      { category: 'bug', source: 'desktop', appVersion: '1.2.3', appModified: false },
+      { category: 'feature', source: 'local-web', appVersion: null, appModified: true },
+      { category: 'other', source: 'hosted-web', appVersion: null, appModified: null },
+    ] as const) {
+      const input = f.submission(metadata);
+      const result = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+      assert.equal(result.json().status, 'submitted');
+      const delivered = f.state.envelopes.at(-1)!;
+      assert.equal(delivered.report, undefined);
+      assert.equal(delivered.appVersion, input.appVersion);
+      assert.equal(delivered.appRelease, input.appRelease);
+      assert.equal(delivered.source, input.source);
+      assert.equal(delivered.appModified, input.appModified);
+      assert.equal(delivered.computerName, input.computerName);
+    }
+    const diagnosticsOnFeature = await app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: f.submission({ category: 'feature', reportId: snapshot.id }),
+    });
+    assert.equal(diagnosticsOnFeature.statusCode, 400);
+    for (const file of [
+      {
+        name: 'wrong.png',
+        mimeType: 'image/png',
+        data: Buffer.from('<html>synthetic</html>').toString('base64'),
+      },
+      {
+        name: 'wrong.jpg',
+        mimeType: 'image/jpeg',
+        data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64'),
+      },
+      { name: 'bad.webp', mimeType: 'image/webp', data: 'not base64!' },
+    ]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/feedback',
+        payload: f.submission({ attachments: [file as FeedbackSubmission['attachments'][number]] }),
+      });
+      assert.equal(response.statusCode, 400);
+    }
+    assert.equal(f.state.envelopes.length, 3);
+    assert.equal(
+      (await f.pool.query('SELECT count(*)::int AS count FROM feedback_submissions')).rows[0].count,
+      3,
+    );
+  },
+);
+
+test(
+  'feedback concurrent duplicate IDs send once and reject different content',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app } = await f.open();
+    await f.pool
+      .query(`CREATE FUNCTION pause_feedback_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_sleep(0.1); RETURN NEW; END;
+    $$;
+    CREATE TRIGGER feedback_insert_pause BEFORE INSERT ON feedback_submissions
+      FOR EACH ROW EXECUTE FUNCTION pause_feedback_insert()`);
+    const input = f.submission();
+    const duplicated = await Promise.all(
+      [input, input].map((payload) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/feedback',
+          payload,
+        }),
+      ),
+    );
+    assert.ok(duplicated.every((response) => response.statusCode === 200));
+    assert.equal(f.state.envelopes.length, 1);
+    const conflicting = f.submission();
+    const conflictResponses = await Promise.all(
+      [conflicting, { ...conflicting, feedback: 'Different request' }].map((payload) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/feedback',
+          payload,
+        }),
+      ),
+    );
+    assert.deepEqual(conflictResponses.map((response) => response.statusCode).sort(), [200, 409]);
+    assert.equal(f.state.envelopes.length, 2);
+  },
+);
+
+test(
+  'feedback status rejects a delayed unclaimed submission without allowing it to send later',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const gate = await blockFeedbackClaim(f.pool, 'BEFORE');
+    const input = f.submission();
+    const sent = app
+      .inject({ method: 'POST', url: '/api/feedback', payload: input })
+      .then((value) => value);
+    try {
+      await waitForBlockedFeedbackClaim(f.pool, gate.pid);
+      const status = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+      assert.equal(status.json().status, 'rejected');
+      assert.equal(f.state.envelopes.length, 0);
+      assert.equal(f.state.statusRequests.length, 0);
+    } finally {
+      await gate.release();
+    }
+    const delayed = await sent;
+    assert.equal(delayed.statusCode, 200);
+    assert.equal(delayed.json().status, 'rejected');
+    const repeated = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+    assert.equal(repeated.json().status, 'rejected');
+    assert.equal(f.state.envelopes.length, 0);
+    const stored = await f.pool.query(
+      'SELECT status,request_hash,payload_hash FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+      [ownerId, input.submissionId],
+    );
+    assert.deepEqual(stored.rows, [{ status: 'rejected', request_hash: '', payload_hash: '' }]);
+  },
+);
+
+test(
+  'feedback status preserves an in-flight submission that claimed its row first',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app } = await f.open();
+    const gate = await blockFeedbackClaim(f.pool, 'AFTER');
+    const input = f.submission();
+    const sent = app
+      .inject({ method: 'POST', url: '/api/feedback', payload: input })
+      .then((value) => value);
+    let status!: Promise<Awaited<typeof sent>>;
+    try {
+      const claimingPid = await waitForBlockedFeedbackClaim(f.pool, gate.pid);
+      status = app.inject({ url: `/api/feedback/${input.submissionId}` }).then((value) => value);
+      await waitForBlockedFeedbackClaim(f.pool, claimingPid);
+    } finally {
+      await gate.release();
+    }
+    const [submitted, checked] = await Promise.all([sent, status]);
+    assert.equal(submitted.json().status, 'submitted');
+    assert.ok(['unknown', 'submitted'].includes(checked.json().status));
+    assert.equal(f.state.envelopes.length, 1);
+    assert.equal(f.state.statusRequests.length, 0);
+    const confirmed = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(confirmed.json().status, 'submitted');
+  },
+);
+
+test(
+  'feedback abandoned before a delayed database claim never reaches external delivery',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { app, ownerId } = await f.open();
+    const gate = await blockFeedbackClaim(f.pool, 'BEFORE');
+    let markClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      markClosed = resolve;
+    });
+    app.addHook('onRequest', async (_request, reply) => {
+      reply.raw.once('close', markClosed);
+    });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+    const controller = new AbortController();
+    const input = f.submission();
+    const sent = fetch(`${origin}/api/feedback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+    const aborted = assert.rejects(sent, (error: Error) => error.name === 'AbortError');
+    try {
+      await waitForBlockedFeedbackClaim(f.pool, gate.pid);
+      controller.abort();
+      await aborted;
+      await closed;
+    } finally {
+      await gate.release();
+    }
+    const deadline = Date.now() + 5000;
+    let status: string | undefined;
+    while (Date.now() < deadline) {
+      const saved = await f.pool.query(
+        'SELECT status FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+        [ownerId, input.submissionId],
+      );
+      status = saved.rows[0]?.status;
+      if (status === 'rejected') break;
+      await delay(20);
+    }
+    assert.equal(status, 'rejected');
+    assert.equal(f.state.envelopes.length, 0);
+    const confirmed = await app.inject({ url: `/api/feedback/${input.submissionId}` });
+    assert.equal(confirmed.json().status, 'rejected');
+    assert.equal(f.state.statusRequests.length, 0);
+  },
+);
+
+test('feedback intake accepts only matching Linear receipts and never retries a failed or redirected request', async (t) => {
+  const input: FeedbackEnvelope = {
+    schemaVersion: 1,
+    submissionId: randomUUID(),
+    payloadHash: 'a'.repeat(64),
+    category: 'bug',
+    feedback: 'Synthetic issue',
+    computerName: null,
+    appVersion: '1.2.3',
+    appRelease: null,
+    platform: null,
+    development: true,
+    source: 'local-web',
+    appModified: true,
+    attachments: [],
+  };
+  const issueUrl = 'https://linear.app/n8n/issue/LAB-123/synthetic-feedback';
+  const valid = { submissionId: input.submissionId, status: 'submitted', issueUrl };
+  const responses: Array<[string, () => Response]> = [
+    ['empty 200', () => new Response('')],
+    ['unrelated 200', () => Response.json({ ok: true })],
+    [
+      'GraphQL errors',
+      () =>
+        Response.json({ data: { issueCreate: null }, errors: [{ message: 'Synthetic failure' }] }),
+    ],
+    ['wrong ID', () => Response.json({ ...valid, submissionId: randomUUID() })],
+    ['missing issue URL', () => Response.json({ ...valid, issueUrl: undefined })],
+    [
+      'foreign issue URL',
+      () => Response.json({ ...valid, issueUrl: 'https://example.test/n8n/issue/LAB-123' }),
+    ],
+    [
+      'wrong team',
+      () => Response.json({ ...valid, issueUrl: 'https://linear.app/n8n/issue/SEC-123' }),
+    ],
+    ['oversized receipt', () => Response.json({ ...valid, extra: 'x'.repeat(9000) })],
+    [
+      'redirect',
+      () =>
+        new Response(null, {
+          status: 307,
+          headers: { location: 'https://elsewhere.example.test' },
+        }),
+    ],
+    ['HTTP error', () => Response.json(valid, { status: 502 })],
+  ];
+  for (const [name, response] of responses) {
+    await t.test(name, async () => {
+      let calls = 0;
+      const delivery = createN8nFeedback({
+        url: 'https://feedback.example.test/intake',
+        request: async (_url, options) => {
+          calls++;
+          assert.equal(options?.redirect, 'error');
+          assert.equal(new Headers(options?.headers).get('x-otto-feedback-token'), null);
+          assert.equal(JSON.parse(String(options?.body)).submissionId, input.submissionId);
+          return response();
+        },
+      });
+      assert.deepEqual(await delivery.submit(input), {
+        submissionId: input.submissionId,
+        status: 'unknown',
+      });
+      assert.equal(calls, 1);
+    });
+  }
+  let calls = 0;
+  const dropped = createN8nFeedback({
+    url: 'https://feedback.example.test/intake',
+    request: async () => {
+      calls++;
+      throw new Error('Synthetic network failure');
+    },
+  });
+  assert.equal((await dropped.submit(input)).status, 'unknown');
+  assert.equal(calls, 1);
+  const delivery = createN8nFeedback({
+    url: 'https://feedback.example.test/intake',
+    request: async () => Response.json(valid),
+  });
+  assert.deepEqual(await delivery.submit(input), valid);
+  await t.test(
+    'delivery preserves bounded explanations without trusting malformed messages',
+    async () => {
+      for (const status of ['rejected', 'partial', 'unknown'] as const) {
+        const receipt = { ...valid, status, message: 'Synthetic recovery instruction.' };
+        const provider = createN8nFeedback({
+          url: 'https://feedback.example.test/intake',
+          request: async () =>
+            Response.json(receipt, { status: status === 'rejected' ? 400 : 200 }),
+        });
+        assert.deepEqual(await provider.submit(input), receipt);
+      }
+      for (const message of [null, {}, 123, 'x'.repeat(1001)]) {
+        const provider = createN8nFeedback({
+          url: 'https://feedback.example.test/intake',
+          request: async () => Response.json({ ...valid, message }),
+        });
+        assert.deepEqual(await provider.submit(input), valid);
+      }
+    },
+  );
+  await t.test('direct webhook reconciles only a matching HTTP 400 rejection', async () => {
+    for (const [status, body, expected] of [
+      [400, { submissionId: input.submissionId, status: 'rejected' }, 'rejected'],
+      [400, { submissionId: randomUUID(), status: 'rejected' }, 'unknown'],
+      [400, { error: 'Invalid request' }, 'unknown'],
+      [400, valid, 'unknown'],
+      [400, { ...valid, status: 'partial' }, 'unknown'],
+      [400, { submissionId: input.submissionId, status: 'unknown' }, 'unknown'],
+      [401, { submissionId: input.submissionId, status: 'rejected' }, 'unknown'],
+      [502, { submissionId: input.submissionId, status: 'rejected' }, 'unknown'],
+    ] as const) {
+      let requests = 0;
+      const direct = createN8nFeedback({
+        url: 'https://feedback.example.test/intake',
+        request: async () => {
+          requests++;
+          return Response.json(body, { status });
+        },
+      });
+      assert.deepEqual(await direct.status(input.submissionId, input.payloadHash), {
+        submissionId: input.submissionId,
+        status: expected,
+      });
+      assert.equal(requests, 1);
+    }
+  });
+  const limited = createN8nFeedback({
+    url: 'https://feedback.example.test/intake',
+    request: async () =>
+      Response.json({ status: 'rejected' }, { status: 429, headers: { 'retry-after': '60' } }),
+  });
+  const refused = await limited.submit(input);
+  assert.equal(refused.status, 'rejected');
+  assert.ok(refused.message);
+  assert.equal((await limited.status(input.submissionId, input.payloadHash)).status, 'unknown');
+  assert.equal((await limited.submit({ ...input, action: 'repair' })).status, 'unknown');
+});
+
+test('feedback diagnostics redact a credential retrieved while the report rows are being sampled', async () => {
+  const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
+  const ownerId = randomUUID();
+  const threadId = randomUUID();
+  const password = 'synthetic-newly-retrieved-login';
+  const sampled = new Set<string>();
+  let credentialAvailable = false;
+  const pool = {
+    async query(sql: string, values: string[]) {
+      assert.equal(values[0], ownerId);
+      if (sql.includes('FROM threads')) return { rows: [{ id: threadId, status: 'running' }] };
+      assert.equal(values[1], threadId);
+      if (sql.includes('FROM messages')) {
+        credentialAvailable = true;
+        sampled.add('messages');
+        return { rows: [{ role: 'assistant', text: `Diagnostic context ${password}` }] };
+      }
+      if (sql.includes('FROM turns')) {
+        sampled.add('turns');
+        return { rows: [{ status: 'running' }] };
+      }
+      if (sql.includes('FROM inspector_records')) {
+        sampled.add('trace');
+        return { rows: [{ name: 'browser', output: { text: `Mirrored ${password}` } }] };
+      }
+      assert.fail('Unexpected diagnostic query');
+    },
+  } as unknown as pg.Pool;
+  const report = await buildFeedbackReport({
+    pool,
+    ownerId,
+    captureEnabled: () => true,
+    sessionEntries: async (id) => {
+      assert.equal(id, threadId);
+      assert.equal(sampled.size, 3);
+      return credentialAvailable
+        ? [
+            {
+              message: {
+                role: 'toolResult',
+                toolName: 'get_credential',
+                content: [{ type: 'text', text: JSON.stringify({ password }) }],
+              },
+            },
+          ]
+        : [];
+    },
+  });
+  assert.ok(report.includes('Diagnostic context [redacted]'));
+  assert.ok(report.includes('Mirrored [redacted]'));
+  assert.ok(!report.includes(password));
+  await assert.rejects(
+    buildFeedbackReport({
+      pool,
+      ownerId,
+      captureEnabled: () => true,
+      sessionEntries: async () => {
+        throw new Error('Synthetic session unavailable');
+      },
+    }),
+    /Synthetic session unavailable/,
+  );
+});
+
+test('feedback diagnostics recover bounded private tool activity when inspector capture is unavailable', async () => {
+  const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
+  const ownerId = randomUUID();
+  const threadId = randomUUID();
+  const now = Date.now() - 1000;
+  const password = 'synthetic-saved-session-password';
+  const username = 'synthetic-saved-session-user';
+  let inspectorRows: unknown[] = [];
+  const pool = {
+    async query(sql: string, values: string[]) {
+      assert.equal(values[0], ownerId);
+      if (sql.includes('FROM threads')) return { rows: [{ id: threadId, status: 'idle' }] };
+      assert.equal(values[1], threadId);
+      return { rows: sql.includes('FROM inspector_records') ? inspectorRows : [] };
+    },
+  } as unknown as pg.Pool;
+  function activity(
+    id: string,
+    name: string,
+    input: unknown,
+    output: string,
+    timestamp = now,
+    isError = false,
+  ) {
+    return [
+      {
+        type: 'message',
+        timestamp: new Date(timestamp).toISOString(),
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'synthetic-private-reasoning' },
+            { type: 'text', text: 'synthetic-assistant-prose' },
+            { type: 'toolCall', id, name, arguments: input },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        timestamp: new Date(timestamp + 1).toISOString(),
+        message: {
+          role: 'toolResult',
+          toolCallId: id,
+          toolName: name,
+          isError,
+          content: [
+            { type: 'text', text: output },
+            { type: 'image', data: 'synthetic-binary-content' },
+          ],
+          details: { private: 'synthetic-opaque-details' },
+        },
+      },
+    ];
+  }
+  let entries: unknown[] = [
+    ...activity(
+      'old-login',
+      'get_credential',
+      {},
+      JSON.stringify({ username, password }),
+      now - 172_800_000,
+    ),
+    ...activity('old-call', 'browser', {}, 'synthetic-old-tool-output', now - 172_800_000),
+    ...activity('rebased-old-call', 'browser', {}, 'synthetic-rebased-old-output').map(
+      (entry, index) => ({
+        ...entry,
+        message: { ...entry.message, timestamp: now - 172_800_000 + index },
+      }),
+    ),
+    ...activity('recent', 'browser', { action: 'snapshot' }, `Visible activity ${password}`).map(
+      (entry, index) => ({
+        ...entry,
+        message: { ...entry.message, timestamp: now - 60_000 + index },
+      }),
+    ),
+    ...activity(
+      'failed',
+      'bash',
+      { command: 'synthetic' },
+      'Synthetic command failed',
+      now,
+      true,
+    ).map((entry) => ({ ...entry, message: { ...entry.message, timestamp: NaN } })),
+    ...activity('fill', 'browser', { action: 'fill', text: 'synthetic-private-fill' }, username),
+    ...activity('login', 'get_credential', { origin: 'synthetic-private-origin' }, 'private-login'),
+    ...activity('flow', 'browser_flow', { query: 'synthetic-private-flow' }, 'private-flow-output'),
+    ...activity(
+      'memory',
+      'manage_personal_context',
+      { action: 'profile_get', args: 'synthetic-private-profile' },
+      'private-memory-output',
+    ),
+    activity('unfinished', 'browser', { action: 'click' }, '')[0],
+    {
+      type: 'message',
+      timestamp: new Date(now).toISOString(),
+      message: { role: 'system', content: 'synthetic-system-prompt' },
+    },
+    { type: 'compaction', timestamp: new Date(now).toISOString(), summary: 'synthetic-compaction' },
+  ];
+  const options = {
+    pool,
+    ownerId,
+    captureEnabled: () => false,
+    sessionEntries: async (id: string) => {
+      assert.equal(id, threadId);
+      return entries;
+    },
+  };
+  for (const captureEnabled of [false, true]) {
+    const encoded = await buildFeedbackReport({ ...options, captureEnabled: () => captureEnabled });
+    const report = JSON.parse(encoded);
+    assert.equal(report.coverage.toolTraceSource, 'saved-session');
+    assert.equal(report.trace.length, 7);
+    const browser = report.trace.find((item: { id: string }) => item.id === 'recent');
+    assert.deepEqual(browser.input, { action: 'snapshot' });
+    assert.deepEqual(browser.output, ['Visible activity [redacted]']);
+    assert.equal(browser.status, 'succeeded');
+    assert.equal(browser.started_at, new Date(now - 60_000).toISOString());
+    assert.equal(browser.finished_at, new Date(now - 60_000 + 1).toISOString());
+    assert.equal(
+      report.trace.find((item: { id: string }) => item.id === 'failed').status,
+      'failed',
+    );
+    assert.equal(
+      report.trace.find((item: { id: string }) => item.id === 'unfinished').status,
+      'unknown',
+    );
+    for (const omitted of [
+      password,
+      username,
+      'synthetic-old-tool-output',
+      'synthetic-rebased-old-output',
+      'synthetic-private-fill',
+      'synthetic-private-origin',
+      'synthetic-private-flow',
+      'synthetic-private-profile',
+      'private-login',
+      'private-flow-output',
+      'private-memory-output',
+      'synthetic-private-reasoning',
+      'synthetic-assistant-prose',
+      'synthetic-binary-content',
+      'synthetic-opaque-details',
+      'synthetic-system-prompt',
+      'synthetic-compaction',
+    ])
+      assert.ok(!encoded.includes(omitted), omitted);
+  }
+  inspectorRows = [{ id: 'captured', name: 'browser', output: 'Captured activity' }];
+  const captured = JSON.parse(
+    await buildFeedbackReport({ ...options, captureEnabled: () => true }),
+  );
+  assert.equal(captured.coverage.toolTraceSource, 'inspector');
+  assert.equal(captured.trace.length, 1);
+  assert.equal(captured.trace[0].id, 'captured');
+  assert.equal(JSON.parse(await buildFeedbackReport(options)).trace.length, 7);
+  const large = 'x'.repeat(3500);
+  entries = Array.from({ length: 70 }, (_, index) =>
+    activity(
+      `bounded-${index}`,
+      'browser',
+      { first: large, second: large },
+      large,
+      now - (70 - index) * 1000,
+    ),
+  ).flat();
+  const bounded = await buildFeedbackReport(options);
+  const truncated = JSON.parse(bounded);
+  assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
+  assert.ok(truncated.trace.length > 0 && truncated.trace.length <= 60);
+  assert.equal(truncated.trace.at(-1).id, 'bounded-69');
+  assert.ok(!bounded.includes('bounded-9'));
+  assert.equal(truncated.coverage.truncated, true);
+});
+
+test(
+  'feedback diagnostics exclude unrelated personal context, redact mirrored credentials and stay bounded',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const f = await feedbackFixture(t);
+    const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
+    await f.pool.query(`
+      CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,status text DEFAULT 'idle',archived_at timestamptz);
+      CREATE TABLE messages(id uuid,owner_id text,thread_id uuid,turn_id uuid,role text,text text,created_at timestamptz DEFAULT now());
+      CREATE TABLE turns(id uuid,owner_id text,thread_id uuid,source text,status text,error text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE inspector_records(id uuid,owner_id text,thread_id uuid,turn_id uuid,kind text,name text,status text,input jsonb,output jsonb,error text,duration_ms integer,recorded_at timestamptz DEFAULT now(),started_at timestamptz DEFAULT now(),finished_at timestamptz);
+      CREATE TABLE profiles(owner_id text,data jsonb);
+      CREATE TABLE goals(owner_id text,title text);
+      CREATE TABLE schedules(owner_id text,prompt text)
+    `);
+    const ownerId = randomUUID();
+    const otherOwner = randomUUID();
+    const threadId = randomUUID();
+    const archivedThread = randomUUID();
+    const otherThread = randomUUID();
+    const secret = 'synthetic-saved-password/123';
+    const username = 'synthetic-saved-user';
+    const apiKey = 'synthetic-provider-key';
+    await f.pool.query(
+      'INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,NULL),($3,$2,now()),($4,$5,NULL)',
+      [threadId, ownerId, archivedThread, otherThread, otherOwner],
+    );
+    await f.pool.query('INSERT INTO profiles VALUES($1,$2)', [
+      ownerId,
+      { personal: 'synthetic-private-profile' },
+    ]);
+    await f.pool.query('INSERT INTO goals VALUES($1,$2)', [ownerId, 'synthetic-private-goal']);
+    await f.pool.query('INSERT INTO schedules VALUES($1,$2)', [
+      ownerId,
+      'synthetic-private-schedule',
+    ]);
+    for (const row of [
+      [
+        ownerId,
+        threadId,
+        `Visible diagnostic ${secret} ${encodeURIComponent(secret)} ${username} ${apiKey}`,
+        'now()',
+      ],
+      [ownerId, archivedThread, 'synthetic-archived-thread', 'now()'],
+      [otherOwner, otherThread, 'synthetic-foreign-owner', 'now()'],
+      [ownerId, threadId, 'synthetic-old-message', "now()-interval '2 days'"],
+    ])
+      await f.pool.query(
+        `INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant',$4,${row[3]})`,
+        [randomUUID(), row[0], row[1], row[2]],
+      );
+    await f.pool.query(
+      "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,input,output,error) VALUES($1,$2,$3,'tool','get_credential',$4,$5,$6)",
+      [
+        randomUUID(),
+        ownerId,
+        threadId,
+        { origin: 'synthetic-credential-origin' },
+        { value: secret },
+        `echo ${secret}`,
+      ],
+    );
+    await f.pool.query(
+      "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,input,output) VALUES($1,$2,$3,'tool','browser',$4,$5)",
+      [
+        randomUUID(),
+        ownerId,
+        threadId,
+        { action: `echo ${secret}` },
+        { result: `Visible tool activity ${username}` },
+      ],
+    );
+    const options = {
+      pool: f.pool,
+      ownerId,
+      captureEnabled: () => true,
+      secrets: [apiKey],
+      provider: 'synthetic',
+      model: 'synthetic',
+      sessionEntries: async (requested: string) => {
+        assert.equal(requested, threadId);
+        return [
+          {
+            type: 'message',
+            message: {
+              role: 'toolResult',
+              toolName: 'get_credential',
+              content: [{ type: 'text', text: JSON.stringify({ username, password: secret }) }],
+            },
+          },
+          {
+            type: 'message',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'thinking', thinking: 'synthetic-private-reasoning' }],
+            },
+          },
+        ];
+      },
+    };
+    const encoded = await buildFeedbackReport(options);
+    for (const omitted of [
+      secret,
+      encodeURIComponent(secret),
+      username,
+      apiKey,
+      'synthetic-private-profile',
+      'synthetic-private-goal',
+      'synthetic-private-schedule',
+      'synthetic-private-reasoning',
+      'synthetic-archived-thread',
+      'synthetic-foreign-owner',
+      'synthetic-old-message',
+      'synthetic-credential-origin',
+    ])
+      assert.ok(!encoded.includes(omitted), omitted);
+    assert.ok(encoded.includes('Visible diagnostic'));
+    assert.ok(encoded.includes('Visible tool activity'));
+    assert.ok(encoded.includes('[redacted]'));
+    const report = JSON.parse(encoded);
+    assert.equal(report.messages.length, 1);
+    assert.equal(report.trace.length, 2);
+    const large = 'x'.repeat(3500);
+    for (let index = 0; index < 60; index++) {
+      await f.pool.query(
+        "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,input,output) VALUES($1,$2,$3,'tool','browser',$4,$5)",
+        [randomUUID(), ownerId, threadId, { first: large }, { second: large, third: large }],
+      );
+      if (index < 30)
+        await f.pool.query(
+          "INSERT INTO messages(id,owner_id,thread_id,role,text) VALUES($1,$2,$3,'assistant',$4)",
+          [randomUUID(), ownerId, threadId, large],
+        );
+    }
+    const bounded = await buildFeedbackReport(options);
+    assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
+    const truncated = JSON.parse(bounded);
+    assert.equal(truncated.coverage.truncated, true);
+    assert.ok(truncated.messages.length <= 30);
+    assert.ok(truncated.trace.length <= 60);
+    assert.ok(truncated.messages.length + truncated.trace.length > 0);
+  },
+);
+
+test('feedback context identifies the running source checkout and keeps hosted release metadata', async (t) => {
+  const { feedbackContext } = await import('../src/server/feedback-context.ts');
+  const cwd = await mkdtemp(join(tmpdir(), 'feedback-source-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const git = promisify(execFile);
+  const environment = { NODE_ENV: 'development', OTTO_RELEASE: 'previous-release' };
+  const gitAvailable = await git('git', ['--version']).then(
+    () => true,
+    (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return false;
+    },
+  );
+  if (gitAvailable) {
+    await git('git', ['init', '--quiet'], { cwd });
+    await writeFile(join(cwd, 'source.txt'), 'Synthetic source');
+    await git('git', ['add', 'source.txt'], { cwd });
+    await git(
+      'git',
+      [
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.test',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+        'commit',
+        '--quiet',
+        '-m',
+        'Fixture',
+      ],
+      { cwd },
+    );
+    const head = (await git('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim();
+    const clean = await feedbackContext({ runtimeMode: 'local', environment, cwd });
+    assert.equal(clean.appRelease, head);
+    assert.equal(clean.appModified, false);
+    assert.equal(clean.appVersion, null);
+    assert.equal(clean.source, 'local-web');
+    await writeFile(join(cwd, 'source.txt'), 'Synthetic modified source');
+    const modified = await feedbackContext({ runtimeMode: 'local', environment, cwd });
+    assert.equal(modified.appRelease, head);
+    assert.equal(modified.appModified, true);
+  } else {
+    const unavailable = await feedbackContext({ runtimeMode: 'local', environment, cwd });
+    assert.equal(unavailable.appRelease, 'previous-release');
+    assert.equal(unavailable.appModified, null);
+    assert.equal(unavailable.appVersion, null);
+    assert.equal(unavailable.source, 'local-web');
+  }
+  for (const runtimeMode of ['tenant', 'gateway'] as const) {
+    const hosted = await feedbackContext({
+      runtimeMode,
+      environment: {
+        ...environment,
+        OTTO_IMAGE_RELEASE: 'deployed-release',
+        OTTO_APP_VERSION: '2.3.4',
+      },
+      cwd,
+    });
+    assert.equal(hosted.appRelease, 'deployed-release');
+    assert.equal(hosted.appVersion, '2.3.4');
+    assert.equal(hosted.appModified, null);
+    assert.equal(hosted.source, 'hosted-web');
+    assert.equal(hosted.development, false);
+  }
+  const production = await feedbackContext({
+    runtimeMode: 'local',
+    environment: { ...environment, NODE_ENV: 'production' },
+    cwd,
+  });
+  assert.equal(production.appRelease, 'previous-release');
+  assert.equal(production.appModified, null);
+  assert.equal(production.development, false);
+});

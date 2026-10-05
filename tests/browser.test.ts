@@ -3150,7 +3150,7 @@ test('desktop restart guard preserves chat drafts, attachments, pending sends an
   }
 });
 
-test('native Settings preserves the active credential form and keeps its restart fence', async () => {
+test('native Settings and feedback preserve the active credential form and its restart fence', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: `
@@ -3176,6 +3176,9 @@ test('native Settings preserves the active credential form and keeps its restart
           settings: { theme: 'system', onboardingCompleted: true },
           capabilities: { developer: true },
         });
+        if (path === '/api/feedback/context') return Response.json({
+          enabled: true, appVersion: null, appRelease: null, appModified: null, source: 'local-web', development: false, computerName: null, platform: null,
+        });
         if (path === '/api/credential-requests/synthetic-form') return Response.json({
           kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
           expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
@@ -3185,6 +3188,7 @@ test('native Settings preserves the active credential form and keeps its restart
       const preferences = { theme: 'system', resolvedTheme: 'light', launchAtLogin: false, notifications: false };
       const checks = new Set();
       let openSettings;
+      let openFeedback;
       dom.window.ottoDesktop = {
         getSettings: async () => ({ ...preferences, hasComposioKey: false, keys: { composioApiKey: { suffix: null } }, restartRequired: false }),
         getPreferences: async () => preferences,
@@ -3192,6 +3196,10 @@ test('native Settings preserves the active credential form and keeps its restart
         onOpenSettings: listener => {
           openSettings = listener;
           return () => { openSettings = undefined; };
+        },
+        onFeedbackRequested: listener => {
+          openFeedback = listener;
+          return () => { openFeedback = undefined; };
         },
         onPrepareUpdate: check => { checks.add(check); return () => checks.delete(check); },
       };
@@ -3221,6 +3229,153 @@ test('native Settings preserves the active credential form and keeps its restart
         assert.ok(document.activeElement === password);
         assert.equal([...checks][0](), false);
         assert.deepEqual(requests, ['/api/session', '/api/credential-requests/synthetic-form']);
+        assert.ok(openFeedback);
+        await act(async () => openFeedback());
+        assert.ok(document.querySelector('[role="dialog"].feedback-dialog'));
+        assert.equal(window.location.pathname, '/credentials/synthetic-form');
+        assert.equal(document.querySelector('input[name="password"]'), password);
+        assert.equal(password.value, 'synthetic-unsaved-password');
+        assert.equal([...checks][0](), false);
+        await act(async () => document.querySelector('[aria-label="Close"]').click());
+        await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
+        assert.equal(document.querySelector('[role="dialog"]'), null);
+        assert.equal(document.querySelector('input[name="password"]'), password);
+        assert.equal(password.value, 'synthetic-unsaved-password');
+        assert.ok(document.activeElement === password);
+        assert.deepEqual(requests, ['/api/session', '/api/credential-requests/synthetic-form', '/api/feedback/context']);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+      process.exit(0);
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
+test('feedback copies the submitted snapshot and cancels pending copies when closed', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', {
+        url: 'http://localhost',
+        pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+      });
+      const copies = [];
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: { userAgent: dom.window.navigator.userAgent, platform: 'MacIntel', clipboard: { writeText: async text => copies.push(text) } },
+      });
+      const requests = [];
+      const reports = [];
+      const submissions = [];
+      const snapshot = {
+        id: crypto.randomUUID(),
+        content: JSON.stringify({ messages: ['Synthetic redacted conversation'], trace: ['Synthetic tool result'] }, null, 2),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      };
+      globalThis.fetch = async (path, options) => {
+        requests.push(path);
+        if (path === '/api/feedback/context') return Response.json({
+          enabled: true, appVersion: null, appRelease: 'synthetic-runtime-commit', appModified: true, source: 'local-web', development: true, computerName: null, platform: null,
+        });
+        if (path === '/api/feedback/report') return new Promise(resolve => reports.push({ resolve, signal: options.signal }));
+        if (path === '/api/feedback') {
+          const body = JSON.parse(options.body);
+          submissions.push(body);
+          return Response.json({ submissionId: body.submissionId, status: 'submitted' });
+        }
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      const { act, createElement, useState } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { FeedbackDialog } = await import('./src/web/components/feedback.tsx');
+      function Fixture() {
+        const [open, setOpen] = useState(true);
+        return createElement('div', null,
+          createElement('button', { 'data-open': true, onClick: () => setOpen(true) }, 'Open fixture'),
+          createElement(FeedbackDialog, { ownerId: 'synthetic-owner', open, onOpenChange: setOpen, returnFocus: () => document.querySelector('[data-open]') }),
+        );
+      }
+      const root = createRoot(document.querySelector('#root'));
+      const click = async label => {
+        const button = [...document.querySelectorAll('button')].find(candidate => candidate.textContent === label);
+        assert.ok(button, label);
+        await act(async () => button.click());
+      };
+      const continueForm = async () => {
+        await act(async () => document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+      };
+      const writeFeedback = async value => {
+        await act(async () => {
+          const input = document.querySelector('textarea');
+          Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value').set.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+      };
+      try {
+        await act(async () => root.render(createElement(Fixture)));
+        await click('Copy trace');
+        assert.equal(reports.length, 1);
+        assert.equal(submissions.length, 0);
+        await continueForm();
+        await writeFeedback('Synthetic feedback');
+        await continueForm();
+        assert.equal(reports.length, 1);
+        await act(async () => reports[0].resolve(Response.json(snapshot)));
+        assert.deepEqual(copies, [snapshot.content]);
+        await click('Review report');
+        assert.equal(document.querySelector('[aria-label="Diagnostic report"]').textContent, copies[0]);
+        await continueForm();
+        assert.equal(submissions.length, 1);
+        assert.equal(submissions[0].reportId, snapshot.id);
+        assert.equal(submissions[0].feedback, 'Synthetic feedback');
+        assert.equal(submissions[0].source, 'local-web');
+        assert.equal(submissions[0].appVersion, null);
+        assert.equal(submissions[0].appRelease, 'synthetic-runtime-commit');
+        assert.equal(submissions[0].appModified, true);
+        assert.equal(submissions[0].platform, 'MacIntel');
+        assert.equal(document.querySelector('[role="dialog"]'), null);
+        window.ottoDesktop = { getFeedbackContext: async () => ({
+          computerName: 'Synthetic Device Name', appVersion: '1.2.3', appRelease: null, appModified: null,
+          source: 'desktop', development: true, platform: 'darwin-arm64',
+        }) };
+        await act(async () => document.querySelector('[data-open]').click());
+        await click('Copy trace');
+        assert.equal(reports.length, 2);
+        await act(async () => document.querySelector('[aria-label="Close"]').click());
+        assert.equal(reports[1].signal.aborted, true);
+        await act(async () => reports[1].resolve(Response.json({ ...snapshot, id: crypto.randomUUID(), content: 'Canceled synthetic trace' })));
+        assert.deepEqual(copies, [snapshot.content]);
+        await act(async () => document.querySelector('[data-open]').click());
+        await click('Copy trace');
+        assert.equal(reports.length, 3);
+        await act(async () => reports[2].resolve(Response.json({ ...snapshot, id: crypto.randomUUID(), content: 'Fresh synthetic trace' })));
+        assert.deepEqual(copies, [snapshot.content, 'Fresh synthetic trace']);
+        assert.equal(submissions.length, 1);
+        assert.equal(requests.includes('/api/conversation/bug-report'), false);
+        await continueForm();
+        await writeFeedback('Synthetic desktop feedback');
+        await continueForm();
+        assert.equal(reports.length, 3);
+        assert.equal(document.body.textContent.includes('Synthetic Device Name'), false);
+        await continueForm();
+        assert.equal(submissions.length, 2);
+        assert.equal(submissions[1].computerName, 'Synthetic Device Name');
+        assert.equal(submissions[1].source, 'desktop');
+        assert.equal(submissions[1].appVersion, '1.2.3');
+        assert.equal(submissions[1].appRelease, 'synthetic-runtime-commit');
+        assert.equal(submissions[1].appModified, true);
+        assert.equal(submissions[1].platform, 'darwin-arm64');
       } finally {
         await act(async () => root.unmount());
         dom.window.close();

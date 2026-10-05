@@ -1,0 +1,54 @@
+export const feedbackLimits = {
+  text: 12_000,
+  attachments: 3,
+  attachmentBytes: 2 * 1024 * 1024,
+  totalAttachmentBytes: 4 * 1024 * 1024,
+  reportBytes: 512 * 1024,
+  requestBytes: 7 * 1024 * 1024,
+};
+
+export interface FeedbackContext {
+  enabled: boolean;
+  appVersion: string | null;
+  appRelease: string | null;
+  development: boolean;
+  source: 'desktop' | 'local-web' | 'hosted-web';
+  appModified: boolean | null;
+  computerName: string | null;
+  platform: string | null;
+}
+
+export interface FeedbackReport {
+  id: string;
+  content: string;
+  expiresAt: string;
+}
+
+export interface FeedbackAttachment {
+  name: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  data: string;
+}
+
+export interface FeedbackSubmission {
+  submissionId: string;
+  category: 'bug' | 'feature' | 'other';
+  feedback: string;
+  computerName: string | null;
+  appVersion: string | null;
+  appRelease: string | null;
+  platform: string | null;
+  development: boolean;
+  source: 'desktop' | 'local-web' | 'hosted-web';
+  appModified: boolean | null;
+  reportId: string | null;
+  attachments: FeedbackAttachment[];
+}
+
+export interface FeedbackReceipt {
+  submissionId: string;
+  status: 'submitted' | 'partial' | 'unknown' | 'rejected';
+  issueUrl?: string;
+  message?: string;
+  canRetryAttachments?: boolean;
+}

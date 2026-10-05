@@ -15,6 +15,7 @@ import { Button, Loading, Notice } from './components/ui';
 import { ChatSkeleton, Splash } from './components/startup';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
+import { FeedbackDialog } from './components/feedback';
 import { navigationItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
@@ -31,6 +32,7 @@ import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
 import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
 import {
   desktopSettingsAvailable,
+  onFeedbackRequested,
   onPrepareDesktopUpdate,
   subscribeDesktopFocusMessage,
   subscribeDesktopSettings,
@@ -76,11 +78,13 @@ function Workspace({
   session,
   account,
   settingsError,
+  onFeedback,
 }: {
   path: string;
   session: SessionResponse;
   account: AccountControls;
   settingsError: string;
+  onFeedback(): void;
 }) {
   const { state, streams, error, connected, refresh, resetConversation } = useAppState(
     session.user!.id,
@@ -228,6 +232,7 @@ function Workspace({
                   toolbarActions={currentPath === '/' ? toolbarActions : null}
                   visible={currentPath === '/'}
                   onReadLatest={unread.markRead}
+                  onFeedback={onFeedback}
                   requestedMessage={chatRequests[0]}
                   onRequestHandled={(id) =>
                     setChatRequests((current) => current.filter((request) => request.id !== id))
@@ -283,13 +288,29 @@ function AuthenticatedApp({
   saving,
   onAccountUpdate,
   onLogout,
+  feedbackRequest,
+  onFeedbackHandled,
 }: {
   path: string;
   session: SessionResponse;
   saving: boolean;
   onAccountUpdate(change: AccountUpdate): Promise<void>;
   onLogout(): void;
+  feedbackRequest: number;
+  onFeedbackHandled(): void;
 }) {
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const feedbackTrigger = useRef<HTMLElement | null>(null);
+  const openFeedback = () => {
+    feedbackTrigger.current =
+      document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
+    setFeedbackOpen(true);
+  };
+  useEffect(() => {
+    if (!feedbackRequest) return;
+    openFeedback();
+    onFeedbackHandled();
+  }, [feedbackRequest, onFeedbackHandled]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsRequest, setSettingsRequest] = useState(0);
   const [settingsTab, setSettingsTab] = useState<AccountTab>(
@@ -398,9 +419,25 @@ function AuthenticatedApp({
           onComplete={() => onAccountUpdate({ onboardingCompleted: true })}
         />
       ) : (
-        <Workspace path={path} session={session} account={account} settingsError={settingsError} />
+        <Workspace
+          path={path}
+          session={session}
+          account={account}
+          settingsError={settingsError}
+          onFeedback={openFeedback}
+        />
       )}
       {settingsError && !workspace && <Notice>{settingsError}</Notice>}
+      <FeedbackDialog
+        ownerId={session.user!.id}
+        open={feedbackOpen}
+        onOpenChange={setFeedbackOpen}
+        returnFocus={() =>
+          feedbackTrigger.current?.isConnected
+            ? feedbackTrigger.current
+            : document.getElementById('feedback-launcher')
+        }
+      />
       <AccountSettings
         account={account}
         open={settingsOpen}
@@ -423,7 +460,17 @@ function AuthenticatedApp({
     </>
   );
 }
-function AccountApp({ path, setPath }: { path: string; setPath(path: string): void }) {
+function AccountApp({
+  path,
+  setPath,
+  feedbackRequest,
+  onFeedbackHandled,
+}: {
+  path: string;
+  setPath(path: string): void;
+  feedbackRequest: number;
+  onFeedbackHandled(): void;
+}) {
   const sessionState = useSession();
   const { session } = sessionState;
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
@@ -517,17 +564,28 @@ function AccountApp({ path, setPath }: { path: string; setPath(path: string): vo
       saving={sessionState.mutating}
       onAccountUpdate={sessionState.update}
       onLogout={logout}
+      feedbackRequest={feedbackRequest}
+      onFeedbackHandled={onFeedbackHandled}
     />
   );
 }
 
 export function App() {
   const [path, setPath] = useState(window.location.pathname);
+  const [feedbackRequest, setFeedbackRequest] = useState(0);
   useEffect(() => {
     const update = () => setPath(window.location.pathname);
     window.addEventListener('popstate', update);
     return () => window.removeEventListener('popstate', update);
   }, []);
+  useEffect(
+    () =>
+      onFeedbackRequested(() => {
+        if (/^\/privacy\/?$/.test(window.location.pathname)) navigate('/');
+        setFeedbackRequest((value) => value + 1);
+      }),
+    [],
+  );
   useEffect(
     () =>
       onPrepareDesktopUpdate(
@@ -542,7 +600,16 @@ export function App() {
   return (
     <>
       {desktopSettingsAvailable() && <div className="desktop-titlebar" aria-hidden="true" />}
-      {/^\/privacy\/?$/.test(path) ? <Privacy /> : <AccountApp path={path} setPath={setPath} />}
+      {/^\/privacy\/?$/.test(path) ? (
+        <Privacy />
+      ) : (
+        <AccountApp
+          path={path}
+          setPath={setPath}
+          feedbackRequest={feedbackRequest}
+          onFeedbackHandled={() => setFeedbackRequest(0)}
+        />
+      )}
     </>
   );
 }

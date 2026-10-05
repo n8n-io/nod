@@ -2,7 +2,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const focusListeners = new Set();
 const settingsListeners = new Set();
+const feedbackListeners = new Set();
 let pendingSettings;
+let pendingFeedback = false;
 const restartChecks = new Set();
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 let pendingFocus;
@@ -43,6 +45,11 @@ ipcRenderer.on('otto:settings:focus', (_event, section) => {
   else for (const listener of settingsListeners) listener(section);
 });
 
+ipcRenderer.on('otto:feedback:open', () => {
+  if (!feedbackListeners.size) pendingFeedback = true;
+  else for (const listener of feedbackListeners) listener();
+});
+
 contextBridge.exposeInMainWorld('ottoDesktop', {
   getAnalyticsConfiguration: () => ipcRenderer.invoke('otto:analytics:configuration'),
   onPrepareUpdate: (check) => {
@@ -67,7 +74,16 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
     return () => settingsListeners.delete(listener);
   },
   getPreferences: () => ipcRenderer.invoke('otto:preferences:get'),
-  getBuildInfo: () => ipcRenderer.invoke('otto:build-info'),
+  getFeedbackContext: () => ipcRenderer.invoke('otto:feedback:context'),
+  onFeedbackRequested: (listener) => {
+    if (typeof listener !== 'function') throw new TypeError('A feedback listener is required.');
+    feedbackListeners.add(listener);
+    if (pendingFeedback) {
+      pendingFeedback = false;
+      listener();
+    }
+    return () => feedbackListeners.delete(listener);
+  },
   setTheme: (theme) => ipcRenderer.invoke('otto:preferences:theme', theme),
   getChatReadCursor: (ownerId, threadId) =>
     ipcRenderer.invoke('otto:chat-read:get', ownerId, threadId),

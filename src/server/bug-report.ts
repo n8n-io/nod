@@ -1,9 +1,90 @@
-import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { activeThread } from './thread.ts';
 import { createInspectorRedactor } from './inspector-redaction.ts';
+import { feedbackLimits } from '../shared/feedback.ts';
 
 type RecordValue = Record<string, unknown>;
+
+export interface FeedbackReportOptions {
+  pool: Pool;
+  ownerId: string;
+  captureEnabled(): boolean;
+  secrets?: string[];
+  provider?: string;
+  model?: string;
+  sessionEntries?: (threadId: string) => Promise<unknown[]>;
+}
+
+export async function buildFeedbackReport(options: FeedbackReportOptions) {
+  const thread = await activeThread(options.pool, options.ownerId);
+  const values = [options.ownerId, thread.id];
+  const [messages, turns, trace] = await Promise.all([
+    options.pool.query(
+      `SELECT id,role,text,turn_id,created_at FROM messages
+       WHERE owner_id=$1 AND thread_id=$2 AND created_at >= now()-interval '24 hours'
+       ORDER BY created_at DESC,id DESC LIMIT 30`,
+      values,
+    ),
+    options.pool.query(
+      `SELECT id,source,status,error,created_at,started_at,finished_at FROM turns
+       WHERE owner_id=$1 AND thread_id=$2 AND created_at >= now()-interval '24 hours'
+       ORDER BY created_at DESC,id DESC LIMIT 20`,
+      values,
+    ),
+    options.pool.query(
+      `SELECT id,turn_id,kind,name,status,input,output,error,duration_ms,started_at,finished_at
+       FROM inspector_records WHERE owner_id=$1 AND thread_id=$2
+       AND recorded_at >= now()-interval '24 hours'
+       ORDER BY started_at DESC,id DESC LIMIT 60`,
+      values,
+    ),
+  ]);
+  const entries = (await options.sessionEntries?.(thread.id)) ?? [];
+  const redact = createInspectorRedactor(
+    [...(options.secrets ?? []), ...savedCredentialValues(entries)],
+    { string: 4000, payload: 12_000, minimumSecretLength: 1 },
+  );
+  const toolCaptureEnabled = options.captureEnabled();
+  const useSessionTrace = !toolCaptureEnabled || !trace.rows.length;
+  const toolTrace = useSessionTrace ? savedToolTrace(entries, Date.now()) : trace.rows;
+  const report = {
+    format: 'otto-feedback-report-v1',
+    generatedAt: new Date().toISOString(),
+    threadId: thread.id,
+    provider: options.provider,
+    model: options.model,
+    coverage: {
+      hours: 24,
+      toolCaptureEnabled,
+      toolTraceSource: useSessionTrace ? 'saved-session' : 'inspector',
+      maximumMessages: 30,
+      maximumTurns: 20,
+      maximumToolRecords: 60,
+      truncated: false,
+    },
+    messages: messages.rows.map(redact).reverse(),
+    turns: turns.rows.map(redact).reverse(),
+    trace: toolTrace
+      .map((row) =>
+        redact(
+          row.name === 'get_credential'
+            ? { ...row, input: '[redacted]', output: '[redacted]', error: '[redacted]' }
+            : row,
+        ),
+      )
+      .reverse(),
+  };
+  let encoded = JSON.stringify(report, null, 2);
+  while (Buffer.byteLength(encoded) > feedbackLimits.reportBytes) {
+    const largest = [report.messages, report.turns, report.trace].sort(
+      (a, b) => Buffer.byteLength(JSON.stringify(b)) - Buffer.byteLength(JSON.stringify(a)),
+    )[0];
+    largest.shift();
+    report.coverage.truncated = true;
+    encoded = JSON.stringify(report, null, 2);
+  }
+  return encoded;
+}
 
 function record(value: unknown): RecordValue | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -11,28 +92,62 @@ function record(value: unknown): RecordValue | undefined {
     : undefined;
 }
 
-function content(value: unknown): unknown {
-  if (typeof value === 'string') return value;
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item): unknown[] => {
-    const block = record(item);
-    if (block?.type === 'text') return [{ type: 'text', text: block.text }];
-    if (block?.type === 'thinking')
-      return [{ type: 'thinking', thinking: block.thinking, redacted: block.redacted }];
-    if (block?.type === 'toolCall')
-      return [
-        {
-          type: 'toolCall',
-          id: block.id,
-          name: block.name,
-          namespace: block.namespace,
-          arguments: block.arguments,
-        },
-      ];
-    if (block?.type === 'image')
-      return [{ type: 'image', mimeType: block.mimeType, data: '[binary omitted]' }];
-    return [];
-  });
+function savedToolTrace(entries: unknown[], now: number): RecordValue[] {
+  const calls = new Map<string, RecordValue>();
+  const privateTools = new Set(['get_credential', 'browser_flow', 'manage_personal_context']);
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = record(entries[index]);
+    const message = record(entry?.message);
+    if (entry?.type !== 'message' || !message) continue;
+    const timestamp =
+      typeof message.timestamp === 'number' && Number.isFinite(message.timestamp)
+        ? message.timestamp
+        : typeof entry.timestamp === 'string'
+          ? Date.parse(entry.timestamp)
+          : NaN;
+    if (!Number.isFinite(timestamp) || timestamp < now - 86_400_000 || timestamp > now) continue;
+    const time = new Date(timestamp).toISOString();
+    const content = Array.isArray(message.content) ? message.content : [];
+    const tools: Array<RecordValue | undefined> =
+      message.role === 'assistant'
+        ? content.map(record).filter((block) => block?.type === 'toolCall')
+        : message.role === 'toolResult'
+          ? [{ id: message.toolCallId, name: message.toolName }]
+          : [];
+    for (const tool of tools) {
+      if (typeof tool?.id !== 'string' || !tool.id || typeof tool.name !== 'string') continue;
+      let call = calls.get(tool.id);
+      if (!call) {
+        if (calls.size >= 60) continue;
+        call = { id: tool.id, kind: 'tool', name: tool.name, status: 'unknown' };
+        calls.set(tool.id, call);
+      }
+      const privateTool = privateTools.has(tool.name) || privateTools.has(String(call.name));
+      if (message.role === 'assistant') {
+        const input = record(tool.arguments);
+        call.input = privateTool
+          ? '[redacted]'
+          : tool.name === 'browser' && input?.action === 'fill'
+            ? { ...input, text: '[redacted]' }
+            : tool.arguments;
+        call.started_at = time;
+      } else {
+        call.output = privateTool
+          ? '[redacted]'
+          : content.flatMap((value) => {
+              const block = record(value);
+              return block?.type === 'text' && typeof block.text === 'string' ? [block.text] : [];
+            });
+        call.status = message.isError === true ? 'failed' : 'succeeded';
+        call.finished_at = time;
+      }
+      if (privateTool) {
+        call.input = '[redacted]';
+        call.output = '[redacted]';
+      }
+    }
+  }
+  return [...calls.values()];
 }
 
 function savedCredentialValues(entries: unknown[]): string[] {
@@ -53,259 +168,4 @@ function savedCredentialValues(entries: unknown[]): string[] {
     }
   }
   return values;
-}
-
-export function piSessionReport(entries: unknown[], secrets: string[] = []): unknown[] {
-  const redact = createInspectorRedactor([...secrets, ...savedCredentialValues(entries)], {
-    string: 64_000,
-    payload: 160_000,
-    minimumSecretLength: 1,
-  });
-  const credentialResults = new Set(
-    entries.flatMap((value) => {
-      const entry = record(value);
-      const message = record(entry?.message);
-      return entry?.type === 'message' &&
-        message?.role === 'toolResult' &&
-        message.toolName === 'get_credential' &&
-        typeof entry.id === 'string'
-        ? [entry.id]
-        : [];
-    }),
-  );
-  return entries.flatMap((value) => {
-    const entry = record(value);
-    if (!entry || typeof entry.type !== 'string') return [];
-    const base = {
-      type: entry.type,
-      id: entry.id,
-      parentId: entry.parentId,
-      timestamp: entry.timestamp,
-    };
-    const message = record(entry.message);
-    if (entry.type === 'message' && message) {
-      const common = { role: message.role, timestamp: message.timestamp };
-      if (message.role === 'toolResult')
-        return [
-          redact({
-            ...base,
-            message: {
-              ...common,
-              toolCallId: message.toolCallId,
-              toolName: message.toolName,
-              isError: message.isError,
-              usage: message.usage,
-              content:
-                message.toolName === 'get_credential' ? '[redacted]' : content(message.content),
-              details: message.toolName === 'get_credential' ? '[redacted]' : message.details,
-            },
-          }),
-        ];
-      if (message.role === 'assistant')
-        return [
-          redact({
-            ...base,
-            message: {
-              ...common,
-              api: message.api,
-              provider: message.provider,
-              model: message.model,
-              responseModel: message.responseModel,
-              responseId: message.responseId,
-              providerThinkingLevel: message.providerThinkingLevel,
-              stopReason: message.stopReason,
-              rawStopReason: message.rawStopReason,
-              endTurn: message.endTurn,
-              errorMessage: message.errorMessage,
-              diagnostics: message.diagnostics,
-              usage: message.usage,
-              content: content(message.content),
-            },
-          }),
-        ];
-      if (message.role === 'user' || message.role === 'system')
-        return [redact({ ...base, message: { ...common, content: content(message.content) } })];
-      return [];
-    }
-    if (entry.type === 'compaction' || entry.type === 'branch_summary')
-      return [
-        redact({
-          ...base,
-          summaryOmitted: true,
-          tokensBefore: entry.tokensBefore,
-          firstKeptEntryId: entry.firstKeptEntryId,
-          fromId: entry.fromId,
-          usage: entry.usage,
-          fromHook: entry.fromHook,
-        }),
-      ];
-    if (entry.type === 'custom_message')
-      return [
-        redact({
-          ...base,
-          customType: entry.customType,
-          display: entry.display,
-          content: content(entry.content),
-          details: entry.details,
-        }),
-      ];
-    if (entry.type === 'context_edit')
-      return [
-        redact({
-          ...base,
-          targetId: entry.targetId,
-          replacement: credentialResults.has(String(entry.targetId))
-            ? '[redacted]'
-            : entry.replacement === null
-              ? null
-              : content(record(entry.replacement)?.content),
-        }),
-      ];
-    if (entry.type === 'custom')
-      return [redact({ ...base, customType: entry.customType, data: entry.data })];
-    if (
-      entry.type === 'model_change' ||
-      entry.type === 'thinking_level_change' ||
-      entry.type === 'usage'
-    )
-      return [
-        redact({
-          ...base,
-          provider: entry.provider,
-          model: entry.model,
-          modelId: entry.modelId,
-          thinkingLevel: entry.thinkingLevel,
-          kind: entry.kind,
-          usage: entry.usage,
-          note: entry.note,
-        }),
-      ];
-    if (entry.type === 'label' || entry.type === 'session_info')
-      return [redact({ ...base, targetId: entry.targetId, label: entry.label, name: entry.name })];
-    return [];
-  });
-}
-
-export function registerBugReport(
-  app: FastifyInstance,
-  options: {
-    pool: Pool;
-    ownerId: string;
-    captureEnabled(): boolean;
-    secrets?: string[];
-    provider?: string;
-    model?: string;
-    sessionEntries?: (threadId: string) => Promise<unknown[]>;
-  },
-) {
-  app.get('/api/conversation/bug-report', async (_request, reply) => {
-    const thread = await activeThread(options.pool, options.ownerId);
-    let sessionEntries: unknown[] = [];
-    let sessionAvailable = true;
-    try {
-      sessionEntries = (await options.sessionEntries?.(thread.id)) ?? [];
-    } catch {
-      sessionAvailable = false;
-    }
-    const sessionSecrets = [
-      ...(options.secrets ?? []).filter((value) => value.length >= 8),
-      ...savedCredentialValues(sessionEntries),
-    ];
-    const redact = createInspectorRedactor(sessionSecrets, {
-      string: 64_000,
-      payload: 160_000,
-      minimumSecretLength: 1,
-    });
-    const values = [options.ownerId, thread.id];
-    const [
-      messages,
-      turns,
-      events,
-      records,
-      prompts,
-      approvals,
-      notifications,
-      profile,
-      tasks,
-      schedules,
-    ] = await Promise.all([
-      options.pool.query(
-        `SELECT id,role,text,turn_id,attachments,reaction,assistant_reaction,reply_to_message_id,created_at
-           FROM messages WHERE owner_id=$1 AND thread_id=$2 ORDER BY created_at,id`,
-        values,
-      ),
-      options.pool.query(
-        `SELECT id,source,prompt,channel,status,waiting_reason,background,read_only,error,created_at,started_at,finished_at
-           FROM turns WHERE owner_id=$1 AND thread_id=$2 ORDER BY created_at,id`,
-        values,
-      ),
-      options.pool.query(
-        `SELECT e.id,e.turn_id,e.type,e.summary,e.created_at FROM turn_events e
-           JOIN turns t ON t.id=e.turn_id AND t.owner_id=$1 AND t.thread_id=$2
-           ORDER BY e.created_at,e.id`,
-        values,
-      ),
-      options.pool.query(
-        `SELECT id,turn_id,kind,name,status,input,output,error,usage,duration_ms,started_at,finished_at
-           FROM inspector_records WHERE owner_id=$1 AND thread_id=$2 AND recorded_at >= now()-interval '7 days'
-           ORDER BY started_at,id`,
-        values,
-      ),
-      options.pool.query(
-        `SELECT id,turn_id,payload,provider,model,created_at FROM inspector_prompts
-           WHERE owner_id=$1 AND thread_id=$2 AND created_at >= now()-interval '7 days'
-           ORDER BY created_at,id`,
-        values,
-      ),
-      options.pool.query(
-        `SELECT id,turn_id,execution_turn_id,action,args,status,result,expires_at
-           FROM approvals WHERE owner_id=$1 AND thread_id=$2 ORDER BY expires_at,id`,
-        values,
-      ),
-      options.pool.query(
-        `SELECT n.id,n.turn_id,n.summary,n.decision,n.reason,n.feedback,n.kind,n.created_at
-           FROM notifications n JOIN turns t ON t.id=n.turn_id AND t.owner_id=$1 AND t.thread_id=$2
-           WHERE n.owner_id=$1 ORDER BY n.created_at,n.id`,
-        values,
-      ),
-      options.pool.query('SELECT data FROM profiles WHERE owner_id=$1', [options.ownerId]),
-      options.pool.query(
-        'SELECT id,turn_id,title,done_when,now_text,state,result,waiting_for,next_check,created_at,updated_at,closed_at FROM tasks WHERE owner_id=$1 ORDER BY created_at,id',
-        [options.ownerId],
-      ),
-      options.pool.query(
-        'SELECT id,title,prompt,kind,enabled,time_zone,next_run_at FROM schedules WHERE owner_id=$1 ORDER BY id',
-        [options.ownerId],
-      ),
-    ]);
-    reply.header('Cache-Control', 'no-store');
-    return {
-      purpose: 'Explain an incorrect Otto answer using the saved conversation and trace.',
-      generatedAt: new Date().toISOString(),
-      threadId: thread.id,
-      provider: options.provider,
-      model: options.model,
-      coverage: {
-        toolAndPromptCaptureEnabled: options.captureEnabled(),
-        traceRetentionDays: 7,
-        note: 'Values are masked and may be shortened. The Pi session includes saved readable thinking. Compaction summary text is omitted because it may retain saved login values. Provider-opaque reasoning, attachment bytes, and expired traces are unavailable.',
-      },
-      piSession: {
-        available: sessionAvailable,
-        entries: piSessionReport(sessionEntries, sessionSecrets),
-      },
-      messages: messages.rows.map(redact),
-      turns: turns.rows.map(redact),
-      events: events.rows.map(redact),
-      trace: records.rows.map(redact),
-      prompts: prompts.rows.map(redact),
-      approvals: approvals.rows.map(redact),
-      notificationDecisions: notifications.rows.map(redact),
-      memory: {
-        profile: redact(profile.rows[0]?.data ?? {}),
-        tasks: tasks.rows.map(redact),
-        schedules: schedules.rows.map(redact),
-      },
-    };
-  });
 }
