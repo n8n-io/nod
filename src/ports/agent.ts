@@ -101,6 +101,7 @@ export interface RuntimeContext {
   attachments: Array<{ path: string; mimeType: string }>;
   emit(type: string, summary: string): Promise<void>;
   markUntrustedContext?(): Promise<void>;
+  flagInjection?(findings: string[]): Promise<void>;
   observe?(event: RuntimeObservation): Promise<void>;
   inspectPrompt?(snapshot: PromptSnapshot): Promise<void>;
   reply(text: string, streamId?: string, replyToMessageId?: string): Promise<void>;
@@ -177,6 +178,7 @@ export interface AgentImage {
   data: string;
   mimeType: string;
 }
+export const appConfirmation = Symbol('appConfirmation');
 export interface AgentToolResult {
   content: Array<{ type: 'text'; text: string } | AgentImage>;
   details?: unknown;
@@ -189,6 +191,10 @@ export interface AgentToolMetadata {
 export interface AgentTool extends AgentToolMetadata {
   parallel?: boolean;
   execute(args: Record<string, unknown>): Promise<AgentToolResult>;
+}
+export interface SkillLibrary {
+  catalog: Array<{ name: string; description: string }>;
+  read(name: string, file?: string): { name: string; file: string; content: string };
 }
 export type AgentEvent =
   | { type: 'provider_usage'; usage: ProviderUsageEvent }
@@ -211,6 +217,7 @@ export interface AgentSessionOptions {
     name: string,
     params: unknown,
     run: () => Promise<AgentToolResult>,
+    options?: { nested?: boolean },
   ): Promise<AgentToolResult>;
   onEvent(event: AgentEvent): void;
   shouldStop(): boolean;

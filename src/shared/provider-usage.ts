@@ -1,5 +1,13 @@
 export type ProviderCategory =
-  'agent' | 'relevance' | 'memory' | 'browser' | 'integration' | 'speech' | 'channel' | 'workspace';
+  | 'agent'
+  | 'relevance'
+  | 'memory'
+  | 'review'
+  | 'browser'
+  | 'integration'
+  | 'speech'
+  | 'channel'
+  | 'workspace';
 export type UsagePricing = 'reported' | 'sdk_estimate' | 'mixed' | 'unavailable';
 
 export interface ProviderUsageSummary {

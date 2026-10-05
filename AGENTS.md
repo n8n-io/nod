@@ -21,7 +21,8 @@ Setup and commands are in [README](README.md); how the system works is in [archi
 
 ## Safety invariants
 
-- Connected app actions run without a server review. Other reviewed actions use an owned yes/no confirmation bound to the exact action and arguments. Confirmed actions run once; interrupted ones become uncertain and are never re-run.
+- Trust check (`src/server/trust.ts`): connected app reads and changes to the owner's own data run directly. An app action that reaches other people (send, reply, post, invite, share, pay), deletes data or cannot be classified runs directly in a conversation only when every recipient is the owner's, written by the owner in a short message or confirmed before, or when the review model, which sees only the owner's recent messages, the message they answered and the action (never tool results), matches it to their request; a scheduled run is matched against the instruction that created its schedule. Otherwise it waits for the owned yes/no confirmation. Event turns always confirm these actions; read-only and onboarding turns refuse classified writes. Every reviewed action uses an owned yes/no confirmation bound to the exact action and arguments. Confirmed actions run once; interrupted ones become uncertain and are never re-run.
+- App, browser, browser-flow, web and codemode results that the model receives directly reach Pi inside one `untrusted_tool_result` block with a data-not-instructions notice; tags inside the content are neutralised. Calls made by codemode scripts stay raw. A tripwire matches every untrusted result Pi receives against a short list of injection patterns aimed at AI assistants; a hit labels the block and, until the owner's next message, holds every send or deletion for a confirmation. It is a security tripwire, not page parsing, and never acts on the page.
 - Vault and sign-in: `get_credential` can return one saved login to Pi by owned ID and exact origin. The value enters the Pi model context and saved session. Omit it from separate tool observations and user messages. New credentials go through secure forms bound to owner, turn, exact origin and expiry. The server types a credential into the field Pi chose with agent-browser after checking only that the page is on the credential's exact origin.
 - Pi reads the page from the agent-browser snapshot and chooses login methods and fields. Do not add page-parsing scripts, snapshot regexes or field checks around the browser; leave the page to Pi, the model and agent-browser. Pi can run page JavaScript with browser evaluate. Tool output replaces known secret values. Keep site-specific cases in regression fixtures.
 - Before choosing a login method, check saved account metadata. Reuse a uniquely applicable login; ask when several methods are available without a matching saved login, unless the user already chose. Ask when the matching account or method remains ambiguous.
@@ -32,8 +33,8 @@ Setup and commands are in [README](README.md); how the system works is in [archi
 
 ## Model policy
 
-- Pi decides if a connected app action is destructive and asks the user when the current request does not clearly authorize it. This is a model instruction, not a server guarantee.
-- Onboarding welcome turns and activity checks must only read connected apps. The server does not classify app actions for these turns.
+- Pi still asks before a destructive connected app action that the current request does not clearly authorize. The trust check is the server floor beneath that instruction, not a replacement.
+- Onboarding welcome turns and activity checks must only read connected apps. The server refuses app actions it classifies as writes in these turns; unclassified actions rely on the instruction.
 
 ## Validation
 

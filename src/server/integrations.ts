@@ -1150,6 +1150,19 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         throw new IntegrationError(failure('App tool search failed', error), 502);
       }
     }
+    return executeApproved(
+      ownerId,
+      action,
+      await prepare(ownerId, action, args),
+      turn,
+      signal,
+      checkConnectionId,
+    );
+  }
+
+  async function prepare(ownerId: string, action: string, args: Record<string, unknown>) {
+    assertOwner(ownerId);
+    if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) return args;
     const slug = actionToolkit(action);
     if (JSON.stringify(args).length > 32_768)
       throw new IntegrationError('The integration request is too large.');
@@ -1158,8 +1171,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       slug,
       z.string().uuid().optional().parse(args.connectionId),
     );
-    const selectedArgs = { ...args, connectionId: row.id };
-    return executeApproved(ownerId, action, selectedArgs, turn, signal, checkConnectionId);
+    return { ...args, connectionId: row.id };
   }
 
   function gmailMailbox(value: string) {
@@ -1714,6 +1726,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
   return {
     registerRoutes,
     execute,
+    executeApproved,
+    prepare,
     emailCode,
     download,
     list,

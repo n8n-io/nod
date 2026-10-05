@@ -283,7 +283,14 @@ export function createDesktopUpdater({
   };
 }
 
-export async function restartDesktopUpdate({ candidate, guard, request, flush, shutdown }) {
+export async function restartDesktopUpdate({
+  candidate,
+  guard,
+  request,
+  flush,
+  shutdown,
+  retryResume,
+}) {
   const release = await guard();
   let transition;
   let closing = false;
@@ -310,12 +317,23 @@ export async function restartDesktopUpdate({ candidate, guard, request, flush, s
     await shutdown();
   } catch (error) {
     if (closing) throw error;
-    if (transition)
-      await request('/api/runtime/resume', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(transition),
-      }).catch(() => {});
+    if (transition) {
+      while (true) {
+        try {
+          const resumed = await request('/api/runtime/resume', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(transition),
+            signal: AbortSignal.timeout(35_000),
+          });
+          if (!resumed.ok || (await resumed.json()).ok !== true)
+            throw new Error('Otto could not resume its work.');
+          break;
+        } catch {
+          if (!(await retryResume?.())) throw new Error('Otto could not resume its work.');
+        }
+      }
+    }
     release();
     throw error;
   }

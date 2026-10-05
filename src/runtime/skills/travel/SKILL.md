@@ -1,0 +1,20 @@
+---
+name: travel
+description: Compare flights, hotels and transport; prepare trips; manage existing reservations and travel claims. Use for itineraries, award travel, check-in and fare watches. Use calendar for ordinary meetings.
+---
+
+# Travel
+
+Start with dates, traveller count, departure and arrival places, budget and hard constraints. Use local time for each leg. Keep airport codes, terminals and overnight arrivals explicit. Read existing reservations before proposing changes.
+
+Compare bookable options with the same fare conditions. Include baggage, seat fees, transfers, resort fees and other mandatory costs. A low fare can require a different airport, a long connection or separate tickets. Flag self-transfers, border crossings and overnight connections. Check connection requirements with the carrier or airport.
+
+For points, show points and cash together. Check award availability before treating an award chart as an offer. Do not transfer points on the basis of an unconfirmed seat. Transfers can be irreversible.
+
+Check hotel room type, occupancy, bed type, check-in limits, location and cancellation terms. A hotel name can refer to several properties. Match the address and dates. Check whether the quoted price is per night or for the full stay.
+
+Build the itinerary from confirmed reservations and clearly marked proposals. Include the time zone, booking reference, important cutoff and source link for each commitment. Leave time for travel between places; do not fill every free hour.
+
+A request to research travel or prepare an itinerary does not authorize a booking. Before booking, check that the current user request approves the exact itinerary, traveller details, full total and fare rules. If approval is missing, show the option and ask. Read those final details again before the authorized booking. Completion needs the issued ticket or reservation reference. Keep payment, reservation and ticket issue as separate states. Otto has no phone-call tool; use supported online paths or prepare a clear handoff when a call is required.
+
+For cancellations, disruptions, check-in or travel claims, read [references/existing-bookings.md](references/existing-bookings.md).

@@ -14,9 +14,8 @@ import {
   explicitlyRequestsAction,
   requestsConnectedSchedule,
 } from '../src/server/action-policy.ts';
-import { actionConfirmation } from '../src/server/action-presentation.ts';
+import { actionConfirmation, appActionConfirmation } from '../src/server/action-presentation.ts';
 import type { ApprovalExecutionContext } from '../src/server/approvals.ts';
-
 test('explicit requests authorize only the named operation and never negated or incidental work', () => {
   for (const [action, text] of [
     ['OTTO_memory_save', 'Remember that I prefer short reports.'],
@@ -331,6 +330,174 @@ test(
       app.get('/api/fixture-error', async () => {
         throw new Error('fixture-private-key');
       });
+
+      const { createTrust } = await import('../src/server/trust.ts');
+      const reviews: Array<Record<string, any>> = [];
+      let aligned = false;
+      const trust = createTrust({
+        pool: db.pool,
+        ownerId,
+        ownAddresses: async () => ['owner@example.test', null],
+        review: async (_instructions, input) => {
+          reviews.push(input as Record<string, any>);
+          return { aligned };
+        },
+      });
+      await trust.initialize();
+      const email = (to: string) => ({
+        recipient_email: to,
+        subject: 'Synthetic update',
+        body: 'Synthetic body.',
+      });
+      const askFor = async (turn: { threadId: string; turnId: string }, args: object) => {
+        const verdict = await trust.check(turn, 'GMAIL_SEND_EMAIL', { ...args });
+        assert.equal(verdict.confirm, true);
+        return approvals.request(
+          turn,
+          'GMAIL_SEND_EMAIL',
+          { ...args },
+          {
+            confirm: true,
+            question: appActionConfirmation(
+              'GMAIL_SEND_EMAIL',
+              { ...args },
+              verdict.confirm ? verdict.reason : 'unrequested',
+            ),
+          },
+        );
+      };
+
+      await t.test(
+        'an outside app action the owner did not ask for waits for one confirmation and runs once',
+        async () => {
+          const turn = await begin('Summarise my inbox.');
+          aligned = false;
+          assert.deepEqual(await trust.check(turn, 'GMAIL_FETCH_EMAILS', {}), { confirm: false });
+          assert.deepEqual(
+            await trust.check(turn, 'GMAIL_CREATE_EMAIL_DRAFT', email('stranger@example.test')),
+            { confirm: false },
+          );
+          assert.deepEqual(
+            await trust.check(turn, 'GMAIL_SEND_EMAIL', email('stranger@example.test')),
+            { confirm: true, reason: 'unrequested' },
+          );
+          assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Summarise my inbox.');
+          assert.deepEqual(reviews.at(-1)?.action.recipients, ['stranger@example.test']);
+          assert.deepEqual(
+            await trust.check(turn, 'GMAIL_DELETE_MESSAGE', { message_id: 'synthetic' }),
+            { confirm: true, reason: 'unrequested' },
+          );
+          assert.deepEqual(
+            await trust.check(turn, 'CONNECTED_MCP_CALL', { tool: 'get_and_delete_message' }),
+            { confirm: true, reason: 'unrequested' },
+          );
+          const before = calls.length;
+          const result = await askFor(turn, email('stranger@example.test'));
+          assert.equal(result.requiresConfirmation, true);
+          assert.equal(calls.length, before);
+          const pending = await proposal(turn.turnId);
+          await confirmTurn(turn.turnId);
+          await execute(pending.id);
+          assert.equal(await execute(pending.id), undefined);
+          assert.equal(calls.length, before + 1);
+          assert.equal(calls.at(-1)?.action, 'GMAIL_SEND_EMAIL');
+          assert.deepEqual(calls.at(-1)?.args, email('stranger@example.test'));
+
+          const resumed = {
+            threadId: turn.threadId,
+            turnId: (await stored(pending.id)).execution_turn_id,
+          };
+          const again = await askFor(resumed, email('second-stranger@example.test'));
+          assert.equal(again.requiresConfirmation, true);
+          assert.equal(calls.length, before + 1);
+
+          const reviewed = reviews.length;
+          const later = await begin('Summarise my inbox again.');
+          assert.deepEqual(
+            await trust.check(later, 'GMAIL_SEND_EMAIL', email('stranger@example.test')),
+            { confirm: false },
+          );
+          assert.equal(reviews.length, reviewed);
+        },
+      );
+
+      await t.test(
+        'recipients the owner named or owns run directly and a matching request needs no confirmation',
+        async () => {
+          aligned = false;
+          const reviewed = reviews.length;
+          const turn = await begin('Email ana.named@example.test the synthetic notes.');
+          for (const to of ['ana.named@example.test', 'OWNER@example.test'])
+            assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', email(to)), {
+              confirm: false,
+            });
+          assert.deepEqual(
+            await trust.check(turn, 'GMAIL_SEND_EMAIL', {
+              recipient_email: 'ana.named@example.test',
+              cc: ['outsider@example.test'],
+            }),
+            { confirm: true, reason: 'unrequested' },
+          );
+          assert.equal(reviews.length, reviewed + 1);
+          aligned = true;
+          const reply = await begin('Yes, reply YES to the dentist.');
+          assert.deepEqual(
+            await trust.check(reply, 'GMAIL_REPLY_TO_THREAD', {
+              thread_id: 'synthetic-thread',
+              message_body: 'YES',
+            }),
+            { confirm: false },
+          );
+          assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Yes, reply YES to the dentist.');
+          await trust.flag(reply, ['ignore_instructions']);
+          assert.deepEqual(
+            await trust.check(reply, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
+            { confirm: true, reason: 'injection' },
+          );
+          const next = await begin('Email ana.named@example.test the notes now.');
+          assert.deepEqual(
+            await trust.check(next, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
+            { confirm: false },
+          );
+        },
+      );
+
+      await t.test(
+        'background and read-only turns cannot take outside app actions without the owner',
+        async () => {
+          aligned = true;
+          for (const source of ['event', 'schedule'] as const) {
+            const turn = await begin('Synthetic background work', { source });
+            assert.deepEqual(
+              await trust.check(turn, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
+              { confirm: true, reason: source === 'event' ? 'background' : 'schedule' },
+            );
+            assert.deepEqual(
+              await trust.check(turn, 'GMAIL_CREATE_EMAIL_DRAFT', email('ana.named@example.test')),
+              { confirm: false },
+            );
+          }
+          const onboarding = await begin('', { source: 'onboarding' });
+          await assert.rejects(
+            trust.check(onboarding, 'GMAIL_SEND_EMAIL', email('owner@example.test')),
+            /only read/,
+          );
+          await assert.rejects(
+            trust.check(onboarding, 'GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND', {}),
+            /only read/,
+          );
+          assert.deepEqual(await trust.check(onboarding, 'GMAIL_FETCH_EMAILS', {}), {
+            confirm: false,
+          });
+          await assert.rejects(
+            approvals.request(onboarding, 'GMAIL_SEND_EMAIL', email('owner@example.test'), {
+              confirm: true,
+              question: 'Send?',
+            }),
+            /read-only/,
+          );
+        },
+      );
 
       await t.test(
         'an explicitly requested memory save runs directly once without a confirmation',
