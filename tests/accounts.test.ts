@@ -691,7 +691,7 @@ describe('keychain', () => {
 });
 
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
-  async function fixture(t: import('node:test').TestContext) {
+  async function fixture(t: import('node:test').TestContext, request?: typeof fetch) {
     const { createModelService } = await import('../src/server/models.ts');
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
     const schema = `test_models_${randomUUID().replaceAll('-', '')}`;
@@ -705,18 +705,20 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const backend = createPiModelBackend({
-      fetch: async (input, init) => {
-        const url = String(input);
-        assert.equal(url, 'https://api.openai.com/v1/models');
-        const key = new Headers(init?.headers).get('authorization');
-        const ids =
-          key === 'Bearer fixture-managed-key'
-            ? ['gpt-6-luna']
-            : key === 'Bearer fixture-no-memory-key'
-              ? ['gpt-6.1-sol']
-              : ['gpt-6.1-sol', 'gpt-6-luna'];
-        return Response.json({ data: ids.map((id) => ({ id })) });
-      },
+      fetch:
+        request ??
+        (async (input, init) => {
+          const url = String(input);
+          assert.equal(url, 'https://api.openai.com/v1/models');
+          const key = new Headers(init?.headers).get('authorization');
+          const ids =
+            key === 'Bearer fixture-managed-key'
+              ? ['gpt-6-luna']
+              : key === 'Bearer fixture-no-memory-key'
+                ? ['gpt-6.1-sol']
+                : ['gpt-6.1-sol', 'gpt-6-luna'];
+          return Response.json({ data: ids.map((id) => ({ id })) });
+        }),
     });
     const services: ReturnType<typeof createModelService>[] = [];
     const create = async (
@@ -803,6 +805,94 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const auxiliary = await memory.resolve(true);
     assert.equal(auxiliary.definition.choice.id, 'gpt-6.1-sol');
     assert.ok(auxiliary.definition.choice.efforts.includes(auxiliary.effort));
+  });
+
+  test('restricted OpenAI keys save and refresh without letting invalid keys replace the saved catalog or selection', async (t) => {
+    let revoked = false;
+    let requests = 0;
+    const f = await fixture(t, async (input, init) => {
+      assert.equal(String(input), 'https://api.openai.com/v1/models');
+      assert.equal(init?.method ?? 'GET', 'GET');
+      requests++;
+      const authorization = new Headers(init?.headers).get('authorization');
+      if (authorization === 'Bearer fixture-invalid-api-key' || revoked)
+        return Response.json(
+          {
+            error: {
+              message: 'Incorrect API key provided: fixture-invalid-api-key.',
+              type: 'invalid_request_error',
+              code: 'invalid_api_key',
+            },
+          },
+          { status: 401 },
+        );
+      assert.equal(authorization, 'Bearer fixture-restricted-api-key');
+      return Response.json(
+        {
+          error: {
+            message:
+              'You have insufficient permissions for this operation. Missing scopes: api.model.read.',
+            type: 'invalid_request_error',
+            code: null,
+          },
+        },
+        { status: 403 },
+      );
+    });
+    const owner = await f.create('fixture-restricted');
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    const added = await app.inject({
+      method: 'POST',
+      url: '/api/models/keys',
+      payload: { provider: 'openai', key: 'fixture-restricted-api-key' },
+    });
+    assert.equal(added.statusCode, 200);
+    assert.ok(!added.body.includes('fixture-restricted-api-key'));
+    const id = owner.view().connections[0].id;
+    const selected = await app.inject({
+      method: 'PUT',
+      url: '/api/models/selection',
+      payload: { connectionId: id, modelId: 'gpt-6-luna', effort: 'medium' },
+    });
+    assert.equal(selected.statusCode, 200);
+    assert.equal(owner.configured, true);
+    const saved = owner.view();
+    const refreshed = await app.inject({
+      method: 'POST',
+      url: `/api/models/connections/${id}/refresh`,
+    });
+    assert.equal(refreshed.statusCode, 200);
+    assert.equal(requests, 2);
+    assert.deepEqual(owner.view(), saved);
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/models/keys',
+      payload: { provider: 'openai', key: 'fixture-invalid-api-key' },
+    });
+    assert.equal(rejected.statusCode, 400);
+    assert.ok(!rejected.body.includes('fixture-invalid-api-key'));
+    assert.deepEqual(owner.view(), saved);
+    revoked = true;
+    const failed = await app.inject({
+      method: 'POST',
+      url: `/api/models/connections/${id}/refresh`,
+    });
+    assert.equal(failed.statusCode, 400);
+    assert.ok(!failed.body.includes('fixture-invalid-api-key'));
+    assert.deepEqual(owner.view(), saved);
+    const restored = await f.create('fixture-restricted');
+    assert.deepEqual(restored.view(), saved);
+    assert.equal(requests, 4);
+    assert.deepEqual(await (await restored.resolve()).read(), {
+      type: 'api_key',
+      key: 'fixture-restricted-api-key',
+    });
+    const grants = (await f.database.query('SELECT * FROM vault_app_grants')).rows;
+    assert.equal(grants.length, 1);
+    assert.ok(!JSON.stringify(grants).includes('fixture-restricted-api-key'));
+    assert.ok(!JSON.stringify(grants).includes('fixture-invalid-api-key'));
   });
 
   test('bootstrap catalog failure preserves the saved choice and recovers only after an explicit refresh', async (t) => {

@@ -29,6 +29,32 @@ const tokenSchema = z.object({
   token_type: z.literal('Bearer'),
 });
 
+async function modelListRestricted(response: Response) {
+  const reader = response.body?.getReader();
+  if (!reader) return false;
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.length;
+      if (bytes > 4096) return false;
+      chunks.push(value);
+    }
+    const body = z
+      .object({ error: z.union([z.string(), z.object({ message: z.string() })]) })
+      .parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+    const message = typeof body.error === 'string' ? body.error : body.error.message;
+    const scopes = [...message.matchAll(/\bMissing scopes:\s*([\s\S]*?)(?:\.(?=\s|$)|$)/g)];
+    return scopes.length === 1 && scopes[0][1].trim() === 'api.model.read';
+  } catch {
+    return false;
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
 export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): ModelBackend {
   const request = options.fetch ?? fetch;
   let catalogRuntime: Promise<ModelRuntime> | undefined;
@@ -38,13 +64,15 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       refreshOnCreate: false,
       allowModelNetwork: false,
     }));
-  async function json(url: string, init: RequestInit = {}) {
-    const response = await request(url, { ...init, signal: AbortSignal.timeout(15000) });
+  async function jsonResponse(response: Response) {
     if (!response.ok)
       throw new Error(
         'The model service rejected the request. Check the connection and account access.',
       );
     return response.json();
+  }
+  async function json(url: string, init: RequestInit = {}) {
+    return jsonResponse(await request(url, { ...init, signal: AbortSignal.timeout(15000) }));
   }
   const jwks = createRemoteJWKSet(new URL('https://auth.openai.com/.well-known/jwks.json'), {
     [customFetch]: request,
@@ -139,7 +167,16 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         if (account.data.is_management_key || account.data.is_provisioning_key)
           throw new Error('Use an inference key for OpenRouter.');
       }
-      const data = await json(url, { headers });
+      const response = await request(url, { headers, signal: AbortSignal.timeout(15000) });
+      if (
+        provider === 'openai' &&
+        method === 'api_key' &&
+        credential.type === 'api_key' &&
+        response.status === 403 &&
+        (await modelListRestricted(response))
+      )
+        return local.map(definition);
+      const data = await jsonResponse(response);
       if (provider !== 'openrouter') {
         const list = z
           .array(
