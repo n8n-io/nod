@@ -1344,6 +1344,8 @@ describe('local access', () => {
       callbacks.push(request.query.state);
       return { ok: true };
     });
+    app.get('/api/models/oauth/callback', async () => ({ ok: true }));
+    app.post('/api/models/oauth/callback', async () => ({ ok: true }));
     app.post('/api/apps/callback', async () => ({ ok: true }));
     const headers = {
       host: '127.0.0.1:4310',
@@ -1353,6 +1355,10 @@ describe('local access', () => {
     };
     try {
       for (const url of [
+        '/api/models/oauth/callback',
+        '/api/models/oauth/callback?state=short',
+        `/api/models/oauth/callback?state=${state}&state=${state}`,
+        `/api/models/oauth/callback/extra?state=${state}`,
         '/api/apps/callback',
         '/api/apps/callback?state=short',
         `/api/apps/callback?state=${state}&state=${state}`,
@@ -1378,6 +1384,21 @@ describe('local access', () => {
         200,
       );
       assert.deepEqual(callbacks, [state]);
+      assert.equal(
+        (await app.inject({ url: `/api/models/oauth/callback?state=${state}`, headers }))
+          .statusCode,
+        200,
+      );
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/models/oauth/callback?state=${state}`,
+            headers,
+          })
+        ).statusCode,
+        401,
+      );
       for (const rejected of [
         { ...headers, host: 'attacker.example:4310' },
         { ...headers, origin: 'https://attacker.example' },

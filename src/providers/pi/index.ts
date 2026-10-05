@@ -16,6 +16,8 @@ import {
   type ResourceLoader,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
+import { createPiModelRuntime } from './models.ts';
+import type { ModelAccess } from '../../ports/models.ts';
 import type { Agent, AgentEvent } from '../../ports/agent.ts';
 import type { WorkspaceSession } from '../../ports/computer.ts';
 import type { PrivateObjectStore } from '../../ports/object-storage.ts';
@@ -122,6 +124,7 @@ async function workspaceCodemodeOutput(
 
 export function createPiAgent(options: {
   provider: string;
+  resolve?: () => Promise<ModelAccess>;
   model?: string;
   apiKey?: string;
   sessionRoot: string;
@@ -145,19 +148,39 @@ export function createPiAgent(options: {
     })),
     async open(input) {
       if (disposed) throw new Error('The agent service has stopped.');
-      if (!options.apiKey)
+      const access = await options.resolve?.();
+      if (!access && !options.apiKey)
         throw new Error('Configure the selected model provider to enable the assistant.');
+      if (access?.method === 'subscription') {
+        const observe = input.onEvent;
+        input = {
+          ...input,
+          onEvent: (event) =>
+            observe(
+              event.type === 'model_usage'
+                ? { ...event, costUsd: null, costSource: 'unavailable' }
+                : event.type === 'provider_usage'
+                  ? { ...event, usage: { ...event.usage, costUsd: null, pricing: 'unavailable' } }
+                  : event,
+            ),
+        };
+      }
       const directory = resolve(options.sessionRoot, threadIdentity(input.threadId));
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      const runtime = await ModelRuntime.create({
-        credentials: new InMemoryCredentialStore(),
-        modelsPath: null,
-        refreshOnCreate: false,
-        allowModelNetwork: false,
-      });
-      await runtime.setRuntimeApiKey(options.provider, options.apiKey);
-      const modelId = options.model || agentModels[options.provider as keyof typeof agentModels];
-      const selectedModel = runtime.getModel(options.provider, modelId);
+      const runtime = access
+        ? (await createPiModelRuntime(access)).runtime
+        : await ModelRuntime.create({
+            credentials: new InMemoryCredentialStore(),
+            modelsPath: null,
+            refreshOnCreate: false,
+            allowModelNetwork: false,
+          });
+      if (!access) await runtime.setRuntimeApiKey(options.provider, options.apiKey!);
+      const modelId =
+        access?.definition.choice.id ||
+        options.model ||
+        agentModels[options.provider as keyof typeof agentModels];
+      const selectedModel = runtime.getModel(access?.provider || options.provider, modelId);
       if (!selectedModel)
         throw new Error('The configured model is not present in the installed Pi catalog.');
       const model =
@@ -286,7 +309,7 @@ export function createPiAgent(options: {
         agentDir: directory,
         modelRuntime: runtime,
         model,
-        thinkingLevel: 'high',
+        thinkingLevel: access?.effort ?? 'high',
         tools: [
           ...tools.map((tool) => tool.name),
           ...extensions.extensions.flatMap((extension) => [...extension.tools.keys()]),
@@ -297,7 +320,7 @@ export function createPiAgent(options: {
         sessionManager: manager,
         settingsManager: SettingsManager.inMemory({
           compaction: { enabled: true },
-          retry: { enabled: true, maxRetries: 5 },
+          retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
           transport: 'sse',
           steeringMode: 'all',
         }),
@@ -436,6 +459,10 @@ export function createPiAgent(options: {
       return {
         resumed,
         async prompt(text, images) {
+          if (images.length && !model.input.includes('image'))
+            throw new Error(
+              'The selected model cannot read images. Choose a model with image support.',
+            );
           try {
             await session.prompt(text, { images, expandPromptTemplates: false });
           } finally {

@@ -2195,7 +2195,8 @@ test('a restarted credential session serves only its cached masked image without
 
 test('inspector masks nested credentials, headers and encoded JSON before persistence', () => {
   const secret = 'fixture-provider-secret-with/slash';
-  const redact = createInspectorRedactor([secret]);
+  const secrets = [secret];
+  const redact = createInspectorRedactor(secrets);
   const input = {
     query: 'messages after yesterday',
     password: 'private-password',
@@ -2232,6 +2233,10 @@ test('inspector masks nested credentials, headers and encoded JSON before persis
   assert.ok(encoded.includes('Useful result'));
   assert.ok(encoded.includes('messages after yesterday'));
   assert.ok(encoded.includes('q=hello'));
+  secrets.push('fixture-rotated-opaque-token');
+  const rotated = String(redact('fixture-rotated-opaque-token and ' + secret));
+  assert.ok(!rotated.includes('fixture-rotated-opaque-token'));
+  assert.ok(!rotated.includes(secret));
 });
 
 test('inspector masks secure links, common token strings and secret assignments in tool text', () => {

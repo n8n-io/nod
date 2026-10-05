@@ -19,6 +19,7 @@ import './pages/sign-in.css';
 import './pages/privacy.css';
 import './pages/onboarding.css';
 import './components/account-settings.css';
+import './components/models.css';
 import './components/time-zone-picker.css';
 import './components/sidebar-unread.css';
 

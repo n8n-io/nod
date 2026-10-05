@@ -13,11 +13,8 @@ export function SetupNotice({
   const [error, setError] = useState('');
   const assistant = capability === 'assistant';
   if (assistant ? configuration.llmReady : configuration.integrationsReady) return null;
-  const provider = assistant
-    ? configuration.provider === 'anthropic'
-      ? 'Anthropic'
-      : 'OpenAI'
-    : 'Composio';
+  if (assistant) return <Notice kind="info">Connect a model service to start chatting.</Notice>;
+  const provider = 'Composio';
   const key = `${provider.toUpperCase()}_API_KEY`;
   return (
     <Notice kind="info">
@@ -41,14 +38,11 @@ export function SetupNotice({
         </>
       ) : configuration.localOnly ? (
         <>
-          <code>{key}</code> is missing. Add it to <code>.env</code> and restart Otto
-          {assistant ? ' to start chatting.' : ' to connect Google apps and Slack.'}
+          <code>{key}</code> is missing. Add it to <code>.env</code> and restart Otto to connect
+          Google apps and Slack.
         </>
       ) : (
-        <>
-          {assistant ? 'Chat isn’t configured.' : 'Google apps and Slack aren’t configured.'}{' '}
-          Contact your Otto administrator.
-        </>
+        <>Google apps and Slack aren’t configured. Contact your Otto administrator.</>
       )}
     </Notice>
   );

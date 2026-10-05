@@ -64,7 +64,7 @@ export function registerLocalAccess(
     const state = new URLSearchParams(request.url.split('?')[1]).getAll('state');
     const appCallback =
       request.method === 'GET' &&
-      path === '/api/apps/callback' &&
+      ['/api/apps/callback', '/api/models/oauth/callback'].includes(path) &&
       (!desktop || (state.length === 1 && /^[A-Za-z0-9_-]{43}$/.test(state[0])));
     if (
       desktopToken &&

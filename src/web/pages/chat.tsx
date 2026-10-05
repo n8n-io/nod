@@ -24,6 +24,7 @@ import {
   Notice,
   Skeleton,
 } from '../components/ui';
+import { ModelPicker } from '../components/models';
 import { SetupNotice } from '../components/setup-notice';
 import { desktopBuildInfo, desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
@@ -879,6 +880,7 @@ export function Chat({
           </Notice>
         )}
         <SetupNotice configuration={state.configuration} capability="assistant" />
+        <ModelPicker />
         <Composer
           canRestart={() => visible && !outstandingSends.current && !resetLock.current}
           key={threadId}

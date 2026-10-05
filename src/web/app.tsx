@@ -126,7 +126,7 @@ function Workspace({
       );
   }, [notificationTarget, state]);
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
-    if (desktopSettingsAvailable()) {
+    if (tab !== 'Models' && desktopSettingsAvailable()) {
       setSettingsError('');
       void openDesktopSettings().catch(() =>
         setSettingsError('Settings could not be opened. Try again.'),
