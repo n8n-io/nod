@@ -3831,8 +3831,26 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
       now - 172_800_000,
     ),
     ...activity('old-call', 'browser', {}, 'synthetic-old-tool-output', now - 172_800_000),
-    ...activity('recent', 'browser', { action: 'snapshot' }, `Visible activity ${password}`),
-    ...activity('failed', 'bash', { command: 'synthetic' }, 'Synthetic command failed', now, true),
+    ...activity('rebased-old-call', 'browser', {}, 'synthetic-rebased-old-output').map(
+      (entry, index) => ({
+        ...entry,
+        message: { ...entry.message, timestamp: now - 172_800_000 + index },
+      }),
+    ),
+    ...activity('recent', 'browser', { action: 'snapshot' }, `Visible activity ${password}`).map(
+      (entry, index) => ({
+        ...entry,
+        message: { ...entry.message, timestamp: now - 60_000 + index },
+      }),
+    ),
+    ...activity(
+      'failed',
+      'bash',
+      { command: 'synthetic' },
+      'Synthetic command failed',
+      now,
+      true,
+    ).map((entry) => ({ ...entry, message: { ...entry.message, timestamp: NaN } })),
     ...activity('fill', 'browser', { action: 'fill', text: 'synthetic-private-fill' }, username),
     ...activity('login', 'get_credential', { origin: 'synthetic-private-origin' }, 'private-login'),
     ...activity('flow', 'browser_flow', { query: 'synthetic-private-flow' }, 'private-flow-output'),
@@ -3868,6 +3886,8 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
     assert.deepEqual(browser.input, { action: 'snapshot' });
     assert.deepEqual(browser.output, ['Visible activity [redacted]']);
     assert.equal(browser.status, 'succeeded');
+    assert.equal(browser.started_at, new Date(now - 60_000).toISOString());
+    assert.equal(browser.finished_at, new Date(now - 60_000 + 1).toISOString());
     assert.equal(
       report.trace.find((item: { id: string }) => item.id === 'failed').status,
       'failed',
@@ -3880,6 +3900,7 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
       password,
       username,
       'synthetic-old-tool-output',
+      'synthetic-rebased-old-output',
       'synthetic-private-fill',
       'synthetic-private-origin',
       'synthetic-private-flow',

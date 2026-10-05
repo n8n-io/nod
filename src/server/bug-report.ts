@@ -100,10 +100,10 @@ function savedToolTrace(entries: unknown[], now: number): RecordValue[] {
     const message = record(entry?.message);
     if (entry?.type !== 'message' || !message) continue;
     const timestamp =
-      typeof entry.timestamp === 'string'
-        ? Date.parse(entry.timestamp)
-        : typeof message.timestamp === 'number'
-          ? message.timestamp
+      typeof message.timestamp === 'number' && Number.isFinite(message.timestamp)
+        ? message.timestamp
+        : typeof entry.timestamp === 'string'
+          ? Date.parse(entry.timestamp)
           : NaN;
     if (!Number.isFinite(timestamp) || timestamp < now - 86_400_000 || timestamp > now) continue;
     const time = new Date(timestamp).toISOString();
