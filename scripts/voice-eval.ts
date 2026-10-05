@@ -390,12 +390,18 @@ async function runScenario(
       const { action, id, status, ...fields } = input as Record<string, unknown>;
       if (action === 'list')
         return record('task', input, { tasks: tasks.filter((task) => !task.closedAt) });
-      const task =
+      const open = tasks.find((item) =>
         action === 'start'
+          ? item.title === fields.title && !item.closedAt
+          : item.id === id && !item.closedAt,
+      );
+      const task =
+        open ??
+        (action === 'start'
           ? { id: randomUUID(), status: 'working', waitingFor: [], nextCheck: null, question: null }
-          : tasks.find((item) => item.id === id && !item.closedAt);
+          : undefined);
       if (!task) throw new Error('This task is not open. Use task list for open tasks.');
-      if (action === 'start') tasks.push(task);
+      if (!open) tasks.push(task);
       Object.assign(
         task,
         fields,
