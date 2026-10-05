@@ -489,6 +489,7 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
         this.visible = true;
         this.webContents = Object.assign(new EventEmitter(), {
           setWindowOpenHandler() {},
+          isLoadingMainFrame: () => Boolean(this.loading),
           send: (channel, value) => {
             this.sent.push([channel, value]);
             if (channel === 'otto:update:prepare')
@@ -512,6 +513,7 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
       }
       loadURL(url) {
         this.url = url;
+        this.loading = true;
         this.webContents.mainFrame = { url };
       }
       loadFile(path, options) {
@@ -550,12 +552,15 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
     engineOrigin = 'http://127.0.0.1:4310';
     onboardingCompleted = true;
     status.phase = 'ready';
-    ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:build-info'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:feedback:context'"), source.indexOf("      ipcMain.handle('otto:preferences:get'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:save'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
     globalThis.running = {
       prepare,
       showEngine,
       replayOnboarding,
+      showFeedback,
+      setReady: (ready) => { status.phase = ready ? 'ready' : 'starting'; },
       status: () => status,
       setRestartRequired: (value) => { restartRequired = value; },
       crash: () => { engine = undefined; enginePreferencesReady = false; },
@@ -1182,6 +1187,100 @@ test('a keyless installation creates one persistent encrypted vault and only con
   assert.equal((await f.store.environment()).OTTO_VAULT_KEY, vault);
 });
 
+test('native feedback waits for the engine and renderer load, then delivers once', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Feedback must not make an engine request.'));
+  f.setReady(false);
+  f.showFeedback();
+  const setup = f.windows.at(-1);
+  assert.ok(setup.path);
+  f.setReady(true);
+  f.showEngine();
+  const window = f.windows.at(-1);
+  assert.notEqual(window, setup);
+  f.showFeedback();
+  assert.deepEqual(window.sent, []);
+  window.loading = false;
+  window.webContents.emit('did-finish-load');
+  assert.deepEqual(window.sent, [['otto:feedback:open', undefined]]);
+  window.webContents.emit('did-finish-load');
+  assert.equal(window.sent.length, 1);
+  f.showFeedback();
+  assert.equal(window.sent.length, 2);
+  const frame = window.webContents.mainFrame;
+  const context = f.handlers.get('otto:feedback:context');
+  for (const rejected of [
+    { sender: { mainFrame: frame }, senderFrame: frame },
+    { sender: window.webContents, senderFrame: { url: frame.url } },
+    { sender: setup.webContents, senderFrame: setup.webContents.mainFrame },
+  ])
+    assert.throws(() => context(rejected), /unavailable/);
+  frame.url = 'http://127.0.0.1:4310/api/files/synthetic';
+  assert.throws(() => context({ sender: window.webContents, senderFrame: frame }), /unavailable/);
+});
+
+test('feedback metadata uses installed version and build source with a bounded hostname fallback', async () => {
+  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+  const body = source.slice(
+    source.indexOf('async function feedbackContext('),
+    source.indexOf('function availablePort('),
+  );
+  let commandError;
+  let computerName = 'Synthetic Mac\n';
+  let sourceRevision = 'a'.repeat(40);
+  let modified = false;
+  const context = {
+    process: { platform: 'darwin', arch: 'arm64' },
+    app: { getVersion: () => '1.2.3', isPackaged: true },
+    desktopRoot: '/synthetic/desktop',
+    join,
+    hostname: () => 'synthetic-hostname',
+    readFile: async (path) => {
+      assert.equal(path, '/synthetic/desktop/package.json');
+      return JSON.stringify({ version: '0.0.0', ottoBuild: { source: sourceRevision, modified } });
+    },
+    execFile: (file, args, options, callback) => {
+      assert.equal(file, '/usr/sbin/scutil');
+      assert.deepEqual(Array.from(args), ['--get', 'ComputerName']);
+      assert.ok(options.timeout > 0);
+      assert.ok(options.maxBuffer > 0);
+      callback(commandError, computerName);
+    },
+  };
+  runInNewContext(`${body}\nglobalThis.read = feedbackContext;`, context);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.read())), {
+    computerName: 'Synthetic Mac',
+    appVersion: '1.2.3',
+    appRelease: sourceRevision,
+    appModified: false,
+    development: false,
+    source: 'desktop',
+    platform: 'darwin-arm64',
+  });
+  commandError = new Error('Synthetic scutil failure');
+  sourceRevision = undefined;
+  modified = undefined;
+  context.app.isPackaged = false;
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.read())), {
+    computerName: 'synthetic-hostname',
+    appVersion: '1.2.3',
+    appRelease: null,
+    appModified: null,
+    development: true,
+    source: 'desktop',
+    platform: 'darwin-arm64',
+  });
+  commandError = undefined;
+  computerName = ' '.repeat(10);
+  assert.equal((await context.read()).computerName, 'synthetic-hostname');
+  computerName = 'x'.repeat(300);
+  assert.equal((await context.read()).computerName.length, 200);
+  context.process.platform = 'linux';
+  context.process.arch = 'x64';
+  context.execFile = () => assert.fail('Other platforms must not invoke scutil.');
+  assert.equal((await context.read()).computerName, 'synthetic-hostname');
+  assert.equal((await context.read()).platform, 'linux-x64');
+});
+
 test('engine preload limits secret access to Composio and withholds privileged IPC event objects', async () => {
   const calls = [];
   const listeners = new Map();
@@ -1216,6 +1315,7 @@ test('engine preload limits secret access to Composio and withholds privileged I
   ])
     assert.equal(bridge[field], undefined);
   bridge.getPreferences();
+  bridge.getFeedbackContext();
   bridge.setTheme('dark');
   bridge.openSettings('models');
   bridge.getSettings();
@@ -1230,6 +1330,7 @@ test('engine preload limits secret access to Composio and withholds privileged I
   bridge.setChatReadCursor(ownerId, threadId, position);
   assert.deepEqual(calls, [
     ['otto:preferences:get'],
+    ['otto:feedback:context'],
     ['otto:preferences:theme', 'dark'],
     ['otto:settings:open', 'models'],
     ['otto:settings:get'],
@@ -1267,6 +1368,22 @@ test('engine preload limits secret access to Composio and withholds privileged I
   const noSettingsReplay = [];
   bridge.onOpenSettings((...values) => noSettingsReplay.push(values))();
   assert.deepEqual(noSettingsReplay, []);
+  const feedbackReceived = [];
+  const emitFeedback = () =>
+    listeners.get('otto:feedback:open')({ sender: 'privileged-synthetic-ipc' });
+  emitFeedback();
+  emitFeedback();
+  const stopFeedback = bridge.onFeedbackRequested((...values) => feedbackReceived.push(values));
+  assert.deepEqual(feedbackReceived, [[]]);
+  emitFeedback();
+  assert.deepEqual(feedbackReceived, [[], []]);
+  stopFeedback();
+  emitFeedback();
+  const resumedFeedback = [];
+  bridge.onFeedbackRequested((...values) => resumedFeedback.push(values))();
+  assert.deepEqual(resumedFeedback, [[]]);
+  bridge.onFeedbackRequested(() => assert.fail('A consumed request must not replay.'))();
+  assert.throws(() => bridge.onFeedbackRequested(null), /listener/);
   const first = { threadId, messageId: randomUUID() };
   const latest = { threadId, messageId: randomUUID() };
   const delivered = [];

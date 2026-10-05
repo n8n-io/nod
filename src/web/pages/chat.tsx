@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, Bug, Check, Trash2 } from 'lucide-react';
+import { ArrowDown, MessageSquarePlus, Trash2 } from 'lucide-react';
 import type {
   AppState,
   Artifact,
@@ -25,7 +25,7 @@ import {
   Skeleton,
 } from '../components/ui';
 import { ModelPicker, ModelSetup } from '../components/models';
-import { desktopBuildInfo, desktopSettingsAvailable } from '../lib/desktop';
+import { desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
 import { analyticsForCurrentSession } from '../lib/analytics';
@@ -70,6 +70,7 @@ export function Chat({
   onReadLatest,
   requestedMessage,
   onRequestHandled,
+  onFeedback,
 }: {
   state: AppState;
   streams: Record<string, string>;
@@ -81,6 +82,7 @@ export function Chat({
   onReadLatest?(threadId: string): void;
   requestedMessage?: { id: string; text: string };
   onRequestHandled?(id: string): void;
+  onFeedback?(): void;
 }) {
   const dateFormat = useDateFormat();
   const { data: connections } = usePageData<Connection[]>('/api/apps');
@@ -101,12 +103,6 @@ export function Chat({
   const [resetting, setResetting] = useState(false);
   const [resetTarget, setResetTarget] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [reportStatus, setReportStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
-  useEffect(() => {
-    if (reportStatus !== 'copied') return;
-    const timeout = setTimeout(() => setReportStatus('idle'), 2000);
-    return () => clearTimeout(timeout);
-  }, [reportStatus]);
   const [connectionNotice, setConnectionNotice] = useState<{
     text: string;
     kind: 'success' | 'error';
@@ -256,7 +252,6 @@ export function Chat({
     setSending(false);
     setReturningHandoff(null);
     setError('');
-    setReportStatus('idle');
     setStopping(false);
     stickToBottom.current = true;
   }, [threadId]);
@@ -663,32 +658,6 @@ export function Chat({
       if (threadRef.current === stoppedThread) setStopping(false);
     }
   }
-  async function copyBugReport() {
-    if (reportStatus === 'copying') return;
-    const requestedThread = threadId;
-    setReportStatus('copying');
-    setError('');
-    try {
-      const [report, desktop] = await Promise.all([
-        api<{ threadId: string }>('/api/conversation/bug-report'),
-        desktopBuildInfo(),
-      ]);
-      if (threadRef.current !== requestedThread) return;
-      if (report.threadId !== requestedThread) {
-        setReportStatus('idle');
-        return;
-      }
-      await navigator.clipboard.writeText(
-        JSON.stringify({ ...report, ...(desktop ? { desktop } : {}) }, null, 2),
-      );
-      if (threadRef.current === requestedThread) setReportStatus('copied');
-    } catch (cause) {
-      if (threadRef.current === requestedThread) {
-        setReportStatus('idle');
-        setError(errorMessage(cause));
-      }
-    }
-  }
   const chatActions = (
     <>
       {import.meta.env?.DEV === true && state.configuration.conversationResetEnabled && (
@@ -703,23 +672,19 @@ export function Chat({
           Clear messages
         </Button>
       )}
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="chat-report-button"
-        onClick={() => void copyBugReport()}
-        disabled={reportStatus === 'copying'}
-        aria-label={reportStatus === 'copied' ? 'Bug report copied' : 'Copy bug report'}
-        title="Copy conversation and trace as JSON"
-      >
-        {reportStatus === 'copied' ? <Check size={15} /> : <Bug size={15} />}
-        {reportStatus === 'copying'
-          ? 'Copying…'
-          : reportStatus === 'copied'
-            ? 'Copied'
-            : 'Copy bug report'}
-      </Button>
+      {onFeedback && (
+        <Button
+          id="feedback-launcher"
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="chat-report-button"
+          onClick={onFeedback}
+        >
+          <MessageSquarePlus size={15} aria-hidden="true" />
+          Send feedback
+        </Button>
+      )}
     </>
   );
   return (

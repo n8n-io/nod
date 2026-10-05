@@ -15,9 +15,11 @@ import {
   utilityProcess,
 } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
+import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createSettingsStore } from './settings.mjs';
@@ -62,6 +64,7 @@ const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analyti
 });
 let setupWindow;
 let engineWindow;
+let pendingFeedback = false;
 let engine;
 let enginePreferencesReady = false;
 let preparing;
@@ -486,6 +489,7 @@ function showEngine() {
   if (engineWindow && !engineWindow.isDestroyed()) {
     engineWindow.show();
     engineWindow.focus();
+    deliverFeedbackRequest(engineWindow);
     return;
   }
   engineWindow = new BrowserWindow({
@@ -508,11 +512,53 @@ function showEngine() {
   engineWindows.add(engineWindow);
   protectWindow(engineWindow, engineOrigin);
   const window = engineWindow;
+  window.webContents.on('did-finish-load', () => deliverFeedbackRequest(window));
   engineWindow.on('closed', () => {
     engineWindows.delete(window);
     engineWindow = undefined;
   });
   void engineWindow.loadURL(engineOrigin);
+}
+
+function showFeedback() {
+  if (quitting) return;
+  pendingFeedback = true;
+  showEngine();
+}
+
+function deliverFeedbackRequest(window) {
+  if (
+    quitting ||
+    !pendingFeedback ||
+    window.isDestroyed() ||
+    window.webContents.isLoadingMainFrame()
+  )
+    return;
+  pendingFeedback = false;
+  window.webContents.send('otto:feedback:open');
+}
+
+async function feedbackContext() {
+  let computerName = '';
+  if (process.platform === 'darwin')
+    computerName = await new Promise((resolve) => {
+      execFile(
+        '/usr/sbin/scutil',
+        ['--get', 'ComputerName'],
+        { encoding: 'utf8', timeout: 2_000, maxBuffer: 8_192 },
+        (error, value) => resolve(error ? '' : value.trim()),
+      );
+    });
+  const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+  return {
+    computerName: (computerName || hostname()).trim().slice(0, 200) || null,
+    appVersion: app.getVersion(),
+    appRelease: typeof ottoBuild?.source === 'string' ? ottoBuild.source : null,
+    appModified: typeof ottoBuild?.modified === 'boolean' ? ottoBuild.modified : null,
+    development: !app.isPackaged,
+    source: 'desktop',
+    platform: `${process.platform}-${process.arch}`,
+  };
 }
 
 function availablePort() {
@@ -599,7 +645,7 @@ async function finishEnginePreparation() {
   update({ phase: 'ready', message: 'Otto is running on this Mac.', progress: undefined });
   synchronizeNotifications();
   if (!replayingOnboarding) {
-    if (foregroundWindow()) showEngine();
+    if (pendingFeedback || foregroundWindow()) showEngine();
     const completedWindow = setupWindow;
     setupWindow = undefined;
     await completeDesktopSetup(completedWindow);
@@ -630,6 +676,7 @@ function refreshUpdateMenu() {
       Menu.buildFromTemplate([
         { label: 'Open Otto', click: showEngine },
         { label: 'Settings…', click: () => showSettings() },
+        { label: 'Send feedback…', click: showFeedback },
         {
           label,
           enabled: Boolean(updates) && !checkingUpdates,
@@ -865,6 +912,8 @@ async function startEngine({ runtime, signal, validateStop }) {
     OTTO_BIND_HOST: '127.0.0.1',
     OTTO_DATA_ROOT: profileRoot,
     OTTO_WEB_ROOT: join(engineRoot, 'dist', 'web'),
+    OTTO_FEEDBACK_URL:
+      process.env.OTTO_FEEDBACK_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/feedback',
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
     COMPUTER_PROVIDER: 'docker',
     DEV_INSPECTOR: 'false',
@@ -1119,6 +1168,7 @@ else {
             submenu: [
               { role: 'about' },
               { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showSettings() },
+              { label: 'Send feedback…', click: showFeedback },
               {
                 id: 'desktop-update',
                 label: 'Check for Updates…',
@@ -1160,19 +1210,9 @@ else {
         if (field !== 'composioApiKey') throw new Error('Choose a supported key.');
         return settings.revealKey(field);
       });
-      ipcMain.handle('otto:build-info', async (event) => {
+      ipcMain.handle('otto:feedback:context', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
-        const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
-        return {
-          version: app.getVersion(),
-          electron: process.versions.electron,
-          platform: process.platform,
-          arch: process.arch,
-          source: ottoBuild?.source,
-          builtAt: ottoBuild?.builtAt,
-          modified: ottoBuild?.modified,
-          runtime: ottoBuild?.runtime,
-        };
+        return feedbackContext();
       });
       ipcMain.handle('otto:preferences:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');

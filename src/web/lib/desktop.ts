@@ -19,6 +19,16 @@ export type DesktopSettingsChange = Partial<
 
 export type DesktopSettingsSection = 'general' | 'models' | 'preferences';
 
+export type DesktopFeedbackContext = {
+  computerName: string | null;
+  appVersion: string;
+  appRelease: string | null;
+  appModified: boolean | null;
+  development: boolean;
+  source: 'desktop';
+  platform: string | null;
+};
+
 type DesktopWindow = Window & {
   ottoDesktop?: {
     onPrepareUpdate?(check: () => boolean): () => void;
@@ -29,16 +39,8 @@ type DesktopWindow = Window & {
     onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
-    getBuildInfo?(): Promise<{
-      version: string;
-      electron: string;
-      platform: string;
-      arch: string;
-      source?: string;
-      builtAt?: string;
-      modified?: boolean;
-      runtime?: string;
-    }>;
+    getFeedbackContext?(): Promise<DesktopFeedbackContext>;
+    onFeedbackRequested?(listener: () => void): () => void;
     setTheme(theme: DesktopPreferences['theme']): Promise<DesktopPreferences>;
     onPreferences(listener: (preferences: DesktopPreferences) => void): () => void;
     onFocusMessage?(
@@ -150,6 +152,10 @@ export async function openConnection(url: string) {
   else window.location.assign(url);
 }
 
-export function desktopBuildInfo() {
-  return (window as DesktopWindow).ottoDesktop?.getBuildInfo?.();
+export function desktopFeedbackContext() {
+  return (window as DesktopWindow).ottoDesktop?.getFeedbackContext?.();
+}
+
+export function onFeedbackRequested(listener: () => void) {
+  return (window as DesktopWindow).ottoDesktop?.onFeedbackRequested?.(listener) ?? (() => {});
 }

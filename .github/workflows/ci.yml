@@ -56,8 +56,8 @@ jobs:
         run: npm --prefix desktop ci
       - name: Check desktop lifecycle, storage and release contracts
         run: npm run desktop:test
-      - name: Check private desktop release delivery
-        run: node --test deployment/n8n/desktop-releases.test.mjs
+      - name: Check n8n delivery contracts
+        run: node --test deployment/n8n/*.test.mjs
       - name: Check desktop network isolation during restart
         run: >-
           sudo env OTTO_TEST_RUNTIME_NETWORK=1 "$(command -v node)"

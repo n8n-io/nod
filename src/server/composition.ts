@@ -18,6 +18,8 @@ import type { MessagingTransport } from '../ports/messaging.ts';
 import type { ChannelAccountRegistry, ChannelSetupVerifier } from '../ports/channel-settings.ts';
 import type { PrivateObjectStore } from '../ports/object-storage.ts';
 import type { LinkPreviewProvider } from '../ports/link-preview.ts';
+import type { FeedbackDelivery } from '../ports/feedback.ts';
+import { createN8nFeedback } from '../providers/n8n/feedback.ts';
 import { agentModels } from '../shared/model-defaults.ts';
 import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
@@ -91,7 +93,9 @@ import { createIntegrations } from './integrations.ts';
 import { createInspectorStore } from './inspector.ts';
 import { createPromptInspector } from './inspector-prompts.ts';
 import { createErrorRedactor } from './inspector-redaction.ts';
-import { registerBugReport } from './bug-report.ts';
+import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
+import { registerFeedback } from './feedback.ts';
+import { feedbackContext } from './feedback-context.ts';
 import { createPersonalService } from './personal.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
 import { createMemoryService } from './memory.ts';
@@ -152,6 +156,7 @@ export interface ApplicationAdapters {
   memoryCurator?: MemoryCurator;
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
+  feedback?: FeedbackDelivery;
   messagingSetup?: {
     verifier: ChannelSetupVerifier;
     create(environment: Record<string, string>): MessagingTransport;
@@ -367,6 +372,10 @@ export function createDefaultAdapters(
       create: (environment) => createChatSdkTransport(pool, { ...env, ...environment }),
     },
     linkPreviews: createPublicLinkPreviewProvider(),
+    feedback: createN8nFeedback({
+      url: env.OTTO_FEEDBACK_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/feedback',
+      token: env.OTTO_FEEDBACK_TOKEN,
+    }),
     get model() {
       return models.current;
     },
@@ -420,7 +429,9 @@ async function initializeApplication(
   const inspectorDatabase = createInspectorPool();
   const inspectorSecrets = Object.entries(process.env)
     .filter(([key]) =>
-      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN)$/.test(key),
+      /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN|FEEDBACK_TOKEN)$/.test(
+        key,
+      ),
     )
     .flatMap(([, value]) => (value ? [value] : []));
   if (process.env.DATABASE_URL) {
@@ -823,6 +834,8 @@ async function initializeApplication(
           const { entry, secret } = await vault.readCredential(input.id);
           if (entry.origin !== credentialOrigin(input.origin))
             throw new Error('This saved login does not match the requested website.');
+          for (const value of [secret.username, secret.password])
+            if (value && !inspectorSecrets.includes(value)) inspectorSecrets.push(value);
           return { credential: secret };
         }
         const { savedLoginId, ...request } = input;
@@ -925,7 +938,7 @@ async function initializeApplication(
   app.addHook('preClose', async () => {
     await adapters.models?.close();
   });
-  registerBugReport(app, {
+  const feedbackReportOptions: FeedbackReportOptions = {
     pool,
     ownerId,
     captureEnabled: () => configuration().inspectorEnabled,
@@ -942,6 +955,17 @@ async function initializeApplication(
         sessionRoot: join(dataRoot, 'sessions'),
         objectStore: adapters.objectStore,
       }),
+  };
+  await registerFeedback(app, {
+    pool,
+    ownerId,
+    context: await feedbackContext({ runtimeMode, environment: process.env }),
+    delivery: adapters.feedback ?? {
+      configured: false,
+      submit: async (input) => ({ submissionId: input.submissionId, status: 'rejected' }),
+      status: async (submissionId) => ({ submissionId, status: 'rejected' }),
+    },
+    buildReport: () => buildFeedbackReport(feedbackReportOptions),
   });
   if (localAccounts) {
     registerPrivacyNotice(app, privacyNotice);
