@@ -299,9 +299,11 @@ export function createModelService(options: {
       : undefined;
     if (connectionId && !row) throw new ConnectionError('This model connection is unavailable.');
     for (const [state, attempt] of attempts)
-      if (attempt.expires < Date.now() || ['connected', 'failed'].includes(attempt.status))
-        attempts.delete(state);
-    if (attempts.size >= 5)
+      if (attempt.expires < Date.now()) attempts.delete(state);
+    if (
+      [...attempts.values()].filter((attempt) => ['waiting', 'completing'].includes(attempt.status))
+        .length >= 5
+    )
       throw new ConnectionError('Complete a pending sign-in before starting another.');
     if (provider === 'openai') {
       listener ??= new Promise<Server>((resolve, reject) => {

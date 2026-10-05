@@ -2999,6 +2999,7 @@ test('browser handoff cancels queued controls when the preceding view cannot be 
 test('desktop restart guard preserves chat drafts, attachments, pending sends and secondary-page forms', async () => {
   let state = requestedChatState();
   const upload = deferred<Response>();
+  let uploadSignal: AbortSignal | null | undefined;
   const sent = deferred<Response>();
   const checks = new Set<() => boolean>();
   let submission: { clientMessageId: string } | undefined;
@@ -3031,7 +3032,10 @@ test('desktop restart guard preserves chat drafts, attachments, pending sends an
   const chat = (visible = true) => createElement(RestartProbe, { visible });
   const view = await handoffView(async (path, options) => {
     if (path === '/api/apps') return Response.json([]);
-    if (path === '/api/uploads') return upload.promise;
+    if (path === '/api/uploads') {
+      uploadSignal = options?.signal;
+      return upload.promise;
+    }
     assert.equal(path, '/api/messages');
     submission = JSON.parse(String(options?.body));
     return sent.promise;
@@ -3071,6 +3075,10 @@ test('desktop restart guard preserves chat drafts, attachments, pending sends an
       input.dispatchEvent(new view.dom.window.Event('change', { bubbles: true }));
     });
     assert.equal(canRestart(), false);
+    await act(async () => editor.commands.setContent('Keep this draft during model setup.'));
+    state = { ...state, configuration: { ...state.configuration, llmReady: false } };
+    await view.render(chat());
+    assert.equal(uploadSignal?.aborted, false);
     await act(async () =>
       upload.resolve(
         Response.json({
@@ -3083,6 +3091,11 @@ test('desktop restart guard preserves chat drafts, attachments, pending sends an
       ),
     );
     assert.equal(canRestart(), false);
+    state = { ...state, configuration: { ...state.configuration, llmReady: true } };
+    await view.render(chat());
+    assert.equal(editor.getMarkdown(), 'Keep this draft during model setup.');
+    assert.ok(view.element('[aria-label="Remove synthetic.txt"]'));
+    await act(async () => editor.commands.clearContent());
     await act(async () =>
       view.element<HTMLButtonElement>('[aria-label="Remove synthetic.txt"]').click(),
     );

@@ -881,25 +881,24 @@ export function Chat({
             {connectionNotice.text}
           </Notice>
         )}
-        {state.configuration.llmReady || working || sending ? (
-          <>
-            <ModelPicker />
-            <Composer
-              canRestart={() => visible && !outstandingSends.current && !resetLock.current}
-              key={threadId}
-              ref={composer}
-              ready={state.configuration.llmReady && !resetting && !welcoming}
-              text={text}
-              setText={setText}
-              replyTo={replyTo}
-              clearReply={() => setReplyTo(null)}
-              onSend={send}
-              onStop={working && state.threadStatus === 'running' ? () => void stop() : undefined}
-              stopping={stopping}
-            />
-          </>
-        ) : (
-          visibleMessages.length > 0 && <ModelSetup />
+        <div hidden={!state.configuration.llmReady && !working && !sending}>
+          <ModelPicker />
+          <Composer
+            canRestart={() => visible && !outstandingSends.current && !resetLock.current}
+            key={threadId}
+            ref={composer}
+            ready={state.configuration.llmReady && !resetting && !welcoming}
+            text={text}
+            setText={setText}
+            replyTo={replyTo}
+            clearReply={() => setReplyTo(null)}
+            onSend={send}
+            onStop={working && state.threadStatus === 'running' ? () => void stop() : undefined}
+            stopping={stopping}
+          />
+        </div>
+        {!state.configuration.llmReady && !working && !sending && visibleMessages.length > 0 && (
+          <ModelSetup />
         )}
       </div>
       <Dialog open={resetTarget !== null} onOpenChange={(open) => !open && setResetTarget(null)}>

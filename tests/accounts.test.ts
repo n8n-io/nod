@@ -874,6 +874,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     await assert.rejects(owner.complete(callback));
     assert.deepEqual((await status()).json(), { status: 'connected' });
     assert.equal(exchanges, 1);
+    await owner.start('openrouter');
+    assert.deepEqual((await status()).json(), { status: 'connected' });
     const restored = await f.create('fixture-owner', backend);
     const a = await owner.resolve();
     const b = await restored.resolve();
@@ -899,6 +901,9 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(await a.read(), undefined);
     assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
     assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
+    for (let count = 0; count < 4; count++) await owner.start('openrouter');
+    await assert.rejects(owner.start('openrouter'), /pending sign-in/);
+    assert.deepEqual((await status()).json(), { status: 'connected' });
     const hosted = await f.create('fixture-hosted', backend, false);
     await assert.rejects(hosted.start('openai'));
     const failed = await f.create('fixture-failed', {
