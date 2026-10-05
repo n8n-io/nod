@@ -8,11 +8,13 @@ Desktop is a wrapper around the same Otto product: it starts `src/server/index.t
 
 ## Trying it
 
-1. Open `Otto-arm64.dmg` and copy **Otto** to Applications.
-2. Choose whether to open at login and show notifications. Otto detects date/time defaults and follows the system appearance.
-3. Open Otto while its matching computer and browser finish preparing automatically. An existing verified runtime is reused without contacting the release service.
+1. Download the release's `Otto-arm64.dmg` using the supplied installation link, open it, drag **Otto** to **Applications**, then open it from Applications. No GitHub account or developer tools are needed.
+2. This alpha is self-signed. If macOS blocks its first launch, approve this installation in **System Settings → Privacy & Security → Open Anyway**. Approve the normal Keychain prompt if shown so Otto can use its saved credentials.
+3. Choose your preferences and keep an internet connection available while Otto automatically downloads and prepares its computer and browser. An existing verified runtime is reused.
 4. Connect an AI provider in the shared product onboarding: a supported API key or ChatGPT plan. Optionally add a Composio key and connect apps.
 5. Use **Settings → Models** for AI connections and the Composio key. The app menu, menu bar and **⌘,** open the same Settings screen.
+
+Otto checks for updates at startup and through **Check for Updates…**. Choose **Later** to keep working or **Restart** to install a prepared update; **Restart to update to VERSION…** remains in the menu after Later. Finish work and save or cancel drafts before restarting.
 
 **General** contains appearance, launch-at-login and notifications. **Preferences** contains region, clock, timezone and quiet hours. AI connections and model selection use the same server APIs, encrypted credential store and components as the web product; the desktop wrapper does not maintain a second AI provider selection.
 
@@ -47,19 +49,20 @@ The app and DMG contain no provider keys. A local, one-time development import c
 ## Current limits
 
 - Apple Silicon macOS only; Windows, Linux, and Intel Mac builds are planned in the research document.
-- This locally built preview is ad-hoc signed. It is not notarized or ready for public distribution. A public DMG needs Apple Developer ID signing and notarization.
+- The official alpha uses the internal Otto certificate and is not Apple-notarized. Locally built development previews may be ad-hoc signed.
 - macOS can request Keychain approval after the preview is re-signed. Approve that request in the OS dialog; never put the Mac password in Otto chat.
-- First installation exposed an intermittent guest login-service delay; the measured first setup took about five minutes. See the [validation record](VALIDATION.md) for measured restart behavior and remaining checks.
+- An earlier development build exposed an intermittent guest login-service delay; that first setup took about five minutes. See the [validation record](VALIDATION.md) for dated observations and remaining checks.
 - Version 0.1.2 starts with a fresh installation and profile. Later releases support automatic updates. Cloud migration, multi-device synchronization and idle-computer suspension are not implemented.
 - The first runtime installation remains large and requires a network connection or manual import of its matching archive. Old runtime versions are retained; automatic cache eviction is not implemented.
 - Direct webhook delivery to a laptop is not provided. External channels that need a publicly reachable callback require a later relay or server deployment.
-- The preview uses isolated test identity and data. Optional provider and integration setup still depends on the provider's API permissions and configuration.
+- Optional provider and integration setup depends on the provider's API permissions and configuration.
+- Official 0.1.2 prepares its runtime successfully but rejects OpenAI keys restricted from listing models. See the [dated installation result](VALIDATION.md#official-012-installation--2026-10-05); full installation and update acceptance need the corrected release.
 
 ## Release automation
 
-The [release guide](RELEASING.md) describes the version/changelog PR, signed release workflow, required GitHub environment, runtime reuse, and acceptance gates. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The installed development preview below remains ad-hoc signed.
+The [release guide](RELEASING.md) describes the version/changelog PR, signed release workflow, required GitHub environment, runtime reuse, and acceptance gates. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The historical development measurements below used ad-hoc signing.
 
-Updater-enabled builds check at startup and through **Check for Updates…**. The app and menu-bar menus show checking, preparation and download states, and retain **Restart to update** after choosing Later. Otto verifies the matching runtime before staging the signed application, then offers **Restart** or **Later**. Restart waits for active work and unfinished input. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); live delivery requires the saved GitHub credential's repository access.
+The updater verifies the matching runtime before staging the signed application and defers restart while work or input is unfinished. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); its GitHub credential stays on the server.
 
 ## Building the experiment
 
@@ -87,9 +90,13 @@ npm --prefix desktop run build -- --full
 
 That emits `Otto-full-arm64.dmg`. It avoids the separate runtime pack, although first provisioning can still need network access. A lean build uses `OTTO_DESKTOP_UPDATE_SOURCE_URL`, set during app packaging, for automatic first-launch downloads and updates. Alternatively, set `OTTO_RUNTIME_RELEASE_URL` to the actual HTTPS URL of its immutable archive while running `runtime-pack.mjs`. Publish and verify the matching archive before distributing the app. Without either source, the picker is the supported first-install path.
 
-## Historical distribution size
+## Distribution size
 
-The earlier macOS arm64 build measured on 2026-10-02 uses source revision `b5cbdfda8687d6a43ba0c884a07e731535eb6ed2` with the desktop experiment changes and runtime `516ca70c945727e79b553ef9aa910b34a02f312a09de4fc451420e8a6a47b0df`. These measurements predate the switch to the full shared dependency installation and browser image. The next release must measure the resulting larger app and runtime again. That earlier DMG was approximately **84.4% smaller** than the original all-in-one preview:
+Official 0.1.2 download sizes: DMG **776,431,526 bytes**, runtime **2,062,117,554 bytes**, and application update ZIP **373,271,203 bytes**. These are archive sizes, not working disk or memory requirements. Download verification is recorded in the [n8n delivery evidence](../deployment/n8n/README.md); physical installation and update acceptance are recorded separately in [VALIDATION.md](VALIDATION.md).
+
+### Historical distribution size
+
+The earlier macOS arm64 build measured on 2026-10-02 uses source revision `b5cbdfda8687d6a43ba0c884a07e731535eb6ed2` with the desktop experiment changes and runtime `516ca70c945727e79b553ef9aa910b34a02f312a09de4fc451420e8a6a47b0df`. These measurements predate the switch to the full shared dependency installation and browser image. That earlier DMG was approximately **84.4% smaller** than the original all-in-one preview:
 
 | Artifact                                     |     Size |
 | -------------------------------------------- | -------: |
