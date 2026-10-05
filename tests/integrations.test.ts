@@ -34,6 +34,7 @@ import { createDiscoveredTransport, safeRemoteFetch } from '../src/providers/dis
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createDiscoveredConnections } from '../src/server/discovered-connections.ts';
 import { registerLocalAccess } from '../src/server/access.ts';
+import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
 import { createErrorRedactor } from '../src/server/inspector-redaction.ts';
 import { createProviderUsageStore } from '../src/server/provider-usage.ts';
@@ -1236,6 +1237,8 @@ test(
     const app = Fastify();
     t.after(() => app.close());
     registerLocalAccess(app, 4310, { token: 'synthetic-desktop-token' });
+    const captured: AnalyticsEvent[] = [];
+    registerAnalyticsRoutes(app, (event) => captured.push(event));
     service.registerRoutes(app);
     const headers = {
       host: '127.0.0.1:4310',
@@ -1268,6 +1271,11 @@ test(
     };
     const first = await authorize();
     assert.equal(first.statusCode, 200, first.body);
+    const connectionStarted: AnalyticsEvent = {
+      event: 'otto_settings_updated',
+      properties: { section: 'connections', operation: 'connect_started' },
+    };
+    assert.deepEqual(captured, [connectionStarted]);
     assert.equal((await authorize()).json().url, first.json().url);
     assert.equal(states.length, 1);
     assert.equal((await status()).oauthStatus, 'pending');
@@ -1302,6 +1310,7 @@ test(
     const interrupted = callback(states[2], 'code=hold');
     await finishing;
     assert.equal((await authorize()).statusCode, 409);
+    assert.equal(captured.length, 4);
     assert.equal(await callback(states[2], 'code=fixture-code'), 'expired');
     assert.equal(finished, 2);
     await createDiscoveredConnections(f.pool, { ...options, ownerId: 'foreign-owner' });
@@ -1321,6 +1330,7 @@ test(
     assert.equal((await recovered.inject(path)).json().oauthStatus, 'connected');
     assert.equal((await status()).authorizationUrl, undefined);
     assert.equal((await authorize()).statusCode, 409);
+    assert.deepEqual(captured, Array(5).fill(connectionStarted));
     assert.equal(await callback(states[3], 'code=fixture-code'), 'expired');
     assert.equal(finished, 3);
     assert.equal((await discovered.list()).length, 1);
@@ -4085,6 +4095,8 @@ test(
       options: `-c search_path=${schema}`,
     });
     const app = Fastify();
+    const captured: AnalyticsEvent[] = [];
+    registerAnalyticsRoutes(app, (event) => captured.push(event));
     try {
       const owner = 'fixture-owner';
       const key = randomBytes(32);
@@ -4251,6 +4263,11 @@ test(
         payload: { token: 'synthetic-cli-token', accountName: 'Fixture CLI account' },
       });
       assert.equal(cliSetup.statusCode, 200);
+      const connectionUpdated: AnalyticsEvent = {
+        event: 'otto_settings_updated',
+        properties: { section: 'connections', operation: 'update' },
+      };
+      assert.deepEqual(captured, [connectionUpdated]);
       assert.equal(cliCalls, 0);
       const addedCli = (await discovered.list()).find(
         (account) => account.accountName === 'Fixture CLI account',
@@ -4375,6 +4392,7 @@ test(
         });
       failReplacement = true;
       assert.equal((await complete()).statusCode, 502);
+      assert.deepEqual(captured, [connectionUpdated]);
       assert.equal((await pool.query('SELECT 1 FROM fixture_checks')).rowCount, 1);
       assert.equal(
         (
@@ -4387,6 +4405,7 @@ test(
       assert.equal((await grantVault.read(connectionId)).value, `synthetic-token-${connectionId}`);
       failReplacement = false;
       assert.equal((await complete()).statusCode, 200);
+      assert.deepEqual(captured, [connectionUpdated, connectionUpdated]);
       assert.equal(replacementCalls, 2);
       assert.equal((await pool.query('SELECT 1 FROM fixture_checks')).rowCount, 0);
       assert.equal((await grantVault.read(connectionId)).value, 'synthetic-new-token');

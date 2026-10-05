@@ -9,6 +9,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createSettingsStore } from '../main/settings.mjs';
+import {
+  completeDesktopSetup,
+  createDesktopAnalytics,
+  trackDesktopAnalytics,
+} from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
@@ -28,6 +33,144 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
+
+test('successful setup lets the recorder flush before closing and cannot block startup', async () => {
+  const flushed = deferred();
+  const events = [];
+  let closed = false;
+  const window = {
+    isDestroyed: () => closed,
+    webContents: {
+      executeJavaScript: () => {
+        events.push('flush');
+        return flushed.promise;
+      },
+    },
+    destroy: () => {
+      closed = true;
+      events.push('close');
+    },
+  };
+  const completed = completeDesktopSetup(window);
+  await new Promise(setImmediate);
+  assert.deepEqual(events, ['flush']);
+  flushed.resolve();
+  await completed;
+  assert.deepEqual(events, ['flush', 'close']);
+  await completeDesktopSetup(window);
+  assert.deepEqual(events, ['flush', 'close']);
+  for (const flush of [
+    () => {
+      throw new Error('Synthetic recorder failure');
+    },
+    () => Promise.reject(new Error('Synthetic renderer failure')),
+    () => new Promise(() => {}),
+  ]) {
+    closed = false;
+    window.webContents.executeJavaScript = flush;
+    await completeDesktopSetup(window, 10);
+    assert.equal(closed, true);
+  }
+});
+
+test('overlapping recording drains share session handlers without mixing windows or dropping later requests', async (t) => {
+  const listeners = {};
+  const session = {
+    webRequest: Object.fromEntries(
+      ['onBeforeRequest', 'onCompleted', 'onErrorOccurred'].map((event) => [
+        event,
+        (_filter, listener) => {
+          listeners[event] = listener;
+        },
+      ]),
+    ),
+  };
+  const createWindow = (id) => {
+    const window = Object.assign(new EventEmitter(), {
+      webContents: { id, session, executeJavaScript: async () => {} },
+      isDestroyed: () => window.destroyed === true,
+      destroy: () => {
+        window.destroyed = true;
+        window.emit('closed');
+      },
+    });
+    t.after(() => {
+      if (!window.isDestroyed()) window.destroy();
+    });
+    trackDesktopAnalytics(window);
+    return window;
+  };
+  const started = (id, webContentsId) => listeners.onBeforeRequest({ id, webContentsId }, () => {});
+  const first = createWindow(1);
+  const second = createWindow(2);
+  started(101, 1);
+  started(102, 2);
+  const firstDrain = completeDesktopSetup(first);
+  const secondDrain = completeDesktopSetup(second);
+  await new Promise((accept) => setTimeout(accept, 150));
+  assert.equal(first.isDestroyed(), false);
+  assert.equal(second.isDestroyed(), false);
+  listeners.onCompleted({ id: 101 });
+  await firstDrain;
+  assert.equal(first.isDestroyed(), true);
+  assert.equal(second.isDestroyed(), false);
+  started(103, 2);
+  listeners.onCompleted({ id: 102 });
+  await new Promise((accept) => setTimeout(accept, 150));
+  assert.equal(second.isDestroyed(), false);
+  listeners.onErrorOccurred({ id: 103 });
+  await secondDrain;
+  assert.equal(second.isDestroyed(), true);
+  const reopened = createWindow(3);
+  started(104, 3);
+  const reopenedDrain = completeDesktopSetup(reopened);
+  await new Promise((accept) => setTimeout(accept, 150));
+  assert.equal(reopened.isDestroyed(), false);
+  listeners.onCompleted({ id: 104 });
+  await reopenedDrain;
+  assert.equal(reopened.isDestroyed(), true);
+});
+
+test('native onboarding and restarted runtimes share a private installation identity', async (t) => {
+  const f = await fixture(t);
+  const path = join(dirname(f.path), 'analytics-id');
+  const readers = Array.from({ length: 12 }, () =>
+    createDesktopAnalytics(path, { packaged: true, env: {} }),
+  );
+  const configurations = await Promise.all(readers.map((read) => read()));
+  assert.equal(new Set(configurations.map((value) => value.distinctId)).size, 1);
+  const saved = await readFile(path, 'utf8');
+  assert.equal(configurations[0].distinctId, `local:${saved}`);
+  assert.equal((await stat(path)).mode & 0o777, 0o600);
+  assert.equal(configurations[0].enabled, true);
+  assert.equal(configurations[0].environment, 'production');
+  const restarted = await createDesktopAnalytics(path, {
+    packaged: true,
+    env: { OTTO_ANALYTICS_ENABLED: 'false' },
+  })();
+  assert.equal(restarted.distinctId, configurations[0].distinctId);
+  assert.equal(restarted.enabled, false);
+  const development = await createDesktopAnalytics(path, { env: {} })();
+  assert.equal(development.enabled, false);
+  assert.equal(development.environment, 'development');
+  const runtime = await createDesktopAnalytics(path, {
+    env: { OTTO_ANALYTICS_ID: saved, OTTO_ANALYTICS_ENABLED: 'true' },
+  })();
+  assert.equal(runtime.distinctId, configurations[0].distinctId);
+  assert.equal(runtime.enabled, true);
+});
+
+test('invalid analytics identifiers never enter the renderer configuration', async (t) => {
+  const f = await fixture(t);
+  const path = join(dirname(f.path), 'analytics-id');
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, 'synthetic-private-value');
+  await assert.rejects(createDesktopAnalytics(path, { env: {} })(), /installation ID is invalid/);
+  await assert.rejects(
+    createDesktopAnalytics(path, { env: { OTTO_ANALYTICS_ID: 'synthetic-private-value' } })(),
+    /installation ID is invalid/,
+  );
+});
 
 test('runtime warmup overlaps onboarding without reading credentials or starting the engine', async (t) => {
   const f = await fixture(t);
@@ -307,6 +450,9 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
     clearTimeout,
     fetch: request,
     createSettingsStore: () => storage.store,
+    createDesktopAnalytics,
+    completeDesktopSetup,
+    trackDesktopAnalytics,
     createAppPreferencesStore: () => ({ sync: async () => {} }),
     createChatReadCursorStore: () => ({}),
     createReadinessNotice: () => ({ update() {} }),
@@ -368,8 +514,9 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
         this.url = url;
         this.webContents.mainFrame = { url };
       }
-      loadFile(path) {
+      loadFile(path, options) {
         this.path = path;
+        this.query = options?.query;
         this.webContents.mainFrame = { url: pathToFileURL(path).href };
       }
       show() {
@@ -408,6 +555,7 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
     globalThis.running = {
       prepare,
       showEngine,
+      replayOnboarding,
       status: () => status,
       setRestartRequired: (value) => { restartRequired = value; },
       crash: () => { engine = undefined; enginePreferencesReady = false; },
@@ -430,6 +578,7 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   const get = (target = event) => invoke('otto:settings:get', target);
   const save = (value, target = event) => invoke('otto:settings:save', target, value);
   const reveal = (field, target = event) => invoke('otto:settings:reveal', target, field);
+  const analytics = (target = event) => invoke('otto:analytics:configuration', target);
   for (const rejected of [
     { sender: { mainFrame: frame }, senderFrame: frame },
     { sender: window.webContents, senderFrame: { url: frame.url } },
@@ -440,12 +589,14 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
       /unavailable/,
     );
     await assert.rejects(reveal('composioApiKey', rejected), /unavailable/);
+    await assert.rejects(analytics(rejected), /unavailable/);
   }
   for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/files/synthetic']) {
     frame.url = url;
     await assert.rejects(get(), /unavailable/);
     await assert.rejects(save({ theme: 'dark' }), /unavailable/);
     await assert.rejects(reveal('composioApiKey'), /unavailable/);
+    await assert.rejects(analytics(), /unavailable/);
   }
   frame.url = 'http://127.0.0.1:4310/onboarding';
   const previous = await readFile(f.storage.path, 'utf8');
@@ -461,6 +612,7 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     await assert.rejects(reveal(field), /supported key/);
   assert.equal(await readFile(f.storage.path, 'utf8'), previous);
   assert.ok(!JSON.stringify(await get()).includes('synthetic-existing-key'));
+  assert.ok(!JSON.stringify(await analytics()).includes('synthetic-existing-key'));
   assert.equal(await reveal('composioApiKey'), 'synthetic-existing-key');
   await save({ theme: 'dark', launchAtLogin: true, composioApiKey: 'synthetic-replacement-key' });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
@@ -663,6 +815,7 @@ test('settings restart displays native progress, restores Chat on success, and k
         assert.equal(path, '/api/runtime/drain');
         progress = f.windows.find((window) => window.path && !window.isDestroyed());
         assert.ok(progress?.visible);
+        assert.equal(progress.query.firstSetup, 'false');
         assert.equal(current.isDestroyed(), false);
         assert.equal(f.children[0].killed, undefined);
         if (failAfterStop) f.storage.encryption.isEncryptionAvailable = () => false;
@@ -704,6 +857,50 @@ test('settings restart displays native progress, restores Chat on success, and k
     assert.equal(replacement.visible, true);
     assert.equal(replacement.isFocused(), true);
   }
+});
+
+test('a pending recording drain cannot close or detach a newly opened onboarding window', async (t) => {
+  const flushing = deferred();
+  const flushed = deferred();
+  let f;
+  let progress;
+  f = await runningDesktop(
+    t,
+    async (url) => {
+      const path = new URL(url).pathname;
+      if (path === '/api/health') return Response.json({ ok: true });
+      if (path === '/api/desktop/status') return Response.json({ activeWork: false });
+      assert.equal(path, '/api/runtime/drain');
+      progress = f.windows.find((window) => window.path && !window.isDestroyed());
+      progress.webContents.executeJavaScript = () => {
+        flushing.resolve();
+        return flushed.promise;
+      };
+      return Response.json({ drained: true });
+    },
+    { allowStart: true },
+  );
+  f.crash();
+  await f.prepare();
+  f.showEngine();
+  const current = f.windows.at(-1);
+  f.setRestartRequired(true);
+  const applying = f.handlers.get('otto:settings:apply')({
+    sender: current.webContents,
+    senderFrame: current.webContents.mainFrame,
+  });
+  await flushing.promise;
+  f.replayOnboarding();
+  const replacement = f.windows.at(-1);
+  flushed.resolve();
+  await applying;
+  assert.notEqual(replacement, progress);
+  assert.equal(progress.isDestroyed(), true);
+  assert.equal(replacement.isDestroyed(), false);
+  const count = f.windows.length;
+  f.replayOnboarding();
+  assert.equal(f.windows.length, count);
+  assert.equal(replacement.isFocused(), true);
 });
 
 test('a failed restart health check or crashed engine retains the error state', async (t) => {

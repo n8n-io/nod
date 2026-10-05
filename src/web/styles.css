@@ -799,6 +799,76 @@ input[type='range']:disabled {
   color: var(--muted-foreground);
   font-size: 13px;
 }
+.browser-handoff-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+.browser-handoff-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.browser-handoff-overlay {
+  position: fixed;
+  inset: var(--desktop-titlebar-height, 0px) 0 0;
+  background: var(--overlay);
+  backdrop-filter: blur(3px);
+  z-index: 50;
+}
+.browser-handoff-expanded {
+  position: fixed;
+  z-index: 51;
+  top: calc(50% + var(--desktop-titlebar-height, 0px) / 2);
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100vw - 48px);
+  max-height: calc(100dvh - var(--desktop-titlebar-height, 0px) - 48px);
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  box-shadow: var(--shadow-dialog);
+}
+.browser-handoff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 550;
+}
+.browser-handoff-header > span:not(.brand-glyph) {
+  flex: 1;
+}
+.browser-handoff-expanded .browser-handoff-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.browser-handoff-expanded .browser-handoff-screen img {
+  width: 100%;
+  height: auto;
+  max-height: calc(100dvh - var(--desktop-titlebar-height, 0px) - 160px);
+  object-fit: contain;
+}
+.browser-handoff-expanded .browser-handoff-bar {
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 640px) {
+  .browser-handoff-expanded {
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - var(--desktop-titlebar-height, 0px) - 16px);
+  }
+}
 .message-user {
   justify-content: flex-end;
 }

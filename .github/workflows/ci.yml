@@ -232,7 +232,7 @@ jobs:
           curl --fail --location --retry 3 --output gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           printf '%s  %s\n' '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb' 'gitleaks.tar.gz' | sha256sum --check --status
           tar --extract --gzip --file gitleaks.tar.gz gitleaks
-      - name: Verify the SQL exception still detects secrets
+      - name: Verify scanning exceptions still detect secrets
         run: python3 .github/scripts/check-secret-config.py "$RUNNER_TEMP/gitleaks/gitleaks"
       - name: Scan Git history
         run: '"$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --log-opts=--all .'

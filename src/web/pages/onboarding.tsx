@@ -17,6 +17,7 @@ import { Button, Notice } from '../components/ui';
 import { useBrowserTimeZone } from '../hooks/use-browser-time-zone';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
+import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
 import { connectionUrl } from '../lib/connection-url';
 import {
   desktopLinksAvailable,
@@ -49,6 +50,12 @@ export function Onboarding({
   const { data: configuration } = usePageData<Configuration>('/api/configuration');
   const { data: models } = usePageData<ModelsResponse>('/api/models');
   const [step, setStep] = useState<'models' | 'apps'>('models');
+  const recordedStep = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (recordedStep.current === step) return;
+    recordedStep.current = step;
+    captureAnalytics('otto_onboarding_step_viewed', { step });
+  }, [step]);
   const modelReady = models?.connections.some(
     (connection) =>
       connection.id === models.selection?.connectionId &&
@@ -131,6 +138,7 @@ export function Onboarding({
     };
   }, [user.id]);
   async function prepare() {
+    const captureAnalytics = analyticsForCurrentSession();
     preparationRequest.current?.abort();
     const request = new AbortController();
     preparationRequest.current = request;
@@ -144,7 +152,10 @@ export function Onboarding({
       if (response.ok !== true) throw new Error('Setup could not be completed.');
       if (!request.signal.aborted) setPreparation('ready');
     } catch {
-      if (!request.signal.aborted) setPreparation('failed');
+      if (!request.signal.aborted) {
+        setPreparation('failed');
+        captureAnalytics('otto_ui_error', { area: 'onboarding', action: 'prepare' });
+      }
     } finally {
       if (preparationRequest.current === request) preparationRequest.current = null;
     }
@@ -159,6 +170,7 @@ export function Onboarding({
   }
   async function connect(slug: IntegrationService) {
     if (actions.current.has(slug) || saving) return;
+    const captureAnalytics = analyticsForCurrentSession();
     const desktop = desktopLinksAvailable();
     const popup = desktop
       ? null
@@ -197,7 +209,10 @@ export function Onboarding({
       }
     } catch (cause) {
       popup?.close();
-      if (!request.signal.aborted) setError(errorMessage(cause));
+      if (!request.signal.aborted) {
+        setError(errorMessage(cause));
+        captureAnalytics('otto_ui_error', { area: 'onboarding', action: 'connect' });
+      }
     } finally {
       if (next !== 'opening' && actions.current.get(slug) === request) {
         actions.current.delete(slug);
@@ -207,12 +222,14 @@ export function Onboarding({
   }
   async function complete() {
     if (saving || composioDirty || preparation !== 'ready') return;
+    const captureAnalytics = analyticsForCurrentSession();
     setSaving(true);
     setError('');
     try {
       await onComplete();
     } catch (cause) {
       if (active.current) setError(errorMessage(cause));
+      captureAnalytics('otto_ui_error', { area: 'onboarding', action: 'save' });
     } finally {
       if (active.current) setSaving(false);
     }
@@ -220,12 +237,12 @@ export function Onboarding({
   return (
     <main className="account-onboarding">
       <header>
-        <div className="sign-in-brand">
+        <div className="sign-in-brand" data-analytics-public>
           <BrandMark />
           <span>otto</span>
         </div>
         {canLogout && (
-          <Button variant="ghost" onClick={onLogout}>
+          <Button variant="ghost" onClick={onLogout} data-analytics-public>
             Sign out
           </Button>
         )}
@@ -235,11 +252,13 @@ export function Onboarding({
         <h1>
           Welcome{canLogout && user.name.trim() ? `, ${user.name.trim().split(/\s+/)[0]}` : ''}.
         </h1>
-        <p>{step === 'models' ? 'Connect your models.' : 'Connect your apps.'}</p>
+        <p data-analytics-public>
+          {step === 'models' ? 'Connect your models.' : 'Connect your apps.'}
+        </p>
         {step === 'models' ? (
           <>
             <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
-            <div className="account-onboarding-actions">
+            <div className="account-onboarding-actions" data-analytics-public>
               <Button disabled={!modelReady || modelDirty} onClick={() => setStep('apps')}>
                 Continue
               </Button>
@@ -291,14 +310,14 @@ export function Onboarding({
                     <span className="onboarding-logo">
                       <img src={`/logos/${slug}.svg`} alt="" width={24} height={24} />
                     </span>
-                    <div className="onboarding-integration-copy">
+                    <div className="onboarding-integration-copy" data-analytics-public>
                       <h2 id={`onboarding-${slug}`}>{service.name}</h2>
                       <p>
                         {state === 'waiting' ? 'Continue in the new window.' : service.description}
                       </p>
                     </div>
                     {connected ? (
-                      <span className="onboarding-connected">
+                      <span className="onboarding-connected" data-analytics-public>
                         <Check size={16} aria-hidden="true" />
                         Connected
                       </span>
@@ -307,6 +326,7 @@ export function Onboarding({
                         variant="outline"
                         size="sm"
                         className="onboarding-connect"
+                        data-analytics-public
                         aria-label={`${label} ${service.name}`}
                         disabled={!data || unavailable || state === 'opening' || saving}
                         onClick={() => void connect(slug)}
@@ -333,7 +353,7 @@ export function Onboarding({
                 </Button>
               </Notice>
             )}
-            <div className="account-onboarding-actions">
+            <div className="account-onboarding-actions" data-analytics-public>
               <Button
                 disabled={saving || composioDirty || preparation !== 'ready'}
                 onClick={() => void complete()}

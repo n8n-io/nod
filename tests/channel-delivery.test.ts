@@ -14,6 +14,7 @@ import { createChannelAccountRegistry } from '../src/server/channel-account-regi
 import { createChannelSettings } from '../src/server/channel-settings.ts';
 import { createChannels } from '../src/server/channels.ts';
 import type { TenantLease } from '../src/server/tenants.ts';
+import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
 
 const token = '987:fixture-never-live';
 
@@ -499,6 +500,12 @@ test(
     const app = Fastify();
     const key = randomBytes(32);
     const registrations: string[] = [];
+    const captured: AnalyticsEvent[] = [];
+    const changed: AnalyticsEvent = {
+      event: 'otto_settings_updated',
+      properties: { section: 'channels', operation: 'update' },
+    };
+    registerAnalyticsRoutes(app, (event) => captured.push(event));
     let applied: Record<string, string> = {};
     let failApply = false;
     let loseRegistrationResponse = false;
@@ -593,6 +600,7 @@ test(
           url: '/api/channel-settings/telegram/pairing',
           payload: {},
         });
+      const beforeRetry = captured.length;
       assert.equal((await retry()).statusCode, 503);
       assert.deepEqual(await settings.environment(), pending);
       assert.equal(
@@ -606,9 +614,11 @@ test(
         503,
       );
       assert.deepEqual(await settings.environment(), pending);
+      assert.equal(captured.length, beforeRetry);
       failApply = false;
       const retried = await retry();
       assert.equal(retried.statusCode, 200);
+      assert.deepEqual(captured.slice(beforeRetry), [changed]);
       assert.match(retried.json().pairingUrl, /^https:\/\/t\.me\/fixture_bot\?start=[\w-]{32}$/);
       assert.equal(retried.json().channel.webhookStatus, 'registered');
       assert.deepEqual(registrations, [pending.TELEGRAM_WEBHOOK_SECRET_TOKEN]);
@@ -672,6 +682,7 @@ test(
         name: '@fixture_owner',
       });
       assert.equal(pairedDuringRetry.json().channel.webhookStatus, 'registered');
+      const beforeConfirm = captured.length;
       const confirmed = await app.inject({
         method: 'POST',
         url: '/api/channel-settings/telegram/confirm',
@@ -679,6 +690,7 @@ test(
       });
       assert.equal(confirmed.statusCode, 200);
       assert.equal(confirmed.json().channel.allowedUserId, '123');
+      assert.deepEqual(captured.slice(beforeConfirm), [changed]);
       loseRegistrationResponse = true;
       assert.equal((await save()).statusCode, 503);
       assert.equal(
@@ -694,6 +706,21 @@ test(
         (await pool.query('SELECT ciphertext FROM channel_settings')).rows[0].ciphertext,
         null,
       );
+      assert.equal((await save(false)).statusCode, 200);
+      const beforeManualPairing = captured.length;
+      const manualPairing = (allowedUserId: string) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/channel-settings/telegram/user',
+          payload: { allowedUserId },
+        });
+      assert.equal((await manualPairing('invalid-user')).statusCode, 400);
+      assert.equal(captured.length, beforeManualPairing);
+      assert.equal((await manualPairing('123')).statusCode, 200);
+      assert.equal((await settings.environment()).TELEGRAM_ALLOWED_USER_ID, '123');
+      assert.deepEqual(captured.slice(beforeManualPairing), [changed]);
+      assert.equal((await manualPairing('456')).statusCode, 400);
+      assert.deepEqual(captured.slice(beforeManualPairing), [changed]);
     } finally {
       await app.close();
       await pool.end();

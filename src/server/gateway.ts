@@ -8,6 +8,7 @@ import { canonicalRequestPath } from './runtime-auth.ts';
 import { parsePrivacyNotice, registerPrivacyNotice } from './privacy.ts';
 import { createDeploymentControl, deploymentHeader } from './deployment-control.ts';
 import { deploymentBodyLimit, deploymentPath } from './deployment-auth.ts';
+import type { Analytics } from './analytics.ts';
 
 function privateRuntimeResponse(response: Response, artifact = false) {
   const headers = new Headers();
@@ -100,6 +101,7 @@ export async function createGateway(options: {
   origin: string;
   authentication: AuthenticationProvider;
   accounts: AccountStore;
+  analytics?: Analytics;
   runtimes: TenantRuntimeHost;
   developerIds?: ReadonlySet<string>;
   sessionCheckIntervalMs?: number;

@@ -1,4 +1,5 @@
 import type { Preferences } from './contracts';
+import type { AnalyticsConfiguration } from './analytics';
 
 export type AccountTheme = 'system' | 'light' | 'dark';
 
@@ -15,6 +16,7 @@ export interface AccountSettings {
 }
 
 export interface SessionResponse {
+  analytics?: AnalyticsConfiguration;
   auth: { mode: 'local' | 'google'; googleAvailable: boolean };
   user: AccountUser | null;
   settings: AccountSettings | null;

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AccountUser, SessionResponse } from '../shared/account.ts';
 import type { AuthenticatedSession, AuthenticationProvider } from '../ports/authentication.ts';
 import type { AccountStore } from './account-store.ts';
+import type { Analytics } from './analytics.ts';
 
 const accountUpdate = z
   .object({
@@ -39,6 +40,7 @@ export function createAccountSession(options: {
   authentication?: AuthenticationProvider;
   localUser?: AccountUser;
   developerIds?: ReadonlySet<string>;
+  analytics?: Analytics;
   prepare?(ownerId: string): Promise<void>;
   start?(ownerId: string, name?: string): Promise<void>;
   warm?(ownerId: string): void;
@@ -83,6 +85,9 @@ export function createAccountSession(options: {
       capabilities: {
         developer: Boolean(session && options.developerIds?.has(session.user.id)),
       },
+      ...(options.analytics
+        ? { analytics: options.analytics.configuration(session?.user.id ?? null) }
+        : {}),
     };
   }
   async function requirePrincipal(request: FastifyRequest, reply: FastifyReply) {
@@ -253,15 +258,24 @@ export function createAccountSession(options: {
       const session = await requirePrincipal(request, reply);
       if (!session) return;
       const input = accountUpdate.parse(request.body);
+      let onboardingCompletedNow = false;
       if (input.onboardingCompleted) {
         if (!(await prepare(request, reply, session))) return;
         if (
-          !(await start(request, reply, session, input.name, () =>
-            options.accounts.update(session.user.id, input),
-          ))
+          !(await start(request, reply, session, input.name, async () => {
+            const account = await options.accounts.update(session.user.id, input);
+            onboardingCompletedNow = account.onboardingCompletedNow === true;
+          }))
         )
           return;
       } else await options.accounts.update(session.user.id, input);
+      if (onboardingCompletedNow)
+        options.analytics?.capture(session.user.id, { event: 'otto_onboarding_completed' });
+      if (input.name !== undefined || input.theme !== undefined)
+        options.analytics?.capture(session.user.id, {
+          event: 'otto_settings_updated',
+          properties: { section: 'account', operation: 'update' },
+        });
       reply.header('cache-control', 'no-store');
       return response(request);
     });

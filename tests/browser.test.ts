@@ -2362,6 +2362,10 @@ async function handoffView(
       const image = element<HTMLImageElement>('img');
       image.getBoundingClientRect = () =>
         ({ left: 10, top: 20, width: 200, height: 100 }) as DOMRect;
+      Object.defineProperties(image, {
+        naturalWidth: { value: 400 },
+        naturalHeight: { value: 200 },
+      });
       await act(async () => {
         image.dispatchEvent(
           new dom.window.MouseEvent('click', { bubbles: true, clientX: 110, clientY: 70 }),
@@ -2780,7 +2784,10 @@ for (const failure of ['rejected', 'disconnected'] as const)
       await view.button('Done');
       assert.equal(submissions.length, 1);
       assert.equal(view.element('.browser-handoff'), original);
-      assert.equal(view.element<HTMLButtonElement>('.browser-handoff-bar button').disabled, true);
+      assert.equal(
+        view.element<HTMLButtonElement>('.browser-handoff-actions button:last-child').disabled,
+        true,
+      );
       assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 1);
       await view.clickImage();
       await view.poll();
@@ -2790,7 +2797,10 @@ for (const failure of ['rejected', 'disconnected'] as const)
         first.resolve(Response.json({ error: 'Synthetic request rejected' }, { status: 503 })),
       );
       assert.equal(view.element('.browser-handoff'), original);
-      assert.equal(view.element<HTMLButtonElement>('.browser-handoff-bar button').disabled, false);
+      assert.equal(
+        view.element<HTMLButtonElement>('.browser-handoff-actions button:last-child').disabled,
+        false,
+      );
       assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 0);
       const failureStatus = view.element('.browser-handoff [role="status"]').textContent;
       await view.poll();
@@ -2896,7 +2906,10 @@ for (const failure of ['rejected', 'disconnected'] as const)
       await view.button('Done');
       assert.ok(view.element('.browser-handoff'));
       assert.equal(view.completions(), 0);
-      assert.equal(view.element<HTMLButtonElement>('button').disabled, true);
+      assert.equal(
+        view.element<HTMLButtonElement>('.browser-handoff-actions button:last-child').disabled,
+        true,
+      );
       await act(async () => {
         input.resolve(
           new Response(JSON.stringify({ error: 'Synthetic input rejected' }), {

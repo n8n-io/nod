@@ -22,6 +22,11 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createSettingsStore } from './settings.mjs';
 import {
+  completeDesktopSetup,
+  createDesktopAnalytics,
+  trackDesktopAnalytics,
+} from './analytics.mjs';
+import {
   assistantNotificationPreview,
   createReadinessNotice,
   isQuietTime,
@@ -41,7 +46,9 @@ const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const engineRoot = app.isPackaged
   ? join(process.resourcesPath, 'engine')
   : resolve(desktopRoot, '..');
-const setupPath = join(desktopRoot, 'ui', 'index.html');
+const setupPath = app.isPackaged
+  ? join(desktopRoot, 'ui', 'index.html')
+  : join(engineRoot, 'dist', 'desktop-ui', 'index.html');
 const setupURL = pathToFileURL(setupPath).href;
 app.setName('Otto');
 const developmentDataRoot = !app.isPackaged ? process.env.OTTO_DESKTOP_USER_DATA : undefined;
@@ -50,6 +57,9 @@ if (developmentDataRoot && !isAbsolute(developmentDataRoot))
 app.setPath('userData', developmentDataRoot || join(app.getPath('appData'), 'Otto'));
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
 const settings = createSettingsStore(join(profileRoot, 'settings.json'), safeStorage);
+const analyticsConfiguration = createDesktopAnalytics(join(profileRoot, 'analytics-id'), {
+  packaged: app.isPackaged,
+});
 let setupWindow;
 let engineWindow;
 let engine;
@@ -456,11 +466,15 @@ function showSettings(section = 'general', _mode, reset = false) {
       partition: 'otto-settings',
     },
   });
-  protectWindow(setupWindow);
-  setupWindow.on('closed', () => {
-    setupWindow = undefined;
+  const window = setupWindow;
+  trackDesktopAnalytics(window);
+  protectWindow(window);
+  window.on('closed', () => {
+    if (setupWindow === window) setupWindow = undefined;
   });
-  void setupWindow.loadFile(setupPath, { query: { mode, section } });
+  void window.loadFile(setupPath, {
+    query: { mode, section, firstSetup: String(!onboardingCompleted) },
+  });
 }
 
 function showEngine() {
@@ -586,7 +600,9 @@ async function finishEnginePreparation() {
   synchronizeNotifications();
   if (!replayingOnboarding) {
     if (foregroundWindow()) showEngine();
-    setupWindow?.destroy();
+    const completedWindow = setupWindow;
+    setupWindow = undefined;
+    await completeDesktopSetup(completedWindow);
   }
   if (updates && !checkedUpdatesAtStartup) {
     checkedUpdatesAtStartup = true;
@@ -831,6 +847,7 @@ async function startEngine({ runtime, signal, validateStop }) {
   for (const field of ['COMPOSIO_API_KEY', 'OTTO_VAULT_KEY'])
     if (providerEnvironment[field]) knownSecrets.add(providerEnvironment[field]);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
+  const analytics = await analyticsConfiguration().catch(() => ({ enabled: false }));
   const environment = {
     ...baseEnvironment(),
     ...runtime.env,
@@ -841,6 +858,9 @@ async function startEngine({ runtime, signal, validateStop }) {
     OTTO_DESKTOP: 'true',
     OTTO_DESKTOP_OWNER_ID: await profileOwner(),
     OTTO_DESKTOP_AUTH_TOKEN: authToken,
+    OTTO_ANALYTICS_ENABLED: String(analytics.enabled),
+    ...(analytics.distinctId ? { OTTO_ANALYTICS_ID: analytics.distinctId.slice(6) } : {}),
+    OTTO_ANALYTICS_ENVIRONMENT: app.isPackaged ? 'production' : 'development',
     OTTO_PUBLIC_URL: engineOrigin,
     OTTO_BIND_HOST: '127.0.0.1',
     OTTO_DATA_ROOT: profileRoot,
@@ -1130,6 +1150,10 @@ else {
       ipcMain.handle('otto:settings:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return readDesktopSettings();
+      });
+      ipcMain.handle('otto:analytics:configuration', (event) => {
+        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        return analyticsConfiguration();
       });
       ipcMain.handle('otto:settings:reveal', (event, field) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');

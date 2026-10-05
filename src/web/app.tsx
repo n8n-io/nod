@@ -24,6 +24,7 @@ import { SignIn } from './pages/sign-in';
 import { Privacy } from './pages/privacy';
 import { Onboarding } from './pages/onboarding';
 import { AccountSettings } from './components/account-settings';
+import { capturePageview } from './lib/analytics';
 import type { AccountControls, AccountTab } from './components/account-menu';
 import { usePageData } from './hooks/use-page-data';
 import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
@@ -426,6 +427,21 @@ function AccountApp({ path, setPath }: { path: string; setPath(path: string): vo
   const sessionState = useSession();
   const { session } = sessionState;
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
+  useEffect(() => {
+    if (sessionState.loading || sessionState.signingOut) return;
+    const secure = /^\/(?:vault|credentials)\/[^/]+\/?$/.test(path) || path === '/browser';
+    capturePageview(
+      !session?.user
+        ? '/login'
+        : !session.settings?.onboardingCompleted && !secure
+          ? '/onboarding'
+          : legacyBrowserLink
+            ? '/apps'
+            : path === '/login' || path === '/onboarding'
+              ? '/'
+              : path,
+    );
+  }, [path, sessionState.loading, sessionState.signingOut, session, legacyBrowserLink]);
   useEffect(() => {
     if (sessionState.loading || !session?.user || !session.settings) return;
     const secure = /^\/(?:vault|credentials)\/[^/]+\/?$/.test(path) || path === '/browser';

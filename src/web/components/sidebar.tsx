@@ -205,7 +205,7 @@ export function Sidebar({
           }}
         >
           <BrandMark />
-          <span>otto</span>
+          <span data-analytics-public>otto</span>
         </a>
         <button
           type="button"
@@ -275,7 +275,9 @@ export function Sidebar({
                   }}
                 >
                   <Icon size={26} strokeWidth={1.8} aria-hidden="true" />
-                  <span className="nav-label">{item.label}</span>
+                  <span className="nav-label" data-analytics-public>
+                    {item.label}
+                  </span>
                   {item.path === '/' && unreadBadge}
                   {item.key && (
                     <kbd className="nav-shortcut" aria-hidden="true">
@@ -361,7 +363,7 @@ export function Sidebar({
                     }}
                   >
                     <Icon size={24} strokeWidth={1.8} aria-hidden="true" />
-                    <span>{item.label}</span>
+                    <span data-analytics-public>{item.label}</span>
                     {item.path === '/' && unreadBadge}
                   </a>
                 );
@@ -479,7 +481,9 @@ export function Sidebar({
               onClick={(event) => account.onSettings('Appearance', event.currentTarget)}
             >
               <Settings size={22} aria-hidden="true" />
-              <span className="nav-label">Settings</span>
+              <span className="nav-label" data-analytics-public>
+                Settings
+              </span>
             </button>
           ))}
       </div>

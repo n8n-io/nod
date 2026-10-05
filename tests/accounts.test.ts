@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 import Fastify from 'fastify';
 import type { AuthenticationProvider } from '../src/ports/authentication.ts';
-import type { AccountStore, StoredAccount } from '../src/server/account-store.ts';
+import {
+  createAccountStore,
+  type AccountStore,
+  type StoredAccount,
+} from '../src/server/account-store.ts';
 import { createAccountSession } from '../src/server/account.ts';
 import { randomUUID, randomBytes } from 'node:crypto';
 import type { SessionResponse } from '../src/shared/account.ts';
@@ -12,11 +16,24 @@ import pg from 'pg';
 import { makeSignature } from 'better-auth/crypto';
 import { createGoogleAuthentication } from '../src/providers/better-auth/index.ts';
 import { createKeychainKeyStore } from '../src/providers/keychain/key-store.ts';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ProductAnalytics } from '../src/ports/analytics.ts';
+import {
+  analyticsEnabled,
+  analyticsEnvironment,
+  createAnalytics,
+  registerAnalyticsRoutes,
+  type Analytics,
+  type AnalyticsEvent,
+} from '../src/server/analytics.ts';
 
 describe('account routes', () => {
   async function fixture(
     prepare?: (ownerId: string) => Promise<void>,
     start?: (ownerId: string) => Promise<void>,
+    analytics?: Analytics,
   ) {
     const records = new Map<string, StoredAccount>();
     const calls = {
@@ -43,7 +60,10 @@ describe('account routes', () => {
           displayName: input.name ?? saved.displayName,
         };
         records.set(owner, next);
-        return next;
+        return {
+          ...next,
+          onboardingCompletedNow: next.onboardingCompleted && !saved.onboardingCompleted,
+        };
       },
     };
     const authentication: AuthenticationProvider = {
@@ -85,6 +105,7 @@ describe('account routes', () => {
       reply.code(400).send({ error: 'Invalid account request.' }),
     );
     const account = createAccountSession({
+      analytics,
       accounts,
       origin: 'https://otto.example.test',
       authentication,
@@ -109,6 +130,204 @@ describe('account routes', () => {
       },
     };
   }
+
+  test(
+    'concurrent onboarding writes preserve account fields and emit one completion across store instances',
+    { skip: !process.env.TEST_DATABASE_URL, timeout: 20_000 },
+    async (t) => {
+      const schema = `test_account_completion_${randomUUID().replaceAll('-', '')}`;
+      const root = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+      const database = new pg.Pool({
+        connectionString: process.env.TEST_DATABASE_URL,
+        options: `-c search_path=${schema}`,
+        max: 2,
+      });
+      t.after(async () => {
+        await database.end();
+        await root.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+        await root.end();
+      });
+      await root.query(`CREATE SCHEMA ${schema}`);
+      const stores = [createAccountStore(database), createAccountStore(database)];
+      await stores[0].initialize();
+      const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+      const analytics = await createAnalytics({
+        provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+        deployment: 'hosted',
+        environment: 'production',
+        dataRoot: '.',
+      });
+      for (const existing of [false, true]) {
+        const ownerId = randomUUID();
+        if (existing) await stores[0].update(ownerId, { onboardingCompleted: false });
+        let prepared = 0;
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const apps = stores.map((accounts) => {
+          const app = Fastify();
+          createAccountSession({
+            accounts,
+            analytics,
+            origin: 'https://otto.example.test',
+            localUser: { id: ownerId, name: 'Synthetic', email: null, avatarUrl: null },
+            async prepare() {
+              if (++prepared === 2) release();
+              await pending;
+            },
+          }).register(app);
+          return app;
+        });
+        try {
+          const responses = await Promise.all(
+            apps.map((app, index) =>
+              app.inject({
+                method: 'PATCH',
+                url: '/api/account',
+                headers: { origin: 'https://otto.example.test' },
+                payload: {
+                  onboardingCompleted: true,
+                  ...(index === 0 ? { name: 'Synthetic Updated' } : { theme: 'dark' }),
+                },
+              }),
+            ),
+          );
+          for (const response of responses) assert.equal(response.statusCode, 200);
+          assert.deepEqual(await stores[1].read(ownerId), {
+            displayName: 'Synthetic Updated',
+            theme: 'dark',
+            onboardingCompleted: true,
+          });
+          const repeated = await apps[0].inject({
+            method: 'PATCH',
+            url: '/api/account',
+            headers: { origin: 'https://otto.example.test' },
+            payload: { onboardingCompleted: true },
+          });
+          assert.equal(repeated.statusCode, 200);
+          assert.equal(
+            captured.filter(
+              (event) =>
+                event.event === 'otto_onboarding_completed' &&
+                event.distinctId === `hosted:${ownerId}`,
+            ).length,
+            1,
+          );
+        } finally {
+          await Promise.all(apps.map((app) => app.close()));
+        }
+      }
+    },
+  );
+
+  test('analytics bind account mutations to the authenticated owner and exclude private account data', async (t) => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      deployment: 'hosted',
+      environment: 'production',
+      dataRoot: '.',
+    });
+    const f = await fixture(undefined, undefined, analytics);
+    t.after(() => f.app.close());
+    for (const owner of ['alex', 'sam']) {
+      const session = await f.app.inject({
+        method: 'GET',
+        url: '/api/session?distinctId=attacker',
+        headers: { cookie: `fixture=${owner}`, 'x-posthog-distinct-id': 'attacker' },
+      });
+      assert.equal(session.json().analytics.distinctId, `hosted:${owner}`);
+      const result = await f.app.inject({
+        method: 'PATCH',
+        url: '/api/account',
+        headers: { origin: 'https://otto.example.test', cookie: `fixture=${owner}` },
+        payload: { name: 'Private Person', onboardingCompleted: true },
+      });
+      assert.equal(result.statusCode, 200);
+    }
+    assert.equal(captured.filter((event) => event.event === 'otto_onboarding_completed').length, 2);
+    assert.deepEqual(
+      new Set(captured.map((event) => event.distinctId)),
+      new Set(['hosted:alex', 'hosted:sam']),
+    );
+    assert.ok(!JSON.stringify(captured).includes('Private Person'));
+    assert.ok(!JSON.stringify(captured).includes('@example.test'));
+    assert.ok(!JSON.stringify(captured).includes('attacker'));
+    const repeated = await f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers: { origin: 'https://otto.example.test', cookie: 'fixture=alex' },
+      payload: { onboardingCompleted: true },
+    });
+    assert.equal(repeated.statusCode, 200);
+    assert.equal(captured.filter((event) => event.event === 'otto_onboarding_completed').length, 2);
+    const rejected = await f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers: {
+        origin: 'https://otto.example.test',
+        cookie: 'fixture=alex',
+        'x-otto-account': 'sam',
+      },
+      payload: { name: 'Rejected Name' },
+    });
+    assert.equal(rejected.statusCode, 401);
+    assert.equal(captured.length, 4);
+    f.revoke();
+    const anonymous = await f.app.inject({
+      method: 'GET',
+      url: '/api/session',
+      headers: { cookie: 'fixture=alex' },
+    });
+    assert.equal(anonymous.json().analytics.distinctId, null);
+  });
+
+  test('failed onboarding produces no completion analytics and telemetry failures do not block account writes', async (t) => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    let failCapture = false;
+    const analytics = await createAnalytics({
+      provider: {
+        capture(event) {
+          if (failCapture) throw new Error('Telemetry unavailable');
+          captured.push(event);
+        },
+        shutdown: async () => {
+          throw new Error('Telemetry unavailable');
+        },
+      },
+      deployment: 'hosted',
+      environment: 'production',
+      dataRoot: '.',
+    });
+    const f = await fixture(
+      async () => {
+        throw new Error('Setup unavailable');
+      },
+      undefined,
+      analytics,
+    );
+    t.after(() => f.app.close());
+    const headers = { origin: 'https://otto.example.test', cookie: 'fixture=alex' };
+    const failed = await f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers,
+      payload: { onboardingCompleted: true },
+    });
+    assert.equal(failed.statusCode, 503);
+    assert.deepEqual(captured, []);
+    failCapture = true;
+    const saved = await f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers,
+      payload: { theme: 'dark' },
+    });
+    assert.equal(saved.statusCode, 200);
+    assert.equal(f.records.get('alex')?.theme, 'dark');
+    await analytics.shutdown();
+  });
 
   test('account preparation requires a current same-origin principal and never accepts provider or owner input', async (t) => {
     const f = await fixture();
@@ -271,6 +490,131 @@ describe('account routes', () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('analytics privacy', () => {
+  test('hosted development suppresses collection in production Node mode unless explicitly enabled', async () => {
+    for (const mode of ['gateway', 'tenant']) {
+      for (const [overrides, enabled, environment] of [
+        [{}, false, 'development'],
+        [{ OTTO_ENVIRONMENT: '' }, false, 'development'],
+        [{ OTTO_ENVIRONMENT: 'staging' }, false, 'development'],
+        [{ OTTO_ANALYTICS_ENVIRONMENT: 'production' }, false, 'production'],
+        [{ OTTO_ANALYTICS_ENABLED: 'true' }, true, 'development'],
+        [
+          { OTTO_ANALYTICS_ENABLED: 'true', OTTO_ANALYTICS_ENVIRONMENT: 'production' },
+          true,
+          'production',
+        ],
+        [{ OTTO_ENVIRONMENT: 'production' }, true, 'production'],
+        [{ OTTO_ENVIRONMENT: 'production', OTTO_ANALYTICS_ENABLED: 'false' }, false, 'production'],
+        [
+          { OTTO_ENVIRONMENT: 'production', OTTO_ANALYTICS_ENVIRONMENT: 'development' },
+          true,
+          'development',
+        ],
+      ] as const) {
+        const env = { OTTO_MODE: mode, NODE_ENV: 'production', ...overrides };
+        const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+        const analytics = await createAnalytics({
+          provider: analyticsEnabled(env)
+            ? { capture: (event) => captured.push(event), shutdown: async () => {} }
+            : undefined,
+          deployment: 'hosted',
+          environment: analyticsEnvironment(env),
+          dataRoot: '.',
+        });
+        const configuration = analytics.configuration('owner-fixture');
+        assert.equal(configuration.enabled, enabled, JSON.stringify(env));
+        assert.equal(configuration.environment, environment, JSON.stringify(env));
+        analytics.capture('owner-fixture', { event: 'otto_onboarding_completed' });
+        assert.equal(captured.length, enabled ? 1 : 0, JSON.stringify(env));
+        if (enabled) assert.equal(captured[0].properties.environment, environment);
+      }
+    }
+  });
+
+  test('local installations retain independent opaque identities and disabled analytics creates no identity', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-analytics-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const provider = { capture() {}, shutdown: async () => {} };
+    const input = {
+      provider,
+      deployment: 'local' as const,
+      environment: 'production' as const,
+      dataRoot: join(root, 'first'),
+    };
+    const [first, concurrent] = await Promise.all([createAnalytics(input), createAnalytics(input)]);
+    const restarted = await createAnalytics(input);
+    const second = await createAnalytics({ ...input, dataRoot: join(root, 'second') });
+    const id = first.configuration('local-development').distinctId;
+    assert.match(id!, /^local:[0-9a-f-]{36}$/);
+    assert.equal(concurrent.configuration('local-development').distinctId, id);
+    assert.equal(restarted.configuration('local-development').distinctId, id);
+    assert.notEqual(second.configuration('local-development').distinctId, id);
+    assert.equal(
+      (await readFile(join(input.dataRoot, 'analytics-id'), 'utf8')).trim(),
+      id!.slice(6),
+    );
+    const supplied = await createAnalytics({
+      ...input,
+      installationId: id!.slice(6),
+      dataRoot: join(root, 'desktop'),
+    });
+    assert.equal(supplied.configuration('local-development').distinctId, id);
+    const disabled = await createAnalytics({
+      ...input,
+      provider: undefined,
+      dataRoot: join(root, 'disabled'),
+    });
+    assert.equal(disabled.configuration('local-development').enabled, false);
+    await assert.rejects(readFile(join(root, 'disabled', 'analytics-id')), { code: 'ENOENT' });
+    const invalid = await createAnalytics({
+      ...input,
+      installationId: 'private-email@example.test',
+    });
+    assert.equal(invalid.configuration('local-development').enabled, false);
+  });
+
+  test('analytics reject arbitrary event names, unbounded identifiers and private properties', async () => {
+    const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+    const analytics = await createAnalytics({
+      provider: { capture: (event) => captured.push(event), shutdown: async () => {} },
+      deployment: 'hosted',
+      environment: 'production',
+      dataRoot: '.',
+    });
+    const capture = analytics.forOwner('owner-fixture');
+    for (const event of [
+      { event: 'private-chat-text' },
+      { event: 'otto_onboarding_completed', distinctId: 'another-owner' },
+      {
+        event: 'otto_settings_updated',
+        properties: { section: 'account', operation: 'update', name: 'Private Person' },
+      },
+      {
+        event: 'otto_turn_started',
+        properties: { source: 'user', channel: 'telegram:private-recipient', background: false },
+      },
+    ])
+      capture(event as never);
+    assert.equal(captured.length, 0);
+    capture({
+      event: 'otto_turn_started',
+      properties: { source: 'user', channel: 'telegram', background: false },
+    });
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].distinctId, 'hosted:owner-fixture');
+    assert.deepEqual(Object.keys(captured[0].properties).sort(), [
+      'analytics_schema',
+      'background',
+      'capture_source',
+      'channel',
+      'deployment',
+      'environment',
+      'source',
+    ]);
   });
 });
 
@@ -691,7 +1035,7 @@ describe('keychain', () => {
 });
 
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
-  async function fixture(t: import('node:test').TestContext) {
+  async function fixture(t: import('node:test').TestContext, request?: typeof fetch) {
     const { createModelService } = await import('../src/server/models.ts');
     const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
     const schema = `test_models_${randomUUID().replaceAll('-', '')}`;
@@ -705,18 +1049,20 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const backend = createPiModelBackend({
-      fetch: async (input, init) => {
-        const url = String(input);
-        assert.equal(url, 'https://api.openai.com/v1/models');
-        const key = new Headers(init?.headers).get('authorization');
-        const ids =
-          key === 'Bearer fixture-managed-key'
-            ? ['gpt-6-luna']
-            : key === 'Bearer fixture-no-memory-key'
-              ? ['gpt-6.1-sol']
-              : ['gpt-6.1-sol', 'gpt-6-luna'];
-        return Response.json({ data: ids.map((id) => ({ id })) });
-      },
+      fetch:
+        request ??
+        (async (input, init) => {
+          const url = String(input);
+          assert.equal(url, 'https://api.openai.com/v1/models');
+          const key = new Headers(init?.headers).get('authorization');
+          const ids =
+            key === 'Bearer fixture-managed-key'
+              ? ['gpt-6-luna']
+              : key === 'Bearer fixture-no-memory-key'
+                ? ['gpt-6.1-sol']
+                : ['gpt-6.1-sol', 'gpt-6-luna'];
+          return Response.json({ data: ids.map((id) => ({ id })) });
+        }),
     });
     const services: ReturnType<typeof createModelService>[] = [];
     const create = async (
@@ -803,6 +1149,101 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const auxiliary = await memory.resolve(true);
     assert.equal(auxiliary.definition.choice.id, 'gpt-6.1-sol');
     assert.ok(auxiliary.definition.choice.efforts.includes(auxiliary.effort));
+  });
+
+  test('restricted OpenAI keys save and refresh without letting invalid keys replace the saved catalog or selection', async (t) => {
+    let revoked = false;
+    let requests = 0;
+    const f = await fixture(t, async (input, init) => {
+      assert.equal(String(input), 'https://api.openai.com/v1/models');
+      assert.equal(init?.method ?? 'GET', 'GET');
+      requests++;
+      const authorization = new Headers(init?.headers).get('authorization');
+      if (authorization === 'Bearer fixture-invalid-api-key' || revoked)
+        return Response.json(
+          {
+            error: {
+              message: 'Incorrect API key provided: fixture-invalid-api-key.',
+              type: 'invalid_request_error',
+              code: 'invalid_api_key',
+            },
+          },
+          { status: 401 },
+        );
+      assert.equal(authorization, 'Bearer fixture-restricted-api-key');
+      return Response.json(
+        {
+          error: {
+            message:
+              'You have insufficient permissions for this operation. Missing scopes: api.model.read.',
+            type: 'invalid_request_error',
+            code: null,
+          },
+        },
+        { status: 403 },
+      );
+    });
+    const owner = await f.create('fixture-restricted');
+    const captured: AnalyticsEvent[] = [];
+    const app = Fastify();
+    registerAnalyticsRoutes(app, (event) => captured.push(event));
+    owner.register(app);
+    t.after(() => app.close());
+    const added = await app.inject({
+      method: 'POST',
+      url: '/api/models/keys',
+      payload: { provider: 'openai', key: 'fixture-restricted-api-key' },
+    });
+    assert.equal(added.statusCode, 200);
+    assert.ok(!added.body.includes('fixture-restricted-api-key'));
+    const id = owner.view().connections[0].id;
+    const selected = await app.inject({
+      method: 'PUT',
+      url: '/api/models/selection',
+      payload: { connectionId: id, modelId: 'gpt-6-luna', effort: 'medium' },
+    });
+    assert.equal(selected.statusCode, 200);
+    assert.equal(owner.configured, true);
+    const saved = owner.view();
+    const beforeRefresh = captured.length;
+    const refreshed = await app.inject({
+      method: 'POST',
+      url: `/api/models/connections/${id}/refresh`,
+    });
+    assert.equal(refreshed.statusCode, 200);
+    assert.deepEqual(captured.slice(beforeRefresh), [
+      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
+    ]);
+    assert.equal(requests, 2);
+    assert.deepEqual(owner.view(), saved);
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/models/keys',
+      payload: { provider: 'openai', key: 'fixture-invalid-api-key' },
+    });
+    assert.equal(rejected.statusCode, 400);
+    assert.ok(!rejected.body.includes('fixture-invalid-api-key'));
+    assert.deepEqual(owner.view(), saved);
+    revoked = true;
+    const failed = await app.inject({
+      method: 'POST',
+      url: `/api/models/connections/${id}/refresh`,
+    });
+    assert.equal(failed.statusCode, 400);
+    assert.ok(!failed.body.includes('fixture-invalid-api-key'));
+    assert.deepEqual(owner.view(), saved);
+    assert.equal(captured.length, beforeRefresh + 1);
+    const restored = await f.create('fixture-restricted');
+    assert.deepEqual(restored.view(), saved);
+    assert.equal(requests, 4);
+    assert.deepEqual(await (await restored.resolve()).read(), {
+      type: 'api_key',
+      key: 'fixture-restricted-api-key',
+    });
+    const grants = (await f.database.query('SELECT * FROM vault_app_grants')).rows;
+    assert.equal(grants.length, 1);
+    assert.ok(!JSON.stringify(grants).includes('fixture-restricted-api-key'));
+    assert.ok(!JSON.stringify(grants).includes('fixture-invalid-api-key'));
   });
 
   test('bootstrap catalog failure preserves the saved choice and recovers only after an explicit refresh', async (t) => {
@@ -950,12 +1391,34 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       },
     };
     const owner = await f.create('fixture-owner', backend);
-    const signIn = await owner.start('openai');
-    const auth = new URL(signIn.url);
-    assert.equal(signIn.attempt, auth.searchParams.get('state'));
+    const captured: AnalyticsEvent[] = [];
     const app = Fastify();
+    registerAnalyticsRoutes(app, (event) => captured.push(event));
     owner.register(app);
     t.after(() => app.close());
+    for (const payload of [
+      { provider: 'anthropic' },
+      { provider: 'openrouter', connectionId: randomUUID() },
+    ]) {
+      const rejected = await app.inject({ method: 'POST', url: '/api/models/oauth', payload });
+      assert.equal(rejected.statusCode, 400);
+    }
+    assert.equal(captured.length, 0);
+    const initiated = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth',
+      payload: { provider: 'openai' },
+    });
+    assert.equal(initiated.statusCode, 200, initiated.body);
+    const signIn = initiated.json();
+    const auth = new URL(signIn.url);
+    assert.equal(signIn.attempt, auth.searchParams.get('state'));
+    assert.deepEqual(captured, [
+      {
+        event: 'otto_settings_updated',
+        properties: { section: 'models', operation: 'connect_started' },
+      },
+    ]);
     const status = () => app.inject({ url: `/api/models/oauth/status/${signIn.attempt}` });
     assert.deepEqual((await status()).json(), { status: 'waiting' });
     const other = await f.create('fixture-other', backend);
@@ -969,12 +1432,29 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const callback = new URL(
       `http://127.0.0.1:1455/auth/callback?state=${auth.searchParams.get('state')}&code=fixture-code&client_id=fixture-client`,
     );
-    await owner.complete(callback);
+    const complete = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/models/oauth/complete',
+        payload: { url: callback.href },
+      });
+    assert.equal((await complete()).statusCode, 200);
+    assert.deepEqual(captured.slice(1), [
+      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
+    ]);
     assert.deepEqual((await status()).json(), { status: 'connected' });
-    await assert.rejects(owner.complete(callback));
+    assert.equal((await complete()).statusCode, 400);
+    assert.equal(captured.length, 2);
     assert.deepEqual((await status()).json(), { status: 'connected' });
     assert.equal(exchanges, 1);
-    await owner.start('openrouter');
+    const openRouter = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth',
+      payload: { provider: 'openrouter' },
+    });
+    assert.equal(openRouter.statusCode, 200);
+    assert.equal(captured.length, 3);
+    assert.deepEqual(captured[2], captured[0]);
     assert.deepEqual((await status()).json(), { status: 'connected' });
     const restored = await f.create('fixture-owner', backend);
     const a = await owner.resolve();
@@ -1002,7 +1482,14 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
     assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
     for (let count = 0; count < 4; count++) await owner.start('openrouter');
-    await assert.rejects(owner.start('openrouter'), /pending sign-in/);
+    const pending = await app.inject({
+      method: 'POST',
+      url: '/api/models/oauth',
+      payload: { provider: 'openrouter' },
+    });
+    assert.equal(pending.statusCode, 400);
+    assert.match(pending.json().error, /pending sign-in/);
+    assert.equal(captured.length, 3);
     assert.deepEqual((await status()).json(), { status: 'connected' });
     const hosted = await f.create('fixture-hosted', backend, false);
     await assert.rejects(hosted.start('openai'));

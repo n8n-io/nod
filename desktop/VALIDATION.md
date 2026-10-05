@@ -1,5 +1,21 @@
 # Desktop experiment validation
 
+## Official 0.1.2 installation — 2026-10-05
+
+The official `desktop-v0.1.2` release was built from `d62c062a639c2ef2192a5b8418105c1414afad90` after [exact-main CI](https://github.com/n8n-io/otto/actions/runs/37308477377) passed. [Build and publication](https://github.com/n8n-io/otto/actions/runs/37310113285) passed. The app and matching runtime are published prereleases, signed with the permanent Otto Internal certificate and not Apple-notarized.
+
+The DMG downloaded anonymously through the n8n service in the browser. Its 776,431,526 bytes and SHA-256 `c4a0ff6ad16b57e75bcea044bbd938f047fc6313b1c9be5f9c114cadddefd3ca` match published metadata. Disk-image integrity, mounted and installed application signatures, source revision, version and runtime descriptor were verified. Finder copied the application to the user's Applications directory; the new Otto profile and computer directories were absent beforehand. No old profile was imported.
+
+On this Apple Silicon Mac with 24 GiB RAM and macOS 26.6.2, Gatekeeper blocked first launch. The user approved Open Anyway; quarantine was not removed and certificate trust was not changed. Login startup and notifications were enabled through native setup. Otto automatically downloaded, verified and prepared runtime `7ac220352d6860a8342e7f072f9eb5fc26d191266dd5dadaed70665cb3828af2` in 289.981 seconds, then opened shared product onboarding. No developer command or runtime-file selection was needed. The installed runtime-cache verifier also passed.
+
+Shared provider setup exposed a release blocker: saving the user's existing restricted OpenAI key returned a model-list access error. The shared backend rejected every non-success catalog response, losing the former narrowly scoped handling of OpenAI's sole missing `api.model.read` permission. The key was entered through the masked UI from the authorized local source; it was not logged or committed. No inference or connected-account action was made during this attempt.
+
+This is a failed full installation acceptance, despite successful delivery and runtime preparation. Provider completion, actual browser/workspace operation, quit/reopen and a complete release-to-release update still require the corrected official release. The original 45-minute case window also elapsed while waiting for the user's Gatekeeper approval; subsequent manual observations do not retroactively pass that frozen timing gate. Physical macOS 14 compatibility remains unverified.
+
+The shared-backend correction passed type, architecture, formatting and production-build checks, plus all **570 isolated integration tests**, with no failures, skips or cancellations. Synthetic cases cover restricted-key catalog fallback, invalid-key rejection, encrypted persistence and preservation of existing model selections after failed refreshes. Independent static review found no actionable issues. These checks do not establish successful use of the fixed official app.
+
+Private evidence: `.local/desktop-012-validation/baseline-attempt-1.json`, `anonymous-release-delivery.json`, `openai-key-catalog-error.png` and the official release metadata. Earlier source, fixture and developer-build observations below remain separate.
+
 ## Feedback integration — 2026-10-04
 
 The feedback branch at `90f7ef8` and desktop PR head `c8b36a1` were combined. Native provider settings, unread state, OAuth, Ask Otto, and titlebar spacing remain intact alongside the setup, memory, Telegram, Notion, PDF, and development reset changes. A missing desktop key now opens the existing Providers settings; ordinary local web setup retains `.env` guidance.

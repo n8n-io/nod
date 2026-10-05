@@ -23,6 +23,8 @@ Configuration lives in the ignored `.env` (all local settings are listed in `.en
 
 Notion and Linear connect through their hosted MCP servers without extra keys. Telegram and WhatsApp are configured from the **Channels** page.
 
+Production web, hosted and packaged desktop builds include PostHog product analytics and masked recordings. Development collection is disabled by default. See [analytics and recording boundaries](docs/analytics.md) for the dashboard, event contract, controls and validation.
+
 ### Composio key permissions
 
 In the [Composio Dashboard](https://dashboard.composio.dev), open **Platform → your project → Settings → API Keys → Create API Key** and create a scoped project key with these permissions:

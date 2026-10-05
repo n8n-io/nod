@@ -15,9 +15,12 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import {
+  calculateCost,
   createAssistantMessageEventStream,
   InMemoryCredentialStore,
+  type Api,
   type AssistantMessage,
+  type Model,
 } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import type { AgentSession, RuntimeContext } from '../src/ports/agent.ts';
@@ -2508,9 +2511,108 @@ test('ChatGPT requests keep full history and namespaced tool calls and make one 
   assert.equal(calls, 2);
 });
 
+test('OpenAI catalog discovery tolerates only model-list permission restrictions', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const key = 'synthetic-restricted-catalog-key';
+  const credential = { type: 'api_key' as const, key };
+  const message =
+    'You have insufficient permissions for this operation. Missing scopes: api.model.read. Check your key permissions.';
+  const calls: string[] = [];
+  let respond = () => Response.json({ data: [{ id: 'gpt-6.1-sol' }, { id: 'fixture-unknown' }] });
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      assert.equal(init?.method ?? 'GET', 'GET');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${key}`);
+      if (url === 'https://openrouter.ai/api/v1/key')
+        return Response.json({ data: { is_management_key: false } });
+      assert.ok(
+        ['https://api.openai.com/v1/models', 'https://openrouter.ai/api/v1/models'].includes(url),
+      );
+      return respond();
+    },
+  });
+  const local = await backend.catalog('openai', 'api_key');
+  assert.deepEqual(
+    (await backend.catalog('openai', 'api_key', credential)).map((model) => model.choice.id),
+    ['gpt-6.1-sol'],
+  );
+  for (const error of [message, { message }]) {
+    calls.length = 0;
+    respond = () => Response.json({ error }, { status: 403 });
+    assert.deepEqual(await backend.catalog('openai', 'api_key', credential), local);
+    assert.deepEqual(calls, ['https://api.openai.com/v1/models']);
+  }
+  for (const [status, body] of [
+    [401, { error: { message } }],
+    [403, { error: { message: `Denied ${key}` } }],
+    [403, { error: { message: 'Missing scopes: api.responses.write.' } }],
+    [403, { error: { message: 'Missing scopes: api.model.read, api.responses.write.' } }],
+    [403, { error: { message: 'Missing scopes: api.model.read api.responses.write.' } }],
+    [403, { error: { message: 'Missing scopes: api.model.read.extra.' } }],
+    [403, { error: { message: 'Missing scopes: api.model.readwrite.' } }],
+    [403, { error: { message: message + ' Missing scopes: api.responses.write.' } }],
+    [403, { error: { message: null } }],
+    [403, { error: { message }, padding: 'x'.repeat(4096) }],
+    [429, { error: { message } }],
+    [500, { error: { message } }],
+  ] as const) {
+    respond = () => Response.json(body, { status });
+    await assert.rejects(backend.catalog('openai', 'api_key', credential), (error: Error) => {
+      assert.ok(!error.message.includes(key));
+      assert.ok(!error.message.includes(message));
+      return true;
+    });
+  }
+  respond = () => new Response('{"error":', { status: 403 });
+  await assert.rejects(backend.catalog('openai', 'api_key', credential));
+  let cancelled = false;
+  respond = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(' '.repeat(4097)));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 403 },
+    );
+  await assert.rejects(backend.catalog('openai', 'api_key', credential));
+  assert.equal(cancelled, true);
+  respond = () => Response.json({ error: { message } }, { status: 403 });
+  await assert.rejects(
+    backend.catalog('openai', 'subscription', {
+      type: 'oauth',
+      access: key,
+      refresh: 'fixture-refresh',
+      expires: Date.now() + 60000,
+      clientId: 'fixture-client',
+      subject: 'fixture-owner',
+      idToken: 'fixture-identity',
+      scopes: [],
+    }),
+  );
+  await assert.rejects(backend.catalog('openrouter', 'api_key', credential));
+  await assert.rejects(
+    createPiModelBackend({ fetch: async () => respond() }).catalog(
+      'anthropic',
+      'api_key',
+      credential,
+    ),
+  );
+  respond = () => {
+    throw new Error('Synthetic offline');
+  };
+  await assert.rejects(backend.catalog('openai', 'api_key', credential));
+});
+
 test('OpenRouter catalogs and both request formats retain tools, effort and one provider attempt', async () => {
   const { createPiModelBackend, createPiModelRuntime } =
     await import('../src/providers/pi/models.ts');
+  const { createPiUsageTracker } = await import('../src/providers/pi/usage.ts');
   const backend = createPiModelBackend({
     fetch: async (input, init) => {
       if (String(input) === 'https://openrouter.ai/api/v1/key') {
@@ -2526,6 +2628,7 @@ test('OpenRouter catalogs and both request formats retain tools, effort and one 
           'anthropic/claude-opus-5.5',
           'fixture/new-model',
           'fixture/no-tools',
+          'openrouter/auto',
         ].map((id) => ({
           id,
           name: id,
@@ -2533,7 +2636,10 @@ test('OpenRouter catalogs and both request formats retain tools, effort and one 
           supported_parameters: id.endsWith('no-tools') ? [] : ['tools', 'reasoning'],
           reasoning: { supported_efforts: ['low', 'medium', 'high'] },
           architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
-          pricing: { prompt: '0.000002', completion: '0.00001' },
+          pricing:
+            id === 'openrouter/auto'
+              ? { prompt: '-1', completion: '-1' }
+              : { prompt: '0.000002', completion: '0.00001' },
         })),
       });
     },
@@ -2545,7 +2651,33 @@ test('OpenRouter catalogs and both request formats retain tools, effort and one 
     type: 'api_key',
     key: 'fixture-router-key',
   });
-  assert.equal(definitions.length, 3);
+  assert.deepEqual(
+    definitions.map((definition) => definition.choice.id),
+    ['openai/gpt-6.1-sol', 'anthropic/claude-opus-5.5', 'fixture/new-model', 'openrouter/auto'],
+  );
+  const router = definitions.find((definition) => definition.choice.id === 'openrouter/auto')!;
+  const usage = {
+    input: 1000,
+    output: 100,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 1100,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  calculateCost(router.spec as unknown as Model<Api>, usage);
+  const observed = createPiUsageTracker({
+    sessionId: 'fixture-session',
+    provider: 'openrouter',
+    model: 'openrouter/auto',
+    history: [],
+  })({
+    ...fauxAssistantMessage([{ type: 'text', text: 'Synthetic answer' }]),
+    provider: 'openrouter',
+    model: 'openrouter/auto',
+    usage,
+  });
+  assert.equal(observed?.costUsd, null);
+  assert.equal(observed?.costSource, 'unavailable');
   for (const definition of definitions) {
     const { runtime, model } = await createPiModelRuntime({
       provider: 'openrouter',

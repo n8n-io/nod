@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
 import { browserHandoffKeys } from '../../shared/browser-handoff';
 import { apiResponse, errorMessage, post } from '../lib/api';
+import { BrandMark } from './brand';
 import { Button, Loading } from './ui';
 
 const specialKeys = new Set<string>(browserHandoffKeys);
 
 export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   const screen = useRef<HTMLDivElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const queue = useRef(Promise.resolve());
   const pending = useRef(0);
   const active = useRef(false);
@@ -27,6 +31,8 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   const [interactive, setInteractive] = useState(false);
   const [returning, setReturning] = useState(false);
   const [closed, setClosed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [naturalWidth, setNaturalWidth] = useState(0);
 
   async function refresh() {
     const version = generation.current;
@@ -148,18 +154,51 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
     };
     element.addEventListener('wheel', wheel, { passive: false });
     return () => element.removeEventListener('wheel', wheel);
-  }, [closed, image]);
+  }, [closed, image, expanded]);
+
+  useEffect(() => {
+    if (!expanded || closed) return;
+    screen.current?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !screen.current?.contains(event.target as Node))
+        setExpanded(false);
+      if (event.key !== 'Tab' || event.defaultPrevented || !dialog.current) return;
+      const focusable = [
+        ...dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]'),
+      ];
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const inside = dialog.current.contains(document.activeElement);
+      if (!inside || (event.shiftKey && document.activeElement === first)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    window.addEventListener('keydown', keydown);
+    return () => {
+      window.removeEventListener('keydown', keydown);
+      screen.current?.focus();
+    };
+  }, [expanded, closed]);
 
   function click(event: React.MouseEvent<HTMLImageElement>) {
-    const box = event.currentTarget.getBoundingClientRect();
-    if (!box.width || !box.height) return;
+    const element = event.currentTarget;
+    const box = element.getBoundingClientRect();
+    if (!box.width || !box.height || !element.naturalWidth || !element.naturalHeight) return;
+    const scale = Math.min(box.width / element.naturalWidth, box.height / element.naturalHeight);
+    const width = element.naturalWidth * scale;
+    const height = element.naturalHeight * scale;
+    const left = box.left + (box.width - width) / 2;
+    const top = box.top + (box.height - height) / 2;
+    const x = (event.clientX - left) / width;
+    const y = (event.clientY - top) / height;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return;
     screen.current?.focus();
     flushTyped();
-    send({
-      type: 'click',
-      x: Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)),
-      y: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)),
-    });
+    send({ type: 'click', x, y });
   }
 
   function key(event: React.KeyboardEvent<HTMLDivElement>) {
@@ -220,8 +259,37 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   }
 
   if (closed) return null;
-  return (
-    <div className="browser-handoff">
+  const sizeToggle = (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => setExpanded(!expanded)}
+      aria-label={expanded ? 'Shrink browser' : 'Enlarge browser'}
+      title={expanded ? 'Shrink browser' : 'Enlarge browser'}
+    >
+      {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+    </Button>
+  );
+  const panel = (
+    <div
+      ref={dialog}
+      className={`browser-handoff${expanded ? ' browser-handoff-expanded' : ''}`}
+      role={expanded ? 'dialog' : undefined}
+      aria-modal={expanded || undefined}
+      aria-label={expanded ? "Otto's browser" : undefined}
+      style={
+        expanded && naturalWidth
+          ? { width: `min(${naturalWidth + 2}px, calc(100vw - 48px))` }
+          : undefined
+      }
+    >
+      {expanded && (
+        <div className="browser-handoff-header">
+          <BrandMark small />
+          <span>Otto's browser</span>
+          {sizeToggle}
+        </div>
+      )}
       <div
         className="browser-handoff-screen"
         ref={screen}
@@ -232,7 +300,13 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
         onKeyDown={key}
       >
         {image ? (
-          <img src={image} alt="Otto's browser" draggable={false} onClick={click} />
+          <img
+            src={image}
+            alt="Otto's browser"
+            draggable={false}
+            onClick={click}
+            onLoad={(event) => setNaturalWidth(event.currentTarget.naturalWidth)}
+          />
         ) : (
           <Loading label="Opening Otto's browser…" />
         )}
@@ -241,18 +315,37 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
         <span role="status">
           {inputError || error || completionError || 'Click and type here, then hand it back.'}
         </span>
-        {(inputError || error) && (
-          <Button variant="ghost" onClick={() => refreshView(true)} disabled={returning}>
-            Refresh view
+        <div className="browser-handoff-actions">
+          {(inputError || error) && (
+            <Button variant="ghost" onClick={() => refreshView(true)} disabled={returning}>
+              Refresh view
+            </Button>
+          )}
+          {!expanded && sizeToggle}
+          <Button
+            onClick={() => void done()}
+            disabled={returning || !interactive || Boolean(inputError)}
+          >
+            {returning ? 'Finishing…' : 'Done'}
           </Button>
-        )}
-        <Button
-          onClick={() => void done()}
-          disabled={returning || !interactive || Boolean(inputError)}
-        >
-          {returning ? 'Finishing…' : 'Done'}
-        </Button>
+        </div>
       </div>
     </div>
+  );
+  if (!expanded) return panel;
+  return (
+    <>
+      <div className="browser-handoff browser-handoff-placeholder">
+        <span>Otto's browser is open in a larger view.</span>
+        {sizeToggle}
+      </div>
+      {createPortal(
+        <>
+          <div className="browser-handoff-overlay" onClick={() => setExpanded(false)} />
+          {panel}
+        </>,
+        document.body,
+      )}
+    </>
   );
 }

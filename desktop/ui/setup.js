@@ -32,6 +32,7 @@ function render() {
   element('keychain-notice').hidden = latestStatus.platform !== 'darwin';
   if (!loading) {
     element('heading').textContent = 'Set up your computer';
+    window.ottoSetupAnalytics?.step('preferences');
     return;
   }
   const runtime = latestStatus.runtime;
@@ -47,6 +48,8 @@ function render() {
       ? runtime
       : latestStatus);
   const ready = latestStatus.phase === 'ready' && !failure;
+  window.ottoSetupAnalytics?.step(failure ? 'error' : ready ? 'ready' : 'preparing');
+  if (ready) void window.ottoSetupAnalytics?.completed();
   element('heading').textContent = ready
     ? 'Otto is ready'
     : failure

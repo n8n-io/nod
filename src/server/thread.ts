@@ -26,6 +26,7 @@ import type { IntegrationFile } from '../ports/integrations.ts';
 import type { AgentReactionInput } from './agent-reactions.ts';
 import type { ChatConfirmationInput, ChatConfirmationResult } from './approvals.ts';
 import type { WorkConsumers } from './work-admission.ts';
+import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { appResultInlineChars, inlineAppResult } from './integration-result.ts';
 
 const queue = 'thread-drain';
@@ -72,6 +73,7 @@ type ConfirmAction = (
 ) => Promise<ChatConfirmationResult>;
 
 export interface ThreadDependencies {
+  analytics?: CaptureAnalytics;
   consumers?: WorkConsumers;
   artifacts?: ArtifactService;
   writeArtifact?: (
@@ -851,6 +853,18 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
 }
 
 async function executeTurn(turn: any, dependencies: ThreadDependencies) {
+  const startedAt = Date.now();
+  const providerChannel = String(turn.channel).split(':')[0];
+  const analyticsProperties = {
+    source: turn.source as 'user' | 'schedule' | 'event' | 'resume',
+    channel: (['web', 'telegram', 'whatsapp'].includes(providerChannel)
+      ? providerChannel
+      : 'other') as 'web' | 'telegram' | 'whatsapp' | 'other',
+    background: Boolean(turn.background),
+  };
+  let outcome: Extract<AnalyticsEvent, { event: 'otto_turn_completed' }>['properties']['outcome'] =
+    'failed';
+  dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
   const ref: TurnRef = { threadId, turnId };
@@ -1116,8 +1130,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     ).catch((error) => {
       if (!signal.aborted) throw error;
     });
+    outcome = signal.aborted ? 'cancelled' : result.status;
   } catch (error) {
-    if (stopping) return;
+    if (stopping) {
+      outcome = 'interrupted';
+      return;
+    }
+    if (signal.aborted) outcome = 'cancelled';
     if (await interruptTurn(turnId)) {
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
       void Promise.resolve()
@@ -1125,6 +1144,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         .catch(() => {});
     }
   } finally {
+    dependencies.analytics?.({
+      event: 'otto_turn_completed',
+      properties: {
+        ...analyticsProperties,
+        outcome,
+        duration_ms: Math.max(0, Date.now() - startedAt),
+      },
+    });
     void Promise.resolve()
       .then(() => dependencies.finishObservationSegment?.(turnId))
       .catch(() => {});

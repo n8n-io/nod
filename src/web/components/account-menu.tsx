@@ -59,6 +59,7 @@ export function AccountMenuItems({
         type="button"
         role={menu ? 'menuitem' : undefined}
         aria-keyshortcuts={shortcuts ? 'Meta+, Control+,' : undefined}
+        data-analytics-public
         onClick={(event) =>
           openSettings(
             desktop ? 'General' : account.local ? 'Appearance' : 'Preferences',
