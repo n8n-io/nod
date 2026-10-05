@@ -1655,7 +1655,7 @@ test('desktop restart fences drafts and active work, resumes failed drains, and 
         if (path.endsWith('/status')) return Response.json({ activeWork: scenario === 'busy' });
         transitions.push(JSON.parse(options.body));
         if (path.endsWith('/drain')) return Response.json({ drained: scenario !== 'drain failed' });
-        return Response.json({ resumed: true });
+        return Response.json({ ok: true });
       },
       flush: async () => {
         events.push('cursors flushed');
@@ -1938,7 +1938,7 @@ test('main update restart preserves the renderer navigation fence through its qu
         contents.emit('did-start-navigation');
         return Response.json({ drained: true });
       }
-      return Response.json({ resumed: true });
+      return Response.json({ ok: true });
     },
     chatReadCursors: { flush: async () => events.push('flushed') },
     updateReadinessNotice: () => assert.fail('Navigation must prevent shutdown'),
@@ -1954,4 +1954,109 @@ test('main update restart preserves the renderer navigation fence through its qu
     'otto:update:resume',
   ]);
   assert.equal(contents.listenerCount('did-start-navigation'), 0);
+});
+
+test('uncertain update resumes retain the renderer fence until explicit retry succeeds or Otto quits', async (t) => {
+  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+  const body = source.slice(
+    source.indexOf('async function restartForUpdate('),
+    source.indexOf('async function validateStart('),
+  );
+  const failures = {
+    unavailable: () => Response.json({ ok: true }, { status: 503 }),
+    rejected: () => Response.json({ ok: false }),
+    malformed: () => new Response('not json'),
+    disconnected: () => {
+      throw new Error('Synthetic connection closed');
+    },
+  };
+  for (const [name, failure] of Object.entries(failures)) {
+    for (const response of [0, 1]) {
+      await t.test(`${name}: ${response === 0 ? 'retry' : 'quit'}`, async () => {
+        const offered = deferred();
+        const choice = deferred();
+        const events = [];
+        const transitions = [];
+        const ipc = new EventEmitter();
+        let attempts = 0;
+        const contents = Object.assign(new EventEmitter(), {
+          send: (channel, token) => {
+            if (channel === 'otto:update:prepare')
+              ipc.emit('otto:update:prepared', { sender: contents }, { token, blocked: false });
+            else events.push(channel);
+          },
+        });
+        const context = {
+          restartDesktopUpdate,
+          guardUpdateRenderers,
+          quitting: false,
+          engine: {},
+          status: { phase: 'ready' },
+          lifecycle: {
+            engineStarting: false,
+            close: async () => events.push('lifecycle closed'),
+          },
+          setupWindow: undefined,
+          engineWindows: new Set([{ isDestroyed: () => false, webContents: contents }]),
+          ipcMain: ipc,
+          isEngine: (event) => event.sender === contents,
+          engineRequest: async (path, options) => {
+            events.push(path);
+            if (path.endsWith('/status')) return Response.json({ activeWork: false });
+            transitions.push(JSON.parse(options.body));
+            if (path.endsWith('/drain')) {
+              contents.emit('did-start-navigation');
+              return Response.json({ drained: true });
+            }
+            assert.equal(path, '/api/runtime/resume');
+            return ++attempts === 1 ? failure() : Response.json({ ok: true });
+          },
+          chatReadCursors: { flush: async () => events.push('flushed') },
+          updateReadinessNotice: () => assert.fail('Canceled update must not install'),
+          writeDiagnostic: async () => {},
+          dialog: {
+            showMessageBox: async () => {
+              events.push('recovery offered');
+              offered.resolve();
+              return choice.promise;
+            },
+          },
+          app: { exit: () => events.push('exit') },
+        };
+        runInNewContext(`${body}\nglobalThis.restart = restartForUpdate;`, context);
+        const result = context.restart({ source: 'a'.repeat(40) }).then(
+          () => ({ completed: true }),
+          (error) => ({ error }),
+        );
+        await Promise.race([
+          offered.promise,
+          result.then(() => assert.fail('Unconfirmed resume must offer recovery')),
+        ]);
+        assert.equal(context.quitting, true);
+        assert.equal(attempts, 1);
+        assert.equal(events.includes('otto:update:resume'), false);
+        assert.equal(events.includes('lifecycle closed'), false);
+        choice.resolve({ response });
+        const outcome = await result;
+        assert.ok(outcome.error);
+        assert.equal(attempts, response === 0 ? 2 : 1);
+        assert.ok(
+          transitions.every(
+            (transition) => JSON.stringify(transition) === JSON.stringify(transitions[0]),
+          ),
+        );
+        if (response === 0) {
+          assert.match(outcome.error.message, /window changed/);
+          assert.equal(context.quitting, false);
+          assert.equal(events.at(-1), 'otto:update:resume');
+          assert.equal(events.includes('lifecycle closed'), false);
+          assert.equal(contents.listenerCount('did-start-navigation'), 0);
+        } else {
+          assert.equal(context.quitting, true);
+          assert.equal(events.includes('otto:update:resume'), false);
+          assert.deepEqual(events.slice(-2), ['lifecycle closed', 'exit']);
+        }
+      });
+    }
+  }
 });

@@ -697,6 +697,21 @@ async function restartForUpdate(candidate) {
     },
     request: engineRequest,
     flush: () => chatReadCursors.flush(),
+    retryResume: async () => {
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        message: 'Otto could not resume its work.',
+        detail: 'Your work is paused. Try again, or quit and reopen Otto.',
+        buttons: ['Try again', 'Quit Otto'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (response === 0) return true;
+      await chatReadCursors.flush().catch(() => {});
+      await finishQuit(() => app.exit());
+      return false;
+    },
     shutdown: async () => {
       updateReadinessNotice();
       stopNotifications?.();
