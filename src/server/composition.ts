@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import pg from 'pg';
 import { z } from 'zod';
-import type { Agent } from '../ports/agent.ts';
+import { appConfirmation, type Agent } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
@@ -815,10 +815,29 @@ export async function createApplication(
         const verdict = await trust.check(turn, action, args);
         if (verdict.confirm) {
           const prepared = await integrations.prepare(ownerId, action, args);
-          return approvals.request(turn, action, prepared, {
+          const account = (await integrations.list(ownerId, { refresh: false })).find(
+            (item) => item.connectionId === prepared.connectionId,
+          );
+          const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
+          const result = await approvals.request(turn, action, prepared, {
             confirm: true,
-            question: appActionConfirmation(action, prepared, verdict.reason),
+            question: appActionConfirmation(
+              action,
+              prepared,
+              verdict.reason,
+              account &&
+                [
+                  account.name,
+                  account.accountEmail ?? account.accountName,
+                  path && `${path.kind} ${path.endpoint}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · '),
+            ),
           });
+          return result && typeof result === 'object' && 'requiresConfirmation' in result
+            ? { [appConfirmation]: result.question }
+            : result;
         }
         return integrations.execute(
           ownerId,

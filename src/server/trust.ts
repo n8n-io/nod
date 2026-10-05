@@ -26,7 +26,8 @@ for (const [effect, words] of [
 ] as const)
   for (const word of words.split(' ')) verbs.set(word, effect);
 const sharing = new Set(['SHARING', 'PERMISSION', 'PERMISSIONS', 'COLLABORATOR', 'COLLABORATORS']);
-const severity: ActionEffect[] = ['change', 'destructive', 'outbound'];
+const rank: ActionEffect[] = ['read', 'change', 'destructive', 'outbound'];
+const connectors = new Set(['AND', 'THEN', 'OR', 'PLUS']);
 const recipientKey =
   /^(?:to|cc|bcc|recipients?|recipient_?emails?|extra_?recipients|attendees?|invitees?|guests?|email_?address(?:es)?|share_?with)$/i;
 const emailAddress = /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/gi;
@@ -51,16 +52,19 @@ function verb(token: string) {
 }
 
 function effectOf(words: string[]): ActionEffect {
-  const first = words.map(verb).find(Boolean);
-  if (first !== 'change') return first ?? 'unknown';
-  if (words.some((word) => sharing.has(word))) return 'outbound';
-  return words
-    .map(verb)
-    .reduce<ActionEffect>(
-      (strongest, effect) =>
-        effect && severity.indexOf(effect) > severity.indexOf(strongest) ? effect : strongest,
-      'change',
-    );
+  const effects = words.map(verb);
+  const first = effects.find(Boolean);
+  if (!first) return 'unknown';
+  if (first === 'change' && words.some((word) => sharing.has(word))) return 'outbound';
+  return (
+    first === 'change'
+      ? effects
+      : effects.filter((_, index) => connectors.has(words[index - 1] ?? ''))
+  ).reduce<ActionEffect>(
+    (strongest, effect) =>
+      effect && rank.indexOf(effect) > rank.indexOf(strongest) ? effect : strongest,
+    first,
+  );
 }
 
 export function actionRecipients(value: unknown, inside = false, found = new Set<string>()) {

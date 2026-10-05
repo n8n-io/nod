@@ -68,6 +68,7 @@ export function appActionConfirmation(
   action: string,
   args: Record<string, unknown>,
   reason: TrustReason,
+  account?: string,
 ) {
   const [app, ...words] = action.split('_');
   const title =
@@ -89,7 +90,7 @@ export function appActionConfirmation(
         .toLowerCase();
       return [`${label[0]!.toUpperCase()}${label.slice(1)}: ${text}`];
     });
-  let body = '';
+  let body = account ? `\n\nAccount: ${shown(account, 300)}` : '';
   for (const detail of details) {
     if (body.length + detail.length > 4800) {
       body += '\n\n…';

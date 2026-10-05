@@ -387,6 +387,10 @@ test(
             await trust.check(turn, 'GMAIL_DELETE_MESSAGE', { message_id: 'synthetic' }),
             { confirm: true, reason: 'unrequested' },
           );
+          assert.deepEqual(
+            await trust.check(turn, 'CONNECTED_MCP_CALL', { tool: 'get_and_delete_message' }),
+            { confirm: true, reason: 'unrequested' },
+          );
           const before = calls.length;
           const result = await askFor(turn, email('stranger@example.test'));
           assert.equal(result.requiresConfirmation, true);

@@ -150,7 +150,9 @@ test(
           const sends = () =>
             integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length;
           const held = await propose('GMAIL_SEND_EMAIL', email('collector@example.test'), 'apps');
-          const [card] = await approvalsFor(held);
+          const cards = await approvalsFor(held);
+          assert.equal(cards.length, 1, 'the send to a stranger was not held for confirmation');
+          const [card] = cards;
           assert.equal(card.status, 'pending');
           assert.equal(card.args.recipient_email, 'collector@example.test');
           assert.equal(sends(), 0);

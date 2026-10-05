@@ -178,6 +178,7 @@ export interface AgentImage {
   data: string;
   mimeType: string;
 }
+export const appConfirmation = Symbol('appConfirmation');
 export interface AgentToolResult {
   content: Array<{ type: 'text'; text: string } | AgentImage>;
   details?: unknown;
