@@ -15,6 +15,6 @@ Prefer manufacturer specifications for compatibility and warranty. Check seller 
 
 For a basket, match each line and quantity. Keep substitutes out unless the request allows them. Read the final basket after changes; adding twice can create an unwanted duplicate. Read delivery and payment choices before an authorized checkout. A request for research or a basket does not authorize a purchase.
 
-Completion requires the final variant, quantity, total, delivery estimate and order reference from the seller. A clicked button or pending payment is not an order. If the result is unclear, inspect orders before any further action.
+For research or a basket task, return the checked options or basket with variants, quantities, total costs and delivery estimates. An authorized purchase requires the final variant, quantity, total, delivery estimate and order reference from the seller. A clicked button or pending payment is not an order. If the result is unclear, inspect orders before any further action.
 
 For returns, exchanges or purchase claims, read [references/after-purchase.md](references/after-purchase.md).

@@ -36,11 +36,10 @@ export function createSkillLibrary(
     skills.some((skill) => skill.name !== basename(skill.baseDir))
   )
     throw new Error('The skill metadata is invalid.');
-  const byName = new Map(skills.map((skill) => [skill.name, skill.baseDir]));
+  const enabled = skills.filter((skill) => !skill.disableModelInvocation);
+  const byName = new Map(enabled.map((skill) => [skill.name, skill.baseDir]));
   return {
-    catalog: skills
-      .filter((skill) => !skill.disableModelInvocation)
-      .map(({ name, description }) => ({ name, description: description.trim() })),
+    catalog: enabled.map(({ name, description }) => ({ name, description: description.trim() })),
     read(name: string, file = 'SKILL.md') {
       const base = byName.get(name);
       if (!base) throw new Error('Select a skill from the skill library.');

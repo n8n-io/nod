@@ -11,8 +11,8 @@ Use the pantry list with its known amounts and freshness. Do not assume that an 
 
 Convert recipe quantities into a combined grocery list. Keep edible weight, drained weight, pack size and units distinct. Subtract only confirmed pantry amounts. Preserve exact brands or variants for reorders. Show unavoidable pack surplus when it affects cost or storage.
 
-For an order, compare the basket total with delivery fees, minimum order, discounts and tip choices. Check the delivery slot before promising that dinner is covered. A clipped coupon is not a discount until the basket applies it.
+For an order, compare the basket total with delivery fees, minimum order, discounts and tip choices. Check the delivery or pickup slot before promising that dinner is covered. A clipped coupon is not a discount until the basket applies it.
 
 Set substitution rules at line level. For an allergy or a required diet, check the label and the store's substitution controls; do not choose a merely similar product. Weighted produce and unavailable items can change the final charge. Mark estimates as estimates.
 
-Check the final basket, quantities, substitution rules, address and slot before an authorized checkout. Completion needs the store's order reference and delivery window. Report missing items and the final charge separately from the estimated basket total.
+Check the final basket, quantities, substitution rules, delivery address or pickup location and slot before an authorized checkout. Completion needs the store's order reference and the applicable delivery or pickup confirmation. Report missing items and the final charge separately from the estimated basket total.

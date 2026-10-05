@@ -46,7 +46,7 @@ The loader uses Pi's metadata parser. Invalid metadata or a missing guide stops 
 
 ## File and permission limits
 
-Composition selects the library in the server source tree. Default Pi discovery is disabled. The library does not search the workspace, home directory, `.pi` folders or connected accounts. It ignores hidden folders and folder symlinks. Each read must stay inside the selected skill folder after path resolution. Only `SKILL.md` and named Markdown files directly inside `references` are allowed. Each file must be a regular file at or below the size limit.
+Composition selects the library in the server source tree. Default Pi discovery is disabled. The library does not search the workspace, home directory, `.pi` folders or connected accounts. It ignores hidden folders and folder symlinks. Skills with `disable-model-invocation: true` cannot be listed or read by the model. Each read must stay inside the selected skill folder after path resolution. Only `SKILL.md` and named Markdown files directly inside `references` are allowed. Each file must be a regular file at or below the size limit.
 
 Skill content is trusted server guidance. Reading it does not expose the model to outside content or change the memory trust state. Read-only turns can load guides. Activity checks cannot load them; their existing app-only tool limit still applies.
 
@@ -56,4 +56,4 @@ Guides do not supply tools, change account access, grant permission or override 
 
 A saved evaluation of an earlier source version compared 300 attempts without task skills with 300 attempts with task skills. The primary judge reported task completion of 71.0% and 76.7%. It also found two unsafe attempts without skills and four with skills. An independent judge found no gain in the full-case pass rate. The recorded skill reads covered 16 of the 25 task guides.
 
-These results do not establish a general quality or safety gain. This PR updates the booking and budget instructions in response to the recorded failures and keeps the newer research guide from main. Those changes have not had a new live evaluation. The PR does not include private research records, raw model traces or the local research database.
+These results do not establish a general quality or safety gain. This PR updates the booking, budget and task completion instructions in response to the recorded failures and keeps the newer research guide from main. Those changes have not had a new live evaluation. The PR does not include private research records, raw model traces or the local research database.

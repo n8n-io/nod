@@ -15,6 +15,6 @@ Check hotel room type, occupancy, bed type, check-in limits, location and cancel
 
 Build the itinerary from confirmed reservations and clearly marked proposals. Include the time zone, booking reference, important cutoff and source link for each commitment. Leave time for travel between places; do not fill every free hour.
 
-Before an authorized booking, read the final traveller details, dates, total and fare rules. Completion needs the issued ticket or reservation reference. Keep payment, reservation and ticket issue as separate states. Otto has no phone-call tool; use supported online paths or prepare a clear handoff when a call is required.
+A request to research travel or prepare an itinerary does not authorize a booking. Before booking, check that the current user request approves the exact itinerary, traveller details, full total and fare rules. If approval is missing, show the option and ask. Read those final details again before the authorized booking. Completion needs the issued ticket or reservation reference. Keep payment, reservation and ticket issue as separate states. Otto has no phone-call tool; use supported online paths or prepare a clear handoff when a call is required.
 
 For cancellations, disruptions, check-in or travel claims, read [references/existing-bookings.md](references/existing-bookings.md).

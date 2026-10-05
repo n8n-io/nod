@@ -6,4 +6,4 @@ Keep the intended local time with a named time zone. A fixed UTC time can move t
 
 An edited occurrence can have values that differ from the series. Changing the series can preserve, replace or invalidate those exceptions. Inspect existing exceptions before a broad change. Do not remove them merely to make the series look consistent.
 
-Before an attendee update, check who organizes the series and which update notifications will be sent. After the change, read the selected occurrence, the series rule and at least one unaffected occurrence. Preserve the IDs and report the actual scope.
+Before an attendee update, check who organizes the series and which update notifications will be sent. After the change, read the selected occurrence and the series rule. If the requested scope leaves any occurrence unchanged, read at least one of those occurrences to check that it was preserved. Preserve the IDs and report the actual scope.

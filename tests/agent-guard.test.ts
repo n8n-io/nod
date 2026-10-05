@@ -269,6 +269,12 @@ test('skill reads cannot escape the trusted library or load workspace instructio
     await symlink(outside, join(escaped, 'SKILL.md'));
     assert.throws(() => createSkillLibrary(root));
     await rm(escaped, { recursive: true });
+    const disabled = join(root, 'disabled');
+    await mkdir(disabled);
+    await writeFile(
+      join(disabled, 'SKILL.md'),
+      '---\nname: disabled\ndescription: Unavailable to model calls.\ndisable-model-invocation: true\n---\nDisabled guide',
+    );
     const library = createSkillLibrary(root);
     assert.equal(library.catalog.length, 1);
     assert.match(library.read('fixture').content, /Fixture guide/);
@@ -281,6 +287,7 @@ test('skill reads cannot escape the trusted library or load workspace instructio
     assert.throws(() => library.read('../private'));
     assert.throws(() => library.read('untrusted'));
     assert.throws(() => library.read('implicit'));
+    assert.throws(() => library.read('disabled'));
     await writeFile(join(base, 'references', 'large.md'), 'x'.repeat(64 * 1024 + 1));
     assert.throws(() => library.read('fixture', 'references/large.md'));
     await mkdir(join(base, 'references', 'directory.md'));

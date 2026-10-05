@@ -15,6 +15,6 @@ For inventory, distinguish on-hand, reserved, available and incoming units. Prev
 
 For orders, match payment, fulfilment, shipment and cancellation states. A paid order may already have been dispatched. Check parcel and line-item quantities before replacements or cancellations. An order can have partial fulfilment or refunds.
 
-Validate one representative record before a broad update, including a product with variants. Stop when the mapping or target state differs. After authorized writes, read the product or order in the destination. Report records changed and exceptions. A browser crash is not evidence of a permission problem or a completed publication.
+Before a broad update, prepare a preview of the full target set with proposed changes and rejected records. Check the account, scope and mappings across that set. Also validate a representative record, including a product with variants, before applying the changes. Stop when the mapping or target state differs. After authorized writes, read the product or order in the destination. Report records changed and exceptions. A browser crash is not evidence of a permission problem or a completed publication.
 
 For catalog or stock synchronization across systems, read [references/catalog-sync.md](references/catalog-sync.md).

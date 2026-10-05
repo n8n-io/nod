@@ -15,4 +15,4 @@ For intake, copy only verified user facts and clearly supplied records. Leave un
 
 Prepare a visit pack with the user's questions, relevant dated records and missing documents. Separate the user's observations from a clinician's findings. Do not rewrite a result into a diagnosis.
 
-Completion needs the appointment reference, date, time zone, provider address, required documents and known cost limits. A submitted request is not a booked slot. Keep medical advice and administrative facts separate, and do not claim that insurance will pay an amount that has not been checked.
+For a provider search, return the checked options, access conditions and unresolved details. For intake preparation or a visit pack, return the checked documents and missing facts. A booking needs the appointment reference, date, time zone, provider address, required documents and known cost limits. A submitted request is not a booked slot. Keep medical advice and administrative facts separate, and do not claim that insurance will pay an amount that has not been checked.
