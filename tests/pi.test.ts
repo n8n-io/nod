@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -2282,13 +2282,22 @@ test('model sign-in verifies account identity, permissions and PKCE on the publi
   let nonce = '';
   let audience = 'fixture-client';
   let issuer = 'https://auth.openai.com';
-  let scope = 'openid chatgpt.tokens.use.direct';
+  let scope: string | undefined = 'openid chatgpt.tokens.use.direct';
   let subject = 'fixture-owner';
   let grant = new URLSearchParams();
   const backend = createPiModelBackend({
     fetch: async (input, init) => {
       const url = String(input);
       if (url.endsWith('/.well-known/jwks.json')) return Response.json({ keys: [jwk] });
+      if (url === 'https://api.openai.com/v1/models') {
+        assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fixture-access');
+        return Response.json({
+          models: [
+            { slug: 'gpt-6.1-sol', visibility: 'list' },
+            { slug: 'gpt-6-luna', visibility: 'hidden' },
+          ],
+        });
+      }
       assert.equal(url, 'https://auth.openai.com/api/accounts/oauth/token');
       grant = new URLSearchParams(String(init?.body));
       const id_token = await new SignJWT({ nonce, email: 'fixture@example.test' })
@@ -2316,6 +2325,11 @@ test('model sign-in verifies account identity, permissions and PKCE on the publi
   const url = new URL(auth.url);
   nonce = String(auth.secret.nonce);
   assert.equal(url.searchParams.get('agent_name_hint'), 'Otto');
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(
+    url.searchParams.get('code_challenge'),
+    createHash('sha256').update(String(auth.secret.verifier)).digest('base64url'),
+  );
   const callback = new URL(
     `http://127.0.0.1:1455/auth/callback?state=${auth.state}&code=fixture-code&client_id=fixture-client`,
   );
@@ -2325,8 +2339,17 @@ test('model sign-in verifies account identity, permissions and PKCE on the publi
   assert.equal(value.subject, 'fixture-owner');
   assert.equal(grant.get('code_verifier'), auth.secret.verifier);
   assert.equal(grant.get('resource'), 'https://api.openai.com/v1');
+  assert.deepEqual(
+    (await backend.catalog('openai', 'subscription', value)).map((model) => model.choice.id),
+    ['gpt-6.1-sol'],
+  );
   for (const invalid of ['nonce', 'audience', 'issuer', 'scope']) {
-    const saved = { nonce, audience, issuer, scope };
+    const saved: { nonce: string; audience: string; issuer: string; scope: string | undefined } = {
+      nonce,
+      audience,
+      issuer,
+      scope,
+    };
     if (invalid === 'nonce') nonce = 'foreign';
     if (invalid === 'audience') audience = 'foreign';
     if (invalid === 'issuer') issuer = 'https://foreign.example.test';
@@ -2334,6 +2357,15 @@ test('model sign-in verifies account identity, permissions and PKCE on the publi
     await assert.rejects(backend.exchange('openai', auth.secret, callback));
     ({ nonce, audience, issuer, scope } = saved);
   }
+  scope = undefined;
+  await assert.rejects(backend.exchange('openai', auth.secret, callback));
+  const refreshed = await backend.refresh(value);
+  assert.equal(refreshed.type, 'oauth');
+  if (refreshed.type !== 'oauth') throw new Error('Expected an account credential.');
+  assert.deepEqual(refreshed.scopes, value.scopes);
+  scope = 'openid';
+  await assert.rejects(backend.refresh(value));
+  scope = 'openid chatgpt.tokens.use.direct';
   await assert.rejects(
     backend.exchange('openai', auth.secret, new URL(`${callback}&state=second`)),
   );

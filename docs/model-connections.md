@@ -10,7 +10,7 @@ Otto keeps one selected connection, model, and effort per owner. All channels us
 | Anthropic  | API key                             | Claude Opus 5.5, high   |
 | OpenRouter | API key; browser sign-in with PKCE  | GPT-6.1 Sol, high       |
 
-Use **Models** in the account menu to add, refresh, reconnect, or remove connections. Use the model control above chat to search models and set effort. Each choice shows the service that receives the request. Adding a connection keeps an existing choice. If the requested default is unavailable, select a listed model.
+Use **Models** in the account menu to add, refresh, reconnect, or remove connections. Connect all the services you want. The model control above chat shows one searchable list from all connected services and lets you set effort. Each model shows the connection that receives the request. Choosing a model also chooses its connection. Adding a connection keeps an existing choice. If the requested default is unavailable, select a listed model.
 
 OpenRouter checks the key through its authenticated [key endpoint](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key), then lists models that support text and tools. Its catalog supplies context limits, image support, prices, and effort information. Pi supplies known protocol settings. New compatible entries use its OpenAI-compatible adapter. The request requires parameter support and disables provider fallbacks. Refresh a connection to update its catalog; a failed refresh keeps the last valid list. Direct OpenAI and Anthropic choices must also exist in the installed Pi catalog.
 
@@ -34,10 +34,10 @@ A later Claude Code runtime must use an unmodified binary and keep sign-in insid
 
 ## Background work and voice
 
-Memory and relevance use the selected connection. They select a smaller compatible model when present, or the selected model with its lowest supported effort. The Jev relevance option stays available through `TYPESAFE_API_KEY`. Voice uses the separate OpenAI key in server settings; a ChatGPT plan does not enable it.
+Memory uses the selected connection. Relevance uses that connection unless `TYPESAFE_API_KEY` enables Jev. Work that uses a model selects a smaller compatible model when present, or the selected model with its lowest supported effort. Voice uses the separate OpenAI key in server settings; a ChatGPT plan does not enable it.
 
 ## Validation
 
 Provider contract tests use synthetic OAuth identities and HTTP streams. Storage tests use disposable PostgreSQL schemas. They cover identity rejection, state reuse, owner isolation, encrypted storage, concurrent refresh, removal, model changes with saved context, and one-attempt failures. No test signs in to a real account or calls a live model.
 
-[The recorded UI demo](demos/model-connections.gif) uses synthetic accounts and keys. Real provider sign-in and first inference remain user-driven checks.
+The video attached to the PR uses synthetic accounts and keys. Real provider sign-in and first inference remain user-driven checks.

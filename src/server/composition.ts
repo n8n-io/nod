@@ -422,19 +422,25 @@ export async function createApplication(
     enabled: () => configuration().inspectorEnabled,
     coverage: [
       {
-        provider: adapters.model.provider,
+        get provider() {
+          return adapters.model.provider;
+        },
         category: 'agent',
         status: 'recorded',
         note: 'Responses, compaction and cache warming when reported by Pi. Costs are SDK estimates; unreported failed attempts may be missing.',
       },
       {
-        provider: adapters.relevance.id,
+        get provider() {
+          return adapters.relevance.id;
+        },
         category: 'relevance',
         status: 'recorded',
         note: 'Classification operations and duration. Tokens and prices are not exposed by this adapter.',
       },
       {
-        provider: memoryCurator.id,
+        get provider() {
+          return memoryCurator.id;
+        },
         category: 'memory',
         status: 'recorded',
         note: 'Background memory reflection, consolidation and search calls and duration. Tokens and prices are not exposed by this adapter.',

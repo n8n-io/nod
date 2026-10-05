@@ -429,7 +429,7 @@ export function createModelService(options: {
           provider as ModelProvider,
           'api_key',
           { type: 'api_key', key },
-          await catalog(provider as ModelProvider, 'api_key'),
+          await catalog(provider as ModelProvider, 'api_key', { type: 'api_key', key }),
           existing?.id,
           true,
         );

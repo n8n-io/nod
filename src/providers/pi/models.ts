@@ -25,7 +25,7 @@ const tokenSchema = z.object({
   refresh_token: z.string().min(1).max(32000).optional(),
   id_token: z.string().min(1).max(32000).optional(),
   expires_in: z.number().positive().max(31536000),
-  scope: z.string(),
+  scope: z.string().optional(),
   token_type: z.literal('Bearer'),
 });
 
@@ -83,7 +83,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     if (!previous && !claims) throw new Error('The sign-in did not return an account identity.');
     if (previous && claims && claims.sub !== previous.subject)
       throw new Error('The signed-in account changed.');
-    const scopes = result.scope.split(/\s+/);
+    const scopes = result.scope?.split(/\s+/) ?? previous?.scopes ?? [];
     if (!scopes.includes(planScope))
       throw new Error('This account did not grant ChatGPT plan use.');
     const refresh = result.refresh_token ?? previous?.refresh;

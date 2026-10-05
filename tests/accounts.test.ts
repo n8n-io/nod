@@ -705,14 +705,26 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const backend = createPiModelBackend({
-      fetch: async (input) => {
+      fetch: async (input, init) => {
         const url = String(input);
         assert.equal(url, 'https://api.openai.com/v1/models');
-        return Response.json({ data: [{ id: 'gpt-6.1-sol' }, { id: 'gpt-6-luna' }] });
+        const key = new Headers(init?.headers).get('authorization');
+        const ids =
+          key === 'Bearer fixture-managed-key'
+            ? ['gpt-6-luna']
+            : key === 'Bearer fixture-no-memory-key'
+              ? ['gpt-6.1-sol']
+              : ['gpt-6.1-sol', 'gpt-6-luna'];
+        return Response.json({ data: ids.map((id) => ({ id })) });
       },
     });
     const services: ReturnType<typeof createModelService>[] = [];
-    const create = async (ownerId: string, selectedBackend = backend, local = true) => {
+    const create = async (
+      ownerId: string,
+      selectedBackend = backend,
+      local = true,
+      bootstrap?: Parameters<typeof createModelService>[0]['bootstrap'],
+    ) => {
       const service = createModelService({
         database,
         ownerId,
@@ -720,6 +732,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         backend: selectedBackend,
         origin: 'http://127.0.0.1:4310',
         local,
+        bootstrap,
       });
       await service.initialize();
       services.push(service);
@@ -776,6 +789,20 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(limited.view().selection, null);
     await limited.select({ connectionId: limitedId, modelId: 'gpt-6-luna', effort: 'medium' });
     assert.equal(limited.configured, true);
+    const managed = await f.create('fixture-managed', f.backend, true, {
+      provider: 'openai',
+      keys: { openai: 'fixture-managed-key' },
+    });
+    assert.deepEqual(
+      managed.view().connections[0].models.map((model) => model.id),
+      ['gpt-6-luna'],
+    );
+    assert.equal(managed.view().selection, null);
+    const memory = await f.create('fixture-memory');
+    await memory.addKey('openai', 'fixture-no-memory-key');
+    const auxiliary = await memory.resolve(true);
+    assert.equal(auxiliary.definition.choice.id, 'gpt-6.1-sol');
+    assert.ok(auxiliary.definition.choice.efforts.includes(auxiliary.effort));
   });
 
   test('sign-in is single-use; refresh and removal serialize across service instances without restoring a removed key', async (t) => {

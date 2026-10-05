@@ -145,6 +145,7 @@
 .model-picker-dialog {
   width: min(540px, calc(100vw - 32px));
   gap: 12px;
+  overflow-y: auto;
 }
 .model-picker-dialog > h2 {
   margin-bottom: 6px;
@@ -157,20 +158,6 @@
   overflow-y: auto;
   margin: 12px -8px;
   padding: 0 8px;
-}
-.model-options h4 {
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-  color: var(--muted-foreground);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 12px 8px 6px;
-  margin: 0;
-}
-.model-options h4 span {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .model-option {
   display: flex;
@@ -240,6 +227,10 @@
   }
   .model-connection {
     align-items: flex-start;
+  }
+  .model-service-heading .model-service-actions {
+    max-width: 100%;
+    flex-wrap: wrap;
   }
   .model-connection .model-service-actions {
     flex-wrap: wrap;

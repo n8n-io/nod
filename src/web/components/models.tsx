@@ -333,6 +333,27 @@ export function ModelPicker() {
   const canChoose = models.data?.connections.some(
     (source) => source.status === 'connected' && source.models.length > 0,
   );
+  const choices = (models.data?.connections ?? [])
+    .filter((source) => source.status === 'connected')
+    .flatMap((source) =>
+      source.models.map((item) => ({
+        source,
+        item,
+        recommended:
+          item.id === agentModels[source.provider] || item.id === 'anthropic/claude-opus-5.5',
+      })),
+    )
+    .filter(({ source, item }) =>
+      `${item.name} ${item.id} ${source.label} ${modelSource(source)}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.recommended) - Number(a.recommended) ||
+        a.item.name.localeCompare(b.item.name) ||
+        modelSource(a.source).localeCompare(modelSource(b.source)),
+    );
   async function choose(source: ModelConnection, id: string, effort: ModelEffort) {
     if (
       await models.change('/api/models/selection', 'PUT', {
@@ -381,7 +402,7 @@ export function ModelPicker() {
         <DialogContent className="model-picker-dialog" aria-describedby="model-picker-description">
           <DialogTitle>Choose model</DialogTitle>
           <p id="model-picker-description" className="model-intro">
-            The next turn uses this model and connection.
+            All models from your connected services. Your choice applies to the next turn.
           </p>
           <SearchField
             placeholder="Search models or services"
@@ -391,78 +412,39 @@ export function ModelPicker() {
             onClear={() => setSearch('')}
           />
           <div className="model-options">
-            {models.data?.connections
-              .filter((source) => source.status === 'connected')
-              .map((source) => {
-                const choices = source.models
-                  .filter((item) =>
-                    `${item.name} ${item.id} ${source.label} ${modelSource(source)}`
-                      .toLowerCase()
-                      .includes(search.toLowerCase()),
-                  )
-                  .sort(
-                    (a, b) =>
-                      Number(
-                        b.id === agentModels[source.provider] ||
-                          b.id === 'anthropic/claude-opus-5.5',
-                      ) -
-                        Number(
-                          a.id === agentModels[source.provider] ||
-                            a.id === 'anthropic/claude-opus-5.5',
-                        ) || a.name.localeCompare(b.name),
-                  );
-                if (!choices.length) return null;
-                return (
-                  <section key={source.id} aria-label={source.label}>
-                    <h4>
+            {choices.map(({ source, item, recommended }) => {
+              const active = selected?.connectionId === source.id && selected.modelId === item.id;
+              const effort = active
+                ? selected.effort
+                : item.efforts.includes('high')
+                  ? 'high'
+                  : item.efforts[0];
+              return (
+                <button
+                  type="button"
+                  key={`${source.id}:${item.id}`}
+                  className="model-option"
+                  aria-pressed={active}
+                  disabled={models.busy}
+                  onClick={() => void choose(source, item.id, effort)}
+                >
+                  <span>
+                    <strong>{item.name}</strong>
+                    <small>
                       {modelSource(source)}
-                      <span>{source.label !== modelSource(source) ? source.label : ''}</span>
-                    </h4>
-                    {choices.map((item) => {
-                      const active =
-                        selected?.connectionId === source.id && selected.modelId === item.id;
-                      const effort = active
-                        ? selected.effort
-                        : item.efforts.includes('high')
-                          ? 'high'
-                          : item.efforts[0];
-                      return (
-                        <button
-                          type="button"
-                          key={item.id}
-                          className="model-option"
-                          aria-pressed={active}
-                          disabled={models.busy}
-                          onClick={() => void choose(source, item.id, effort)}
-                        >
-                          <span>
-                            <strong>{item.name}</strong>
-                            <small>
-                              {Math.round(item.contextWindow / 1000)}k context
-                              {item.images ? ' · Images' : ''}
-                            </small>
-                          </span>
-                          {active ? (
-                            <Check size={16} />
-                          ) : (
-                            (item.id === agentModels[source.provider] ||
-                              item.id === 'anthropic/claude-opus-5.5') && <small>Recommended</small>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </section>
-                );
-              })}
-            {!models.data?.connections.some(
-              (source) =>
-                source.status === 'connected' &&
-                source.models.some((item) =>
-                  `${item.name} ${item.id} ${source.label} ${modelSource(source)}`
-                    .toLowerCase()
-                    .includes(search.toLowerCase()),
-                ),
-            ) && <p className="model-empty">No available models match this search.</p>}
+                      {source.label !== modelSource(source) ? ` · ${source.label}` : ''}
+                      {' · '}
+                      {Math.round(item.contextWindow / 1000)}k context
+                      {item.images ? ' · Images' : ''}
+                    </small>
+                  </span>
+                  {active ? <Check size={16} /> : recommended && <small>Recommended</small>}
+                </button>
+              );
+            })}
+            {!choices.length && (
+              <p className="model-empty">No available models match this search.</p>
+            )}
           </div>
           {model && model.efforts.length > 1 && (
             <div className="model-efforts">
