@@ -1,7 +1,7 @@
 {
   "name": "otto-desktop",
   "productName": "Otto",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "main": "main/main.mjs",

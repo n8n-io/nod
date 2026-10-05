@@ -1,5 +1,13 @@
 # Desktop changelog
 
+## 0.1.2 - 2026-10-05
+
+Source: `782c0890f7bc60aa7896e32c0b3874ee4007df0b`
+Previous release: `desktop-v0.1.1`
+
+- feat(desktop): ship Otto with automatic first-run setup (#114) (782c089)
+- feat: add model connections, ChatGPT plans, and OpenRouter (#113) (933cbb2)
+
 ## 0.1.1 - 2026-10-04
 
 Source: `b1cb5047b2d9a4aa90b3746453f85ce2c56a5af1`
