@@ -3201,10 +3201,11 @@ test('native Settings preserves the active credential form and keeps its restart
         assert.equal(document.querySelector('input[name="password"]'), password);
         assert.equal(password.value, 'synthetic-unsaved-password');
         await act(async () => document.querySelector('[aria-label="Close"]').click());
+        await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
         assert.equal(document.querySelector('[role="dialog"]'), null);
         assert.equal(document.querySelector('input[name="password"]'), password);
         assert.equal(password.value, 'synthetic-unsaved-password');
-        assert.equal(document.activeElement, password);
+        assert.ok(document.activeElement === password);
         assert.equal([...checks][0](), false);
         assert.deepEqual(requests, ['/api/session', '/api/credential-requests/synthetic-form']);
       } finally {
