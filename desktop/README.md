@@ -20,7 +20,7 @@ Alternatively, quit Otto and install the latest published release from Terminal:
 (
   installer="$(mktemp)" || exit
   trap 'rm -f "$installer"' EXIT
-  curl --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
+  curl -q --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
 )
 ```
 

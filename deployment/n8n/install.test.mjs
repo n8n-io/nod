@@ -27,6 +27,8 @@ async function fixture(options = {}) {
       typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value),
     );
   };
+  if (options.curlConfig)
+    await write(join(home, '.curlrc'), 'otto-synthetic-unknown-option = true\n');
   const app = join(directory, 'fixture.app');
   const version = options.releaseVersion || '0.2.0';
   await write(join(app, 'Contents/Info.plist'), {
@@ -80,6 +82,7 @@ async function fixture(options = {}) {
   const driver = `#!${process.execPath}
 import{readFileSync,writeFileSync,copyFileSync,cpSync,statSync,mkdirSync,renameSync}from'node:fs';
 import{basename,join}from'node:path';
+import{spawnSync}from'node:child_process';
 const command=basename(process.argv[1]),args=process.argv.slice(2),root=process.env.FIXTURE_ROOT,options=JSON.parse(process.env.FIXTURE_OPTIONS);
 const stop=()=>process.exit(1),print=value=>process.stdout.write(String(value)+'\\n');
 if(command==='uname')print(args[0]==='-s'?'Darwin':'arm64');
@@ -89,7 +92,7 @@ else if(command==='stat'){const info=statSync(args[2]);print(args[1]==='%u'?1000
 else if(command==='pgrep')process.exit(options.running?0:1);
 else if(command==='file')print('Mach-O 64-bit executable arm64');
 else if(command==='plutil'){let value=JSON.parse(readFileSync(args.at(-1),'utf8'));for(const key of args[1].split('.'))value=value?.[key];const type=args[args.indexOf('-expect')+1];if((type==='string'&&typeof value!=='string')||(type==='bool'&&typeof value!=='boolean')||(type==='integer'&&!Number.isInteger(value)))stop();print(value)}
-else if(command==='curl'){const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url.endsWith('?installer=true')?'latest.json':url.endsWith('release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(root,'home/Applications/Otto.app/Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
+else if(command==='curl'){if(options.curlConfig){const probe=spawnSync('/usr/bin/curl',[...args,'--version'],{env:{...process.env,CURL_HOME:join(root,'home')},encoding:'utf8'});if(probe.status!==0||probe.stderr.includes('otto-synthetic-unknown-option'))stop()}const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url.endsWith('?installer=true')?'latest.json':url.endsWith('release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(root,'home/Applications/Otto.app/Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
 else if(command==='codesign'){if(options.badSignature&&args.at(-1).includes('mount/'))stop();const extract=args.find(value=>value.startsWith('--extract-certificates='));if(extract)copyFileSync(join(root,'certificate'),extract.split('=')[1]+'0')}
 else if(command==='hdiutil'){if(options.detachFailure&&args[0]==='detach')stop();if(args[0]==='attach')cpSync(join(root,'fixture.app'),join(args[args.indexOf('-mountpoint')+1],'Otto.app'),{recursive:true})}
 else if(command==='ditto'){if(options.copyFailure){mkdirSync(args[1],{recursive:true});writeFileSync(join(args[1],'partial'),'partial copy');stop()}cpSync(args[0],args[1],{recursive:true})}
@@ -126,6 +129,7 @@ else stop();
   }
   return {
     directory,
+    home,
     target,
     profile,
     app,
@@ -232,6 +236,28 @@ test('CLI-INSTALL: failed disk-image detach preserves the mounted staging direct
     assert.equal(entries.length, 2);
     assert.ok(entries.some((entry) => entry.startsWith('.otto-install.')));
     assert.ok(!entries.includes('.otto-install-lock'));
+  } finally {
+    await state.close();
+  }
+});
+
+test('CLI-INSTALL: stock curl ignores an existing user configuration before processing download options', async () => {
+  const state = await fixture({ curlConfig: true });
+  try {
+    const control = spawnSync('/usr/bin/curl', ['--version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      env: { ...process.env, HOME: state.home, CURL_HOME: state.home },
+    });
+    assert.match(control.stderr, /otto-synthetic-unknown-option|unknown/);
+    const result = state.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      JSON.parse(await readFile(join(state.target, 'Contents/Resources/app/package.json'), 'utf8'))
+        .ottoBuild.source,
+      source,
+    );
+    assert.equal(await readFile(state.profile, 'utf8'), 'keep synthetic keys and conversations');
   } finally {
     await state.close();
   }

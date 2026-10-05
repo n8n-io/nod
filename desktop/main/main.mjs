@@ -692,7 +692,8 @@ function refreshUpdateMenu() {
 }
 
 async function checkForUpdates(manual = true) {
-  if (!updates || quitting || checkingUpdates || (!manual && updates.ready)) return;
+  if (!updates || quitting || (!manual && updates.ready)) return;
+  if (checkingUpdates) return checkingUpdates;
   checkingUpdates = (async () => {
     try {
       const candidate = await updates.check();

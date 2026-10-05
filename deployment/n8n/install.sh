@@ -41,7 +41,7 @@ field() {
 }
 
 download() {
-  curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error \
+  curl -q --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error \
     --location --max-redirs 3 --connect-timeout 20 --max-time 1800 \
     --max-filesize "$3" --output "$2" "$1" || fail 'Download failed. Run the installer again to retry.'
 }

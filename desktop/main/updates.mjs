@@ -286,6 +286,7 @@ export function createDesktopUpdater({
 export function startDesktopUpdateChecks({ check, powerMonitor, interval = 6 * 60 * 60 * 1000 }) {
   let timer;
   let pending = false;
+  let resumePending = false;
   let stopped = false;
   let due = 0;
   const run = async () => {
@@ -297,15 +298,19 @@ export function startDesktopUpdateChecks({ check, powerMonitor, interval = 6 * 6
     } catch {
     } finally {
       pending = false;
-      due = Date.now() + interval;
+      const delay = resumePending ? 0 : interval;
+      resumePending = false;
+      due = Date.now() + delay;
       if (!stopped) {
-        timer = setTimeout(run, interval);
+        timer = setTimeout(run, delay);
         timer.unref?.();
       }
     }
   };
   const resume = () => {
-    if (Date.now() >= due) void run();
+    if (Date.now() < due || stopped) return;
+    if (pending) resumePending = true;
+    else void run();
   };
   powerMonitor.on('resume', resume);
   void run();

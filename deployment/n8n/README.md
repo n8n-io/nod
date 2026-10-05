@@ -25,7 +25,7 @@ After publishing the reviewed installer and broker versions, users can paste thi
 (
   installer="$(mktemp)" || exit
   trap 'rm -f "$installer"' EXIT
-  curl --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
+  curl -q --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
 )
 ```
 

@@ -1854,7 +1854,7 @@ test('first installation resolves its exact published runtime without a newer ap
   }
 });
 
-test('desktop update discovery repeats after failures without overlapping timer and wake checks', async (t) => {
+test('desktop update discovery repeats after failures and clock changes', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000 });
   const powerMonitor = new EventEmitter();
   const pending = deferred();
@@ -1871,7 +1871,6 @@ test('desktop update discovery repeats after failures without overlapping timer 
   t.after(stop);
   assert.equal(attempts, 1);
   t.mock.timers.tick(5_000);
-  powerMonitor.emit('resume');
   assert.equal(attempts, 1);
   pending.resolve();
   await new Promise(setImmediate);
@@ -1879,11 +1878,9 @@ test('desktop update discovery repeats after failures without overlapping timer 
   t.mock.timers.tick(999);
   assert.equal(attempts, 1);
   t.mock.timers.tick(1);
-  powerMonitor.emit('resume');
   assert.equal(attempts, 2);
   await new Promise(setImmediate);
   t.mock.timers.setTime(20_000);
-  powerMonitor.emit('resume');
   powerMonitor.emit('resume');
   assert.equal(attempts, 3);
   await new Promise(setImmediate);
@@ -1898,6 +1895,45 @@ test('desktop update discovery repeats after failures without overlapping timer 
   t.mock.timers.tick(10_000);
   powerMonitor.emit('resume');
   assert.equal(attempts, 5);
+  assert.equal(powerMonitor.listenerCount('resume'), 0);
+});
+
+test('waking during a pending update check queues one check and quit cancels it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000 });
+  const powerMonitor = new EventEmitter();
+  const first = deferred();
+  const last = deferred();
+  let attempts = 0;
+  const stop = startDesktopUpdateChecks({
+    interval: 1_000,
+    powerMonitor,
+    check: async () => {
+      attempts++;
+      if (attempts === 1) await first.promise;
+      if (attempts === 3) await last.promise;
+    },
+  });
+  t.after(stop);
+  t.mock.timers.tick(5_000);
+  powerMonitor.emit('resume');
+  powerMonitor.emit('resume');
+  assert.equal(attempts, 1);
+  first.reject(new Error('Connection lost during sleep'));
+  await new Promise(setImmediate);
+  t.mock.timers.tick(0);
+  assert.equal(attempts, 2);
+  await new Promise(setImmediate);
+  powerMonitor.emit('resume');
+  assert.equal(attempts, 2);
+  t.mock.timers.tick(1_000);
+  powerMonitor.emit('resume');
+  assert.equal(attempts, 3);
+  stop();
+  last.resolve();
+  await new Promise(setImmediate);
+  t.mock.timers.tick(10_000);
+  powerMonitor.emit('resume');
+  assert.equal(attempts, 3);
   assert.equal(powerMonitor.listenerCount('resume'), 0);
 });
 
