@@ -1,8 +1,10 @@
 # Skill library
 
+Otto uses progressive disclosure: metadata at session start, instructions when a skill applies, and references when needed. This follows the [Agent Skills integration guide](https://agentskills.io/client-implementation/adding-skills-support) and [Anthropic loading guidance](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview).
+
 Otto loads task guidance when the model needs it. The system prompt contains the task skill names and descriptions. It also contains the core guides for connected apps, schedules, artifacts and video links. The research guide is now a task skill.
 
-The model selects a guide by the task, constraints and required result. It calls `skills` with `action: "read"` and the skill name. It reads a linked reference only when the guide says that reference applies. It can read the guide again after compaction. `action: "list"` returns names and descriptions.
+The model selects a guide by the task, constraints and required result. The server does not select skills with keyword rules or a second model request. It calls `skills` with `action: "read"` and the skill name. It reads a linked reference only when the guide says that reference applies. It can read the guide again after compaction. `action: "list"` returns names and descriptions.
 
 ## Included guides
 
