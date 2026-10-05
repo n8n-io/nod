@@ -56,6 +56,10 @@ Ports: 4310 local app, 4330 hosted development (`node scripts/start-hosted.mjs`,
 
 Ctrl-C stops the server; `docker compose stop` stops the containers. Data stays in `.local/` and Docker volumes.
 
+## Task skills
+
+Otto has a server skill library for common tasks. The model sees skill names and descriptions, then reads the required guide and references through the `skills` tool. Guides help with task decisions and result checks. They do not add tools or permission. See [skill library](docs/skill-library.md).
+
 ## Checks
 
 ```sh

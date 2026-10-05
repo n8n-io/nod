@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import type { Agent } from '../ports/agent.ts';
@@ -43,10 +44,12 @@ import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService } from './models.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
+import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
+import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
 import { createTenantDrain } from './tenant-drain.ts';
@@ -524,6 +527,10 @@ export async function createApplication(
   const curator = meterMemoryCurator(memoryCurator, providerUsage);
   const runtime = createAgentRuntime({
     agent: meterAgent(adapters.agent, providerUsage),
+    skills: createSkillLibrary(
+      fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
+      coreSkills,
+    ),
     withTool: providerUsage.withTool,
     computer,
     workspace,

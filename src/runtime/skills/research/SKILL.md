@@ -14,3 +14,11 @@ When initial results are weak, vary the query, inspect further result pages and 
 For distance or travel-time requirements, inspect an actual route from the user's stated origin using the requested mode. Check day or departure time when it could change whether an option qualifies; label the condition or ask if it determines the choice. Straight-line distance and a nearby town are not driving-time evidence. If a route cannot be checked, say travel time is unverified.
 
 Deliver the useful result concisely, with source links beside each option and the facts that make it fit. Include a material caveat where it affects that option. Do not claim an exhaustive search or verified condition without evidence. Keep search counts and routine process out of the answer unless the user asks. Concise output must not mean shallow research.
+
+Record a source URL, publication or update date, access date and the claim it supports. Prefer original documents, official specifications, datasets and firsthand reports. Use secondary sources to find original evidence. Several copies of one press release or post count as one source.
+
+Distinguish a person's reported experience, a product claim, a requested capability and a demonstrated result. Promotional or referral-heavy posts can suggest tasks but cannot establish prevalence. Do not infer what most people do from search rank, likes or a selected forum sample.
+
+For comparisons, use the same period, units and conditions. Check whether a price is current, whether a metric has a denominator and whether a percentage is relative or absolute. Preserve uncertainty that can change the decision. A missing source is not evidence that a claim is false.
+
+For a large corpus, survey or task database, read [references/corpus.md](references/corpus.md).

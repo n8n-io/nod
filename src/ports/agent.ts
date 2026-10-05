@@ -190,6 +190,10 @@ export interface AgentTool extends AgentToolMetadata {
   parallel?: boolean;
   execute(args: Record<string, unknown>): Promise<AgentToolResult>;
 }
+export interface SkillLibrary {
+  catalog: Array<{ name: string; description: string }>;
+  read(name: string, file?: string): { name: string; file: string; content: string };
+}
 export type AgentEvent =
   | { type: 'provider_usage'; usage: ProviderUsageEvent }
   | { type: 'turn_start' }

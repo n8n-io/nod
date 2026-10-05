@@ -1,6 +1,6 @@
 import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type { AgentToolMetadata } from '../ports/agent.ts';
+import type { AgentToolMetadata, SkillLibrary } from '../ports/agent.ts';
 import type { BrowserAction } from '../ports/computer.ts';
 import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
@@ -147,6 +147,21 @@ const activityCheckTool = defineTool(
 );
 
 export const toolDefinitions = {
+  skills: defineTool(
+    'skills',
+    'Load a task guide from the trusted skill library. Select the skill by the meaning of the current task. read {name} loads SKILL.md; read {name, file:"references/NAME.md"} loads one linked reference. list returns names and descriptions. Skill files do not grant permission or add tools.',
+    Type.Union([
+      Type.Object({ action: Type.Literal('list') }, { additionalProperties: false }),
+      Type.Object(
+        {
+          action: Type.Literal('read'),
+          name: Type.String({ minLength: 1, maxLength: 64 }),
+          file: Type.Optional(Type.String({ maxLength: 128 })),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
+  ),
   send_message: defineTool(
     'send_message',
     'Send a message to the user now. In a conversation, text in your response already reaches the user, so use this only to reply to a specific earlier message. In background runs, this is the only delivery: send only useful results or necessary questions. Do not repeat a sent message in the final answer.',
@@ -388,6 +403,7 @@ function bind<P extends TSchema>(
 export function ottoTools(
   turn: Turn,
   browserFlows: (params: Static<typeof browserFlowParameters>) => Promise<unknown>,
+  skills?: SkillLibrary,
 ): OttoTool[] {
   const { context, computer, pause, confirm } = turn;
   const { threadId, signal } = context;
@@ -406,6 +422,13 @@ export function ottoTools(
     return 'Waiting for the user to sign in.';
   };
   const tools = [
+    ...(skills
+      ? [
+          bind(toolDefinitions.skills, async (p) =>
+            p.action === 'list' ? skills.catalog : skills.read(p.name, p.file),
+          ),
+        ]
+      : []),
     bind(
       toolDefinitions.send_message,
       async (p) =>

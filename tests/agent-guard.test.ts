@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import type {
   Agent,
@@ -14,6 +15,8 @@ import type {
   RuntimeObservation,
 } from '../src/ports/agent.ts';
 import { requestsPrivateInput } from '../src/runtime/communication.ts';
+import { createSkillLibrary } from '../src/providers/pi/skills.ts';
+import { coreSkills } from '../src/runtime/prompt.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { inlineAppResult } from '../src/server/integration-result.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
@@ -84,6 +87,10 @@ async function fixture(
   };
   const runtime = createAgentRuntime({
     agent,
+    skills: createSkillLibrary(
+      fileURLToPath(new URL('../src/runtime/skills/', import.meta.url)),
+      coreSkills,
+    ),
     computer: fakeComputer({
       currentPage: async () => ({
         origin: 'https://example.com',
@@ -234,6 +241,97 @@ test('verification email codes stay out of app tool results, observations and wo
     { name: 'From', value: 'security@example.test' },
     { name: 'To', value: 'owner@example.test' },
   ]);
+});
+
+test('skill reads cannot escape the trusted library or load workspace instructions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-skills-'));
+  const root = join(directory, 'trusted');
+  const base = join(root, 'fixture');
+  const outside = join(directory, 'private.md');
+  try {
+    await mkdir(join(base, 'references'), { recursive: true });
+    await writeFile(outside, 'Private fixture data');
+    await writeFile(
+      join(base, 'SKILL.md'),
+      '---\nname: fixture\ndescription: Read a synthetic task guide.\n---\nFixture guide',
+    );
+    await writeFile(join(base, 'references', 'checked.md'), 'Checked fixture reference');
+    await symlink(outside, join(base, 'references', 'outside.md'));
+    await symlink(directory, join(root, 'untrusted'));
+    const implicit = join(root, '.pi', 'skills', 'implicit');
+    await mkdir(implicit, { recursive: true });
+    await writeFile(
+      join(implicit, 'SKILL.md'),
+      '---\nname: implicit\ndescription: Untrusted local instructions.\n---\nUntrusted guide',
+    );
+    const escaped = join(root, 'escaped');
+    await mkdir(escaped);
+    await symlink(outside, join(escaped, 'SKILL.md'));
+    assert.throws(() => createSkillLibrary(root));
+    await rm(escaped, { recursive: true });
+    const library = createSkillLibrary(root);
+    assert.equal(library.catalog.length, 1);
+    assert.match(library.read('fixture').content, /Fixture guide/);
+    assert.equal(
+      library.read('fixture', 'references/checked.md').content,
+      'Checked fixture reference',
+    );
+    for (const file of ['../private.md', outside, 'references/outside.md'])
+      assert.throws(() => library.read('fixture', file));
+    assert.throws(() => library.read('../private'));
+    assert.throws(() => library.read('untrusted'));
+    assert.throws(() => library.read('implicit'));
+    await writeFile(join(base, 'references', 'large.md'), 'x'.repeat(64 * 1024 + 1));
+    assert.throws(() => library.read('fixture', 'references/large.md'));
+    await mkdir(join(base, 'references', 'directory.md'));
+    assert.throws(() => library.read('fixture', 'references/directory.md'));
+    await writeFile(
+      join(base, 'SKILL.md'),
+      '---\nname: different\ndescription: A mismatched task guide.\n---\nFixture guide',
+    );
+    assert.throws(() => createSkillLibrary(root));
+    await rm(join(base, 'SKILL.md'));
+    await symlink(outside, join(base, 'SKILL.md'));
+    assert.throws(() => library.read('fixture'));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a read-only turn can load a trusted skill without changing workspace or memory trust', async () => {
+  let marked = false;
+  let writes = 0;
+  const output = await fixture(
+    async (tools) => {
+      const result = await call(tools, 'skills', { action: 'read', name: 'shopping' });
+      const text = result.content.find((item) => item.type === 'text');
+      assert.ok(text && text.type === 'text');
+      const guide = JSON.parse(text.text);
+      assert.equal(guide.name, 'shopping');
+      assert.ok(guide.content.length > 0);
+    },
+    {
+      readOnly: true,
+      markUntrustedContext: async () => {
+        marked = true;
+      },
+    },
+    {
+      workspace: fakeWorkspace({
+        open: () => ({
+          path: '/fixture/workspace',
+          instructions: 'Fixture workspace only.',
+          exec: async () => {
+            writes += 1;
+            return { exitCode: 0 };
+          },
+        }),
+      }),
+    },
+  );
+  assert.equal(output.result.status, 'succeeded');
+  assert.equal(marked, false);
+  assert.equal(writes, 0);
 });
 
 test('saved memory reaches Pi but stays out of inspector records', async () => {

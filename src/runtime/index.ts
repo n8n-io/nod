@@ -11,6 +11,7 @@ import type {
   PromptSnapshot,
   RuntimeContext,
   RuntimeResult,
+  SkillLibrary,
 } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
@@ -29,6 +30,7 @@ const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
 const parallelTools = new Set(['share_file', 'create_audio']);
 const trustedResultTools = new Set([
+  'skills',
   'send_message',
   'ask_user',
   'react_to_message',
@@ -37,6 +39,7 @@ const trustedResultTools = new Set([
   'create_audio',
 ]);
 const readOnlyTools: Record<string, true | string[]> = {
+  skills: true,
   read: true,
   find: true,
   ls: true,
@@ -141,6 +144,7 @@ export function createAgentRuntime(dependencies: {
   agent: Agent;
   computer: Computer;
   workspace: Workspace;
+  skills?: SkillLibrary;
   observationTimeoutMs?: number;
   withTool?<T>(turnId: string, toolCallId: string, toolName: string, action: () => T): T;
   redactError?(text: string): string;
@@ -491,21 +495,23 @@ export function createAgentRuntime(dependencies: {
         pause,
         confirm,
       };
-      const tools = ottoTools(turn, createBrowserFlows(workspace, computer, threadId, signal)).map(
-        ({ name, description, parameters, execute }): AgentTool => ({
-          name,
-          description,
-          parameters,
-          parallel: parallelTools.has(name),
-          execute: (params) =>
-            guard(name, params, async () => {
-              if (!Value.Check(parameters, params))
-                throw new Error('The tool arguments do not match its schema.');
-              return execute(params);
-            }),
-        }),
-      );
-      const system = systemPrompt(workspace);
+      const tools = ottoTools(
+        turn,
+        createBrowserFlows(workspace, computer, threadId, signal),
+        dependencies.skills,
+      ).map(({ name, description, parameters, execute }): AgentTool => ({
+        name,
+        description,
+        parameters,
+        parallel: parallelTools.has(name),
+        execute: (params) =>
+          guard(name, params, async () => {
+            if (!Value.Check(parameters, params))
+              throw new Error('The tool arguments do not match its schema.');
+            return execute(params);
+          }),
+      }));
+      const system = systemPrompt(workspace, dependencies.skills);
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
       const instruct = (
         instruction: string,
