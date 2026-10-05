@@ -38,7 +38,7 @@ Private releases use the configured n8n download service for automatic first-run
 
 ## Private-alpha installation and recovery
 
-Testers need an Apple Silicon Mac and their own supported provider API key. Share the published DMG asset through the n8n download service. Copy Otto to Applications before opening it. Follow macOS's Open Anyway and Keychain prompts if shown; managed Macs may require IT approval. Onboarding downloads and verifies the matching runtime automatically. First provisioning needs an internet connection.
+Testers need an Apple Silicon Mac and a supported provider API key or ChatGPT plan. Share the published DMG asset through the n8n download service. Copy Otto to Applications before opening it. Follow macOS's Open Anyway and Keychain prompts if shown; managed Macs may require IT approval. Onboarding downloads and verifies the matching runtime automatically. First provisioning needs an internet connection.
 
 Installation checks available storage against the runtime's extracted file sizes plus 512 MiB of working headroom. Automatic downloads also reserve the archive size, then check space again before extraction. Importing an archive already on disk does not reserve a second copy. The error reports the additional free space needed; free space and retry with the same matching pack. Otto keeps existing caches, conversations and settings. This check covers runtime installation, not the computer's later working storage. Minimum RAM, total working disk space and macOS 14 hardware acceptance remain unmeasured; the VM currently reserves 3–6 GiB RAM and a 24 GiB virtual disk that grows as used.
 

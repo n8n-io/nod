@@ -1,5 +1,15 @@
 import { constants } from 'node:fs';
-import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  cp,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { packager } from '@electron/packager';
@@ -72,7 +82,7 @@ if (updateSourceUrl) {
   if (!URL.canParse(updateSourceUrl))
     throw new Error('The desktop update source must be a credential-free HTTPS URL.');
   const url = new URL(updateSourceUrl);
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+  if (url.protocol !== 'https:' || url.username || url.password || /[?#]/.test(updateSourceUrl))
     throw new Error('The desktop update source must be a credential-free HTTPS URL.');
 }
 const electronVersion = configuration.devDependencies.electron;
@@ -236,8 +246,10 @@ if (signing) {
 }
 await verifyApplicationRuntime(application, electronVersion);
 console.log(`Application ready: ${application}`);
+for (const entry of await readdir(output, { withFileTypes: true }))
+  if (entry.isFile() && /\.(?:dmg|zip)(?:\.sha256)?$/.test(entry.name))
+    await rm(join(output, entry.name));
 const updateArchive = join(output, full ? 'Otto-full-arm64.zip' : 'Otto-arm64.zip');
-await rm(updateArchive, { force: true });
 await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, updateArchive], {
   timeout: 10 * 60_000,
 });
@@ -254,7 +266,6 @@ await mkdir(diskStage, { recursive: true });
 await run('/bin/cp', ['-cR', application, join(diskStage, `${configuration.productName}.app`)]);
 await run('/bin/ln', ['-s', '/Applications', join(diskStage, 'Applications')]);
 const diskImage = join(output, full ? 'Otto-full-arm64.dmg' : 'Otto-arm64.dmg');
-await rm(diskImage, { force: true });
 await run(
   '/usr/bin/hdiutil',
   [

@@ -649,6 +649,8 @@ test('app publication binds its delivery source and renamed installer to verifie
     'https://user:password@releases.example.invalid/otto',
     'https://releases.example.invalid/otto?token=synthetic',
     'https://releases.example.invalid/otto#fragment',
+    'https://releases.example.invalid/otto?',
+    'https://releases.example.invalid/otto#',
   ]) {
     const invalid = await releaseFixture(t, { updateSourceUrl: source });
     await assert.rejects(invalid.invoke('draft'), /credential-free HTTPS/);

@@ -2421,19 +2421,20 @@ function requestedChatState(): AppState {
   };
 }
 
-test('missing-key setup opens native Providers and can retry a rejected settings request', async () => {
+test('missing-key setup opens the shared Models settings', async () => {
   const requests: string[] = [];
   const view = await handoffView(async () => {
     throw new Error('Unexpected setup network request.');
   }, createElement('div'));
   Object.assign(view.dom.window, {
     ottoDesktop: {
-      openSettings: async (section: string) => {
-        requests.push(section);
-        if (requests.length === 1) throw new Error('Synthetic settings rejection.');
+      getSettings: async () => {
+        throw new Error('Unexpected native settings request.');
       },
     },
   });
+  const receive = (event: Event) => requests.push((event as CustomEvent<string>).detail);
+  view.dom.window.addEventListener('otto:open-settings', receive);
   const notice = (integrationsReady: boolean) =>
     createElement(SetupNotice, {
       configuration: { ...requestedChatState().configuration, integrationsReady },
@@ -2441,15 +2442,14 @@ test('missing-key setup opens native Providers and can retry a rejected settings
   try {
     await view.render(notice(false));
     await act(async () => view.element<HTMLButtonElement>('button').click());
-    assert.deepEqual(requests, ['providers']);
-    assert.ok(view.element('[role="alert"]'));
+    assert.deepEqual(requests, ['models']);
     await act(async () => view.element<HTMLButtonElement>('button').click());
-    assert.deepEqual(requests, ['providers', 'providers']);
-    assert.equal(view.dom.window.document.querySelector('[role="alert"]'), null);
+    assert.deepEqual(requests, ['models', 'models']);
     await view.render(notice(true));
     assert.equal(view.dom.window.document.querySelector('button'), null);
-    assert.deepEqual(requests, ['providers', 'providers']);
+    assert.deepEqual(requests, ['models', 'models']);
   } finally {
+    view.dom.window.removeEventListener('otto:open-settings', receive);
     await view.close();
   }
 });

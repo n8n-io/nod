@@ -20,8 +20,7 @@ import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createSettingsStore, secretFields } from './settings.mjs';
-import { validateProviderKey } from './validate-provider.mjs';
+import { createSettingsStore } from './settings.mjs';
 import {
   assistantNotificationPreview,
   createReadinessNotice,
@@ -50,24 +49,20 @@ if (developmentDataRoot && !isAbsolute(developmentDataRoot))
   throw new Error('The development profile path must be absolute.');
 app.setPath('userData', developmentDataRoot || join(app.getPath('appData'), 'Otto'));
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
-const settings = createSettingsStore(
-  join(profileRoot, 'settings.json'),
-  safeStorage,
-  validateProviderKey,
-);
+const settings = createSettingsStore(join(profileRoot, 'settings.json'), safeStorage);
 let setupWindow;
 let engineWindow;
 let engine;
 let enginePreferencesReady = false;
 let preparing;
 let onboardingCompleted = false;
-let providerConfigured = false;
 let guidedStartup = false;
 let quitting = false;
 let installingUpdate = false;
 let updateSource;
 let updates;
 let checkingUpdates;
+let updatePhase = 'idle';
 let checkedUpdatesAtStartup = false;
 let closingEngine = false;
 let tray;
@@ -84,7 +79,7 @@ let status = {
   platform: process.platform,
   unlockingKeys: false,
   phase: 'idle',
-  message: 'Add your provider key to start Otto.',
+  message: 'Set up Otto on your computer.',
   restartRequired: false,
   runtime: {
     phase: 'idle',
@@ -178,7 +173,7 @@ function updateReadinessNotice() {
     enabled: preferences.notifications,
     foreground: foregroundWindow(),
     quitting,
-    completed: onboardingCompleted && providerConfigured && !replayingOnboarding,
+    completed: onboardingCompleted && !replayingOnboarding,
     engineReady: Boolean(engine) && status.phase === 'ready',
   });
 }
@@ -212,6 +207,10 @@ function publicPreferences() {
     ...preferences,
     resolvedTheme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
   };
+}
+
+async function readDesktopSettings() {
+  return { ...(await settings.get()), ...publicPreferences(), restartRequired };
 }
 
 function publishPreferences() {
@@ -418,25 +417,34 @@ function showSettings(section = 'general', _mode, reset = false) {
   if (quitting) return;
   const mode = desktopSetupMode({
     completed: onboardingCompleted,
-    providerConfigured,
     replaying: replayingOnboarding,
     running: Boolean(engine) && status.phase === 'ready',
   });
-  const guided = mode !== 'settings';
+  if (mode === 'settings') {
+    showEngine();
+    const window = engineWindow;
+    if (!window || window.isDestroyed()) return;
+    const open = () => {
+      if (!window.isDestroyed()) window.webContents.send('otto:settings:focus', section);
+    };
+    if (window.webContents.isLoadingMainFrame()) window.webContents.once('did-finish-load', open);
+    else open();
+    return;
+  }
   const changedMode = setupNavigation.mode !== mode;
   setupNavigation = { section, mode, reset };
   if (setupWindow && !setupWindow.isDestroyed()) {
-    if (changedMode) setupWindow.setSize(guided ? 620 : 760, guided ? 640 : 650);
+    if (changedMode) setupWindow.setSize(600, 540);
     setupWindow.webContents.send('otto:navigate', setupNavigation);
     setupWindow.show();
     setupWindow.focus();
     return;
   }
   setupWindow = new BrowserWindow({
-    width: guided ? 620 : 760,
-    height: guided ? 640 : 650,
-    minWidth: 600,
-    minHeight: 600,
+    width: 600,
+    height: 540,
+    minWidth: 520,
+    minHeight: 500,
     title: 'Otto',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1b21' : '#fdfcfe',
     titleBarStyle: 'hiddenInset',
@@ -457,13 +465,7 @@ function showSettings(section = 'general', _mode, reset = false) {
 
 function showEngine() {
   if (quitting) return;
-  if (
-    !onboardingCompleted ||
-    !providerConfigured ||
-    replayingOnboarding ||
-    !engineOrigin ||
-    status.phase !== 'ready'
-  ) {
+  if (!onboardingCompleted || replayingOnboarding || !engineOrigin || status.phase !== 'ready') {
     showSettings(setupNavigation.section, setupNavigation.mode);
     return;
   }
@@ -593,6 +595,36 @@ async function finishEnginePreparation() {
   return status;
 }
 
+function refreshUpdateMenu() {
+  if (quitting) return;
+  const label = updates?.ready
+    ? `Restart to update to ${updates.ready.version}…`
+    : {
+        checking: 'Checking for updates…',
+        preparing: 'Preparing update…',
+        downloading: 'Downloading update…',
+      }[updatePhase] || 'Check for Updates…';
+  const item = Menu.getApplicationMenu?.()?.getMenuItemById('desktop-update');
+  if (item) {
+    item.label = label;
+    item.enabled = Boolean(updates) && !checkingUpdates;
+  }
+  if (tray)
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: 'Open Otto', click: showEngine },
+        { label: 'Settings…', click: () => showSettings() },
+        {
+          label,
+          enabled: Boolean(updates) && !checkingUpdates,
+          click: () => void checkForUpdates(),
+        },
+        { type: 'separator' },
+        { label: 'Quit Otto', click: () => app.quit() },
+      ]),
+    );
+}
+
 async function checkForUpdates(manual = true) {
   if (!updates || quitting || checkingUpdates) return;
   checkingUpdates = (async () => {
@@ -627,7 +659,9 @@ async function checkForUpdates(manual = true) {
     }
   })().finally(() => {
     checkingUpdates = undefined;
+    refreshUpdateMenu();
   });
+  refreshUpdateMenu();
   return checkingUpdates;
 }
 
@@ -727,13 +761,9 @@ async function validateStart() {
   if (quitting) throw new Error('Otto is closing.');
   if (!selected.onboardingCompleted)
     throw new Error('Choose your preferences to finish setting up Otto.');
-  if (!(selected.provider === 'openai' ? selected.hasOpenAIKey : selected.hasAnthropicKey))
-    throw new Error(
-      `Add your ${selected.provider === 'openai' ? 'OpenAI' : 'Anthropic'} key first.`,
-    );
 }
 
-async function startEngine({ runtime, signal }) {
+async function startEngine({ runtime, signal, validateStop }) {
   if (engine && !restartRequired && enginePreferencesReady) return finishEnginePreparation();
   if (engine) {
     const current = await engineRequest('/api/desktop/status');
@@ -757,13 +787,16 @@ async function startEngine({ runtime, signal }) {
       });
       if (!response.ok || !(await response.json()).drained)
         throw new Error('Otto is still finishing work. Try again shortly.');
+      validateStop?.();
     } catch {
       await engineRequest('/api/runtime/resume', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(transition),
       }).catch(() => {});
-      throw new Error('Otto is still finishing work. Try again shortly.');
+      throw Object.assign(new Error('Otto is still finishing work. Try again shortly.'), {
+        code: 'OTTO_RESTART_DEFERRED',
+      });
     }
     await stopEngine();
   }
@@ -778,7 +811,7 @@ async function startEngine({ runtime, signal }) {
   if (quitting || signal.aborted) throw new Error('Otto is closing.');
   const providerEnvironment = await settings.environment();
   appliedRevision = await settings.revision();
-  for (const field of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'COMPOSIO_API_KEY', 'OTTO_VAULT_KEY'])
+  for (const field of ['COMPOSIO_API_KEY', 'OTTO_VAULT_KEY'])
     if (providerEnvironment[field]) knownSecrets.add(providerEnvironment[field]);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
   const environment = {
@@ -867,7 +900,7 @@ async function startEngine({ runtime, signal }) {
   return finishEnginePreparation();
 }
 
-async function prepare(options = {}) {
+async function prepare(options = {}, validateStop) {
   if (preparing) return preparing;
   update({
     phase: 'preparing',
@@ -876,7 +909,7 @@ async function prepare(options = {}) {
     needsRuntimeArchive: false,
   });
   preparing = lifecycle
-    .start({ retry: options?.retry === true })
+    .start({ retry: options?.retry === true, validateStop })
     .catch((error) => {
       void writeDiagnostic(error.message).catch(() => {});
       const deferred =
@@ -910,14 +943,8 @@ async function importSettings() {
   const values = require('dotenv').parse(buffer);
   buffer.fill(0);
   const input = {};
-  for (const [field, name] of [
-    ['openaiApiKey', 'OPENAI_API_KEY'],
-    ['anthropicApiKey', 'ANTHROPIC_API_KEY'],
-    ['composioApiKey', 'COMPOSIO_API_KEY'],
-  ])
+  for (const [field, name] of [['composioApiKey', 'COMPOSIO_API_KEY']])
     if (values[name]) input[field] = values[name];
-  if (['openai', 'anthropic'].includes(values.LLM_PROVIDER)) input.provider = values.LLM_PROVIDER;
-  if (values.LLM_MODEL) input.model = values.LLM_MODEL;
   await settings.save(input, values);
 }
 
@@ -932,7 +959,7 @@ async function warmRuntime(options = {}) {
 
 function replayOnboarding() {
   replayingOnboarding = true;
-  showSettings('providers', 'onboarding', true);
+  showSettings('general', 'onboarding', true);
   return status;
 }
 
@@ -1013,6 +1040,10 @@ else {
             });
           },
           restart: restartForUpdate,
+          onStatus: (phase) => {
+            updatePhase = phase;
+            refreshUpdateMenu();
+          },
         });
       }
       nativeTheme.on('updated', publishPreferences);
@@ -1043,14 +1074,6 @@ else {
       const image = nativeImage.createFromPath(join(desktopRoot, 'main', 'trayTemplate.png'));
       image.setTemplateImage(true);
       tray = new Tray(image);
-      tray.setContextMenu(
-        Menu.buildFromTemplate([
-          { label: 'Open Otto', click: showEngine },
-          { label: 'Settings…', click: () => showSettings() },
-          { type: 'separator' },
-          { label: 'Quit Otto', click: () => app.quit() },
-        ]),
-      );
       if (process.platform !== 'darwin') tray.on('click', showEngine);
       Menu.setApplicationMenu(
         Menu.buildFromTemplate([
@@ -1060,6 +1083,7 @@ else {
               { role: 'about' },
               { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showSettings() },
               {
+                id: 'desktop-update',
                 label: 'Check for Updates…',
                 enabled: Boolean(updates),
                 click: () => void checkForUpdates(),
@@ -1081,16 +1105,18 @@ else {
           { role: 'windowMenu' },
         ]),
       );
+      refreshUpdateMenu();
       ipcMain.handle('otto:status', (event) => {
         allowSetup(event);
         return status;
       });
       ipcMain.handle('otto:settings:get', (event) => {
-        allowSetup(event);
-        return settings.get();
+        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        return readDesktopSettings();
       });
       ipcMain.handle('otto:settings:reveal', (event, field) => {
-        allowSetup(event);
+        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        if (field !== 'composioApiKey') throw new Error('Choose a supported key.');
         return settings.revealKey(field);
       });
       ipcMain.handle('otto:build-info', async (event) => {
@@ -1118,13 +1144,17 @@ else {
         return publicPreferences();
       });
       ipcMain.handle('otto:settings:save', async (event, value) => {
-        allowSetup(event);
-        const changesProvider =
-          value &&
-          ['provider', 'model', 'clearKeys', ...secretFields].some((field) =>
-            Object.hasOwn(value, field),
-          );
-        if ((lifecycle.engineStarting && changesProvider) || quitting)
+        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
+        const allowed = ['theme', 'notifications', 'launchAtLogin', 'composioApiKey'];
+        if (isSetup(event)) allowed.push('onboardingCompleted');
+        if (
+          !value ||
+          typeof value !== 'object' ||
+          Array.isArray(value) ||
+          Object.keys(value).some((field) => !allowed.includes(field))
+        )
+          throw new Error('These settings are not supported.');
+        if ((lifecycle.engineStarting && Object.hasOwn(value, 'composioApiKey')) || quitting)
           throw new Error('Wait for Otto to finish starting before changing settings.');
         const loginChanged = typeof value.launchAtLogin === 'boolean';
         const previousLogin = loginChanged ? app.getLoginItemSettings().openAtLogin : undefined;
@@ -1141,15 +1171,42 @@ else {
           throw error;
         }
         onboardingCompleted = saved.onboardingCompleted;
-        providerConfigured =
-          saved.provider === 'openai' ? saved.hasOpenAIKey : saved.hasAnthropicKey;
         applyPreferences(saved);
         restartRequired = Boolean(engine) && (await settings.revision()) !== appliedRevision;
         if (!['preparing', 'starting', 'error'].includes(status.phase))
           update({
-            message: restartRequired ? 'Settings saved. Restart Otto to apply them.' : 'Saved.',
+            message: restartRequired ? 'Restart Otto to apply your app connection key.' : 'Ready.',
           });
-        return saved;
+        return readDesktopSettings();
+      });
+      ipcMain.handle('otto:settings:apply', async (event) => {
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
+        if (quitting || lifecycle.busy) throw new Error('Wait for Otto to finish starting.');
+        if (!restartRequired) return;
+        const windows = [...engineWindows].filter((window) => !window.isDestroyed());
+        const release = await guardUpdateRenderers({ windows, ipc: ipcMain, trusted: isEngine });
+        try {
+          update({ phase: 'preparing', message: 'Applying your app connection key.' });
+          showSettings();
+          const result = await prepare({}, () => {
+            release.validate();
+            if (
+              [...engineWindows].some(
+                (window) => !window.isDestroyed() && !windows.includes(window),
+              )
+            )
+              throw new Error('Close the new window before restarting Otto.');
+          });
+          if (result.error) {
+            if (result.phase === 'ready') {
+              setupWindow?.destroy();
+              showEngine();
+            }
+            throw new Error(result.error);
+          }
+        } finally {
+          release();
+        }
       });
       ipcMain.handle('otto:prepare', (event, options) => {
         allowSetup(event);
@@ -1168,15 +1225,6 @@ else {
         allowSetup(event);
         return importRuntime();
       });
-      ipcMain.handle('otto:app-preferences:get', (event) => {
-        allowSetup(event);
-        return appPreferences.get();
-      });
-      ipcMain.handle('otto:app-preferences:save', (event, patch) => {
-        allowSetup(event);
-        if (quitting) throw new Error('Otto is closing.');
-        return appPreferences.save(patch);
-      });
       ipcMain.handle('otto:chat-read:get', (event, ownerId, threadId) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return chatReadCursors.get(ownerId, threadId);
@@ -1192,7 +1240,7 @@ else {
       });
       ipcMain.handle('otto:settings:open', (event, section = 'general') => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
-        if (!['general', 'providers', 'preferences'].includes(section))
+        if (!['general', 'models', 'preferences'].includes(section))
           throw new Error('Choose a settings section.');
         showSettings(section);
       });
@@ -1204,22 +1252,14 @@ else {
         await importSettings();
         const saved = await settings.get();
         onboardingCompleted = saved.onboardingCompleted;
-        providerConfigured =
-          saved.provider === 'openai' ? saved.hasOpenAIKey : saved.hasAnthropicKey;
         applyPreferences(saved);
-        if (!providerConfigured) replayingOnboarding = true;
         const onboarding = replayingOnboarding || !saved.onboardingCompleted;
         guidedStartup = onboarding;
-        showSettings(onboarding ? 'providers' : 'general', onboarding ? 'onboarding' : 'settings');
+        showSettings('general', onboarding ? 'onboarding' : 'settings');
         void warmRuntime();
-        if (
-          !replayingOnboarding &&
-          saved.onboardingCompleted &&
-          (saved.provider === 'openai' ? saved.hasOpenAIKey : saved.hasAnthropicKey)
-        )
-          void prepare();
+        if (!replayingOnboarding && saved.onboardingCompleted) void prepare();
       } catch (error) {
-        showSettings('providers', 'onboarding');
+        showSettings('general', 'onboarding');
         update({ phase: 'error', message: bounded(error.message), error: bounded(error.message) });
       }
     })

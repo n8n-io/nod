@@ -30,8 +30,9 @@ import { resolveBrowserRegion, setDateFormat } from './lib/date-format';
 import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
 import {
   desktopSettingsAvailable,
-  openDesktopSettings,
+  onPrepareDesktopUpdate,
   subscribeDesktopFocusMessage,
+  subscribeDesktopSettings,
 } from './lib/desktop';
 
 function navigate(path: string) {
@@ -106,8 +107,13 @@ function Workspace({
   };
   const [inspectionFocus, setInspectionFocus] = useState<{ messageId: string; turnId: string }>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsRequest, setSettingsRequest] = useState(0);
   const [settingsTab, setSettingsTab] = useState<AccountTab>(
-    session.auth.mode === 'local' ? 'Appearance' : 'Profile',
+    desktopSettingsAvailable()
+      ? 'General'
+      : session.auth.mode === 'local'
+        ? 'Appearance'
+        : 'Profile',
   );
   const [settingsError, setSettingsError] = useState('');
   const settingsTrigger = useRef<HTMLElement | null>(null);
@@ -126,17 +132,43 @@ function Workspace({
       );
   }, [notificationTarget, state]);
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
-    if (tab !== 'Models' && desktopSettingsAvailable()) {
-      setSettingsError('');
-      void openDesktopSettings().catch(() =>
-        setSettingsError('Settings could not be opened. Try again.'),
-      );
-      return;
-    }
+    setSettingsError('');
+    setSettingsRequest((current) => current + 1);
     settingsTrigger.current = trigger ?? (document.activeElement as HTMLElement);
-    setSettingsTab(tab === 'Profile' && session.auth.mode === 'local' ? 'Appearance' : tab);
+    setSettingsTab(
+      desktopSettingsAvailable() && (tab === 'Appearance' || tab === 'Profile')
+        ? 'General'
+        : tab === 'Profile' && session.auth.mode === 'local'
+          ? 'Appearance'
+          : tab,
+    );
     setSettingsOpen(true);
   };
+  useEffect(
+    () =>
+      subscribeDesktopSettings((section) =>
+        openSettings(
+          section === 'models' ? 'Models' : section === 'preferences' ? 'Preferences' : 'General',
+        ),
+      ),
+    [session.auth.mode],
+  );
+  useEffect(() => {
+    const apply = () => {
+      setSettingsError('');
+      setSettingsOpen(false);
+    };
+    const failed = (event: Event) => {
+      const message = (event as CustomEvent<unknown>).detail;
+      if (typeof message === 'string') setSettingsError(message);
+    };
+    window.addEventListener('otto:apply-settings', apply);
+    window.addEventListener('otto:settings-error', failed);
+    return () => {
+      window.removeEventListener('otto:apply-settings', apply);
+      window.removeEventListener('otto:settings-error', failed);
+    };
+  }, []);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       const modifier = /Mac|iPhone|iPad/.test(navigator.platform) ? event.metaKey : event.ctrlKey;
@@ -330,6 +362,7 @@ function Workspace({
         account={account}
         open={settingsOpen}
         initialTab={settingsTab}
+        openRequest={settingsRequest}
         onOpenChange={setSettingsOpen}
         onName={(name) => onAccountUpdate({ name })}
         returnFocus={() =>
@@ -461,6 +494,17 @@ export function App() {
     window.addEventListener('popstate', update);
     return () => window.removeEventListener('popstate', update);
   }, []);
+  useEffect(
+    () =>
+      onPrepareDesktopUpdate(
+        () =>
+          !/^\/(?:browser|vault\/[^/]+|credentials\/[^/]+)\/?$/.test(window.location.pathname) &&
+          !document.querySelector(
+            '[role="dialog"], [role="alertdialog"], dialog[open], [data-desktop-settings-pending="true"]',
+          ),
+      ),
+    [],
+  );
   return (
     <>
       {desktopSettingsAvailable() && <div className="desktop-titlebar" aria-hidden="true" />}

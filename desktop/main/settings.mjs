@@ -1,9 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { availableModels, modelCatalog, selectedModel } from './models.mjs';
 
-export const secretFields = ['openaiApiKey', 'anthropicApiKey', 'composioApiKey'];
+export const secretFields = ['composioApiKey'];
 const integrationKeys = [
   'COMPOSIO_GMAIL_AUTH_CONFIG_ID',
   'COMPOSIO_CALENDAR_AUTH_CONFIG_ID',
@@ -15,7 +14,7 @@ const integrationKeys = [
 ];
 const preferenceFields = ['launchAtLogin', 'notifications', 'onboardingCompleted'];
 
-export function createSettingsStore(path, encryption, validate = async () => {}) {
+export function createSettingsStore(path, encryption) {
   let current;
   let loading;
   let writing = Promise.resolve();
@@ -34,31 +33,52 @@ export function createSettingsStore(path, encryption, validate = async () => {})
       let value;
       try {
         value = JSON.parse(await readFile(path, 'utf8'));
+        const record = (input) => input && typeof input === 'object' && !Array.isArray(input);
         if (
-          ![1, 2].includes(value.version) ||
-          !['openai', 'anthropic'].includes(value.provider) ||
-          !value.secrets ||
-          typeof value.secrets !== 'object' ||
-          Array.isArray(value.secrets)
+          !record(value) ||
+          value.version !== 1 ||
+          Object.keys(value).some(
+            (field) =>
+              !['version', 'theme', ...preferenceFields, 'secrets', 'keyMetadata'].includes(field),
+          ) ||
+          !['system', 'light', 'dark'].includes(value.theme) ||
+          preferenceFields.some((field) => typeof value[field] !== 'boolean') ||
+          !record(value.secrets) ||
+          Object.entries(value.secrets).some(
+            ([field, secret]) =>
+              ![...secretFields, 'vaultKey', 'integrationConfiguration'].includes(field) ||
+              typeof secret !== 'string' ||
+              !secret,
+          ) ||
+          !record(value.keyMetadata) ||
+          Object.entries(value.keyMetadata).some(
+            ([field, metadata]) =>
+              !secretFields.includes(field) ||
+              !value.secrets[field] ||
+              !record(metadata) ||
+              Object.keys(metadata).some(
+                (name) => !['suffix', 'source', 'updatedAt'].includes(name),
+              ) ||
+              (metadata.suffix !== null &&
+                (typeof metadata.suffix !== 'string' || metadata.suffix.length !== 4)) ||
+              !['manual', 'import'].includes(metadata.source) ||
+              typeof metadata.updatedAt !== 'string',
+          ) ||
+          secretFields.some((field) => value.secrets[field] && !value.keyMetadata[field])
         )
           throw new Error();
       } catch (error) {
         if (error.code !== 'ENOENT') throw new Error('Otto could not open its saved settings.');
       }
-      const migrated = {
-        ...value,
-        version: 2,
-        provider: value?.provider || 'openai',
-        model: value?.model || '',
-        theme: ['system', 'light', 'dark'].includes(value?.theme) ? value.theme : 'system',
-        launchAtLogin: value?.launchAtLogin === true,
-        notifications: value?.notifications === true,
-        onboardingCompleted: value?.version === 1 || value?.onboardingCompleted === true,
-        secrets: value?.secrets || {},
-        keyMetadata: value?.keyMetadata || {},
+      current = value ?? {
+        version: 1,
+        theme: 'system',
+        launchAtLogin: false,
+        notifications: false,
+        onboardingCompleted: false,
+        secrets: {},
+        keyMetadata: {},
       };
-      if (value?.version === 1) await write(migrated);
-      else current = migrated;
       return current;
     })();
     try {
@@ -89,16 +109,11 @@ export function createSettingsStore(path, encryption, validate = async () => {})
   }
   function redacted(value) {
     return {
-      provider: value.provider,
-      model: selectedModel(value),
-      hasOpenAIKey: Boolean(value.secrets.openaiApiKey),
-      hasAnthropicKey: Boolean(value.secrets.anthropicApiKey),
       hasComposioKey: Boolean(value.secrets.composioApiKey),
       launchAtLogin: value.launchAtLogin,
       notifications: value.notifications,
       theme: value.theme,
       onboardingCompleted: value.onboardingCompleted,
-      models: availableModels(value),
       keys: Object.fromEntries(
         secretFields.map((field) => {
           const metadata = value.keyMetadata[field];
@@ -106,15 +121,9 @@ export function createSettingsStore(path, encryption, validate = async () => {})
           return [
             field,
             {
-              suffix:
-                present && typeof metadata?.suffix === 'string' ? metadata.suffix.slice(-4) : null,
-              source: present
-                ? ['manual', 'import'].includes(metadata?.source)
-                  ? metadata.source
-                  : 'saved'
-                : null,
-              updatedAt:
-                present && typeof metadata?.updatedAt === 'string' ? metadata.updatedAt : null,
+              suffix: present ? metadata.suffix : null,
+              source: present ? metadata.source : null,
+              updatedAt: present ? metadata.updatedAt : null,
             },
           ];
         }),
@@ -131,7 +140,7 @@ export function createSettingsStore(path, encryption, validate = async () => {})
       return engineRevision;
     },
     async revealKey(field) {
-      if (!secretFields.includes(field)) throw new Error('Choose a supported provider key.');
+      if (!secretFields.includes(field)) throw new Error('Choose a supported app connection key.');
       await writing;
       return reveal((await read()).secrets[field]);
     },
@@ -141,15 +150,7 @@ export function createSettingsStore(path, encryption, validate = async () => {})
           throw new Error('Check your settings and try again.');
         if (
           Object.keys(input).some(
-            (key) =>
-              ![
-                'provider',
-                'model',
-                'theme',
-                'clearKeys',
-                ...preferenceFields,
-                ...secretFields,
-              ].includes(key),
+            (key) => !['theme', 'clearKeys', ...preferenceFields, ...secretFields].includes(key),
           )
         )
           throw new Error('These settings are not supported.');
@@ -159,26 +160,6 @@ export function createSettingsStore(path, encryption, validate = async () => {})
           secrets: { ...previous.secrets },
           keyMetadata: { ...previous.keyMetadata },
         };
-        let validatedProvider;
-        if (input.provider !== undefined) {
-          if (!['openai', 'anthropic'].includes(input.provider))
-            throw new Error('Choose OpenAI or Anthropic.');
-          value.provider = input.provider;
-          if (value.provider !== previous.provider) value.model = '';
-        }
-        if (input.model !== undefined) {
-          if (typeof input.model !== 'string' || input.model.length > 256)
-            throw new Error('Choose an available model.');
-          const model = input.model.trim();
-          if (
-            model &&
-            !importedConfiguration &&
-            !modelCatalog[value.provider].some(({ id }) => id === model) &&
-            !(value.provider === previous.provider && model === previous.model)
-          )
-            throw new Error('Choose an available model.');
-          value.model = model;
-        }
         if (input.theme !== undefined) {
           if (!['system', 'light', 'dark'].includes(input.theme))
             throw new Error('Choose a supported appearance.');
@@ -208,18 +189,9 @@ export function createSettingsStore(path, encryption, validate = async () => {})
           }
           if (input[key] === undefined || input[key] === '') continue;
           if (typeof input[key] !== 'string' || input[key].length > 16_384)
-            throw new Error('Enter a valid provider key.');
+            throw new Error('Enter a valid app connection key.');
           const secret = input[key].trim();
           if (secret) {
-            if (key !== 'composioApiKey') {
-              const provider = key === 'openaiApiKey' ? 'openai' : 'anthropic';
-              await validate(
-                provider,
-                secret,
-                provider === value.provider ? selectedModel(value) : undefined,
-              );
-              if (provider === value.provider) validatedProvider = provider;
-            }
             value.secrets[key] = protect(secret);
             value.keyMetadata[key] = {
               suffix: secret.length > 4 ? secret.slice(-4) : null,
@@ -227,14 +199,6 @@ export function createSettingsStore(path, encryption, validate = async () => {})
               updatedAt: new Date().toISOString(),
             };
           }
-        }
-        if (
-          validatedProvider !== value.provider &&
-          (value.provider !== previous.provider || selectedModel(value) !== selectedModel(previous))
-        ) {
-          const field = value.provider === 'openai' ? 'openaiApiKey' : 'anthropicApiKey';
-          if (value.secrets[field])
-            await validate(value.provider, reveal(value.secrets[field]), selectedModel(value));
         }
         if (importedConfiguration) {
           const allowed = Object.fromEntries(
@@ -246,12 +210,9 @@ export function createSettingsStore(path, encryption, validate = async () => {})
         }
         if (secretFields.some((field) => value.secrets[field]))
           value.secrets.vaultKey ??= protect(randomBytes(32).toString('base64'));
-        const changed =
-          value.provider !== previous.provider ||
-          selectedModel(value) !== selectedModel(previous) ||
-          [...secretFields, 'integrationConfiguration'].some(
-            (field) => value.secrets[field] !== previous.secrets[field],
-          );
+        const changed = [...secretFields, 'integrationConfiguration'].some(
+          (field) => value.secrets[field] !== previous.secrets[field],
+        );
         await write(value);
         if (changed) engineRevision++;
         return redacted(value);
@@ -279,10 +240,6 @@ export function createSettingsStore(path, encryption, validate = async () => {})
         ...(value.secrets.integrationConfiguration
           ? JSON.parse(reveal(value.secrets.integrationConfiguration))
           : {}),
-        LLM_PROVIDER: value.provider,
-        LLM_MODEL: selectedModel(value),
-        OPENAI_API_KEY: reveal(value.secrets.openaiApiKey),
-        ANTHROPIC_API_KEY: reveal(value.secrets.anthropicApiKey),
         COMPOSIO_API_KEY: reveal(value.secrets.composioApiKey),
         OTTO_VAULT_KEY: reveal(value.secrets.vaultKey),
       };

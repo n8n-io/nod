@@ -432,7 +432,12 @@ async function draftApp() {
     if (typeof metadata.updateSourceUrl !== 'string' || !URL.canParse(metadata.updateSourceUrl))
       throw new Error('The packaged update source must be a credential-free HTTPS URL.');
     const url = new URL(metadata.updateSourceUrl);
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+    if (
+      url.protocol !== 'https:' ||
+      url.username ||
+      url.password ||
+      /[?#]/.test(metadata.updateSourceUrl)
+    )
       throw new Error('The packaged update source must be a credential-free HTTPS URL.');
   }
   const changes = run(process.execPath, ['.github/scripts/prepare-desktop-release.mjs', '--notes']);

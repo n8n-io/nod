@@ -27,8 +27,14 @@ The native cases were revised to v2 on 2026-10-05, before execution, to require 
 
 The native fixtures establish Electron/Squirrel signing, installation and relaunch behavior with the pinned framework. They do not prove the full Otto UI, live n8n/PAT access, model/account behavior, notarized distribution, or a fresh user’s Gatekeeper experience. The restart/runtime/delivery contract cases cover the production orchestration separately. A real update from one released Otto version to the next remains a distinct receiving-user acceptance check; version 0.1.0 has no updater and requires a manual first upgrade.
 
-## Native result
+## Native v1 result
 
-The first [macOS acceptance run](https://github.com/n8n-io/otto/actions/runs/37220336375) passed both frozen cases on 2026-10-04. Tested PR merge commit: `3ce8a8ca15de161151779416160329be64b7cd3d`, containing updater head `8d22e3ab922b1d8acb1add7386b1b0cd0794095b`. Fixture SHA-256: `79ef4d2f3d2a3c7f9333d4936418114a35d111fa1fd63f84c5a0069f30e65268`.
+The first [macOS acceptance run](https://github.com/n8n-io/otto/actions/runs/37220336375) passed `UPD-NATIVE.v1` and `UPD-SIGNATURE.v1` on 2026-10-04. Tested PR merge commit: `3ce8a8ca15de161151779416160329be64b7cd3d`, containing updater head `8d22e3ab922b1d8acb1add7386b1b0cd0794095b`. Fixture SHA-256: `79ef4d2f3d2a3c7f9333d4936418114a35d111fa1fd63f84c5a0069f30e65268`.
 
 The correctly signed ZIP was requested, installed and relaunched as 1.0.1 at the original application path with identical saved profile bytes. The different-signer ZIP was requested and rejected by the native signature requirement; version 1.0.0 and its saved profile remained intact. Scope and cleanup checks passed in the same attempt. The run used Electron 44.5.0 on a disposable macOS runner and took 167 seconds including fixture packaging. The downloaded JSON receipt is retained under ignored `.local/desktop-update-validation/native-8d22e3a/` and in that run's `native-update-acceptance` artifact.
+
+## Native v2 result
+
+The [2026-10-05 macOS acceptance run](https://github.com/n8n-io/otto/actions/runs/37301055495) passed `UPD-NATIVE.v2` and `UPD-SIGNATURE.v2`, including every encrypted-sentinel check. Tested PR merge commit: `9ccf889840f0b5a5398717c88eccddb420d4b2e1`, containing branch head `c507e5322552e13fd00e49508cce56a2362ae050`. Fixture SHA-256: `fed5e776f114cb06813adc15a0bcc5080e9004c20a65646654e1b6cd20d611a1`.
+
+The signed update relaunched as 1.0.1 with unchanged profile and ciphertext bytes, and decrypted the sentinel to its original digest. The different-signer update was rejected after its ZIP downloaded, preserving version 1.0.0 and its encrypted profile. The temporary encryption keychain was isolated, removed, and the original keychain settings restored. All scope and cleanup checks passed. The Electron 44.5.0 fixture took 121 seconds including packaging. Its receipt is retained under ignored `.local/native-update-acceptance/c507e53/` and in the run's `native-update-acceptance` artifact. This is disposable CI evidence; the released Otto application still needs its separate physical-Mac update and UX check.

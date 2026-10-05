@@ -9,15 +9,14 @@ Desktop is a wrapper around the same Otto product: it starts `src/server/index.t
 ## Trying it
 
 1. Open `Otto-arm64.dmg` and copy **Otto** to Applications.
-2. Open **Otto** and choose OpenAI or Anthropic.
-3. Add the provider API key and, optionally, a Composio key for app connections.
-4. Choose whether to open at login and show notifications. Otto detects date/time defaults and follows the system appearance; customize these later in Settings.
-5. Otto downloads and prepares its matching computer and browser in the background during these steps. The final step shows actual readiness and any recovery action. An existing verified runtime is reused without contacting the release service.
-6. Open Otto. After setup, change provider keys through **Settings → Providers**, the **Otto → Settings…** menu, or **⌘,**.
+2. Choose whether to open at login and show notifications. Otto detects date/time defaults and follows the system appearance.
+3. Open Otto while its matching computer and browser finish preparing automatically. An existing verified runtime is reused without contacting the release service.
+4. Connect an AI provider in the shared product onboarding: a supported API key or ChatGPT plan. Optionally add a Composio key and connect apps.
+5. Use **Settings → Models** for AI connections and the Composio key. The app menu, menu bar and **⌘,** open the same Settings screen.
 
-**General** contains appearance, launch-at-login, and notification settings. **Preferences** contains region, clock, timezone, and quiet hours; edits made while the engine is unavailable are queued and applied when it returns. **Otto → Replay onboarding** reopens the introduction without resetting the profile or its provider keys.
+**General** contains appearance, launch-at-login and notifications. **Preferences** contains region, clock, timezone and quiet hours. AI connections and model selection use the same server APIs, encrypted credential store and components as the web product; the desktop wrapper does not maintain a second AI provider selection.
 
-Onboarding has three guided steps with Back and Continue; the Settings sidebar is available after setup. Replaying onboarding retains keys and conversations. The assistant engine starts only after setup is completed with a configured AI provider. Preparing the computer in the background does not send a model request. If notifications are enabled and setup finishes while Otto is in the background, a readiness notification brings you back without automatically focusing the app. Quiet hours still apply; normal app launches do not send readiness notifications.
+The native introduction prepares the computer without requiring an AI key. Shared product onboarding offers AI connections; without one, Chat prompts the user to connect a model before the assistant can work. Preparing the computer does not send a model request. If notifications are enabled and setup finishes while Otto is in the background, a readiness notification brings you back without automatically focusing the app. Quiet hours still apply; normal app launches do not send readiness notifications. **Otto → Replay onboarding** reopens the computer introduction without resetting its profile.
 
 First-launch downloads use the same configured release source as app updates. Private releases use the n8n download service; users do not need a GitHub account or token. Publish the matching runtime before distributing the app, because draft runtime packs are not served. Builds without a release source or an archive URL still offer manual import of the compressed matching `Otto-Runtime-darwin-arm64-….tar.gz`. Splitting the files reduces the app download; it does not remove the first installation's computer-image download or disk usage.
 
@@ -31,7 +30,7 @@ Otto uses a fresh profile, separate from repository development and earlier desk
 - Lima and Apple's Virtualization framework run a private Ubuntu computer.
 - The private computer contains PostgreSQL and separate workspace and browser containers. Docker is an internal implementation detail; Docker Desktop is not a prerequisite.
 - Container images, the base computer image, Lima, and Docker binaries live in the versioned runtime pack. First-run provisioning may still require network access for guest system packages. The optional full build embeds these assets in the app.
-- Provider keys and the Vault encryption key are encrypted through Electron `safeStorage`, backed by the macOS key store. The main app owns settings; the chat renderer cannot read saved keys.
+- The Composio key and Vault encryption key are encrypted through Electron `safeStorage`, backed by the macOS key store. Shared model connections use the Vault encryption key; model credentials never enter the computer containers. The settings screen reveals the Composio key only on an explicit user action.
 - The engine listens on a loopback port protected by a per-launch token. Approved app windows receive access; an ordinary website or browser tab does not.
 - The workspace and browser have separate networks, no host home-directory mount, no Docker socket, and no model-provider credentials.
 
@@ -43,7 +42,7 @@ Application state is under `~/Library/Application Support/Otto/profiles/local`. 
 
 Verified runtime versions live under `~/Library/Application Support/Otto/runtime/<release identifier>`. Installation checks the archive size and SHA-256 before extraction, accepts only the manifest's regular files, bounds expanded size, verifies every extracted file, and publishes the cache atomically. Interrupted installation can be retried. The running computer mounts this cache read-only; it does not depend on the checkout or app location.
 
-The app and DMG contain no provider keys. A local, one-time development import can populate encrypted settings from an existing environment file; only provider credentials and the optional Composio configuration are accepted. That import is not part of the normal user flow.
+The app and DMG contain no provider keys. A local, one-time development import can populate encrypted settings from an existing environment file; only the optional Composio key and configuration are accepted. AI connections are configured in the shared product UI. That import is not part of the normal user flow.
 
 ## Current limits
 
@@ -60,7 +59,7 @@ The app and DMG contain no provider keys. A local, one-time development import c
 
 The [release guide](RELEASING.md) describes the version/changelog PR, signed release workflow, required GitHub environment, runtime reuse, and acceptance gates. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The installed development preview below remains ad-hoc signed.
 
-Updater-enabled builds check at startup and through **Check for Updates…**. Otto verifies the matching runtime before staging the signed application, then offers **Restart** or **Later**. Restart waits for active work and unfinished input. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); live delivery requires the saved GitHub credential's repository access.
+Updater-enabled builds check at startup and through **Check for Updates…**. The app and menu-bar menus show checking, preparation and download states, and retain **Restart to update** after choosing Later. Otto verifies the matching runtime before staging the signed application, then offers **Restart** or **Later**. Restart waits for active work and unfinished input. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); live delivery requires the saved GitHub credential's repository access.
 
 ## Building the experiment
 

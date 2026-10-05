@@ -87,7 +87,7 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
   const base = sourceUrl
     ? https(sourceUrl).replace(/\/$/, '')
     : `https://api.github.com/repos/${repository}`;
-  if (new URL(base).search) throw new Error('The desktop update source is invalid.');
+  if (/[?#]/.test(base)) throw new Error('The desktop update source is invalid.');
   const releasePath = (id) => `${base}/releases/${id}`;
   const assetUrl = (release, item) =>
     sourceUrl
@@ -197,7 +197,14 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
   };
 }
 
-export function createDesktopUpdater({ source, currentVersion, native, prepareRuntime, restart }) {
+export function createDesktopUpdater({
+  source,
+  currentVersion,
+  native,
+  prepareRuntime,
+  restart,
+  onStatus = () => {},
+}) {
   let checking;
   let restarting;
   let ready;
@@ -214,12 +221,15 @@ export function createDesktopUpdater({ source, currentVersion, native, prepareRu
       if (ready) return Promise.resolve(ready);
       if (checking) return checking;
       checking = (async () => {
+        onStatus('checking');
         const candidate = await source.latest(currentVersion, controller.signal);
         if (!candidate) return undefined;
         if (compareVersions(candidate.version, currentVersion) <= 0)
           throw new Error('The desktop update is not newer than this app.');
+        onStatus('preparing');
         await prepareRuntime(candidate, controller.signal);
         controller.signal.throwIfAborted();
+        onStatus('downloading');
         await new Promise((resolve, reject) => {
           const finish = (error) => {
             native.removeListener('error', failed);
@@ -253,6 +263,7 @@ export function createDesktopUpdater({ source, currentVersion, native, prepareRu
         return ready;
       })().finally(() => {
         checking = undefined;
+        onStatus(ready ? 'ready' : 'idle');
       });
       return checking;
     },
@@ -320,8 +331,9 @@ export async function guardUpdateRenderers({ windows, ipc, trusted, timeout = 30
   for (const window of windows) window.webContents.on('did-start-navigation', navigation);
   const release = () => {
     for (const window of windows) {
+      if (window.isDestroyed()) continue;
       window.webContents.removeListener('did-start-navigation', navigation);
-      if (!window.isDestroyed()) window.webContents.send('otto:update:resume', token);
+      window.webContents.send('otto:update:resume', token);
     }
   };
   release.validate = () => {

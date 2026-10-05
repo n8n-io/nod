@@ -17,8 +17,6 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
   warmRuntime: (options) => ipcRenderer.invoke('otto:runtime:warm', options),
   replayOnboarding: () => ipcRenderer.invoke('otto:onboarding:replay'),
   importRuntime: () => ipcRenderer.invoke('otto:runtime:import'),
-  getAppPreferences: () => ipcRenderer.invoke('otto:app-preferences:get'),
-  saveAppPreferences: (patch) => ipcRenderer.invoke('otto:app-preferences:save', patch),
   openExternal: (url) => ipcRenderer.invoke('otto:external', url),
   openSettings: (section = 'general') => ipcRenderer.invoke('otto:settings:open', section),
   quit: () => ipcRenderer.invoke('otto:quit'),
