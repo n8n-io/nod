@@ -2192,6 +2192,54 @@ test('desktop updates bind newer published releases and both source adapters to 
   }
 });
 
+test('first installation resolves its exact published runtime without a newer app and rejects changed identities', async () => {
+  for (const sourceUrl of [undefined, 'https://updates.example.invalid/otto-desktop']) {
+    const f = updateReleaseFixture(sourceUrl);
+    assert.equal(await f.source.latest('0.2.0'), undefined);
+    f.calls.length = 0;
+    assert.equal(
+      await f.source.runtimeDownloadUrl(f.runtime),
+      sourceUrl
+        ? `${sourceUrl}/releases/18/assets/201/${f.runtime.archive.file}`
+        : 'https://api.github.com/repos/n8n-io/otto/releases/assets/201',
+    );
+    assert.deepEqual(f.calls, [
+      `${f.base}/${sourceUrl ? 'tags' : 'releases/tags'}/${f.pack.tag_name}`,
+    ]);
+    for (const change of [
+      (runtime) => (runtime.fingerprint = '../other'),
+      (runtime) => (runtime.id = 'invalid'),
+      (runtime) => (runtime.archive.file = '../runtime.tar.gz'),
+      (runtime) => (runtime.archive.file = `Otto-Runtime-darwin-arm64-${'f'.repeat(12)}.tar.gz`),
+      (runtime) => (runtime.archive.bytes = 0),
+      (runtime) => (runtime.archive.bytes = 1.5),
+      (runtime) => (runtime.archive.sha256 = 'invalid'),
+    ]) {
+      const runtime = structuredClone(f.runtime);
+      change(runtime);
+      f.calls.length = 0;
+      await assert.rejects(f.source.runtimeDownloadUrl(runtime));
+      assert.deepEqual(f.calls, []);
+    }
+    for (const change of [
+      (pack) => (pack.draft = true),
+      (pack) => (pack.tag_name = `runtime-darwin-arm64-${'f'.repeat(64)}`),
+      (pack) => (pack.id = 0),
+      (pack) => (pack.assets[0].id = 0),
+      (pack) => (pack.assets[0].name = 'another-runtime.tar.gz'),
+      (pack) => pack.assets.push({ ...pack.assets[0], id: 202 }),
+      (pack) => (pack.assets[0].state = 'new'),
+      (pack) => pack.assets[0].size++,
+      (pack) => (pack.assets[0].digest = `sha256:${'f'.repeat(64)}`),
+    ]) {
+      const changed = updateReleaseFixture(sourceUrl);
+      change(changed.pack);
+      await assert.rejects(changed.source.runtimeDownloadUrl(changed.runtime));
+      assert.equal(changed.calls.length, 1);
+    }
+  }
+});
+
 test('desktop staging waits for runtime preparation and a native downloaded event, and retries preparation only explicitly', async () => {
   const candidate = {
     version: '0.2.0',

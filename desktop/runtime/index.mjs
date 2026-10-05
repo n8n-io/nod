@@ -104,7 +104,12 @@ async function prepare(options, onComputerStart) {
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   const controlRoot = join(dataRoot, 'desktop-runtime');
   await mkdir(controlRoot, { recursive: true, mode: 0o700 });
-  const assets = await ensureRuntimeAssets({ resourcesPath, onStatus, signal });
+  const assets = await ensureRuntimeAssets({
+    resourcesPath,
+    onStatus,
+    signal,
+    resolveDownloadUrl: options.resolveDownloadUrl,
+  });
   const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
   if (
     manifest.version !== 1 ||

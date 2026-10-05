@@ -937,6 +937,84 @@ test('missing runtime release requests the companion pack without inventing a do
   assert.equal(await findRuntimeAssets(options), undefined);
 });
 
+test('first-run runtime resolves its exact download after a cache miss and restarts offline', async (t) => {
+  const options = await fixture(t);
+  const signal = new AbortController().signal;
+  const requests = [];
+  const bytes = await readFile(options.archivePath);
+  let resolutions = 0;
+  const installed = await ensureRuntimeAssets({
+    ...options,
+    signal,
+    resolveDownloadUrl: async (release, receivedSignal) => {
+      assert.deepEqual(release, options.release);
+      assert.equal(receivedSignal, signal);
+      resolutions++;
+      return 'https://releases.example.invalid/exact-runtime';
+    },
+    fetch: async (url) => {
+      requests.push(url);
+      return requests.length === 1
+        ? new Response(null, {
+            status: 302,
+            headers: { location: 'https://assets.example.invalid/exact-runtime' },
+          })
+        : new Response(bytes);
+    },
+  });
+  assert.equal(resolutions, 1);
+  assert.deepEqual(requests, [
+    'https://releases.example.invalid/exact-runtime',
+    'https://assets.example.invalid/exact-runtime',
+  ]);
+  assert.equal(await findRuntimeAssets(options), installed);
+  const offline = async () => {
+    throw new Error('A verified cache must not access the network.');
+  };
+  assert.equal(
+    await ensureRuntimeAssets({ ...options, resolveDownloadUrl: offline, fetch: offline }),
+    installed,
+  );
+});
+
+test('failed or cancelled runtime resolution never fetches an archive and allows an explicit retry', async (t) => {
+  const options = await fixture(t);
+  const controller = new AbortController();
+  const fetch = async () => {
+    throw new Error('Archive download must not start.');
+  };
+  await assert.rejects(
+    ensureRuntimeAssets({
+      ...options,
+      fetch,
+      resolveDownloadUrl: async () => {
+        throw new Error('Release service unavailable');
+      },
+    }),
+    /Release service unavailable/,
+  );
+  await assert.rejects(
+    ensureRuntimeAssets({
+      ...options,
+      fetch,
+      signal: controller.signal,
+      resolveDownloadUrl: async () => {
+        controller.abort();
+        return 'https://releases.example.invalid/exact-runtime';
+      },
+    }),
+    { name: 'AbortError' },
+  );
+  assert.equal(await findRuntimeAssets(options), undefined);
+  const bytes = await readFile(options.archivePath);
+  const installed = await ensureRuntimeAssets({
+    ...options,
+    resolveDownloadUrl: async () => 'https://releases.example.invalid/exact-runtime',
+    fetch: async () => new Response(bytes),
+  });
+  assert.equal(await findRuntimeAssets(options), installed);
+});
+
 test('runtime installation refuses insufficient storage without removing saved caches and can retry', async (t) => {
   const options = await fixture(t);
   const saved = join(options.cacheRoot, 'previous-runtime');

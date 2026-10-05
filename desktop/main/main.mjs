@@ -68,6 +68,7 @@ let providerConfigured = false;
 let guidedStartup = false;
 let quitting = false;
 let installingUpdate = false;
+let updateSource;
 let updates;
 let checkingUpdates;
 let checkedUpdatesAtStartup = false;
@@ -114,6 +115,7 @@ const lifecycle = createDesktopLifecycle({
     const prepared = await prepareRuntime({
       dataRoot: profileRoot,
       resourcesPath: engineRoot,
+      resolveDownloadUrl: updateSource?.runtimeDownloadUrl,
       signal,
       onStatus,
     });
@@ -998,8 +1000,9 @@ else {
     .then(async () => {
       if (app.isPackaged && process.platform === 'darwin' && process.arch === 'arm64') {
         const { ottoBuild } = JSON.parse(await readFile(join(desktopRoot, 'package.json'), 'utf8'));
+        updateSource = createUpdateSource({ sourceUrl: ottoBuild?.updateSourceUrl });
         updates = createDesktopUpdater({
-          source: createUpdateSource({ sourceUrl: ottoBuild?.updateSourceUrl }),
+          source: updateSource,
           currentVersion: app.getVersion(),
           native: autoUpdater,
           prepareRuntime: async (candidate, signal) => {

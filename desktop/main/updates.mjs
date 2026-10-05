@@ -95,7 +95,34 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
       : `${base}/releases/assets/${item.id}`;
   const getAsset = (release, name, signal) =>
     json(assetUrl(release, asset(release, name)), request, signal, 'application/octet-stream');
+  const runtimeDownloadUrl = async (runtime, signal) => {
+    if (
+      ![runtime?.fingerprint, runtime?.id, runtime?.archive?.sha256].every(
+        (value) => typeof value === 'string' && hash.test(value),
+      ) ||
+      runtime.archive.file !== `Otto-Runtime-darwin-arm64-${runtime.id.slice(0, 12)}.tar.gz` ||
+      !Number.isSafeInteger(runtime.archive.bytes) ||
+      runtime.archive.bytes < 1
+    )
+      throw new Error('The desktop runtime metadata is incompatible.');
+    const runtimeTag = `runtime-darwin-arm64-${runtime.fingerprint}`;
+    const runtimeRelease = published(
+      await json(
+        sourceUrl ? `${base}/tags/${runtimeTag}` : `${base}/releases/tags/${runtimeTag}`,
+        request,
+        signal,
+      ),
+      runtimeTag,
+    );
+    const archive = asset(runtimeRelease, runtime.archive.file);
+    if (archive.size !== runtime.archive.bytes)
+      throw new Error('The desktop update runtime archive size does not match.');
+    if (archive.digest !== `sha256:${runtime.archive.sha256}`)
+      throw new Error('The desktop update runtime archive digest does not match.');
+    return assetUrl(runtimeRelease, archive);
+  };
   return {
+    runtimeDownloadUrl,
     async latest(currentVersion, signal) {
       versionParts(currentVersion);
       const releases = await json(
@@ -146,24 +173,10 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
         runtime.fingerprint !== manifest.runtime.fingerprint ||
         runtime.archive?.file !== manifest.runtime.archive?.file ||
         runtime.archive?.bytes !== manifest.runtime.archive?.bytes ||
-        runtime.archive?.sha256 !== manifest.runtime.archive?.sha256 ||
-        !/^Otto-Runtime-darwin-arm64-[a-f0-9]+\.tar\.gz$/.test(runtime.archive.file)
+        runtime.archive?.sha256 !== manifest.runtime.archive?.sha256
       )
         throw new Error('The desktop update runtime does not match.');
-      const runtimeTag = `runtime-darwin-arm64-${runtime.fingerprint}`;
-      const runtimeRelease = published(
-        await json(
-          sourceUrl ? `${base}/tags/${runtimeTag}` : `${base}/releases/tags/${runtimeTag}`,
-          request,
-          signal,
-        ),
-        runtimeTag,
-      );
-      const archive = asset(runtimeRelease, runtime.archive.file);
-      if (archive.size !== runtime.archive.bytes)
-        throw new Error('The desktop update runtime archive size does not match.');
-      if (archive.digest !== `sha256:${runtime.archive.sha256}`)
-        throw new Error('The desktop update runtime archive digest does not match.');
+      const downloadUrl = await runtimeDownloadUrl(runtime, signal);
       let feedUrl;
       if (sourceUrl)
         feedUrl = `${releasePath(release.id)}/feed/${zip.id}?version=${currentVersion}&platform=darwin-arm64`;
@@ -177,7 +190,7 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
         version,
         source: manifest.source,
         runtime,
-        downloadUrl: assetUrl(runtimeRelease, archive),
+        downloadUrl,
         feedUrl,
       };
     },
