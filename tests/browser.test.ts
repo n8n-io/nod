@@ -2437,7 +2437,6 @@ test('missing-key setup opens native Providers and can retry a rejected settings
   const notice = (integrationsReady: boolean) =>
     createElement(SetupNotice, {
       configuration: { ...requestedChatState().configuration, integrationsReady },
-      capability: 'apps',
     });
   try {
     await view.render(notice(false));

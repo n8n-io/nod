@@ -472,7 +472,7 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
           </Button>
         </div>
       </header>
-      {configuration && <SetupNotice configuration={configuration} capability="apps" />}
+      {configuration && <SetupNotice configuration={configuration} />}
       {(error || loadError) && (
         <Notice onDismiss={error ? () => setError('') : undefined}>{error || loadError}</Notice>
       )}

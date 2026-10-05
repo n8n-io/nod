@@ -69,6 +69,8 @@ export function createModelService(options: {
       connectionId?: string;
       secret: Record<string, unknown>;
       expires: number;
+      status: 'waiting' | 'completing' | 'connected' | 'failed';
+      error?: string;
     }
   >();
   function remember(value: ModelCredential) {
@@ -234,31 +236,50 @@ export function createModelService(options: {
     await reload();
     return id;
   }
+  function signInStatus(state: string) {
+    const attempt = attempts.get(state);
+    if (!attempt || closed || attempt.expires < Date.now())
+      return { status: 'failed' as const, error: 'Sign-in expired. Start a new connection.' };
+    return {
+      status: attempt.status === 'completing' ? 'waiting' : attempt.status,
+      ...(attempt.error ? { error: attempt.error } : {}),
+    };
+  }
   async function complete(callback: URL) {
     const state = callback.searchParams.get('state') ?? '';
     const attempt = attempts.get(state);
-    if (!attempt || closed || attempt.expires < Date.now())
+    if (!attempt || closed || attempt.expires < Date.now() || attempt.status !== 'waiting')
       throw new ConnectionError('This sign-in request has expired. Start a new connection.');
-    attempts.delete(state);
-    let value: ModelCredential;
+    attempt.status = 'completing';
     try {
-      value = await backend.exchange(attempt.provider, attempt.secret, callback);
-    } catch {
-      throw new ConnectionError('Sign-in failed. Start a new connection and grant model access.');
+      let value: ModelCredential;
+      try {
+        value = await backend.exchange(attempt.provider, attempt.secret, callback);
+      } catch {
+        throw new ConnectionError('Sign-in failed. Start a new connection and grant model access.');
+      }
+      remember(value);
+      const method = attempt.provider === 'openai' ? 'subscription' : 'oauth';
+      const definitions = await catalog(attempt.provider, method, value);
+      if (closed) throw new ConnectionError('Model connections have stopped.');
+      await save(
+        attempt.provider,
+        method,
+        value,
+        definitions,
+        attempt.connectionId,
+        false,
+        !!attempt.connectionId,
+      );
+      attempt.status = 'connected';
+    } catch (error) {
+      attempt.status = 'failed';
+      attempt.error =
+        error instanceof ConnectionError
+          ? error.message
+          : 'Sign-in failed. Start a new connection.';
+      throw error;
     }
-    remember(value);
-    const method = attempt.provider === 'openai' ? 'subscription' : 'oauth';
-    const definitions = await catalog(attempt.provider, method, value);
-    if (closed) throw new ConnectionError('Model connections have stopped.');
-    await save(
-      attempt.provider,
-      method,
-      value,
-      definitions,
-      attempt.connectionId,
-      false,
-      !!attempt.connectionId,
-    );
   }
   async function start(provider: 'openai' | 'openrouter', connectionId?: string) {
     if (closed) throw new ConnectionError('Model connections have stopped.');
@@ -278,7 +299,8 @@ export function createModelService(options: {
       : undefined;
     if (connectionId && !row) throw new ConnectionError('This model connection is unavailable.');
     for (const [state, attempt] of attempts)
-      if (attempt.expires < Date.now()) attempts.delete(state);
+      if (attempt.expires < Date.now() || ['connected', 'failed'].includes(attempt.status))
+        attempts.delete(state);
     if (attempts.size >= 5)
       throw new ConnectionError('Complete a pending sign-in before starting another.');
     if (provider === 'openai') {
@@ -299,7 +321,7 @@ export function createModelService(options: {
                 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
               });
               response.end(
-                '<!doctype html><title>Otto</title><h1>ChatGPT connected</h1><p>Return to Otto to select a model.</p>',
+                '<!doctype html><title>Otto</title><h1>ChatGPT connected</h1><p>Return to Otto. Your models are ready.</p>',
               );
             },
             () => {
@@ -338,8 +360,9 @@ export function createModelService(options: {
       connectionId,
       secret: auth.secret,
       expires: Date.now() + 600000,
+      status: 'waiting',
     });
-    return { url: auth.url };
+    return { url: auth.url, attempt: auth.state };
   }
   const service = {
     get configured() {
@@ -531,6 +554,7 @@ export function createModelService(options: {
     },
     start,
     complete,
+    signInStatus,
     register(app: FastifyInstance) {
       void app.register(async (routes) => {
         routes.setErrorHandler((error, _request, reply) =>
@@ -578,6 +602,18 @@ export function createModelService(options: {
             .parse(request.body);
           return start(input.provider, input.connectionId);
         });
+        routes.get<{ Params: { attempt: string } }>(
+          '/api/models/oauth/status/:attempt',
+          async (request, reply) => {
+            reply.header('Cache-Control', 'no-store');
+            return signInStatus(
+              z
+                .string()
+                .regex(/^[A-Za-z0-9_-]{43}$/)
+                .parse(request.params.attempt),
+            );
+          },
+        );
         routes.post('/api/models/oauth/complete', async (request) => {
           const input = z
             .object({ url: z.url().max(64000) })
@@ -589,7 +625,14 @@ export function createModelService(options: {
         routes.get('/api/models/oauth/callback', async (request, reply) => {
           try {
             await complete(new URL(request.url, options.origin));
-            return reply.redirect('/?models=connected');
+            return reply
+              .header('Cache-Control', 'no-store')
+              .header('Referrer-Policy', 'no-referrer')
+              .header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+              .type('text/html')
+              .send(
+                '<!doctype html><title>Otto</title><h1>OpenRouter connected</h1><p>Return to Otto. Your models are ready.</p>',
+              );
           } catch {
             return reply
               .code(400)

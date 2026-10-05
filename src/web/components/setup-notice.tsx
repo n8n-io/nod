@@ -3,17 +3,9 @@ import type { Configuration } from '../../shared/contracts';
 import { desktopSettingsAvailable, openDesktopSettings } from '../lib/desktop';
 import { Button, Notice } from './ui';
 
-export function SetupNotice({
-  configuration,
-  capability,
-}: {
-  configuration: Configuration;
-  capability: 'assistant' | 'apps';
-}) {
+export function SetupNotice({ configuration }: { configuration: Configuration }) {
   const [error, setError] = useState('');
-  const assistant = capability === 'assistant';
-  if (assistant ? configuration.llmReady : configuration.integrationsReady) return null;
-  if (assistant) return <Notice kind="info">Connect a model service to start chatting.</Notice>;
+  if (configuration.integrationsReady) return null;
   const provider = 'Composio';
   const key = `${provider.toUpperCase()}_API_KEY`;
   return (

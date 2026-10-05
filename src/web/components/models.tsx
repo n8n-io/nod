@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -17,8 +17,11 @@ import type {
 } from '../../shared/models';
 import { modelProviderNames, modelSource } from '../../shared/models';
 import { agentModels } from '../../shared/model-defaults';
+import { BrandMark } from './brand';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage, post } from '../lib/api';
+import { connectionUrl } from '../lib/connection-url';
+import { desktopLinksAvailable, openConnection } from '../lib/desktop';
 import {
   Button,
   Dialog,
@@ -73,19 +76,67 @@ export function ModelSettings() {
   const [keyProvider, setKeyProvider] = useState<ModelProvider | null>(null);
   const [key, setKey] = useState('');
   const [signingIn, setSigningIn] = useState(false);
-  const [signInUrl, setSignInUrl] = useState('');
+  const [signIn, setSignIn] = useState<{ url: string; attempt: string } | null>(null);
   const [callback, setCallback] = useState('');
+  useEffect(() => {
+    if (!signIn) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const expires = Date.now() + 600000;
+    async function check() {
+      try {
+        const result = await api<{ status: 'waiting' | 'connected' | 'failed'; error?: string }>(
+          `/api/models/oauth/status/${signIn!.attempt}`,
+          { signal: controller.signal },
+        );
+        if (controller.signal.aborted) return;
+        if (result.status === 'connected') {
+          await models.refresh();
+          if (!controller.signal.aborted) {
+            models.setError('');
+            setSignIn(null);
+          }
+          return;
+        }
+        if (result.status === 'failed') {
+          models.setError(result.error ?? 'Sign-in failed. Start a new connection.');
+          setSignIn(null);
+          return;
+        }
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        models.setError(errorMessage(cause));
+      }
+      if (Date.now() >= expires) {
+        models.setError('Sign-in expired. Start a new connection.');
+        setSignIn(null);
+      } else timer = setTimeout(() => void check(), 2000);
+    }
+    void check();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [signIn, models.refresh]);
   async function connect(provider: 'openai' | 'openrouter', connectionId?: string) {
-    const popup = window.open('about:blank', '_blank');
+    if (signingIn || signIn) return;
+    const desktop = desktopLinksAvailable();
+    const popup = desktop ? null : window.open('about:blank', '_blank');
     if (popup) popup.opener = null;
     setSigningIn(true);
     models.setError('');
     try {
-      const { url } = await post<{ url: string }>('/api/models/oauth', { provider, connectionId });
-      setSignInUrl(url);
-      if (popup) popup.location.replace(url);
+      const response = await post<{ url: string; attempt: string }>('/api/models/oauth', {
+        provider,
+        connectionId,
+      });
+      const url = connectionUrl(response.url, window.location.origin);
+      setSignIn({ url, attempt: response.attempt });
+      if (desktop) await openConnection(url);
+      else if (popup) popup.location.replace(url);
     } catch (cause) {
       popup?.close();
+      setSignIn(null);
       models.setError(errorMessage(cause));
     } finally {
       setSigningIn(false);
@@ -93,13 +144,20 @@ export function ModelSettings() {
   }
   if (!models.data) return models.loading ? <Loading /> : <Notice>{models.error}</Notice>;
   const data = models.data;
-  const busy = models.busy || signingIn;
+  const busy = models.busy || signingIn || !!signIn;
   return (
     <div className="model-settings">
       <p className="model-intro">
-        Connect a service, then choose a model in chat. Your choice applies to all channels on the
-        next turn.
+        Connect as many services as you want. All their models appear in one list.
       </p>
+      {data.connections.some(
+        (connection) => connection.status === 'connected' && connection.models.length > 0,
+      ) && (
+        <div className="model-current">
+          <span>Your model</span>
+          <ModelPicker manageConnections={false} />
+        </div>
+      )}
       <div className="model-services">
         {(['openai', 'anthropic', 'openrouter'] as ModelProvider[]).map((provider) => (
           <section
@@ -112,9 +170,11 @@ export function ModelSettings() {
                 <h4>{modelProviderNames[provider]}</h4>
                 <p>
                   {provider === 'openai'
-                    ? 'API key or ChatGPT plan'
+                    ? data.subscriptionAvailable
+                      ? 'API key or ChatGPT plan'
+                      : 'API key'
                     : provider === 'anthropic'
-                      ? 'Claude models with an API key'
+                      ? 'API key for Claude models'
                       : 'Many models with one connection'}
                 </p>
               </div>
@@ -163,7 +223,7 @@ export function ModelSettings() {
               >
                 <Field
                   label={`${modelProviderNames[provider]} API key`}
-                  hint="The server encrypts your key. Otto does not return it to this page."
+                  hint="Your saved key stays private."
                 >
                   <Input
                     type="password"
@@ -263,12 +323,26 @@ export function ModelSettings() {
           </section>
         ))}
       </div>
-      {signInUrl && (
+      {signIn && (
         <div className="model-sign-in">
           <p>Complete sign-in in the browser, then return to Otto.</p>
-          <a href={signInUrl} target="_blank" rel="noreferrer">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (desktopLinksAvailable())
+                void openConnection(signIn.url).catch((cause) =>
+                  models.setError(errorMessage(cause)),
+                );
+              else window.open(signIn.url, '_blank', 'noopener,noreferrer');
+            }}
+          >
             Open sign-in <ExternalLink size={13} />
-          </a>
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setSignIn(null)}>
+            Dismiss
+          </Button>
           <details>
             <summary>Callback did not open?</summary>
             <form
@@ -277,7 +351,7 @@ export function ModelSettings() {
                 const url = callback;
                 setCallback('');
                 void models.change('/api/models/oauth/complete', 'POST', { url }).then((saved) => {
-                  if (saved) setSignInUrl('');
+                  if (saved) setSignIn(null);
                 });
               }}
             >
@@ -285,13 +359,13 @@ export function ModelSettings() {
                 <Input
                   value={callback}
                   autoComplete="off"
-                  disabled={busy}
+                  disabled={models.busy}
                   onChange={(event) => setCallback(event.target.value)}
                   required
                   type="url"
                 />
               </Field>
-              <Button type="submit" size="sm" disabled={busy}>
+              <Button type="submit" size="sm" disabled={models.busy}>
                 Complete sign-in
               </Button>
             </form>
@@ -299,30 +373,34 @@ export function ModelSettings() {
         </div>
       )}
       {models.error && <Notice>{models.error}</Notice>}
-      <p className="model-footnote">
-        Claude subscriptions cannot supply API tokens to Otto. Use an Anthropic key or OpenRouter.{' '}
-        <a
-          href="https://code.claude.com/docs/en/legal-and-compliance"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Provider conditions
-        </a>
-      </p>
-      {!data.subscriptionAvailable && (
+      <details className="model-details">
+        <summary>Connection details</summary>
         <p className="model-footnote">
-          ChatGPT plan sign-in is available in local Otto. Hosted use needs OpenAI access.
+          Claude plans do not support this connection. Use an Anthropic API key or OpenRouter.{' '}
+          <a
+            href="https://code.claude.com/docs/en/legal-and-compliance"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Provider conditions
+          </a>
         </p>
-      )}
-      <p className="model-footnote">
-        Voice uses the separate OpenAI API key in server settings. A ChatGPT plan does not enable
-        voice.
-      </p>
+        {!data.subscriptionAvailable && (
+          <p className="model-footnote">ChatGPT plan sign-in is available in local Otto.</p>
+        )}
+        <p className="model-footnote">Voice needs an OpenAI API key in server settings.</p>
+      </details>
     </div>
   );
 }
 
-export function ModelPicker() {
+export function ModelPicker({
+  setup = false,
+  manageConnections = true,
+}: {
+  setup?: boolean;
+  manageConnections?: boolean;
+}) {
   const models = useModels();
   const [open, setOpen] = useState(false);
   const [manage, setManage] = useState(false);
@@ -365,20 +443,20 @@ export function ModelPicker() {
       setOpen(false);
   }
   return (
-    <div className="model-picker">
+    <div className={`model-picker${setup ? ' model-picker-setup' : ''}`}>
       <Button
         type="button"
-        variant="ghost"
-        size="sm"
+        variant={setup ? 'default' : 'ghost'}
+        size={setup ? 'default' : 'sm'}
         className="model-picker-trigger"
         onClick={() => {
           setSearch('');
           canChoose ? setOpen(true) : setManage(true);
         }}
-        aria-label="Choose model"
+        aria-label={setup && !canChoose ? 'Connect a model' : 'Choose model'}
         disabled={models.loading}
       >
-        {model ? (
+        {model && !setup ? (
           <>
             <span className="model-picker-name">{model.name}</span>
             <span className="model-picker-effort">{effortNames[selected!.effort]}</span>
@@ -391,7 +469,7 @@ export function ModelPicker() {
           </>
         )}
       </Button>
-      {model && (
+      {model && !setup && (
         <span
           className={`model-picker-source ${connection?.status === 'reconnect' ? 'model-needs-reconnect' : ''}`}
         >
@@ -467,18 +545,20 @@ export function ModelPicker() {
             </div>
           )}
           {models.error && <Notice>{models.error}</Notice>}
-          <Button
-            type="button"
-            variant="ghost"
-            className="model-manage"
-            onClick={() => {
-              setOpen(false);
-              setManage(true);
-            }}
-          >
-            <SlidersHorizontal size={15} />
-            Manage connections
-          </Button>
+          {manageConnections && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="model-manage"
+              onClick={() => {
+                setOpen(false);
+                setManage(true);
+              }}
+            >
+              <SlidersHorizontal size={15} />
+              Manage connections
+            </Button>
+          )}
         </DialogContent>
       </Dialog>
       <Dialog open={manage} onOpenChange={setManage}>
@@ -487,6 +567,21 @@ export function ModelPicker() {
           <ModelSettings />
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+export function ModelSetup() {
+  const { data } = useModels();
+  const available = data?.connections.some(
+    (connection) => connection.status === 'connected' && connection.models.length > 0,
+  );
+  return (
+    <div className="welcome model-setup">
+      <BrandMark />
+      <h2>{available ? 'Choose your model' : 'Connect your model'}</h2>
+      <p>{available ? 'All your models, in one place.' : 'Use your ChatGPT plan or an API key.'}</p>
+      <ModelPicker setup />
     </div>
   );
 }

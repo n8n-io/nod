@@ -850,12 +850,29 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       },
     };
     const owner = await f.create('fixture-owner', backend);
-    const auth = new URL((await owner.start('openai')).url);
+    const signIn = await owner.start('openai');
+    const auth = new URL(signIn.url);
+    assert.equal(signIn.attempt, auth.searchParams.get('state'));
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    const status = () => app.inject({ url: `/api/models/oauth/status/${signIn.attempt}` });
+    assert.deepEqual((await status()).json(), { status: 'waiting' });
+    const other = await f.create('fixture-other', backend);
+    const otherApp = Fastify();
+    other.register(otherApp);
+    t.after(() => otherApp.close());
+    assert.equal(
+      (await otherApp.inject({ url: `/api/models/oauth/status/${signIn.attempt}` })).json().status,
+      'failed',
+    );
     const callback = new URL(
       `http://127.0.0.1:1455/auth/callback?state=${auth.searchParams.get('state')}&code=fixture-code&client_id=fixture-client`,
     );
     await owner.complete(callback);
+    assert.deepEqual((await status()).json(), { status: 'connected' });
     await assert.rejects(owner.complete(callback));
+    assert.deepEqual((await status()).json(), { status: 'connected' });
     assert.equal(exchanges, 1);
     const restored = await f.create('fixture-owner', backend);
     const a = await owner.resolve();
@@ -868,7 +885,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(((await secondRead) as { access: string }).access, 'fixture-rotated-access');
     assert.equal(refreshes, 1);
     const id = owner.view().connections[0].id;
-    const reconnect = new URL((await owner.start('openai', id)).url);
+    const reconnectSignIn = await owner.start('openai', id);
+    const reconnect = new URL(reconnectSignIn.url);
     await restored.remove(id);
     await assert.rejects(
       owner.complete(
@@ -877,10 +895,29 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         ),
       ),
     );
+    assert.equal(owner.signInStatus(reconnectSignIn.attempt).status, 'failed');
     assert.equal(await a.read(), undefined);
     assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
     assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
     const hosted = await f.create('fixture-hosted', backend, false);
     await assert.rejects(hosted.start('openai'));
+    const failed = await f.create('fixture-failed', {
+      ...backend,
+      exchange: async () => {
+        throw new Error('fixture-secret-must-stay-private');
+      },
+    });
+    const rejected = await failed.start('openrouter');
+    const rejectedCallback = new URL(
+      `http://127.0.0.1:4310/api/models/oauth/callback?state=${rejected.attempt}&code=fixture-code`,
+    );
+    await assert.rejects(failed.complete(rejectedCallback));
+    assert.equal(failed.signInStatus(rejected.attempt).status, 'failed');
+    assert.ok(!JSON.stringify(failed.signInStatus(rejected.attempt)).includes('fixture-secret'));
+    await assert.rejects(failed.complete(rejectedCallback));
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    t.mock.timers.tick(600001);
+    assert.equal(owner.signInStatus(signIn.attempt).status, 'failed');
+    t.mock.timers.reset();
   });
 });

@@ -10,6 +10,8 @@ Otto keeps one selected connection, model, and effort per owner. All channels us
 | Anthropic  | API key                             | Claude Opus 5.5, high   |
 | OpenRouter | API key; browser sign-in with PKCE  | GPT-6.1 Sol, high       |
 
+Onboarding shows model connections before app connections. Environment connections appear as connected services without exposing saved keys. The model control lets the owner confirm or change the default before opening chat. Setup can be skipped. An empty chat without a model shows one connection action in place of the message box.
+
 Use **Models** in the account menu to add, refresh, reconnect, or remove connections. Connect all the services you want. The model control above chat shows one searchable list from all connected services and lets you set effort. Each model shows the connection that receives the request. Choosing a model also chooses its connection. Adding a connection keeps an existing choice. If the requested default is unavailable, select a listed model.
 
 OpenRouter checks the key through its authenticated [key endpoint](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key), then lists models that support text and tools. Its catalog supplies context limits, image support, prices, and effort information. Pi supplies known protocol settings. New compatible entries use its OpenAI-compatible adapter. The request requires parameter support and disables provider fallbacks. Refresh a connection to update its catalog; a failed refresh keeps the last valid list. Direct OpenAI and Anthropic choices must also exist in the installed Pi catalog.
@@ -20,7 +22,7 @@ Saved credentials use the existing encrypted grant vault. The macOS key store us
 
 Environment keys remain server-managed connections. They stay in server memory and are not copied into the database. `LLM_PROVIDER` and `LLM_MODEL` set the initial choice. The saved choice takes priority. Removing the selected saved connection clears the choice and requires another explicit selection.
 
-Sign-in attempts have an owner, state, PKCE verifier, nonce, callback address, and ten-minute expiry. State is single-use. ChatGPT identity validation checks the signature, issuer, audience, expiry, nonce, subject, and plan-use permission. Otto retains the issued client registration and a stable host ID. Refresh, replacement, and removal use database locks. Token rotation saves the credential as one encrypted value. Error and Inspector redaction include current and replaced secret values.
+Sign-in attempts have an owner, state, PKCE verifier, nonce, callback address, and ten-minute expiry. State is single-use. The owner can read the status of a pending attempt. The UI checks that status until completion or expiry and updates the model list. The status route returns no credentials. The desktop app opens the system browser; the web app opens a new tab. A manual callback form remains available. ChatGPT identity validation checks the signature, issuer, audience, expiry, nonce, subject, and plan-use permission. Otto retains the issued client registration and a stable host ID. Refresh, replacement, and removal use database locks. Token rotation saves the credential as one encrypted value. Error and Inspector redaction include current and replaced secret values.
 
 ## Subscriptions
 
