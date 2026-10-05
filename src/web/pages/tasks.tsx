@@ -87,7 +87,7 @@ export function TaskCard({ task }: { task: Task }) {
       )}
       <p className="saved-plan-footer">
         {task.closedAt
-          ? `Finished ${formatDateTime(task.closedAt, format)}`
+          ? `${task.status === 'cancelled' ? 'Stopped' : 'Finished'} ${formatDateTime(task.closedAt, format)}`
           : `Started ${formatDateTime(task.createdAt, format)}`}
       </p>
     </article>

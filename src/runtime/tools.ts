@@ -121,7 +121,10 @@ const taskWaits = Type.Array(
   ),
   { maxItems: 10 },
 );
-const taskNextCheck = Type.String({ minLength: 1, maxLength: 40 });
+const taskNextCheck = Type.String({
+  pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$',
+  description: 'ISO time with seconds and offset, such as 2026-10-08T09:00:00+01:00',
+});
 
 const activityCheckTool = defineTool(
   'record_activity_check',

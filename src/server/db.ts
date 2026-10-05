@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { databaseUrl } from './config.ts';
+import { defaultPreferences } from './preferences.ts';
 
 function poolSize(value: string | undefined, fallback: number) {
   const size = value === undefined ? fallback : Number(value);
@@ -112,6 +113,10 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS inspector_records_thread_time ON inspector_records(owner_id,thread_id,started_at DESC,id DESC);
     CREATE INDEX IF NOT EXISTS inspector_records_retention ON inspector_records(recorded_at);
   `);
+  await pool.query('UPDATE preferences SET notification_rule=$1 WHERE notification_rule=$2', [
+    defaultPreferences.notificationRule,
+    'Only interrupt me for a time-sensitive message that needs my reply, a meaningful calendar change affecting me, or a concrete next step for an active goal. Keep newsletters, routine updates, uncertain relevance and repeated reminders quiet.',
+  ]);
 }
 
 export async function transaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {

@@ -38,7 +38,6 @@ const trustedResultTools = new Set([
   'manage_apps',
   'share_file',
   'create_audio',
-  'task',
 ]);
 const delimitedTools = new Set([
   'apps',
