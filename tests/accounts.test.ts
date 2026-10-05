@@ -920,9 +920,12 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(failed.signInStatus(rejected.attempt).status, 'failed');
     assert.ok(!JSON.stringify(failed.signInStatus(rejected.attempt)).includes('fixture-secret'));
     await assert.rejects(failed.complete(rejectedCallback));
-    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    const expiring = await failed.start('openrouter');
+    assert.equal(failed.signInStatus(expiring.attempt).status, 'waiting');
     t.mock.timers.tick(600001);
     assert.equal(owner.signInStatus(signIn.attempt).status, 'failed');
     t.mock.timers.reset();
+    assert.equal(failed.signInStatus(expiring.attempt).status, 'failed');
   });
 });

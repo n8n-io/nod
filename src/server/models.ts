@@ -69,10 +69,15 @@ export function createModelService(options: {
       connectionId?: string;
       secret: Record<string, unknown>;
       expires: number;
+      timer: ReturnType<typeof setTimeout>;
       status: 'waiting' | 'completing' | 'connected' | 'failed';
       error?: string;
     }
   >();
+  function forgetAttempt(state: string) {
+    clearTimeout(attempts.get(state)?.timer);
+    attempts.delete(state);
+  }
   function remember(value: ModelCredential) {
     const values = (
       value.type === 'api_key' ? [value.key] : [value.access, value.refresh, value.idToken]
@@ -279,6 +284,8 @@ export function createModelService(options: {
           ? error.message
           : 'Sign-in failed. Start a new connection.';
       throw error;
+    } finally {
+      attempt.secret = {};
     }
   }
   async function start(provider: 'openai' | 'openrouter', connectionId?: string) {
@@ -298,8 +305,7 @@ export function createModelService(options: {
         )
       : undefined;
     if (connectionId && !row) throw new ConnectionError('This model connection is unavailable.');
-    for (const [state, attempt] of attempts)
-      if (attempt.expires < Date.now()) attempts.delete(state);
+    for (const [state, attempt] of attempts) if (attempt.expires < Date.now()) forgetAttempt(state);
     if (
       [...attempts.values()].filter((attempt) => ['waiting', 'completing'].includes(attempt.status))
         .length >= 5
@@ -357,11 +363,14 @@ export function createModelService(options: {
       hostId,
       previous: row ? await credential(row.id) : undefined,
     });
+    const timer = setTimeout(() => forgetAttempt(auth.state), 600000);
+    timer.unref();
     attempts.set(auth.state, {
       provider,
       connectionId,
       secret: auth.secret,
       expires: Date.now() + 600000,
+      timer,
       status: 'waiting',
     });
     return { url: auth.url, attempt: auth.state };
@@ -492,7 +501,7 @@ export function createModelService(options: {
     },
     async remove(id: string) {
       for (const [state, attempt] of attempts)
-        if (attempt.connectionId === id) attempts.delete(state);
+        if (attempt.connectionId === id) forgetAttempt(state);
       await locked(id, async (client) => {
         const row = (
           await client.query<Row>(
@@ -646,7 +655,7 @@ export function createModelService(options: {
     },
     async close() {
       closed = true;
-      attempts.clear();
+      for (const state of attempts.keys()) forgetAttempt(state);
       const server = await listener?.catch(() => undefined);
       listener = undefined;
       if (server) {
