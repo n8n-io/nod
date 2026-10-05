@@ -689,3 +689,243 @@ describe('keychain', () => {
     assert.equal((await store.getKey()).toString('base64'), saved);
   });
 });
+
+describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
+  async function fixture(t: import('node:test').TestContext) {
+    const { createModelService } = await import('../src/server/models.ts');
+    const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+    const schema = `test_models_${randomUUID().replaceAll('-', '')}`;
+    const root = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await root.query(`CREATE SCHEMA ${schema}`);
+    const database = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+      max: 2,
+    });
+    const key = randomBytes(32);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
+    const backend = createPiModelBackend({
+      fetch: async (input, init) => {
+        const url = String(input);
+        assert.equal(url, 'https://api.openai.com/v1/models');
+        const key = new Headers(init?.headers).get('authorization');
+        const ids =
+          key === 'Bearer fixture-managed-key'
+            ? ['gpt-6-luna']
+            : key === 'Bearer fixture-no-memory-key'
+              ? ['gpt-6.1-sol']
+              : ['gpt-6.1-sol', 'gpt-6-luna'];
+        return Response.json({ data: ids.map((id) => ({ id })) });
+      },
+    });
+    const services: ReturnType<typeof createModelService>[] = [];
+    const create = async (
+      ownerId: string,
+      selectedBackend = backend,
+      local = true,
+      bootstrap?: Parameters<typeof createModelService>[0]['bootstrap'],
+    ) => {
+      const service = createModelService({
+        database,
+        ownerId,
+        keyStore,
+        backend: selectedBackend,
+        origin: 'http://127.0.0.1:4310',
+        local,
+        bootstrap,
+      });
+      await service.initialize();
+      services.push(service);
+      return service;
+    };
+    t.after(async () => {
+      for (const service of services) await service.close();
+      await database.end();
+      await root.query(`DROP SCHEMA ${schema} CASCADE`);
+      await root.end();
+    });
+    return { create, database, backend };
+  }
+
+  test('saved keys stay encrypted and owner-scoped; a removed connection cannot supply a later turn', async (t) => {
+    const f = await fixture(t);
+    const owner = await f.create('fixture-owner');
+    const other = await f.create('fixture-other');
+    const first = await owner.addKey('openai', 'fixture-first-api-key');
+    const original = owner.view().selection!;
+    const captured = await owner.resolve();
+    const second = await owner.addKey('openai', 'fixture-second-api-key');
+    assert.deepEqual(owner.view().selection, original);
+    await assert.rejects(other.select(original));
+    await other.remove(first);
+    assert.equal((await captured.read())?.type, 'api_key');
+    const ciphertext = JSON.stringify(
+      (await f.database.query('SELECT * FROM vault_app_grants')).rows,
+    );
+    assert.ok(!ciphertext.includes('fixture-first-api-key'));
+    assert.ok(!ciphertext.includes('fixture-second-api-key'));
+    assert.ok(!JSON.stringify(owner.view()).includes('fixture-first-api-key'));
+    assert.deepEqual(other.view().connections, []);
+    await owner.select({ connectionId: second, modelId: 'gpt-6.1-sol', effort: 'medium' });
+    assert.equal(((await captured.read()) as { key: string }).key, 'fixture-first-api-key');
+    assert.equal((await owner.resolve()).effort, 'medium');
+    await owner.remove(second);
+    assert.equal(owner.configured, false);
+    assert.equal(
+      (await f.database.query('SELECT id FROM vault_app_grants WHERE id=$1', [second])).rowCount,
+      0,
+    );
+    const restored = await f.create('fixture-owner');
+    await restored.addKey('openai', 'fixture-third-api-key');
+    assert.equal(restored.view().selection, null);
+    await owner.remove(first);
+    assert.equal(await captured.read(), undefined);
+    const limited = await f.create('fixture-limited', {
+      ...f.backend,
+      catalog: async (...args) =>
+        (await f.backend.catalog(...args)).filter((model) => model.choice.id !== 'gpt-6.1-sol'),
+    });
+    const limitedId = await limited.addKey('openai', 'fixture-limited-api-key');
+    assert.equal(limited.view().selection, null);
+    await limited.select({ connectionId: limitedId, modelId: 'gpt-6-luna', effort: 'medium' });
+    assert.equal(limited.configured, true);
+    const managed = await f.create('fixture-managed', f.backend, true, {
+      provider: 'openai',
+      keys: { openai: 'fixture-managed-key' },
+    });
+    assert.deepEqual(
+      managed.view().connections[0].models.map((model) => model.id),
+      ['gpt-6-luna'],
+    );
+    assert.equal(managed.view().selection, null);
+    const memory = await f.create('fixture-memory');
+    await memory.addKey('openai', 'fixture-no-memory-key');
+    const auxiliary = await memory.resolve(true);
+    assert.equal(auxiliary.definition.choice.id, 'gpt-6.1-sol');
+    assert.ok(auxiliary.definition.choice.efforts.includes(auxiliary.effort));
+  });
+
+  test('sign-in is single-use; refresh and removal serialize across service instances without restoring a removed key', async (t) => {
+    const f = await fixture(t);
+    let exchanges = 0;
+    let refreshes = 0;
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const backend = {
+      ...f.backend,
+      catalog: (
+        provider: Parameters<typeof f.backend.catalog>[0],
+        method: Parameters<typeof f.backend.catalog>[1],
+      ) => f.backend.catalog(provider, method),
+      async exchange() {
+        exchanges++;
+        return {
+          type: 'oauth' as const,
+          access: 'fixture-old-access',
+          refresh: 'fixture-old-refresh',
+          expires: 0,
+          clientId: 'fixture-client',
+          subject: 'fixture-owner',
+          idToken: 'fixture-id-token',
+          scopes: ['chatgpt.tokens.use.direct'],
+        };
+      },
+      async refresh(value: import('../src/ports/models.ts').ModelCredential) {
+        if (value.type !== 'oauth') throw new Error('Expected an account credential.');
+        refreshes++;
+        entered();
+        await gate;
+        return {
+          ...value,
+          access: 'fixture-rotated-access',
+          refresh: 'fixture-rotated-refresh',
+          expires: Date.now() + 3600000,
+        };
+      },
+    };
+    const owner = await f.create('fixture-owner', backend);
+    const signIn = await owner.start('openai');
+    const auth = new URL(signIn.url);
+    assert.equal(signIn.attempt, auth.searchParams.get('state'));
+    const app = Fastify();
+    owner.register(app);
+    t.after(() => app.close());
+    const status = () => app.inject({ url: `/api/models/oauth/status/${signIn.attempt}` });
+    assert.deepEqual((await status()).json(), { status: 'waiting' });
+    const other = await f.create('fixture-other', backend);
+    const otherApp = Fastify();
+    other.register(otherApp);
+    t.after(() => otherApp.close());
+    assert.equal(
+      (await otherApp.inject({ url: `/api/models/oauth/status/${signIn.attempt}` })).json().status,
+      'failed',
+    );
+    const callback = new URL(
+      `http://127.0.0.1:1455/auth/callback?state=${auth.searchParams.get('state')}&code=fixture-code&client_id=fixture-client`,
+    );
+    await owner.complete(callback);
+    assert.deepEqual((await status()).json(), { status: 'connected' });
+    await assert.rejects(owner.complete(callback));
+    assert.deepEqual((await status()).json(), { status: 'connected' });
+    assert.equal(exchanges, 1);
+    await owner.start('openrouter');
+    assert.deepEqual((await status()).json(), { status: 'connected' });
+    const restored = await f.create('fixture-owner', backend);
+    const a = await owner.resolve();
+    const b = await restored.resolve();
+    const firstRead = a.read();
+    await started;
+    const secondRead = b.read();
+    release();
+    assert.equal(((await firstRead) as { access: string }).access, 'fixture-rotated-access');
+    assert.equal(((await secondRead) as { access: string }).access, 'fixture-rotated-access');
+    assert.equal(refreshes, 1);
+    const id = owner.view().connections[0].id;
+    const reconnectSignIn = await owner.start('openai', id);
+    const reconnect = new URL(reconnectSignIn.url);
+    await restored.remove(id);
+    await assert.rejects(
+      owner.complete(
+        new URL(
+          `http://127.0.0.1:1455/auth/callback?state=${reconnect.searchParams.get('state')}&code=fixture-code&client_id=fixture-client`,
+        ),
+      ),
+    );
+    assert.equal(owner.signInStatus(reconnectSignIn.attempt).status, 'failed');
+    assert.equal(await a.read(), undefined);
+    assert.equal((await f.database.query('SELECT id FROM model_connections')).rowCount, 0);
+    assert.equal((await f.database.query('SELECT id FROM vault_app_grants')).rowCount, 0);
+    for (let count = 0; count < 4; count++) await owner.start('openrouter');
+    await assert.rejects(owner.start('openrouter'), /pending sign-in/);
+    assert.deepEqual((await status()).json(), { status: 'connected' });
+    const hosted = await f.create('fixture-hosted', backend, false);
+    await assert.rejects(hosted.start('openai'));
+    const failed = await f.create('fixture-failed', {
+      ...backend,
+      exchange: async () => {
+        throw new Error('fixture-secret-must-stay-private');
+      },
+    });
+    const rejected = await failed.start('openrouter');
+    const rejectedCallback = new URL(
+      `http://127.0.0.1:4310/api/models/oauth/callback?state=${rejected.attempt}&code=fixture-code`,
+    );
+    await assert.rejects(failed.complete(rejectedCallback));
+    assert.equal(failed.signInStatus(rejected.attempt).status, 'failed');
+    assert.ok(!JSON.stringify(failed.signInStatus(rejected.attempt)).includes('fixture-secret'));
+    await assert.rejects(failed.complete(rejectedCallback));
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    const expiring = await failed.start('openrouter');
+    assert.equal(failed.signInStatus(expiring.attempt).status, 'waiting');
+    t.mock.timers.tick(600001);
+    assert.equal(owner.signInStatus(signIn.attempt).status, 'failed');
+    t.mock.timers.reset();
+    assert.equal(failed.signInStatus(expiring.attempt).status, 'failed');
+  });
+});

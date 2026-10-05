@@ -24,7 +24,7 @@ import {
   Notice,
   Skeleton,
 } from '../components/ui';
-import { SetupNotice } from '../components/setup-notice';
+import { ModelPicker, ModelSetup } from '../components/models';
 import { desktopBuildInfo, desktopSettingsAvailable } from '../lib/desktop';
 import { usePageData } from '../hooks/use-page-data';
 import { api, apiResponse, errorMessage, post } from '../lib/api';
@@ -777,9 +777,12 @@ export function Chat({
               </div>
             )
           )}
-          {visibleMessages.length === 0 && !welcoming && !resetting && !working && !sending && (
-            <Welcome />
-          )}
+          {visibleMessages.length === 0 &&
+            !welcoming &&
+            !resetting &&
+            !working &&
+            !sending &&
+            (state.configuration.llmReady ? <Welcome /> : <ModelSetup />)}
           <div
             className="messages"
             role="log"
@@ -878,20 +881,25 @@ export function Chat({
             {connectionNotice.text}
           </Notice>
         )}
-        <SetupNotice configuration={state.configuration} capability="assistant" />
-        <Composer
-          canRestart={() => visible && !outstandingSends.current && !resetLock.current}
-          key={threadId}
-          ref={composer}
-          ready={state.configuration.llmReady && !resetting && !welcoming}
-          text={text}
-          setText={setText}
-          replyTo={replyTo}
-          clearReply={() => setReplyTo(null)}
-          onSend={send}
-          onStop={working && state.threadStatus === 'running' ? () => void stop() : undefined}
-          stopping={stopping}
-        />
+        <div hidden={!state.configuration.llmReady && !working && !sending}>
+          <ModelPicker />
+          <Composer
+            canRestart={() => visible && !outstandingSends.current && !resetLock.current}
+            key={threadId}
+            ref={composer}
+            ready={state.configuration.llmReady && !resetting && !welcoming}
+            text={text}
+            setText={setText}
+            replyTo={replyTo}
+            clearReply={() => setReplyTo(null)}
+            onSend={send}
+            onStop={working && state.threadStatus === 'running' ? () => void stop() : undefined}
+            stopping={stopping}
+          />
+        </div>
+        {!state.configuration.llmReady && !working && !sending && visibleMessages.length > 0 && (
+          <ModelSetup />
+        )}
       </div>
       <Dialog open={resetTarget !== null} onOpenChange={(open) => !open && setResetTarget(null)}>
         <DialogContent>

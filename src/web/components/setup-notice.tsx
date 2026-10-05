@@ -3,21 +3,10 @@ import type { Configuration } from '../../shared/contracts';
 import { desktopSettingsAvailable, openDesktopSettings } from '../lib/desktop';
 import { Button, Notice } from './ui';
 
-export function SetupNotice({
-  configuration,
-  capability,
-}: {
-  configuration: Configuration;
-  capability: 'assistant' | 'apps';
-}) {
+export function SetupNotice({ configuration }: { configuration: Configuration }) {
   const [error, setError] = useState('');
-  const assistant = capability === 'assistant';
-  if (assistant ? configuration.llmReady : configuration.integrationsReady) return null;
-  const provider = assistant
-    ? configuration.provider === 'anthropic'
-      ? 'Anthropic'
-      : 'OpenAI'
-    : 'Composio';
+  if (configuration.integrationsReady) return null;
+  const provider = 'Composio';
   const key = `${provider.toUpperCase()}_API_KEY`;
   return (
     <Notice kind="info">
@@ -41,14 +30,11 @@ export function SetupNotice({
         </>
       ) : configuration.localOnly ? (
         <>
-          <code>{key}</code> is missing. Add it to <code>.env</code> and restart Otto
-          {assistant ? ' to start chatting.' : ' to connect Google apps and Slack.'}
+          <code>{key}</code> is missing. Add it to <code>.env</code> and restart Otto to connect
+          Google apps and Slack.
         </>
       ) : (
-        <>
-          {assistant ? 'Chat isn’t configured.' : 'Google apps and Slack aren’t configured.'}{' '}
-          Contact your Otto administrator.
-        </>
+        <>Google apps and Slack aren’t configured. Contact your Otto administrator.</>
       )}
     </Notice>
   );

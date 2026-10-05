@@ -14,12 +14,12 @@ The first run installs dependencies, creates `.env`, and starts PostgreSQL plus 
 
 Configuration lives in the ignored `.env` (all local settings are listed in `.env.example`; shell variables take priority; restart after edits):
 
-| Setting                                  | Needed for                                                |
-| ---------------------------------------- | --------------------------------------------------------- |
-| `LLM_PROVIDER=openai` + `OPENAI_API_KEY` | Chat (required; or `anthropic` + `ANTHROPIC_API_KEY`)     |
-| `COMPOSIO_API_KEY`                       | Gmail, Calendar, Drive, Sheets, Docs, Slack               |
-| `OTTO_VAULT_KEY`                         | Vault encryption on non-macOS hosts (macOS uses Keychain) |
-| `DEV_INSPECTOR=false`                    | Disables the Inspector view (on by default locally)       |
+| Setting                        | Needed for                                                |
+| ------------------------------ | --------------------------------------------------------- |
+| Model connection in **Models** | Chat with a key, ChatGPT plan, or OpenRouter              |
+| `COMPOSIO_API_KEY`             | Gmail, Calendar, Drive, Sheets, Docs, Slack               |
+| `OTTO_VAULT_KEY`               | Vault encryption on non-macOS hosts (macOS uses Keychain) |
+| `DEV_INSPECTOR=false`          | Disables the Inspector view (on by default locally)       |
 
 Notion and Linear connect through their hosted MCP servers without extra keys. Telegram and WhatsApp are configured from the **Channels** page.
 
@@ -44,16 +44,13 @@ Reviewed on 2026-10-02 against [`@composio/core` 0.21.0 and Otto's adapter](src/
 
 ### Models
 
-Model defaults, reviewed on 2026-09-30:
+Onboarding starts with model connections, then app connections. Existing server connections appear automatically. You can skip either step and connect later. An empty chat shows **Connect a model** until a model is ready. Open **Models** from the account menu to manage connections. Add an OpenAI, Anthropic, or OpenRouter API key. You can also connect a ChatGPT plan in local Otto or connect an OpenRouter account through browser sign-in. Otto opens the system browser in the desktop app and a new tab on the web. The connection and model list update when sign-in completes. If the callback cannot open, paste its URL in **Callback did not open?**. The server encrypts saved credentials with the Vault key. macOS uses Keychain; other hosts need `OTTO_VAULT_KEY`.
 
-| Role                   | Model                                                                                                           | Selection                                                            |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Main agent (OpenAI)    | [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)                                        | Capability and speed for coding, browser and general assistant work  |
-| Main agent (Anthropic) | [Claude Sonnet 5.5](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)                             | Capability and speed when `LLM_PROVIDER=anthropic`                   |
-| Event triage (OpenAI)  | [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)                                          | Short relevance decisions with reasoning disabled                    |
-| Memory (main provider) | [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) on OpenAI, Claude Haiku 4.5 on Anthropic | Hourly learning, daily consolidation and meaning-based `memory_find` |
+The first connection selects GPT-6.1 Sol at high effort, or Claude Opus 5.5 at high effort for Anthropic, when that model is available. If the default is unavailable, choose a listed model. Click the model name above chat to search, switch models, or set effort. The next turn uses the saved choice in every channel and keeps the Pi conversation. A running turn keeps its model. Connections do not change on errors and requests do not retry automatically.
 
-Leave `LLM_MODEL`, `TRIAGE_MODEL` and `MEMORY_MODEL` empty to follow these defaults. Memory learning and meaning-based search use the main agent's provider and key, so an OpenAI or an Anthropic key both work; `MEMORY_MODEL` picks another model from that provider. Without a key memory still saves, lints and searches by words. Explicit values override them. `TYPESAFE_API_KEY` selects Jev for triage instead. Main agents retain high reasoning effort. Restart after changing models; existing conversations use the selected model on their next turn. Model upgrades require a Pi SDK version whose catalog includes the selected model.
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `OPENROUTER_API_KEY` remain server-managed connections. `LLM_PROVIDER` and `LLM_MODEL` set the initial choice. Saved choices take priority after that. Memory and event relevance use the selected connection and a smaller compatible model where available. `TYPESAFE_API_KEY` retains the Jev relevance option. Voice uses the separate OpenAI key in server settings.
+
+Claude subscriptions do not permit direct token use in Otto. Use an Anthropic API key or OpenRouter. A Claude Code runtime needs separate session and safety checks before release. Hosted ChatGPT plan use needs OpenAI access. See [model connection details](docs/model-connections.md).
 
 Ports: 4310 local app, 4330 hosted development (`node scripts/start-hosted.mjs`, see [Cloudflare](deployment/cloudflare/README.md)), 4320 E2E harness.
 

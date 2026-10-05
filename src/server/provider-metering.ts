@@ -198,6 +198,9 @@ export function meterRelevance(
 ): RelevanceClassifier {
   return {
     ...provider,
+    get configured() {
+      return provider.configured;
+    },
     classify: (context, policy, signal) =>
       usage.track({ provider: provider.id, category: 'relevance', operation: 'classify' }, () =>
         provider.classify(context, policy, signal),
@@ -211,6 +214,9 @@ export function meterMemoryCurator(
 ): MemoryCurator {
   return {
     ...provider,
+    get configured() {
+      return provider.configured;
+    },
     curate: (request, signal) =>
       usage.track({ provider: provider.id, category: 'memory', operation: request.task }, () =>
         provider.curate(request, signal),

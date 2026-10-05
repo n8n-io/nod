@@ -6422,6 +6422,8 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
         inventoryReads++;
         return Response.json([{ slug: 'gmail', name: 'Gmail', status: 'disconnected' }]);
       }
+      if (path === '/api/models')
+        return Response.json({ connections: [], selection: null, subscriptionAvailable: true });
       if (path === '/api/preferences') return Response.json({ timeZone: 'Europe/Lisbon' });
       if (path === '/api/account/prepare') return Response.json({ ok: true });
       if (path === '/api/apps/gmail/connect') {
@@ -6589,6 +6591,11 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
     assert.equal(discoveryReads, completedReads);
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('.account-onboarding-actions .button-ghost')!
+        .click(),
+    );
     await act(async () =>
       dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Connect Gmail"]')!.click(),
     );

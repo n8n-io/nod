@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, LoaderCircle } from 'lucide-react';
 import type { AccountPreparationResponse, AccountUser } from '../../shared/account';
 import type { Configuration, Connection } from '../../shared/contracts';
+import { ModelPicker, ModelSettings } from '../components/models';
+import type { ModelsResponse } from '../../shared/models';
 import { SetupNotice } from '../components/setup-notice';
 import {
   integrationServiceIds,
@@ -39,6 +41,17 @@ export function Onboarding({
   useBrowserTimeZone();
   const { data, error: loadError, loading, refresh } = usePageData<Connection[]>('/api/apps');
   const { data: configuration } = usePageData<Configuration>('/api/configuration');
+  const { data: models } = usePageData<ModelsResponse>('/api/models');
+  const [step, setStep] = useState<'models' | 'apps'>('models');
+  const modelReady = models?.connections.some(
+    (connection) =>
+      connection.id === models.selection?.connectionId &&
+      connection.status === 'connected' &&
+      connection.models.some(
+        (model) =>
+          model.id === models.selection?.modelId && model.efforts.includes(models.selection.effort),
+      ),
+  );
   const [pending, setPending] = useState<Partial<Record<IntegrationService, Pending>>>({});
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -201,91 +214,116 @@ export function Onboarding({
         <h1>
           Welcome{canLogout && user.name.trim() ? `, ${user.name.trim().split(/\s+/)[0]}` : ''}.
         </h1>
-        <p>Connect your apps.</p>
-        {configuration && <SetupNotice configuration={configuration} capability="apps" />}
-        {(error || loadError) && <Notice>{error || loadError}</Notice>}
-        {loadError && (
-          <Button variant="outline" onClick={() => void refresh()}>
-            Try again
-          </Button>
-        )}
-        <div className="onboarding-integrations" aria-busy={loading}>
-          {integrationServiceIds.map((slug) => {
-            const service = integrationServices[slug];
-            const rows = data?.filter((connection) => connection.slug === slug) ?? [];
-            const connected = rows.some((connection) => connection.status === 'connected');
-            const unavailable =
-              !rows.length || rows.every((connection) => connection.status === 'not_configured');
-            const label =
-              rows.some((connection) => connection.connectionId) && !connected
-                ? 'Reconnect'
-                : 'Connect';
-            const state = pending[slug];
-            return (
-              <article
-                key={slug}
-                className={`onboarding-integration${connected ? ' connected' : ''}${state ? ` ${state}` : ''}`}
-                aria-labelledby={`onboarding-${slug}`}
-              >
-                <span className="onboarding-logo">
-                  <img src={`/logos/${slug}.svg`} alt="" width={24} height={24} />
-                </span>
-                <div className="onboarding-integration-copy">
-                  <h2 id={`onboarding-${slug}`}>{service.name}</h2>
-                  <p>{state === 'waiting' ? 'Continue in the new window.' : service.description}</p>
-                </div>
-                {connected ? (
-                  <span className="onboarding-connected">
-                    <Check size={16} aria-hidden="true" />
-                    Connected
-                  </span>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="onboarding-connect"
-                    aria-label={`${label} ${service.name}`}
-                    disabled={!data || unavailable || state === 'opening' || saving}
-                    onClick={() => void connect(slug)}
+        <p>{step === 'models' ? 'Connect your models.' : 'Connect your apps.'}</p>
+        {step === 'models' ? (
+          <>
+            <ModelSettings />
+            <div className="account-onboarding-actions">
+              <Button disabled={!modelReady} onClick={() => setStep('apps')}>
+                Continue
+              </Button>
+              <Button variant="ghost" onClick={() => setStep('apps')}>
+                Skip for now
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="onboarding-model">
+              <Button variant="ghost" size="sm" onClick={() => setStep('models')}>
+                Back to models
+              </Button>
+              {modelReady && <ModelPicker />}
+            </div>
+            {configuration && <SetupNotice configuration={configuration} />}
+            {(error || loadError) && <Notice>{error || loadError}</Notice>}
+            {loadError && (
+              <Button variant="outline" onClick={() => void refresh()}>
+                Try again
+              </Button>
+            )}
+            <div className="onboarding-integrations" aria-busy={loading}>
+              {integrationServiceIds.map((slug) => {
+                const service = integrationServices[slug];
+                const rows = data?.filter((connection) => connection.slug === slug) ?? [];
+                const connected = rows.some((connection) => connection.status === 'connected');
+                const unavailable =
+                  !rows.length ||
+                  rows.every((connection) => connection.status === 'not_configured');
+                const label =
+                  rows.some((connection) => connection.connectionId) && !connected
+                    ? 'Reconnect'
+                    : 'Connect';
+                const state = pending[slug];
+                return (
+                  <article
+                    key={slug}
+                    className={`onboarding-integration${connected ? ' connected' : ''}${state ? ` ${state}` : ''}`}
+                    aria-labelledby={`onboarding-${slug}`}
                   >
-                    {state === 'opening' ? (
-                      <>
-                        <LoaderCircle className="spin" size={14} aria-hidden="true" />
-                        Opening…
-                      </>
+                    <span className="onboarding-logo">
+                      <img src={`/logos/${slug}.svg`} alt="" width={24} height={24} />
+                    </span>
+                    <div className="onboarding-integration-copy">
+                      <h2 id={`onboarding-${slug}`}>{service.name}</h2>
+                      <p>
+                        {state === 'waiting' ? 'Continue in the new window.' : service.description}
+                      </p>
+                    </div>
+                    {connected ? (
+                      <span className="onboarding-connected">
+                        <Check size={16} aria-hidden="true" />
+                        Connected
+                      </span>
                     ) : (
-                      label
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="onboarding-connect"
+                        aria-label={`${label} ${service.name}`}
+                        disabled={!data || unavailable || state === 'opening' || saving}
+                        onClick={() => void connect(slug)}
+                      >
+                        {state === 'opening' ? (
+                          <>
+                            <LoaderCircle className="spin" size={14} aria-hidden="true" />
+                            Opening…
+                          </>
+                        ) : (
+                          label
+                        )}
+                      </Button>
                     )}
-                  </Button>
-                )}
-              </article>
-            );
-          })}
-        </div>
-        {preparation === 'failed' && (
-          <Notice>
-            Setup could not be completed.{' '}
-            <Button variant="ghost" onClick={() => void prepare()}>
-              Try again
-            </Button>
-          </Notice>
+                  </article>
+                );
+              })}
+            </div>
+            {preparation === 'failed' && (
+              <Notice>
+                Setup could not be completed.{' '}
+                <Button variant="ghost" onClick={() => void prepare()}>
+                  Try again
+                </Button>
+              </Notice>
+            )}
+            <div className="account-onboarding-actions">
+              <Button disabled={saving || preparation !== 'ready'} onClick={() => void complete()}>
+                {preparation === 'pending'
+                  ? 'Preparing…'
+                  : saving
+                    ? 'Opening Otto…'
+                    : 'Continue to Otto'}
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={saving || preparation !== 'ready'}
+                onClick={() => void complete()}
+              >
+                I’ll do this later
+              </Button>
+            </div>
+          </>
         )}
-        <div className="account-onboarding-actions">
-          <Button disabled={saving || preparation !== 'ready'} onClick={() => void complete()}>
-            {preparation === 'pending'
-              ? 'Preparing…'
-              : saving
-                ? 'Opening Otto…'
-                : 'Continue to Otto'}
-          </Button>
-          <Button
-            variant="ghost"
-            disabled={saving || preparation !== 'ready'}
-            onClick={() => void complete()}
-          >
-            I’ll do this later
-          </Button>
-        </div>
       </div>
     </main>
   );

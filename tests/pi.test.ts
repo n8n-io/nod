@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -2272,4 +2272,413 @@ test('every Otto tool schema reaches a model provider as a root object with its 
   ) as unknown as { properties: Record<string, unknown>; required: string[] };
   assert.deepEqual(Object.keys(merged.properties).sort(), ['id', 'kind', 'origin']);
   assert.deepEqual(merged.required, ['origin']);
+});
+
+test('model sign-in verifies account identity, permissions and PKCE on the public endpoint', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const { generateKeyPair, exportJWK, SignJWT } = await import('jose');
+  const { privateKey, publicKey } = await generateKeyPair('RS256');
+  const jwk = { ...(await exportJWK(publicKey)), kid: 'fixture-key' };
+  let nonce = '';
+  let audience = 'fixture-client';
+  let issuer = 'https://auth.openai.com';
+  let scope: string | undefined = 'openid chatgpt.tokens.use.direct';
+  let subject = 'fixture-owner';
+  let grant = new URLSearchParams();
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/.well-known/jwks.json')) return Response.json({ keys: [jwk] });
+      if (url === 'https://api.openai.com/v1/models') {
+        assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fixture-access');
+        return Response.json({
+          models: [
+            { slug: 'gpt-6.1-sol', visibility: 'list' },
+            { slug: 'gpt-6-luna', visibility: 'hidden' },
+          ],
+        });
+      }
+      assert.equal(url, 'https://auth.openai.com/api/accounts/oauth/token');
+      grant = new URLSearchParams(String(init?.body));
+      const id_token = await new SignJWT({ nonce, email: 'fixture@example.test' })
+        .setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
+        .setIssuer(issuer)
+        .setAudience(audience)
+        .setSubject(subject)
+        .setExpirationTime('5m')
+        .sign(privateKey);
+      return Response.json({
+        access_token: 'fixture-access',
+        refresh_token: 'fixture-refresh',
+        id_token,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope,
+      });
+    },
+  });
+  const auth = backend.authorize({
+    provider: 'openai',
+    hostId: 'urn:uuid:fixture',
+    redirectUri: 'http://127.0.0.1:1455/auth/callback',
+  });
+  const url = new URL(auth.url);
+  nonce = String(auth.secret.nonce);
+  assert.equal(url.searchParams.get('agent_name_hint'), 'Otto');
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(
+    url.searchParams.get('code_challenge'),
+    createHash('sha256').update(String(auth.secret.verifier)).digest('base64url'),
+  );
+  const callback = new URL(
+    `http://127.0.0.1:1455/auth/callback?state=${auth.state}&code=fixture-code&client_id=fixture-client`,
+  );
+  const value = await backend.exchange('openai', auth.secret, callback);
+  assert.equal(value.type, 'oauth');
+  if (value.type !== 'oauth') throw new Error('Expected an account credential.');
+  assert.equal(value.subject, 'fixture-owner');
+  assert.equal(grant.get('code_verifier'), auth.secret.verifier);
+  assert.equal(grant.get('resource'), 'https://api.openai.com/v1');
+  assert.deepEqual(
+    (await backend.catalog('openai', 'subscription', value)).map((model) => model.choice.id),
+    ['gpt-6.1-sol'],
+  );
+  for (const invalid of ['nonce', 'audience', 'issuer', 'scope']) {
+    const saved: { nonce: string; audience: string; issuer: string; scope: string | undefined } = {
+      nonce,
+      audience,
+      issuer,
+      scope,
+    };
+    if (invalid === 'nonce') nonce = 'foreign';
+    if (invalid === 'audience') audience = 'foreign';
+    if (invalid === 'issuer') issuer = 'https://foreign.example.test';
+    if (invalid === 'scope') scope = 'openid';
+    await assert.rejects(backend.exchange('openai', auth.secret, callback));
+    ({ nonce, audience, issuer, scope } = saved);
+  }
+  scope = undefined;
+  await assert.rejects(backend.exchange('openai', auth.secret, callback));
+  const refreshed = await backend.refresh(value);
+  assert.equal(refreshed.type, 'oauth');
+  if (refreshed.type !== 'oauth') throw new Error('Expected an account credential.');
+  assert.deepEqual(refreshed.scopes, value.scopes);
+  scope = 'openid';
+  await assert.rejects(backend.refresh(value));
+  scope = 'openid chatgpt.tokens.use.direct';
+  await assert.rejects(
+    backend.exchange('openai', auth.secret, new URL(`${callback}&state=second`)),
+  );
+  await assert.rejects(
+    backend.exchange(
+      'openai',
+      auth.secret,
+      new URL(callback.href.replace('127.0.0.1', 'localhost')),
+    ),
+  );
+  subject = 'another-owner';
+  await assert.rejects(backend.refresh(value));
+  const reconnect = new URL(
+    backend.authorize({
+      provider: 'openai',
+      hostId: 'urn:uuid:fixture',
+      redirectUri: callback.origin + callback.pathname,
+      previous: value,
+    }).url,
+  );
+  assert.equal(reconnect.searchParams.get('client_id'), 'fixture-client');
+});
+
+test('ChatGPT requests keep full history and namespaced tool calls and make one failed request', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const definitions = await createPiModelBackend({
+    fetch: async () => {
+      throw new Error('Unexpected catalog request.');
+    },
+  }).catalog('openai', 'subscription');
+  const definition = definitions.find((model) => model.choice.id === 'gpt-6.1-sol')!;
+  const { runtime, model } = await createPiModelRuntime({
+    provider: 'openai',
+    method: 'subscription',
+    definition,
+    effort: 'high',
+    read: async () => ({ type: 'api_key', key: 'fixture-subscription-access' }),
+  });
+  let calls = 0;
+  let payload: Record<string, any>;
+  const item = {
+    type: 'function_call',
+    id: 'fc_fixture',
+    call_id: 'call_fixture',
+    name: 'read_fixture',
+    namespace: 'otto',
+    arguments: '{}',
+  };
+  const message = await runtime.completeSimple(
+    model,
+    {
+      systemPrompt: 'Fixture system',
+      tools: [
+        { name: 'read_fixture', description: 'Read synthetic data.', parameters: Type.Object({}) },
+      ],
+      messages: [{ role: 'user', content: 'Read the fixture', timestamp: 1 }],
+    },
+    {
+      reasoning: 'high',
+      maxTokens: 100,
+      temperature: 0.3,
+      fetch: async (input, init) => {
+        calls++;
+        assert.equal(String(input), 'https://api.openai.com/v1/responses');
+        assert.equal(
+          new Headers(init?.headers).get('authorization'),
+          'Bearer fixture-subscription-access',
+        );
+        payload = JSON.parse(String(init?.body));
+        return new Response(
+          [
+            {
+              type: 'response.output_item.added',
+              output_index: 0,
+              item: { ...item, arguments: '' },
+            },
+            { type: 'response.function_call_arguments.delta', item_id: item.id, delta: '{}' },
+            { type: 'response.output_item.done', output_index: 0, item },
+            {
+              type: 'response.completed',
+              response: {
+                id: 'resp_fixture',
+                status: 'completed',
+                output: [item],
+                usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+              },
+            },
+          ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(''),
+          { headers: { 'content-type': 'text/event-stream' } },
+        );
+      },
+    },
+  );
+  assert.equal(calls, 1, message.errorMessage);
+  assert.equal(message.stopReason, 'toolUse', message.errorMessage);
+  assert.ok(
+    message.content.some(
+      (block) =>
+        block.type === 'toolCall' && block.name === 'read_fixture' && block.namespace === 'otto',
+    ),
+  );
+  assert.equal(payload!.store, false);
+  assert.equal(payload!.stream, true);
+  assert.equal(payload!.max_output_tokens, undefined);
+  assert.equal(payload!.temperature, undefined);
+  assert.equal(payload!.previous_response_id, undefined);
+  assert.ok(payload!.input.some((item: any) => item.role === 'developer'));
+  assert.deepEqual(
+    payload!.tools.map((tool: any) => tool.type),
+    ['namespace'],
+  );
+  assert.equal(payload!.reasoning.effort, 'high');
+  const failed = await runtime.completeSimple(
+    model,
+    { messages: [{ role: 'user', content: 'Fixture', timestamp: 1 }] },
+    {
+      maxRetries: 5,
+      fetch: async () => {
+        calls++;
+        return Response.json(
+          {
+            error: {
+              message: 'Synthetic rate limit fixture-subscription-access',
+              type: 'rate_limit_error',
+            },
+          },
+          { status: 429 },
+        );
+      },
+    },
+  );
+  assert.equal(failed.stopReason, 'error');
+  assert.ok(!failed.errorMessage?.includes('fixture-subscription-access'));
+  assert.equal(calls, 2);
+});
+
+test('OpenRouter catalogs and both request formats retain tools, effort and one provider attempt', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      if (String(input) === 'https://openrouter.ai/api/v1/key') {
+        if (new Headers(init?.headers).get('authorization') !== 'Bearer fixture-router-key')
+          return Response.json({ error: 'Invalid fixture key' }, { status: 401 });
+        return Response.json({ data: { is_management_key: false } });
+      }
+      assert.equal(String(input), 'https://openrouter.ai/api/v1/models');
+      assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fixture-router-key');
+      return Response.json({
+        data: [
+          'openai/gpt-6.1-sol',
+          'anthropic/claude-opus-5.5',
+          'fixture/new-model',
+          'fixture/no-tools',
+        ].map((id) => ({
+          id,
+          name: id,
+          context_length: 100000,
+          supported_parameters: id.endsWith('no-tools') ? [] : ['tools', 'reasoning'],
+          reasoning: { supported_efforts: ['low', 'medium', 'high'] },
+          architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+          pricing: { prompt: '0.000002', completion: '0.00001' },
+        })),
+      });
+    },
+  });
+  await assert.rejects(
+    backend.catalog('openrouter', 'api_key', { type: 'api_key', key: 'fixture-invalid-key' }),
+  );
+  const definitions = await backend.catalog('openrouter', 'api_key', {
+    type: 'api_key',
+    key: 'fixture-router-key',
+  });
+  assert.equal(definitions.length, 3);
+  for (const definition of definitions) {
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'openrouter',
+      method: 'api_key',
+      definition,
+      effort: 'high',
+      read: async () => ({ type: 'api_key', key: 'fixture-router-key' }),
+    });
+    let calls = 0;
+    const failed = await runtime.completeSimple(
+      model,
+      {
+        messages: [
+          { role: 'user', content: 'Synthetic fixture', timestamp: 1 },
+          {
+            role: 'system',
+            content: '',
+            toolsAdded: [
+              { name: 'read_fixture', description: 'Read fixture.', parameters: Type.Object({}) },
+            ],
+            timestamp: 1,
+          },
+        ],
+      },
+      {
+        reasoning: 'high',
+        maxRetries: 5,
+        fetch: async (input, init) => {
+          calls++;
+          assert.equal(
+            new URL(String(input)).pathname,
+            model.api === 'anthropic-messages' ? '/api/v1/messages' : '/api/v1/chat/completions',
+          );
+          const body = JSON.parse(String(init?.body));
+          assert.equal(body.model, definition.choice.id);
+          assert.deepEqual(body.provider, { require_parameters: true, allow_fallbacks: false });
+          assert.ok(body.tools.length);
+          assert.equal(
+            model.api === 'anthropic-messages' ? body.output_config.effort : body.reasoning.effort,
+            'high',
+          );
+          return Response.json(
+            { error: { type: 'rate_limit_error', message: 'Synthetic rate limit' } },
+            { status: 429 },
+          );
+        },
+      },
+    );
+    assert.equal(failed.stopReason, 'error');
+    assert.equal(calls, 1, failed.errorMessage);
+  }
+});
+
+test('a model change keeps the Pi transcript and applies only when the next turn opens', async () => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const backend = createPiModelBackend({
+    fetch: async () => {
+      throw new Error('Network access is disabled.');
+    },
+  });
+  const openai = (await backend.catalog('openai', 'api_key')).find(
+    (item) => item.choice.id === 'gpt-6.1-sol',
+  )!;
+  const anthropic = (await backend.catalog('anthropic', 'api_key')).find(
+    (item) => item.choice.id === 'claude-opus-5-5',
+  )!;
+  const directory = await mkdtemp(join(tmpdir(), 'otto-model-switch-'));
+  const requests: Array<{ provider: string; effort: string; history: string }> = [];
+  let selected: import('../src/ports/models.ts').ModelAccess = {
+    provider: 'openai',
+    method: 'api_key',
+    definition: openai,
+    effort: 'high',
+    read: async () => ({ type: 'api_key', key: 'fixture-openai-key' }),
+  };
+  const agent = createPiAgent({
+    provider: 'openai',
+    resolve: async () => selected,
+    sessionRoot: directory,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model, context) => {
+        requests.push({
+          provider: model.provider,
+          effort: options?.thinkingLevel ?? 'off',
+          history: JSON.stringify(context.messages),
+        });
+        const message: AssistantMessage = {
+          ...fauxAssistantMessage([{ type: 'text', text: 'Synthetic answer' }]),
+          provider: model.provider,
+          model: model.id,
+          api: model.api,
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'done', reason: 'stop', message });
+        return stream;
+      };
+      return result;
+    },
+  });
+  const threadId = randomUUID();
+  const open = () =>
+    agent.open({
+      threadId,
+      turnId: randomUUID(),
+      systemPrompt: 'Fixture system',
+      ...sandbox,
+      tools: [],
+      shouldStop: () => false,
+      onEvent() {},
+    });
+  try {
+    const first = await open();
+    selected = {
+      provider: 'anthropic',
+      method: 'api_key',
+      definition: anthropic,
+      effort: 'medium',
+      read: async () => ({ type: 'api_key', key: 'fixture-anthropic-key' }),
+    };
+    await first.prompt('Remember the synthetic blue label.', []);
+    await first.dispose();
+    const next = await open();
+    assert.equal(next.resumed, true);
+    await next.prompt('Use the previous label.', []);
+    await next.dispose();
+    assert.equal(requests[0].provider, 'openai');
+    assert.equal(requests[0].effort, 'high');
+    assert.equal(requests[1].provider, 'anthropic');
+    assert.equal(requests[1].effort, 'medium');
+    assert.ok(requests[1].history.includes('Remember the synthetic blue label.'));
+    assert.ok(requests[1].history.includes('Synthetic answer'));
+    assert.ok(!requests[1].history.includes('fixture-openai-key'));
+    assert.ok(!requests[1].history.includes('fixture-anthropic-key'));
+  } finally {
+    await agent.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

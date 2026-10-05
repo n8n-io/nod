@@ -1,5 +1,7 @@
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { createPiModelRuntime } from './models.ts';
+import type { ModelAccess } from '../../ports/models.ts';
 import type { MemoryCurator } from '../../ports/memory-curator.ts';
 import { agentModels, memoryModels } from '../../shared/model-defaults.ts';
 
@@ -15,12 +17,16 @@ function json(text: string) {
 
 export function createPiMemoryCurator(options: {
   provider: string;
+  resolve?: () => Promise<ModelAccess>;
+  configured?: () => boolean;
   model?: string;
   apiKey?: string;
   runtime?: ModelRuntime;
 }): MemoryCurator {
   let loaded: ReturnType<typeof load> | undefined;
   async function load() {
+    const access = await options.resolve?.();
+    if (access) return { ...(await createPiModelRuntime(access)), effort: access.effort };
     const runtime =
       options.runtime ??
       (await ModelRuntime.create({
@@ -39,18 +45,23 @@ export function createPiMemoryCurator(options: {
           ]
     ).flatMap((id) => (id ? (runtime.getModel(options.provider, id) ?? []) : []))[0];
     if (!model) throw new Error('The memory model is not present in the installed Pi catalog.');
-    return { runtime, model };
+    return { runtime, model, effort: undefined };
   }
   return {
-    id: options.provider,
-    configured: Boolean(options.apiKey),
+    get id() {
+      return options.provider;
+    },
+    get configured() {
+      return options.configured?.() ?? Boolean(options.apiKey);
+    },
     async curate({ instructions, input }, signal) {
       signal?.throwIfAborted();
+      if (options.resolve) loaded = undefined;
       loaded ??= load().catch((error) => {
         loaded = undefined;
         throw error;
       });
-      const { runtime, model } = await loaded;
+      const { runtime, model, effort } = await loaded;
       const reply = await runtime.completeSimple(
         model,
         {
@@ -60,6 +71,8 @@ export function createPiMemoryCurator(options: {
         {
           signal: AbortSignal.any([AbortSignal.timeout(45_000), ...(signal ? [signal] : [])]),
           maxTokens: 2048,
+          maxRetries: 0,
+          reasoning: effort === 'off' ? undefined : effort,
         },
       );
       if (reply.stopReason === 'error' || reply.stopReason === 'aborted')

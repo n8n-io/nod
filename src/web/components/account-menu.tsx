@@ -5,7 +5,7 @@ import { AccountAvatar } from './account-avatar';
 import { ConnectionMenu } from './connection-menu';
 import { desktopSettingsAvailable, openDesktopSettings } from '../lib/desktop';
 
-export type AccountTab = 'Profile' | 'Appearance' | 'Preferences';
+export type AccountTab = 'Profile' | 'Appearance' | 'Preferences' | 'Models';
 export interface AccountControls {
   user: AccountUser;
   local: boolean;
@@ -70,6 +70,14 @@ export function AccountMenuItems({
             {/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘,' : 'Ctrl+,'}
           </kbd>
         )}
+      </button>
+      <button
+        type="button"
+        role={menu ? 'menuitem' : undefined}
+        onClick={(event) => openSettings('Models', event.currentTarget)}
+      >
+        <KeyRound size={18} aria-hidden="true" />
+        Models
       </button>
       {desktop && (
         <button

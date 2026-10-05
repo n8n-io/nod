@@ -39,8 +39,9 @@ import { createLocalRuntimeTransport } from '../providers/runtime-host/local.ts'
 import { createComputerShutdownConfirmation } from '../providers/runtime-host/computer-shutdown.ts';
 import { createJevRelevanceClassifier } from '../providers/jev/relevance.ts';
 import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
-import { createOpenAIRelevanceClassifier } from '../providers/openai/relevance.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
+import { createPiModelBackend } from '../providers/pi/models.ts';
+import { createModelService } from './models.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
@@ -119,6 +120,7 @@ import {
 
 export interface ApplicationAdapters {
   initialize?(): Promise<void>;
+  models?: ReturnType<typeof createModelService>;
   prepareComputer?(): Promise<void>;
   computerLifecycle?: { pause(): Promise<void>; resume(): Promise<void> };
   confirmComputerShutdown?(): Promise<void>;
@@ -151,10 +153,39 @@ export function createDefaultAdapters(
   env: Record<string, string | undefined> = process.env,
 ): ApplicationAdapters {
   const provider = env.LLM_PROVIDER || 'openai';
-  if (!['openai', 'anthropic'].includes(provider))
-    throw new Error('LLM_PROVIDER must be openai or anthropic.');
-  const apiKey = provider === 'anthropic' ? env.ANTHROPIC_API_KEY : env.OPENAI_API_KEY;
+  if (!['openai', 'anthropic', 'openrouter'].includes(provider))
+    throw new Error('LLM_PROVIDER must be openai, anthropic or openrouter.');
   const model = env.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
+  const keyStore = env.OTTO_VAULT_KEY
+    ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
+    : process.platform === 'darwin'
+      ? createKeychainKeyStore()
+      : createEnvironmentKeyStore();
+  const models = createModelService({
+    database: pool,
+    ownerId,
+    keyStore,
+    backend: createPiModelBackend(),
+    origin: publicOrigin,
+    local: runtimeMode === 'local',
+    bootstrap: {
+      provider: provider as keyof typeof agentModels,
+      model,
+      keys: {
+        openai: env.OPENAI_API_KEY,
+        anthropic: env.ANTHROPIC_API_KEY,
+        openrouter: env.OPENROUTER_API_KEY,
+      },
+    },
+    changed: refresh,
+  });
+  const modelCurator = createPiMemoryCurator({
+    get provider() {
+      return models.current.provider;
+    },
+    resolve: () => models.resolve(true),
+    configured: () => models.configured,
+  });
   const authConfigs: Partial<Record<IntegrationService, string>> = {
     gmail: env.COMPOSIO_GMAIL_AUTH_CONFIG_ID,
     googlecalendar: env.COMPOSIO_CALENDAR_AUTH_CONFIG_ID,
@@ -215,6 +246,7 @@ export function createDefaultAdapters(
     throw new Error('Private durable storage is required.');
   return {
     initialize: async () => {
+      await models.initialize();
       await allocations?.initialize();
       await databaseObjects?.initialize();
     },
@@ -244,10 +276,11 @@ export function createDefaultAdapters(
           }),
         }
       : {}),
+    models,
     agent: createPiAgent({
+      resolve: () => models.resolve(),
       provider,
       model,
-      apiKey,
       sessionRoot: join(dataRoot, 'sessions'),
       objectStore,
     }),
@@ -281,15 +314,37 @@ export function createDefaultAdapters(
           ) => createDirectProvider({ pool, keyStore, grantVault, ownerId }),
         }
       : {}),
-    keyStore: env.OTTO_VAULT_KEY
-      ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
-      : process.platform === 'darwin'
-        ? createKeychainKeyStore()
-        : createEnvironmentKeyStore(),
+    keyStore,
     relevance: env.TYPESAFE_API_KEY
       ? createJevRelevanceClassifier({ apiKey: env.TYPESAFE_API_KEY, model: env.TYPESAFE_MODEL })
-      : createOpenAIRelevanceClassifier({ apiKey: env.OPENAI_API_KEY, model: env.TRIAGE_MODEL }),
-    memoryCurator: createPiMemoryCurator({ provider, apiKey, model: env.MEMORY_MODEL }),
+      : {
+          get id() {
+            return modelCurator.id;
+          },
+          get configured() {
+            return models.configured;
+          },
+          async classify(context, policy, signal) {
+            const answer = (await modelCurator.curate(
+              {
+                task: 'search',
+                instructions: `Return JSON {"decision":"ignore"|"digest"|"wake","confidence":0.0}. ${policy.instructions} Decision criteria: ${JSON.stringify(policy.criteria)}`,
+                input: context,
+              },
+              signal,
+            )) as { decision?: string; confidence?: number } | null;
+            const parsed = z
+              .object({
+                decision: z.enum(['ignore', 'digest', 'wake']),
+                confidence: z.number().min(0).max(1),
+              })
+              .parse(answer);
+            return parsed.decision === 'wake' && parsed.confidence < policy.minWakeConfidence
+              ? 'digest'
+              : parsed.decision;
+          },
+        },
+    memoryCurator: modelCurator,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(
         runtimeMode === 'tenant'
@@ -301,7 +356,9 @@ export function createDefaultAdapters(
       create: (environment) => createChatSdkTransport(pool, { ...env, ...environment }),
     },
     linkPreviews: createPublicLinkPreviewProvider(),
-    model: { provider, name: model, configured: Boolean(apiKey) },
+    get model() {
+      return models.current;
+    },
   };
 }
 
@@ -340,6 +397,7 @@ export async function createApplication(
       if (password) inspectorSecrets.push(password);
     } catch {}
   }
+  adapters.models?.onSecrets((values) => inspectorSecrets.push(...values));
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
   const inspector = createInspectorStore(inspectorDatabase, {
@@ -351,8 +409,12 @@ export async function createApplication(
     ownerId,
     enabled: () => configuration().inspectorEnabled,
     secrets: inspectorSecrets,
-    provider: adapters.model.provider,
-    model: adapters.model.name,
+    get provider() {
+      return adapters.model.provider;
+    },
+    get model() {
+      return adapters.model.name;
+    },
   });
   await promptInspector.initialize(pool);
   const providerUsage = createProviderUsageStore(inspectorDatabase, {
@@ -360,19 +422,25 @@ export async function createApplication(
     enabled: () => configuration().inspectorEnabled,
     coverage: [
       {
-        provider: adapters.model.provider,
+        get provider() {
+          return adapters.model.provider;
+        },
         category: 'agent',
         status: 'recorded',
         note: 'Responses, compaction and cache warming when reported by Pi. Costs are SDK estimates; unreported failed attempts may be missing.',
       },
       {
-        provider: adapters.relevance.id,
+        get provider() {
+          return adapters.relevance.id;
+        },
         category: 'relevance',
         status: 'recorded',
         note: 'Classification operations and duration. Tokens and prices are not exposed by this adapter.',
       },
       {
-        provider: memoryCurator.id,
+        get provider() {
+          return memoryCurator.id;
+        },
         category: 'memory',
         status: 'recorded',
         note: 'Background memory reflection, consolidation and search calls and duration. Tokens and prices are not exposed by this adapter.',
@@ -761,13 +829,21 @@ export async function createApplication(
         integrationsReady: adapters.integrations.configured,
       }),
   });
+  adapters.models?.register(app);
+  app.addHook('preClose', async () => {
+    await adapters.models?.close();
+  });
   registerBugReport(app, {
     pool,
     ownerId,
     captureEnabled: () => configuration().inspectorEnabled,
     secrets: inspectorSecrets,
-    provider: adapters.model.provider,
-    model: adapters.model.name,
+    get provider() {
+      return adapters.model.provider;
+    },
+    get model() {
+      return adapters.model.name;
+    },
     sessionEntries: (threadId) =>
       readPiSessionEntries({
         threadId,

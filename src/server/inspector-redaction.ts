@@ -11,7 +11,7 @@ const secretAssignment = new RegExp(
   'gi',
 );
 
-export function createInspectorRedactor(
+function compileInspectorRedactor(
   secrets: string[] = [],
   limits: { string?: number; payload?: number; minimumSecretLength?: number } = {},
 ) {
@@ -153,6 +153,21 @@ export function createInspectorRedactor(
     while (Buffer.byteLength(JSON.stringify({ preview, truncated: true })) > payloadLimit)
       preview = preview.slice(0, Math.floor(preview.length * 0.8));
     return { preview, truncated: true };
+  };
+}
+
+export function createInspectorRedactor(
+  secrets: string[] = [],
+  limits: Parameters<typeof compileInspectorRedactor>[1] = {},
+) {
+  let size = -1;
+  let redact: ReturnType<typeof compileInspectorRedactor>;
+  return (value: unknown) => {
+    if (size !== secrets.length) {
+      redact = compileInspectorRedactor(secrets, limits);
+      size = secrets.length;
+    }
+    return redact(value);
   };
 }
 

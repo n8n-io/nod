@@ -1,6 +1,8 @@
+import { ModelSettings } from './models';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   Clock3,
+  KeyRound,
   Globe,
   MapPin,
   LogOut,
@@ -324,8 +326,8 @@ export function AccountSettings({
   returnFocus(): HTMLElement | null;
 }) {
   const tabs: AccountTab[] = account.local
-    ? ['Appearance', 'Preferences']
-    : ['Profile', 'Appearance', 'Preferences'];
+    ? ['Models', 'Appearance', 'Preferences']
+    : ['Profile', 'Models', 'Appearance', 'Preferences'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : 'Appearance';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [name, setName] = useState(account.user.name);
@@ -378,7 +380,13 @@ export function AccountSettings({
           <nav role="tablist" aria-label="Settings" aria-orientation="vertical">
             {tabs.map((value, index) => {
               const Icon =
-                value === 'Profile' ? UserRound : value === 'Appearance' ? Sun : SlidersHorizontal;
+                value === 'Models'
+                  ? KeyRound
+                  : value === 'Profile'
+                    ? UserRound
+                    : value === 'Appearance'
+                      ? Sun
+                      : SlidersHorizontal;
               return (
                 <button
                   key={value}
@@ -518,6 +526,7 @@ export function AccountSettings({
                 </>
               )}
               {tab === 'Preferences' && <PreferencesForm />}
+              {tab === 'Models' && <ModelSettings />}
             </div>
           </div>
           {account.canLogout && (
