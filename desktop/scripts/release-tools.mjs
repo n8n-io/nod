@@ -358,7 +358,7 @@ const native = await import(pathToFileURL(resolve('node_modules/@earendil-works/
 assert(native.getNativePlatformHelper());
 console.log('Otto engine imports verified.');`;
   const result = await run(
-    join(application, 'Contents/MacOS/Otto Preview'),
+    join(application, 'Contents/MacOS/Otto'),
     ['--input-type=module', '-e', script],
     { cwd: engine, env: { ...environment, ELECTRON_RUN_AS_NODE: '1' } },
   );

@@ -1,6 +1,6 @@
 {
-  "name": "otto-desktop-experiment",
-  "productName": "Otto Preview",
+  "name": "otto-desktop",
+  "productName": "Otto",
   "version": "0.1.1",
   "private": true,
   "type": "module",

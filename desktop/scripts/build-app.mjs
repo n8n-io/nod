@@ -180,9 +180,9 @@ await run('/usr/bin/iconutil', ['--convert', 'icns', '--output', icon, iconset])
 const paths = await packager({
   dir: appSource,
   out: output,
-  name: 'Otto Preview',
-  executableName: 'Otto Preview',
-  appBundleId: 'dev.otto.desktop.preview',
+  name: configuration.productName,
+  executableName: configuration.productName,
+  appBundleId: 'dev.otto.desktop',
   appVersion: version,
   electronVersion,
   platform: 'darwin',
@@ -196,7 +196,7 @@ const paths = await packager({
     NSMicrophoneUsageDescription: 'Otto uses your microphone when you record a voice message.',
   },
 });
-const application = join(paths[0], 'Otto Preview.app');
+const application = join(paths[0], `${configuration.productName}.app`);
 await rename(engine, join(application, 'Contents', 'Resources', 'engine'));
 const licenses = join(application, 'Contents', 'Resources', 'licenses');
 await mkdir(licenses, { recursive: true });
@@ -236,7 +236,7 @@ if (signing) {
 }
 await verifyApplicationRuntime(application, electronVersion);
 console.log(`Application ready: ${application}`);
-const updateArchive = join(output, full ? 'Otto-Preview-full-arm64.zip' : 'Otto-Preview-arm64.zip');
+const updateArchive = join(output, full ? 'Otto-full-arm64.zip' : 'Otto-arm64.zip');
 await rm(updateArchive, { force: true });
 await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, updateArchive], {
   timeout: 10 * 60_000,
@@ -251,22 +251,16 @@ const update = {
 };
 const diskStage = join(stage, 'disk');
 await mkdir(diskStage, { recursive: true });
-await run('/bin/cp', ['-cR', application, join(diskStage, 'Otto Preview.app')]);
+await run('/bin/cp', ['-cR', application, join(diskStage, `${configuration.productName}.app`)]);
 await run('/bin/ln', ['-s', '/Applications', join(diskStage, 'Applications')]);
-const diskImage = join(output, full ? 'Otto-Preview-full-arm64.dmg' : 'Otto-Preview-arm64.dmg');
-const legacyDiskImage = join(
-  output,
-  full ? 'Otto Preview-full-arm64.dmg' : 'Otto Preview-arm64.dmg',
-);
-await rm(legacyDiskImage, { force: true });
-await rm(`${legacyDiskImage}.sha256`, { force: true });
+const diskImage = join(output, full ? 'Otto-full-arm64.dmg' : 'Otto-arm64.dmg');
 await rm(diskImage, { force: true });
 await run(
   '/usr/bin/hdiutil',
   [
     'create',
     '-volname',
-    'Otto Preview',
+    configuration.productName,
     '-srcfolder',
     diskStage,
     '-ov',
@@ -333,6 +327,7 @@ await writeFile(
       platform: 'darwin-arm64',
       minimumSystemVersion,
       source: await sourceRevision(),
+      ...(updateSourceUrl ? { updateSourceUrl } : {}),
       signing: signing ? signingMetadata(signing) : { mode: 'ad-hoc' },
       notarized: signing?.mode === 'developer-id',
       ...(applicationNotarization

@@ -294,6 +294,7 @@ jobs:
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
       OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
       OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
+      OTTO_DESKTOP_UPDATE_SOURCE_URL: ${{ vars.OTTO_DESKTOP_UPDATE_SOURCE_URL }}
     permissions:
       contents: write
     steps:

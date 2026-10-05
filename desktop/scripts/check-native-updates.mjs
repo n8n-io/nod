@@ -5,7 +5,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { packager } from '@electron/packager';
@@ -39,8 +39,8 @@ async function packageFixtures(planPath) {
     await writeFile(
       join(directory, 'main.cjs'),
       `
-const { app, autoUpdater } = require('electron');
-const { appendFileSync, readFileSync } = require('node:fs');
+const { app, autoUpdater, safeStorage } = require('electron');
+const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
 const { createHash } = require('node:crypto');
 const fixture = ${JSON.stringify(fixture)};
 app.setPath('userData', fixture.profile);
@@ -48,7 +48,14 @@ const receipt = (event, fields = {}) => appendFileSync(fixture.events,
   JSON.stringify({ event, version: app.getVersion(), at: Date.now(), executable: process.execPath,
     dataHash: createHash('sha256').update(readFileSync(fixture.data)).digest('hex'), ...fields }) + '\\n');
 app.whenReady().then(() => {
-  receipt('ready');
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Fixture encryption is unavailable.');
+  if (app.getVersion() === '1.0.0')
+    writeFileSync(fixture.encrypted, safeStorage.encryptString(fixture.sentinel), { mode: 0o600, flag: 'wx' });
+  const encrypted = readFileSync(fixture.encrypted);
+  receipt('ready', {
+    encryptedHash: createHash('sha256').update(encrypted).digest('hex'),
+    decryptedHash: createHash('sha256').update(safeStorage.decryptString(encrypted)).digest('hex'),
+  });
   if (app.getVersion() === '1.0.1') return setTimeout(() => app.quit(), 500);
   autoUpdater.on('error', (error) => {
     receipt('error', { message: String(error.message).slice(0, 2000) });
@@ -61,6 +68,9 @@ app.whenReady().then(() => {
   autoUpdater.on('update-not-available', () => { receipt('unavailable'); app.quit(); });
   autoUpdater.setFeedURL({ url: fixture.feed });
   autoUpdater.checkForUpdates();
+}).catch((error) => {
+  receipt('error', { message: String(error.message).slice(0, 2000) });
+  app.quit();
 });
 `,
     );
@@ -179,6 +189,8 @@ async function main() {
     }
   });
   const fixtures = [];
+  const storageKeychain = join(root, 'storage.keychain-db');
+  let previousKeychains;
   let failure;
   try {
     await new Promise((accept) => server.listen(0, '127.0.0.1', accept));
@@ -190,6 +202,8 @@ async function main() {
         profile: join(root, `${kind}-profile`),
         events: join(root, `${kind}.jsonl`),
         data: join(root, `${kind}-profile`, 'saved.json'),
+        encrypted: join(root, `${kind}-profile`, 'encrypted.bin'),
+        sentinel: `Synthetic encrypted update fixture ${randomUUID()}`,
         application: join(root, `OttoFixture-${kind}.app`),
         archive: join(root, `${kind}.zip`),
         feed: `${origin}/${kind}/feed`,
@@ -224,10 +238,42 @@ async function main() {
       env: await certificate(root, 'current'),
     });
     assert.equal(existsSync(join(runner, 'otto-apple-signing-state.json')), false);
+    const keychains = {
+      default: JSON.parse(await run('/usr/bin/security', ['default-keychain', '-d', 'user'])),
+      search: (await run('/usr/bin/security', ['list-keychains', '-d', 'user']))
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line.trim())),
+    };
+    assert(
+      [keychains.default, ...keychains.search].every(
+        (path) => typeof path === 'string' && isAbsolute(path) && !/[\r\n\0]/.test(path),
+      ),
+      'The original keychains must be recorded before creating the fixture keychain.',
+    );
+    previousKeychains = keychains;
+    const storagePassword = randomBytes(32).toString('hex');
+    await run('/usr/bin/security', ['create-keychain', '-p', storagePassword, storageKeychain]);
+    await run('/usr/bin/security', ['set-keychain-settings', '-lut', '3600', storageKeychain]);
+    await run('/usr/bin/security', ['unlock-keychain', '-p', storagePassword, storageKeychain]);
+    await run('/usr/bin/security', ['list-keychains', '-d', 'user', '-s', storageKeychain]);
+    await run('/usr/bin/security', ['default-keychain', '-d', 'user', '-s', storageKeychain]);
+    assert.equal(
+      JSON.parse(await run('/usr/bin/security', ['default-keychain', '-d', 'user'])),
+      storageKeychain,
+    );
+    assert.deepEqual(
+      (await run('/usr/bin/security', ['list-keychains', '-d', 'user']))
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line.trim())),
+      [storageKeychain],
+    );
     report.checks.push({
       id: 'UPD-SCOPE',
       pass: true,
       identifiers: fixtures.map((fixture) => fixture.identifier),
+      encryptionKeychain: storageKeychain,
     });
     for (const fixture of fixtures) {
       const before = sha256(await readFile(fixture.data));
@@ -236,7 +282,7 @@ async function main() {
       );
       const archive = await readFile(fixture.archive);
       const entry = {
-        id: fixture.kind === 'install' ? 'UPD-NATIVE.v1' : 'UPD-SIGNATURE.v1',
+        id: fixture.kind === 'install' ? 'UPD-NATIVE.v2' : 'UPD-SIGNATURE.v2',
         startedAt: new Date().toISOString(),
         archive: { bytes: archive.length, sha256: sha256(archive) },
         checks: [],
@@ -326,6 +372,17 @@ async function main() {
         sha256(await readFile(fixture.data)) === before &&
           events.every((event) => event.dataHash === before),
       );
+      const readyEvents = events.filter((event) => event.event === 'ready');
+      check(
+        'UPD-KEYS',
+        readyEvents.length === (fixture.kind === 'install' ? 2 : 1) &&
+          readyEvents.every(
+            (event) =>
+              event.decryptedHash === sha256(fixture.sentinel) &&
+              event.encryptedHash === readyEvents[0].encryptedHash,
+          ) &&
+          sha256(await readFile(fixture.encrypted)) === readyEvents[0].encryptedHash,
+      );
       await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', fixture.application]);
       entry.finishedAt = new Date().toISOString();
       if (entry.checks.some((check) => !check.pass))
@@ -364,6 +421,36 @@ async function main() {
       );
       for (const fixture of fixtures)
         for (const cache of fixture.caches) await rm(cache, { recursive: true, force: true });
+      if (previousKeychains) {
+        await run('/usr/bin/security', [
+          'default-keychain',
+          '-d',
+          'user',
+          '-s',
+          previousKeychains.default,
+        ]);
+        await run('/usr/bin/security', [
+          'list-keychains',
+          '-d',
+          'user',
+          '-s',
+          ...previousKeychains.search,
+        ]);
+        if (existsSync(storageKeychain))
+          await run('/usr/bin/security', ['delete-keychain', storageKeychain]);
+        assert.equal(existsSync(storageKeychain), false);
+        assert.equal(
+          JSON.parse(await run('/usr/bin/security', ['default-keychain', '-d', 'user'])),
+          previousKeychains.default,
+        );
+        assert.deepEqual(
+          (await run('/usr/bin/security', ['list-keychains', '-d', 'user']))
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line.trim())),
+          previousKeychains.search,
+        );
+      }
       await rm(root, { recursive: true });
       report.checks.push({ id: 'UPD-CLEANUP', pass: !existsSync(root) });
     } catch (error) {
@@ -376,7 +463,7 @@ async function main() {
   }
   if (failure) throw failure;
   process.stdout.write(
-    'Native update installation, signature rejection and profile preservation passed.\n',
+    'Native update installation, signature rejection and encrypted profile preservation passed.\n',
   );
 }
 

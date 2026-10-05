@@ -1,6 +1,6 @@
 # Otto desktop experiment
 
-This experiment packages Otto as an Apple Silicon Mac application. Users open the DMG, drag **Otto Preview** to Applications, open it, and enter a provider API key. They do not install Node, pnpm, Homebrew, Docker Desktop, or PostgreSQL. The default build separates the app from a verified, reusable Otto Runtime pack to keep app downloads and updates small.
+This experiment packages Otto as an Apple Silicon Mac application. Users open the DMG, drag **Otto** to Applications, open it, and enter a provider API key. They do not install Node, pnpm, Homebrew, Docker Desktop, or PostgreSQL. The default build separates the app from a verified, reusable Otto Runtime pack to keep app downloads and updates small.
 
 The assistant engine, database, workspace, and browser run on the Mac. Model requests still go to the selected provider and incur that provider's API charges. This is local execution with bring-your-own keys, not offline model inference.
 
@@ -8,8 +8,8 @@ Desktop is a wrapper around the same Otto product: it starts `src/server/index.t
 
 ## Trying it
 
-1. Open `Otto-Preview-arm64.dmg` and copy **Otto Preview** to Applications.
-2. Open **Otto Preview** and choose OpenAI or Anthropic.
+1. Open `Otto-arm64.dmg` and copy **Otto** to Applications.
+2. Open **Otto** and choose OpenAI or Anthropic.
 3. Add the provider API key and, optionally, a Composio key for app connections.
 4. Choose whether to open at login and show notifications. Otto detects date/time defaults and follows the system appearance; customize these later in Settings.
 5. Otto downloads and prepares its matching computer and browser in the background during these steps. The final step shows actual readiness and any recovery action. An existing verified runtime is reused without contacting the release service.
@@ -23,7 +23,7 @@ First-launch downloads use the same configured release source as app updates. Pr
 
 Closing the window keeps Otto running in the menu bar. **Quit Otto** stops its engine and private computer. Launch at login is optional. Tasks cannot run while the Mac is asleep or the app is quit.
 
-Otto Preview uses a separate profile from the existing development installation and from `/Applications/Otto.app`. It does not import existing conversations, browser accounts, channel tokens, or connected-account identities.
+Otto uses a fresh profile, separate from repository development and earlier desktop experiments. It does not import existing conversations, browser accounts, channel tokens, connected-account identities, or encrypted keys.
 
 ## What runs locally
 
@@ -39,9 +39,9 @@ This experiment deliberately retains PostgreSQL to exercise Otto's existing migr
 
 ## Local data
 
-Application state is under `~/Library/Application Support/Otto Desktop Experiment/profiles/local`. Private VM state is under `~/.otto-desktop-experiment/<profile identifier>`. Runtime disks, database contents, workspace files, browser profiles, Pi sessions, and encrypted settings together form the local installation's state. Copying only the database is not a complete backup.
+Application state is under `~/Library/Application Support/Otto/profiles/local`. Private VM state is under `~/.otto-desktop/<profile identifier>`. Runtime disks, database contents, workspace files, browser profiles, Pi sessions, and encrypted settings together form the local installation's state. Copying only the database is not a complete backup.
 
-Verified runtime versions live under `~/Library/Application Support/Otto Desktop Experiment/runtime/<release identifier>`. Installation checks the archive size and SHA-256 before extraction, accepts only the manifest's regular files, bounds expanded size, verifies every extracted file, and publishes the cache atomically. Interrupted installation can be retried. The running computer mounts this cache read-only; it does not depend on the checkout or app location. Upgrading this earlier preview requires quitting it first so its stopped computer can move from the old asset path to the cache without changing user data.
+Verified runtime versions live under `~/Library/Application Support/Otto/runtime/<release identifier>`. Installation checks the archive size and SHA-256 before extraction, accepts only the manifest's regular files, bounds expanded size, verifies every extracted file, and publishes the cache atomically. Interrupted installation can be retried. The running computer mounts this cache read-only; it does not depend on the checkout or app location.
 
 The app and DMG contain no provider keys. A local, one-time development import can populate encrypted settings from an existing environment file; only provider credentials and the optional Composio configuration are accepted. That import is not part of the normal user flow.
 
@@ -51,7 +51,7 @@ The app and DMG contain no provider keys. A local, one-time development import c
 - This locally built preview is ad-hoc signed. It is not notarized or ready for public distribution. A public DMG needs Apple Developer ID signing and notarization.
 - macOS can request Keychain approval after the preview is re-signed. Approve that request in the OS dialog; never put the Mac password in Otto chat.
 - First installation exposed an intermittent guest login-service delay; the measured first setup took about five minutes. See the [validation record](VALIDATION.md) for measured restart behavior and remaining checks.
-- Version 0.1.0 requires a manual first upgrade to an updater-enabled build. Cloud migration, multi-device synchronization and idle-computer suspension are not implemented.
+- Version 0.1.2 starts with a fresh installation and profile. Later releases support automatic updates. Cloud migration, multi-device synchronization and idle-computer suspension are not implemented.
 - The first runtime installation remains large and requires a network connection or manual import of its matching archive. Old runtime versions are retained; automatic cache eviction is not implemented.
 - Direct webhook delivery to a laptop is not provided. External channels that need a publicly reachable callback require a later relay or server deployment.
 - The preview uses isolated test identity and data. Optional provider and integration setup still depends on the provider's API permissions and configuration.
@@ -86,7 +86,7 @@ For a full installer that embeds the runtime assets, run:
 npm --prefix desktop run build -- --full
 ```
 
-That emits `Otto-Preview-full-arm64.dmg`. It avoids the separate runtime pack, although first provisioning can still need network access. A lean build uses `OTTO_DESKTOP_UPDATE_SOURCE_URL`, set during app packaging, for automatic first-launch downloads and updates. Alternatively, set `OTTO_RUNTIME_RELEASE_URL` to the actual HTTPS URL of its immutable archive while running `runtime-pack.mjs`. Publish and verify the matching archive before distributing the app. Without either source, the picker is the supported first-install path.
+That emits `Otto-full-arm64.dmg`. It avoids the separate runtime pack, although first provisioning can still need network access. A lean build uses `OTTO_DESKTOP_UPDATE_SOURCE_URL`, set during app packaging, for automatic first-launch downloads and updates. Alternatively, set `OTTO_RUNTIME_RELEASE_URL` to the actual HTTPS URL of its immutable archive while running `runtime-pack.mjs`. Publish and verify the matching archive before distributing the app. Without either source, the picker is the supported first-install path.
 
 ## Historical distribution size
 

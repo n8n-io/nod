@@ -44,14 +44,11 @@ const engineRoot = app.isPackaged
   : resolve(desktopRoot, '..');
 const setupPath = join(desktopRoot, 'ui', 'index.html');
 const setupURL = pathToFileURL(setupPath).href;
-app.setName('Otto Preview');
+app.setName('Otto');
 const developmentDataRoot = !app.isPackaged ? process.env.OTTO_DESKTOP_USER_DATA : undefined;
 if (developmentDataRoot && !isAbsolute(developmentDataRoot))
   throw new Error('The development profile path must be absolute.');
-app.setPath(
-  'userData',
-  developmentDataRoot || join(app.getPath('appData'), 'Otto Desktop Experiment'),
-);
+app.setPath('userData', developmentDataRoot || join(app.getPath('appData'), 'Otto'));
 const profileRoot = join(app.getPath('userData'), 'profiles', 'local');
 const settings = createSettingsStore(
   join(profileRoot, 'settings.json'),

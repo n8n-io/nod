@@ -158,7 +158,7 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
         !['self-signed', 'developer-id'].includes(manifest.signing?.mode) ||
         !hash.test(manifest.runtime?.fingerprint) ||
         !hash.test(manifest.runtime?.id) ||
-        manifest.update?.file !== 'Otto-Preview-arm64.zip' ||
+        manifest.update?.file !== 'Otto-arm64.zip' ||
         !hash.test(manifest.update.sha256)
       )
         throw new Error('The desktop update metadata is incompatible.');

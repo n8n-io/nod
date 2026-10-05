@@ -101,10 +101,7 @@ export function validateRuntimeRelease(release) {
 }
 
 export function runtimeCacheRoot(release, cacheRoot) {
-  return join(
-    cacheRoot || join(homedir(), 'Library/Application Support/Otto Desktop Experiment/runtime'),
-    release.id,
-  );
+  return join(cacheRoot || join(homedir(), 'Library/Application Support/Otto/runtime'), release.id);
 }
 
 async function verifiedCache(release, signal, cacheRoot) {

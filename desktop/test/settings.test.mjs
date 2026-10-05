@@ -2098,7 +2098,7 @@ function updateReleaseFixture(sourceUrl) {
     prerelease: true,
     assets: [
       item(101, 'release.json', 300),
-      item(103, 'Otto-Preview-arm64.zip', 1000),
+      item(103, 'Otto-arm64.zip', 1000),
       item(102, 'runtime-release.json', 500),
       item(104, 'update.json', 150),
     ],
@@ -2115,7 +2115,7 @@ function updateReleaseFixture(sourceUrl) {
     source: 'a'.repeat(40),
     signing: { mode: 'self-signed' },
     runtime,
-    update: { file: 'Otto-Preview-arm64.zip', bytes: 1000, sha256: 'e'.repeat(64) },
+    update: { file: 'Otto-arm64.zip', bytes: 1000, sha256: 'e'.repeat(64) },
   };
   const base = sourceUrl || 'https://api.github.com/repos/n8n-io/otto';
   const assetPath = (owner, entry) =>
@@ -2139,7 +2139,7 @@ function updateReleaseFixture(sourceUrl) {
     [
       assetPath(release, release.assets[3]),
       {
-        url: 'https://github.com/n8n-io/otto/releases/download/desktop-v0.2.0/Otto-Preview-arm64.zip',
+        url: 'https://github.com/n8n-io/otto/releases/download/desktop-v0.2.0/Otto-arm64.zip',
         name: 'Otto 0.2.0',
       },
     ],
