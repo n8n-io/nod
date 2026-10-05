@@ -469,7 +469,7 @@ export function createAgentBrowserComputer(options: {
           '--proxy-bypass',
           '<-loopback>',
           '--args',
-          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization' +
+          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--disable-blink-features=AutomationControlled' +
             (sandbox ? '' : ',--no-sandbox') +
             (headed && platform === 'darwin' ? ',--start-minimized' : '') +
             (state.saved.restoreSession ? ',--restore-last-session' : ''),
