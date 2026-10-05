@@ -148,7 +148,7 @@ export default scenario({
   seconds,
   user: { approve, answers, secrets, persona },
   world(clock) {
-    /* apps, sites, saved logins, goals, cards, state */
+    /* apps, sites, saved logins, cards, state */
   },
   async play(session, world) {
     /* say(), fireSchedules(), mutate the world, say() again */

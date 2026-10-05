@@ -250,7 +250,7 @@
   display: grid;
   gap: 12px;
 }
-.goals-views,
+.task-views,
 .schedule-views {
   display: flex;
   gap: 20px;
@@ -258,7 +258,7 @@
   margin-bottom: var(--secondary-section-gap);
   border-bottom: 1px solid var(--border);
 }
-.goals-views > button,
+.task-views > button,
 .schedule-views > button {
   display: inline-flex;
   align-items: center;
@@ -272,7 +272,7 @@
   font-size: 13px;
   cursor: pointer;
 }
-.goals-views > button[aria-selected='true'],
+.task-views > button[aria-selected='true'],
 .schedule-views > button[aria-selected='true'] {
   color: var(--foreground);
   border-bottom-color: var(--accent);
@@ -434,36 +434,6 @@
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-.saved-goal-progress {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-}
-.saved-goal-progress progress {
-  appearance: none;
-  border: 0;
-  width: min(180px, 70%);
-  height: 4px;
-  border-radius: 2px;
-  overflow: hidden;
-  background: var(--secondary);
-}
-.saved-goal-progress progress::-webkit-progress-bar {
-  background: var(--secondary);
-}
-.saved-goal-progress progress::-webkit-progress-value {
-  border-radius: 2px;
-  background: var(--accent);
-}
-.saved-goal-progress progress::-moz-progress-bar {
-  border-radius: 2px;
-  background: var(--accent);
-}
-.saved-goal-progress > span {
-  color: var(--muted-foreground);
-  font-size: 11px;
 }
 .saved-plan-next {
   display: flex;

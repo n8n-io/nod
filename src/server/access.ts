@@ -12,7 +12,7 @@ export function registerLocalAccess(
   const desktopToken = desktop && Buffer.from(desktop.token);
   const pages = new Set([
     '/',
-    '/goals',
+    '/tasks',
     '/schedule',
     '/apps',
     '/onboarding',

@@ -391,7 +391,7 @@ test('the thread is marked once, before Pi first receives outside content', asyn
   const events: string[] = [];
   await fixture(
     async (tools, _emit, options) => {
-      await call(tools, 'manage_personal_context', { action: 'goal_list', args: {} });
+      await call(tools, 'manage_personal_context', { action: 'schedule_list', args: {} });
       await call(tools, 'send_message', { text: 'Checking now.' });
       await options.runTool(
         'fetch_content',
@@ -413,7 +413,7 @@ test('the thread is marked once, before Pi first receives outside content', asyn
       },
     },
   );
-  assert.deepEqual(events, ['goal_list', 'marked', 'fetch_content', 'history_search']);
+  assert.deepEqual(events, ['schedule_list', 'marked', 'fetch_content', 'history_search']);
 });
 
 test('attachments and credential reads mark the thread', async () => {
@@ -736,7 +736,7 @@ test('secure credential pause prevents subsequent tools in the same execution se
         });
         await assert.rejects(
           call(tools, 'manage_personal_context', {
-            action: 'goal_create',
+            action: 'schedule_create',
             args: { title: 'must not run' },
           }),
           /stopped/,

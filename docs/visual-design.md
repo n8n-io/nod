@@ -6,7 +6,7 @@ keyboard commands, account settings, and all assistant capabilities.
 ## Direction
 
 Otto is a personal assistant with one persistent conversation. The conversation
-is the main work area. Goals, schedules, apps, channels, and the Vault support it.
+is the main work area. Tasks, schedules, apps, channels, and the Vault support it.
 The interface must make these areas easy to find without adding visual noise.
 
 Use the pink actions and plum surfaces from
@@ -100,7 +100,7 @@ This diagram shows the expanded sidebar.
 | Otto           | Conversation or page           | Inspector        |
 |                |                                |                  |
 | Chat           | Readable content width         | Tabs             |
-| Goals          |                                |                  |
+| Tasks          |                                |                  |
 | Schedule       |                                | Current state    |
 | Apps           |                                |                  |
 | Channels       |                                | Details          |
@@ -112,7 +112,7 @@ This diagram shows the expanded sidebar.
 ```
 
 Secondary pages share one title size, content width, heading gap, and action
-alignment. Apps retain their grid. Goals and schedules retain their lists and
+alignment. Apps retain their grid. Tasks and schedules retain their lists and
 tabs. The Vault retains its list and detail layout.
 
 On phones, preserve the existing top bar and navigation sheet. Keep controls
@@ -126,7 +126,7 @@ scroll. The Inspector keeps its existing phone presentation.
 | Shell                      | Brand, sidebar, route selection, account menu  | Collapse, shortcuts, navigation                  |
 | Chat                       | Message surfaces, text, date markers, composer | Reply, reactions, files, formatting, voice, stop |
 | Chat states                | Welcome, loading, working, reconnecting        | Existing status and recovery actions             |
-| Goals and schedules        | Titles, tabs, rows, controls                   | Create, edit, pause, delete, history             |
+| Tasks and schedules        | Titles, tabs, rows, controls                   | Create, edit, pause, delete, history             |
 | Apps and channels          | Cards, status, account details                 | Connect, manage, disconnect, setup               |
 | Vault                      | Search, selection, details, fields             | Secure forms, reveal, edit, delete               |
 | Inspector                  | Heading, tabs, surfaces, code details          | Resize, browser, tools, prompts, usage           |

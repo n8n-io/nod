@@ -6,7 +6,7 @@ import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials } from './pages/credentials';
 import { Inspector } from './pages/inspector';
-import { Goals } from './pages/goals';
+import { Tasks } from './pages/tasks';
 import { SchedulePage } from './pages/schedule';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
@@ -160,7 +160,7 @@ function Workspace({
     return () => clearTimeout(timer);
   }, [loaded]);
   useEffect(() => {
-    prefetchPageData(['/api/vault', '/api/goals', '/api/schedules', '/api/apps']);
+    prefetchPageData(['/api/vault', '/api/tasks', '/api/schedules', '/api/apps']);
   }, []);
   useEffect(() => {
     if (path === '/dev') setInspector(true);
@@ -251,7 +251,7 @@ function Workspace({
             {currentPath === '/vault' && <Vault />}
             {currentPath === '/apps' && <Apps configuration={state?.configuration} />}
             {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
-            {currentPath === '/goals' && <Goals onAsk={askInChat} />}
+            {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
             {currentPath === '/schedule' && <SchedulePage onAsk={askInChat} />}
             {!navigationItems.some((item) => item.path === currentPath) && (
               <div className="empty-state">

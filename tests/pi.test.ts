@@ -219,7 +219,10 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                   type: 'toolCall',
                   id: 'later-call',
                   name: 'manage_personal_context',
-                  arguments: { action: 'goal_create', args: { title: 'This should not execute' } },
+                  arguments: {
+                    action: 'schedule_create',
+                    args: { title: 'This should not execute' },
+                  },
                 },
               ]
             : [{ type: 'text', text: 'Resumed successfully.' }],

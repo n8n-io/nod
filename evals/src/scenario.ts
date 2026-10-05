@@ -30,12 +30,6 @@ export interface World {
   apps?: AppsWorld;
   sites?: Record<string, Site>;
   logins?: Array<{ label: string; origin: string; username: string; password: string }>;
-  goals?: Array<{
-    title: string;
-    description?: string;
-    nextAction?: string;
-    targetDate?: string | null;
-  }>;
   cards?: Array<{
     label: string;
     cardholder: string;

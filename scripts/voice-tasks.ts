@@ -374,16 +374,16 @@ export const taskScenarios: VoiceScenario[] = [
     background: true,
     apps: ['gmail', 'googlecalendar'],
     data: { GMAIL: slipping, GOOGLECALENDAR: calendarToday },
-    goals: [
+    tasks: [
       {
         title: 'Launch Beacon beta to first 50 users',
-        description: 'Launch post on Oct 14.',
-        nextAction: 'Pick the 50 users',
+        now: 'Picking the 50 users',
+        doneWhen: 'Launch post is out on Oct 14.',
       },
       {
         title: 'Close Northwind contract',
-        description: 'Sign by Oct 15.',
-        nextAction: 'Decide clause 7.2',
+        now: 'Deciding clause 7.2',
+        doneWhen: 'Contract signed by Oct 15.',
       },
     ],
     maxWords: 150,

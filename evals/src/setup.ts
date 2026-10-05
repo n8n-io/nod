@@ -33,7 +33,6 @@ export async function prepare(stack: Stack, world: World, timeZone: string) {
     url.searchParams.set('outcome', 'success');
     await call(stack, 'GET', url.pathname + url.search, undefined, 'manual');
   }
-  for (const goal of world.goals ?? []) await call(stack, 'POST', '/api/goals', goal);
   for (const card of world.cards ?? [])
     await call(stack, 'POST', '/api/vault', { kind: 'card', ...card });
   for (const login of world.logins ?? [])

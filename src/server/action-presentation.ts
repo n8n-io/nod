@@ -1,8 +1,6 @@
 import type { TrustReason } from './trust.ts';
 
 const labels: Record<string, string> = {
-  OTTO_goal_create: 'Add this goal',
-  OTTO_goal_update: 'Update this goal',
   OTTO_schedule_create: 'Add this schedule',
   OTTO_schedule_update: 'Update this schedule',
   OTTO_schedule_cancel: 'Pause this schedule',

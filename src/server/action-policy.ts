@@ -7,13 +7,7 @@ const ordinaryActions: Record<string, Intent[]> = {
 };
 
 export function isReversiblePlanAction(action: string) {
-  return [
-    'OTTO_goal_create',
-    'OTTO_goal_update',
-    'OTTO_schedule_create',
-    'OTTO_schedule_update',
-    'OTTO_schedule_cancel',
-  ].includes(action);
+  return ['OTTO_schedule_create', 'OTTO_schedule_update', 'OTTO_schedule_cancel'].includes(action);
 }
 
 export function requestsConnectedSchedule(action: string, instruction: string) {

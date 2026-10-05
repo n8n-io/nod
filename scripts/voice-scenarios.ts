@@ -13,7 +13,7 @@ export interface VoiceScenario {
   maxWords?: number;
   channel?: string;
   history?: Array<{ role: 'user' | 'assistant'; text: string; hoursAgo: number }>;
-  goals?: Array<{ title: string; description: string; nextAction: string }>;
+  tasks?: Array<{ title: string; now: string; doneWhen: string }>;
   preferences?: string;
   profile?: { name: string; location: string; phone: string; preferences: string };
   memory?: string;
@@ -78,11 +78,11 @@ const calendar = {
   ],
 };
 
-const launchGoal = {
+const launchTask = {
   title: 'Launch Beacon beta to first 50 users',
-  description:
-    'Beacon is an open source meeting-notes agent. Beta goes to 50 users from the waitlist; launch post on Oct 14.',
-  nextAction: 'Finish onboarding flow and pick the 50 users',
+  now: 'Finishing the onboarding flow and picking the 50 users',
+  doneWhen:
+    'Beacon, an open source meeting-notes agent, is live for 50 waitlist users with the launch post out on Oct 14.',
 };
 
 export const scenarios: VoiceScenario[] = [
@@ -133,10 +133,10 @@ export const scenarios: VoiceScenario[] = [
   {
     id: 'vague-with-context',
     title: 'Vague ask, context already known',
-    good: 'Uses the saved goal instead of asking what the launch is. Proposes one concrete move and asks at most one question.',
+    good: 'Uses the open task instead of asking what the launch is. Proposes one concrete move and asks at most one question.',
     prompt: 'help me with the launch',
     work: true,
-    goals: [launchGoal],
+    tasks: [launchTask],
     apps: ['gmail', 'googlecalendar'],
     data: { GMAIL: inbox, GOOGLECALENDAR: calendar },
   },
@@ -169,9 +169,9 @@ export const scenarios: VoiceScenario[] = [
   {
     id: 'what-can-you-do',
     title: '"What can you do?"',
-    good: 'Two or three offers grounded in what it can see (goal, inbox, calendar), not a capability catalogue. Ends with one easy question.',
+    good: 'Two or three offers grounded in what it can see (tasks, inbox, calendar), not a capability catalogue. Ends with one easy question.',
     prompt: 'what can u do for me',
-    goals: [launchGoal],
+    tasks: [launchTask],
     apps: ['gmail', 'googlecalendar'],
     data: { GMAIL: inbox, GOOGLECALENDAR: calendar },
     maxWords: 80,
@@ -202,10 +202,10 @@ export const scenarios: VoiceScenario[] = [
     title: 'Background: user has ignored the last pings',
     good: 'Sends nothing for a low-value update, or one short line offering to go quieter (like Viktor: "Slack has been quiet since Thursday, switch to weekly?").',
     prompt:
-      'Heartbeat review: check active goals and saved updates. New since last review: 2 newsletters, a calendar invite for a webinar next month. Work quietly; send a concise message only when there is a useful result or necessary question.',
+      'Heartbeat review: check current context and saved updates. New since last review: 2 newsletters, a calendar invite for a webinar next month. Work quietly; send a concise message only when there is a useful result or necessary question.',
     background: true,
     quiet: true,
-    goals: [launchGoal],
+    tasks: [launchTask],
     apps: ['gmail', 'googlecalendar'],
     data: {
       GMAIL: { messages: inbox.messages.slice(3, 5) },

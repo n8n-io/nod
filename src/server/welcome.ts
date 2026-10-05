@@ -2,7 +2,7 @@ export function welcomeGreeting(name: string | undefined, apps: string[]) {
   const firstName = name?.trim().split(/\s+/)[0]?.slice(0, 40);
   const hi = firstName ? `Hi ${firstName}` : 'Hi';
   if (!apps.length)
-    return `${hi}, I’m Otto. I can plan your week, research a topic or keep a goal on track for you. Connect one app, such as Gmail, in Apps, and I’ll find work I can take off your plate.`;
+    return `${hi}, I’m Otto. I can plan your week, research a topic or follow up on things for you. Connect one app, such as Gmail, in Apps, and I’ll find work I can take off your plate.`;
   const shown = apps.slice(0, 3);
   const names =
     apps.length > 3

@@ -131,11 +131,11 @@ export interface ActivityItem {
 
 export function compactActivityText(text: string, limit = 160) {
   if (
-    /^(Hourly review of active goals, current context|A relevance check selected this hourly review)/i.test(
+    /^(Review current context and saved connection updates|A relevance check selected this hourly review)/i.test(
       text.trim(),
     )
   )
-    return 'Hourly goal and context review';
+    return 'Context review';
   if (/^A relevance check selected this event/i.test(text.trim()))
     return 'Connection update review';
   const compact = text.replace(/\s+/g, ' ').trim();

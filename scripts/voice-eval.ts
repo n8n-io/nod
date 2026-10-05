@@ -255,10 +255,15 @@ async function runScenario(
   const visible = new Map<string, number>();
   const latency = () => sleep(scenario.latencyMs ?? 1500);
   const apps = scenario.apps ?? [];
-  const goals = (scenario.goals ?? []).map((goal) => ({
-    ...goal,
-    progress: 30,
-    targetDate: '2026-10-14',
+  const tasks = (scenario.tasks ?? []).map((task) => ({
+    id: randomUUID(),
+    title: task.title,
+    now: task.now,
+    doneWhen: task.doneWhen,
+    status: 'scheduled' as const,
+    waitingFor: [],
+    checkAt: '2026-10-14T09:00:00.000Z',
+    question: null,
   }));
   const directory = await mkdtemp(join(tmpdir(), 'otto-voice-'));
   const threadId = randomUUID();
@@ -293,8 +298,8 @@ async function runScenario(
         phone: '',
         preferences: scenario.preferences ?? '',
       },
-      activeGoals: goals,
     },
+    tasks,
     memory: scenario.memory,
     workspacePath: directory,
     signal: AbortSignal.timeout(scenario.answer ? 90_000 : 240_000),
@@ -382,8 +387,8 @@ async function runScenario(
       if (/CREATE|UPDATE|ADD|APPEND|INSERT/.test(action)) return { status: 'ok' };
       return scenario.data?.[prefix] ?? { items: [] };
     },
+    task: async (input) => record('task', input, { tasks }),
     manage: async (action, input) => {
-      if (action === 'goal_list') return record(action, input, goals);
       if (action === 'profile_get') return record(action, input, context.personalContext!.profile);
       if (action === 'history_search') return record(action, input, []);
       if (['memory_find', 'memory_read', 'schedule_list'].includes(action))

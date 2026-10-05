@@ -99,25 +99,12 @@ export default scenario({
       }),
       marks: { setup: 0, fired: 0, run: 0 },
       deadline,
-      goals: [
-        {
-          title: `Ship the Meridian rebrand by ${date(28, 'en-GB', { day: 'numeric', month: 'long' })}`,
-          description: 'Final identity, guidelines and handoff to Sofia.',
-          nextAction: 'Send the revised moodboard to Sofia before the review',
-          targetDate: date(28),
-        },
-        {
-          title: 'Reach €6,000 a month in recurring work',
-          description: 'Close the open proposals and keep two retainers warm.',
-          nextAction: 'Follow up on open quotes this week',
-          targetDate: date(90),
-        },
-      ],
+      rebrandBy: date(28, 'en-GB', { day: 'numeric', month: 'long' }),
     };
   },
   async play(session, world) {
     await session.say(
-      "Every morning at 8:00, give me a brief: today's meetings, what's due this week, what's slipping, and the 3 things that matter most for my goals.",
+      `Every morning at 8:00, give me a brief: today's meetings, what's due this week, what's slipping, and the 3 things that matter most for my goals. My goals are shipping the Meridian rebrand by ${world.rebrandBy} (final identity, guidelines and handoff to Sofia; next I send her the revised moodboard before the review) and reaching €6,000 a month in recurring work (close the open proposals and keep two retainers warm).`,
     );
     const { marks } = world;
     marks.setup = await session.assistantCount();
@@ -132,7 +119,7 @@ export default scenario({
         .map((text) => `  - ${text.replace(/\s+/g, ' ').slice(0, 1200)}`)
         .join('\n') || '  (no message)';
     return [
-      `Today's meetings: ${meetings.map((m) => m.summary).join('; ')}. Due soon: the accountant needs September receipts by ${world.deadline}. Slipping: Marta Silva at Harborline asked for a revised quote 5 days ago and has had no reply. Sofia asked whether the revised moodboard is ready for today's Meridian review. Goals: ${world.goals.map((goal) => goal.title).join('; ')}.`,
+      `Today's meetings: ${meetings.map((m) => m.summary).join('; ')}. Due soon: the accountant needs September receipts by ${world.deadline}. Slipping: Marta Silva at Harborline asked for a revised quote 5 days ago and has had no reply. Sofia asked whether the revised moodboard is ready for today's Meridian review. Goals the user stated: ship the Meridian rebrand by ${world.rebrandBy}; reach €6,000 a month in recurring work.`,
       `Scheduled runs started: ${marks.fired}.`,
       `Messages when the routine was set up:\n${part(0, marks.setup)}`,
       `Messages from the scheduled run:\n${part(marks.setup, marks.run)}`,

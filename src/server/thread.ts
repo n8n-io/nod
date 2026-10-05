@@ -50,6 +50,8 @@ export interface EnqueueTurnOptions {
   channelSourceId?: string | null;
   background?: boolean;
   readOnly?: boolean;
+  taskId?: string;
+  taskFrom?: string;
   client?: PoolClient;
 }
 export interface SubmitUserMessageOptions {
@@ -93,6 +95,13 @@ export interface ThreadDependencies {
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
   activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
+  taskContext?: (turnId: string) => Promise<Pick<RuntimeContext, 'tasks' | 'taskId'>>;
+  task?: (
+    turn: TurnRef,
+    input: unknown,
+    provenance: { sourceMessageId: string | null },
+  ) => Promise<unknown>;
+  settleTask?: (client: PoolClient, turnId: string) => Promise<void>;
   markUntrustedContext?: (turn: TurnRef) => Promise<void>;
   flagInjection?: (turn: TurnRef, findings: string[]) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
@@ -265,8 +274,8 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
     const thread = await lockThread(client);
     const id = randomUUID();
     const inserted = await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,channel_source_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,channel_source_id,task_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,(SELECT task_id FROM turns WHERE id=$12 AND owner_id=$2)))
        ON CONFLICT (owner_id,source_id) WHERE source_id IS NOT NULL DO NOTHING RETURNING id`,
       [
         id,
@@ -279,6 +288,8 @@ export async function enqueueTurn(prompt: string, options: EnqueueTurnOptions) {
         options.background ?? options.source !== 'resume',
         options.readOnly ?? false,
         options.channelSourceId ?? null,
+        options.taskId ?? null,
+        options.taskFrom ?? null,
       ],
     );
     if (!inserted.rowCount)
@@ -364,8 +375,11 @@ export async function submitUserMessage(
     const messageId = options.clientMessageId ?? randomUUID();
     const turnId = randomUUID();
     await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel)
-       VALUES($1,$2,$3,'user',$4,$5,$6,$7)`,
+      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,message_id,prompt,channel,task_id)
+       VALUES($1,$2,$3,'user',$4,$5,$6,$7,(
+         SELECT w.task_id FROM turns w WHERE w.thread_id=$3 AND w.owner_id=$2 AND w.status='waiting'
+         AND NOT EXISTS (SELECT 1 FROM turns n WHERE n.thread_id=w.thread_id AND n.source='user' AND n.created_at>w.created_at)
+         ORDER BY w.created_at DESC,w.id DESC LIMIT 1))`,
       [
         turnId,
         ownerId,
@@ -551,6 +565,7 @@ async function resumeTurn(turnId: string, sourceId: string, prompt: string, pend
       sourceId,
       channel: turn?.channel ?? 'web',
       background: turn?.background ?? false,
+      taskFrom: turnId,
       client,
     });
     return true;
@@ -786,12 +801,12 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
     source,
     history,
     profile,
-    goals,
     preferences,
     account,
     memory,
     connectedApps,
     activityCheck,
+    tasks,
   ] = await Promise.all([
     sourceMessageId
       ? pool.query(
@@ -809,15 +824,12 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       [ownerId, threadId, sourceMessageId],
     ),
     pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
-    pool.query(
-      'SELECT title,description,progress,next_action AS "nextAction",target_date AS "targetDate" FROM goals WHERE owner_id=$1 AND status=\'active\' ORDER BY updated_at DESC LIMIT 10',
-      [ownerId],
-    ),
     pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [ownerId]),
     dependencies.accountProfile?.().catch(() => undefined),
     dependencies.memoryContext?.().catch(() => ''),
     turn.background ? dependencies.connectedApps?.() : undefined,
     turn.background ? dependencies.activityCheck?.({ threadId, turnId: turn.id }) : undefined,
+    dependencies.taskContext?.(turn.id),
   ]);
   const message = source?.rows[0];
   const replyTo = message?.id
@@ -847,6 +859,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),
       ...(activityCheck ? { activityCheck, limits: { maxToolCalls: 8, timeoutMs: 90_000 } } : {}),
+      ...tasks,
       personalContext: {
         profile: {
           name: String(stored.name ?? ''),
@@ -854,7 +867,6 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           phone: String(stored.phone ?? ''),
           preferences: String(stored.preferences ?? ''),
         },
-        activeGoals: goals.rows,
       },
     },
   };
@@ -1068,6 +1080,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         return inline(action, result, operation);
       }),
       manage: fenced((action, args) => dependencies.manage(ref, action, args, { sourceMessageId })),
+      task:
+        dependencies.task && fenced((input) => dependencies.task!(ref, input, { sourceMessageId })),
       takeMessages:
         turn.background || turn.read_only
           ? undefined
@@ -1113,16 +1127,17 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     });
     if (!['succeeded', 'waiting_credentials', 'waiting_user'].includes(result.status))
       throw new Error('Invalid turn result.');
-    await current((client) =>
-      result.status === 'succeeded'
-        ? finishTurn(client, turnId, 'succeeded')
-        : finishTurn(client, turnId, 'waiting', {
-            waitingReason:
-              result.status === 'waiting_credentials'
-                ? 'credentials'
-                : (result.waitingFor ?? 'question'),
-          }),
-    ).catch((error) => {
+    await current(async (client) => {
+      if (result.status === 'succeeded') await finishTurn(client, turnId, 'succeeded');
+      else
+        await finishTurn(client, turnId, 'waiting', {
+          waitingReason:
+            result.status === 'waiting_credentials'
+              ? 'credentials'
+              : (result.waitingFor ?? 'question'),
+        });
+      await dependencies.settleTask?.(client, turnId);
+    }).catch((error) => {
       if (!signal.aborted) throw error;
     });
   } catch (error) {

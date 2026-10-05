@@ -108,6 +108,7 @@ import {
   withTurnLock,
 } from './thread.ts';
 import { createTriage } from './triage.ts';
+import { createTasks } from './tasks.ts';
 import { createVault, credentialOrigin } from './vault.ts';
 import { createBrowserConnections } from './browser-connections.ts';
 import { createProviderUsageStore } from './provider-usage.ts';
@@ -576,11 +577,12 @@ export async function createApplication(
   });
   await memory.initialize();
   await personal.initialize({ workers: options.workers });
+  const tasks = createTasks({ boss, consumers });
   const triage = createTriage({
     consumers,
     classifier: classify,
     getProfile: personal.getProfile,
-    listGoals: personal.listGoals,
+    openTasks: tasks.open,
     connectedApps: () => integrations.connectedApps(),
   });
   const grantVault = await createAppGrantVault(pool, {
@@ -674,17 +676,20 @@ export async function createApplication(
     refresh,
   });
   const approvals = await createApprovals(
-    (action, args, provenance) =>
-      action === 'OTTO_memory_save'
-        ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
-        : action.startsWith('OTTO_')
-          ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-          : providerUsage.withTurn(provenance.turnId, () =>
-              integrations.executeApproved(ownerId, action, args, {
-                threadId: provenance.threadId,
-                turnId: provenance.turnId,
-              }),
-            ),
+    async (action, args, provenance) => {
+      if (action === 'OTTO_memory_save')
+        return memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true });
+      if (action.startsWith('OTTO_'))
+        return personal.manage(action.slice('OTTO_'.length), args, provenance);
+      const result = await providerUsage.withTurn(provenance.turnId, () =>
+        integrations.executeApproved(ownerId, action, args, {
+          threadId: provenance.threadId,
+          turnId: provenance.turnId,
+        }),
+      );
+      await tasks.recordSend(provenance.turnId, action, args, result).catch(() => {});
+      return result;
+    },
     async (action, args) => {
       if (action.startsWith('OTTO_'))
         await personal.validateReview(action.slice('OTTO_'.length), args);
@@ -721,6 +726,7 @@ export async function createApplication(
   if (options.workers !== false) {
     await inspector.recover().catch(() => {});
     await triage.initializeHeartbeat();
+    await tasks.initialize();
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
     await startThreadWorkers({
       consumers,
@@ -740,6 +746,15 @@ export async function createApplication(
       connectedApps: integrations.connectedApps,
       activityCheck: triage.activityCheck,
       memoryContext: memory.context,
+      taskContext: tasks.context,
+      task: async (turn, input, provenance) => {
+        const result = await withTurnLock(turn.turnId, (client) =>
+          tasks.act(client, turn, input, provenance),
+        );
+        refresh();
+        return result;
+      },
+      settleTask: tasks.settle,
       markUntrustedContext: (turn) => memory.markUntrusted(turn.threadId),
       flagInjection: trust.flag,
       connections: integrations.manageConnections,
@@ -751,8 +766,6 @@ export async function createApplication(
           [
             'profile_update',
             'notification_preferences_update',
-            'goal_create',
-            'goal_update',
             'schedule_create',
             'schedule_update',
             'schedule_cancel',
@@ -846,7 +859,7 @@ export async function createApplication(
             ? { [appConfirmation]: result.question }
             : result;
         }
-        return integrations.execute(
+        const result = await integrations.execute(
           ownerId,
           action,
           args,
@@ -854,6 +867,8 @@ export async function createApplication(
           options?.signal,
           options?.checkConnectionId,
         );
+        await tasks.recordSend(turn.turnId, action, args, result).catch(() => {});
+        return result;
       },
     });
   }
@@ -952,6 +967,7 @@ export async function createApplication(
   vault.registerRoutes(app);
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
+  tasks.registerRoutes(app);
   triage.registerRoutes(app);
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
   let channelSettings: Awaited<ReturnType<typeof createChannelSettings>> | undefined;

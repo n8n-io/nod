@@ -17,7 +17,7 @@ export function DeletePlan({
   id,
   title,
 }: {
-  kind: 'goal' | 'schedule';
+  kind: 'task' | 'schedule';
   id: string;
   title: string;
 }) {
@@ -87,7 +87,7 @@ export function DeletePlan({
           <span>
             {kind === 'schedule'
               ? 'Future runs will stop. Past runs stay in History.'
-              : 'This will remove the goal and its progress.'}
+              : 'Otto will stop working on it and its checks will stop.'}
           </span>
         </DialogDescription>
         {error && <Notice>{error}</Notice>}

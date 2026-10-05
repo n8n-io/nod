@@ -59,6 +59,24 @@ export async function initializeDatabase() {
       summary text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS turn_events_turn_time ON turn_events(turn_id,created_at);
+    CREATE TABLE IF NOT EXISTS tasks (
+      id uuid PRIMARY KEY, owner_id text NOT NULL, title text NOT NULL, done_when text NOT NULL,
+      now_text text NOT NULL, result text NOT NULL DEFAULT '',
+      state text NOT NULL DEFAULT 'open' CHECK (state IN ('open','done','cancelled')),
+      waiting_for jsonb NOT NULL DEFAULT '[]', check_at timestamptz, idle_checks integer NOT NULL DEFAULT 0,
+      source_message_id uuid, channel text NOT NULL DEFAULT 'web', channel_source_id text,
+      created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+      closed_at timestamptz
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS tasks_source_title ON tasks(owner_id,source_message_id,title) WHERE source_message_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS tasks_due ON tasks(owner_id,check_at) WHERE state='open';
+    ALTER TABLE turns ADD COLUMN IF NOT EXISTS task_id uuid REFERENCES tasks(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS turns_task ON turns(task_id,status) WHERE task_id IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS turn_sends (
+      id uuid PRIMARY KEY, owner_id text NOT NULL, turn_id uuid NOT NULL REFERENCES turns(id),
+      via text NOT NULL, recipient text NOT NULL, sent_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS turn_sends_turn ON turn_sends(turn_id);
     CREATE TABLE IF NOT EXISTS messages (
       id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL,
       thread_id uuid REFERENCES threads(id), turn_id uuid REFERENCES turns(id),

@@ -179,14 +179,17 @@ test(
       await t.test(
         'deleted targets and obsolete invalid payloads stay pending without an uncertain execution',
         async () => {
-          const goal = { id: randomUUID() };
+          const schedule = { id: randomUUID() };
           await pool.query(
-            "INSERT INTO goals(id,owner_id,title,description) VALUES($1,$2,'Review Northstar','Synthetic review goal')",
-            [goal.id, ownerId],
+            "INSERT INTO schedules(id,owner_id,title,prompt,cron,time_zone) VALUES($1,$2,'Review Northstar','Synthetic review','0 9 * * 1','UTC')",
+            [schedule.id, ownerId],
           );
-          const id = await pendingPlan('goal_update', { id: goal.id, progress: 20 });
+          const id = await pendingPlan('schedule_cancel', { id: schedule.id });
           const [approval] = await approvalsFor(id);
-          await pool.query('DELETE FROM goals WHERE id=$1 AND owner_id=$2', [goal.id, ownerId]);
+          await pool.query('DELETE FROM schedules WHERE id=$1 AND owner_id=$2', [
+            schedule.id,
+            ownerId,
+          ]);
           assert.equal(
             (
               await request('POST', '/api/messages', {
@@ -198,11 +201,13 @@ test(
             404,
           );
           assert.equal((await approvalsFor(id))[0].status, 'pending');
-          const legacyId = await pendingPlan('goal_create', { title: 'Valid at proposal' });
+          const legacyId = await pendingPlan('profile_update', {
+            preferences: 'Valid at proposal',
+          });
           const [legacy] = await approvalsFor(legacyId);
           await pool.query('UPDATE approvals SET args=$2 WHERE id=$1', [
             legacy.id,
-            { title: 'Invalid historical payload', unexpected: true },
+            { preferences: 'Invalid historical payload', unexpected: true },
           ]);
           assert.equal(
             (
@@ -215,7 +220,10 @@ test(
             400,
           );
           assert.equal((await approvalsFor(legacyId))[0].status, 'pending');
-          assert.equal((await application.personal.listGoals()).length, 0);
+          assert.notEqual(
+            (await application.personal.getProfile()).preferences,
+            'Invalid historical payload',
+          );
         },
       );
     } finally {

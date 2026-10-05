@@ -1,8 +1,8 @@
-import { CalendarClock, KeyRound, MessageCircle, PlugZap, Radio, Target } from 'lucide-react';
+import { CalendarClock, KeyRound, ListChecks, MessageCircle, PlugZap, Radio } from 'lucide-react';
 
 export const navigationItems = [
   { path: '/', label: 'Chat', key: 'j', icon: MessageCircle },
-  { path: '/goals', label: 'Goals', key: 'g', icon: Target },
+  { path: '/tasks', label: 'Tasks', key: 'g', icon: ListChecks },
   { path: '/schedule', label: 'Schedule', key: 's', icon: CalendarClock },
   { path: '/apps', label: 'Apps', key: 'e', icon: PlugZap },
   { path: '/channels', label: 'Channels', key: 'd', icon: Radio },

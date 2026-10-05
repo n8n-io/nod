@@ -151,15 +151,27 @@ export interface InspectorState {
   runtime: { browser: string; workspace: string; database: string };
   currentBrowser?: { threadId: string; title: string; status: string; lastActivityAt: string };
 }
-export interface Goal {
+export type TaskStatus =
+  'working' | 'needs_you' | 'waiting' | 'scheduled' | 'stalled' | 'done' | 'cancelled';
+export interface TaskWait {
+  who: string;
+  via: string;
+  address: string | null;
+  since: string | null;
+}
+export interface Task {
   id: string;
   title: string;
-  description: string;
-  progress: number;
-  status: 'active' | 'paused' | 'completed';
-  nextAction: string;
-  targetDate: string | null;
+  doneWhen: string;
+  now: string;
+  result: string;
+  status: TaskStatus;
+  question: string | null;
+  waitingFor: TaskWait[];
+  checkAt: string | null;
+  createdAt: string;
   updatedAt: string;
+  closedAt: string | null;
 }
 export interface Schedule {
   id: string;

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { createPreferencesStore } from './preferences.ts';
@@ -15,29 +14,8 @@ const profileSchema = z
     preferences: z.string().max(4000),
   })
   .strict();
-const goalSchema = z
-  .object({
-    title: z.string().trim().min(1).max(150),
-    description: z.string().max(6000).default(''),
-    progress: z.number().int().min(0).max(100).default(0),
-    nextAction: z.string().max(2000).default(''),
-    status: z.enum(['active', 'paused', 'completed']).default('active'),
-    targetDate: z.iso.date().nullable().optional(),
-  })
-  .strict();
-const goalUpdateSchema = goalSchema
-  .partial()
-  .extend({
-    description: z.string().max(6000).optional(),
-    progress: z.number().int().min(0).max(100).optional(),
-    nextAction: z.string().max(2000).optional(),
-    status: z.enum(['active', 'paused', 'completed']).optional(),
-  })
-  .strict();
 const declinedPersonalAnswer =
   /^(?:no(?: thanks)?\b|skip\b|pass\b|not now\b|none\b|n\/a\b|(?:i(?:'d| would) rather not|i (?:do not|don't|don’t) want to|prefer not to|let(?:'s| us) not)(?:\b|$)|(?:do not|don't|don’t) (?:save|store|remember|ask)|não\b|prefiro não\b|saltar\b)/i;
-const goalColumns =
-  'id,title,description,progress,status,next_action AS "nextAction",target_date AS "targetDate",updated_at AS "updatedAt"';
 type PersonalDependencies = ScheduleDependencies & {
   memory?: MemoryService;
 };
@@ -51,11 +29,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   async function initialize(options: { workers?: boolean } = {}) {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS profiles (owner_id text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}');
-      CREATE TABLE IF NOT EXISTS goals (
-        id uuid PRIMARY KEY, owner_id text NOT NULL, title text NOT NULL, description text NOT NULL,
-        progress integer NOT NULL DEFAULT 0, status text NOT NULL DEFAULT 'active', next_action text NOT NULL DEFAULT '',
-        target_date text, updated_at timestamptz NOT NULL DEFAULT now()
-      );
     `);
     await schedules.initialize(options);
   }
@@ -75,72 +48,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     refresh();
     if (sourceMessageId) await memory?.saved(sourceMessageId);
     return data;
-  }
-
-  async function listGoals() {
-    return (
-      await pool.query(
-        `SELECT ${goalColumns} FROM goals WHERE owner_id=$1 ORDER BY updated_at DESC,id`,
-        [ownerId],
-      )
-    ).rows;
-  }
-
-  async function createGoal(raw: unknown) {
-    const input = goalSchema.parse(raw);
-    const result = await pool.query(
-      `INSERT INTO goals(id,owner_id,title,description,target_date,progress,next_action,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${goalColumns}`,
-      [
-        randomUUID(),
-        ownerId,
-        input.title,
-        input.description,
-        input.targetDate ?? null,
-        input.progress,
-        input.nextAction,
-        input.status,
-      ],
-    );
-    refresh();
-    return result.rows[0];
-  }
-
-  async function updateGoal(id: string, raw: unknown) {
-    z.uuid().parse(id);
-    const input = goalUpdateSchema.parse(raw);
-    if (!Object.keys(input).length)
-      throw Object.assign(new Error('Choose a goal detail to update.'), { statusCode: 400 });
-    const result = await pool.query(
-      `UPDATE goals SET title=COALESCE($3,title),description=COALESCE($4,description),
-      progress=COALESCE($5,progress),next_action=COALESCE($6,next_action),status=COALESCE($7,status),
-      target_date=CASE WHEN $8 THEN $9 ELSE target_date END,updated_at=now()
-      WHERE id=$1 AND owner_id=$2 RETURNING ${goalColumns}`,
-      [
-        id,
-        ownerId,
-        input.title,
-        input.description,
-        input.progress,
-        input.nextAction,
-        input.status,
-        'targetDate' in input,
-        input.targetDate,
-      ],
-    );
-    if (!result.rowCount) throw Object.assign(new Error('Goal not found.'), { statusCode: 404 });
-    refresh();
-    return result.rows[0];
-  }
-
-  async function removeGoal(id: string) {
-    z.uuid().parse(id);
-    const result = await pool.query('DELETE FROM goals WHERE id=$1 AND owner_id=$2 RETURNING id', [
-      id,
-      ownerId,
-    ]);
-    if (!result.rowCount) throw Object.assign(new Error('Goal not found.'), { statusCode: 404 });
-    refresh();
-    return { ok: true };
   }
 
   async function learnProfileFact(
@@ -245,18 +152,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     }
     if (action === 'profile_update') return changed(profileSchema.partial().parse(args));
     if (action === 'notification_preferences_update') return changed(preferences.validate(args));
-    if (action === 'goal_create') return goalSchema.parse(args);
-    if (action === 'goal_update') {
-      const { id: rawId, ...raw } = args;
-      const id = z.uuid().parse(rawId);
-      const input = changed(goalUpdateSchema.parse(raw));
-      if (
-        !(await pool.query('SELECT id FROM goals WHERE id=$1 AND owner_id=$2', [id, ownerId]))
-          .rowCount
-      )
-        throw Object.assign(new Error('Goal not found.'), { statusCode: 404 });
-      return { id, ...input };
-    }
     if (action === 'schedule_create') return schedules.validateCreate(args);
     if (action === 'schedule_update') {
       const { id: rawId, ...raw } = args;
@@ -292,12 +187,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     if (action === 'profile_get') return getProfile();
     if (action === 'profile_update')
       return setProfile({ ...(await getProfile()), ...args }, provenance?.sourceMessageId);
-    if (action === 'goal_list') return listGoals();
-    if (action === 'goal_create') return createGoal(args);
-    if (action === 'goal_update') {
-      const { id, ...input } = args;
-      return updateGoal(String(id || ''), input);
-    }
     if (action === 'schedule_list') return schedules.list();
     if (action === 'schedule_record_observation')
       return schedules.recordObservation(provenance?.turnId ?? '', args);
@@ -357,21 +246,12 @@ export function createPersonalService(dependencies: PersonalDependencies) {
 
   function registerRoutes(app: FastifyInstance) {
     app.get('/api/memory', () => memory?.view() ?? { areas: [], archive: [] });
-    app.get('/api/goals', listGoals);
-    app.post('/api/goals', (request) => createGoal(request.body));
-    app.patch<{ Params: { id: string } }>('/api/goals/:id', (request) =>
-      updateGoal(request.params.id, request.body),
-    );
-    app.delete<{ Params: { id: string } }>('/api/goals/:id', (request) =>
-      removeGoal(request.params.id),
-    );
     schedules.registerRoutes(app);
   }
 
   return {
     initialize,
     getProfile,
-    listGoals,
     listSchedules: schedules.list,
     manage,
     validateReview,

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ArrowUp, LoaderCircle, Sparkles } from 'lucide-react';
-import type { Goal, Schedule } from '../../shared/contracts';
+import type { Schedule, Task } from '../../shared/contracts';
 import { Button, Field, Input, Notice, Switch } from './ui';
 import { SearchPicker, TimeZonePicker, type PickerOption } from './time-zone-picker';
 import { api, errorMessage } from '../lib/api';
@@ -14,18 +14,22 @@ import {
   type ScheduleFrequency,
 } from '../lib/schedules';
 
-type Kind = 'goal' | 'schedule';
+type Kind = 'task' | 'schedule';
 type Subject = { kind: Kind; title?: string };
 
 function subjectPrefix(subject: Subject) {
-  if (!subject.title) return subject.kind === 'goal' ? 'New goal: ' : 'New schedule: ';
+  if (!subject.title) return subject.kind === 'task' ? 'New task: ' : 'New schedule: ';
   return `About the ${subject.kind} ${JSON.stringify(subject.title)}: `;
 }
 
 const suggestions = {
-  goal: ['Mark it 50% done', 'Change the next step', 'Move the target date'],
+  task: ['How is it going?', 'Check on it now', 'Stop working on it'],
   schedule: ['Move it to 8:00 on weekdays', 'Run it every Monday', 'Add the weather'],
-  newGoal: ['Run a 10 km race', 'Read more books', 'Save for a trip'],
+  newTask: [
+    'Get three quotes for a plumber',
+    'Chase my missing refund',
+    'Find a table for Saturday',
+  ],
   newSchedule: ['Remind me to stretch at 16:00', 'Summarize my inbox each Friday'],
 };
 
@@ -44,8 +48,8 @@ function AskOtto({
   useEffect(() => input.current?.focus(), []);
   const chips = subject.title
     ? suggestions[subject.kind]
-    : subject.kind === 'goal'
-      ? suggestions.newGoal
+    : subject.kind === 'task'
+      ? suggestions.newTask
       : suggestions.newSchedule;
   const submit = (value: string) => {
     if (!value.trim()) return;
@@ -53,8 +57,8 @@ function AskOtto({
   };
   const placeholder = subject.title
     ? `What should change in ${subject.title}?`
-    : subject.kind === 'goal'
-      ? 'What do you want to achieve?'
+    : subject.kind === 'task'
+      ? 'What should Otto take care of?'
       : 'What should Otto do, and when?';
   return (
     <div className="ask-otto" role="group" aria-labelledby={`${id}-label`}>
@@ -96,20 +100,15 @@ function AskOtto({
   );
 }
 
-function statusChange(kind: Kind, item: Goal | Schedule) {
-  if (kind === 'goal') return { status: (item as Goal).status === 'active' ? 'paused' : 'active' };
-  return { enabled: !(item as Schedule).enabled };
-}
-
-async function patchPlan(kind: Kind, id: string, body: Record<string, unknown>) {
-  const path = `/api/${kind}s`;
-  const saved = await api<Goal | Schedule>(`${path}/${encodeURIComponent(id)}`, {
+async function patchSchedule(id: string, body: Record<string, unknown>) {
+  const path = '/api/schedules';
+  const saved = await api<Schedule>(`${path}/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10000),
   });
-  pageDataCache.update<Array<Goal | Schedule>>(path, (items) =>
+  pageDataCache.update<Schedule[]>(path, (items) =>
     items ? items.map((entry) => (entry.id === id ? { ...entry, ...saved } : entry)) : items,
   );
   void pageDataCache.refresh(path, true);
@@ -163,7 +162,7 @@ export function PlanToast() {
   );
 }
 
-function useDirectChange(kind: Kind, id: string) {
+function useDirectChange(id: string) {
   const [busy, setBusy] = useState(false);
   async function apply(
     body: Record<string, unknown>,
@@ -172,14 +171,14 @@ function useDirectChange(kind: Kind, id: string) {
   ) {
     setBusy(true);
     try {
-      await patchPlan(kind, id, body);
+      await patchSchedule(id, body);
       showToast({
         id: Date.now(),
         text: note,
         ...(undo
           ? {
               undo: () =>
-                void patchPlan(kind, id, undo).catch((cause) =>
+                void patchSchedule(id, undo).catch((cause) =>
                   showToast({ id: Date.now(), text: errorMessage(cause), failed: true }),
                 ),
             }
@@ -194,11 +193,10 @@ function useDirectChange(kind: Kind, id: string) {
   return { busy, apply };
 }
 
-function pauseNote(kind: Kind, pausing: boolean, title: string) {
-  if (!pausing) return `Resumed ${title}.`;
-  return kind === 'schedule'
+function pauseNote(pausing: boolean, title: string) {
+  return pausing
     ? `Paused ${title}. Otto will not run it until you resume it.`
-    : `Paused ${title}. Progress and next step stay saved.`;
+    : `Resumed ${title}.`;
 }
 
 const frequencies = [
@@ -267,7 +265,7 @@ function Note({ change }: { change: { busy: boolean } }) {
 }
 
 function ScheduleControls({ schedule, canPause }: { schedule: Schedule; canPause: boolean }) {
-  const change = useDirectChange('schedule', schedule.id);
+  const change = useDirectChange(schedule.id);
   return (
     <div className="schedule-controls">
       <div className="schedule-control-status">
@@ -280,7 +278,7 @@ function ScheduleControls({ schedule, canPause }: { schedule: Schedule; canPause
             onChange={() =>
               void change.apply(
                 { enabled: !schedule.enabled },
-                pauseNote('schedule', schedule.enabled, schedule.title),
+                pauseNote(schedule.enabled, schedule.title),
                 { enabled: schedule.enabled },
               )
             }
@@ -465,50 +463,6 @@ function ScheduleTiming({
   );
 }
 
-function GoalControls({ goal }: { goal: Goal }) {
-  const change = useDirectChange('goal', goal.id);
-  if (goal.status === 'completed') return null;
-  const save = (value: string) =>
-    void change.apply({ progress: Number(value) }, `${goal.title} is ${value}% done.`, {
-      progress: goal.progress,
-    });
-  return (
-    <div className="plan-controls">
-      <Toggle
-        label={`${goal.title} active`}
-        on={goal.status === 'active'}
-        text={goal.status === 'active' ? 'Active' : 'Paused'}
-        disabled={change.busy}
-        onChange={() =>
-          void change.apply(
-            statusChange('goal', goal),
-            pauseNote('goal', goal.status === 'active', goal.title),
-            { status: goal.status },
-          )
-        }
-      />
-      <input
-        className="plan-range"
-        type="range"
-        min={0}
-        max={100}
-        step={5}
-        defaultValue={goal.progress}
-        key={goal.progress}
-        aria-label={`${goal.title} progress`}
-        disabled={change.busy}
-        onPointerUp={(event) => save(event.currentTarget.value)}
-        onKeyUp={(event) => {
-          if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key))
-            save(event.currentTarget.value);
-        }}
-      />
-      <span className="plan-range-value">{goal.progress}%</span>
-      <Note change={change} />
-    </div>
-  );
-}
-
 export function PlanFooter({
   kind,
   item,
@@ -518,7 +472,7 @@ export function PlanFooter({
   onAsk,
 }: {
   kind: Kind;
-  item: Goal | Schedule;
+  item: Task | Schedule;
   meta: ReactNode;
   remove: ReactNode;
   canPause: boolean;
@@ -527,11 +481,7 @@ export function PlanFooter({
   const [open, setOpen] = useState(false);
   return (
     <>
-      {kind === 'goal' ? (
-        <GoalControls goal={item as Goal} />
-      ) : (
-        <ScheduleControls schedule={item as Schedule} canPause={canPause} />
-      )}
+      {kind === 'schedule' && <ScheduleControls schedule={item as Schedule} canPause={canPause} />}
       <div className="saved-plan-footer">
         <span>{meta}</span>
         <div className="saved-plan-actions">
@@ -565,7 +515,7 @@ export function NewPlan({ kind, onAsk }: { kind: Kind; onAsk(text: string): void
     <>
       <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
         <Sparkles size={14} aria-hidden="true" />
-        {kind === 'goal' ? 'New goal' : 'New schedule'}
+        {kind === 'task' ? 'New task' : 'New schedule'}
       </Button>
       {open && (
         <div className="connection-menu-options menu new-plan-card">

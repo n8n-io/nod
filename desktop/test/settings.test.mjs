@@ -534,7 +534,7 @@ test('settings restart resumes the running engine when a renderer navigates or o
           assert.equal(current.isDestroyed(), false);
           assert.equal(f.children[0].killed, undefined);
           if (mutation === 'navigation') {
-            current.webContents.mainFrame.url = `${current.url}/goals`;
+            current.webContents.mainFrame.url = `${current.url}/tasks`;
             current.webContents.emit('did-start-navigation');
           } else {
             const child = new current.constructor();

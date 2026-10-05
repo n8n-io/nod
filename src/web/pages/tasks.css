@@ -1,0 +1,73 @@
+.task-views > button > span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.task-views > button:focus-visible,
+.tasks-page > [role='tabpanel']:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.task-card .saved-plan-title {
+  align-items: center;
+}
+.task-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+.task-status[data-status='needs_you'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.task-status[data-status='working'] {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.task-status[data-status='stalled'] {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.task-status[data-status='done'] {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.task-now {
+  display: -webkit-box;
+  margin-top: 8px;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+.task-facts {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+.task-facts > li > span {
+  margin-right: 8px;
+  color: var(--muted-foreground);
+}
+@media (max-width: 640px) {
+  .tasks-page .saved-plan-actions {
+    flex-wrap: wrap;
+  }
+  .tasks-page .saved-plan-actions > .button {
+    min-height: 40px;
+  }
+}

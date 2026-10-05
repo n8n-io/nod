@@ -1,7 +1,7 @@
 import type { ProviderUsageEvent } from './provider-usage.ts';
 import type { ConnectedApp } from './integrations.ts';
 import type { CredentialKind, WorkspaceSession } from './computer.ts';
-import type { AgentReactionResult, Artifact, MessageReaction } from '../shared/contracts.ts';
+import type { AgentReactionResult, Artifact, MessageReaction, Task } from '../shared/contracts.ts';
 
 export interface ModelUsageObservation {
   type: 'model_usage';
@@ -42,6 +42,11 @@ interface MessageAttachment {
   mimeType: string;
   workspaceFile?: string;
 }
+
+export type TaskBrief = Pick<
+  Task,
+  'id' | 'title' | 'status' | 'now' | 'doneWhen' | 'waitingFor' | 'checkAt' | 'question'
+>;
 
 export interface RuntimeAccount {
   preferredName: string | null;
@@ -87,14 +92,9 @@ export interface RuntimeContext {
   }>;
   personalContext?: {
     profile: { name: string; location: string; phone: string; preferences: string };
-    activeGoals: Array<{
-      title: string;
-      description: string;
-      progress: number;
-      nextAction: string;
-      targetDate: string | null;
-    }>;
   };
+  tasks?: TaskBrief[];
+  taskId?: string;
   memory?: string;
   workspacePath: string;
   signal: AbortSignal;
@@ -157,6 +157,7 @@ export interface RuntimeContext {
     args: Record<string, unknown>,
   ): Promise<Artifact & { workspaceFile: string }>;
   manage(action: string, args: Record<string, unknown>): Promise<unknown>;
+  task?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<Array<{ id: string; text: string }>>;
 }
 export interface PromptSnapshot {

@@ -1423,7 +1423,7 @@ describe('local access', () => {
     registerLocalAccess(app, 4310);
     app.get('/apps', async () => 'Application shell');
     app.get('/onboarding', async () => 'Application shell');
-    app.get('/goals', async () => 'Application shell');
+    app.get('/tasks', async () => 'Application shell');
     app.get('/schedule', async () => 'Application shell');
     app.get('/browser', async () => 'Application shell');
     app.get('/connected.html', async () => 'Window return page');
@@ -1461,7 +1461,7 @@ describe('local access', () => {
       for (const url of [
         '/onboarding?connection=connected',
         '/apps?connection=connected',
-        '/goals',
+        '/tasks',
         '/schedule',
         '/browser',
         '/vault/test-link',
