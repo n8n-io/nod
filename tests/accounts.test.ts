@@ -20,7 +20,12 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
-import { createAnalytics, type Analytics } from '../src/server/analytics.ts';
+import {
+  analyticsEnabled,
+  analyticsEnvironment,
+  createAnalytics,
+  type Analytics,
+} from '../src/server/analytics.ts';
 
 describe('account routes', () => {
   async function fixture(
@@ -487,6 +492,47 @@ describe('account routes', () => {
 });
 
 describe('analytics privacy', () => {
+  test('hosted development suppresses collection in production Node mode unless explicitly enabled', async () => {
+    for (const mode of ['gateway', 'tenant']) {
+      for (const [overrides, enabled, environment] of [
+        [{}, false, 'development'],
+        [{ OTTO_ENVIRONMENT: '' }, false, 'development'],
+        [{ OTTO_ENVIRONMENT: 'staging' }, false, 'development'],
+        [{ OTTO_ANALYTICS_ENVIRONMENT: 'production' }, false, 'production'],
+        [{ OTTO_ANALYTICS_ENABLED: 'true' }, true, 'development'],
+        [
+          { OTTO_ANALYTICS_ENABLED: 'true', OTTO_ANALYTICS_ENVIRONMENT: 'production' },
+          true,
+          'production',
+        ],
+        [{ OTTO_ENVIRONMENT: 'production' }, true, 'production'],
+        [{ OTTO_ENVIRONMENT: 'production', OTTO_ANALYTICS_ENABLED: 'false' }, false, 'production'],
+        [
+          { OTTO_ENVIRONMENT: 'production', OTTO_ANALYTICS_ENVIRONMENT: 'development' },
+          true,
+          'development',
+        ],
+      ] as const) {
+        const env = { OTTO_MODE: mode, NODE_ENV: 'production', ...overrides };
+        const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+        const analytics = await createAnalytics({
+          provider: analyticsEnabled(env)
+            ? { capture: (event) => captured.push(event), shutdown: async () => {} }
+            : undefined,
+          deployment: 'hosted',
+          environment: analyticsEnvironment(env),
+          dataRoot: '.',
+        });
+        const configuration = analytics.configuration('owner-fixture');
+        assert.equal(configuration.enabled, enabled, JSON.stringify(env));
+        assert.equal(configuration.environment, environment, JSON.stringify(env));
+        analytics.capture('owner-fixture', { event: 'otto_onboarding_completed' });
+        assert.equal(captured.length, enabled ? 1 : 0, JSON.stringify(env));
+        if (enabled) assert.equal(captured[0].properties.environment, environment);
+      }
+    }
+  });
+
   test('local installations retain independent opaque identities and disabled analytics creates no identity', async (t) => {
     const root = await mkdtemp(join(tmpdir(), 'otto-analytics-'));
     t.after(() => rm(root, { recursive: true, force: true }));

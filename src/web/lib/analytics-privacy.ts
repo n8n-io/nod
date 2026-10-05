@@ -118,6 +118,7 @@ export const recordingOptions: SessionRecordingOptions = {
   maskAllElementAttributes: false,
   maskAttributeFn: (name, value, element) => {
     if (name === 'data-theme') return ['light', 'dark', 'system'].includes(value) ? value : '';
+    if (name === 'data-desktop') return ['true', 'false'].includes(value) ? value : '';
     if (name === '_cssText') return value;
     if (name === 'style')
       return value.replace(/url\([^)]*\)/gi, 'none').replace(/content\s*:[^;]*/gi, 'content: none');

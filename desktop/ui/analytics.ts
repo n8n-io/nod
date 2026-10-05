@@ -7,6 +7,7 @@ import {
 } from '../../src/web/lib/analytics-client';
 
 type Step = 'preferences' | 'preparing' | 'ready' | 'error';
+const firstSetup = new URLSearchParams(location.search).get('firstSetup') === 'true';
 const target = window as Window & {
   ottoDesktop?: { getAnalyticsConfiguration(): Promise<AnalyticsConfiguration> };
   ottoSetupAnalytics?: { step(step: Step): void; completed(): Promise<void> };
@@ -33,7 +34,7 @@ target.ottoSetupAnalytics = {
         if (!ready) return;
         currentStep = 'ready';
         reportStep();
-        captureAnalytics('otto_desktop_setup_completed');
+        if (firstSetup) captureAnalytics('otto_desktop_setup_completed');
         await posthog.shutdown();
       })
       .catch(() => {});

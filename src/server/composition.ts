@@ -376,6 +376,20 @@ export async function createApplication(
   adapters: ApplicationAdapters,
   options: { workers?: boolean; channels?: boolean } = {},
 ) {
+  try {
+    return await initializeApplication(adapters, options);
+  } catch (error) {
+    try {
+      await adapters.analytics?.shutdown();
+    } catch {}
+    throw error;
+  }
+}
+
+async function initializeApplication(
+  adapters: ApplicationAdapters,
+  options: { workers?: boolean; channels?: boolean },
+) {
   const analytics = await createAnalytics({
     provider: adapters.analytics,
     deployment: runtimeMode === 'local' ? 'local' : 'hosted',

@@ -12,11 +12,13 @@ config = Path(__file__).resolve().parents[2] / ".gitleaks.toml"
 sql = "UPDATE tasks SET status='waiting_credentials',waiting_reason='credentials'"
 
 
-def scan(content):
+def scan(content, filename="app.ts"):
     with tempfile.TemporaryDirectory(prefix="otto-secret-regression-") as directory:
         fixture = Path(directory) / "source"
         fixture.mkdir()
-        (fixture / "app.ts").write_text(content)
+        source = fixture / filename
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(content)
         report = Path(directory) / "findings.json"
         result = subprocess.run(
             [
@@ -48,5 +50,19 @@ candidate = "".join(random.Random(271828).choices(string.ascii_letters + string.
 code, findings = scan(f'{sql}; api_key = "{candidate}"')
 if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
     raise SystemExit("A generated secret beside the SQL assignment must fail secret scanning.")
+
+analytics_path = "src/shared/analytics.ts"
+analytics = (config.parent / analytics_path).read_text()
+code, findings = scan(analytics, analytics_path)
+if code != 0 or findings:
+    raise SystemExit("The public PostHog ingestion token must pass secret scanning.")
+
+code, findings = scan(f'{analytics}\napi_key = "{candidate}"', analytics_path)
+if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+    raise SystemExit("A generated secret beside the public token must fail secret scanning.")
+
+code, findings = scan(analytics)
+if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+    raise SystemExit("The public token exception must be limited to its configuration file.")
 
 print("Secret scanning configuration regression passed.")

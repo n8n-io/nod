@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { gunzipSync } from 'node:zlib';
-import { completeDesktopSetup } from '../main/analytics.mjs';
+import { completeDesktopSetup, trackDesktopAnalytics } from '../main/analytics.mjs';
 
 const source = fileURLToPath(import.meta.url);
 const root = resolve(dirname(source), '../..');
@@ -48,6 +48,7 @@ async function checkNativeAnalytics() {
       `const { contextBridge } = require('electron');
 let attempts = 0;
 let onStatus;
+const firstSetup = process.argv.includes('--otto-fixture-first-setup');
 contextBridge.exposeInMainWorld('ottoDesktop', {
   getAnalyticsConfiguration: async () => ({
     enabled: process.argv.includes('--otto-fixture-enabled'),
@@ -55,10 +56,10 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
     deployment: 'local', environment: 'development',
   }),
   getPreferences: async () => ({ theme: 'light', notifications: false, launchAtLogin: false }),
-  status: async () => ({ phase: 'idle' }),
+  status: async () => ({ phase: firstSetup ? 'idle' : 'preparing' }),
   saveSettings: async () => ({}),
   prepare: async () => {
-    if (++attempts === 1) throw new Error('Synthetic runtime preparation failure');
+    if (firstSetup && ++attempts === 1) throw new Error('Synthetic runtime preparation failure');
     const status = { phase: 'ready' };
     onStatus?.(status);
     onStatus?.(status);
@@ -69,11 +70,17 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
 });`,
     );
     await app.whenReady();
-    for (const enabled of [true, false]) {
+    for (const { enabled, firstSetup, transport } of [
+      { enabled: true, firstSetup: true, transport: 'slow' },
+      { enabled: false, firstSetup: true, transport: 'normal' },
+      { enabled: true, firstSetup: false, transport: 'normal' },
+      { enabled: true, firstSetup: false, transport: 'hung' },
+    ]) {
       const partition = `otto-analytics-fixture-${randomUUID()}`;
       const target = session.fromPartition(partition);
       const calls = [];
       const failures = [];
+      let completionUploaded = false;
       await target.protocol.handle('http', () => {
         failures.push('Unexpected HTTP request');
         return new Response('', { status: 403 });
@@ -97,6 +104,15 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
             )
           : undefined;
         calls.push({ path: url.pathname, payload });
+        if (payload && transport === 'hung') await new Promise(() => {});
+        if (
+          transport === 'slow' &&
+          payload?.batch?.some((event) => event.event === 'otto_desktop_setup_completed')
+        ) {
+          await new Promise((accept) => setTimeout(accept, 1300));
+          assert.equal(window.isDestroyed(), false);
+          completionUploaded = true;
+        }
         return Response.json(
           url.pathname.endsWith('/config')
             ? {
@@ -111,12 +127,16 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
         webPreferences: {
           preload,
           partition,
-          additionalArguments: [enabled ? '--otto-fixture-enabled' : '--otto-fixture-disabled'],
+          additionalArguments: [
+            enabled ? '--otto-fixture-enabled' : '--otto-fixture-disabled',
+            firstSetup ? '--otto-fixture-first-setup' : '--otto-fixture-returning',
+          ],
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,
         },
       });
+      trackDesktopAnalytics(window);
       window.webContents.on('console-message', (event) => {
         if (
           event.level === 'error' &&
@@ -124,7 +144,9 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
         )
           failures.push(event.message);
       });
-      await window.loadFile(join(ui, 'index.html'));
+      await window.loadFile(join(ui, 'index.html'), {
+        query: { mode: firstSetup ? 'onboarding' : 'loading', firstSetup: String(firstSetup) },
+      });
       await new Promise((accept) => setTimeout(accept, 1000));
       assert.equal(
         await window.webContents.executeJavaScript(
@@ -135,12 +157,13 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
       await window.webContents.executeJavaScript(`
 document.getElementById('private-marker').textContent = 'SYNTHETIC_PRIVATE_CHANGED';
 document.getElementById('private-input').value = 'SYNTHETIC_PRIVATE_CHANGED_INPUT';
-document.getElementById('private-input').dispatchEvent(new Event('input', { bubbles: true }));
-document.getElementById('continue').click();`);
+document.getElementById('private-input').dispatchEvent(new Event('input', { bubbles: true }));`);
+      if (firstSetup)
+        await window.webContents.executeJavaScript("document.getElementById('continue').click()");
       await new Promise((accept) => setTimeout(accept, enabled ? 6000 : 1000));
       assert.equal(
         await window.webContents.executeJavaScript("!document.getElementById('retry').hidden"),
-        true,
+        firstSetup,
       );
       assert.equal(
         calls
@@ -148,11 +171,22 @@ document.getElementById('continue').click();`);
           .filter((event) => event.event === 'otto_desktop_setup_completed').length,
         0,
       );
-      await window.webContents.executeJavaScript(`(async () => {
+      if (firstSetup)
+        await window.webContents.executeJavaScript(`(async () => {
 document.getElementById('retry').click();
 await new Promise((accept) => setTimeout(accept, 0));
 })()`);
+      else await window.webContents.executeJavaScript('window.ottoDesktop.prepare()');
+      const closing = Date.now();
       await completeDesktopSetup(window);
+      const closeDuration = Date.now() - closing;
+      if (transport === 'slow') {
+        assert.equal(completionUploaded, true);
+        assert.ok(closeDuration >= 1000);
+      }
+      if (transport === 'hung') assert.ok(closeDuration >= 4900 && closeDuration < 7000);
+      if (transport === 'normal') assert.ok(closeDuration < 1000);
+      assert.equal(window.isDestroyed(), true);
       await new Promise((accept) => setTimeout(accept, 1000));
       assert.deepEqual(failures, []);
       if (!enabled) {
@@ -162,7 +196,7 @@ await new Promise((accept) => setTimeout(accept, 0));
       const events = calls.flatMap(({ payload }) => payload?.batch ?? []);
       assert.equal(
         events.filter((event) => event.event === 'otto_desktop_setup_completed').length,
-        1,
+        firstSetup ? 1 : 0,
       );
       assert.ok(
         events.some(
@@ -186,12 +220,12 @@ await new Promise((accept) => setTimeout(accept, 0));
       assert.ok(recordings.some((event) => event.type === 2));
       assert.ok(recordings.some((event) => event.type === 3));
       const snapshots = JSON.stringify(recordings);
-      assert.ok(snapshots.includes('Set up your computer'));
+      assert.ok(snapshots.includes('Open at login'));
       assert.ok(!snapshots.includes('SYNTHETIC_PRIVATE'));
       assert.ok(!snapshots.includes(directory));
     }
     console.log(
-      'Native analytics: setup events, full and incremental replay, masking, and disabled collection passed. All network requests were intercepted locally.',
+      'Native analytics: first-time completion, returning startup, bounded slow and stalled upload drains, full and incremental replay, masking, and disabled collection passed. All network requests were intercepted locally.',
     );
   } catch (error) {
     failure = error;

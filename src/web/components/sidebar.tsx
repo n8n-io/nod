@@ -224,12 +224,7 @@ export function Sidebar({
           )}
         </button>
       </div>
-      <nav
-        className="main-nav"
-        aria-label="Main navigation"
-        id="sidebar-navigation"
-        data-analytics-public
-      >
+      <nav className="main-nav" aria-label="Main navigation" id="sidebar-navigation">
         <ul
           onKeyDown={(event) => {
             if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
@@ -280,7 +275,9 @@ export function Sidebar({
                   }}
                 >
                   <Icon size={26} strokeWidth={1.8} aria-hidden="true" />
-                  <span className="nav-label">{item.label}</span>
+                  <span className="nav-label" data-analytics-public>
+                    {item.label}
+                  </span>
                   {item.path === '/' && unreadBadge}
                   {item.key && (
                     <kbd className="nav-shortcut" aria-hidden="true">
@@ -341,7 +338,7 @@ export function Sidebar({
           }}
         >
           <div className="mobile-sheet-body" tabIndex={-1}>
-            <nav className="mobile-sections" aria-label="Sections" data-analytics-public>
+            <nav className="mobile-sections" aria-label="Sections">
               {navigationItems.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -366,7 +363,7 @@ export function Sidebar({
                     }}
                   >
                     <Icon size={24} strokeWidth={1.8} aria-hidden="true" />
-                    <span>{item.label}</span>
+                    <span data-analytics-public>{item.label}</span>
                     {item.path === '/' && unreadBadge}
                   </a>
                 );

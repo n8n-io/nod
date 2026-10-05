@@ -11,6 +11,35 @@ import type { ApplicationAdapters } from '../src/server/composition.ts';
 import type { MessagingTransport } from '../src/ports/messaging.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { fakeComputer } from './runtime-fixtures.ts';
+import { PostHog } from 'posthog-node';
+import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
+
+test('analytics initializes on capture, flushes once, and cannot restart after shutdown', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({ status: 1 }));
+  const shutdown = t.mock.method(PostHog.prototype, 'shutdown');
+  const capture = t.mock.method(PostHog.prototype, 'capture');
+  const event = { distinctId: 'fixture-owner', event: 'otto_onboarding_completed', properties: {} };
+  const unused = createPostHogAnalytics();
+  await unused.shutdown();
+  unused.capture(event);
+  assert.equal(shutdown.mock.callCount(), 0);
+  assert.equal(capture.mock.callCount(), 0);
+  assert.equal(fetch.mock.callCount(), 0);
+
+  const active = createPostHogAnalytics();
+  t.after(() => active.shutdown());
+  active.capture(event);
+  active.capture(event);
+  await Promise.all([active.shutdown(), active.shutdown()]);
+  assert.equal(capture.mock.callCount(), 2);
+  assert.equal(shutdown.mock.callCount(), 1);
+  assert.equal(fetch.mock.callCount(), 1);
+  active.capture(event);
+  await active.shutdown();
+  assert.equal(capture.mock.callCount(), 2);
+  assert.equal(shutdown.mock.callCount(), 1);
+  assert.equal(fetch.mock.callCount(), 1);
+});
 
 test(
   'application loads encrypted channel setup, replaces transports, and continues replies within their channel',
@@ -75,7 +104,15 @@ test(
     let closed = 0;
     let failClose = false;
     let agentDisposed = false;
+    let analyticsClosed = 0;
     const adapters: ApplicationAdapters = {
+      analytics: {
+        capture() {},
+        async shutdown() {
+          analyticsClosed++;
+          throw new Error('Synthetic analytics shutdown failure.');
+        },
+      },
       agent: {
         open: async () => {
           throw new Error('No agent in fixture');
@@ -177,6 +214,28 @@ test(
     const application = await createApplication(adapters, { workers: false });
     const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
     try {
+      let failedAnalyticsClosed = 0;
+      const startupFailure = new Error('Synthetic application startup failure.');
+      await assert.rejects(
+        createApplication(
+          {
+            ...adapters,
+            analytics: {
+              capture() {},
+              async shutdown() {
+                failedAnalyticsClosed++;
+                throw new Error('Synthetic analytics shutdown failure.');
+              },
+            },
+            async initialize() {
+              throw startupFailure;
+            },
+          },
+          { workers: false },
+        ),
+        (error) => error === startupFailure,
+      );
+      assert.equal(failedAnalyticsClosed, 1);
       assert.equal(applied[0].TELEGRAM_BOT_TOKEN, '42:private-fixture');
       const status = await application.app.inject({ url: '/api/channel-settings', headers });
       assert.equal(status.statusCode, 200);
@@ -287,6 +346,7 @@ test(
         failClose = true;
         await assert.rejects(application.app.close(), /Some application resources could not close/);
         assert.equal(agentDisposed, true);
+        assert.equal(analyticsClosed, 1);
       } finally {
         try {
           await pool.end();

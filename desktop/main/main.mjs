@@ -21,7 +21,11 @@ import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createSettingsStore } from './settings.mjs';
-import { completeDesktopSetup, createDesktopAnalytics } from './analytics.mjs';
+import {
+  completeDesktopSetup,
+  createDesktopAnalytics,
+  trackDesktopAnalytics,
+} from './analytics.mjs';
 import {
   assistantNotificationPreview,
   createReadinessNotice,
@@ -459,14 +463,18 @@ function showSettings(section = 'general', _mode, reset = false) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      partition: 'otto-settings',
+      partition: `otto-settings-${randomUUID()}`,
     },
   });
-  protectWindow(setupWindow);
-  setupWindow.on('closed', () => {
-    setupWindow = undefined;
+  const window = setupWindow;
+  trackDesktopAnalytics(window);
+  protectWindow(window);
+  window.on('closed', () => {
+    if (setupWindow === window) setupWindow = undefined;
   });
-  void setupWindow.loadFile(setupPath, { query: { mode, section } });
+  void window.loadFile(setupPath, {
+    query: { mode, section, firstSetup: String(!onboardingCompleted) },
+  });
 }
 
 function showEngine() {
@@ -592,7 +600,9 @@ async function finishEnginePreparation() {
   synchronizeNotifications();
   if (!replayingOnboarding) {
     if (foregroundWindow()) showEngine();
-    await completeDesktopSetup(setupWindow);
+    const completedWindow = setupWindow;
+    setupWindow = undefined;
+    await completeDesktopSetup(completedWindow);
   }
   if (updates && !checkedUpdatesAtStartup) {
     checkedUpdatesAtStartup = true;

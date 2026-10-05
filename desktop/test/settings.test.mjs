@@ -9,7 +9,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createSettingsStore } from '../main/settings.mjs';
-import { completeDesktopSetup, createDesktopAnalytics } from '../main/analytics.mjs';
+import {
+  completeDesktopSetup,
+  createDesktopAnalytics,
+  trackDesktopAnalytics,
+} from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
@@ -390,6 +394,7 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
     createSettingsStore: () => storage.store,
     createDesktopAnalytics,
     completeDesktopSetup,
+    trackDesktopAnalytics,
     createAppPreferencesStore: () => ({ sync: async () => {} }),
     createChatReadCursorStore: () => ({}),
     createReadinessNotice: () => ({ update() {} }),
@@ -451,8 +456,9 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
         this.url = url;
         this.webContents.mainFrame = { url };
       }
-      loadFile(path) {
+      loadFile(path, options) {
         this.path = path;
+        this.query = options?.query;
         this.webContents.mainFrame = { url: pathToFileURL(path).href };
       }
       show() {
@@ -491,6 +497,7 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
     globalThis.running = {
       prepare,
       showEngine,
+      replayOnboarding,
       status: () => status,
       setRestartRequired: (value) => { restartRequired = value; },
       crash: () => { engine = undefined; enginePreferencesReady = false; },
@@ -750,6 +757,7 @@ test('settings restart displays native progress, restores Chat on success, and k
         assert.equal(path, '/api/runtime/drain');
         progress = f.windows.find((window) => window.path && !window.isDestroyed());
         assert.ok(progress?.visible);
+        assert.equal(progress.query.firstSetup, 'false');
         assert.equal(current.isDestroyed(), false);
         assert.equal(f.children[0].killed, undefined);
         if (failAfterStop) f.storage.encryption.isEncryptionAvailable = () => false;
@@ -791,6 +799,50 @@ test('settings restart displays native progress, restores Chat on success, and k
     assert.equal(replacement.visible, true);
     assert.equal(replacement.isFocused(), true);
   }
+});
+
+test('a pending recording drain cannot close or detach a newly opened onboarding window', async (t) => {
+  const flushing = deferred();
+  const flushed = deferred();
+  let f;
+  let progress;
+  f = await runningDesktop(
+    t,
+    async (url) => {
+      const path = new URL(url).pathname;
+      if (path === '/api/health') return Response.json({ ok: true });
+      if (path === '/api/desktop/status') return Response.json({ activeWork: false });
+      assert.equal(path, '/api/runtime/drain');
+      progress = f.windows.find((window) => window.path && !window.isDestroyed());
+      progress.webContents.executeJavaScript = () => {
+        flushing.resolve();
+        return flushed.promise;
+      };
+      return Response.json({ drained: true });
+    },
+    { allowStart: true },
+  );
+  f.crash();
+  await f.prepare();
+  f.showEngine();
+  const current = f.windows.at(-1);
+  f.setRestartRequired(true);
+  const applying = f.handlers.get('otto:settings:apply')({
+    sender: current.webContents,
+    senderFrame: current.webContents.mainFrame,
+  });
+  await flushing.promise;
+  f.replayOnboarding();
+  const replacement = f.windows.at(-1);
+  flushed.resolve();
+  await applying;
+  assert.notEqual(replacement, progress);
+  assert.equal(progress.isDestroyed(), true);
+  assert.equal(replacement.isDestroyed(), false);
+  const count = f.windows.length;
+  f.replayOnboarding();
+  assert.equal(f.windows.length, count);
+  assert.equal(replacement.isFocused(), true);
 });
 
 test('a failed restart health check or crashed engine retains the error state', async (t) => {
