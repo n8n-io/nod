@@ -36,6 +36,8 @@ The workflow SDK validation and synthetic pinned workflow runs check n8n's actua
 
 ## Evidence
 
+The frozen `desktop-v0.1.0` operational read passed on 2026-10-05 at 09:55 UTC using the workflow's saved credential: its tag and release `403107162` metadata returned HTTP 200, and the app and runtime descriptors matched GitHub's byte counts and SHA-256 digests. The private receipt is `.local/desktop-update-validation/n8n-operational-release-read-2026-10-05.json`.
+
 On 2026-10-05, [Otto Desktop Releases](https://internal.users.n8n.cloud/workflow/yHes8g8CIyObW0Zh) was active at version `5b9c82ee-517c-4d70-98f5-056e50d95784`, and its saved GitHub PAT successfully served published private releases. Anonymous requests verified HTTP 200 for the official `desktop-v0.1.2` app and runtime release metadata, an exact `Otto 0.1.2` update feed, HTTP 204 for the current version, and a valid runtime-archive HTTP 302. The runtime redirect was not followed. The receipt is private at `.local/desktop-012-validation/anonymous-release-delivery.json`.
 
 A separate browser download completed for the official 0.1.2 DMG: 776,431,526 bytes, SHA-256 `c4a0ff6ad16b57e75bcea044bbd938f047fc6313b1c9be5f9c114cadddefd3ca`. This verifies anonymous delivery of the DMG; it does not establish a complete runtime-archive download, physical setup, or a successful 0.1.2 → 0.1.3 update.
