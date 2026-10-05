@@ -17,7 +17,7 @@ if (!process.versions.electron) {
   const electron = createRequire(import.meta.url)('electron');
   const result = await promisify(execFile)(electron, [source], {
     cwd: root,
-    timeout: 45_000,
+    timeout: 60_000,
     maxBuffer: 1024 * 1024,
   });
   process.stdout.write(result.stdout);
@@ -224,8 +224,9 @@ await new Promise((accept) => setTimeout(accept, 0));
       assert.ok(!snapshots.includes('SYNTHETIC_PRIVATE'));
       assert.ok(!snapshots.includes(directory));
     }
+    await checkSharedSession(BrowserWindow, session, ui, preload);
     console.log(
-      'Native analytics: first-time completion, returning startup, bounded slow and stalled upload drains, full and incremental replay, masking, and disabled collection passed. All network requests were intercepted locally.',
+      'Native analytics: first-time completion, returning startup, shared-session window isolation, bounded slow and stalled upload drains, full and incremental replay, masking, and disabled collection passed. All network requests were intercepted locally.',
     );
   } catch (error) {
     failure = error;
@@ -233,6 +234,85 @@ await new Promise((accept) => setTimeout(accept, 0));
   } finally {
     await rm(directory, { recursive: true, force: true });
     app.exit(failure ? 1 : 0);
+  }
+}
+
+async function checkSharedSession(BrowserWindow, session, ui, preload) {
+  const partition = 'otto-analytics-shared-fixture';
+  const target = session.fromPartition(partition);
+  const requests = Array.from({ length: 4 }, () => ({
+    started: Promise.withResolvers(),
+    response: Promise.withResolvers(),
+  }));
+  const windows = [];
+  await target.protocol.handle('http', () => new Response('', { status: 403 }));
+  await target.protocol.handle('https', async (request) => {
+    const url = new URL(request.url);
+    const pending = requests[Number(url.pathname.slice('/fixture/'.length))];
+    assert.equal(url.origin, 'https://eu.i.posthog.com');
+    assert.ok(url.pathname.startsWith('/fixture/') && pending);
+    pending.started.resolve();
+    await pending.response.promise;
+    return Response.json({ ok: true });
+  });
+  const createWindow = async () => {
+    const window = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        preload,
+        partition,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    windows.push(window);
+    trackDesktopAnalytics(window);
+    await window.loadFile(join(ui, 'index.html'), {
+      query: { mode: 'loading', firstSetup: 'false' },
+    });
+    assert.equal(window.webContents.session, target);
+    return window;
+  };
+  const request = async (window, index) => {
+    await window.webContents.executeJavaScript(
+      `void fetch('https://eu.i.posthog.com/fixture/${index}', { mode: 'no-cors' }).catch(() => {})`,
+    );
+    await requests[index].started.promise;
+  };
+  try {
+    const first = await createWindow();
+    const second = await createWindow();
+    await request(first, 0);
+    await request(second, 1);
+    const firstDrain = completeDesktopSetup(first);
+    const secondDrain = completeDesktopSetup(second);
+    await new Promise((accept) => setTimeout(accept, 150));
+    assert.equal(first.isDestroyed(), false);
+    assert.equal(second.isDestroyed(), false);
+    requests[0].response.resolve();
+    await firstDrain;
+    assert.equal(first.isDestroyed(), true);
+    assert.equal(second.isDestroyed(), false);
+    await request(second, 2);
+    requests[1].response.resolve();
+    await new Promise((accept) => setTimeout(accept, 150));
+    assert.equal(second.isDestroyed(), false);
+    requests[2].response.resolve();
+    await secondDrain;
+    assert.equal(second.isDestroyed(), true);
+    const reopened = await createWindow();
+    await request(reopened, 3);
+    const reopenedDrain = completeDesktopSetup(reopened);
+    await new Promise((accept) => setTimeout(accept, 150));
+    assert.equal(reopened.isDestroyed(), false);
+    requests[3].response.resolve();
+    await reopenedDrain;
+    assert.equal(reopened.isDestroyed(), true);
+    assert.equal(session.fromPartition(partition), target);
+  } finally {
+    for (const request of requests) request.response.resolve();
+    for (const window of windows) if (!window.isDestroyed()) window.destroy();
   }
 }
 

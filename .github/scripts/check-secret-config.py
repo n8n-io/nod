@@ -32,8 +32,9 @@ def scan(content, filename="app.ts"):
                 "json",
                 "--report-path",
                 str(report),
-                str(fixture),
+                ".",
             ],
+            cwd=fixture,
             capture_output=True,
             text=True,
             check=False,
@@ -61,8 +62,9 @@ code, findings = scan(f'{analytics}\napi_key = "{candidate}"', analytics_path)
 if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
     raise SystemExit("A generated secret beside the public token must fail secret scanning.")
 
-code, findings = scan(analytics)
-if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
-    raise SystemExit("The public token exception must be limited to its configuration file.")
+for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
+    code, findings = scan(analytics, filename)
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit("The public token exception must be limited to its configuration file.")
 
 print("Secret scanning configuration regression passed.")

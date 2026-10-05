@@ -4,13 +4,34 @@ import { dirname } from 'node:path';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const recordingRequests = new WeakMap();
+const sessionRequests = new WeakMap();
+
+function sessionRecordings(session) {
+  let recordings = sessionRequests.get(session);
+  if (recordings) return recordings;
+  recordings = new Map();
+  const filter = { urls: ['https://eu.i.posthog.com/*'] };
+  session.webRequest.onBeforeRequest(filter, (details, callback) => {
+    recordings.get(details.webContentsId)?.started(details.id);
+    callback({});
+  });
+  const completed = (details) => {
+    for (const recording of recordings.values()) recording.completed(details.id);
+  };
+  session.webRequest.onCompleted(filter, completed);
+  session.webRequest.onErrorOccurred(filter, completed);
+  sessionRequests.set(session, recordings);
+  return recordings;
+}
 
 export function trackDesktopAnalytics(window) {
+  if (recordingRequests.has(window)) return;
   const pending = new Set();
   let idleTimer;
   let drained;
   let disposed = false;
-  let request;
+  let recordings;
+  let id;
   const settle = () => {
     clearTimeout(idleTimer);
     if (drained && pending.size === 0) idleTimer = setTimeout(drained, 100);
@@ -19,33 +40,27 @@ export function trackDesktopAnalytics(window) {
     if (disposed) return;
     disposed = true;
     clearTimeout(idleTimer);
-    for (const event of ['onBeforeRequest', 'onCompleted', 'onErrorOccurred']) {
-      try {
-        request?.[event](null);
-      } catch {}
-    }
+    recordings?.delete(id);
+    pending.clear();
     recordingRequests.delete(window);
     drained?.();
   };
   try {
-    request = window.webContents.session.webRequest;
-    const filter = { urls: ['https://eu.i.posthog.com/*'] };
-    request.onBeforeRequest(filter, (details, callback) => {
-      if (details.webContentsId === window.webContents.id) {
-        pending.add(details.id);
+    id = window.webContents.id;
+    recordings = sessionRecordings(window.webContents.session);
+    recordings.set(id, {
+      started: (requestId) => {
+        pending.add(requestId);
         settle();
-      }
-      callback({});
+      },
+      completed: (requestId) => {
+        if (pending.delete(requestId)) settle();
+      },
     });
-    const completed = (details) => {
-      pending.delete(details.id);
-      settle();
-    };
-    request.onCompleted(filter, completed);
-    request.onErrorOccurred(filter, completed);
     recordingRequests.set(window, {
       drain: () =>
         new Promise((accept) => {
+          if (disposed) return accept();
           drained = accept;
           settle();
         }),

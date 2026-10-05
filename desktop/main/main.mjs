@@ -463,7 +463,7 @@ function showSettings(section = 'general', _mode, reset = false) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      partition: `otto-settings-${randomUUID()}`,
+      partition: 'otto-settings',
     },
   });
   const window = setupWindow;

@@ -73,6 +73,64 @@ test('successful setup lets the recorder flush before closing and cannot block s
   }
 });
 
+test('overlapping recording drains share session handlers without mixing windows or dropping later requests', async (t) => {
+  const listeners = {};
+  const session = {
+    webRequest: Object.fromEntries(
+      ['onBeforeRequest', 'onCompleted', 'onErrorOccurred'].map((event) => [
+        event,
+        (_filter, listener) => {
+          listeners[event] = listener;
+        },
+      ]),
+    ),
+  };
+  const createWindow = (id) => {
+    const window = Object.assign(new EventEmitter(), {
+      webContents: { id, session, executeJavaScript: async () => {} },
+      isDestroyed: () => window.destroyed === true,
+      destroy: () => {
+        window.destroyed = true;
+        window.emit('closed');
+      },
+    });
+    t.after(() => {
+      if (!window.isDestroyed()) window.destroy();
+    });
+    trackDesktopAnalytics(window);
+    return window;
+  };
+  const started = (id, webContentsId) => listeners.onBeforeRequest({ id, webContentsId }, () => {});
+  const first = createWindow(1);
+  const second = createWindow(2);
+  started(101, 1);
+  started(102, 2);
+  const firstDrain = completeDesktopSetup(first);
+  const secondDrain = completeDesktopSetup(second);
+  await new Promise((accept) => setTimeout(accept, 150));
+  assert.equal(first.isDestroyed(), false);
+  assert.equal(second.isDestroyed(), false);
+  listeners.onCompleted({ id: 101 });
+  await firstDrain;
+  assert.equal(first.isDestroyed(), true);
+  assert.equal(second.isDestroyed(), false);
+  started(103, 2);
+  listeners.onCompleted({ id: 102 });
+  await new Promise((accept) => setTimeout(accept, 150));
+  assert.equal(second.isDestroyed(), false);
+  listeners.onErrorOccurred({ id: 103 });
+  await secondDrain;
+  assert.equal(second.isDestroyed(), true);
+  const reopened = createWindow(3);
+  started(104, 3);
+  const reopenedDrain = completeDesktopSetup(reopened);
+  await new Promise((accept) => setTimeout(accept, 150));
+  assert.equal(reopened.isDestroyed(), false);
+  listeners.onCompleted({ id: 104 });
+  await reopenedDrain;
+  assert.equal(reopened.isDestroyed(), true);
+});
+
 test('native onboarding and restarted runtimes share a private installation identity', async (t) => {
   const f = await fixture(t);
   const path = join(dirname(f.path), 'analytics-id');
