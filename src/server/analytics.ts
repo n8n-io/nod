@@ -183,6 +183,20 @@ export function registerAnalyticsRoutes(app: FastifyInstance, capture: CaptureAn
       },
     ],
     [
+      'POST /api/apps/discovery/:id/authorize',
+      {
+        event: 'otto_settings_updated',
+        properties: { section: 'connections', operation: 'connect_started' },
+      },
+    ],
+    [
+      'POST /api/apps/discovery/:id/complete',
+      {
+        event: 'otto_settings_updated',
+        properties: { section: 'connections', operation: 'update' },
+      },
+    ],
+    [
       'POST /api/apps/:slug/accounts/:connectionId/disconnect',
       {
         event: 'otto_settings_updated',
@@ -191,6 +205,18 @@ export function registerAnalyticsRoutes(app: FastifyInstance, capture: CaptureAn
     ],
     [
       'PUT /api/channel-settings/:provider',
+      { event: 'otto_settings_updated', properties: { section: 'channels', operation: 'update' } },
+    ],
+    [
+      'POST /api/channel-settings/telegram/pairing',
+      { event: 'otto_settings_updated', properties: { section: 'channels', operation: 'update' } },
+    ],
+    [
+      'POST /api/channel-settings/telegram/confirm',
+      { event: 'otto_settings_updated', properties: { section: 'channels', operation: 'update' } },
+    ],
+    [
+      'POST /api/channel-settings/telegram/user',
       { event: 'otto_settings_updated', properties: { section: 'channels', operation: 'update' } },
     ],
     [
@@ -210,6 +236,14 @@ export function registerAnalyticsRoutes(app: FastifyInstance, capture: CaptureAn
         event: 'otto_settings_updated',
         properties: { section: 'models', operation: 'connect_started' },
       },
+    ],
+    [
+      'POST /api/models/oauth/complete',
+      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
+    ],
+    [
+      'POST /api/models/connections/:id/refresh',
+      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
     ],
     [
       'PUT /api/models/selection',

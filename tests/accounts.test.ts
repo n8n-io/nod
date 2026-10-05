@@ -1184,7 +1184,9 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       );
     });
     const owner = await f.create('fixture-restricted');
+    const captured: AnalyticsEvent[] = [];
     const app = Fastify();
+    registerAnalyticsRoutes(app, (event) => captured.push(event));
     owner.register(app);
     t.after(() => app.close());
     const added = await app.inject({
@@ -1203,11 +1205,15 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(selected.statusCode, 200);
     assert.equal(owner.configured, true);
     const saved = owner.view();
+    const beforeRefresh = captured.length;
     const refreshed = await app.inject({
       method: 'POST',
       url: `/api/models/connections/${id}/refresh`,
     });
     assert.equal(refreshed.statusCode, 200);
+    assert.deepEqual(captured.slice(beforeRefresh), [
+      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
+    ]);
     assert.equal(requests, 2);
     assert.deepEqual(owner.view(), saved);
     const rejected = await app.inject({
@@ -1226,6 +1232,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(failed.statusCode, 400);
     assert.ok(!failed.body.includes('fixture-invalid-api-key'));
     assert.deepEqual(owner.view(), saved);
+    assert.equal(captured.length, beforeRefresh + 1);
     const restored = await f.create('fixture-restricted');
     assert.deepEqual(restored.view(), saved);
     assert.equal(requests, 4);
@@ -1425,9 +1432,19 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     const callback = new URL(
       `http://127.0.0.1:1455/auth/callback?state=${auth.searchParams.get('state')}&code=fixture-code&client_id=fixture-client`,
     );
-    await owner.complete(callback);
+    const complete = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/models/oauth/complete',
+        payload: { url: callback.href },
+      });
+    assert.equal((await complete()).statusCode, 200);
+    assert.deepEqual(captured.slice(1), [
+      { event: 'otto_settings_updated', properties: { section: 'models', operation: 'update' } },
+    ]);
     assert.deepEqual((await status()).json(), { status: 'connected' });
-    await assert.rejects(owner.complete(callback));
+    assert.equal((await complete()).statusCode, 400);
+    assert.equal(captured.length, 2);
     assert.deepEqual((await status()).json(), { status: 'connected' });
     assert.equal(exchanges, 1);
     const openRouter = await app.inject({
@@ -1436,8 +1453,8 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       payload: { provider: 'openrouter' },
     });
     assert.equal(openRouter.statusCode, 200);
-    assert.equal(captured.length, 2);
-    assert.deepEqual(captured[1], captured[0]);
+    assert.equal(captured.length, 3);
+    assert.deepEqual(captured[2], captured[0]);
     assert.deepEqual((await status()).json(), { status: 'connected' });
     const restored = await f.create('fixture-owner', backend);
     const a = await owner.resolve();
@@ -1472,7 +1489,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     });
     assert.equal(pending.statusCode, 400);
     assert.match(pending.json().error, /pending sign-in/);
-    assert.equal(captured.length, 2);
+    assert.equal(captured.length, 3);
     assert.deepEqual((await status()).json(), { status: 'connected' });
     const hosted = await f.create('fixture-hosted', backend, false);
     await assert.rejects(hosted.start('openai'));
