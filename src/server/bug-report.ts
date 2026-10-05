@@ -44,6 +44,9 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     [...(options.secrets ?? []), ...savedCredentialValues(entries)],
     { string: 4000, payload: 12_000, minimumSecretLength: 1 },
   );
+  const toolCaptureEnabled = options.captureEnabled();
+  const useSessionTrace = !toolCaptureEnabled || !trace.rows.length;
+  const toolTrace = useSessionTrace ? savedToolTrace(entries, Date.now()) : trace.rows;
   const report = {
     format: 'otto-feedback-report-v1',
     generatedAt: new Date().toISOString(),
@@ -52,7 +55,8 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     model: options.model,
     coverage: {
       hours: 24,
-      toolCaptureEnabled: options.captureEnabled(),
+      toolCaptureEnabled,
+      toolTraceSource: useSessionTrace ? 'saved-session' : 'inspector',
       maximumMessages: 30,
       maximumTurns: 20,
       maximumToolRecords: 60,
@@ -60,7 +64,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     },
     messages: messages.rows.map(redact).reverse(),
     turns: turns.rows.map(redact).reverse(),
-    trace: trace.rows
+    trace: toolTrace
       .map((row) =>
         redact(
           row.name === 'get_credential'
@@ -86,6 +90,64 @@ function record(value: unknown): RecordValue | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as RecordValue)
     : undefined;
+}
+
+function savedToolTrace(entries: unknown[], now: number): RecordValue[] {
+  const calls = new Map<string, RecordValue>();
+  const privateTools = new Set(['get_credential', 'browser_flow', 'manage_personal_context']);
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = record(entries[index]);
+    const message = record(entry?.message);
+    if (entry?.type !== 'message' || !message) continue;
+    const timestamp =
+      typeof entry.timestamp === 'string'
+        ? Date.parse(entry.timestamp)
+        : typeof message.timestamp === 'number'
+          ? message.timestamp
+          : NaN;
+    if (!Number.isFinite(timestamp) || timestamp < now - 86_400_000 || timestamp > now) continue;
+    const time = new Date(timestamp).toISOString();
+    const content = Array.isArray(message.content) ? message.content : [];
+    const tools: Array<RecordValue | undefined> =
+      message.role === 'assistant'
+        ? content.map(record).filter((block) => block?.type === 'toolCall')
+        : message.role === 'toolResult'
+          ? [{ id: message.toolCallId, name: message.toolName }]
+          : [];
+    for (const tool of tools) {
+      if (typeof tool?.id !== 'string' || !tool.id || typeof tool.name !== 'string') continue;
+      let call = calls.get(tool.id);
+      if (!call) {
+        if (calls.size >= 60) continue;
+        call = { id: tool.id, kind: 'tool', name: tool.name, status: 'unknown' };
+        calls.set(tool.id, call);
+      }
+      const privateTool = privateTools.has(tool.name) || privateTools.has(String(call.name));
+      if (message.role === 'assistant') {
+        const input = record(tool.arguments);
+        call.input = privateTool
+          ? '[redacted]'
+          : tool.name === 'browser' && input?.action === 'fill'
+            ? { ...input, text: '[redacted]' }
+            : tool.arguments;
+        call.started_at = time;
+      } else {
+        call.output = privateTool
+          ? '[redacted]'
+          : content.flatMap((value) => {
+              const block = record(value);
+              return block?.type === 'text' && typeof block.text === 'string' ? [block.text] : [];
+            });
+        call.status = message.isError === true ? 'failed' : 'succeeded';
+        call.finished_at = time;
+      }
+      if (privateTool) {
+        call.input = '[redacted]';
+        call.output = '[redacted]';
+      }
+    }
+  }
+  return [...calls.values()];
 }
 
 function savedCredentialValues(entries: unknown[]): string[] {

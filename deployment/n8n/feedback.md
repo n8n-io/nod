@@ -18,6 +18,8 @@ The versioned envelope is defined by `src/ports/feedback.ts`. The app defaults t
 
 Reporting context includes source (`desktop`, `local-web` or `hosted-web`), development mode, platform, computer name when available, app version, source commit and whether the checkout was modified. Unknown values are null. Native builds report their actual installed version and build source. Local development reports the current commit and modified state without treating the package placeholder version as a release. Hosted servers use supplied release metadata. Browser reports do not use the server's hostname as the user's computer name.
 
+Diagnostic activity uses Inspector records when capture is enabled and records exist. Installed apps and other sessions without Inspector capture use a bounded projection of recent saved tool calls and results. This excludes prompts, reasoning, binary blocks and private credential, flow and memory payloads, while preserving tool outcome and timing. Both paths retain the same redaction and size limits.
+
 Feedback text is limited to 12,000 characters. A diagnostic report is accepted only for the bug category and is limited to 512 KiB. Screenshots are PNG, JPEG or WebP, at most three files, 2 MiB per file and 4 MiB together. The entire JSON request is at most 7 MiB.
 
 `payloadHash` is SHA-256 over JSON with this exact property order, excluding `payloadHash` and `action`:

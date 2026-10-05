@@ -3768,6 +3768,161 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
   assert.ok(!report.includes(password));
 });
 
+test('feedback diagnostics recover bounded private tool activity when inspector capture is unavailable', async () => {
+  const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
+  const ownerId = randomUUID();
+  const threadId = randomUUID();
+  const now = Date.now() - 1000;
+  const password = 'synthetic-saved-session-password';
+  const username = 'synthetic-saved-session-user';
+  let inspectorRows: unknown[] = [];
+  const pool = {
+    async query(sql: string, values: string[]) {
+      assert.equal(values[0], ownerId);
+      if (sql.includes('FROM threads')) return { rows: [{ id: threadId, status: 'idle' }] };
+      assert.equal(values[1], threadId);
+      return { rows: sql.includes('FROM inspector_records') ? inspectorRows : [] };
+    },
+  } as unknown as pg.Pool;
+  function activity(
+    id: string,
+    name: string,
+    input: unknown,
+    output: string,
+    timestamp = now,
+    isError = false,
+  ) {
+    return [
+      {
+        type: 'message',
+        timestamp: new Date(timestamp).toISOString(),
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'synthetic-private-reasoning' },
+            { type: 'text', text: 'synthetic-assistant-prose' },
+            { type: 'toolCall', id, name, arguments: input },
+          ],
+        },
+      },
+      {
+        type: 'message',
+        timestamp: new Date(timestamp + 1).toISOString(),
+        message: {
+          role: 'toolResult',
+          toolCallId: id,
+          toolName: name,
+          isError,
+          content: [
+            { type: 'text', text: output },
+            { type: 'image', data: 'synthetic-binary-content' },
+          ],
+          details: { private: 'synthetic-opaque-details' },
+        },
+      },
+    ];
+  }
+  let entries: unknown[] = [
+    ...activity(
+      'old-login',
+      'get_credential',
+      {},
+      JSON.stringify({ username, password }),
+      now - 172_800_000,
+    ),
+    ...activity('old-call', 'browser', {}, 'synthetic-old-tool-output', now - 172_800_000),
+    ...activity('recent', 'browser', { action: 'snapshot' }, `Visible activity ${password}`),
+    ...activity('failed', 'bash', { command: 'synthetic' }, 'Synthetic command failed', now, true),
+    ...activity('fill', 'browser', { action: 'fill', text: 'synthetic-private-fill' }, username),
+    ...activity('login', 'get_credential', { origin: 'synthetic-private-origin' }, 'private-login'),
+    ...activity('flow', 'browser_flow', { query: 'synthetic-private-flow' }, 'private-flow-output'),
+    ...activity(
+      'memory',
+      'manage_personal_context',
+      { action: 'profile_get', args: 'synthetic-private-profile' },
+      'private-memory-output',
+    ),
+    activity('unfinished', 'browser', { action: 'click' }, '')[0],
+    {
+      type: 'message',
+      timestamp: new Date(now).toISOString(),
+      message: { role: 'system', content: 'synthetic-system-prompt' },
+    },
+    { type: 'compaction', timestamp: new Date(now).toISOString(), summary: 'synthetic-compaction' },
+  ];
+  const options = {
+    pool,
+    ownerId,
+    captureEnabled: () => false,
+    sessionEntries: async (id: string) => {
+      assert.equal(id, threadId);
+      return entries;
+    },
+  };
+  for (const captureEnabled of [false, true]) {
+    const encoded = await buildFeedbackReport({ ...options, captureEnabled: () => captureEnabled });
+    const report = JSON.parse(encoded);
+    assert.equal(report.coverage.toolTraceSource, 'saved-session');
+    assert.equal(report.trace.length, 7);
+    const browser = report.trace.find((item: { id: string }) => item.id === 'recent');
+    assert.deepEqual(browser.input, { action: 'snapshot' });
+    assert.deepEqual(browser.output, ['Visible activity [redacted]']);
+    assert.equal(browser.status, 'succeeded');
+    assert.equal(
+      report.trace.find((item: { id: string }) => item.id === 'failed').status,
+      'failed',
+    );
+    assert.equal(
+      report.trace.find((item: { id: string }) => item.id === 'unfinished').status,
+      'unknown',
+    );
+    for (const omitted of [
+      password,
+      username,
+      'synthetic-old-tool-output',
+      'synthetic-private-fill',
+      'synthetic-private-origin',
+      'synthetic-private-flow',
+      'synthetic-private-profile',
+      'private-login',
+      'private-flow-output',
+      'private-memory-output',
+      'synthetic-private-reasoning',
+      'synthetic-assistant-prose',
+      'synthetic-binary-content',
+      'synthetic-opaque-details',
+      'synthetic-system-prompt',
+      'synthetic-compaction',
+    ])
+      assert.ok(!encoded.includes(omitted), omitted);
+  }
+  inspectorRows = [{ id: 'captured', name: 'browser', output: 'Captured activity' }];
+  const captured = JSON.parse(
+    await buildFeedbackReport({ ...options, captureEnabled: () => true }),
+  );
+  assert.equal(captured.coverage.toolTraceSource, 'inspector');
+  assert.equal(captured.trace.length, 1);
+  assert.equal(captured.trace[0].id, 'captured');
+  assert.equal(JSON.parse(await buildFeedbackReport(options)).trace.length, 7);
+  const large = 'x'.repeat(3500);
+  entries = Array.from({ length: 70 }, (_, index) =>
+    activity(
+      `bounded-${index}`,
+      'browser',
+      { first: large, second: large },
+      large,
+      now - (70 - index) * 1000,
+    ),
+  ).flat();
+  const bounded = await buildFeedbackReport(options);
+  const truncated = JSON.parse(bounded);
+  assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
+  assert.ok(truncated.trace.length > 0 && truncated.trace.length <= 60);
+  assert.equal(truncated.trace.at(-1).id, 'bounded-69');
+  assert.ok(!bounded.includes('bounded-9'));
+  assert.equal(truncated.coverage.truncated, true);
+});
+
 test(
   'feedback diagnostics exclude unrelated personal context, redact mirrored credentials and stay bounded',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
