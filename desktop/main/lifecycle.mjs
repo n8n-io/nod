@@ -1,5 +1,5 @@
-export function desktopSetupMode({ completed, providerConfigured, replaying, running }) {
-  if (!completed || providerConfigured === false || replaying) return 'onboarding';
+export function desktopSetupMode({ completed, replaying, running }) {
+  if (!completed || replaying) return 'onboarding';
   return running ? 'settings' : 'loading';
 }
 
@@ -97,7 +97,11 @@ export function createDesktopLifecycle({
         await validateStart();
         checkOpen(controller.signal);
         engineStarting = true;
-        return startEngine({ runtime: prepared, signal: controller.signal });
+        return startEngine({
+          runtime: prepared,
+          signal: controller.signal,
+          validateStop: options?.validateStop,
+        });
       })
       .finally(() => {
         engineStarting = false;

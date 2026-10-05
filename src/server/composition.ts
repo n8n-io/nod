@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
-import type { Agent } from '../ports/agent.ts';
+import { appConfirmation, type Agent } from '../ports/agent.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
@@ -56,6 +56,8 @@ import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
 import { createApprovals } from './approvals.ts';
+import { appActionConfirmation } from './action-presentation.ts';
+import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
 import { createChannels } from './channels.ts';
 import { createChannelSettings } from './channel-settings.ts';
@@ -675,9 +677,18 @@ export async function createApplication(
     (action, args, provenance) =>
       action === 'OTTO_memory_save'
         ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
-        : personal.manage(action.slice('OTTO_'.length), args, provenance),
+        : action.startsWith('OTTO_')
+          ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+          : providerUsage.withTurn(provenance.turnId, () =>
+              integrations.executeApproved(ownerId, action, args, {
+                threadId: provenance.threadId,
+                turnId: provenance.turnId,
+              }),
+            ),
     async (action, args) => {
-      await personal.validateReview(action.slice('OTTO_'.length), args);
+      if (action.startsWith('OTTO_'))
+        await personal.validateReview(action.slice('OTTO_'.length), args);
+      else await integrations.prepare(ownerId, action, args);
     },
   );
   const reactions = createAgentReactionService({ pool, ownerId, refresh });
@@ -695,6 +706,17 @@ export async function createApplication(
           }
         : await accountProfiles.read(),
     );
+  const trust = createTrust({
+    pool,
+    ownerId,
+    ownAddresses: async () => [
+      (await accountProfile())?.email,
+      ...(await integrations.connectedApps()).map((app) => app.accountEmail),
+    ],
+    review: async (instructions, input) =>
+      curator.configured ? curator.curate({ task: 'review', instructions, input }) : undefined,
+  });
+  await trust.initialize();
   const userMessages = createUserMessageService({ confirmAction: approvals.acceptChat });
   if (options.workers !== false) {
     await inspector.recover().catch(() => {});
@@ -719,6 +741,7 @@ export async function createApplication(
       activityCheck: triage.activityCheck,
       memoryContext: memory.context,
       markUntrustedContext: (turn) => memory.markUntrusted(turn.threadId),
+      flagInjection: trust.flag,
       connections: integrations.manageConnections,
       browserConnection: (request, turn, signal) =>
         browserConnections.request(request, turn, signal),
@@ -796,6 +819,33 @@ export async function createApplication(
         return vault.request(turn, ownerId, request);
       },
       integration: async (turn, action, args, options) => {
+        const verdict = await trust.check(turn, action, args);
+        if (verdict.confirm) {
+          const prepared = await integrations.prepare(ownerId, action, args);
+          const account = (await integrations.list(ownerId, { refresh: false })).find(
+            (item) => item.connectionId === prepared.connectionId,
+          );
+          const path = account?.accessPaths?.find((item) => item.id === prepared.pathId);
+          const result = await approvals.request(turn, action, prepared, {
+            confirm: true,
+            question: appActionConfirmation(
+              action,
+              prepared,
+              verdict.reason,
+              account &&
+                [
+                  account.name,
+                  account.accountEmail ?? account.accountName,
+                  path && `${path.kind} ${path.endpoint}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · '),
+            ),
+          });
+          return result && typeof result === 'object' && 'requiresConfirmation' in result
+            ? { [appConfirmation]: result.question }
+            : result;
+        }
         return integrations.execute(
           ownerId,
           action,

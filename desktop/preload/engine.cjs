@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const focusListeners = new Set();
+const settingsListeners = new Set();
+let pendingSettings;
 const restartChecks = new Set();
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 let pendingFocus;
@@ -35,6 +37,12 @@ ipcRenderer.on('otto:focus-message', (_event, value) => {
   else for (const listener of focusListeners) listener(target);
 });
 
+ipcRenderer.on('otto:settings:focus', (_event, section) => {
+  if (!['general', 'models', 'preferences'].includes(section)) return;
+  if (!settingsListeners.size) pendingSettings = section;
+  else for (const listener of settingsListeners) listener(section);
+});
+
 contextBridge.exposeInMainWorld('ottoDesktop', {
   onPrepareUpdate: (check) => {
     if (typeof check !== 'function') throw new TypeError('A restart check is required.');
@@ -43,6 +51,20 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
   },
   openSettings: (section = 'general') => ipcRenderer.invoke('otto:settings:open', section),
   openExternal: (url) => ipcRenderer.invoke('otto:external', url),
+  getSettings: () => ipcRenderer.invoke('otto:settings:get'),
+  saveSettings: (input) => ipcRenderer.invoke('otto:settings:save', input),
+  revealComposioKey: () => ipcRenderer.invoke('otto:settings:reveal', 'composioApiKey'),
+  applySettings: () => ipcRenderer.invoke('otto:settings:apply'),
+  onOpenSettings: (listener) => {
+    if (typeof listener !== 'function') throw new TypeError('A settings listener is required.');
+    settingsListeners.add(listener);
+    if (pendingSettings !== undefined) {
+      const section = pendingSettings;
+      pendingSettings = undefined;
+      listener(section);
+    }
+    return () => settingsListeners.delete(listener);
+  },
   getPreferences: () => ipcRenderer.invoke('otto:preferences:get'),
   getBuildInfo: () => ipcRenderer.invoke('otto:build-info'),
   setTheme: (theme) => ipcRenderer.invoke('otto:preferences:theme', theme),

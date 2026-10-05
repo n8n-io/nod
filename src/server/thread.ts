@@ -17,6 +17,7 @@ import type {
   RuntimeObservation,
   RuntimeResult,
 } from '../ports/agent.ts';
+import { appConfirmation } from '../ports/agent.ts';
 import { welcomeGreeting, welcomePrompt } from './welcome.ts';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
 import { defaultPreferences } from './preferences.ts';
@@ -93,6 +94,7 @@ export interface ThreadDependencies {
   activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   markUntrustedContext?: (turn: TurnRef) => Promise<void>;
+  flagInjection?: (turn: TurnRef, findings: string[]) => Promise<void>;
   runTurn: (context: RuntimeContext) => Promise<RuntimeResult>;
   speech: Pick<SpeechService, 'synthesize'>;
   requestCredential: (
@@ -1055,6 +1057,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           checkConnectionId: loaded.context.activityCheck?.connectionId,
         });
         operation.throwIfAborted();
+        if (result && typeof result === 'object' && appConfirmation in result) return result;
         if (
           loaded.context.activityCheck &&
           JSON.stringify(result ?? null).length > appResultInlineChars
@@ -1078,6 +1081,9 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
               return taken;
             },
       markUntrustedContext: fenced(async () => dependencies.markUntrustedContext?.(ref)),
+      flagInjection: fenced(async (findings: string[]) =>
+        dependencies.flagInjection?.(ref, findings),
+      ),
       downloadIntegrationFile:
         downloadIntegrationFile &&
         (async (action, args) =>

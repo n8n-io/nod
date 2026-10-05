@@ -18,6 +18,7 @@ const schema = z
       'agent',
       'relevance',
       'memory',
+      'review',
       'browser',
       'integration',
       'speech',

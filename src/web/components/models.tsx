@@ -71,13 +71,22 @@ function useModels() {
   return { ...page, busy, error: error || page.error, setError, change };
 }
 
-export function ModelSettings() {
+export function ModelSettings({
+  onDirtyChange,
+}: {
+  onDirtyChange?(dirty: boolean): void;
+} = {}) {
   const models = useModels();
   const [keyProvider, setKeyProvider] = useState<ModelProvider | null>(null);
   const [key, setKey] = useState('');
   const [signingIn, setSigningIn] = useState(false);
   const [signIn, setSignIn] = useState<{ url: string; attempt: string } | null>(null);
   const [callback, setCallback] = useState('');
+  const dirty = models.busy || signingIn || !!signIn || Boolean(key.trim());
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
   useEffect(() => {
     if (!signIn) return;
     const controller = new AbortController();
@@ -146,7 +155,7 @@ export function ModelSettings() {
   const data = models.data;
   const busy = models.busy || signingIn || !!signIn;
   return (
-    <div className="model-settings">
+    <div className="model-settings" data-desktop-settings-pending={dirty || undefined}>
       <p className="model-intro">
         Connect as many services as you want. All their models appear in one list.
       </p>

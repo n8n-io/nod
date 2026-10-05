@@ -426,6 +426,20 @@ async function draftApp() {
     (signingMode === 'developer-id' && metadata.notarized !== true)
   )
     throw new Error('Packaged release metadata does not match the approved source.');
+  if (metadata.updateSourceUrl !== (process.env.OTTO_DESKTOP_UPDATE_SOURCE_URL || undefined))
+    throw new Error('The packaged update source does not match the release configuration.');
+  if (metadata.updateSourceUrl !== undefined) {
+    if (typeof metadata.updateSourceUrl !== 'string' || !URL.canParse(metadata.updateSourceUrl))
+      throw new Error('The packaged update source must be a credential-free HTTPS URL.');
+    const url = new URL(metadata.updateSourceUrl);
+    if (
+      url.protocol !== 'https:' ||
+      url.username ||
+      url.password ||
+      /[?#]/.test(metadata.updateSourceUrl)
+    )
+      throw new Error('The packaged update source must be a credential-free HTTPS URL.');
+  }
   const changes = run(process.execPath, ['.github/scripts/prepare-desktop-release.mjs', '--notes']);
   await writeFile(join(output, 'CHANGELOG.md'), changes + '\n');
   const names = (await readdir(output)).filter(
@@ -499,6 +513,7 @@ async function draftApp() {
       throw new Error('Packaged application assets do not match the release metadata.');
   }
   if (
+    disk !== 'Otto-arm64.dmg' ||
     zip !== disk.replace(/\.dmg$/, '.zip') ||
     (await readFile(join(output, 'SHA256SUMS'), 'utf8')).trim() !==
       `${metadata.disk.sha256}  ${disk}\n${metadata.update.sha256}  ${zip}`
@@ -523,10 +538,10 @@ async function draftApp() {
       signingMode === 'self-signed'
         ? 'Internal self-signed preview. This is not Apple-notarized; macOS may require Privacy & Security → Open Anyway on first launch.'
         : 'Signed with Developer ID and notarized by Apple.',
-      runtime.url && !runtimeRelease.draft
+      (runtime.url || metadata.updateSourceUrl) && (publish || !runtimeRelease.draft)
         ? 'Otto downloads and verifies its runtime on first launch.'
         : `Download the [matching runtime pack](${runtimeLink})${runtimeRelease.draft ? ' from the draft release assets' : ''}, leave it compressed, and select it when Otto asks. GitHub access is required for these internal downloads.`,
-      'Saved keys and conversations remain in the existing local profile.',
+      'Otto keeps keys and conversations in its local profile between updates.',
     ].join('\n\n');
     return `${changes}\n\n${installation}\n\n${marker}\n`;
   };

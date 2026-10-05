@@ -101,10 +101,7 @@ export function validateRuntimeRelease(release) {
 }
 
 export function runtimeCacheRoot(release, cacheRoot) {
-  return join(
-    cacheRoot || join(homedir(), 'Library/Application Support/Otto Desktop Experiment/runtime'),
-    release.id,
-  );
+  return join(cacheRoot || join(homedir(), 'Library/Application Support/Otto/runtime'), release.id);
 }
 
 async function verifiedCache(release, signal, cacheRoot) {
@@ -397,7 +394,14 @@ export async function ensureRuntimeAssets(options) {
   const release = options.release
     ? validateRuntimeRelease(options.release)
     : await runtimeRelease(options.resourcesPath);
-  if (release && (options.downloadUrl || release.url)) return downloadRuntime(release, options);
+  let downloadUrl = options.downloadUrl || release?.url;
+  if (release && !downloadUrl && options.resolveDownloadUrl) {
+    options.signal?.throwIfAborted();
+    options.onStatus?.({ phase: 'downloading', message: 'Finding your local computer…' });
+    downloadUrl = await options.resolveDownloadUrl(release, options.signal);
+    options.signal?.throwIfAborted();
+  }
+  if (release && downloadUrl) return downloadRuntime(release, { ...options, downloadUrl });
   throw Object.assign(new Error('Choose the Otto Runtime pack to finish setting up this Mac.'), {
     code: 'RUNTIME_ARCHIVE_REQUIRED',
   });

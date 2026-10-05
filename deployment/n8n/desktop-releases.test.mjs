@@ -29,11 +29,7 @@ const release = (overrides = {}) => ({
   draft: false,
   prerelease: true,
   published_at: '2026-10-04T12:00:00Z',
-  assets: [
-    asset(101, 'release.json'),
-    asset(102, 'Otto-Preview-arm64.zip'),
-    asset(103, 'Otto-Preview-arm64.dmg'),
-  ],
+  assets: [asset(101, 'release.json'), asset(102, 'Otto-arm64.zip'), asset(103, 'Otto-arm64.dmg')],
   author: { secret: 'synthetic-private-field' },
   ...overrides,
 });
@@ -98,7 +94,7 @@ test('N8ND-PUBLISHED: broker omits drafts, legacy tags, unknown assets and priva
   assert.equal(result.body[1].assets.length, 0);
   assert.equal(
     result.body[0].assets[1].browser_download_url,
-    `${base}/releases/42/assets/102/Otto-Preview-arm64.zip`,
+    `${base}/releases/42/assets/102/Otto-arm64.zip`,
   );
   assert.doesNotMatch(
     JSON.stringify(result),
@@ -109,26 +105,37 @@ test('N8ND-PUBLISHED: broker omits drafts, legacy tags, unknown assets and priva
 });
 
 test('N8ND-PIN: asset resolution binds release, asset ID and filename including replacement races', () => {
-  const input = { params: { releaseId: '42', assetId: '102', filename: 'Otto-Preview-arm64.zip' } };
+  const input = { params: { releaseId: '42', assetId: '102', filename: 'Otto-arm64.zip' } };
   assert.deepEqual(read(release(), input), {
     assetUrl: 'https://api.github.com/repos/n8n-io/otto/releases/assets/102',
   });
   assert.equal(read(release({ id: 43 }), input).status, 404);
   assert.equal(
-    read(release(), { params: { ...input.params, filename: 'Otto-Preview-arm64.dmg' } }).status,
+    read(release(), { params: { ...input.params, filename: 'Otto-arm64.dmg' } }).status,
     404,
   );
-  assert.equal(
-    read(release({ assets: [asset(200, 'Otto-Preview-arm64.zip')] }), input).status,
-    404,
-  );
+  assert.equal(read(release({ assets: [asset(200, 'Otto-arm64.zip')] }), input).status, 404);
   assert.equal(
     read(
       release({
-        assets: [asset(102, 'Otto-Preview-arm64.zip'), asset(200, 'Otto-Preview-arm64.zip')],
+        assets: [asset(102, 'Otto-arm64.zip'), asset(200, 'Otto-arm64.zip')],
       }),
       input,
     ).status,
+    503,
+  );
+  const name = 'Otto-arm64.dmg';
+  const installer = { params: { releaseId: '42', assetId: '103', filename: name } };
+  assert.deepEqual(read(release({ assets: [asset(103, name)] }), installer), {
+    assetUrl: 'https://api.github.com/repos/n8n-io/otto/releases/assets/103',
+  });
+  assert.equal(read(release({ assets: [asset(104, name)] }), installer).status, 404);
+  assert.equal(
+    read(release({ assets: [{ ...asset(103, name), digest: null }] }), installer).status,
+    503,
+  );
+  assert.equal(
+    read(release({ assets: [asset(103, name), asset(104, name)] }), installer).status,
     503,
   );
   assert.equal(
@@ -140,10 +147,7 @@ test('N8ND-PIN: asset resolution binds release, asset ID and filename including 
   assert.equal(
     read(
       release({
-        assets: [
-          asset(102, 'Otto-Preview-arm64.zip'),
-          { ...asset(200, 'release.json'), digest: null },
-        ],
+        assets: [asset(102, 'Otto-arm64.zip'), { ...asset(200, 'release.json'), digest: null }],
       }),
       input,
     ).status,
@@ -197,7 +201,7 @@ test('N8ND-FEED: native feed uses the exact newer app ZIP and handles version or
   assert.deepEqual(result, {
     status: 200,
     body: {
-      url: `${base}/releases/42/assets/102/Otto-Preview-arm64.zip`,
+      url: `${base}/releases/42/assets/102/Otto-arm64.zip`,
       name: 'Otto 0.2.0',
       pub_date: '2026-10-04T12:00:00Z',
     },
@@ -214,7 +218,7 @@ test('N8ND-FEED: native feed uses the exact newer app ZIP and handles version or
   );
   assert.equal(read(release({ tag_name: 'desktop-v0.2.0-alpha' }), input('0.2.0')).status, 204);
   assert.equal(
-    read(release({ assets: [asset(102, 'Otto-Preview-arm64.dmg')] }), input('0.1.0')).status,
+    read(release({ assets: [asset(102, 'Otto-arm64.dmg')] }), input('0.1.0')).status,
     404,
   );
   assert.equal(
@@ -290,7 +294,7 @@ test('N8ND-METADATA200: bounded JSON bytes and digest are verified before direct
     503,
   );
   const archive = read(release(), {
-    params: { releaseId: '42', assetId: '102', filename: 'Otto-Preview-arm64.zip' },
+    params: { releaseId: '42', assetId: '102', filename: 'Otto-arm64.zip' },
   });
   assert.equal(method(archive), 'HEAD');
   assert.equal(execute({ statusCode: 200, body }, archive).status, 503);
@@ -313,7 +317,7 @@ test('N8ND-CONFIG: actual embedded request pipeline gates credentialed metadata 
   const nodes = workflowNodes();
   const requestNode = nodes.find((entry) => entry.name === 'Check desktop request');
   const responseNode = nodes.find((entry) => entry.name === 'Build desktop response');
-  const input = { params: { releaseId: '42', assetId: '102', filename: 'Otto-Preview-arm64.zip' } };
+  const input = { params: { releaseId: '42', assetId: '102', filename: 'Otto-arm64.zip' } };
   const request = new Function('$input', requestNode.parameters.jsCode)({
     first: () => ({ json: input }),
   })[0].json;
@@ -344,7 +348,8 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   const appRelease = release({
     assets: [
       asset(101, 'release.json'),
-      asset(102, 'Otto-Preview-arm64.zip'),
+      asset(102, 'Otto-arm64.zip'),
+      asset(103, 'Otto-arm64.dmg'),
       asset(104, 'runtime-release.json'),
     ],
   });
@@ -358,7 +363,8 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
     platform: 'darwin-arm64',
     source: 'd'.repeat(40),
     signing: { mode: 'self-signed' },
-    update: { file: 'Otto-Preview-arm64.zip', bytes: 1234, sha256: 'a'.repeat(64) },
+    disk: { file: 'Otto-arm64.dmg', bytes: 1234, sha256: 'a'.repeat(64) },
+    update: { file: 'Otto-arm64.zip', bytes: 1234, sha256: 'a'.repeat(64) },
     runtime,
   };
   const unrelated = Array.from({ length: 100 }, (_, index) =>

@@ -87,7 +87,7 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
   const base = sourceUrl
     ? https(sourceUrl).replace(/\/$/, '')
     : `https://api.github.com/repos/${repository}`;
-  if (new URL(base).search) throw new Error('The desktop update source is invalid.');
+  if (/[?#]/.test(base)) throw new Error('The desktop update source is invalid.');
   const releasePath = (id) => `${base}/releases/${id}`;
   const assetUrl = (release, item) =>
     sourceUrl
@@ -95,7 +95,34 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
       : `${base}/releases/assets/${item.id}`;
   const getAsset = (release, name, signal) =>
     json(assetUrl(release, asset(release, name)), request, signal, 'application/octet-stream');
+  const runtimeDownloadUrl = async (runtime, signal) => {
+    if (
+      ![runtime?.fingerprint, runtime?.id, runtime?.archive?.sha256].every(
+        (value) => typeof value === 'string' && hash.test(value),
+      ) ||
+      runtime.archive.file !== `Otto-Runtime-darwin-arm64-${runtime.id.slice(0, 12)}.tar.gz` ||
+      !Number.isSafeInteger(runtime.archive.bytes) ||
+      runtime.archive.bytes < 1
+    )
+      throw new Error('The desktop runtime metadata is incompatible.');
+    const runtimeTag = `runtime-darwin-arm64-${runtime.fingerprint}`;
+    const runtimeRelease = published(
+      await json(
+        sourceUrl ? `${base}/tags/${runtimeTag}` : `${base}/releases/tags/${runtimeTag}`,
+        request,
+        signal,
+      ),
+      runtimeTag,
+    );
+    const archive = asset(runtimeRelease, runtime.archive.file);
+    if (archive.size !== runtime.archive.bytes)
+      throw new Error('The desktop update runtime archive size does not match.');
+    if (archive.digest !== `sha256:${runtime.archive.sha256}`)
+      throw new Error('The desktop update runtime archive digest does not match.');
+    return assetUrl(runtimeRelease, archive);
+  };
   return {
+    runtimeDownloadUrl,
     async latest(currentVersion, signal) {
       versionParts(currentVersion);
       const releases = await json(
@@ -131,7 +158,7 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
         !['self-signed', 'developer-id'].includes(manifest.signing?.mode) ||
         !hash.test(manifest.runtime?.fingerprint) ||
         !hash.test(manifest.runtime?.id) ||
-        manifest.update?.file !== 'Otto-Preview-arm64.zip' ||
+        manifest.update?.file !== 'Otto-arm64.zip' ||
         !hash.test(manifest.update.sha256)
       )
         throw new Error('The desktop update metadata is incompatible.');
@@ -146,24 +173,10 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
         runtime.fingerprint !== manifest.runtime.fingerprint ||
         runtime.archive?.file !== manifest.runtime.archive?.file ||
         runtime.archive?.bytes !== manifest.runtime.archive?.bytes ||
-        runtime.archive?.sha256 !== manifest.runtime.archive?.sha256 ||
-        !/^Otto-Runtime-darwin-arm64-[a-f0-9]+\.tar\.gz$/.test(runtime.archive.file)
+        runtime.archive?.sha256 !== manifest.runtime.archive?.sha256
       )
         throw new Error('The desktop update runtime does not match.');
-      const runtimeTag = `runtime-darwin-arm64-${runtime.fingerprint}`;
-      const runtimeRelease = published(
-        await json(
-          sourceUrl ? `${base}/tags/${runtimeTag}` : `${base}/releases/tags/${runtimeTag}`,
-          request,
-          signal,
-        ),
-        runtimeTag,
-      );
-      const archive = asset(runtimeRelease, runtime.archive.file);
-      if (archive.size !== runtime.archive.bytes)
-        throw new Error('The desktop update runtime archive size does not match.');
-      if (archive.digest !== `sha256:${runtime.archive.sha256}`)
-        throw new Error('The desktop update runtime archive digest does not match.');
+      const downloadUrl = await runtimeDownloadUrl(runtime, signal);
       let feedUrl;
       if (sourceUrl)
         feedUrl = `${releasePath(release.id)}/feed/${zip.id}?version=${currentVersion}&platform=darwin-arm64`;
@@ -177,14 +190,21 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
         version,
         source: manifest.source,
         runtime,
-        downloadUrl: assetUrl(runtimeRelease, archive),
+        downloadUrl,
         feedUrl,
       };
     },
   };
 }
 
-export function createDesktopUpdater({ source, currentVersion, native, prepareRuntime, restart }) {
+export function createDesktopUpdater({
+  source,
+  currentVersion,
+  native,
+  prepareRuntime,
+  restart,
+  onStatus = () => {},
+}) {
   let checking;
   let restarting;
   let ready;
@@ -201,12 +221,15 @@ export function createDesktopUpdater({ source, currentVersion, native, prepareRu
       if (ready) return Promise.resolve(ready);
       if (checking) return checking;
       checking = (async () => {
+        onStatus('checking');
         const candidate = await source.latest(currentVersion, controller.signal);
         if (!candidate) return undefined;
         if (compareVersions(candidate.version, currentVersion) <= 0)
           throw new Error('The desktop update is not newer than this app.');
+        onStatus('preparing');
         await prepareRuntime(candidate, controller.signal);
         controller.signal.throwIfAborted();
+        onStatus('downloading');
         await new Promise((resolve, reject) => {
           const finish = (error) => {
             native.removeListener('error', failed);
@@ -240,6 +263,7 @@ export function createDesktopUpdater({ source, currentVersion, native, prepareRu
         return ready;
       })().finally(() => {
         checking = undefined;
+        onStatus(ready ? 'ready' : 'idle');
       });
       return checking;
     },
@@ -259,7 +283,14 @@ export function createDesktopUpdater({ source, currentVersion, native, prepareRu
   };
 }
 
-export async function restartDesktopUpdate({ candidate, guard, request, flush, shutdown }) {
+export async function restartDesktopUpdate({
+  candidate,
+  guard,
+  request,
+  flush,
+  shutdown,
+  retryResume,
+}) {
   const release = await guard();
   let transition;
   let closing = false;
@@ -286,12 +317,23 @@ export async function restartDesktopUpdate({ candidate, guard, request, flush, s
     await shutdown();
   } catch (error) {
     if (closing) throw error;
-    if (transition)
-      await request('/api/runtime/resume', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(transition),
-      }).catch(() => {});
+    if (transition) {
+      while (true) {
+        try {
+          const resumed = await request('/api/runtime/resume', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(transition),
+            signal: AbortSignal.timeout(35_000),
+          });
+          if (!resumed.ok || (await resumed.json()).ok !== true)
+            throw new Error('Otto could not resume its work.');
+          break;
+        } catch {
+          if (!(await retryResume?.())) throw new Error('Otto could not resume its work.');
+        }
+      }
+    }
     release();
     throw error;
   }
@@ -307,8 +349,9 @@ export async function guardUpdateRenderers({ windows, ipc, trusted, timeout = 30
   for (const window of windows) window.webContents.on('did-start-navigation', navigation);
   const release = () => {
     for (const window of windows) {
+      if (window.isDestroyed()) continue;
       window.webContents.removeListener('did-start-navigation', navigation);
-      if (!window.isDestroyed()) window.webContents.send('otto:update:resume', token);
+      window.webContents.send('otto:update:resume', token);
     }
   };
   release.validate = () => {

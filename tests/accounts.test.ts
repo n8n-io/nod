@@ -805,6 +805,106 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.ok(auxiliary.definition.choice.efforts.includes(auxiliary.effort));
   });
 
+  test('bootstrap catalog failure preserves the saved choice and recovers only after an explicit refresh', async (t) => {
+    const f = await fixture(t);
+    let failed = false;
+    let requests = 0;
+    const backend = {
+      ...f.backend,
+      catalog: async (...args: Parameters<typeof f.backend.catalog>) => {
+        requests++;
+        if (failed) throw new Error('fixture-bootstrap-private-key');
+        return f.backend.catalog(...args);
+      },
+    };
+    const bootstrap = {
+      provider: 'openai' as const,
+      keys: { openai: 'fixture-bootstrap-private-key' },
+    };
+    const first = await f.create('fixture-offline', backend, true, bootstrap);
+    const saved = first.view();
+    assert.equal(first.configured, true);
+    failed = true;
+    const restored = await f.create('fixture-offline', backend, true, bootstrap);
+    assert.equal(requests, 2);
+    assert.deepEqual(restored.view().selection, saved.selection);
+    assert.deepEqual(restored.view().connections[0].models, saved.connections[0].models);
+    assert.equal(restored.view().connections[0].status, 'reconnect');
+    assert.equal(restored.configured, false);
+    await assert.rejects(restored.resolve());
+    const app = Fastify();
+    restored.register(app);
+    t.after(() => app.close());
+    const response = await app.inject({ url: '/api/models' });
+    assert.equal(response.statusCode, 200);
+    assert.ok(!response.body.includes('fixture-bootstrap-private-key'));
+    const id = saved.connections[0].id;
+    const rejected = await app.inject({
+      method: 'POST',
+      url: `/api/models/connections/${id}/refresh`,
+    });
+    assert.equal(rejected.statusCode, 400);
+    assert.ok(!rejected.body.includes('fixture-bootstrap-private-key'));
+    assert.deepEqual(restored.view().selection, saved.selection);
+    failed = false;
+    const recovered = await app.inject({
+      method: 'POST',
+      url: `/api/models/connections/${id}/refresh`,
+    });
+    assert.equal(recovered.statusCode, 200);
+    assert.equal(requests, 4);
+    assert.equal(restored.configured, true);
+    assert.deepEqual(restored.view().selection, saved.selection);
+    assert.deepEqual(await (await restored.resolve()).read(), {
+      type: 'api_key',
+      key: 'fixture-bootstrap-private-key',
+    });
+  });
+
+  test('a failed bootstrap provider neither selects another provider nor blocks a separately selected connection', async (t) => {
+    const f = await fixture(t);
+    const requests: string[] = [];
+    const backend = {
+      ...f.backend,
+      catalog: async (...args: Parameters<typeof f.backend.catalog>) => {
+        requests.push(args[0]);
+        if (args[0] === 'anthropic') throw new Error('fixture-revoked-anthropic-key');
+        return f.backend.catalog(...args);
+      },
+    };
+    const bootstrap = {
+      provider: 'anthropic' as const,
+      keys: {
+        openai: 'fixture-available-openai-key',
+        anthropic: 'fixture-revoked-anthropic-key',
+      },
+    };
+    const owner = await f.create('fixture-multiple-bootstrap', backend, true, bootstrap);
+    assert.deepEqual(requests, ['anthropic', 'openai']);
+    assert.equal(owner.view().selection, null);
+    assert.equal(owner.configured, false);
+    const unavailable = owner.view().connections.find((value) => value.provider === 'anthropic')!;
+    assert.equal(unavailable.status, 'reconnect');
+    assert.deepEqual(unavailable.models, []);
+    const available = owner.view().connections.find((value) => value.provider === 'openai')!;
+    await owner.select({ connectionId: available.id, modelId: 'gpt-6.1-sol', effort: 'high' });
+    const selection = owner.view().selection;
+    const restored = await f.create('fixture-multiple-bootstrap', backend, true, bootstrap);
+    assert.deepEqual(requests, ['anthropic', 'openai', 'anthropic', 'openai']);
+    assert.deepEqual(restored.view().selection, selection);
+    assert.equal(restored.configured, true);
+    assert.equal((await restored.resolve()).provider, 'openai');
+    assert.equal(restored.view().connections.length, 2);
+    assert.ok(!JSON.stringify(restored.view()).includes('fixture-revoked-anthropic-key'));
+    await assert.rejects(
+      restored.select({
+        connectionId: unavailable.id,
+        modelId: 'claude-opus-5-5',
+        effort: 'high',
+      }),
+    );
+  });
+
   test('sign-in is single-use; refresh and removal serialize across service instances without restoring a removed key', async (t) => {
     const f = await fixture(t);
     let exchanges = 0;

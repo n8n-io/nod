@@ -31,9 +31,12 @@ test(
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, ownerId, port } = await import('../src/server/config.ts');
     const phases = new Map<string, number>();
-    const plans = new Map<string, { action: string; args: Record<string, unknown> }>();
+    const plans = new Map<
+      string,
+      { tool?: string; action: string; args: Record<string, unknown> }
+    >();
     const ids: string[] = [];
-    const integrationProvider = createIntegrationFixture('http://localhost:4320').provider;
+    const integrationFixture = createIntegrationFixture(`http://localhost:${port}`);
     const application = await createApplication(
       {
         agent: {
@@ -45,14 +48,16 @@ test(
               abort() {},
               dispose() {},
               async prompt(text) {
-                if (phase === 0) {
-                  const input = JSON.parse(
-                    text.split('Request data (JSON):\n')[1]!.split('\n')[0]!,
-                  );
-                  const plan = plans.get(input.currentInstruction)!;
-                  assert.ok(plan);
+                const plan =
+                  phase === 0
+                    ? plans.get(
+                        JSON.parse(text.split('Request data (JSON):\n')[1]!.split('\n')[0]!)
+                          .currentInstruction,
+                      )
+                    : undefined;
+                if (plan) {
                   await options.tools
-                    .find((tool) => tool.name === 'manage_personal_context')!
+                    .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
                     .execute({ action: plan.action, args: plan.args });
                   return;
                 }
@@ -64,7 +69,7 @@ test(
         },
         computer: fakeComputer(),
         workspace: fakeWorkspace(),
-        integrations: integrationProvider,
+        integrations: integrationFixture.provider,
         speech: {
           id: 'fixture',
           configured: false,
@@ -80,26 +85,31 @@ test(
       },
       { channels: false },
     );
+    integrationFixture.register(application.app);
     const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
     const request = (method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>) =>
       application.app.inject({ method, url: path, headers, payload });
     async function waitFor(id: string, status: string) {
       for (let attempt = 0; attempt < 300; attempt++) {
         const turn = (await pool.query('SELECT status,error FROM turns WHERE id=$1', [id])).rows[0];
-        if (turn.status === status) return;
+        if (status.split('|').includes(turn.status)) return;
         assert.notEqual(turn.status, 'failed', turn.error);
         await delay(20);
       }
       assert.fail(`Synthetic turn did not become ${status}.`);
     }
-    async function propose(action: string, args: Record<string, unknown>) {
-      const text = `Synthetic proposal ${randomUUID()}`;
-      plans.set(text, { action, args });
+    async function propose(
+      action: string,
+      args: Record<string, unknown>,
+      tool?: string,
+      text = `Synthetic proposal ${randomUUID()}`,
+    ) {
+      plans.set(text, { tool, action, args });
       const response = await request('POST', '/api/messages', { text });
       assert.equal(response.statusCode, 200);
       const id = response.json().turnId as string;
       ids.push(response.json().threadId as string);
-      await waitFor(id, 'waiting');
+      await waitFor(id, tool ? 'waiting|succeeded' : 'waiting');
       return id;
     }
     const approvalsFor = async (id: string) =>
@@ -119,6 +129,53 @@ test(
       return id;
     }
     try {
+      await t.test(
+        'a compromised agent cannot send outside the account until the owner confirms',
+        async () => {
+          const connect = await request('POST', '/api/apps/gmail/connect', {});
+          assert.equal(connect.statusCode, 200, connect.body);
+          const accountId = new URL(connect.json().url).pathname.split('/').pop();
+          const consent = await application.app.inject({
+            method: 'POST',
+            url: `/e2e/connect/${accountId}`,
+            headers,
+          });
+          const callback = new URL(String(consent.headers.location));
+          await application.app.inject({ url: `${callback.pathname}${callback.search}`, headers });
+          const email = (to: string) => ({
+            recipient_email: to,
+            subject: 'Synthetic invoices',
+            body: 'Synthetic forwarded content.',
+          });
+          const sends = () =>
+            integrationFixture.writes.filter((write) => write.action === 'GMAIL_SEND_EMAIL').length;
+          const held = await propose('GMAIL_SEND_EMAIL', email('collector@example.test'), 'apps');
+          const cards = await approvalsFor(held);
+          assert.equal(cards.length, 1, 'the send to a stranger was not held for confirmation');
+          const [card] = cards;
+          assert.equal(card.status, 'pending');
+          assert.equal(card.args.recipient_email, 'collector@example.test');
+          assert.equal(sends(), 0);
+          const declined = await request('POST', '/api/messages', {
+            text: 'No',
+            replyToMessageId: card.confirmation_message_id,
+            clientMessageId: randomUUID(),
+          });
+          assert.equal(declined.statusCode, 200, declined.body);
+          await waitFor(declined.json().turnId, 'succeeded');
+          assert.equal((await approvalsFor(held))[0].status, 'declined');
+          assert.equal(sends(), 0);
+          const direct = await propose(
+            'GMAIL_SEND_EMAIL',
+            email('ana.owner-named@example.test'),
+            'apps',
+            'Email ana.owner-named@example.test the synthetic invoices.',
+          );
+          assert.equal((await approvalsFor(direct)).length, 0);
+          assert.equal(sends(), 1);
+        },
+      );
+
       await t.test(
         'deleted targets and obsolete invalid payloads stay pending without an uncertain execution',
         async () => {

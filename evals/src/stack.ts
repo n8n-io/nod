@@ -76,6 +76,7 @@ export interface Stack {
   bossSchema: string;
   sessionRoot: string;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
+  resetConversation(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -253,6 +254,8 @@ export async function startStack(options: {
       { createApplication },
       { pool },
       { createPiAgent },
+      { createPiMemoryCurator },
+      { activeThread, resetThread },
       { createContainerBrowserComputer },
       { createDockerWorkspace },
       { createOpenAIRelevanceClassifier },
@@ -261,6 +264,10 @@ export async function startStack(options: {
       load<typeof import('../../src/server/composition.ts')>('src/server/composition.ts'),
       load<typeof import('../../src/server/db.ts')>('src/server/db.ts'),
       load<typeof import('../../src/providers/pi/index.ts')>('src/providers/pi/index.ts'),
+      load<typeof import('../../src/providers/pi/memory-curator.ts')>(
+        'src/providers/pi/memory-curator.ts',
+      ),
+      load<typeof import('../../src/server/thread.ts')>('src/server/thread.ts'),
       load<typeof import('../../src/providers/container-browser/index.ts')>(
         'src/providers/container-browser/index.ts',
       ),
@@ -275,6 +282,10 @@ export async function startStack(options: {
     databasePool = pool;
     const vaultKey = randomBytes(32);
     const sessionRoot = join(directory, '.local', 'sessions');
+    const computer = createContainerBrowserComputer({
+      dataRoot: join(directory, '.local'),
+      container: browserContainer,
+    });
     application = await createApplication({
       agent: createPiAgent({
         provider: model.provider,
@@ -282,10 +293,7 @@ export async function startStack(options: {
         apiKey: model.apiKey,
         sessionRoot,
       }),
-      computer: createContainerBrowserComputer({
-        dataRoot: join(directory, '.local'),
-        container: browserContainer,
-      }),
+      computer,
       workspace: createDockerWorkspace({ container, workspaceRoot }),
       integrations: options.integrations,
       messagingSetup: {
@@ -318,6 +326,7 @@ export async function startStack(options: {
       },
       keyStore: { id: 'isolated-memory', configured: true, getKey: async () => vaultKey },
       relevance: createOpenAIRelevanceClassifier({ apiKey: environment.OPENAI_API_KEY }),
+      memoryCurator: createPiMemoryCurator({ provider: model.provider, apiKey: model.apiKey }),
       linkPreviews: createPublicLinkPreviewProvider(),
       model: { provider: model.provider, name: model.name, configured: true },
     });
@@ -337,6 +346,10 @@ export async function startStack(options: {
           { timeoutMs },
         );
         return { exitCode: result.exitCode ?? 1, output: result.stdout + result.stderr };
+      },
+      async resetConversation() {
+        const { previousThreadId } = await resetThread((await activeThread()).id);
+        await computer.discard?.(previousThreadId).catch(() => {});
       },
       stop,
     };

@@ -225,8 +225,11 @@ export function createPiAgent(options: {
           ...definition,
           execute: async (id, params, signal, onUpdate, context) => {
             await checkpoint();
-            const result = await input.runTool(definition.name, params, () =>
-              definition.execute(id, params, signal, onUpdate, context),
+            const result = await input.runTool(
+              definition.name,
+              params,
+              () => definition.execute(id, params, signal, onUpdate, context),
+              { nested: id.includes('/') },
             );
             return { ...result, details: result.details ?? {} };
           },
@@ -281,23 +284,28 @@ export function createPiAgent(options: {
                 const args = search
                   ? { ...(params as Record<string, unknown>), workflow: 'none' }
                   : params;
-                const result = await input.runTool(name, args, async () => {
-                  const output = await registered.definition.execute(
-                    id,
-                    args,
-                    signal,
-                    onUpdate,
-                    context,
-                  );
-                  return name === 'codemode'
-                    ? workspaceCodemodeOutput(
-                        output,
-                        input.workspace,
-                        sandboxTools.find((tool) => tool.name === 'write')!,
-                        signal,
-                      )
-                    : output;
-                });
+                const result = await input.runTool(
+                  name,
+                  args,
+                  async () => {
+                    const output = await registered.definition.execute(
+                      id,
+                      args,
+                      signal,
+                      onUpdate,
+                      context,
+                    );
+                    return name === 'codemode'
+                      ? workspaceCodemodeOutput(
+                          output,
+                          input.workspace,
+                          sandboxTools.find((tool) => tool.name === 'write')!,
+                          signal,
+                        )
+                      : output;
+                  },
+                  { nested: id.includes('/') },
+                );
                 return { ...result, details: result.details ?? {} };
               },
             },

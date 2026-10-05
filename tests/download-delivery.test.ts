@@ -275,7 +275,9 @@ test(
                 const content = result.content[0];
                 assert.equal(content.type, 'text');
                 if (content.type !== 'text') throw new Error('Expected an artifact receipt.');
-                const artifact = JSON.parse(content.text) as Artifact;
+                const artifact = JSON.parse(
+                  content.text.slice(content.text.indexOf('{'), content.text.lastIndexOf('}') + 1),
+                ) as Artifact;
                 assert.deepEqual(Object.keys(artifact).sort(), [
                   'id',
                   'mimeType',

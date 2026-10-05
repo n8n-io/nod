@@ -1,6 +1,6 @@
 import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import type { AgentToolMetadata, SkillLibrary } from '../ports/agent.ts';
+import { appConfirmation, type AgentToolMetadata, type SkillLibrary } from '../ports/agent.ts';
 import type { BrowserAction } from '../ports/computer.ts';
 import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
@@ -529,7 +529,9 @@ export function ottoTools(
       if (!(integrationDownloadActions as readonly string[]).includes(p.action)) {
         const result = await context.integration(p.action, p.args, signal);
         signal.throwIfAborted();
-        return result;
+        return result && typeof result === 'object' && appConfirmation in result
+          ? confirm({ requiresConfirmation: true, question: result[appConfirmation] })
+          : result;
       }
       if (!context.downloadIntegrationFile) throw new Error('App file delivery is unavailable.');
       return context.downloadIntegrationFile(p.action, p.args);

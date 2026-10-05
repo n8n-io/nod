@@ -184,15 +184,19 @@ export function createModelService(options: {
     value: ModelCredential,
     definitions: ModelDefinition[],
     id: string = randomUUID(),
-    managed = false,
-    replace = false,
+    {
+      managed = false,
+      replace = false,
+      status = 'connected',
+    }: { managed?: boolean; replace?: boolean; status?: Row['status'] } = {},
   ) {
     remember(value);
     if (!managed && !options.keyStore.configured)
       throw new ConnectionError(
         'Configure OTTO_VAULT_KEY in server settings before saving a connection.',
       );
-    if (!definitions.length) throw new ConnectionError('This connection has no supported models.');
+    if (status === 'connected' && !definitions.length)
+      throw new ConnectionError('This connection has no supported models.');
     await locked(id, async (client) => {
       const exists = await credential(id, client);
       if (replace && !exists)
@@ -214,16 +218,20 @@ export function createModelService(options: {
           ? (value.email ?? 'ChatGPT account')
           : modelSource({ provider, method });
       await client.query(
-        `INSERT INTO model_connections(id,owner_id,provider,method,label,models,managed) VALUES($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status='connected' WHERE model_connections.owner_id=excluded.owner_id`,
-        [id, ownerId, provider, method, label, JSON.stringify(definitions), managed],
+        `INSERT INTO model_connections(id,owner_id,provider,method,label,models,managed,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status=excluded.status WHERE model_connections.owner_id=excluded.owner_id`,
+        [id, ownerId, provider, method, label, JSON.stringify(definitions), managed, status],
       );
       const preferredId =
         managed && options.bootstrap?.provider === provider
           ? (options.bootstrap.model ?? agentModels[provider])
           : agentModels[provider];
       const preferred = definitions.find((model) => model.choice.id === preferredId);
-      if (preferred)
+      if (
+        preferred &&
+        status === 'connected' &&
+        (!managed || options.bootstrap?.provider === provider)
+      )
         await client.query(
           'UPDATE model_settings SET selection=$2,selection_set=true WHERE owner_id=$1 AND NOT selection_set',
           [
@@ -267,15 +275,9 @@ export function createModelService(options: {
       const method = attempt.provider === 'openai' ? 'subscription' : 'oauth';
       const definitions = await catalog(attempt.provider, method, value);
       if (closed) throw new ConnectionError('Model connections have stopped.');
-      await save(
-        attempt.provider,
-        method,
-        value,
-        definitions,
-        attempt.connectionId,
-        false,
-        !!attempt.connectionId,
-      );
+      await save(attempt.provider, method, value, definitions, attempt.connectionId, {
+        replace: !!attempt.connectionId,
+      });
       attempt.status = 'connected';
     } catch (error) {
       attempt.status = 'failed';
@@ -459,13 +461,19 @@ export function createModelService(options: {
       for (const [provider, key] of sources) {
         if (!key) continue;
         const existing = rows.find((row) => row.provider === provider && row.managed);
+        const value = { type: 'api_key' as const, key };
+        let definitions: ModelDefinition[] | undefined;
+        try {
+          definitions = await catalog(provider as ModelProvider, 'api_key', value);
+        } catch {}
+        const connected = !!definitions?.length;
         await save(
           provider as ModelProvider,
           'api_key',
-          { type: 'api_key', key },
-          await catalog(provider as ModelProvider, 'api_key', { type: 'api_key', key }),
+          value,
+          connected ? definitions! : (existing?.models ?? []),
           existing?.id,
-          true,
+          { managed: true, status: connected ? 'connected' : 'reconnect' },
         );
       }
     },
@@ -526,7 +534,7 @@ export function createModelService(options: {
     async refreshCatalog(id: string) {
       const row = rows.find((row) => row.id === id);
       if (!row) throw new ConnectionError('This model connection is unavailable.');
-      const value = await read(id);
+      const value = row.managed ? await credential(id) : await read(id);
       if (!value) throw new ConnectionError('This model connection is unavailable.');
       const definitions = await catalog(row.provider, row.method, value);
       if (!definitions.length)

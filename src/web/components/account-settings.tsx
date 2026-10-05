@@ -39,6 +39,8 @@ import {
 } from '../lib/date-format';
 import { savePreferences } from '../lib/preferences';
 import { localeRegion } from '../../shared/date-locale';
+import { desktopSettingsAvailable } from '../lib/desktop';
+import { ComposioSettings, DesktopOptions, useDesktopSettings } from './desktop-settings';
 
 const editablePreferences = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
 const regionLabels = {
@@ -70,7 +72,13 @@ function regionOptions(current: string, detected: string) {
   ];
 }
 
-function LanguageAndRegion({ saved }: { saved: AccountPreferences }) {
+function LanguageAndRegion({
+  saved,
+  onBusyChange,
+}: {
+  saved: AccountPreferences;
+  onBusyChange(busy: boolean): void;
+}) {
   const heading = useId();
   const regionLabel = useId();
   const clockLabel = useId();
@@ -79,6 +87,10 @@ function LanguageAndRegion({ saved }: { saved: AccountPreferences }) {
   const [error, setError] = useState('');
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => {
+    onBusyChange(saving);
+    return () => onBusyChange(false);
+  }, [saving, onBusyChange]);
   const format = dateFormatFrom(saved);
   const region = localeRegion(saved.locale) ?? 'auto';
   const detected = useBrowserRegion();
@@ -176,7 +188,7 @@ function LanguageAndRegion({ saved }: { saved: AccountPreferences }) {
   );
 }
 
-function PreferencesForm() {
+function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): void }) {
   const {
     data,
     loading,
@@ -185,6 +197,7 @@ function PreferencesForm() {
   } = usePageData<AccountPreferences>('/api/preferences');
   const [draft, setDraft] = useState<AccountPreferences | null>(null);
   const [saving, setSaving] = useState(false);
+  const [regionBusy, setRegionBusy] = useState(false);
   const [error, setError] = useState('');
   const request = useRef<AbortController | null>(null);
   const previous = useRef<AccountPreferences | null>(null);
@@ -206,6 +219,13 @@ function PreferencesForm() {
     previous.current = data;
   }, [data]);
   useEffect(() => () => request.current?.abort(), []);
+  const dirty = Boolean(
+    data && draft && editablePreferences.some((key) => draft[key] !== data[key]),
+  );
+  useEffect(() => {
+    onDirtyChange(dirty || saving || regionBusy);
+    return () => onDirtyChange(false);
+  }, [dirty, saving, regionBusy, onDirtyChange]);
   if (!data || !draft)
     return (
       <>
@@ -219,7 +239,6 @@ function PreferencesForm() {
     );
   const current = draft;
   const saved = data;
-  const dirty = editablePreferences.some((key) => current[key] !== saved[key]);
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (request.current) return;
@@ -248,7 +267,7 @@ function PreferencesForm() {
   }
   return (
     <>
-      <LanguageAndRegion saved={saved} />
+      <LanguageAndRegion saved={saved} onBusyChange={setRegionBusy} />
       <form onSubmit={(event) => void save(event)}>
         <div className="account-preference-row">
           <div className="account-preference-label">
@@ -314,6 +333,7 @@ export function AccountSettings({
   account,
   open,
   initialTab,
+  openRequest,
   onOpenChange,
   onName,
   returnFocus,
@@ -321,16 +341,32 @@ export function AccountSettings({
   account: AccountControls;
   open: boolean;
   initialTab: AccountTab;
+  openRequest: number;
   onOpenChange(open: boolean): void;
   onName(name: string): Promise<void>;
   returnFocus(): HTMLElement | null;
 }) {
-  const tabs: AccountTab[] = account.local
-    ? ['Models', 'Appearance', 'Preferences']
-    : ['Profile', 'Models', 'Appearance', 'Preferences'];
-  const selectedTab = tabs.includes(initialTab) ? initialTab : 'Appearance';
+  const desktop = desktopSettingsAvailable();
+  const native = useDesktopSettings(desktop && open);
+  const tabs: AccountTab[] = desktop
+    ? ['General', 'Models', 'Preferences']
+    : account.local
+      ? ['Models', 'Appearance', 'Preferences']
+      : ['Profile', 'Models', 'Appearance', 'Preferences'];
+  const selectedTab = tabs.includes(initialTab) ? initialTab : desktop ? 'General' : 'Appearance';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
+  const [composioDirty, setComposioDirty] = useState(false);
+  const [modelDirty, setModelDirty] = useState(false);
+  const [preferencesDirty, setPreferencesDirty] = useState(false);
   const [name, setName] = useState(account.user.name);
+  const pending = useRef(false);
+  pending.current =
+    composioDirty ||
+    modelDirty ||
+    preferencesDirty ||
+    native.busy ||
+    account.saving ||
+    name.trim() !== account.user.name;
   const [error, setError] = useState('');
   const active = useRef(false);
   const id = useId();
@@ -342,11 +378,15 @@ export function AccountSettings({
   }, []);
   useEffect(() => {
     if (open) {
+      if (pending.current) {
+        setError('Save or cancel your changes first.');
+        return;
+      }
       setTab(selectedTab);
       setName(account.user.name);
       setError('');
     }
-  }, [open, selectedTab, account.user.id]);
+  }, [open, selectedTab, openRequest, account.user.id]);
   useEffect(() => setName(account.user.name), [account.user.name]);
   async function saveName(event: React.FormEvent) {
     event.preventDefault();
@@ -358,8 +398,25 @@ export function AccountSettings({
       if (active.current) setError(errorMessage(cause));
     }
   }
+  function changeTab(value: AccountTab) {
+    if (pending.current) {
+      setError('Save or cancel your changes first.');
+      return false;
+    }
+    setTab(value);
+    setError('');
+    return true;
+  }
+  const theme = desktop ? native.settings?.theme : account.theme;
+  const themeSaving = desktop ? native.busy || !native.settings : account.saving;
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(value) => {
+        if (!value && pending.current) setError('Save or cancel your changes first.');
+        else onOpenChange(value);
+      }}
+    >
       <DialogContent
         className="account-settings"
         aria-describedby={undefined}
@@ -384,7 +441,7 @@ export function AccountSettings({
                   ? KeyRound
                   : value === 'Profile'
                     ? UserRound
-                    : value === 'Appearance'
+                    : value === 'Appearance' || value === 'General'
                       ? Sun
                       : SlidersHorizontal;
               return (
@@ -398,10 +455,7 @@ export function AccountSettings({
                   title={value}
                   aria-controls={`${id}-content`}
                   tabIndex={value === tab ? 0 : -1}
-                  onClick={() => {
-                    setTab(value);
-                    setError('');
-                  }}
+                  onClick={() => changeTab(value)}
                   onKeyDown={(event) => {
                     const next =
                       event.key === 'ArrowDown' || event.key === 'ArrowRight'
@@ -415,9 +469,8 @@ export function AccountSettings({
                               : null;
                     if (next === null) return;
                     event.preventDefault();
-                    setTab(tabs[next]);
-                    setError('');
-                    document.getElementById(`${id}-${tabs[next]}`)?.focus();
+                    if (changeTab(tabs[next]))
+                      document.getElementById(`${id}-${tabs[next]}`)?.focus();
                   }}
                 >
                   <Icon size={16} aria-hidden="true" />
@@ -481,27 +534,39 @@ export function AccountSettings({
                   )}
                 </form>
               )}
-              {tab === 'Appearance' && (
+              {(tab === 'Appearance' || tab === 'General') && (
                 <>
+                  {desktop && native.error && (
+                    <Notice>
+                      {native.error}{' '}
+                      {!native.settings && (
+                        <Button variant="ghost" size="sm" onClick={() => void native.refresh()}>
+                          Try again
+                        </Button>
+                      )}
+                    </Notice>
+                  )}
                   <div className="account-theme-previews" role="group" aria-label="Theme">
-                    {(['light', 'dark', 'system'] as AccountTheme[]).map((theme) => {
-                      const Icon = theme === 'light' ? Sun : theme === 'dark' ? Moon : Monitor;
-                      const label = theme[0].toUpperCase() + theme.slice(1);
+                    {(['light', 'dark', 'system'] as AccountTheme[]).map((value) => {
+                      const Icon = value === 'light' ? Sun : value === 'dark' ? Moon : Monitor;
+                      const label = value[0].toUpperCase() + value.slice(1);
                       return (
                         <button
-                          key={theme}
+                          key={value}
                           type="button"
                           aria-label={`${label} theme`}
-                          aria-pressed={account.theme === theme}
-                          disabled={account.saving}
+                          aria-pressed={theme === value}
+                          disabled={themeSaving}
                           onClick={() => {
                             setError('');
-                            void account.onTheme(theme).catch((cause) => {
-                              if (active.current) setError(errorMessage(cause));
+                            void (
+                              desktop ? native.save({ theme: value }) : account.onTheme(value)
+                            ).catch((cause) => {
+                              if (!desktop && active.current) setError(errorMessage(cause));
                             });
                           }}
                         >
-                          <span className={`account-theme-sample ${theme}`} aria-hidden="true">
+                          <span className={`account-theme-sample ${value}`} aria-hidden="true">
                             <i>
                               <em />
                               <em />
@@ -522,11 +587,25 @@ export function AccountSettings({
                       );
                     })}
                   </div>
-                  {error && <Notice>{error}</Notice>}
+                  {desktop && native.settings && (
+                    <DesktopOptions
+                      settings={native.settings}
+                      busy={native.busy}
+                      onChange={native.save}
+                    />
+                  )}
                 </>
               )}
-              {tab === 'Preferences' && <PreferencesForm />}
-              {tab === 'Models' && <ModelSettings />}
+              {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}
+              {tab === 'Models' && (
+                <>
+                  <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
+                  {desktop && (
+                    <ComposioSettings onDirtyChange={setComposioDirty} applyBlocked={modelDirty} />
+                  )}
+                </>
+              )}
+              {error && tab !== 'Profile' && <Notice>{error}</Notice>}
             </div>
           </div>
           {account.canLogout && (

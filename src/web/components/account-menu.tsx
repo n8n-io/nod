@@ -3,9 +3,9 @@ import { ChevronUp, KeyRound, LogOut, Monitor, Moon, Settings, Sun, UserRound } 
 import type { AccountTheme, AccountUser } from '../../shared/account';
 import { AccountAvatar } from './account-avatar';
 import { ConnectionMenu } from './connection-menu';
-import { desktopSettingsAvailable, openDesktopSettings } from '../lib/desktop';
+import { desktopSettingsAvailable } from '../lib/desktop';
 
-export type AccountTab = 'Profile' | 'Appearance' | 'Preferences' | 'Models';
+export type AccountTab = 'Profile' | 'General' | 'Appearance' | 'Preferences' | 'Models';
 export interface AccountControls {
   user: AccountUser;
   local: boolean;
@@ -60,7 +60,10 @@ export function AccountMenuItems({
         role={menu ? 'menuitem' : undefined}
         aria-keyshortcuts={shortcuts ? 'Meta+, Control+,' : undefined}
         onClick={(event) =>
-          openSettings(account.local ? 'Appearance' : 'Preferences', event.currentTarget)
+          openSettings(
+            desktop ? 'General' : account.local ? 'Appearance' : 'Preferences',
+            event.currentTarget,
+          )
         }
       >
         <Settings size={18} aria-hidden="true" />
@@ -79,21 +82,6 @@ export function AccountMenuItems({
         <KeyRound size={18} aria-hidden="true" />
         Models
       </button>
-      {desktop && (
-        <button
-          type="button"
-          role={menu ? 'menuitem' : undefined}
-          onClick={() => {
-            setError('');
-            void openDesktopSettings('providers').then(close, () =>
-              setError('Settings could not be opened. Try again.'),
-            );
-          }}
-        >
-          <KeyRound size={18} aria-hidden="true" />
-          Providers
-        </button>
-      )}
       {!desktop && (
         <div className="account-menu-themes" role="group" aria-label="Theme">
           <span>Theme</span>

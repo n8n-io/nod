@@ -75,8 +75,8 @@ export function releaseResponse(pages, request, baseUrl) {
           'release.json',
           'runtime-release.json',
           'update.json',
-          'Otto-Preview-arm64.dmg',
-          'Otto-Preview-arm64.zip',
+          'Otto-arm64.dmg',
+          'Otto-arm64.zip',
           'SHA256SUMS',
           'signing.cer',
           'CHANGELOG.md',
@@ -202,7 +202,7 @@ export function releaseResponse(pages, request, baseUrl) {
     if (
       request.operation !== 'feed' ||
       !desktopTag(release.tag_name) ||
-      asset.name !== 'Otto-Preview-arm64.zip'
+      asset.name !== 'Otto-arm64.zip'
     )
       return missing();
     const version = release.tag_name.slice(9);

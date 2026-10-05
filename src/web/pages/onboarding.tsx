@@ -5,6 +5,7 @@ import type { Configuration, Connection } from '../../shared/contracts';
 import { ModelPicker, ModelSettings } from '../components/models';
 import type { ModelsResponse } from '../../shared/models';
 import { SetupNotice } from '../components/setup-notice';
+import { ComposioSettings } from '../components/desktop-settings';
 import {
   integrationServiceIds,
   integrationServices,
@@ -17,7 +18,12 @@ import { useBrowserTimeZone } from '../hooks/use-browser-time-zone';
 import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
-import { desktopLinksAvailable, openConnection } from '../lib/desktop';
+import {
+  desktopLinksAvailable,
+  desktopSettingsAvailable,
+  onPrepareDesktopUpdate,
+  openConnection,
+} from '../lib/desktop';
 
 type Pending = 'opening' | 'waiting';
 
@@ -55,11 +61,26 @@ export function Onboarding({
   const [pending, setPending] = useState<Partial<Record<IntegrationService, Pending>>>({});
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [composioDirty, setComposioDirty] = useState(false);
+  const [modelDirty, setModelDirty] = useState(false);
+  const desktop = desktopSettingsAvailable();
   const [preparation, setPreparation] = useState<'pending' | 'ready' | 'failed'>('pending');
   const preparationRequest = useRef<AbortController | null>(null);
   const actions = useRef(new Map<IntegrationService, AbortController>());
   const attempts = useRef(new Map<IntegrationService, string>());
   const active = useRef(false);
+  useEffect(
+    () =>
+      onPrepareDesktopUpdate(
+        () =>
+          !saving &&
+          !composioDirty &&
+          !modelDirty &&
+          Object.keys(pending).length === 0 &&
+          actions.current.size === 0,
+      ),
+    [saving, composioDirty, modelDirty, pending],
+  );
   useEffect(() => {
     active.current = true;
     const result = new URLSearchParams(window.location.search).get('connection');
@@ -185,7 +206,7 @@ export function Onboarding({
     }
   }
   async function complete() {
-    if (saving || preparation !== 'ready') return;
+    if (saving || composioDirty || preparation !== 'ready') return;
     setSaving(true);
     setError('');
     try {
@@ -217,12 +238,12 @@ export function Onboarding({
         <p>{step === 'models' ? 'Connect your models.' : 'Connect your apps.'}</p>
         {step === 'models' ? (
           <>
-            <ModelSettings />
+            <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
             <div className="account-onboarding-actions">
-              <Button disabled={!modelReady} onClick={() => setStep('apps')}>
+              <Button disabled={!modelReady || modelDirty} onClick={() => setStep('apps')}>
                 Continue
               </Button>
-              <Button variant="ghost" onClick={() => setStep('apps')}>
+              <Button variant="ghost" disabled={modelDirty} onClick={() => setStep('apps')}>
                 Skip for now
               </Button>
             </div>
@@ -230,12 +251,18 @@ export function Onboarding({
         ) : (
           <>
             <div className="onboarding-model">
-              <Button variant="ghost" size="sm" onClick={() => setStep('models')}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={composioDirty}
+                onClick={() => setStep('models')}
+              >
                 Back to models
               </Button>
               {modelReady && <ModelPicker />}
             </div>
-            {configuration && <SetupNotice configuration={configuration} />}
+            {desktop && <ComposioSettings onDirtyChange={setComposioDirty} />}
+            {!desktop && configuration && <SetupNotice configuration={configuration} />}
             {(error || loadError) && <Notice>{error || loadError}</Notice>}
             {loadError && (
               <Button variant="outline" onClick={() => void refresh()}>
@@ -307,7 +334,10 @@ export function Onboarding({
               </Notice>
             )}
             <div className="account-onboarding-actions">
-              <Button disabled={saving || preparation !== 'ready'} onClick={() => void complete()}>
+              <Button
+                disabled={saving || composioDirty || preparation !== 'ready'}
+                onClick={() => void complete()}
+              >
                 {preparation === 'pending'
                   ? 'Preparing…'
                   : saving
@@ -316,7 +346,7 @@ export function Onboarding({
               </Button>
               <Button
                 variant="ghost"
-                disabled={saving || preparation !== 'ready'}
+                disabled={saving || composioDirty || preparation !== 'ready'}
                 onClick={() => void complete()}
               >
                 I’ll do this later

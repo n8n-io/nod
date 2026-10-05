@@ -1,3 +1,5 @@
+import type { TrustReason } from './trust.ts';
+
 const labels: Record<string, string> = {
   OTTO_goal_create: 'Add this goal',
   OTTO_goal_update: 'Update this goal',
@@ -28,6 +30,75 @@ function plain(value: string) {
 
 function text(value: unknown) {
   return typeof value === 'string' && value.trim() ? plain(value.trim()) : undefined;
+}
+
+const apps: Record<string, string> = {
+  GMAIL: 'Gmail',
+  GOOGLECALENDAR: 'Google Calendar',
+  GOOGLESHEETS: 'Google Sheets',
+  GOOGLEDOCS: 'Google Docs',
+  GOOGLEDRIVE: 'Google Drive',
+  SLACK: 'Slack',
+  NOTION: 'Notion',
+  LINEAR: 'Linear',
+};
+const reasons: Record<TrustReason, string> = {
+  background: 'this came up in background work, not from a message of yours.',
+  schedule: 'your scheduled task does not clearly ask for this.',
+  unrequested: 'I could not confirm that you asked for exactly this.',
+  injection:
+    'something I read since your last message looked like instructions aimed at an AI assistant.',
+};
+
+function shown(value: unknown, limit: number): string | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    return trimmed.length > limit
+      ? `${plain(trimmed.slice(0, limit))}… (${trimmed.length - limit} more characters)`
+      : plain(trimmed);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string'))
+    return shown(value.join(', '), limit);
+  return value === undefined || value === null ? undefined : shown(JSON.stringify(value), 400);
+}
+
+export function appActionConfirmation(
+  action: string,
+  args: Record<string, unknown>,
+  reason: TrustReason,
+  account?: string,
+) {
+  const [app, ...words] = action.split('_');
+  const title =
+    action === 'CONNECTED_HTTP'
+      ? `Call ${shown(args.method, 10) ?? 'POST'} ${shown(args.path, 200) ?? ''} on a connected API`
+      : action === 'CONNECTED_MCP_CALL'
+        ? `Run ${shown(args.tool, 100) ?? 'a tool'} on a connected app`
+        : action === 'CONNECTED_CLI'
+          ? `Run a connected command line tool`
+          : `${apps[app!] ?? `${app![0]}${app!.slice(1).toLowerCase()}`}: ${words.join(' ').toLowerCase()}`;
+  const details = Object.entries(args)
+    .filter(([key]) => !['connectionId', 'pathId', 'method', 'path', 'tool'].includes(key))
+    .flatMap(([key, value]) => {
+      const text = shown(value, 1500);
+      if (!text) return [];
+      const label = key
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replaceAll('_', ' ')
+        .toLowerCase();
+      return [`${label[0]!.toUpperCase()}${label.slice(1)}: ${text}`];
+    });
+  let body = account ? `\n\nAccount: ${shown(account, 300)}` : '';
+  for (const detail of details) {
+    if (body.length + detail.length > 4800) {
+      body += '\n\n…';
+      break;
+    }
+    body += `\n\n${detail}`;
+  }
+  return `${title}?${body}\n\nWhy I'm asking: ${reasons[reason]}\n\nReply yes to go ahead, no to skip it, or tell me what to change.`;
 }
 
 export function actionConfirmation(

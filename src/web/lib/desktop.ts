@@ -7,10 +7,26 @@ export type DesktopPreferences = {
   launchAtLogin: boolean;
 };
 
+export type DesktopSettings = DesktopPreferences & {
+  hasComposioKey: boolean;
+  keys: { composioApiKey: { suffix: string | null } };
+  restartRequired: boolean;
+};
+
+export type DesktopSettingsChange = Partial<
+  Pick<DesktopPreferences, 'theme' | 'notifications' | 'launchAtLogin'>
+> & { composioApiKey?: string | null };
+
+export type DesktopSettingsSection = 'general' | 'models' | 'preferences';
+
 type DesktopWindow = Window & {
   ottoDesktop?: {
     onPrepareUpdate?(check: () => boolean): () => void;
-    openSettings(section?: 'general' | 'providers' | 'preferences'): Promise<void>;
+    getSettings(): Promise<DesktopSettings>;
+    saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
+    revealComposioKey(): Promise<string>;
+    applySettings(): Promise<void>;
+    onOpenSettings(listener: (section: DesktopSettingsSection) => void): () => void;
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
     getBuildInfo?(): Promise<{
@@ -38,13 +54,61 @@ export function onPrepareDesktopUpdate(check: () => boolean) {
 }
 
 export function desktopSettingsAvailable() {
-  return typeof (window as DesktopWindow).ottoDesktop?.openSettings === 'function';
+  return typeof (window as DesktopWindow).ottoDesktop?.getSettings === 'function';
 }
 
-export async function openDesktopSettings(
-  section: 'general' | 'providers' | 'preferences' = 'general',
-) {
-  await (window as DesktopWindow).ottoDesktop?.openSettings(section);
+export function openDesktopSettings(section: DesktopSettingsSection = 'general') {
+  window.dispatchEvent(new window.CustomEvent('otto:open-settings', { detail: section }));
+}
+
+export function subscribeDesktopSettings(listener: (section: DesktopSettingsSection) => void) {
+  const receive = (event: Event) => {
+    const section = (event as CustomEvent<unknown>).detail;
+    if (section === 'general' || section === 'models' || section === 'preferences')
+      listener(section);
+  };
+  window.addEventListener('otto:open-settings', receive);
+  const unsubscribe = (window as DesktopWindow).ottoDesktop?.onOpenSettings(listener);
+  return () => {
+    window.removeEventListener('otto:open-settings', receive);
+    unsubscribe?.();
+  };
+}
+
+function settingsBridge() {
+  const bridge = (window as DesktopWindow).ottoDesktop;
+  if (!bridge) throw new Error('Desktop settings are unavailable.');
+  return bridge;
+}
+
+export function getDesktopSettings() {
+  return settingsBridge().getSettings();
+}
+
+export function saveDesktopSettings(change: DesktopSettingsChange) {
+  return settingsBridge().saveSettings(change);
+}
+
+export function revealDesktopComposioKey() {
+  return settingsBridge().revealComposioKey();
+}
+
+export async function applyDesktopSettings() {
+  window.dispatchEvent(new window.Event('otto:apply-settings'));
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+  try {
+    await settingsBridge().applySettings();
+  } catch (cause) {
+    window.dispatchEvent(
+      new window.CustomEvent('otto:settings-error', {
+        detail:
+          'Your key change is saved but could not be applied yet. Finish your current work, then try again in Settings → Models.',
+      }),
+    );
+    throw cause;
+  }
 }
 
 export function desktopPreferences() {

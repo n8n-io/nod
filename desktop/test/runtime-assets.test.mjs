@@ -251,7 +251,14 @@ test('runtime public verification uses a bounded GET when HEAD is unsupported or
 
 async function releaseFixture(
   t,
-  { isPublic = false, publish = false, plan = false, runtimeRepository = 'synthetic/otto' } = {},
+  {
+    isPublic = false,
+    publish = false,
+    plan = false,
+    runtimeRepository = 'synthetic/otto',
+    diskName = 'Otto-arm64.dmg',
+    updateSourceUrl,
+  } = {},
 ) {
   const f = await releaseRepository(t);
   const root = f.root;
@@ -339,9 +346,8 @@ async function releaseFixture(
       : {}),
   };
   const disk = Buffer.from('Synthetic signed disk image');
-  const diskName = 'Otto-Preview-arm64.dmg';
   const update = Buffer.from('Synthetic signed application ZIP');
-  const updateName = 'Otto-Preview-arm64.zip';
+  const updateName = 'Otto-arm64.zip';
   const feed = {
     url: `https://github.com/synthetic/otto/releases/download/${appTag}/${updateName}`,
     name: 'Otto 0.1.0',
@@ -350,6 +356,7 @@ async function releaseFixture(
   const metadata = {
     version: '0.1.0',
     source,
+    ...(updateSourceUrl ? { updateSourceUrl } : {}),
     signing: release.signing,
     notarized: isPublic,
     runtime: { fingerprint, id: release.id, archive: release.archive },
@@ -502,6 +509,7 @@ globalThis.fetch = async (url, options = {}) => {
         OTTO_RUNTIME_FINGERPRINT: fingerprint,
         OTTO_EXPECTED_RUNTIME_FINGERPRINT: fingerprint,
         OTTO_PUBLISH_RELEASE: String(requestPublish),
+        ...(updateSourceUrl ? { OTTO_DESKTOP_UPDATE_SOURCE_URL: updateSourceUrl } : {}),
       },
       timeout: 30_000,
     });
@@ -580,6 +588,7 @@ test('app upload rejects mismatched update artifacts, feed and provenance', asyn
     ['ZIP filename', (metadata) => (metadata.update.file = '../outside.zip')],
     ['ZIP limit', (metadata) => (metadata.update.bytes = 2 * 1024 ** 3)],
     ['source', (metadata) => (metadata.source = '0'.repeat(40))],
+    ['update source', (metadata) => (metadata.updateSourceUrl = 'https://unapproved.invalid')],
     ['certificate', (metadata) => (metadata.signing.certificateSha256 = '0'.repeat(64))],
     ['runtime', (metadata) => (metadata.runtime.archive.bytes += 1)],
     ['feed release', (_metadata, feed) => (feed.url = feed.url.replace('v0.1.0', 'v0.2.0'))],
@@ -603,6 +612,54 @@ test('app upload rejects mismatched update artifacts, feed and provenance', asyn
       assert(!state.calls.some((call) => call.includes('--draft=false')));
     });
   }
+});
+
+test('app publication binds its delivery source and renamed installer to verified release assets', async (t) => {
+  const f = await releaseFixture(t, {
+    publish: true,
+    updateSourceUrl: 'https://releases.example.invalid/otto',
+  });
+  await f.invoke('draft-runtime');
+  await writeFile(
+    join(f.output, 'release.json'),
+    JSON.stringify({ ...f.metadata, updateSourceUrl: undefined }),
+  );
+  await assert.rejects(f.invoke('draft'), /update source does not match/);
+  assert.equal((await f.readState()).releases[f.appTag], undefined);
+  await writeFile(join(f.output, 'release.json'), JSON.stringify(f.metadata));
+  await f.invoke('draft');
+  const state = await f.readState();
+  const assets = state.releases[f.appTag].assets;
+  for (const entry of [f.metadata.disk, f.metadata.update])
+    assert.deepEqual(
+      assets.find((asset) => asset.name === entry.file),
+      {
+        name: entry.file,
+        size: entry.bytes,
+        digest: `sha256:${entry.sha256}`,
+      },
+    );
+  assert.equal(
+    JSON.parse(Buffer.from(state.contents[f.appTag + '/release.json'], 'base64')).updateSourceUrl,
+    f.metadata.updateSourceUrl,
+  );
+  assert(Object.values(state.releases).every((release) => !release.draft));
+  for (const source of [
+    'http://releases.example.invalid/otto',
+    'https://user:password@releases.example.invalid/otto',
+    'https://releases.example.invalid/otto?token=synthetic',
+    'https://releases.example.invalid/otto#fragment',
+    'https://releases.example.invalid/otto?',
+    'https://releases.example.invalid/otto#',
+  ]) {
+    const invalid = await releaseFixture(t, { updateSourceUrl: source });
+    await assert.rejects(invalid.invoke('draft'), /credential-free HTTPS/);
+    assert.equal((await invalid.readState()).created, 0);
+  }
+  const unrelated = await releaseFixture(t, { diskName: 'Other-arm64.dmg' });
+  await unrelated.invoke('draft-runtime');
+  await assert.rejects(unrelated.invoke('draft'), /DMG, application ZIP and checksums/);
+  assert.equal((await unrelated.readState()).releases[unrelated.appTag], undefined);
 });
 
 test('new public runtime drafts omit anonymous download URLs and support signed manual import', async (t) => {
@@ -935,6 +992,84 @@ test('missing runtime release requests the companion pack without inventing a do
   await assert.rejects(ensureRuntimeAssets(options), { code: 'RUNTIME_ARCHIVE_REQUIRED' });
   await assert.rejects(installRuntimeArchive({ ...options, signal: AbortSignal.abort() }));
   assert.equal(await findRuntimeAssets(options), undefined);
+});
+
+test('first-run runtime resolves its exact download after a cache miss and restarts offline', async (t) => {
+  const options = await fixture(t);
+  const signal = new AbortController().signal;
+  const requests = [];
+  const bytes = await readFile(options.archivePath);
+  let resolutions = 0;
+  const installed = await ensureRuntimeAssets({
+    ...options,
+    signal,
+    resolveDownloadUrl: async (release, receivedSignal) => {
+      assert.deepEqual(release, options.release);
+      assert.equal(receivedSignal, signal);
+      resolutions++;
+      return 'https://releases.example.invalid/exact-runtime';
+    },
+    fetch: async (url) => {
+      requests.push(url);
+      return requests.length === 1
+        ? new Response(null, {
+            status: 302,
+            headers: { location: 'https://assets.example.invalid/exact-runtime' },
+          })
+        : new Response(bytes);
+    },
+  });
+  assert.equal(resolutions, 1);
+  assert.deepEqual(requests, [
+    'https://releases.example.invalid/exact-runtime',
+    'https://assets.example.invalid/exact-runtime',
+  ]);
+  assert.equal(await findRuntimeAssets(options), installed);
+  const offline = async () => {
+    throw new Error('A verified cache must not access the network.');
+  };
+  assert.equal(
+    await ensureRuntimeAssets({ ...options, resolveDownloadUrl: offline, fetch: offline }),
+    installed,
+  );
+});
+
+test('failed or cancelled runtime resolution never fetches an archive and allows an explicit retry', async (t) => {
+  const options = await fixture(t);
+  const controller = new AbortController();
+  const fetch = async () => {
+    throw new Error('Archive download must not start.');
+  };
+  await assert.rejects(
+    ensureRuntimeAssets({
+      ...options,
+      fetch,
+      resolveDownloadUrl: async () => {
+        throw new Error('Release service unavailable');
+      },
+    }),
+    /Release service unavailable/,
+  );
+  await assert.rejects(
+    ensureRuntimeAssets({
+      ...options,
+      fetch,
+      signal: controller.signal,
+      resolveDownloadUrl: async () => {
+        controller.abort();
+        return 'https://releases.example.invalid/exact-runtime';
+      },
+    }),
+    { name: 'AbortError' },
+  );
+  assert.equal(await findRuntimeAssets(options), undefined);
+  const bytes = await readFile(options.archivePath);
+  const installed = await ensureRuntimeAssets({
+    ...options,
+    resolveDownloadUrl: async () => 'https://releases.example.invalid/exact-runtime',
+    fetch: async () => new Response(bytes),
+  });
+  assert.equal(await findRuntimeAssets(options), installed);
 });
 
 test('runtime installation refuses insufficient storage without removing saved caches and can retry', async (t) => {

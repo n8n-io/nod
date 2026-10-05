@@ -25,6 +25,7 @@ import { firstInstruction, steeredInstruction, systemContext, systemPrompt } fro
 import { currentUserTime } from './time-context.ts';
 import { inspectToolCatalog, ottoTools } from './tools.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
+import { delimit, injectionFindings, resultText } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
@@ -37,6 +38,16 @@ const trustedResultTools = new Set([
   'manage_apps',
   'share_file',
   'create_audio',
+]);
+const delimitedTools = new Set([
+  'apps',
+  'browser',
+  'browser_flow',
+  'web_search',
+  'fetch_content',
+  'get_search_content',
+  'source_check',
+  'codemode',
 ]);
 const readOnlyTools: Record<string, true | string[]> = {
   skills: true,
@@ -335,6 +346,7 @@ export function createAgentRuntime(dependencies: {
       name: string,
       params: unknown,
       execute: () => Promise<unknown>,
+      { nested = false } = {},
     ): Promise<AgentToolResult> => {
       const label = name.replaceAll('_', ' ');
       const pending = waitFor(
@@ -444,6 +456,12 @@ export function createAgentRuntime(dependencies: {
             if (context.activityCheck && name === 'record_activity_check') checkRecorded = true;
             if (!stopped) await waitFor(context.emit('tool_complete', label));
             result = isToolResult(output) ? output : textResult(output);
+            if (untrustedResult && !nested && !stopped) {
+              const findings = injectionFindings(resultText(result));
+              if (findings.length)
+                await waitFor(Promise.resolve(context.flagInjection?.(findings)));
+              if (delimitedTools.has(name)) result = delimit(name, result, findings);
+            }
             await end({
               status: 'succeeded',
               ...(['get_credential', 'browser_flow'].includes(name) || memoryAction

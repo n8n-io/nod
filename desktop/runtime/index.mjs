@@ -104,7 +104,12 @@ async function prepare(options, onComputerStart) {
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   const controlRoot = join(dataRoot, 'desktop-runtime');
   await mkdir(controlRoot, { recursive: true, mode: 0o700 });
-  const assets = await ensureRuntimeAssets({ resourcesPath, onStatus, signal });
+  const assets = await ensureRuntimeAssets({
+    resourcesPath,
+    onStatus,
+    signal,
+    resolveDownloadUrl: options.resolveDownloadUrl,
+  });
   const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
   if (
     manifest.version !== 1 ||
@@ -123,7 +128,7 @@ async function prepare(options, onComputerStart) {
       throw new Error('The Otto computer manifest is invalid.');
   }
   const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
-  const limaHome = join(homedir(), '.otto-desktop-experiment', identity);
+  const limaHome = join(homedir(), '.otto-desktop', identity);
   await mkdir(limaHome, { recursive: true, mode: 0o700 });
   await chmod(limaHome, 0o700);
   const lima = join(assets, 'lima/bin/limactl');
@@ -592,7 +597,7 @@ export async function stopRuntime(options) {
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);
-  const expected = join(homedir(), '.otto-desktop-experiment', identity);
+  const expected = join(homedir(), '.otto-desktop', identity);
   try {
     const exists = await access(join(expected, 'otto/lima.yaml')).then(
       () => true,
