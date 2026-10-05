@@ -17,7 +17,11 @@ Desktop is a wrapper around the same Otto product: it starts `src/server/index.t
 Alternatively, quit Otto and install the latest published release from Terminal:
 
 ```sh
-curl -fsSL https://internal.users.n8n.cloud/webhook/otto/install | sh
+(
+  installer="$(mktemp)" || exit
+  trap 'rm -f "$installer"' EXIT
+  curl --proto '=https' --tlsv1.2 -fsSL https://internal.users.n8n.cloud/webhook/otto/install -o "$installer" && /bin/sh "$installer"
+)
 ```
 
 The installer uses stock macOS tools, verifies the release and signing identity, and installs to `~/Applications/Otto.app`. It keeps existing keys, conversations and workspace. Open that app after installation; the same self-signed first-launch instructions apply.
