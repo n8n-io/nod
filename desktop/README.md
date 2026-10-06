@@ -24,7 +24,7 @@ Alternatively, quit Otto and install the latest published release from Terminal:
 )
 ```
 
-The installer uses stock macOS tools, verifies the release and signing identity, and installs to `~/Applications/Otto.app`. It keeps existing keys, conversations and workspace. Open that app after installation; the same self-signed first-launch instructions apply.
+The installer uses stock macOS tools, verifies the release and signing identity, and installs to `/Applications/Otto.app`. Run it as your normal user with permission to install apps in `/Applications`, without `sudo`. It keeps existing keys, conversations and workspace. Open that app after installation; the same self-signed first-launch instructions apply.
 
 Otto checks for updates after startup, every six hours while open, and after waking when a check is due. **Check for Updates…** checks immediately. Updates download automatically; choose **Later** to keep working or **Restart** to install. **Restart to update to VERSION…** remains in the menu after Later, without repeated background prompts. Finish work and save or cancel drafts before restarting.
 

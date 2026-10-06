@@ -29,7 +29,7 @@ After publishing the reviewed installer and broker versions, users can paste thi
 )
 ```
 
-Downloading the entire script before running it avoids executing a partial response. The HTTPS n8n endpoint is the bootstrap trust boundary. No GitHub token, Node, Python, Homebrew or administrator access is required. Otto must be closed. The installer supports Apple Silicon on macOS 14 or later, installs only to `~/Applications/Otto.app`, and leaves keys, conversations and the workspace intact. Open Otto from that folder after installation; its native updater handles subsequent releases.
+Downloading the entire script before running it avoids executing a partial response. The HTTPS n8n endpoint is the bootstrap trust boundary. No GitHub token, Node, Python or Homebrew is required. Otto must be closed. The installer supports Apple Silicon on macOS 14 or later, installs only to `/Applications/Otto.app`, and leaves keys, conversations and the workspace intact. Run it as your normal user with permission to install apps in `/Applications`; do not run the script with `sudo`. Open Otto from Applications after installation; its native updater handles subsequent releases.
 
 The script chooses the highest published `desktop-vSEMVER`, including published alpha prereleases, and fixes that release and its asset IDs for the whole transaction. An incomplete latest release fails instead of silently selecting an older version. An already newer installed app is kept. It rejects another app at the destination, symbolic links, concurrent installers and destination changes during download.
 

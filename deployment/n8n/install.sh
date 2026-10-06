@@ -111,7 +111,7 @@ check_app() {
   file -b "$candidate/Contents/MacOS/Otto" | grep -q 'Mach-O 64-bit executable arm64' || fail 'The Otto app does not contain an Apple Silicon executable.'
 }
 
-[ "$#" -eq 0 ] || fail 'This installer takes no arguments and installs to ~/Applications/Otto.app.'
+[ "$#" -eq 0 ] || fail 'This installer takes no arguments and installs to /Applications/Otto.app.'
 [ "$(uname -s)" = Darwin ] || fail 'Otto currently requires macOS 14 or later on Apple Silicon.'
 [ "$(uname -m)" = arm64 ] || fail 'Otto currently requires Apple Silicon. Run Terminal without Rosetta.'
 [ "$(id -u)" -ne 0 ] || fail 'Run this installer as your normal user, without sudo.'
@@ -119,16 +119,14 @@ os_version=$(sw_vers -productVersion)
 os_major=${os_version%%.*}
 case "$os_major" in ''|*[!0-9]*) fail 'Could not read the macOS version.' ;; esac
 [ "$os_major" -ge 14 ] || fail 'Otto requires macOS 14 or later.'
-case "$HOME" in /*) ;; *) fail 'Your home directory must be an absolute path.' ;; esac
-[ -d "$HOME" ] && [ ! -L "$HOME" ] || fail 'Your home directory is unavailable or is a symbolic link.'
-applications="$HOME/Applications"
+applications='/Applications'
 target="$applications/Otto.app"
 [ ! -L "$applications" ] && [ ! -L "$target" ] || fail 'The installation destination must not be a symbolic link.'
 [ ! -e "$target" ] || [ -d "$target" ] || fail 'The installation destination is not an app directory.'
-mkdir -p "$applications"
-[ "$(stat -f %u "$applications")" = "$(id -u)" ] || fail 'Your Applications folder must belong to your user.'
+[ -d "$applications" ] && [ -w "$applications" ] && [ -x "$applications" ] || fail 'You need permission to install apps in /Applications. Use a macOS administrator account.'
+[ ! -d "$target" ] || { [ -w "$target" ] && [ -x "$target" ]; } || fail 'You need permission to replace /Applications/Otto.app. Ask its owner or your administrator.'
 check_stopped
-mkdir "$applications/.otto-install-lock" 2>/dev/null || fail 'Another installer is running. If it was interrupted, remove ~/Applications/.otto-install-lock and retry.'
+mkdir "$applications/.otto-install-lock" 2>/dev/null || fail 'Another installer is running. If it was interrupted, remove /Applications/.otto-install-lock and retry.'
 locked=true
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -140,7 +138,7 @@ current_identity=''
 current_metadata=''
 if [ -d "$target" ]; then
   check_signature "$target"
-  [ "$(field "$target/Contents/Info.plist" CFBundleIdentifier string)" = 'dev.otto.desktop' ] || fail 'An unrelated app already occupies ~/Applications/Otto.app.'
+  [ "$(field "$target/Contents/Info.plist" CFBundleIdentifier string)" = 'dev.otto.desktop' ] || fail 'An unrelated app already occupies /Applications/Otto.app.'
   current_version=$(field "$target/Contents/Info.plist" CFBundleShortVersionString string)
   valid_version "$current_version" || fail 'The installed Otto version is invalid.'
   current_identity=$(stat -f '%d:%i' "$target")
