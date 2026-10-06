@@ -50,6 +50,7 @@ export const MessageText = memo(function MessageText({
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeRaw, rehypeLocalLinks, rehypeSanitize]}
           components={{
+            table: ({ node, ...props }) => <table {...props} tabIndex={0} />,
             a: ({ href, children, node }) => {
               const link = safeMessageLink(href ?? '', origin);
               if (!link) return <span>{children}</span>;
@@ -388,7 +389,7 @@ export function MessageBubble({
                     title="Reply"
                     onClick={reply}
                   >
-                    <CornerUpLeft size={14} />
+                    <CornerUpLeft size={16} />
                   </Button>
                 )}
                 <Button
@@ -398,7 +399,7 @@ export function MessageBubble({
                   title="Copy"
                   onClick={() => void copy()}
                 >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                  {copied ? <Check size={16} /> : <Copy size={16} />}
                 </Button>
                 {message.role === 'assistant' && (
                   <Button
@@ -412,7 +413,7 @@ export function MessageBubble({
                       pickingReaction ? closePicker() : openPicker(event.currentTarget)
                     }
                   >
-                    <SmilePlus size={14} />
+                    <SmilePlus size={16} />
                   </Button>
                 )}
                 {canInspect && (
@@ -423,7 +424,7 @@ export function MessageBubble({
                     title="Inspect"
                     onClick={inspect}
                   >
-                    <ScanSearch size={14} />
+                    <ScanSearch size={16} />
                   </Button>
                 )}
               </div>
@@ -438,7 +439,7 @@ export function MessageBubble({
                   openMenu(rect.right - 192, rect.bottom + 6, event.currentTarget);
                 }}
               >
-                <MoreHorizontal size={17} />
+                <MoreHorizontal size={16} />
               </Button>
             </div>
           )}
@@ -502,23 +503,23 @@ export function MessageBubble({
                 role="menuitem"
                 onClick={() => openPicker(menuTrigger.current ?? document.body, true)}
               >
-                <SmilePlus size={14} />
+                <SmilePlus size={16} />
                 More emoji
               </button>
             )}
             {onReply && (
               <button role="menuitem" onClick={reply}>
-                <CornerUpLeft size={14} />
+                <CornerUpLeft size={16} />
                 Reply
               </button>
             )}
             <button role="menuitem" onClick={() => void copy()}>
-              <Copy size={14} />
+              <Copy size={16} />
               Copy
             </button>
             {canInspect && (
               <button role="menuitem" onClick={inspect}>
-                <ScanSearch size={14} />
+                <ScanSearch size={16} />
                 Inspect
               </button>
             )}
@@ -553,7 +554,7 @@ export function MessageBubble({
                   aria-label="Close emoji picker"
                   onClick={closePicker}
                 >
-                  <X size={15} />
+                  <X size={16} />
                 </Button>
               </div>
             )}

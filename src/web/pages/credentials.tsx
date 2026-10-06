@@ -197,7 +197,7 @@ function CredentialForm({ id }: { id: string }) {
           </div>
         ) : expired ? (
           <div className="credential-complete">
-            <LockKeyhole size={28} />
+            <LockKeyhole size={32} />
             <h1>{retried ? 'A new step is on its way.' : 'This link has expired.'}</h1>
             <p>
               {retried
@@ -219,7 +219,7 @@ function CredentialForm({ id }: { id: string }) {
           <>
             <header className="credential-heading">
               <div className="credential-symbol">
-                <LockKeyhole size={22} />
+                <LockKeyhole size={24} />
               </div>
               <div>
                 <h1>{request?.kind === 'otp' ? 'Enter verification code' : 'Sign in'}</h1>
@@ -240,7 +240,7 @@ function CredentialForm({ id }: { id: string }) {
                     disabled={saving}
                     onClick={() => void useSaved(entry.id)}
                   >
-                    <KeyRound size={18} />
+                    <KeyRound size={16} />
                     <span>
                       <strong>{entry.label}</strong>
                       {entry.usernameHint && <small>{entry.usernameHint}</small>}

@@ -45,7 +45,7 @@ export function ToolCallRecord({ call }: { call: ToolCall }) {
   return (
     <details className={`inspector-record inspector-call-${call.status}`}>
       <summary>
-        <ChevronDown size={13} className="inspector-disclosure" />
+        <ChevronDown size={16} className="inspector-disclosure" />
         <span className="inspector-record-title">
           <strong>{call.name}</strong>
           <small>{formatTime(call.startedAt, undefined, { seconds: true })}</small>
@@ -168,7 +168,7 @@ export function ModelUsageRecord({ usage }: { usage: ModelUsage }) {
   return (
     <details className="inspector-record">
       <summary>
-        <ChevronDown size={13} className="inspector-disclosure" />
+        <ChevronDown size={16} className="inspector-disclosure" />
         <span className="inspector-record-title">
           <strong>{usage.model}</strong>
           <small>
@@ -452,7 +452,7 @@ export function ToolUsageGroup({
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
-        <ChevronDown size={14} className="inspector-disclosure" />
+        <ChevronDown size={16} className="inspector-disclosure" />
         <span className="inspector-tool-group-title">
           <strong>{usage.name}</strong>
           <ToolUsageFacts usage={usage} />

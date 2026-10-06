@@ -9,7 +9,7 @@ export function BrowserWindow() {
     <main className="browser-window">
       <header className="browser-window-heading">
         <div>
-          <Monitor size={20} />
+          <Monitor size={24} />
           <h1>Workspace browser</h1>
         </div>
       </header>

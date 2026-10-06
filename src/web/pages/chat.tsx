@@ -668,7 +668,7 @@ export function Chat({
           disabled={resetting || sending || welcoming}
           onClick={() => setResetTarget(threadId)}
         >
-          <Trash2 size={14} aria-hidden="true" />
+          <Trash2 size={16} aria-hidden="true" />
           Clear messages
         </Button>
       )}
@@ -681,7 +681,7 @@ export function Chat({
           className="chat-report-button"
           onClick={onFeedback}
         >
-          <MessageSquarePlus size={15} aria-hidden="true" />
+          <MessageSquarePlus size={16} aria-hidden="true" />
           Send feedback
         </Button>
       )}
@@ -844,7 +844,7 @@ export function Chat({
               bottom.current?.scrollIntoView({ block: 'end', behavior: scrollBehavior() });
             }}
           >
-            <ArrowDown size={14} />
+            <ArrowDown size={16} />
             {unseen
               ? `${unseen > 99 ? '99+' : unseen} new ${unseen === 1 ? 'reply' : 'replies'}`
               : 'Back to latest'}

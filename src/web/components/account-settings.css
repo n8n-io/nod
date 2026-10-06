@@ -9,8 +9,8 @@
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
 }
 .account-avatar img {
   width: 100%;
@@ -31,9 +31,9 @@
 .sidebar-account-menu .account-menu-trigger {
   min-height: 44px;
   height: auto;
-  gap: 10px;
-  padding: 8px 10px;
-  font-size: 13px;
+  gap: 8px;
+  padding: 8px 8px;
+  font-size: var(--text-control);
 }
 .sidebar-account-menu .account-menu-trigger[aria-expanded='true'] {
   background: var(--hover);
@@ -70,22 +70,22 @@
 .account-menu-identity {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 12px 10px 16px;
+  gap: 12px;
+  padding: 12px 8px 16px;
 }
 .account-menu-identity > div {
   min-width: 0;
 }
 .account-menu-identity strong {
   display: block;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 .account-menu-identity span:not(.account-avatar) {
   display: block;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--text-control);
   margin-top: 4px;
   overflow-wrap: anywhere;
 }
@@ -93,20 +93,20 @@
   margin-left: auto;
   color: var(--muted-foreground);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--text-control);
 }
 .account-menu-themes {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 8px 10px;
-  font-size: 13px;
+  padding: 8px 8px;
+  font-size: var(--text-control);
 }
 .account-menu-themes > div {
   display: flex;
-  gap: 3px;
-  padding: 3px;
+  gap: 4px;
+  padding: 4px;
   border-radius: 8px;
   background: var(--surface-subtle);
 }
@@ -116,9 +116,9 @@
   justify-content: center;
   min-height: 30px;
   width: 32px;
-  padding: 6px;
+  padding: 4px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--muted-foreground);
   background: transparent;
 }
@@ -128,9 +128,9 @@
   color: var(--foreground);
 }
 .account-menu-error {
-  margin: 8px 10px;
+  margin: 8px 8px;
   color: var(--error);
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.5;
 }
 .account-settings.dialog-content {
@@ -158,7 +158,7 @@
   flex-direction: column;
   align-items: stretch;
   gap: 4px;
-  padding: 18px 10px;
+  padding: 16px 8px;
   border-right: 1px solid var(--border);
   background: var(--sidebar);
 }
@@ -167,16 +167,20 @@
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
-  gap: 9px;
+  gap: 8px;
   min-height: 40px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-control);
   text-align: left;
   cursor: pointer;
+}
+.account-settings-layout > nav button > svg {
+  width: 24px;
+  height: 24px;
 }
 .account-settings-layout > nav button:hover {
   background: var(--hover);
@@ -185,7 +189,7 @@
 .account-settings-layout > nav button[aria-selected='true'] {
   background: var(--accent-soft);
   color: var(--foreground);
-  font-weight: 550;
+  font-weight: 500;
 }
 .account-settings-layout > nav button[aria-selected='true'] svg {
   color: var(--accent);
@@ -200,7 +204,7 @@
 }
 .account-settings-header {
   flex-shrink: 0;
-  padding: 27px 68px 22px 32px;
+  padding: 24px 64px 24px 32px;
   border-bottom: 1px solid var(--border);
 }
 .account-settings-body {
@@ -218,7 +222,7 @@
 .account-settings-header > h3 {
   margin: 0;
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.4px;
 }
 .account-settings-body:focus-visible {
@@ -228,23 +232,23 @@
 .account-settings-signout {
   grid-column: 1;
   grid-row: 2;
-  padding: 12px 10px;
+  padding: 12px 8px;
   border-right: 1px solid var(--border);
   background: var(--sidebar);
 }
 .account-settings-signout button {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   justify-content: flex-start;
   width: 100%;
   min-height: 40px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
   cursor: pointer;
 }
 .account-settings-signout button:hover {
@@ -254,12 +258,12 @@
 .account-profile-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 20px;
+  gap: 16px;
 }
 .account-profile-identity {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
 }
 .account-profile-identity .field {
   flex: 1;
@@ -270,13 +274,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  font-size: 13px;
+  gap: 16px;
+  font-size: var(--text-control);
 }
 .account-profile-email > div {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   color: var(--text-secondary);
   overflow-wrap: anywhere;
@@ -291,7 +295,7 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 20px;
+  margin-top: 16px;
 }
 .account-profile-form .account-settings-actions {
   margin-top: 0;
@@ -300,9 +304,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  padding: 18px 0;
-  font-size: 13px;
+  gap: 16px;
+  padding: 16px 0;
+  font-size: var(--text-control);
 }
 .account-preference-row > span,
 .account-preference-label {
@@ -311,6 +315,8 @@
   gap: 12px;
 }
 .account-preference-row svg {
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
@@ -321,18 +327,18 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 .account-theme-previews {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 .account-theme-previews > button {
   min-width: 0;
-  padding: 5px;
+  padding: 4px;
   border: 2px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: transparent;
   color: var(--foreground);
   text-align: left;
@@ -348,57 +354,57 @@
 .account-theme-label {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 11px 4px 6px;
-  font-size: 12px;
-  font-weight: 600;
+  gap: 4px;
+  padding: 12px 4px 4px;
+  font-size: var(--text-control);
+  font-weight: 500;
 }
 .account-theme-sample {
   display: flex;
   height: 104px;
   overflow: hidden;
-  border: 1px solid #e2dce8;
-  border-radius: 6px;
-  background: #fdfcfe;
+  border: 1px solid var(--gray-25);
+  border-radius: 4px;
+  background: var(--white);
 }
 .account-theme-sample > i {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   width: 24%;
-  padding-top: 33px;
-  border-right: 1px solid #e2dce8;
-  background: #f5f3f7;
+  padding-top: 32px;
+  border-right: 1px solid var(--gray-25);
+  background: var(--gray-15);
 }
 .account-theme-sample > i em {
   width: 5px;
   height: 5px;
-  border-radius: 2px;
-  background: #ccc5d3;
+  border-radius: 4px;
+  background: var(--gray-40);
 }
 .account-theme-sample > i em:first-child {
-  background: #ae2956;
+  background: var(--pink-70);
 }
 .account-theme-sample > span {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 6px;
-  padding: 20px 9px 8px;
+  gap: 4px;
+  padding: 16px 8px 8px;
 }
 .account-theme-sample b {
   height: 4px;
   width: 76%;
-  border-radius: 2px;
-  background: #d6cddd;
+  border-radius: 4px;
+  background: var(--gray-30);
 }
 .account-theme-sample b:first-child {
   height: 10px;
   width: 60%;
   margin: 0 0 8px auto;
   border-radius: 4px;
-  background: #fce9ef;
+  background: var(--pink-20);
 }
 .account-theme-sample b:nth-child(3) {
   width: 54%;
@@ -406,37 +412,37 @@
 .account-theme-sample > span > em {
   height: 14px;
   margin-top: auto;
-  border: 1px solid #e2dce8;
+  border: 1px solid var(--gray-25);
   border-radius: 4px;
 }
 .account-theme-sample.dark {
-  background: #1e1b21;
-  border-color: #3d3444;
+  background: var(--black);
+  border-color: var(--gray-85);
 }
 .account-theme-sample.dark > i {
-  background: #19161c;
-  border-color: #3d3444;
+  background: var(--gray-90);
+  border-color: var(--gray-85);
 }
 .account-theme-sample.dark > i em:first-child {
   background: var(--brand-pink);
 }
 .account-theme-sample.dark b {
-  background: #807289;
+  background: var(--gray-60);
 }
 .account-theme-sample.dark b:first-child {
-  background: #3c2833;
+  background: var(--pink-80);
 }
 .account-theme-sample.dark > span > em {
-  border-color: #3d3444;
+  border-color: var(--gray-85);
 }
 .account-theme-sample.system {
-  background: linear-gradient(115deg, #fdfcfe 45%, #1e1b21 45%);
+  background: linear-gradient(115deg, var(--white) 45%, var(--black) 45%);
 }
 .account-theme-sample.system > span > em {
-  border-color: #807289;
+  border-color: var(--gray-60);
 }
 .account-settings-body .notice {
-  margin-top: 18px;
+  margin-top: 16px;
 }
 .sidebar-collapsed .account-menu-chevron {
   display: none;
@@ -490,43 +496,43 @@
     max-height: none;
   }
   .account-settings-layout > nav {
-    padding: 16px 7px;
-    gap: 6px;
+    padding: 16px 8px;
+    gap: 4px;
   }
   .account-settings-layout > nav button {
     justify-content: center;
     min-height: 44px;
-    padding: 10px;
+    padding: 8px;
   }
   .account-settings-layout > nav button > span,
   .account-settings-signout button > span {
     display: none;
   }
   .account-settings-layout > nav button > svg {
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
   }
   .account-settings-header {
-    padding: 24px 62px 20px 18px;
+    padding: 24px 64px 16px 16px;
   }
   .account-settings-body {
-    padding: 24px 18px;
+    padding: 24px 16px;
   }
   .account-settings-signout {
-    padding: 12px 7px;
+    padding: 12px 8px;
   }
   .account-settings-signout button {
     justify-content: center;
     min-height: 44px;
-    padding: 10px;
+    padding: 8px;
   }
   .account-profile-identity {
-    gap: 14px;
+    gap: 12px;
   }
   .account-profile-identity .account-avatar-large {
     width: 48px;
     height: 48px;
-    font-size: 17px;
+    font-size: var(--text-body);
   }
 }
 @container account-settings (max-width: 350px) {
@@ -537,7 +543,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 7px;
+    padding: 8px;
     border-color: var(--border);
   }
   .account-theme-previews > button[aria-pressed='true'] {
@@ -549,11 +555,11 @@
     height: 72px;
   }
   .account-theme-sample > i {
-    padding-top: 20px;
+    padding-top: 16px;
   }
   .account-theme-sample > span {
     gap: 4px;
-    padding: 11px 7px 6px;
+    padding: 12px 8px 4px;
   }
   .account-theme-sample b:first-child {
     margin-bottom: 4px;
@@ -562,15 +568,15 @@
     height: 10px;
   }
   .account-theme-label {
-    gap: 6px;
+    gap: 4px;
     padding: 0;
-    font-size: 13px;
+    font-size: var(--text-control);
   }
   .account-profile-email {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-    font-size: 12px;
+    gap: 8px;
+    font-size: var(--text-control);
   }
   .account-preference-row {
     gap: 12px;
@@ -590,8 +596,8 @@
   border-bottom: 1px solid var(--border);
 }
 .account-region h4 {
-  margin: 0 0 6px;
-  font-size: 13px;
+  margin: 0 0 4px;
+  font-size: var(--text-control);
   font-weight: 500;
 }
 .account-region .account-preference-row {
@@ -605,7 +611,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 4px;
 }
 @container account-settings (max-width: 330px) {
   .account-clock-row {
@@ -617,13 +623,13 @@
   }
 }
 .desktop-options {
-  margin-top: 28px;
+  margin-top: 24px;
 }
 .desktop-options .account-preference-row {
   border: 0;
 }
 .composio-settings {
-  margin-top: 28px;
+  margin-top: 24px;
 }
 .composio-settings-heading {
   display: flex;
@@ -632,8 +638,8 @@
 }
 .composio-settings-heading h4 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
 }
 .composio-logo {
   width: 18px;
@@ -649,11 +655,11 @@
 .composio-settings > p,
 .composio-restart > p {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.6;
 }
 .composio-settings > p {
-  margin: 6px 0 16px;
+  margin: 4px 0 16px;
 }
 .composio-key-form {
   display: grid;
@@ -662,7 +668,7 @@
 .composio-key-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   margin-top: 8px;
 }
 .composio-key-form .composio-key-actions {

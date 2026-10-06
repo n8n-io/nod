@@ -177,7 +177,7 @@ export function InspectorScreen({
         title="Open browser window"
         onClick={openBrowserWindow}
       >
-        <ExternalLink size={14} />
+        <ExternalLink size={16} />
         <span>Open browser window</span>
       </a>
     </Button>
@@ -216,7 +216,7 @@ export function InspectorScreen({
                     aria-label="Enlarge browser screen"
                     onClick={() => setEnlarged(true)}
                   >
-                    <Maximize2 size={15} />
+                    <Maximize2 size={16} />
                   </Button>
                 )}
                 {openWindowAction}
@@ -260,7 +260,7 @@ export function InspectorScreen({
                 </button>
               ) : (
                 <div className="screen-empty">
-                  <Monitor size={26} />
+                  <Monitor size={24} />
                   <p>{screenState}</p>
                 </div>
               )}
@@ -274,7 +274,7 @@ export function InspectorScreen({
           {showDetails && (
             <section className="inspector-system">
               <h3>
-                <Terminal size={14} />
+                <Terminal size={16} />
                 Computer
               </h3>
               <dl>
@@ -301,7 +301,7 @@ export function InspectorScreen({
                       target="_blank"
                       rel="noreferrer"
                     >
-                      <FileText size={14} />
+                      <FileText size={16} />
                       {item.name}
                     </a>
                   ))}

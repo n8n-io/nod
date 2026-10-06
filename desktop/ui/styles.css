@@ -1,37 +1,46 @@
+@font-face {
+  font-family: 'n8n Baumer Uniwidth';
+  src: url('./n8nBaumerUniwidth.woff2') format('woff2');
+  font-style: oblique 0deg 14deg;
+  font-weight: 400 800;
+  font-display: swap;
+}
 :root {
   color-scheme: light;
-  --canvas: #fdfcfe;
-  --sidebar: #f5f3f7;
+  --canvas: #fafafa;
+  --sidebar: #f1f1f1;
   --surface: #ffffff;
-  --text: #211c28;
-  --muted: #665c6e;
-  --line: #e7e1eb;
-  --control: #8f8696;
-  --accent: #ae2956;
-  --selection: #fbe7ee;
+  --text: #191919;
+  --muted: #676767;
+  --line: #e0e0e0;
+  --control: #676767;
+  --accent: #87003c;
+  --selection: #ffe8ec;
   --pink: #ff91ac;
   --error: #b42142;
   font:
-    13px/1.5 -apple-system,
+    14px/1.5 'n8n Baumer Uniwidth',
+    -apple-system,
     BlinkMacSystemFont,
     'Segoe UI',
     sans-serif;
   font-synthesis: none;
+  font-feature-settings: 'liga' 1;
   -webkit-font-smoothing: antialiased;
   color: var(--text);
   background: var(--canvas);
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --canvas: #1e1b21;
-  --sidebar: #19161c;
-  --surface: #28242c;
-  --text: #f5f1f6;
-  --muted: #bdb1c6;
-  --line: #3b3342;
-  --control: #796b85;
+  --canvas: #191919;
+  --sidebar: #242424;
+  --surface: #242424;
+  --text: #fafafa;
+  --muted: #bfbfbf;
+  --line: #353535;
+  --control: #868686;
   --accent: #ff91ac;
-  --selection: #412631;
+  --selection: #5a0026;
   --error: #ff9db3;
 }
 * {
@@ -67,7 +76,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 summary:focus-visible {
-  outline: 1px solid var(--muted);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .switch {
@@ -116,14 +125,14 @@ header {
   display: flex;
   gap: 8px;
   align-items: center;
-  font-size: 23px;
-  font-weight: 650;
+  font-size: 24px;
+  font-weight: 500;
   letter-spacing: -0.8px;
   margin-bottom: 26px;
 }
 .brand svg {
-  width: 27px;
-  height: 27px;
+  width: 32px;
+  height: 32px;
 }
 h1,
 p {
@@ -153,11 +162,11 @@ header > p {
   gap: 16px;
 }
 .setting-row > label {
-  font-weight: 550;
+  font-weight: 500;
 }
 .hint {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 form > .hint {
@@ -175,14 +184,14 @@ footer .hint {
   margin-bottom: 12px;
 }
 button {
-  border-radius: 7px;
-  padding: 9px 14px;
-  font-weight: 550;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-weight: 500;
 }
 .primary {
   background: var(--pink);
   border: 1px solid var(--pink);
-  color: #2c0c17;
+  color: #191919;
 }
 .secondary {
   background: var(--surface);

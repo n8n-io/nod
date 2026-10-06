@@ -192,7 +192,7 @@ export function Vault() {
                 type="button"
                 className="button button-primary button-sm vault-new"
               >
-                <Plus size={14} aria-hidden="true" />
+                <Plus size={16} aria-hidden="true" />
                 New
               </button>
             </Popover.Trigger>

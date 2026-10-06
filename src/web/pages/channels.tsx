@@ -50,7 +50,7 @@ function ExternalLinkText({ href, children }: { href: string; children: React.Re
   return (
     <a className="channel-external-link" href={href} target="_blank" rel="noopener noreferrer">
       {children}
-      <ExternalLink size={12} />
+      <ExternalLink size={16} />
     </a>
   );
 }
@@ -268,14 +268,14 @@ export function ChannelAccount({
         {provider === 'telegram' && (needsDelivery || needsPairing) ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={onPair}>
             {needsDelivery ? 'Retry connection' : 'Finish setup'}
-            <ArrowRight size={13} />
+            <ArrowRight size={16} />
           </Button>
         ) : needsDelivery ? (
           <Dialog>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm" disabled={busy}>
                 Finish setup
-                <ArrowRight size={13} />
+                <ArrowRight size={16} />
               </Button>
             </DialogTrigger>
             <DialogContent className="channel-delivery-dialog">
@@ -304,7 +304,7 @@ export function ChannelAccount({
           <Button asChild size="sm">
             <a href={botUrl} target="_blank" rel="noopener noreferrer">
               Start conversation
-              <ExternalLink size={13} />
+              <ExternalLink size={16} />
             </a>
           </Button>
         ) : null}
@@ -318,7 +318,7 @@ export function ChannelAccount({
           disabled={busy}
           onClick={(event) => onDisconnect(event.currentTarget)}
         >
-          <X size={15} aria-hidden="true" />
+          <X size={16} aria-hidden="true" />
         </Button>
       </div>
     </div>
@@ -383,7 +383,7 @@ function TelegramSetup({
       <ol className="telegram-checklist">
         <li className={saved ? 'is-done' : 'is-active'}>
           <span className="telegram-checklist-marker" aria-hidden="true">
-            {saved ? <Check size={13} /> : '1'}
+            {saved ? <Check size={16} /> : '1'}
           </span>
           <div>
             <strong>
@@ -410,7 +410,7 @@ function TelegramSetup({
         <li className={paired ? 'is-done' : saved ? 'is-active' : 'is-next'}>
           <span className="telegram-checklist-marker" aria-hidden="true">
             {paired ? (
-              <Check size={13} />
+              <Check size={16} />
             ) : ready && !expired && !manual ? (
               <span className="channel-pairing-signal" />
             ) : (
@@ -535,7 +535,7 @@ function TelegramSetup({
                           rel="noopener noreferrer"
                         >
                           Open Telegram app
-                          <ExternalLink size={13} />
+                          <ExternalLink size={16} />
                         </a>
                       </Button>
                       <Button
@@ -574,7 +574,7 @@ function TelegramSetup({
           <Button asChild>
             <a data-telegram-primary href={botUrl} target="_blank" rel="noopener noreferrer">
               Start conversation
-              <ExternalLink size={14} />
+              <ExternalLink size={16} />
             </a>
           </Button>
         )}
@@ -1046,7 +1046,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
                     disabled={busy}
                     onClick={() => (step ? setStep((value) => value - 1) : close())}
                   >
-                    {step ? <ArrowLeft size={14} /> : null}
+                    {step ? <ArrowLeft size={16} /> : null}
                     {step ? 'Back' : 'Cancel'}
                   </Button>
                   <Button type="submit" disabled={busy}>
@@ -1055,7 +1055,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
                       : step === whatsappSteps.length - 1
                         ? 'Verify and save'
                         : 'Continue'}
-                    {!busy && step < whatsappSteps.length - 1 && <ArrowRight size={14} />}
+                    {!busy && step < whatsappSteps.length - 1 && <ArrowRight size={16} />}
                   </Button>
                 </div>
               </form>

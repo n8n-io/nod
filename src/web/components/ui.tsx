@@ -57,7 +57,7 @@ export function DialogContent({
           className="button button-ghost button-icon dialog-close"
           aria-label="Close"
         >
-          <X size={18} />
+          <X size={16} />
         </DialogPrimitive.Close>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
@@ -95,11 +95,11 @@ export function SearchField({
 }) {
   return (
     <div className={cn('search-field', className)}>
-      <Search size={15} aria-hidden="true" />
+      <Search size={16} aria-hidden="true" />
       <Input ref={inputRef} {...props} />
       {onClear && props.value ? (
         <Button type="button" variant="ghost" size="icon" aria-label={clearLabel} onClick={onClear}>
-          <X size={15} aria-hidden="true" />
+          <X size={16} aria-hidden="true" />
         </Button>
       ) : null}
     </div>
@@ -158,7 +158,7 @@ export function Notice({
           aria-label="Dismiss notification"
           onClick={onDismiss}
         >
-          <X size={15} aria-hidden="true" />
+          <X size={16} aria-hidden="true" />
         </Button>
       )}
     </div>
@@ -190,7 +190,7 @@ export function Loading({ label = 'Loading…' }: { label?: string }) {
         ))}
       </span>
       <span className="loading-label">
-        <LoaderCircle size={17} className="spin" />
+        <LoaderCircle size={16} className="spin" />
         <span>{label}</span>
       </span>
     </div>

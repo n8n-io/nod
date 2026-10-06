@@ -1,154 +1,142 @@
 # Otto visual design
 
-This pass changes the appearance of the app. It preserves routes, actions,
-keyboard commands, account settings, and all assistant capabilities.
+Reviewed on 6 October 2026 against the
+[n8n brand system](https://guidelines.n8n.design/) and its
+[n8ndesign.md, version 3](https://guidelines.n8n.design/downloads/n8ndesign.md).
+The [assessment](brand-assessment.md) records the gaps, changes, and checks.
 
-## Direction
+## Purpose
 
-Otto is a personal assistant with one persistent conversation. The conversation
-is the main work area. Tasks, schedules, apps, channels, and the Vault support it.
-The interface must make these areas easy to find without adding visual noise.
+Otto is a personal assistant with one conversation. Chat is the main work area.
+Tasks, schedules, apps, channels, and the Vault support that conversation.
+Keep navigation and task results clear. Keep decoration out of active work.
 
-Use the pink actions and plum surfaces from
-[the earlier Otto](https://github.com/n8n-io/otto-grokbot-experiment).
-Use the clear surface hierarchy and compact controls of
-[Orca](https://github.com/stablyai/orca) and
-[Linear](https://linear.app). The n8n editor also uses Inter. Serve that font
-from Otto so the interface does not need an external font request. The normal
-and italic variable font files come from the n8n design system. Their SIL Open
-Font License is in `public/fonts/Inter-LICENSE.txt`.
+The n8n guide replaces the earlier Otto palette as the design reference.
+Use neutral gray surfaces, pink primary actions, and clear text. Keep Otto's
+existing symbol. It is a product mark, not a copy of the n8n logo. If an n8n
+logo is needed later, use an official file from the brand portal.
 
-The earlier Otto defines `#ff91ac` for primary actions and `#44001b` for text
-on those actions. Its light accent text is `#bc3666`. These colors are the
-base for this pass. The public
-[n8n brand guide](https://n8n.io/brandguidelines/) lists `#ea4b71` for the logo.
-The earlier Otto palette is the closer reference for this app.
+## Color
 
-## Color and contrast
+Define the palette and its use in `src/web/theme.css`. Page styles use variables.
+Theme samples use the same palette. Do not put page-specific colors in styles.
 
-| Role           | Light     | Dark      |
-| -------------- | --------- | --------- |
-| Canvas         | `#fdfcfe` | `#1e1b21` |
-| Sidebar        | `#f5f3f7` | `#19161c` |
-| Surface        | `#ffffff` | `#28242c` |
-| Main text      | `#211c28` | `#f5f1f6` |
-| Accent text    | `#ae2956` | `#ff91ac` |
-| Primary action | `#ff91ac` | `#ff91ac` |
+| Role                     | Light          | Dark           |
+| ------------------------ | -------------- | -------------- |
+| Canvas                   | `--white`      | `--black`      |
+| Sidebar                  | `--gray-15`    | `--gray-90`    |
+| Raised surface           | `--gray-0`     | `--gray-90`    |
+| Inset surface            | `--gray-20`    | `--gray-85`    |
+| Main text                | `--black`      | `--white`      |
+| Secondary text           | `--gray-80`    | `--gray-30`    |
+| Muted text               | `--gray-70`    | `--gray-40`    |
+| Primary action           | `--brand-pink` | `--brand-pink` |
+| Text on a primary action | `--black`      | `--black`      |
+| Selected surface         | `--pink-10`    | `--pink-80`    |
+| Link and focus           | `--pink-70`    | `--brand-pink` |
+| Sent message             | `--pink-20`    | `--pink-80`    |
+| Text on a sent message   | `--black`      | `--white`      |
 
-Define colors by their use in `src/web/theme.css`. Page styles use these
-variables. Theme preview tiles use the same base values as the app.
+Use black text on main pink. Main pink text does not have enough contrast on a
+light surface. Use deep pink for light-theme links and keyboard focus.
 
-Keep body text at a contrast ratio of at least 7:1. Keep secondary text,
-placeholder text, links, and status text at least 4.5:1 on their surfaces.
-Keep focus indicators and essential control boundaries at least 3:1.
-Use softer borders for section dividers. A divider does not identify a control.
+Keep body text at least 7:1. Keep smaller text, placeholders, links, and status
+text at least 4.5:1. Essential control boundaries and focus must reach 3:1.
+Dividers can be softer because they do not identify a control.
 
-Use pink for primary actions, selection, and focus. Success, warning, error,
-and information each have a separate text color and surface color. Preserve
-their text and icon cues. Do not use color as the only state indicator.
+Keep the existing success, warning, error, and information colors. These are
+product states. Use an icon or text with each state. A brand color alone must
+not carry a safety decision.
 
-## Type and spacing
+## Type
 
-Use Inter for the interface. Use the existing system monospace stack for code.
-Use 13 px for controls, 14 px for list titles, 15 px for conversation text,
-and 26 px for page titles. Use a line height of 1.6 for conversation text.
-Keep the existing larger input text on touch devices.
+Use n8n Baumer Uniwidth for the interface and n8n Baumer Mono for code.
+Use regular body text and medium headings. Serve both fonts locally. The owner
+confirmed the font license for Otto's web and desktop apps on 6 October 2026.
+Font sources are recorded in `public/fonts/Baumer-SOURCE.md`.
 
-Use a 4 px spacing scale: 4, 8, 12, 16, 20, 24, 32, and 40 px.
+Use these sizes across the app:
+
+| Use                         | Size                   | Line height            |
+| --------------------------- | ---------------------- | ---------------------- |
+| Page title                  | 32 px; 28 px on phones | 36 px; 32 px on phones |
+| Sign-in story title         | 40 px                  | 42 px                  |
+| Message and long text       | 16 px                  | 1.6                    |
+| Control and supporting text | 14 px                  | At least 18 px         |
+| Small graphic detail        | 10 px                  | At least 14 px         |
+
+Use regular body text and medium headings. Enable standard ligatures.
+Balance short headings. Use natural paragraph wrapping. Keep code, passwords,
+URLs, and user content in their original case. Do not use the brand's uppercase
+capsule rule on technical data.
+
+## Spacing and shape
+
+Use 8 px steps for layout. Use 4 px and 12 px for small controls and details.
 Use 8 px control corners, 12 px content corners, and 16 px dialog corners.
-Use shadows for overlays and the composer. Lists use borders and spacing.
+Use the existing fully rounded shapes for dots, avatars, and switches.
 
-## Conversation
+Keep page content within 1184 px and chat within 880 px. These widths use the
+8 px scale. Page padding changes with the available width. Keep a 16 px inset
+on phones. Use a shared title size and align actions with the page heading.
 
-Keep chat bubbles for both sides. Place Otto's messages on the left and the
-user's messages on the right. Use a neutral surface for Otto. Use solid dark
-plum with white text for sent messages in the light theme. Use solid pink with
-dark plum text for sent messages in the dark theme. This makes sent and received
-messages easy to distinguish. Use no outline on bubbles. Round all four corners
-equally. Use the same neutral surface for Otto's typing indicator.
+Use borders and space for lists. Use shadows for menus, dialogs, and the
+composer. The sign-in story uses the guide's medium inset shadow: the panel
+has the same background as its surrounding surface.
 
-The conversation should feel like text messages. Short progress messages keep
-the user informed while Otto does the work. Each update should state a useful
-step, result, or blocker. Group consecutive messages from the same sender with
-a smaller gap. Keep full answers, tables, files, and task results readable.
-Do not cut off content to make a message fit its bubble.
+## Brand devices
 
-Include the sign-in approval change in this pass. When a website needs approval
-on another device, Otto gives the instructions and watches the page. Use the same
-page watch for other steps that need user action outside Otto's browser. Continue
-after the page confirms completion. Ask the user only when Otto cannot read the
-result or the wait ends. Do not watch or resume while the user controls Otto's
-browser; wait until they hand it back. This keeps the user informed without
-requiring a reply for a result that Otto can observe.
+Use a 24 px dot grid on the sign-in story and the empty conversation. Align
+it with the layout scale. Keep the dot grid out of messages, tables, forms,
+app lists, and the Inspector.
 
-## Layout
+Do not show a construction grid. Do not add marketing capsules to application
+controls. A status, tab, or navigation item must stay a clear control.
 
-The desktop sidebar uses an icon rail by default. Keep tooltips and accessible
-names on the navigation icons. The user can expand the rail to see labels, and
-the app keeps that choice. Navigation starts below the brand. The account and
-utility actions stay at the bottom. Place one icon to collapse or expand the
-sidebar at the top, beside the brand when there is room. Keep its accessible
-name, tooltip, and keyboard shortcut. The selected route has a pink surface and
-a clear icon. Use no border between the sidebar and the main workspace, or below
-the chat header. The Inspector remains a separate column with its existing width
-and resize control.
+## Icons
 
-This diagram shows the expanded sidebar.
+Use the existing Lucide symbols for product controls. The guide shows a bold
+outline icon set, but it does not supply a product SVG package. This is a
+product adaptation, not an import of the official n8n icon set.
 
-```text
-+----------------+--------------------------------+------------------+
-| Otto           | Conversation or page           | Inspector        |
-|                |                                |                  |
-| Chat           | Readable content width         | Tabs             |
-| Tasks          |                                |                  |
-| Schedule       |                                | Current state    |
-| Apps           |                                |                  |
-| Channels       |                                | Details          |
-| Vault          |                                |                  |
-|                |                                |                  |
-| Utilities      | Composer                       |                  |
-| Account        |                                |                  |
-+----------------+--------------------------------+------------------+
-```
+Use a 2 px stroke in the 24 px view box. Use 16 px for inline controls and
+status, 24 px for navigation and page titles, and 32 px or 48 px for large
+empty-state symbols. Keep symbols aligned with the text. Use neutral color
+by default and pink for selected navigation. Keep state colors on status
+symbols. Keep connected-service logos in their official colors.
 
-Secondary pages share one title size, content width, heading gap, and action
-alignment. Apps retain their grid. Tasks and schedules retain their lists and
-tabs. The Vault retains its list and detail layout.
+Otto uses its own existing mark in the app, favicon, and touch icon. Use the
+new base colors for that mark. Keep its shape and proportions.
 
-On phones, preserve the existing top bar and navigation sheet. Keep controls
-large enough for touch, preserve safe area spacing, and avoid horizontal page
-scroll. The Inspector keeps its existing phone presentation.
+## Product surfaces
 
-## Surface inventory
+| Surface                         | Design rule                                                            |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| Shell                           | Neutral sidebar; pink selection; quiet utility controls                |
+| Chat                            | Neutral received bubbles; pink sent bubbles; readable tables and files |
+| Composer                        | Clear boundary; visible focus; one primary send action                 |
+| Tasks and schedules             | Shared title, tabs, row spacing, and action height                     |
+| Apps and channels               | Neutral cards; visible connection state; consistent controls           |
+| Vault                           | Clear selection, fields, and error states; preserve secure forms       |
+| Inspector                       | Dense, readable details; preserve resizing and code case               |
+| Account settings                | Consistent fields and theme samples; preserve keyboard access          |
+| Sign-in                         | Plain capability text; pink sign-in action; one inset story panel      |
+| Onboarding                      | Clear connection steps; no decorative grid behind fields               |
+| Credentials and approvals       | Clear action hierarchy; preserve origin and expiry                     |
+| File previews                   | Clear captions and toolbars; preserve local scrolling                  |
+| Native desktop setup            | Same palette and type scale as the web app                             |
+| Icons and connection completion | Same base colors as the app                                            |
 
-| Surface                    | Visual work                                    | Behavior to preserve                             |
-| -------------------------- | ---------------------------------------------- | ------------------------------------------------ |
-| Shell                      | Brand, sidebar, route selection, account menu  | Collapse, shortcuts, navigation                  |
-| Chat                       | Message surfaces, text, date markers, composer | Reply, reactions, files, formatting, voice, stop |
-| Chat states                | Welcome, loading, working, reconnecting        | Existing status and recovery actions             |
-| Tasks and schedules        | Titles, tabs, rows, controls                   | Create, edit, pause, delete, history             |
-| Apps and channels          | Cards, status, account details                 | Connect, manage, disconnect, setup               |
-| Vault                      | Search, selection, details, fields             | Secure forms, reveal, edit, delete               |
-| Inspector                  | Heading, tabs, surfaces, code details          | Resize, browser, tools, prompts, usage           |
-| Account settings           | Navigation, fields, theme samples              | Profile, theme, notifications, locale            |
-| Sign in and onboarding     | Brand, type, surfaces, controls                | Authentication and connection flow               |
-| Credentials and approvals  | Form and action hierarchy                      | Origin, expiry, and action confirmation          |
-| Files and links            | Borders, captions, toolbars                    | Preview, zoom, download, open                    |
-| Privacy and connected page | Type, colors, surfaces                         | Existing links and completion state              |
-| Menus and dialogs          | Common corners, shadow, focus                  | Keyboard access, dismissal, return focus         |
-
-## Motion
-
-Use short color and border transitions for user actions. Remove decorative icon
-rotation and staggered page entrances. Keep working indicators and state
-transitions. Respect the existing reduced motion setting.
+Keep existing routes, actions, shortcuts, sidebar choice, account settings,
+browser controls, and assistant capabilities. Use the existing reduced-motion
+behavior. The brand guide does not yet define motion for product interfaces.
 
 ## Checks
 
-Review synthetic screens in light and dark themes at desktop and phone sizes.
-Review populated and empty pages, long text, open menus, dialogs, selected tabs,
-focus, disabled controls, and errors. Measure text contrast against the actual
-surface color. Check page overflow and access to existing controls.
+Use synthetic data. Check light and dark themes at desktop and phone sizes.
+Check open menus, dialogs, selected tabs, keyboard focus, disabled controls,
+long text, tables, and errors. Check empty and populated states. Confirm font
+loading and text contrast. Check that the page does not scroll horizontally.
 
 Run `npm run check`, `npm run test:integration`, and `npm run build`.
-Report fixture checks, UI checks, and live checks separately.
+Report synthetic UI checks and live checks separately.

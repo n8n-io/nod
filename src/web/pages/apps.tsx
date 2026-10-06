@@ -118,9 +118,9 @@ export function ConnectedAccount({
         {identity.secondary && <span className="compact-account-email">{identity.secondary}</span>}
         <p className="app-account-status" data-needs-attention={Boolean(issue) || undefined}>
           {issue ? (
-            <AlertCircle size={13} aria-hidden="true" />
+            <AlertCircle size={16} aria-hidden="true" />
           ) : (
-            <Check size={13} aria-hidden="true" />
+            <Check size={16} aria-hidden="true" />
           )}
           {issue ?? 'Connected'}
         </p>
@@ -467,7 +467,7 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
               setWebsiteOpen(true);
             }}
           >
-            <Plus size={14} aria-hidden="true" />
+            <Plus size={16} aria-hidden="true" />
             Connect website
           </Button>
         </div>
@@ -555,9 +555,9 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
               onClick={() => managed && void connect(managed.accounts[0], true)}
             >
               {busy === `connect:${manageService}` ? (
-                <LoaderCircle size={15} className="spin" aria-hidden="true" />
+                <LoaderCircle size={16} className="spin" aria-hidden="true" />
               ) : (
-                <Plus size={15} aria-hidden="true" />
+                <Plus size={16} aria-hidden="true" />
               )}
               Add account
             </Button>

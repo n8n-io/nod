@@ -3409,9 +3409,7 @@ test('Vault Escape cancels edits and clears replacement secrets without disablin
     );
     assert.equal(page.document.querySelector('[data-vault-edit]'), edit);
     await act(async () =>
-      page.document
-        .querySelector<HTMLButtonElement>('[aria-label="Edit username or email"]')!
-        .click(),
+      page.document.querySelector<HTMLButtonElement>('[data-vault-field="username"]')!.click(),
     );
     assert.equal(page.document.activeElement?.getAttribute('name'), 'username');
     assert.equal(

@@ -335,7 +335,7 @@ export function Onboarding({
                       >
                         {state === 'opening' ? (
                           <>
-                            <LoaderCircle className="spin" size={14} aria-hidden="true" />
+                            <LoaderCircle className="spin" size={16} aria-hidden="true" />
                             Opening…
                           </>
                         ) : (

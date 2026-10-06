@@ -3,11 +3,11 @@
 }
 .connection-menu-options.new-plan-card {
   width: min(460px, calc(100vw - 32px));
-  padding: 14px;
+  padding: 12px;
 }
 .ask-otto {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin-top: 12px;
 }
 .saved-plan .ask-otto {
@@ -25,7 +25,7 @@
 .ask-otto-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 .plan-controls {
   display: flex;
@@ -34,7 +34,7 @@
   gap: 8px 12px;
   margin-top: 12px;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 .plan-controls:empty {
   display: none;
@@ -46,7 +46,7 @@
 }
 .schedule-controls {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
@@ -54,16 +54,16 @@
 .schedule-control-status {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 .schedule-control-status:empty {
   display: none;
 }
 .schedule-timing {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 .schedule-timing-fields {
   display: flex;
@@ -74,7 +74,7 @@
 .schedule-timing-field {
   display: grid;
   flex: 1 1 130px;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
   margin: 0;
 }
@@ -117,7 +117,7 @@
   align-items: center;
   gap: 12px;
   margin: 0;
-  padding-block: 6px;
+  padding-block: 4px;
 }
 @media (max-width: 640px) {
   .plan-toast {

@@ -1,6 +1,6 @@
 .task-views > button > span {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--text-control);
   font-variant-numeric: tabular-nums;
 }
 .task-views > button:focus-visible,
@@ -15,12 +15,12 @@
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 6px;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--control-radius);
   background: var(--surface-subtle);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--text-control);
   font-weight: 500;
 }
 .task-status[data-status='needs_you'] {
@@ -43,7 +43,7 @@
   display: -webkit-box;
   margin-top: 8px;
   overflow: hidden;
-  font-size: 14px;
+  font-size: var(--text-control);
   line-height: 1.55;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
@@ -54,7 +54,7 @@
   gap: 4px;
   margin: 12px 0 0;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.6;
   list-style: none;
   overflow-wrap: anywhere;

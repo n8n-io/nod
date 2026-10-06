@@ -5,7 +5,7 @@ export function PageTitle({ path }: { path: (typeof navigationItems)[number]['pa
   const Icon = item.icon;
   return (
     <h1 className="page-title" data-analytics-public>
-      <Icon size={26} strokeWidth={1.8} aria-hidden="true" />
+      <Icon size={24} aria-hidden="true" />
       {item.label}
     </h1>
   );

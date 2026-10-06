@@ -97,7 +97,7 @@ export function VaultSurface({
 export function VaultBackButton({ onClick }: { onClick(): void }) {
   return (
     <Button type="button" variant="ghost" size="sm" className="vault-back" onClick={onClick}>
-      <ChevronLeft size={18} aria-hidden="true" />
+      <ChevronLeft size={16} aria-hidden="true" />
       Vault
     </Button>
   );

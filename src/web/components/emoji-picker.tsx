@@ -108,7 +108,7 @@ export default function ReactionPicker({
         onFocus={() => setActive(commonReactions.length)}
         onClick={onExpand}
       >
-        <Plus size={19} aria-hidden="true" />
+        <Plus size={24} aria-hidden="true" />
       </button>
     </div>
   );

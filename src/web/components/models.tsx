@@ -73,7 +73,7 @@ function ModelConnectionAvatar({ connection }: { connection: ModelConnection }) 
   return (
     <span className={`model-connection-avatar${initials ? '' : ' neutral'}`} aria-hidden="true">
       {initials ||
-        (connection.method === 'api_key' ? <KeyRound size={18} /> : <UserRound size={19} />)}
+        (connection.method === 'api_key' ? <KeyRound size={16} /> : <UserRound size={24} />)}
       <span className="model-connection-provider">
         <span className={`model-provider-logo ${connection.provider}`} />
       </span>
@@ -275,7 +275,7 @@ export function ModelSettings({
                     setKeyProvider(keyProvider === provider ? null : provider);
                   }}
                 >
-                  <KeyRound size={14} />
+                  <KeyRound size={16} />
                   Add API key
                 </Button>
               </div>
@@ -351,7 +351,7 @@ export function ModelSettings({
                   <div className="model-connection-controls">
                     {data.selection?.connectionId === connection.id && (
                       <span className="model-connection-selected">
-                        <Check size={12} aria-hidden="true" />
+                        <Check size={16} aria-hidden="true" />
                         Selected
                       </span>
                     )}
@@ -382,7 +382,7 @@ export function ModelSettings({
                           )
                         }
                       >
-                        <RefreshCw size={15} />
+                        <RefreshCw size={16} />
                         {connection.status === 'loading' && 'Load models'}
                       </Button>
                       {!connection.managed && (
@@ -396,7 +396,7 @@ export function ModelSettings({
                             void models.change(`/api/models/connections/${connection.id}`, 'DELETE')
                           }
                         >
-                          <X size={15} />
+                          <X size={16} />
                         </Button>
                       )}
                     </div>
@@ -437,7 +437,7 @@ export function ModelSettings({
               else window.open(signIn.url, '_blank', 'noopener,noreferrer');
             }}
           >
-            Open sign-in <ExternalLink size={13} />
+            Open sign-in <ExternalLink size={16} />
           </Button>
           <Button
             type="button"
@@ -562,17 +562,23 @@ export function ModelPicker({
           setSearch('');
           canChoose ? setOpen(true) : setManage(true);
         }}
-        aria-label={setup && !canChoose ? 'Connect a model' : 'Choose model'}
+        aria-label={
+          model && !setup
+            ? `Choose model: ${model.name}`
+            : canChoose
+              ? 'Choose a model'
+              : 'Connect a model'
+        }
         disabled={models.loading}
       >
         {model && !setup ? (
           <>
             <span className="model-picker-name">{model.name}</span>
-            <ChevronDown size={13} />
+            <ChevronDown size={16} />
           </>
         ) : (
           <>
-            <Plus size={14} />
+            <Plus size={16} />
             {canChoose ? 'Choose a model' : 'Connect a model'}
           </>
         )}
@@ -638,7 +644,7 @@ export function ModelPicker({
                 setManage(true);
               }}
             >
-              <SlidersHorizontal size={15} />
+              <SlidersHorizontal size={16} />
               Manage connections
             </Button>
           )}

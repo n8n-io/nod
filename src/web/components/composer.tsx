@@ -291,7 +291,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       {error && <Notice>{error}</Notice>}
       {replyTo && (
         <div className="reply-context composer-reply">
-          <CornerUpLeft size={15} />
+          <CornerUpLeft size={16} />
           <div>
             <strong>Replying to {replyTo.role === 'assistant' ? 'Otto' : 'yourself'}</strong>
             <span>{replyTo.text || 'Attachment'}</span>
@@ -303,7 +303,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             onClick={clearReply}
             aria-label="Cancel reply"
           >
-            <X size={14} />
+            <X size={16} />
           </Button>
         </div>
       )}
@@ -352,7 +352,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       </button>
                       {!item.artifact && (
                         <span className="pending-image-uploading" aria-hidden="true">
-                          <LoaderCircle size={14} className="spin" />
+                          <LoaderCircle size={16} className="spin" />
                         </span>
                       )}
                     </>
@@ -368,14 +368,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     onClick={() => removeAttachment(item)}
                     aria-label={`Remove ${item.name}`}
                   >
-                    <X size={13} />
+                    <X size={16} />
                   </button>
                 </div>
               );
             })}
             {pendingUploads > 0 && (
               <span className="attachment-uploading" role="status">
-                <LoaderCircle size={14} className="spin" />
+                <LoaderCircle size={16} className="spin" />
                 Uploading {pendingUploads === 1 ? 'file' : `${pendingUploads} files`}…
               </span>
             )}
@@ -405,7 +405,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               onClick={() => fileInput.current?.click()}
               disabled={attachments.length >= 20}
             >
-              <Paperclip size={18} />
+              <Paperclip size={16} />
             </Button>
           </div>
           <div className="composer-right">
@@ -420,7 +420,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 disabled={stopping}
                 onClick={onStop}
               >
-                <Square size={14} fill="currentColor" />
+                <Square size={16} fill="currentColor" />
               </Button>
             )}
             <Button
@@ -430,7 +430,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               aria-label="Send message"
               disabled={!ready || pendingUploads > 0 || (!text.trim() && !attachments.length)}
             >
-              <ArrowUp size={19} />
+              <ArrowUp size={24} />
             </Button>
           </div>
         </div>

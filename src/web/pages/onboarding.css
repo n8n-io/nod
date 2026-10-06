@@ -1,43 +1,44 @@
 .account-onboarding {
   min-height: 100dvh;
-  padding: 30px 48px 70px;
+  padding: 32px 48px 64px;
 }
 .account-onboarding > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px;
 }
 .account-onboarding-content {
   max-width: 800px;
-  margin: 52px auto 0;
+  margin: 48px auto 0;
 }
 .account-onboarding-content > h1 {
-  margin: 23px 0 8px;
-  font-size: 32px;
-  font-weight: 600;
-  letter-spacing: -1px;
+  margin: 24px 0 8px;
+  font-size: var(--text-title);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.125;
 }
 .account-onboarding-content > p {
-  margin-bottom: 28px;
-  font-size: 17px;
+  margin-bottom: 24px;
+  font-size: var(--text-body);
 }
 .account-onboarding-content > .notice {
-  margin: 20px 0;
+  margin: 16px 0;
 }
 .onboarding-integrations {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-top: 28px;
+  margin-top: 24px;
 }
 .onboarding-integration {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
   min-height: 82px;
-  padding: 16px 18px;
+  padding: 16px 16px;
   border: 1px solid var(--border);
   border-radius: var(--card-radius);
   background: var(--surface);
@@ -48,19 +49,19 @@
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: var(--surface-inset);
 }
 .onboarding-integration h2 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
   line-height: 1.5;
 }
 .onboarding-integration p {
-  margin: 2px 0 0;
+  margin: 0 0 0;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.5;
 }
 .onboarding-integration.waiting p {
@@ -73,9 +74,9 @@
 .onboarding-connected {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   color: var(--success);
-  font-size: 12px;
+  font-size: var(--text-control);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -108,7 +109,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 16px;
-  margin-top: 26px;
+  margin-top: 24px;
 }
 .account-onboarding-actions > .button {
   min-width: 120px;
@@ -120,7 +121,7 @@
 }
 @media (max-width: 760px) {
   .account-onboarding {
-    padding: 24px 20px 50px;
+    padding: 24px 16px 48px;
   }
   .account-onboarding-content {
     margin-top: 40px;
@@ -130,11 +131,11 @@
   }
   .onboarding-integrations {
     grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
+    gap: 8px;
   }
   .onboarding-integration {
     min-height: 72px;
-    padding: 14px;
+    padding: 12px;
     gap: 12px;
   }
   .onboarding-logo {

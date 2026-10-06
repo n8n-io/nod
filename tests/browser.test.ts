@@ -3322,7 +3322,7 @@ test('a selected model arriving during onboarding keeps the picker closed', asyn
         };
         await act(async () => pageDataCache.update('/api/models', () => models));
         assert.equal(Boolean(document.querySelector('[role="dialog"]')), false);
-        const picker = document.querySelector('[aria-label="Choose model"]');
+        const picker = document.querySelector('.model-picker-trigger');
         assert.ok(picker);
         assert.equal(picker.disabled, false);
         await act(async () => picker.dispatchEvent(new Event('click', { bubbles: true })));

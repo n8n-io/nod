@@ -83,7 +83,7 @@ export function DesktopOptions({
       ).map(([key, label, Icon]) => (
         <div className="account-preference-row" key={key}>
           <span data-analytics-public>
-            <Icon size={18} aria-hidden="true" />
+            <Icon size={16} aria-hidden="true" />
             {label}
           </span>
           <Switch
@@ -280,7 +280,7 @@ export function ComposioSettings({
               disabled={busy}
               onClick={() => void reveal()}
             >
-              {revealed ? <EyeOff size={15} /> : <Eye size={15} />}
+              {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
               {revealed ? 'Hide' : 'Show'}
             </Button>
             <Button

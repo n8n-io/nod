@@ -12,7 +12,7 @@ function PromptText({ label, text }: { label: string; text: string }) {
     <details className="inspector-prompt-text">
       <summary>
         <span className="inspector-prompt-label">
-          <ChevronDown size={13} />
+          <ChevronDown size={16} />
           {label}
         </span>
         <small>{formatNumber(text.length)} characters</small>
@@ -27,7 +27,7 @@ function PromptText({ label, text }: { label: string; text: string }) {
             .catch(() => setCopied(false))
         }
       >
-        {copied ? <Check size={13} /> : <Copy size={13} />}
+        {copied ? <Check size={16} /> : <Copy size={16} />}
         {copied ? 'Copied' : `Copy ${label.toLowerCase()}`}
       </Button>
       <pre>{text}</pre>

@@ -131,7 +131,7 @@ function LanguageAndRegion({
       </h4>
       <div className="account-preference-row account-picker-row">
         <span id={regionLabel} data-analytics-public>
-          <MapPin size={18} aria-hidden="true" />
+          <MapPin size={16} aria-hidden="true" />
           Region
         </span>
         <SearchPicker
@@ -147,7 +147,7 @@ function LanguageAndRegion({
       </div>
       <div className="account-preference-row account-clock-row">
         <span id={clockLabel} data-analytics-public>
-          <Clock3 size={18} aria-hidden="true" />
+          <Clock3 size={16} aria-hidden="true" />
           Clock
         </span>
         <div className="account-clock-options" role="group" aria-labelledby={clockLabel}>
@@ -170,7 +170,7 @@ function LanguageAndRegion({
       </div>
       <div className="account-preference-row account-picker-row account-time-zone">
         <span id={timeZoneLabel} data-analytics-public>
-          <Globe size={18} aria-hidden="true" />
+          <Globe size={16} aria-hidden="true" />
           Time zone
         </span>
         <TimeZonePicker
@@ -274,7 +274,7 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
       <form onSubmit={(event) => void save(event)}>
         <div className="account-preference-row">
           <div className="account-preference-label">
-            <Moon size={18} aria-hidden="true" />
+            <Moon size={16} aria-hidden="true" />
             <div>
               <strong>Quiet hours</strong>
             </div>
@@ -606,7 +606,7 @@ export function AccountSettings({
                             </span>
                           </span>
                           <span className="account-theme-label">
-                            <Icon size={15} aria-hidden="true" />
+                            <Icon size={16} aria-hidden="true" />
                             {label}
                           </span>
                         </button>

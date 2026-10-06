@@ -26,7 +26,7 @@ export function DesktopToolbar({
         disabled={!onToggle}
         onClick={onToggle}
       >
-        {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
       </Button>
       <div className="desktop-toolbar-actions" ref={actionsRef} />
     </header>

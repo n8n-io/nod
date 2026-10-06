@@ -1,10 +1,10 @@
 .feedback-dialog {
   display: flex;
   flex-direction: column;
-  width: min(578px, calc(100vw - 24px));
+  width: min(576px, calc(100vw - 24px));
   padding: 0;
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: var(--dialog-radius);
 }
 .feedback-dialog[data-busy='true'] > .dialog-close {
   pointer-events: none;
@@ -18,28 +18,28 @@
   display: flex;
   justify-content: space-between;
   gap: 24px;
-  padding: 27px 29px 23px;
+  padding: 24px 32px 24px;
   flex-shrink: 0;
 }
 .feedback-header h2 {
-  font-size: 23px;
-  font-weight: 620;
+  font-size: 24px;
+  font-weight: 500;
   letter-spacing: -0.65px;
   line-height: 1.25;
 }
 .feedback-progress {
-  margin: 0 29px;
+  margin: 0 32px;
   display: flex;
-  gap: 18px;
-  padding: 0 0 19px;
+  gap: 16px;
+  padding: 0 0 16px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .feedback-progress > div {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: 4px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
   white-space: nowrap;
 }
@@ -47,19 +47,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 19px;
-  height: 19px;
+  width: 24px;
+  height: 24px;
   background: var(--surface-subtle);
   border-radius: 100%;
   font-size: 10px;
 }
 .feedback-progress .current {
   color: var(--foreground);
-  font-weight: 650;
+  font-weight: 500;
 }
 .feedback-progress .current > span {
-  background: var(--accent);
-  color: var(--surface);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 .feedback-progress .done > span {
   background: var(--accent-soft);
@@ -71,28 +71,28 @@
   min-height: 0;
 }
 .feedback-body {
-  padding: 23px 29px 26px;
+  padding: 24px 32px 24px;
   overflow-y: auto;
   min-height: 0;
 }
 .feedback-category-options {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 .feedback-category-option {
   width: 100%;
   display: flex;
   align-items: flex-start;
-  gap: 13px;
-  padding: 19px 16px;
+  gap: 12px;
+  padding: 16px 16px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--surface);
   color: var(--foreground);
   text-align: left;
 }
 .feedback-category-option > svg {
-  margin-top: 2px;
+  margin-top: 0px;
   color: var(--muted-foreground);
   flex-shrink: 0;
 }
@@ -101,8 +101,8 @@
 }
 .feedback-category-option strong {
   display: block;
-  font-weight: 580;
-  font-size: 14px;
+  font-weight: 500;
+  font-size: var(--text-control);
 }
 .feedback-category-option:hover {
   border-color: var(--accent-border);
@@ -119,7 +119,7 @@
   width: 16px;
   height: 16px;
   border-radius: 100%;
-  margin-top: 3px;
+  margin-top: 4px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -135,7 +135,7 @@
 }
 .feedback-footer {
   border-top: 1px solid var(--border);
-  padding: 17px 29px;
+  padding: 16px 32px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -145,27 +145,27 @@
 .feedback-footer > div {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
 }
 .feedback-details-form {
   display: grid;
-  gap: 20px;
+  gap: 16px;
 }
 .feedback-dialog .field {
   display: grid;
   gap: 8px;
-  font-size: 12px;
-  font-weight: 550;
+  font-size: var(--text-control);
+  font-weight: 500;
   margin: 0;
 }
 .feedback-dialog textarea {
   width: 100%;
-  font-size: 13px;
+  font-size: var(--text-control);
   font-weight: 400;
 }
 .feedback-dialog textarea {
   border: 1px solid var(--input);
-  padding: 11px 12px;
+  padding: 12px 12px;
   border-radius: 8px;
   line-height: 1.6;
   min-height: 130px;
@@ -179,7 +179,7 @@
 }
 .feedback-attachment-controls {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
   margin-top: -11px;
 }
@@ -191,9 +191,9 @@
   gap: 8px;
 }
 .feedback-attachment-list > div {
-  font-size: 12px;
+  font-size: var(--text-control);
   display: flex;
-  gap: 7px;
+  gap: 8px;
   align-items: center;
 }
 .feedback-attachment-list span {
@@ -208,42 +208,42 @@
 }
 .feedback-review-content {
   display: grid;
-  gap: 23px;
+  gap: 24px;
 }
 .feedback-review-summary {
-  padding-bottom: 20px;
+  padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
 }
 .feedback-type-tag {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   color: var(--muted-foreground);
-  font-size: 11px;
-  margin-bottom: 10px;
+  font-size: var(--text-control);
+  margin-bottom: 8px;
 }
 .feedback-review-summary p {
-  font-size: 13px;
+  font-size: var(--text-control);
   color: var(--text-secondary);
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .feedback-dialog .muted {
-  font-size: 11px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
   line-height: 1.6;
 }
 .feedback-report-block {
   border: 1px solid var(--border);
   background: var(--surface-subtle);
-  border-radius: 10px;
-  padding: 15px;
+  border-radius: var(--card-radius);
+  padding: 16px;
 }
 .feedback-report-heading {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .feedback-report-heading > svg {
   color: var(--muted-foreground);
@@ -254,17 +254,17 @@
 }
 .feedback-report-heading strong {
   display: block;
-  font-weight: 570;
-  font-size: 12px;
+  font-weight: 500;
+  font-size: var(--text-control);
 }
 .feedback-report-heading span {
   display: block;
-  font-size: 11px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
-  margin-top: 3px;
+  margin-top: 4px;
 }
 .feedback-text-action {
-  font-size: 11px;
+  font-size: var(--text-control);
   color: var(--accent);
   background: transparent;
   padding: 0;
@@ -272,19 +272,19 @@
   text-underline-offset: 3px;
 }
 .feedback-report-disclosure {
-  font-size: 12px;
+  font-size: var(--text-control);
   color: var(--text-secondary);
   line-height: 1.6;
-  margin: 14px 0 10px;
+  margin: 12px 0 8px;
 }
 .feedback-preview-toggle {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 .feedback-report-preview {
   margin-top: 12px;
-  font-size: 11px;
+  font-size: var(--text-control);
   color: var(--text-secondary);
   line-height: 1.65;
 }
@@ -294,7 +294,7 @@
   overflow: auto;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 4px;
   font-size: 10px;
 }
 .feedback-report-removed {
@@ -307,15 +307,15 @@
   bottom: 24px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   max-width: calc(100vw - 32px);
-  padding: 15px 18px;
+  padding: 16px 16px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
   background: var(--surface-overlay);
   color: var(--foreground);
   box-shadow: var(--shadow-menu);
-  font-size: 13px;
+  font-size: var(--text-control);
 }
 .feedback-toast > svg {
   color: var(--success);
@@ -329,14 +329,14 @@
   border-radius: 4px;
 }
 .feedback-send-notice {
-  margin: 0 29px 15px;
+  margin: 0 32px 16px;
   background: var(--warning-soft);
   color: var(--warning);
   border-radius: 8px;
-  padding: 13px;
+  padding: 12px;
   display: grid;
-  gap: 6px;
-  font-size: 12px;
+  gap: 4px;
+  font-size: var(--text-control);
   line-height: 1.55;
 }
 .feedback-send-notice .feedback-text-action {
@@ -344,7 +344,7 @@
   color: inherit;
 }
 .feedback-header h2 {
-  padding-right: 30px;
+  padding-right: 32px;
   outline: none;
 }
 .feedback-details-form textarea:focus-visible {
@@ -364,17 +364,17 @@
 }
 @media (max-width: 480px) {
   .feedback-header {
-    padding: 20px 19px 19px;
+    padding: 16px 16px 16px;
   }
   .feedback-header h2 {
-    font-size: 21px;
+    font-size: 24px;
   }
   .feedback-dialog > .dialog-close {
     top: 16px;
     right: 14px;
   }
   .feedback-progress {
-    margin-inline: 19px;
+    margin-inline: 16px;
     gap: 12px;
   }
   .feedback-progress > div {
@@ -382,27 +382,27 @@
     gap: 4px;
   }
   .feedback-body {
-    padding: 20px 19px;
+    padding: 16px 16px;
   }
   .feedback-footer {
-    padding: 14px 19px;
+    padding: 12px 16px;
   }
   .feedback-footer .button {
-    font-size: 11px;
-    padding-inline: 9px;
+    font-size: var(--text-control);
+    padding-inline: 8px;
   }
   .feedback-category-option {
-    padding: 16px 13px;
-    gap: 10px;
+    padding: 16px 12px;
+    gap: 8px;
   }
   .feedback-category-option strong {
-    font-size: 13px;
+    font-size: var(--text-control);
   }
   .feedback-toast {
     right: 16px;
     bottom: 16px;
   }
   .feedback-send-notice {
-    margin-inline: 19px;
+    margin-inline: 16px;
   }
 }

@@ -34,7 +34,7 @@ export function ScheduleRow({
         </span>
       </div>
       <p className="saved-schedule-time">
-        <CalendarClock size={14} aria-hidden="true" />
+        <CalendarClock size={16} aria-hidden="true" />
         {schedule.kind === 'once'
           ? schedule.runAt
             ? scheduleDate(schedule.runAt, schedule.timeZone, dateFormat)
@@ -108,7 +108,7 @@ export function ScheduleRunRow({ run }: { run: ScheduleRun }) {
             onClick={() => setOpen(!open)}
           >
             {!open && <span>{run.messagePreview}</span>}
-            <ChevronDown size={14} aria-hidden="true" />
+            <ChevronDown size={16} aria-hidden="true" />
           </button>
           {open && (
             <div className="schedule-run-body" id={bodyId}>
@@ -119,7 +119,7 @@ export function ScheduleRunRow({ run }: { run: ScheduleRun }) {
                 aria-label={`Open the message from ${run.title} in the conversation`}
                 onClick={() => focusChatMessage(run.messageId!)}
               >
-                <MessageCircle size={13} aria-hidden="true" />
+                <MessageCircle size={16} aria-hidden="true" />
                 Open in conversation
               </Button>
             </div>

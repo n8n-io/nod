@@ -333,7 +333,7 @@ export function VaultItemForm({
       </div>
       <div className="vault-hero">
         <span className="vault-hero-icon" aria-hidden="true">
-          {kind === 'card' ? <CreditCard size={44} /> : <Globe size={44} />}
+          {kind === 'card' ? <CreditCard size={48} /> : <Globe size={48} />}
         </span>
         <VaultTitle>{kind === 'card' ? 'New payment card' : 'New login'}</VaultTitle>
       </div>

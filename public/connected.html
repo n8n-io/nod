@@ -9,18 +9,19 @@
     <title>Otto</title>
     <style>
       @font-face {
-        font-family: 'Inter';
-        src: url('/fonts/InterVariable.woff2') format('woff2');
-        font-weight: 100 900;
+        font-family: 'n8n Baumer Uniwidth';
+        src: url('/fonts/n8nBaumerUniwidth.woff2') format('woff2');
+        font-weight: 400 800;
+        font-style: oblique 0deg 14deg;
         font-display: swap;
       }
       :root {
-        background: #fdfcfe;
-        color: #211c28;
+        background: #fafafa;
+        color: #191919;
       }
       :root[data-theme='dark'] {
-        background: #1e1b21;
-        color: #f5f1f6;
+        background: #191919;
+        color: #fafafa;
       }
       body {
         margin: 0;
@@ -30,8 +31,9 @@
         padding: 24px;
         box-sizing: border-box;
         text-align: center;
+        font-feature-settings: 'liga' 1;
         font:
-          15px/1.6 'Inter',
+          16px/1.6 'n8n Baumer Uniwidth',
           -apple-system,
           BlinkMacSystemFont,
           'Segoe UI',

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronUp, KeyRound, LogOut, Monitor, Moon, Settings, Sun, UserRound } from 'lucide-react';
 import type { AccountTheme, AccountUser } from '../../shared/account';
-import { AccountAvatar } from './account-avatar';
+import { AccountAvatar, accountInitials } from './account-avatar';
 import { ConnectionMenu } from './connection-menu';
 import { desktopSettingsAvailable } from '../lib/desktop';
 
@@ -50,7 +50,7 @@ export function AccountMenuItems({
             role={menu ? 'menuitem' : undefined}
             onClick={(event) => openSettings('Profile', event.currentTarget)}
           >
-            <UserRound size={18} aria-hidden="true" />
+            <UserRound size={16} aria-hidden="true" />
             Profile
           </button>
         </>
@@ -67,7 +67,7 @@ export function AccountMenuItems({
           )
         }
       >
-        <Settings size={18} aria-hidden="true" />
+        <Settings size={16} aria-hidden="true" />
         Settings
         {shortcuts && (
           <kbd className="account-settings-shortcut">
@@ -80,7 +80,7 @@ export function AccountMenuItems({
         role={menu ? 'menuitem' : undefined}
         onClick={(event) => openSettings('Models', event.currentTarget)}
       >
-        <KeyRound size={18} aria-hidden="true" />
+        <KeyRound size={16} aria-hidden="true" />
         Models
       </button>
       {!desktop && (
@@ -130,7 +130,7 @@ export function AccountMenuItems({
               account.onLogout();
             }}
           >
-            <LogOut size={18} aria-hidden="true" />
+            <LogOut size={16} aria-hidden="true" />
             Sign out
           </button>
         </>
@@ -143,15 +143,15 @@ export function AccountMenu({ account }: { account: AccountControls }) {
   return (
     <div className="sidebar-account-menu">
       <ConnectionMenu
-        label="Account menu"
+        label={`Account menu: ${accountInitials(account.user)} ${account.user.name}`}
         compact
         triggerClassName="nav-link account-menu-trigger"
         trigger={
           <>
-            <AccountAvatar user={account.user} />
+            <AccountAvatar user={account.user} />{' '}
             <span className="nav-label">{account.user.name}</span>
             <span className="account-menu-chevron" aria-hidden="true">
-              <ChevronUp size={18} strokeWidth={1.75} />
+              <ChevronUp size={16} />
             </span>
           </>
         }

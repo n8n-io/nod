@@ -57,7 +57,7 @@ export function TaskCard({ task }: { task: Task }) {
         <h2 id={headingId}>{task.title}</h2>
         <span className="task-status" data-status={task.status}>
           <Icon
-            size={13}
+            size={16}
             aria-hidden="true"
             className={task.status === 'working' ? 'spin' : undefined}
           />

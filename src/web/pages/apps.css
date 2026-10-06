@@ -5,20 +5,20 @@
   margin-bottom: 32px;
 }
 .apps-page .apps-group + .apps-group {
-  margin-top: 28px;
+  margin-top: 24px;
 }
 .apps-page .apps-group > h2 {
   margin: 0 0 12px;
   color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
   line-height: 1.5;
 }
 .apps-page .app-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: start;
-  gap: 14px;
+  gap: 12px;
 }
 .apps-page .app-card {
   min-width: 0;
@@ -37,8 +37,8 @@
 }
 .apps-page .app-card-summary > img,
 .apps-page .app-card-summary > svg {
-  width: 25px;
-  height: 25px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
 }
 .apps-page .app-card-copy {
@@ -47,29 +47,29 @@
 .apps-page .app-card-copy h3 {
   margin: 0;
   color: var(--foreground);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .apps-page .app-card-description {
   margin: 4px 0 0;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.5;
 }
 .apps-page .app-card-unavailable {
-  margin: 5px 0 0;
+  margin: 4px 0 0;
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--text-control);
   line-height: 1.5;
 }
 .apps-page .app-connect,
 .apps-page .app-manage {
   min-height: var(--control-height);
-  padding: 0 10px;
+  padding: 0 8px;
   border-radius: var(--control-radius);
-  font-size: 12px;
+  font-size: var(--text-control);
   white-space: nowrap;
 }
 .app-manage-dialog .account-disconnect {
@@ -83,12 +83,12 @@
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding-right: 22px;
+  padding-right: 24px;
 }
 .app-manage-heading > img,
 .app-manage-heading > svg {
   flex: none;
-  margin-top: 3px;
+  margin-top: 4px;
   color: var(--muted-foreground);
 }
 .app-manage-heading h2 {
@@ -114,22 +114,22 @@
 }
 .app-manage-dialog .compact-account-name {
   display: block;
-  font-size: 13px;
-  font-weight: 550;
+  font-size: var(--text-control);
+  font-weight: 500;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .app-manage-dialog .compact-account-email {
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.5;
 }
 .app-account-status {
   display: flex;
   align-items: center;
-  gap: 5px;
-  margin-top: 6px;
+  gap: 4px;
+  margin-top: 4px;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.5;
 }
 .app-account-status > svg {
@@ -158,20 +158,20 @@
 .app-website-dialog form {
   display: grid;
   gap: 16px;
-  margin-top: 22px;
+  margin-top: 24px;
 }
 .app-discovery-path {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   padding: 8px 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 .app-discovery-path strong {
-  font-size: 11px;
+  font-size: var(--text-control);
 }
 .app-discovery-methods {
-  font-size: 12px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
 }
 .app-discovery-methods summary {
@@ -179,7 +179,7 @@
 }
 .app-discovery-dialog form {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 .app-discovery-dialog form {
   margin-top: 16px;
@@ -204,7 +204,7 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 22px;
+  margin-top: 24px;
 }
 .app-disconnect-dialog[aria-busy='true'] > .dialog-close {
   visibility: hidden;

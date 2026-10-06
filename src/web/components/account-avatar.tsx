@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react';
 import type { AccountUser } from '../../shared/account';
 
+export function accountInitials(user: AccountUser) {
+  return (
+    user.name
+      .trim()
+      .split(/\s+/)
+      .map((part) => part[0])
+      .slice(0, 2)
+      .join('') || 'S'
+  );
+}
+
 export function AccountAvatar({ user, large = false }: { user: AccountUser; large?: boolean }) {
   const [failed, setFailed] = useState(false);
   const picture = user.avatarUrl?.startsWith('/api/') ? user.avatarUrl : null;
@@ -10,12 +21,7 @@ export function AccountAvatar({ user, large = false }: { user: AccountUser; larg
       {picture && !failed ? (
         <img src={picture} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
       ) : (
-        user.name
-          .trim()
-          .split(/\s+/)
-          .map((part) => part[0])
-          .slice(0, 2)
-          .join('') || 'S'
+        accountInitials(user)
       )}
     </span>
   );

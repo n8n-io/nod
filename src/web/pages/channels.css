@@ -7,20 +7,20 @@
 }
 
 .channels-page .channels-group + .channels-group {
-  margin-top: 28px;
+  margin-top: 24px;
 }
 
 .channels-page .channels-group > h2 {
   margin: 0 0 12px;
   color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
   line-height: 1.5;
 }
 
 .channels-page .channel-options {
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
+  gap: 12px;
 }
 
 .channels-page .channel-option {
@@ -48,8 +48,8 @@
 }
 
 .channels-page .channel-option-heading > img {
-  width: 25px;
-  height: 25px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
 }
 
@@ -60,8 +60,8 @@
 .channels-page .channel-option-heading h3 {
   margin: 0;
   color: var(--foreground);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -70,15 +70,15 @@
   max-width: none;
   margin: 4px 0 0;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.5;
 }
 
 .channels-page .channel-connect {
   min-height: var(--control-height);
-  padding: 0 10px;
+  padding: 0 8px;
   border-radius: var(--control-radius);
-  font-size: 12px;
+  font-size: var(--text-control);
   white-space: nowrap;
 }
 
@@ -107,22 +107,22 @@
 .channels-page .channel-account-label {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 10px;
+  gap: 0 8px;
   overflow-wrap: anywhere;
 }
 
 .channels-page .channel-account-label strong {
-  font-size: 13px;
+  font-size: var(--text-control);
   font-weight: 500;
 }
 
 .channels-page .channel-account-label > span {
   display: block;
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 
 .channels-page .channel-account-status {
-  margin-top: 3px;
+  margin-top: 4px;
   color: var(--muted-foreground);
 }
 
@@ -142,7 +142,7 @@
   min-height: var(--control-height);
   padding-inline: 12px;
   border-radius: var(--control-radius);
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 
 .channels-page .channel-remove {
@@ -151,7 +151,7 @@
   height: 32px;
   min-height: 32px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--muted-foreground);
 }
 
@@ -175,7 +175,7 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 22px;
+  margin-top: 24px;
 }
 
 .channel-remove-dialog[aria-busy='true'] > .dialog-close {
@@ -183,29 +183,29 @@
 }
 
 .channel-delivery-dialog {
-  gap: 20px;
+  gap: 16px;
 }
 
 .channel-delivery-dialog > p {
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
   line-height: 1.6;
 }
 
 .channel-delivery-address {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
 .channel-delivery-address > span {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 
 .channel-delivery-address code {
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 
 @container (max-width: 700px) {
@@ -215,7 +215,7 @@
 
   .channels-page .channel-account {
     margin: 0 16px;
-    padding: 10px 0 12px;
+    padding: 8px 0 12px;
     border-top: 1px solid var(--border);
   }
 }
@@ -230,7 +230,7 @@
   }
 
   .channels-page .channel-account-actions {
-    margin-top: 10px;
+    margin-top: 8px;
   }
 
   .channels-page .channel-account-actions > .button:not(.channel-remove) {
@@ -283,7 +283,7 @@
 
 .telegram-checklist {
   display: grid;
-  margin: 22px 0;
+  margin: 24px 0;
   padding: 0;
   list-style: none;
 }
@@ -292,8 +292,8 @@
   position: relative;
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
-  gap: 14px;
-  padding-bottom: 22px;
+  gap: 12px;
+  padding-bottom: 24px;
 }
 
 .telegram-checklist > li:not(:last-child)::before {
@@ -313,13 +313,13 @@
 .telegram-checklist-marker {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: 1px solid var(--border);
   border-radius: 50%;
   color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  font-weight: 500;
 }
 
 .telegram-checklist > li.is-active .telegram-checklist-marker {
@@ -339,43 +339,43 @@
 
 .telegram-checklist li > div > strong {
   display: block;
-  padding-top: 3px;
-  font-size: 14px;
-  font-weight: 600;
+  padding-top: 4px;
+  font-size: var(--text-control);
+  font-weight: 500;
 }
 
 .telegram-checklist li > div > p,
 .telegram-checklist-form > p {
-  margin-top: 5px;
+  margin-top: 4px;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
   line-height: 1.6;
 }
 
 .telegram-checklist-form > p code {
   color: var(--foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 
 .telegram-checklist .telegram-candidate {
   margin-top: 8px;
-  padding: 12px 14px;
+  padding: 12px 12px;
   border: 1px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--control-radius);
   background: var(--accent-soft);
   color: var(--foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
 }
 
 .telegram-candidate strong {
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
 .telegram-checklist-form {
   display: grid;
   justify-items: start;
-  gap: 14px;
+  gap: 12px;
   margin-top: 8px;
 }
 
@@ -404,7 +404,7 @@
 
 .telegram-pairing-qr figcaption {
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
 }
 
 .telegram-manual-toggle {
@@ -413,7 +413,7 @@
   border: 0;
   background: none;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
@@ -427,12 +427,12 @@
   display: inline-flex;
   align-items: center;
   min-height: 24px;
-  padding: 0 9px;
+  padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-subtle);
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--text-control);
   font-weight: 500;
   white-space: nowrap;
 }

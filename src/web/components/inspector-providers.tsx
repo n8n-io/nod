@@ -31,7 +31,7 @@ export function ProviderUsageRow({ usage }: { usage: ProviderUsageSummary }) {
   return (
     <details className="inspector-provider-operation">
       <summary>
-        <ChevronDown size={13} className="inspector-disclosure" />
+        <ChevronDown size={16} className="inspector-disclosure" />
         <span className="inspector-provider-name">
           <strong>{operationLabel(usage.operation)}</strong>
           <small>{usage.model ?? usage.category}</small>

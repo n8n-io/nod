@@ -116,7 +116,7 @@ export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
           aria-hidden="true"
         />
         <span className="attachment-media-label" aria-hidden="true">
-          <Play size={20} />
+          <Play size={24} />
           Video
         </span>
       </>
@@ -135,7 +135,7 @@ export function AttachmentThumbnail({ image }: { image: ImagePreview }) {
               : 'Spreadsheet';
   return (
     <span className="attachment-media-thumbnail" aria-hidden="true">
-      {kind === 'audio' ? <Music2 size={28} /> : <FileText size={28} />}
+      {kind === 'audio' ? <Music2 size={32} /> : <FileText size={32} />}
       <span>{label}</span>
       {kind !== 'audio' && kind !== 'pdf' && (
         <span className="attachment-document-name">{image.name}</span>
@@ -296,7 +296,7 @@ export function ImageViewer({
                   aria-disabled={index === 0}
                   onClick={() => move(index - 1)}
                 >
-                  <ChevronLeft size={20} />
+                  <ChevronLeft size={24} />
                 </Button>
                 <Button
                   variant="ghost"
@@ -305,7 +305,7 @@ export function ImageViewer({
                   aria-disabled={index === safeImages.length - 1}
                   onClick={() => move(index + 1)}
                 >
-                  <ChevronRight size={20} />
+                  <ChevronRight size={24} />
                 </Button>
               </>
             )}
@@ -316,7 +316,7 @@ export function ImageViewer({
                   download={current.name}
                   aria-label={`Download ${current.name}`}
                 >
-                  <Download size={18} />
+                  <Download size={16} />
                 </a>
               </Button>
             )}

@@ -5,12 +5,12 @@
   justify-content: center;
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
+  padding: 0 4px;
+  border-radius: var(--control-radius);
   background: var(--primary);
   color: var(--primary-foreground);
   font-size: 10px;
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   flex: none;

@@ -107,13 +107,13 @@ export function Inspector({
       />
       <header className="inspector-heading">
         <div>
-          <Monitor size={17} />
+          <Monitor size={16} />
           <h2>Inspector</h2>
           <span className="dev-label">DEV</span>
         </div>
         <div>
           <Button variant="ghost" size="icon" aria-label="Close inspector" onClick={onClose}>
-            <X size={17} />
+            <X size={16} />
           </Button>
         </div>
       </header>
@@ -145,7 +145,7 @@ export function Inspector({
             key={value}
             onClick={() => setTab(value)}
           >
-            <Icon size={14} />
+            <Icon size={16} />
             {label}
           </button>
         ))}
@@ -171,7 +171,7 @@ export function Inspector({
                 trigger={
                   <>
                     Turn
-                    <ChevronDown size={14} aria-hidden="true" />
+                    <ChevronDown size={16} aria-hidden="true" />
                   </>
                 }
               >

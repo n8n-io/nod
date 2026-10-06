@@ -5,7 +5,7 @@
 .attachment-image-gallery {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
+  gap: 4px;
   width: 320px;
   max-width: 100%;
   margin-bottom: 8px;
@@ -28,7 +28,7 @@
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--control-radius);
   background: var(--muted);
   cursor: zoom-in;
 }
@@ -76,7 +76,7 @@
   gap: 8px;
   width: 100%;
   height: 100%;
-  font-size: 12px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
 }
 
@@ -107,8 +107,8 @@
   place-items: center;
   background: var(--image-overlay);
   color: var(--image-foreground);
-  font-size: 26px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 500;
 }
 
 .pending-attachment.is-preview {
@@ -118,7 +118,7 @@
   height: 72px;
   padding: 0;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--control-radius);
 }
 
 .pending-attachment.is-preview .pending-image-preview {
@@ -129,7 +129,7 @@
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--control-radius);
   background: var(--muted);
   cursor: zoom-in;
 }
@@ -168,8 +168,8 @@
   bottom: 5px;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--background);
   pointer-events: none;
@@ -243,7 +243,7 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--muted);
   overscroll-behavior: contain;
 }
@@ -261,13 +261,13 @@
 .attachment-data-preview {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
   height: min(720px, calc(var(--dialog-viewport-height) - 148px));
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 20px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--background);
@@ -277,7 +277,7 @@
 .attachment-data-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -289,7 +289,7 @@
 
 .attachment-data-toolbar {
   justify-content: space-between;
-  font-size: 13px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
 }
 
@@ -301,9 +301,9 @@
 
 .attachment-data-toolbar select {
   max-width: 220px;
-  padding: 7px 9px;
+  padding: 8px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--background);
   color: var(--foreground);
 }
@@ -323,7 +323,7 @@
 
 .attachment-markdown {
   flex: 1;
-  padding: 0 10px 12px;
+  padding: 0 8px 12px;
   line-height: 1.6;
 }
 
@@ -337,9 +337,9 @@
   min-height: 0;
   margin: 0;
   overflow: auto;
-  padding: 0 10px 12px;
-  font-family: 'SFMono-Regular', Consolas, monospace;
-  font-size: 13px;
+  padding: 0 8px 12px;
+  font-family: var(--font-mono);
+  font-size: var(--text-control);
   line-height: 1.6;
   white-space: pre;
   tab-size: 4;
@@ -355,7 +355,7 @@
 .attachment-markdown td,
 .attachment-table-scroll th,
 .attachment-table-scroll td {
-  padding: 8px 10px;
+  padding: 8px 8px;
   border: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
@@ -364,7 +364,7 @@
 .attachment-table-scroll {
   flex: 1;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 .attachment-table-scroll th {
@@ -391,12 +391,12 @@
 .attachment-table-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: 4px 8px;
 }
 
 .attachment-data-limit {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
 }
 
@@ -410,7 +410,7 @@
   overflow: auto;
   padding: 12px;
   background: var(--muted);
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 .attachment-pdf-page canvas {
@@ -435,7 +435,7 @@
 .attachment-pdf-loading {
   align-self: center;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
 }
 
 .attachment-pdf-controls {
@@ -444,7 +444,7 @@
   justify-content: center;
   gap: 4px;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
@@ -456,7 +456,7 @@
 .attachment-pdf-controls .button {
   height: 28px;
   padding-inline: 8px;
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 
 .attachment-pdf-controls .button-icon {
@@ -497,7 +497,7 @@
 
 .attachment-viewer-counter {
   padding-inline: 8px;
-  font-size: 13px;
+  font-size: var(--text-control);
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
@@ -505,7 +505,7 @@
 .attachment-viewer-actions {
   display: flex;
   flex-shrink: 0;
-  gap: 2px;
+  gap: 0;
 }
 
 .attachment-viewer-actions .button,

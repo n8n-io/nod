@@ -51,19 +51,13 @@ export function SignIn({
           <span>otto</span>
         </div>
         <div className="sign-in-form">
-          <span className="sign-in-mark">
-            <BrandMark />
-          </span>
           <h1 data-analytics-public>Sign in to Otto</h1>
           <p data-analytics-public>
-            Hand off the work you keep putting off.
-            <br />
-            Otto gets it done while you sleep.
+            Ask Otto to research, prepare files and work with your connected apps.
           </p>
           {visibleError && <Notice>{visibleError}</Notice>}
           {available ? (
             <Button
-              variant="outline"
               className="google-sign-in"
               data-analytics-public
               disabled={busy}
@@ -87,11 +81,11 @@ export function SignIn({
       </div>
       <aside className="sign-in-story" aria-label="What Otto can help with" data-analytics-public>
         <div className="sign-in-note">
-          <span className="sign-in-note-time">Today, 07:30</span>
+          <span className="sign-in-note-time">Your morning brief</span>
           <h2>
-            Ready when
+            A clear start
             <br />
-            you wake up.
+            to your day.
           </h2>
           <div className="sign-in-examples">
             <div>

@@ -1,8 +1,8 @@
 .model-intro {
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: var(--text-control);
   line-height: 1.6;
-  margin: 0 0 20px;
+  margin: 0 0 16px;
 }
 .model-settings-dialog {
   width: min(700px, calc(100vw - 32px));
@@ -10,13 +10,13 @@
   overflow-y: auto;
 }
 .model-settings-dialog > h2 {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 .model-services {
   border-top: 1px solid var(--border);
 }
 .model-service {
-  padding: 20px 0;
+  padding: 16px 0;
   border-bottom: 1px solid var(--border);
 }
 .model-service-heading,
@@ -27,13 +27,13 @@
   gap: 12px;
 }
 .model-service h4 {
-  font-size: 14px;
-  margin: 0 0 5px;
-  font-weight: 600;
+  font-size: var(--text-control);
+  margin: 0 0 4px;
+  font-weight: 500;
 }
 .model-service p {
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: var(--text-control);
   margin: 0;
 }
 .model-service-identity {
@@ -78,14 +78,14 @@
 .model-key-form {
   display: grid;
   gap: 12px;
-  margin-top: 20px;
+  margin-top: 16px;
 }
 .model-key-form > div {
   display: flex;
-  gap: 6px;
+  gap: 4px;
 }
 .model-connection {
-  padding-top: 18px;
+  padding-top: 16px;
 }
 .model-connection-label {
   display: flex;
@@ -98,14 +98,14 @@
 }
 .model-connection-label strong {
   display: block;
-  font-size: 13px;
+  font-size: var(--text-control);
   overflow-wrap: anywhere;
 }
 .model-connection-meta {
   display: block;
   color: var(--muted-foreground);
-  font-size: 11px;
-  margin-top: 3px;
+  font-size: var(--text-control);
+  margin-top: 4px;
 }
 .model-connection-meta.reconnect {
   color: var(--error);
@@ -159,7 +159,7 @@
 }
 .model-footnote {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: var(--text-control);
   line-height: 1.6;
   margin-top: 16px;
 }
@@ -170,28 +170,28 @@
   text-underline-offset: 3px;
 }
 .model-sign-in {
-  margin-top: 20px;
-  font-size: 13px;
+  margin-top: 16px;
+  font-size: var(--text-control);
 }
 .model-sign-in a {
   display: inline-flex;
-  gap: 5px;
+  gap: 4px;
   align-items: center;
 }
 .model-sign-in form {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin-top: 12px;
 }
 .model-picker {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 2px 6px;
+  gap: 4px;
+  padding: 0 0 4px;
   min-width: 0;
 }
 .model-picker-trigger {
-  gap: 7px;
+  gap: 8px;
   max-width: 70%;
   font-weight: 500;
 }
@@ -201,7 +201,7 @@
   white-space: nowrap;
 }
 .model-picker-source {
-  font-size: 11px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -216,10 +216,10 @@
   overflow-y: auto;
 }
 .model-picker-dialog > h2 {
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .model-picker-dialog .model-intro {
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .model-options {
   max-height: min(44dvh, 420px);
@@ -235,7 +235,7 @@
   width: 100%;
   border: 0;
   border-radius: 8px;
-  padding: 10px 8px;
+  padding: 8px 8px;
   background: transparent;
   color: var(--foreground);
   text-align: left;
@@ -251,20 +251,20 @@
 }
 .model-option strong {
   display: block;
-  font-size: 13px;
+  font-size: var(--text-control);
   font-weight: 500;
 }
 .model-option small {
   display: block;
   color: var(--muted-foreground);
-  font-size: 11px;
-  margin-top: 3px;
+  font-size: var(--text-control);
+  margin-top: 4px;
 }
 .model-option svg {
   flex-shrink: 0;
 }
 .model-empty {
-  font-size: 13px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
   padding: 12px 8px;
 }
@@ -272,7 +272,7 @@
   margin-top: 12px;
   width: 100%;
   justify-content: flex-start;
-  font-size: 12px;
+  font-size: var(--text-control);
 }
 @media (max-width: 640px) {
   .model-service-heading {
@@ -302,8 +302,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 16px;
-  margin-bottom: 20px;
-  font-size: 12px;
+  margin-bottom: 16px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
 }
 .model-current .model-picker,
@@ -314,8 +314,8 @@
   max-width: 260px;
 }
 .model-details {
-  margin-top: 20px;
-  font-size: 12px;
+  margin-top: 16px;
+  font-size: var(--text-control);
   color: var(--muted-foreground);
 }
 .model-details summary {
@@ -324,7 +324,7 @@
 .model-setup p {
   margin: 12px 0 24px;
   color: var(--muted-foreground);
-  font-size: 14px;
+  font-size: var(--text-control);
   text-align: center;
 }
 .model-picker-setup {

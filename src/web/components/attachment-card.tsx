@@ -58,7 +58,7 @@ function FileGlyph({ name, mimeType }: { name: string; mimeType: string }) {
               : /pdf|^text\/|document|msword/.test(type)
                 ? FileText
                 : File;
-  return <Icon className="attachment-card-glyph" size={20} aria-hidden="true" />;
+  return <Icon className="attachment-card-glyph" size={24} aria-hidden="true" />;
 }
 
 function CardDetails({ name, mimeType, meta }: { name: string; mimeType: string; meta: string }) {

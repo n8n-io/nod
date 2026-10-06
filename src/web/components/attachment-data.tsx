@@ -45,7 +45,7 @@ function SpreadsheetLink({ href }: { href: string }) {
       aria-label={`Open ${host}`}
     >
       {host}
-      <ExternalLink size={13} aria-hidden="true" />
+      <ExternalLink size={16} aria-hidden="true" />
     </a>
   );
 }
@@ -250,7 +250,7 @@ export default function AttachmentData({
   return (
     <div className="attachment-data-preview" aria-busy={!content && !error}>
       <div className="attachment-data-heading">
-        <FileText size={18} aria-hidden="true" />
+        <FileText size={16} aria-hidden="true" />
         <strong>{name}</strong>
       </div>
       {error ? (

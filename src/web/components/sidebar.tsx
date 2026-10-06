@@ -10,7 +10,7 @@ import {
   Sun,
 } from 'lucide-react';
 import { BrandMark } from './brand';
-import { AccountAvatar } from './account-avatar';
+import { AccountAvatar, accountInitials } from './account-avatar';
 import { ConnectionMenu } from './connection-menu';
 import { AccountMenu, AccountMenuItems, type AccountControls } from './account-menu';
 import { currentTheme, setTheme, subscribeTheme } from '../lib/theme';
@@ -218,9 +218,9 @@ export function Sidebar({
           onClick={onToggle}
         >
           {collapsed ? (
-            <PanelLeftOpen size={18} aria-hidden="true" />
+            <PanelLeftOpen size={16} aria-hidden="true" />
           ) : (
-            <PanelLeftClose size={18} aria-hidden="true" />
+            <PanelLeftClose size={16} aria-hidden="true" />
           )}
         </button>
       </div>
@@ -274,10 +274,10 @@ export function Sidebar({
                     onNavigate(item.path);
                   }}
                 >
-                  <Icon size={26} strokeWidth={1.8} aria-hidden="true" />
+                  <Icon size={24} aria-hidden="true" />
                   <span className="nav-label" data-analytics-public>
                     {item.label}
-                  </span>
+                  </span>{' '}
                   {item.path === '/' && unreadBadge}
                   {item.key && (
                     <kbd className="nav-shortcut" aria-hidden="true">
@@ -317,7 +317,11 @@ export function Sidebar({
           type="button"
           ref={mobileTrigger}
           className="mobile-menu-trigger"
-          aria-label="Navigation menu"
+          aria-label={
+            account && !account.local
+              ? `Navigation menu: ${accountInitials(account.user)} ${account.user.name}`
+              : 'Navigation menu'
+          }
           aria-haspopup="dialog"
           aria-expanded={mobileMenuOpen}
           onClick={() => setMobileMenuOpen(true)}
@@ -325,7 +329,7 @@ export function Sidebar({
           {account && !account.local ? (
             <AccountAvatar user={account.user} />
           ) : (
-            <LayoutGrid size={22} aria-hidden="true" />
+            <LayoutGrid size={24} aria-hidden="true" />
           )}
         </button>
         <dialog
@@ -362,8 +366,8 @@ export function Sidebar({
                       onNavigate(item.path);
                     }}
                   >
-                    <Icon size={24} strokeWidth={1.8} aria-hidden="true" />
-                    <span data-analytics-public>{item.label}</span>
+                    <Icon size={24} aria-hidden="true" />
+                    <span data-analytics-public>{item.label}</span>{' '}
                     {item.path === '/' && unreadBadge}
                   </a>
                 );
@@ -383,7 +387,7 @@ export function Sidebar({
                 />
               ) : (
                 <button type="button" onClick={toggleTheme}>
-                  <ThemeIcon size={18} aria-hidden="true" /> {themeLabel}
+                  <ThemeIcon size={16} aria-hidden="true" /> {themeLabel}
                 </button>
               )}
               {inspectorEnabled && (
@@ -396,7 +400,7 @@ export function Sidebar({
                     onToggleInspector?.();
                   }}
                 >
-                  <Monitor size={18} aria-hidden="true" /> Inspector
+                  <Monitor size={16} aria-hidden="true" /> Inspector
                 </button>
               )}
             </div>
@@ -412,7 +416,7 @@ export function Sidebar({
             title={themeLabel}
             onClick={toggleTheme}
           >
-            <ThemeIcon size={22} aria-hidden="true" />
+            <ThemeIcon size={24} aria-hidden="true" />
             <span className="nav-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
           </button>
         )}
@@ -427,7 +431,7 @@ export function Sidebar({
             title={`Inspector (${shortcutLabel('i', mac)})`}
             onClick={onToggleInspector}
           >
-            <Monitor size={22} aria-hidden="true" />
+            <Monitor size={24} aria-hidden="true" />
             <span className="nav-label">Inspector</span>
             <kbd className="nav-shortcut" aria-hidden="true">
               I
@@ -444,7 +448,7 @@ export function Sidebar({
               onOpenChange={setAppMenuOpen}
               trigger={
                 <>
-                  <MoreHorizontal size={22} aria-hidden="true" />
+                  <MoreHorizontal size={24} aria-hidden="true" />
                   <span className="nav-label">More</span>
                 </>
               }
@@ -462,7 +466,7 @@ export function Sidebar({
                     onToggleInspector?.();
                   }}
                 >
-                  <Monitor size={18} aria-hidden="true" /> Inspector
+                  <Monitor size={16} aria-hidden="true" /> Inspector
                 </button>
               )}
             </ConnectionMenu>
@@ -480,7 +484,7 @@ export function Sidebar({
               title="Settings"
               onClick={(event) => account.onSettings('Appearance', event.currentTarget)}
             >
-              <Settings size={22} aria-hidden="true" />
+              <Settings size={24} aria-hidden="true" />
               <span className="nav-label" data-analytics-public>
                 Settings
               </span>

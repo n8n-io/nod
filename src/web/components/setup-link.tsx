@@ -87,9 +87,9 @@ function SetupAction({ href, setup, label }: { href: string; setup: SetupKind; l
     return (
       <button type="button" data-setup={setup} data-status={status} disabled>
         {status === 'filled' ? (
-          <Check size={14} aria-hidden="true" />
+          <Check size={16} aria-hidden="true" />
         ) : (
-          <Icon size={14} aria-hidden="true" />
+          <Icon size={16} aria-hidden="true" />
         )}
         {label}
       </button>
@@ -97,7 +97,7 @@ function SetupAction({ href, setup, label }: { href: string; setup: SetupKind; l
   if (setup === 'app')
     return (
       <button type="button" data-setup={setup} onClick={() => window.location.assign(href)}>
-        <Icon size={14} aria-hidden="true" />
+        <Icon size={16} aria-hidden="true" />
         {label}
       </button>
     );
@@ -110,7 +110,7 @@ function SetupAction({ href, setup, label }: { href: string; setup: SetupKind; l
       referrerPolicy="no-referrer"
       title={href.startsWith('https://') ? new URL(href).host : undefined}
     >
-      <Icon size={14} aria-hidden="true" />
+      <Icon size={16} aria-hidden="true" />
       {label}
     </a>
   );

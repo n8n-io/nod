@@ -447,13 +447,16 @@ export function VaultDetails({
   }
 
   function editableValue(field: string, value: React.ReactNode) {
+    const label = `Edit ${field === 'label' ? 'name' : field === 'username' ? identityName.toLowerCase() : field}`;
     return (
       <button
         type="button"
         className="vault-detail-value vault-field-edit"
-        aria-label={`Edit ${field === 'label' ? 'name' : field === 'username' ? identityName.toLowerCase() : field}`}
+        title={label}
+        data-vault-field={field}
         onClick={() => startEditing(field)}
       >
+        <span className="sr-only">{label}: </span>
         {value}
       </button>
     );
@@ -621,7 +624,7 @@ export function VaultDetails({
               setDeleting(true);
             }}
           >
-            <Trash2 size={15} aria-hidden="true" />
+            <Trash2 size={16} aria-hidden="true" />
             Delete {item}
           </button>
         </div>

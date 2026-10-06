@@ -247,7 +247,7 @@ function Toggle({
 }
 
 function Note({ change }: { change: { busy: boolean } }) {
-  return change.busy ? <LoaderCircle size={14} className="spin" aria-label="Saving" /> : null;
+  return change.busy ? <LoaderCircle size={16} className="spin" aria-label="Saving" /> : null;
 }
 
 function ScheduleControls({ schedule, canPause }: { schedule: Schedule; canPause: boolean }) {
@@ -476,7 +476,7 @@ export function PlanFooter({
             aria-label={`Ask Otto about ${item.title}`}
             onClick={() => setOpen(!open)}
           >
-            <Sparkles size={13} aria-hidden="true" />
+            <Sparkles size={16} aria-hidden="true" />
             Ask Otto
           </Button>
           {remove}
@@ -494,7 +494,7 @@ export function NewPlan({ onAsk }: { onAsk(text: string): void }) {
   return (
     <>
       <Button size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Sparkles size={14} aria-hidden="true" />
+        <Sparkles size={16} aria-hidden="true" />
         New schedule
       </Button>
       {open && (

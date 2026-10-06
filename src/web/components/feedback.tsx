@@ -448,7 +448,7 @@ export function FeedbackDialog({
       disabled={frozen || copyStatus === 'copying'}
       onClick={() => void copyReport()}
     >
-      <Copy size={15} aria-hidden="true" />
+      <Copy size={16} aria-hidden="true" />
       {copyStatus === 'copying' ? 'Copying…' : copyStatus === 'copied' ? 'Copied' : 'Copy trace'}
     </Button>
   );
@@ -485,7 +485,7 @@ export function FeedbackDialog({
                 className={index === step ? 'current' : index < step ? 'done' : ''}
                 aria-current={index === step ? 'step' : undefined}
               >
-                <span>{index < step ? <Check size={12} aria-hidden="true" /> : index + 1}</span>
+                <span>{index < step ? <Check size={16} aria-hidden="true" /> : index + 1}</span>
                 {label}
               </div>
             ))}
@@ -506,7 +506,7 @@ export function FeedbackDialog({
                         setPreview(false);
                       }}
                     >
-                      <item.icon size={21} aria-hidden="true" />
+                      <item.icon size={24} aria-hidden="true" />
                       <div>
                         <strong>{item.title}</strong>
                       </div>
@@ -554,7 +554,7 @@ export function FeedbackDialog({
                       size="sm"
                       onClick={() => fileInput.current?.click()}
                     >
-                      <Paperclip size={15} aria-hidden="true" />
+                      <Paperclip size={16} aria-hidden="true" />
                       Add screenshots
                     </Button>
                   </div>
@@ -562,7 +562,7 @@ export function FeedbackDialog({
                     <div className="feedback-attachment-list">
                       {attachments.map((file, index) => (
                         <div key={`${file.name}-${index}`}>
-                          <Paperclip size={14} aria-hidden="true" />
+                          <Paperclip size={16} aria-hidden="true" />
                           <span>{file.name}</span>
                           <button
                             type="button"
@@ -571,7 +571,7 @@ export function FeedbackDialog({
                               setAttachments(attachments.filter((_, value) => value !== index))
                             }
                           >
-                            <X size={14} aria-hidden="true" />
+                            <X size={16} aria-hidden="true" />
                           </button>
                         </div>
                       ))}
@@ -583,7 +583,7 @@ export function FeedbackDialog({
                   {feedback && (
                     <div className="feedback-review-summary">
                       <span className="feedback-type-tag">
-                        <category.icon size={14} aria-hidden="true" />
+                        <category.icon size={16} aria-hidden="true" />
                         {category.short}
                       </span>
                       <p>{feedback}</p>
@@ -600,7 +600,7 @@ export function FeedbackDialog({
                       className={`feedback-report-block ${hasReport ? '' : 'feedback-report-removed'}`}
                     >
                       <div className="feedback-report-heading">
-                        <FileJson size={19} aria-hidden="true" />
+                        <FileJson size={24} aria-hidden="true" />
                         <div>
                           <strong>Diagnostic report</strong>
                           <span>
@@ -638,7 +638,7 @@ export function FeedbackDialog({
                             aria-expanded={preview}
                           >
                             {preview ? 'Hide report' : 'Review report'}
-                            <ChevronDown size={14} aria-hidden="true" />
+                            <ChevronDown size={16} aria-hidden="true" />
                           </button>
                           {preview && (
                             <div className="feedback-report-preview">
@@ -750,7 +750,7 @@ export function FeedbackDialog({
                       setError('');
                     }}
                   >
-                    <ArrowLeft size={15} aria-hidden="true" />
+                    <ArrowLeft size={16} aria-hidden="true" />
                     Back
                   </Button>
                 ) : development ? (
@@ -774,13 +774,13 @@ export function FeedbackDialog({
                     'Sending…'
                   ) : step === 2 ? (
                     <>
-                      <Send size={15} aria-hidden="true" />
+                      <Send size={16} aria-hidden="true" />
                       Send feedback
                     </>
                   ) : (
                     <>
                       Continue
-                      <ArrowRight size={15} aria-hidden="true" />
+                      <ArrowRight size={16} aria-hidden="true" />
                     </>
                   )}
                 </Button>
@@ -791,10 +791,10 @@ export function FeedbackDialog({
       </Dialog>
       {toast && (
         <div className="feedback-toast" role="status" aria-live="polite">
-          <Check size={18} aria-hidden="true" />
+          <Check size={16} aria-hidden="true" />
           <span>Thanks for your feedback!</span>
           <button type="button" aria-label="Dismiss notification" onClick={() => setToast(false)}>
-            <X size={15} aria-hidden="true" />
+            <X size={16} aria-hidden="true" />
           </button>
         </div>
       )}

@@ -12,9 +12,9 @@ export const statusLabels: Record<TurnStatus, string> = {
 export const activeStatuses: TurnStatus[] = ['queued', 'running', 'waiting'];
 
 export function StatusIcon({ status }: { status: TurnStatus }) {
-  if (status === 'running') return <LoaderCircle size={15} className="spin" aria-hidden="true" />;
-  if (status === 'waiting') return <MessageCircle size={15} aria-hidden="true" />;
-  if (status === 'succeeded') return <CircleCheck size={15} aria-hidden="true" />;
-  if (status === 'failed') return <CircleAlert size={15} aria-hidden="true" />;
-  return <CircleDashed size={15} aria-hidden="true" />;
+  if (status === 'running') return <LoaderCircle size={16} className="spin" aria-hidden="true" />;
+  if (status === 'waiting') return <MessageCircle size={16} aria-hidden="true" />;
+  if (status === 'succeeded') return <CircleCheck size={16} aria-hidden="true" />;
+  if (status === 'failed') return <CircleAlert size={16} aria-hidden="true" />;
+  return <CircleDashed size={16} aria-hidden="true" />;
 }

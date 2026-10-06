@@ -1,5 +1,5 @@
 .chat-emoji-popover.is-compact {
-  padding: 5px;
+  padding: 4px;
   border-radius: 999px;
   overflow: visible;
 }
@@ -7,7 +7,7 @@
 .chat-reaction-strip {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
 }
 
 .chat-reaction-strip button {

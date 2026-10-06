@@ -82,11 +82,11 @@ export function ChatSkeleton({
           <div className="composer-tools">
             <div className="composer-left">
               <span className="button button-ghost button-icon">
-                <Paperclip size={18} />
+                <Paperclip size={16} />
               </span>
             </div>
             <span className="button button-icon send-button ghost-send">
-              <ArrowUp size={19} />
+              <ArrowUp size={24} />
             </span>
           </div>
         </div>

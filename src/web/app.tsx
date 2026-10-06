@@ -450,10 +450,10 @@ function AuthenticatedApp({
             ? settingsTrigger.current
             : document.querySelector<HTMLElement>(
                 window.innerWidth <= 640
-                  ? '[aria-label="Navigation menu"]'
+                  ? '.mobile-menu-trigger'
                   : account.local
                     ? '[aria-label="Settings"]'
-                    : '[aria-label="Account menu"]',
+                    : '.account-menu-trigger',
               )
         }
       />

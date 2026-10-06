@@ -62,7 +62,7 @@ export function DeletePlan({ id, title }: { id: string; title: string }) {
             setError('');
           }}
         >
-          <Trash2 size={14} />
+          <Trash2 size={16} />
           Delete
         </Button>
       </DialogTrigger>
