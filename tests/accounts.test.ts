@@ -1593,6 +1593,66 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     t.mock.timers.reset();
     assert.equal(failed.signInStatus(expiring.attempt).status, 'failed');
   });
+  test('new ChatGPT connections select GPT-6 Sol or an offered fallback without replacing an existing choice', async (t) => {
+    const f = await fixture(t);
+    const offered = ['gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol'];
+    const backend = {
+      ...f.backend,
+      signIn: stubSignIn(async () => subscriptionCredential()),
+      async catalog(
+        provider: Parameters<typeof f.backend.catalog>[0],
+        method: Parameters<typeof f.backend.catalog>[1],
+      ) {
+        return (await f.backend.catalog(provider, method)).filter((model) =>
+          offered.includes(model.choice.id),
+        );
+      },
+    };
+    const connect = async (owner: Awaited<ReturnType<typeof f.create>>, connectionId?: string) => {
+      const started = await owner.start('openai', connectionId);
+      await owner.complete(
+        new URL(`http://localhost:1455/auth/callback?state=${started.attempt}&code=fixture`),
+      );
+    };
+    const owner = await f.create('fixture-owner', backend);
+    await connect(owner);
+    const original = owner.view().selection!;
+    assert.equal(original.modelId, 'gpt-6-sol');
+    assert.equal(owner.configured, true);
+    await owner.select({ ...original, modelId: 'gpt-6-luna', effort: 'medium' });
+    const chosen = owner.view().selection;
+    await connect(owner, original.connectionId);
+    assert.deepEqual(owner.view().selection, chosen);
+    await connect(owner);
+    assert.deepEqual(owner.view().selection, chosen);
+    await owner.refreshCatalog(original.connectionId);
+    assert.deepEqual(owner.view().selection, chosen);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const removed = owner.view().selection!.connectionId;
+      await owner.remove(removed);
+      assert.equal(owner.view().selection, null);
+      await connect(owner);
+      assert.equal(owner.view().selection?.modelId, 'gpt-6-sol');
+      assert.notEqual(owner.view().selection?.connectionId, removed);
+      assert.equal(owner.configured, true);
+    }
+    offered.splice(offered.indexOf('gpt-6-sol'), 1);
+    const fallback = await f.create('fixture-fallback', backend);
+    await connect(fallback);
+    assert.equal(fallback.view().selection?.modelId, 'gpt-6.1-sol');
+    offered.splice(offered.indexOf('gpt-6.1-sol'), 1);
+    const limited = await f.create('fixture-limited', backend);
+    await connect(limited);
+    assert.equal(limited.view().selection?.modelId, 'gpt-6-luna');
+    assert.equal(limited.configured, true);
+    const existing = await f.create('fixture-existing');
+    await existing.addKey('openai', 'fixture-api-key');
+    const previous = existing.view().selection;
+    const restored = await f.create('fixture-existing', backend);
+    await connect(restored);
+    assert.deepEqual(restored.view().selection, previous);
+  });
+
   test('a verified account survives catalog failure and recovers without repeating sign-in', async (t) => {
     const f = await fixture(t);
     let exchanges = 0;
@@ -1832,7 +1892,10 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     let refreshes = 0;
     const backend = {
       ...f.backend,
-      signIn: stubSignIn(async () => subscriptionCredential(0)),
+      signIn: stubSignIn(async () => ({
+        ...subscriptionCredential(0),
+        email: 'fixture-before@example.test',
+      })),
       catalog: (
         provider: Parameters<typeof f.backend.catalog>[0],
         method: Parameters<typeof f.backend.catalog>[1],
@@ -1845,7 +1908,12 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         if (failure)
           throw new ModelAuthError('ChatGPT temporarily unavailable.', failure === 'terminal');
         if (value.type !== 'oauth') throw new Error('Expected OAuth credential.');
-        return { ...value, refresh: 'fixture-rotated-refresh', expires: Date.now() + 3600000 };
+        return {
+          ...value,
+          email: 'fixture-after@example.test',
+          refresh: 'fixture-rotated-refresh',
+          expires: Date.now() + 3600000,
+        };
       },
     };
     const owner = await f.create('fixture-owner', backend);
@@ -1863,8 +1931,14 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(refreshed?.type, 'oauth');
     assert.equal((refreshed as { refresh: string }).refresh, 'fixture-rotated-refresh');
     assert.equal(refreshes, 2);
-    failure = 'terminal';
     catalogFailure = false;
+    await owner.refreshCatalog(owner.view().connections[0].id);
+    assert.equal(owner.view().connections[0].label, 'fixture-after@example.test');
+    assert.doesNotMatch(
+      JSON.stringify(owner.view()),
+      /fixture-access|fixture-rotated-refresh|fixture-account/,
+    );
+    failure = 'terminal';
     t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 3600000 });
     await assert.rejects(access.read(), /Reconnect/);
     t.mock.timers.reset();

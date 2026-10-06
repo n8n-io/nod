@@ -287,7 +287,7 @@ export function createModelService(options: {
         ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status=excluded.status WHERE model_connections.owner_id=excluded.owner_id`,
           [id, ownerId, provider, method, label, JSON.stringify(definitions), managed, status],
         );
-        await selectDefault(client, provider, definitions, id, managed, status);
+        await selectDefault(client, provider, method, definitions, id, managed, status);
       },
       signal,
     );
@@ -297,6 +297,7 @@ export function createModelService(options: {
   async function selectDefault(
     client: PoolClient,
     provider: ModelProvider,
+    method: ModelMethod,
     definitions: ModelDefinition[],
     id: string,
     managed: boolean,
@@ -306,14 +307,18 @@ export function createModelService(options: {
       managed && options.bootstrap?.provider === provider
         ? (options.bootstrap.model ?? agentModels[provider])
         : agentModels[provider];
-    const preferred = definitions.find((model) => model.choice.id === preferredId);
+    const subscription = method === 'subscription';
+    const preferred =
+      (subscription && definitions.find((model) => model.choice.id === 'gpt-6-sol')) ||
+      definitions.find((model) => model.choice.id === preferredId) ||
+      (subscription ? definitions[0] : undefined);
     if (
       preferred &&
       status === 'connected' &&
       (!managed || options.bootstrap?.provider === provider)
     )
       await client.query(
-        'UPDATE model_settings SET selection=$2,selection_set=true WHERE owner_id=$1 AND NOT selection_set',
+        'UPDATE model_settings SET selection=$2,selection_set=true WHERE owner_id=$1 AND (NOT selection_set OR ($3 AND selection IS NULL))',
         [
           ownerId,
           JSON.stringify({
@@ -323,6 +328,7 @@ export function createModelService(options: {
               ? 'high'
               : preferred.choice.efforts[0],
           }),
+          subscription,
         ],
       );
   }
@@ -346,10 +352,18 @@ export function createModelService(options: {
           throw new ConnectionError('This connection has no supported models.');
         signal?.throwIfAborted();
         await client.query(
-          "UPDATE model_connections SET models=$3,status='connected' WHERE id=$1 AND owner_id=$2",
-          [id, ownerId, JSON.stringify(definitions)],
+          "UPDATE model_connections SET models=$3,status='connected',label=COALESCE($4,label) WHERE id=$1 AND owner_id=$2",
+          [id, ownerId, JSON.stringify(definitions), value.type === 'oauth' ? value.email : null],
         );
-        await selectDefault(client, row.provider, definitions, id, row.managed, 'connected');
+        await selectDefault(
+          client,
+          row.provider,
+          row.method,
+          definitions,
+          id,
+          row.managed,
+          'connected',
+        );
       },
       signal,
     );

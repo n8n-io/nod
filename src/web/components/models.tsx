@@ -7,6 +7,7 @@ import {
   Plus,
   RefreshCw,
   SlidersHorizontal,
+  UserRound,
   X,
 } from 'lucide-react';
 import type { ModelConnection, ModelProvider, ModelsResponse } from '../../shared/models';
@@ -57,6 +58,29 @@ function useModels() {
   return { ...page, busy, error: error || page.error, setError, change };
 }
 
+function ModelConnectionAvatar({ connection }: { connection: ModelConnection }) {
+  const initials =
+    connection.method !== 'api_key' && connection.label.includes('@')
+      ? connection.label
+          .split('@')[0]
+          .split(/[.\s_-]+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => Array.from(part)[0])
+          .join('')
+          .toLocaleUpperCase()
+      : '';
+  return (
+    <span className={`model-connection-avatar${initials ? '' : ' neutral'}`} aria-hidden="true">
+      {initials ||
+        (connection.method === 'api_key' ? <KeyRound size={18} /> : <UserRound size={19} />)}
+      <span className="model-connection-provider">
+        <span className={`model-provider-logo ${connection.provider}`} />
+      </span>
+    </span>
+  );
+}
+
 export function ModelSettings({
   onDirtyChange,
   onboarding = false,
@@ -73,11 +97,9 @@ export function ModelSettings({
   const mounted = useRef(true);
   const [callback, setCallback] = useState('');
   const dirty = models.busy || signingIn || !!signIn || Boolean(key.trim());
-  const [chooseSignal, setChooseSignal] = useState(0);
   const available = models.data?.connections.filter(
     (connection) => connection.status === 'connected' && connection.models.length > 0,
   ).length;
-  const seen = useRef<number | undefined>(undefined);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -88,12 +110,6 @@ export function ModelSettings({
         );
     };
   }, []);
-  useEffect(() => {
-    if (available === undefined) return;
-    if (onboarding && seen.current !== undefined && available > seen.current)
-      setChooseSignal((count) => count + 1);
-    seen.current = available;
-  }, [available, onboarding]);
   useEffect(() => {
     onDirtyChange?.(dirty);
     return () => onDirtyChange?.(false);
@@ -219,29 +235,33 @@ export function ModelSettings({
             aria-label={modelProviderNames[provider]}
           >
             <div className="model-service-heading" data-analytics-public>
-              <div>
-                <h4>{modelProviderNames[provider]}</h4>
-                <p>
-                  {provider === 'openai'
-                    ? data.subscriptionAvailable
-                      ? 'API key or ChatGPT plan'
-                      : 'API key'
-                    : provider === 'anthropic'
-                      ? 'API key for Claude models'
-                      : 'Many models with one connection'}
-                </p>
+              <div className="model-service-identity">
+                <span className={`model-provider-logo ${provider}`} aria-hidden="true" />
+                <div>
+                  <h4>{modelProviderNames[provider]}</h4>
+                  <p>
+                    {provider === 'openai'
+                      ? data.subscriptionAvailable
+                        ? 'API key or ChatGPT plan'
+                        : 'API key'
+                      : provider === 'anthropic'
+                        ? 'API key for Claude models'
+                        : 'Many models with one connection'}
+                  </p>
+                </div>
               </div>
               <div className="model-service-actions">
                 {(provider === 'openrouter' ||
                   (provider === 'openai' && data.subscriptionAvailable)) && (
                   <Button
                     type="button"
+                    className="model-connect-button"
                     variant="outline"
                     size="sm"
                     disabled={busy}
                     onClick={() => void connect(provider as 'openai' | 'openrouter')}
                   >
-                    <Plus size={14} />
+                    <span className={`model-provider-logo ${provider}`} aria-hidden="true" />
                     {provider === 'openai' ? 'Connect ChatGPT' : 'Connect account'}
                   </Button>
                 )}
@@ -315,64 +335,71 @@ export function ModelSettings({
               .map((connection) => (
                 <div className="model-connection" key={connection.id}>
                   <div className="model-connection-label">
-                    <span className={`model-status ${connection.status}`} aria-hidden="true" />
-                    <div>
+                    <ModelConnectionAvatar connection={connection} />
+                    <div className="model-connection-identity">
                       <strong>{connection.label}</strong>
-                      <span>
+                      <span className={`model-connection-meta ${connection.status}`}>
                         {connection.status === 'reconnect'
                           ? 'Reconnect to continue'
                           : connection.status === 'loading'
                             ? 'Connected · Load models to continue'
                             : `${modelSource(connection)} · ${connection.models.length} models`}
-                        {data.selection?.connectionId === connection.id && ' · Selected'}
                         {connection.managed && ' · Server settings'}
                       </span>
                     </div>
                   </div>
-                  <div className="model-service-actions">
-                    {connection.method !== 'api_key' && (
+                  <div className="model-connection-controls">
+                    {data.selection?.connectionId === connection.id && (
+                      <span className="model-connection-selected">
+                        <Check size={12} aria-hidden="true" />
+                        Selected
+                      </span>
+                    )}
+                    <div className="model-service-actions">
+                      {connection.method !== 'api_key' && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() =>
+                            void connect(provider as 'openai' | 'openrouter', connection.id)
+                          }
+                        >
+                          Reconnect
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="ghost"
-                        size="sm"
+                        size={connection.status === 'loading' ? 'sm' : 'icon'}
+                        aria-label={`Refresh ${connection.label} models`}
                         disabled={busy}
                         onClick={() =>
-                          void connect(provider as 'openai' | 'openrouter', connection.id)
+                          void models.change(
+                            `/api/models/connections/${connection.id}/refresh`,
+                            'POST',
+                          )
                         }
                       >
-                        Reconnect
+                        <RefreshCw size={15} />
+                        {connection.status === 'loading' && 'Load models'}
                       </Button>
-                    )}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size={connection.status === 'loading' ? 'sm' : 'icon'}
-                      aria-label={`Refresh ${connection.label} models`}
-                      disabled={busy}
-                      onClick={() =>
-                        void models.change(
-                          `/api/models/connections/${connection.id}/refresh`,
-                          'POST',
-                        )
-                      }
-                    >
-                      <RefreshCw size={15} />
-                      {connection.status === 'loading' && 'Load models'}
-                    </Button>
-                    {!connection.managed && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Remove ${connection.label}`}
-                        disabled={busy}
-                        onClick={() =>
-                          void models.change(`/api/models/connections/${connection.id}`, 'DELETE')
-                        }
-                      >
-                        <X size={15} />
-                      </Button>
-                    )}
+                      {!connection.managed && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove ${connection.label}`}
+                          disabled={busy}
+                          onClick={() =>
+                            void models.change(`/api/models/connections/${connection.id}`, 'DELETE')
+                          }
+                        >
+                          <X size={15} />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -386,7 +413,7 @@ export function ModelSettings({
                 <p>All models from your connected services</p>
               </div>
               <div className="model-service-actions">
-                <ModelPicker manageConnections={false} openSignal={chooseSignal} />
+                <ModelPicker manageConnections={false} />
               </div>
             </div>
           </section>
@@ -477,20 +504,12 @@ export function ModelSettings({
 export function ModelPicker({
   setup = false,
   manageConnections = true,
-  openSignal = 0,
 }: {
   setup?: boolean;
   manageConnections?: boolean;
-  openSignal?: number;
 }) {
   const models = useModels();
   const [open, setOpen] = useState(false);
-  useEffect(() => {
-    if (openSignal > 0) {
-      setSearch('');
-      setOpen(true);
-    }
-  }, [openSignal]);
   const [manage, setManage] = useState(false);
   const [search, setSearch] = useState('');
   const selected = models.data?.selection;

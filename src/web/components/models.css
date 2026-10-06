@@ -36,11 +36,44 @@
   font-size: 12px;
   margin: 0;
 }
+.model-service-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.model-service-identity > .model-provider-logo {
+  width: 20px;
+  height: 20px;
+}
 .model-service-actions {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+.model-connect-button {
+  width: 150px;
+  justify-content: flex-start;
+}
+.model-provider-logo {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  background: currentColor;
+  mask-size: contain;
+  mask-position: center;
+  mask-repeat: no-repeat;
+}
+.model-provider-logo.openai {
+  mask-image: url('/logos/chatgpt.svg');
+}
+.model-provider-logo.anthropic {
+  mask-image: url('/logos/anthropic.svg');
+}
+.model-provider-logo.openrouter {
+  mask-image: url('/logos/openrouter.svg');
 }
 .model-key-form {
   display: grid;
@@ -57,7 +90,10 @@
 .model-connection-label {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
+}
+.model-connection-identity {
   min-width: 0;
 }
 .model-connection-label strong {
@@ -65,21 +101,61 @@
   font-size: 13px;
   overflow-wrap: anywhere;
 }
-.model-connection-label span:not(.model-status) {
+.model-connection-meta {
   display: block;
   color: var(--muted-foreground);
   font-size: 11px;
   margin-top: 3px;
 }
-.model-status {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--foreground);
-  flex-shrink: 0;
+.model-connection-meta.reconnect {
+  color: var(--error);
 }
-.model-status.reconnect {
-  background: var(--destructive);
+.model-connection-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.model-connection-avatar.neutral {
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+}
+.model-connection-provider {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--foreground);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.model-connection-provider .model-provider-logo {
+  width: 13px;
+  height: 13px;
+}
+.model-connection-controls {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+.model-connection-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 550;
 }
 .model-footnote {
   color: var(--muted-foreground);
@@ -206,6 +282,10 @@
   }
   .model-connection {
     align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .model-connection-controls {
+    margin-left: auto;
   }
   .model-service-heading .model-service-actions {
     max-width: 100%;

@@ -2301,8 +2301,8 @@ test('every Otto tool schema reaches a model provider as a root object with its 
   assert.deepEqual(merged.required, ['origin']);
 });
 
-function codexFixtureAccess(accountId = 'fixture-owner') {
-  return `fixture.${Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })).toString('base64url')}.signature`;
+function codexFixtureAccess(accountId = 'fixture-owner', claims: Record<string, unknown> = {}) {
+  return `fixture.${Buffer.from(JSON.stringify({ ...claims, 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })).toString('base64url')}.signature`;
 }
 
 test('ChatGPT refuses occupied loopback ports before publishing sign-in or requesting tokens', async (t) => {
@@ -2429,6 +2429,9 @@ test('Pi ChatGPT sign-in validates callbacks, exchanges PKCE once and drains can
   );
   const grants: URLSearchParams[] = [];
   let tokenStatus = 200;
+  let metadata: Record<string, unknown> = {
+    'https://api.openai.com/profile': { email: 'fixture-profile@example.test' },
+  };
   let holdExchange = false;
   let exchangeStarted!: () => void;
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2449,7 +2452,7 @@ test('Pi ChatGPT sign-in validates callbacks, exchanges PKCE once and drains can
     }
     return tokenStatus === 200
       ? Response.json({
-          access_token: codexFixtureAccess(),
+          access_token: codexFixtureAccess('fixture-owner', metadata),
           refresh_token: 'fixture-refresh',
           expires_in: 3600,
         })
@@ -2543,7 +2546,8 @@ test('Pi ChatGPT sign-in validates callbacks, exchanges PKCE once and drains can
   assert.equal(credential.type, 'oauth');
   if (credential.type !== 'oauth') throw new Error('Expected OAuth.');
   assert.equal(credential.accountId, 'fixture-owner');
-  assert.equal(credential.access, codexFixtureAccess());
+  assert.equal(credential.access, codexFixtureAccess('fixture-owner', metadata));
+  assert.equal(credential.email, 'fixture-profile@example.test');
   assert.equal(grants.length, 1);
   assert.equal(grants[0].get('grant_type'), 'authorization_code');
   assert.equal(grants[0].get('client_id'), authorization.searchParams.get('client_id'));
@@ -2562,6 +2566,30 @@ test('Pi ChatGPT sign-in validates callbacks, exchanges PKCE once and drains can
   assert.equal((await manual.result).type, 'oauth');
   assert.equal(grants.at(-1)!.get('code'), 'manual-code');
   assert.ok(servers.every((server) => !server.listening));
+
+  for (const [claims, expected] of [
+    [{ email: 'fixture-top@example.test' }, 'fixture-top@example.test'],
+    [{}, undefined],
+    [{ email: { invalid: true }, 'https://api.openai.com/profile': 'invalid' }, undefined],
+    [
+      {
+        email: 'not-an-email',
+        'https://api.openai.com/profile': { email: 'fixture-nested@example.test' },
+      },
+      'fixture-nested@example.test',
+    ],
+    [{ email: 'a'.repeat(321) + '@example.test' }, undefined],
+  ] as const) {
+    metadata = claims;
+    const flow = await backend.signIn({ signal: controller.signal });
+    flow.complete(
+      new URL(`http://localhost:1455/auth/callback?state=${flow.state}&code=metadata-code`),
+    );
+    const saved = await flow.result;
+    assert.equal(saved.type, 'oauth');
+    if (saved.type !== 'oauth') throw new Error('Expected OAuth.');
+    assert.equal(saved.email, expected);
+  }
 
   const cancel = new AbortController();
   const pending = await backend.signIn({ signal: cancel.signal });
@@ -2625,9 +2653,12 @@ test('Pi ChatGPT refresh distinguishes rejected credentials from transient servi
     refresh: 'fixture-refresh',
     expires: 1,
     accountId: 'fixture-owner',
+    email: 'fixture-previous@example.test',
   };
   let status = 200;
+  let expectedRefresh = 'fixture-refresh';
   let changed = false;
+  let metadata: Record<string, unknown> = { email: 'fixture-refreshed@example.test' };
   let offline = false;
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2636,12 +2667,12 @@ test('Pi ChatGPT refresh distinguishes rejected credentials from transient servi
     assert.ok(init?.signal);
     const body = new URLSearchParams(String(init?.body));
     assert.equal(body.get('grant_type'), 'refresh_token');
-    assert.equal(body.get('refresh_token'), 'fixture-refresh');
+    assert.equal(body.get('refresh_token'), expectedRefresh);
     assert.equal(body.get('client_id'), 'app_EMoamEEZ73f0CkXaXp7hrann');
     if (offline) throw new Error('Offline fixture-refresh fixture-owner');
     return status === 200
       ? Response.json({
-          access_token: codexFixtureAccess(changed ? 'foreign' : 'fixture-owner'),
+          access_token: codexFixtureAccess(changed ? 'foreign' : 'fixture-owner', metadata),
           refresh_token: 'fixture-rotated',
           expires_in: 3600,
         })
@@ -2653,6 +2684,19 @@ test('Pi ChatGPT refresh distinguishes rejected credentials from transient servi
   if (renewed.type !== 'oauth') throw new Error('Expected OAuth.');
   assert.equal(renewed.refresh, 'fixture-rotated');
   assert.equal(renewed.accountId, credential.accountId);
+  assert.equal(renewed.email, 'fixture-refreshed@example.test');
+  expectedRefresh = 'fixture-rotated';
+  for (const claims of [
+    {},
+    { email: false, 'https://api.openai.com/profile': { email: 'invalid' } },
+  ]) {
+    metadata = claims;
+    const next = await backend.refresh(renewed);
+    assert.equal(next.type, 'oauth');
+    if (next.type !== 'oauth') throw new Error('Expected OAuth.');
+    assert.equal(next.email, 'fixture-refreshed@example.test');
+  }
+  expectedRefresh = 'fixture-refresh';
   for (const code of [400, 401, 403, 429, 500, 503]) {
     status = code;
     const before = calls;

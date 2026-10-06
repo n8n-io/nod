@@ -3287,6 +3287,56 @@ test('native Settings and feedback preserve the active credential form and its r
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
+test('a selected model arriving during onboarding keeps the picker closed', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+      });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      let models = { connections: [], selection: null, subscriptionAvailable: true };
+      globalThis.fetch = async path => {
+        assert.equal(path, '/api/models');
+        return Response.json(models);
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { ModelSettings } = await import('./src/web/components/models.tsx');
+      const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+      const root = createRoot(document.querySelector('#root'));
+      try {
+        await act(async () => root.render(createElement(ModelSettings, { onboarding: true })));
+        models = {
+          connections: [{ id: 'fixture', provider: 'openai', method: 'subscription', label: 'Fixture', status: 'connected', managed: false,
+            models: [{ id: 'gpt-6-sol', name: 'GPT-6 Sol', efforts: ['high'], images: true, contextWindow: 1000 }] }],
+          selection: { connectionId: 'fixture', modelId: 'gpt-6-sol', effort: 'high' },
+          subscriptionAvailable: true,
+        };
+        await act(async () => pageDataCache.update('/api/models', () => models));
+        assert.equal(Boolean(document.querySelector('[role="dialog"]')), false);
+        const picker = document.querySelector('[aria-label="Choose model"]');
+        assert.ok(picker);
+        assert.equal(picker.disabled, false);
+        await act(async () => picker.dispatchEvent(new Event('click', { bubbles: true })));
+        assert.equal(Boolean(document.querySelector('[role="dialog"]')), true);
+      } finally {
+        await act(async () => root.unmount());
+        pageDataCache.clear();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test('model sign-in cancellation reaches the server on dismissal, unmount and a late start response', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

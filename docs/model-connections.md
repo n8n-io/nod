@@ -4,23 +4,26 @@ Otto keeps one selected connection, model, and effort per owner. All channels us
 
 ## Connection methods
 
-| Service    | Methods                             | Default, when available |
-| ---------- | ----------------------------------- | ----------------------- |
-| OpenAI     | API key; ChatGPT plan in local Otto | GPT-6.1 Sol, high       |
-| Anthropic  | API key                             | Claude Opus 5.5, high   |
-| OpenRouter | API key; browser sign-in with PKCE  | GPT-6.1 Sol, high       |
+| Service    | Methods                            | Default, when available |
+| ---------- | ---------------------------------- | ----------------------- |
+| OpenAI     | API key                            | GPT-6.1 Sol, high       |
+| ChatGPT    | ChatGPT plan in local Otto         | GPT-6 Sol, high         |
+| Anthropic  | API key                            | Claude Opus 5.5, high   |
+| OpenRouter | API key; browser sign-in with PKCE | GPT-6.1 Sol, high       |
 
-Onboarding shows model connections before app connections. Environment connections appear as connected services without exposing saved keys. The model control lets the owner confirm or change the default before opening chat. Onboarding continues once a model is selected. An empty chat without a model shows one connection action in place of the message box.
+Onboarding shows model connections before app connections. Environment connections appear as connected services without exposing saved keys. A first ChatGPT connection selects GPT-6 Sol automatically when available, without opening the model picker. The model control lets the owner change the default before opening chat. Onboarding continues once a model is selected. An empty chat without a model shows one connection action in place of the message box.
 
-Use **Models** in the account menu to add, refresh, reconnect, or remove connections. Connect all the services you want. The model control above chat shows one searchable list from all connected services and uses high effort where the model supports it. Each model shows the connection that receives the request. Choosing a model also chooses its connection. Adding a connection keeps an existing choice. If the requested default is unavailable, select a listed model.
+Use **Models** in the account menu to add, refresh, reconnect, or remove connections. Connect all the services you want. The model control above chat shows one searchable list from all connected services and uses high effort where the model supports it. Each model shows the connection that receives the request. Choosing a model also chooses its connection. Adding a connection keeps an existing choice. For API connections whose default is unavailable, select a listed model.
 
-OpenRouter checks the key through its authenticated [key endpoint](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key), then lists models that support text and tools. Its catalog supplies context limits, image support, prices, and effort information. Pi supplies known protocol settings. New compatible entries use its OpenAI-compatible adapter. The request requires parameter support and disables provider fallbacks. Refresh a connection to update its catalog; a failed refresh keeps the last valid list. OpenAI and Anthropic choices must also exist in the installed Pi catalog. ChatGPT choices use the intersection of the account's Codex catalog and Pi's Codex models; the preferred defaults are unchanged.
+OpenRouter checks the key through its authenticated [key endpoint](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key), then lists models that support text and tools. Its catalog supplies context limits, image support, prices, and effort information. Pi supplies known protocol settings. New compatible entries use its OpenAI-compatible adapter. The request requires parameter support and disables provider fallbacks. Refresh a connection to update its catalog; a failed refresh keeps the last valid list. OpenAI and Anthropic choices must also exist in the installed Pi catalog. ChatGPT choices use the intersection of the account's Codex catalog and Pi's Codex models. If GPT-6 Sol is unavailable for a first ChatGPT connection, Otto uses its OpenAI default when offered, then the first supported model. Reconnecting or adding another account keeps an existing choice.
 
 ## Credentials
 
 Saved credentials use the existing encrypted grant vault. The macOS key store uses Keychain. Other hosts need `OTTO_VAULT_KEY`, a base64 value for a 32-byte key. Credentials never enter the agent workspace or model context. The API returns safe metadata and model choices. The key form clears its value on submission and does not store it in browser storage.
 
-Environment keys remain server-managed connections. They stay in server memory and are not copied into the database. `LLM_PROVIDER` and `LLM_MODEL` set the initial choice. The saved choice takes priority. Removing the selected saved connection clears the choice and requires another explicit selection.
+ChatGPT account labels and avatar initials use an optional email from the existing sign-in token. This is display metadata only; account fencing still uses the account ID. Missing or malformed email leaves a generic account avatar with the ChatGPT badge and does not block sign-in.
+
+Environment keys remain server-managed connections. They stay in server memory and are not copied into the database. `LLM_PROVIDER` and `LLM_MODEL` set the initial choice. The saved choice takes priority. Removing the selected saved connection clears the choice. A later ChatGPT connection selects its default if the owner has not chosen another model.
 
 Sign-in attempts bind the owner, state, PKCE verifier, and callback address. The owner can check a pending attempt's status without receiving credentials. The desktop app opens the system browser; the web app opens a new tab. A manual callback form remains available. Completion consumes the attempt once; cancellation and expiry release its listener and pending work. Refresh, replacement, and removal use database locks. Token rotation saves the credential as one encrypted value. Error and Inspector redaction include current and replaced secret values.
 

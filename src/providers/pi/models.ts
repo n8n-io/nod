@@ -8,6 +8,7 @@ import {
 } from '@earendil-works/pi-ai';
 import { ModelRuntime, type ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { z } from 'zod';
+import { decodeJwt } from 'jose';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { ModelAuthError } from '../../ports/models.ts';
 import type {
@@ -21,18 +22,32 @@ import { signInPage } from '../../shared/sign-in-page.ts';
 
 const resource = 'https://api.openai.com/v1';
 const random = () => randomBytes(32).toString('base64url');
+const emailSchema = z.string().trim().max(320).email().optional().catch(undefined);
 const codexCredentialSchema = z.object({
   type: z.literal('oauth'),
   access: z.string().min(1).max(32000),
   refresh: z.string().min(1).max(32000),
   expires: z.number().positive().finite(),
   accountId: z.string().min(1).max(1000),
-  email: z.string().optional(),
+  email: emailSchema,
 });
 
 function codexCredential(value: unknown) {
   const parsed = codexCredentialSchema.safeParse(value);
   if (!parsed.success) throw new ModelAuthError('Reconnect your ChatGPT account in Models.', true);
+  try {
+    const claims = decodeJwt(parsed.data.access);
+    const profile = z
+      .object({ email: emailSchema })
+      .safeParse(claims['https://api.openai.com/profile']);
+    return {
+      ...parsed.data,
+      email:
+        emailSchema.parse(claims.email) ??
+        (profile.success ? profile.data.email : undefined) ??
+        parsed.data.email,
+    };
+  } catch {}
   return parsed.data;
 }
 
@@ -464,7 +479,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         const next = codexCredential(await oauth.refresh(current, AbortSignal.timeout(15000)));
         if (next.accountId !== current.accountId)
           throw new ModelAuthError('The ChatGPT account changed. Reconnect in Models.', true);
-        return { ...next, ...(current.email ? { email: current.email } : {}) };
+        return { ...next, email: next.email ?? current.email };
       } catch (error) {
         if (error instanceof ModelAuthError) throw error;
         const terminal =

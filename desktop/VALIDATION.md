@@ -1,5 +1,11 @@
 # Desktop experiment validation
 
+## Native ChatGPT sign-in — 2026-10-06
+
+An unpackaged Electron run of the ChatGPT sign-in changes in [PR #140](https://github.com/n8n-io/otto/pull/140) used an isolated desktop profile and Otto-managed Lima computer. Sign-in completed in the system browser with the selected ChatGPT workspace and returned automatically to Otto. Six models loaded, GPT-6 Sol was selected without opening a model picker, and the required Composio setup remained available. A real chat returned “Otto desktop sign-in verified.”
+
+After a normal quit and restart without importing configuration again, the saved ChatGPT connection, GPT-6 Sol selection and conversation remained available. A subsequent reconnect displayed the returned email and initials avatar with the ChatGPT badge, while retaining the selection. Provider heading logos and connection-button alignment were checked in the native window. The normal installed app and its profile were preserved. This is manual native source acceptance; installation and upgrade of the resulting signed release remain separate checks. Private evidence is in `.local/chatgpt-desktop-profile` and the session's native sign-in and restart screenshots.
+
 ## Official 0.1.2 installation — 2026-10-05
 
 The official `desktop-v0.1.2` release was built from `d62c062a639c2ef2192a5b8418105c1414afad90` after [exact-main CI](https://github.com/n8n-io/otto/actions/runs/37308477377) passed. [Build and publication](https://github.com/n8n-io/otto/actions/runs/37310113285) passed. The app and matching runtime are published prereleases, signed with the permanent Otto Internal certificate and not Apple-notarized.
