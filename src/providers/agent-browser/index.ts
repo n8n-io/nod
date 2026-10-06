@@ -124,12 +124,11 @@ function browserKey(value: string | undefined) {
   const modifiers = value?.split('+') ?? [];
   const key = modifiers.pop() ?? '';
   if (
+    !value ||
+    value.startsWith('-') ||
     new Set(modifiers).size !== modifiers.length ||
     modifiers.some((modifier) => !['Control', 'Shift', 'Alt', 'Meta'].includes(modifier)) ||
-    !(
-      browserKeys.includes(key) ||
-      (/^[a-zA-Z0-9]$/.test(key) && modifiers.some((modifier) => modifier !== 'Shift'))
-    )
+    !(browserKeys.includes(key) || /^[\x21-\x7e]$/.test(key))
   )
     throw new Error('Choose a supported browser key or shortcut.');
   return value!;
@@ -1011,8 +1010,6 @@ export function createAgentBrowserComputer(options: {
             throw new Error('This field must use the secure credential flow.');
           if (input.action === 'fill') await command(state, ['fill', target, text], { signal });
           else {
-            if (!text || text.length > 500)
-              throw new Error('Type 1 to 500 characters; use fill for longer text.');
             await command(state, ['focus', target], { signal });
             for (const character of text)
               await command(

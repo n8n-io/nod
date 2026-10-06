@@ -130,7 +130,13 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
                                   : command.action === 'keyboard'
                                     ? ['keyboard', 'type', String(command.text)]
                                     : command.action === 'dialog'
-                                      ? ['dialog', String(command.response)]
+                                      ? [
+                                          'dialog',
+                                          String(command.response),
+                                          ...(typeof command.promptText === 'string'
+                                            ? [command.promptText]
+                                            : []),
+                                        ]
                                       : command.action === 'close'
                                         ? ['close']
                                         : null;
