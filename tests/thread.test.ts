@@ -1240,8 +1240,7 @@ test(
             watching = false;
             progressGate = undefined;
           });
-          const idle = () =>
-            waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+          const idle = () => waitFor(settledThread);
           const cards = async () => (await request('GET', '/api/tasks')).json() as Task[];
           const autoCards = async () =>
             (
