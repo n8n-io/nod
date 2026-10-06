@@ -2,10 +2,15 @@
 
 ## 0.1.7 - 2026-10-06
 
+Otto has a new look based on the updated n8n design.
+
+- Baumer fonts, neutral surfaces, and pink actions in the web and desktop apps (90caa7a)
+- Consistent spacing and outline icons across the app
+- Updated sign-in, setup, and empty chat layouts
+- Better text contrast, keyboard access, and focus in light and dark themes
+
 Source: `90caa7ad7de48b4a270ad0705d5ba0b439c22155`
 Previous release: `desktop-v0.1.6`
-
-- Apply n8n brand system to Otto (#141) (90caa7a)
 
 ## 0.1.3 - 2026-10-05
 
