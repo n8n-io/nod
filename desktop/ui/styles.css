@@ -87,8 +87,8 @@ summary:focus-visible {
 .switch input {
   appearance: none;
   display: block;
-  width: 34px;
-  height: 20px;
+  width: 40px;
+  height: 24px;
   background: var(--control);
   margin: 0;
   border-radius: 20px;
@@ -100,16 +100,16 @@ summary:focus-visible {
 .switch span {
   pointer-events: none;
   position: absolute;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #fff;
-  left: 3px;
-  top: 3px;
+  left: 4px;
+  top: 4px;
   transition: transform 120ms;
 }
 .switch input:checked + span {
-  transform: translateX(14px);
+  transform: translateX(16px);
 }
 
 main {

@@ -494,7 +494,7 @@ export function AccountSettings({
                       document.getElementById(`${id}-${tabs[next]}`)?.focus();
                   }}
                 >
-                  <Icon size={16} aria-hidden="true" />
+                  <Icon size={24} aria-hidden="true" />
                   <span>{value}</span>
                 </button>
               );

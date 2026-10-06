@@ -564,7 +564,7 @@ export function ModelPicker({
         }}
         aria-label={
           model && !setup
-            ? `Choose model: ${model.name}`
+            ? `${canChoose ? 'Choose model' : 'Manage model connections'}: ${model.name}`
             : canChoose
               ? 'Choose a model'
               : 'Connect a model'

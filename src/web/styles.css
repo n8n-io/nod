@@ -371,16 +371,16 @@ a svg {
 .switch {
   display: flex;
   flex-shrink: 0;
-  width: 34px;
-  height: 21px;
+  width: 40px;
+  height: 24px;
   padding: 4px;
   border: 0;
   border-radius: 999px;
   background: var(--switch-off);
 }
 .switch > span {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--switch-thumb);
   transition: transform 160ms ease;
@@ -389,7 +389,7 @@ a svg {
   background: var(--accent);
 }
 .switch[aria-checked='true'] > span {
-  transform: translateX(13px);
+  transform: translateX(16px);
 }
 .switch:disabled {
   opacity: 0.45;
@@ -2176,7 +2176,7 @@ input[type='range']:disabled {
 }
 .inspector-record > summary {
   display: grid;
-  grid-template-columns: 13px minmax(0, 1fr) auto;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: start;
   padding: 12px 8px;
@@ -2320,7 +2320,7 @@ input[type='range']:disabled {
     display: none;
   }
   .inspector-record > summary {
-    grid-template-columns: 13px minmax(0, 1fr);
+    grid-template-columns: 16px minmax(0, 1fr);
   }
   .inspector-record-state {
     grid-column: 2;
