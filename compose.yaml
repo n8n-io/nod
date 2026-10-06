@@ -32,7 +32,7 @@ services:
     volumes:
       - browser-data:/data
     tmpfs:
-      - /tmp:size=256m
+      - /tmp:size=1g
       - /home/node:uid=1000,gid=1000,mode=700,size=256m
     healthcheck:
       test:

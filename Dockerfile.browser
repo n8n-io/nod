@@ -7,6 +7,6 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci && npm cache clean --force
 COPY src ./src
-RUN chmod 555 src/providers/container-browser/chromium.sh && mkdir /data && chown node:node /data && chmod 700 /data
+RUN chmod 555 src/providers/container-browser/chromium.sh && install -m 555 src/providers/container-browser/xvfb.sh /usr/local/bin/Xvfb && mkdir /data && chown node:node /data && chmod 700 /data
 USER node
 CMD ["node", "--import", "tsx", "/app/src/providers/container-browser/worker.ts"]

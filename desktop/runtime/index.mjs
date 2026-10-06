@@ -505,7 +505,7 @@ async function finishRuntime({
     '--shm-size',
     '256m',
     '--tmpfs',
-    '/tmp:size=256m',
+    '/tmp:size=1g',
     '--tmpfs',
     '/home/node:uid=1000,gid=1000,mode=700,size=256m',
     '--volume',
