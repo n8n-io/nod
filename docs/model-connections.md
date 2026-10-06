@@ -24,6 +24,8 @@ Environment keys remain server-managed connections. They stay in server memory a
 
 Sign-in attempts bind the owner, state, PKCE verifier, and callback address. The owner can check a pending attempt's status without receiving credentials. The desktop app opens the system browser; the web app opens a new tab. A manual callback form remains available. Completion consumes the attempt once; cancellation and expiry release its listener and pending work. Refresh, replacement, and removal use database locks. Token rotation saves the credential as one encrypted value. Error and Inspector redaction include current and replaced secret values.
 
+Successful model sign-ins try to close their browser tab automatically. Browsers that prevent closing show an Otto page explaining that the tab can be closed. Error pages stay open with retry instructions. Callback pages remove authorization parameters from the address bar and load no external assets.
+
 ## Subscriptions
 
 ChatGPT uses Pi's `openai-codex` provider for both OAuth and inference. Pi calls this its legacy Codex flow: a fixed public client, browser authorization with PKCE, and a loopback callback on port 1455. Otto reserves that callback listener before opening sign-in and passes validated callbacks to Pi's manual-completion interface. If another process holds the port, sign-in stops with an actionable error before opening OpenAI. Completion, cancellation, and failure release the listener. It does not dynamically register an Otto client. The matching transport sends streaming requests to `https://chatgpt.com/backend-api/codex/responses` with `store: false`. Pi formats the conversation and tools for that endpoint. Subscription costs show unavailable pricing.

@@ -17,6 +17,7 @@ import type {
   ModelsResponse,
 } from '../shared/models.ts';
 import { modelSource } from '../shared/models.ts';
+import { signInPage } from '../shared/sign-in-page.ts';
 import { agentModels, memoryModels } from '../shared/model-defaults.ts';
 import { createAppGrantVault } from './vault-app-grants.ts';
 
@@ -777,22 +778,16 @@ export function createModelService(options: {
           return service.view();
         });
         routes.get('/api/models/oauth/callback', async (request, reply) => {
+          let succeeded = false;
           try {
             await completeCallback(new URL(request.url, options.origin));
-            return reply
-              .header('Cache-Control', 'no-store')
-              .header('Referrer-Policy', 'no-referrer')
-              .header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
-              .type('text/html')
-              .send(
-                '<!doctype html><title>Otto</title><h1>OpenRouter connected</h1><p>Return to Otto. Your models are ready.</p>',
-              );
-          } catch {
-            return reply
-              .code(400)
-              .type('text/plain')
-              .send('Sign-in failed. Return to Otto and start a new connection.');
-          }
+            succeeded = true;
+          } catch {}
+          const page = signInPage(succeeded, randomUUID());
+          return reply
+            .code(succeeded ? 200 : 400)
+            .headers(page.headers)
+            .send(page.html);
         });
       });
     },

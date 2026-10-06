@@ -17,6 +17,7 @@ import type {
   ModelDefinition,
 } from '../../ports/models.ts';
 import type { ModelProvider, ModelMethod } from '../../shared/models.ts';
+import { signInPage } from '../../shared/sign-in-page.ts';
 
 const resource = 'https://api.openai.com/v1';
 const random = () => randomBytes(32).toString('base64url');
@@ -108,30 +109,28 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       let completeCallback: ((callback: URL) => void) | undefined;
       let authenticated!: Promise<ModelCredential>;
       const receive: RequestListener = (request, response) => {
-        const send = (status: number, message: string) => {
+        const send = (status: number) => {
+          const page = signInPage(status === 200, random());
           response.writeHead(status, {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-store',
-            'Referrer-Policy': 'no-referrer',
-            'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+            ...page.headers,
             Connection: 'close',
           });
-          response.end(`<!doctype html><title>Otto</title><p>${message}</p>`);
+          response.end(page.html);
         };
         try {
           const callback = new URL(request.url ?? '/', 'http://localhost:1455');
           if (request.method !== 'GET' || callback.pathname !== '/auth/callback') {
-            send(404, 'This page is not available.');
+            send(404);
             return;
           }
           if (!completeCallback) throw new Error();
           completeCallback(callback);
           void authenticated.then(
-            () => send(200, 'Sign-in received. Return to Otto to finish connecting.'),
-            () => send(400, 'Sign-in could not finish. Return to Otto and try again.'),
+            () => send(200),
+            () => send(400),
           );
         } catch {
-          send(400, 'This sign-in callback is invalid. Return to Otto and try again.');
+          send(400);
         }
       };
       const servers = [createServer(receive), createServer(receive)];

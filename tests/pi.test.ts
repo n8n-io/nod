@@ -2468,6 +2468,37 @@ test('Pi ChatGPT sign-in validates callbacks, exchanges PKCE once and drains can
     }
   });
   const signIn = await backend.signIn({ signal: controller.signal });
+  async function checkCallbackPage(response: Response, url: string, closes: boolean) {
+    const html = await response.text();
+    assert.doesNotMatch(html, /fixture-code|fixture-secret|fixture-refresh|fixture-owner/);
+    const closed: string[] = [];
+    let dispose = () => {};
+    const dom = new JSDOM(html, {
+      url,
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        dispose = window.close.bind(window);
+        window.close = () => {
+          closed.push(window.location.href);
+        };
+      },
+    });
+    try {
+      const nonce = dom.window.document.querySelector('script')!.nonce;
+      assert.ok(nonce && nonce.length >= 32);
+      const policy = response.headers.get('content-security-policy')!;
+      assert.ok(policy.includes(`script-src 'nonce-${nonce}'`));
+      assert.ok(policy.includes(`style-src 'nonce-${nonce}'`));
+      assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval/);
+      const clean = new URL(url);
+      clean.search = '';
+      clean.hash = '';
+      assert.equal(dom.window.location.href, clean.href);
+      assert.deepEqual(closed, closes ? [clean.href] : []);
+    } finally {
+      dispose();
+    }
+  }
   const authorization = new URL(signIn.url);
   assert.equal(
     authorization.origin + authorization.pathname,
@@ -2489,7 +2520,9 @@ test('Pi ChatGPT sign-in validates callbacks, exchanges PKCE once and drains can
   ])
     assert.throws(() => signIn.complete(new URL(invalid)), ModelAuthError);
   const wrong = new URL(`http://127.0.0.1:${port}/auth/callback?state=foreign&code=fixture-code`);
-  assert.equal((await fetch(wrong)).status, 400);
+  const invalidResponse = await fetch(wrong);
+  assert.equal(invalidResponse.status, 400);
+  await checkCallbackPage(invalidResponse, wrong.href, false);
   assert.equal(grants.length, 0);
   for (const suffix of [
     `state=${signIn.state}&state=second&code=fixture-code`,
@@ -2505,7 +2538,7 @@ test('Pi ChatGPT sign-in validates callbacks, exchanges PKCE once and drains can
   local.port = String(port);
   const received = await fetch(local);
   assert.equal(received.status, 200);
-  assert.match(await received.text(), /Return to Otto to finish connecting/);
+  await checkCallbackPage(received, local.href, true);
   const credential = await signIn.result;
   assert.equal(credential.type, 'oauth');
   if (credential.type !== 'oauth') throw new Error('Expected OAuth.');
