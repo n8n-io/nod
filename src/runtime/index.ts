@@ -17,6 +17,7 @@ import type { Computer, Workspace } from '../ports/computer.ts';
 import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
+import { actionEffect } from '../shared/action-effect.ts';
 import { integrationDownloadActions } from '../shared/integrations.ts';
 import { createBrowserFlows } from './browser-flows.ts';
 import { requestsPrivateInput } from './communication.ts';
@@ -29,7 +30,14 @@ import { delimit, injectionFindings, resultText } from './untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
-const parallelTools = new Set(['share_file', 'create_audio']);
+const parallelTools = new Set([
+  'share_file',
+  'create_audio',
+  'skills',
+  'apps',
+  'manage_personal_context',
+]);
+const mixedTools = new Set(['apps', 'manage_personal_context']);
 const trustedResultTools = new Set([
   'skills',
   'send_message',
@@ -136,6 +144,18 @@ function inspectedAppResult(value: unknown): boolean {
 function allowedReadOnly(name: string, params: unknown) {
   const rule = readOnlyTools[name];
   return rule === true || rule?.includes(String((params as { action?: unknown })?.action)) === true;
+}
+
+function readCall(name: string, params: unknown) {
+  if (name !== 'apps') return allowedReadOnly(name, params);
+  const { action, args } = params as { action?: unknown; args?: unknown };
+  return (
+    typeof action === 'string' &&
+    actionEffect(
+      action,
+      args && typeof args === 'object' ? (args as Record<string, unknown>) : {},
+    ) === 'read'
+  );
 }
 
 function textResult(value: unknown): AgentToolResult {
@@ -513,6 +533,16 @@ export function createAgentRuntime(dependencies: {
         pause,
         confirm,
       };
+      let exclusive = Promise.resolve();
+      const inTurn = (name: string, params: unknown, run: () => Promise<AgentToolResult>) => {
+        if (!mixedTools.has(name) || readCall(name, params)) return run();
+        const next = exclusive.then(run);
+        exclusive = next.then(
+          () => {},
+          () => {},
+        );
+        return next;
+      };
       const tools = ottoTools(
         turn,
         createBrowserFlows(workspace, computer, threadId, signal),
@@ -523,11 +553,13 @@ export function createAgentRuntime(dependencies: {
         parameters,
         parallel: parallelTools.has(name),
         execute: (params) =>
-          guard(name, params, async () => {
-            if (!Value.Check(parameters, params))
-              throw new Error('The tool arguments do not match its schema.');
-            return execute(params);
-          }),
+          inTurn(name, params, () =>
+            guard(name, params, async () => {
+              if (!Value.Check(parameters, params))
+                throw new Error('The tool arguments do not match its schema.');
+              return execute(params);
+            }),
+          ),
       }));
       const system = systemPrompt(workspace, dependencies.skills);
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;

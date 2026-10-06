@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { appConfirmation } from '../src/ports/agent.ts';
@@ -341,6 +342,34 @@ test('a read-only turn can load a trusted skill without changing workspace or me
   assert.equal(output.result.status, 'succeeded');
   assert.equal(marked, false);
   assert.equal(writes, 0);
+});
+
+test('app reads in one batch run together while app changes run one at a time in call order', async () => {
+  const events: string[] = [];
+  await fixture(
+    async (tools) => {
+      const apps = tools.get('apps')!;
+      assert.equal(apps.parallel, true);
+      await Promise.all(
+        [
+          ['GMAIL_FETCH_EMAILS', {}],
+          ['GMAIL_LIST_LABELS', {}],
+          ['GMAIL_CREATE_DRAFT', { subject: 'One' }],
+          ['NOTION_UPDATE_PAGE', { title: 'Two' }],
+        ].map(([action, args]) => apps.execute({ action, args })),
+      );
+    },
+    {
+      integration: async (action) => {
+        events.push(`start ${action}`);
+        await setTimeout(20);
+        events.push(`end ${action}`);
+        return { ok: true };
+      },
+    },
+  );
+  assert.ok(events.indexOf('start GMAIL_LIST_LABELS') < events.indexOf('end GMAIL_FETCH_EMAILS'));
+  assert.ok(events.indexOf('end GMAIL_CREATE_DRAFT') < events.indexOf('start NOTION_UPDATE_PAGE'));
 });
 
 test('saved memory reaches Pi but stays out of inspector records', async () => {
