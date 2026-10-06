@@ -7,7 +7,8 @@ import {
 } from '@earendil-works/pi-ai';
 import { ModelRuntime, type ProviderModelConfig } from '@earendil-works/pi-coding-agent';
 import { z } from 'zod';
-import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
+import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
+import { ModelAuthError } from '../../ports/models.ts';
 import type {
   ModelAccess,
   ModelBackend,
@@ -17,17 +18,21 @@ import type {
 import type { ModelProvider, ModelMethod } from '../../shared/models.ts';
 
 const resource = 'https://api.openai.com/v1';
-const tokenUrl = 'https://auth.openai.com/api/accounts/oauth/token';
-const planScope = 'chatgpt.tokens.use.direct';
 const random = () => randomBytes(32).toString('base64url');
-const tokenSchema = z.object({
-  access_token: z.string().min(1).max(32000),
-  refresh_token: z.string().min(1).max(32000).optional(),
-  id_token: z.string().min(1).max(32000).optional(),
-  expires_in: z.number().positive().max(31536000),
-  scope: z.string().optional(),
-  token_type: z.literal('Bearer'),
+const codexCredentialSchema = z.object({
+  type: z.literal('oauth'),
+  access: z.string().min(1).max(32000),
+  refresh: z.string().min(1).max(32000),
+  expires: z.number().positive().finite(),
+  accountId: z.string().min(1).max(1000),
+  email: z.string().optional(),
 });
+
+function codexCredential(value: unknown) {
+  const parsed = codexCredentialSchema.safeParse(value);
+  if (!parsed.success) throw new ModelAuthError('Reconnect your ChatGPT account in Models.', true);
+  return parsed.data;
+}
 
 async function modelListRestricted(response: Response) {
   const reader = response.body?.getReader();
@@ -74,60 +79,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
   async function json(url: string, init: RequestInit = {}) {
     return jsonResponse(await request(url, { ...init, signal: AbortSignal.timeout(15000) }));
   }
-  const jwks = createRemoteJWKSet(new URL('https://auth.openai.com/.well-known/jwks.json'), {
-    [customFetch]: request,
-  });
-  async function identity(token: string, clientId: string, nonce?: string) {
-    const { payload } = await jwtVerify(token, jwks, {
-      issuer: 'https://auth.openai.com',
-      audience: clientId,
-      algorithms: ['RS256'],
-      requiredClaims: ['sub', 'exp'],
-    });
-    const claims = z
-      .object({
-        sub: z.string().min(1),
-        nonce: z.string().optional(),
-        email: z.string().optional(),
-      })
-      .parse(payload);
-    if (nonce !== undefined && claims.nonce !== nonce) throw new Error('Invalid account identity.');
-    return claims;
-  }
-  async function tokens(
-    body: URLSearchParams,
-    previous?: Extract<ModelCredential, { type: 'oauth' }>,
-    nonce?: string,
-  ): Promise<ModelCredential> {
-    const result = tokenSchema.parse(
-      await json(tokenUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-      }),
-    );
-    const clientId = body.get('client_id')!;
-    const claims = result.id_token ? await identity(result.id_token, clientId, nonce) : undefined;
-    if (!previous && !claims) throw new Error('The sign-in did not return an account identity.');
-    if (previous && claims && claims.sub !== previous.subject)
-      throw new Error('The signed-in account changed.');
-    const scopes = result.scope?.split(/\s+/) ?? previous?.scopes ?? [];
-    if (!scopes.includes(planScope))
-      throw new Error('This account did not grant ChatGPT plan use.');
-    const refresh = result.refresh_token ?? previous?.refresh;
-    if (!refresh) throw new Error('The sign-in did not return a refresh token.');
-    return {
-      type: 'oauth',
-      access: result.access_token,
-      refresh,
-      expires: Date.now() + result.expires_in * 1000,
-      clientId,
-      subject: claims?.sub ?? previous!.subject,
-      idToken: result.id_token ?? previous!.idToken,
-      scopes,
-      email: claims?.email ?? previous?.email,
-    };
-  }
+  const oauth = openaiCodexProvider().auth.oauth!;
   function definition(model: Model<Api>): ModelDefinition {
     return {
       choice: {
@@ -141,12 +93,99 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     };
   }
   return {
+    async signIn({ signal: requestedSignal }) {
+      const controller = new AbortController();
+      const signal = AbortSignal.any([requestedSignal, controller.signal]);
+      let resolveManual!: (value: string) => void;
+      const manual = new Promise<string>((resolve) => {
+        resolveManual = resolve;
+      });
+      let resolveReady!: (value: Awaited<ReturnType<ModelBackend['signIn']>>) => void;
+      let rejectReady!: (error: Error) => void;
+      const ready = new Promise<Awaited<ReturnType<ModelBackend['signIn']>>>((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+      });
+      let settled = false;
+      const result = oauth
+        .login({
+          signal,
+          async prompt(prompt) {
+            signal.throwIfAborted();
+            if (prompt.type === 'select') return 'browser';
+            if (prompt.type !== 'manual_code') throw new ModelAuthError('Use browser sign-in.');
+            const cancellation = AbortSignal.any([
+              signal,
+              ...(prompt.signal ? [prompt.signal] : []),
+            ]);
+            return new Promise<string>((resolve, reject) => {
+              const abort = () => reject(new ModelAuthError('ChatGPT sign-in was canceled.'));
+              if (cancellation.aborted) return abort();
+              cancellation.addEventListener('abort', abort, { once: true });
+              void manual
+                .then(resolve)
+                .finally(() => cancellation.removeEventListener('abort', abort));
+            });
+          },
+          notify(event) {
+            if (signal.aborted || event.type !== 'auth_url') return;
+            const url = new URL(event.url);
+            const state = url.searchParams.get('state');
+            const redirect = new URL(url.searchParams.get('redirect_uri')!);
+            if (url.origin !== 'https://auth.openai.com' || !state) {
+              controller.abort();
+              return;
+            }
+            resolveReady({
+              url: event.url,
+              state,
+              result,
+              complete(callback) {
+                if (settled || signal.aborted)
+                  throw new ModelAuthError(
+                    'This sign-in request has expired. Start a new connection.',
+                  );
+                if (
+                  callback.origin !== redirect.origin ||
+                  callback.pathname !== redirect.pathname ||
+                  callback.username ||
+                  callback.password ||
+                  callback.hash ||
+                  callback.searchParams.getAll('state').length !== 1 ||
+                  callback.searchParams.get('state') !== state ||
+                  callback.searchParams.getAll('code').length !== 1 ||
+                  !callback.searchParams.get('code') ||
+                  callback.searchParams.has('error')
+                )
+                  throw new ModelAuthError('This sign-in callback is invalid or was declined.');
+                resolveManual(callback.href);
+              },
+            });
+          },
+        })
+        .then(codexCredential)
+        .catch(() => {
+          throw new ModelAuthError(
+            signal.aborted
+              ? 'ChatGPT sign-in was canceled.'
+              : 'ChatGPT sign-in failed. Start a new connection and check your account access.',
+          );
+        })
+        .finally(() => {
+          settled = true;
+        });
+      void result.catch(rejectReady);
+      return ready;
+    },
     async catalog(provider: ModelProvider, method: ModelMethod, credential?: ModelCredential) {
-      const local = (await runtime()).getModels(provider);
+      const subscription = method === 'subscription';
+      const account = subscription && credential ? codexCredential(credential) : undefined;
+      const local = (await runtime()).getModels(subscription ? 'openai-codex' : provider);
       if (!credential) return local.map(definition);
       const key = credential.type === 'api_key' ? credential.key : credential.access;
-      const url =
-        provider === 'openrouter'
+      const url = subscription
+        ? 'https://chatgpt.com/backend-api/codex/models?client_version=0.155.1'
+        : provider === 'openrouter'
           ? 'https://openrouter.ai/api/v1/models'
           : provider === 'anthropic'
             ? 'https://api.anthropic.com/v1/models?limit=1000'
@@ -155,6 +194,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         provider === 'anthropic'
           ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
           : { Authorization: `Bearer ${key}` };
+      if (account) headers['ChatGPT-Account-Id'] = account.accountId;
       if (provider === 'openrouter') {
         const account = z
           .object({
@@ -167,7 +207,11 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         if (account.data.is_management_key || account.data.is_provisioning_key)
           throw new Error('Use an inference key for OpenRouter.');
       }
-      const response = await request(url, { headers, signal: AbortSignal.timeout(15000) });
+      const response = await request(url, {
+        headers,
+        signal: AbortSignal.timeout(15000),
+        redirect: 'error',
+      });
       if (
         provider === 'openai' &&
         method === 'api_key' &&
@@ -192,9 +236,7 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           list.filter((m) => !m.visibility || m.visibility === 'list').map((m) => m.slug ?? m.id),
         );
         return local
-          .filter(
-            (m) => ids.has(m.id) && (method !== 'subscription' || m.api === 'openai-responses'),
-          )
+          .filter((m) => ids.has(m.id) && (!subscription || m.api === 'openai-codex-responses'))
           .map(definition);
       }
       const list = z
@@ -275,56 +317,23 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
           } as Model<Api>);
         });
     },
-    authorize({ provider, redirectUri, hostId, previous }) {
+    authorize({ redirectUri }) {
       const state = random();
       const verifier = random();
-      const nonce = random();
       const challenge = createHash('sha256').update(verifier).digest('base64url');
-      const saved = previous?.type === 'oauth' ? previous : undefined;
-      const url = new URL(
-        provider === 'openai'
-          ? 'https://auth.openai.com/api/accounts/authorize'
-          : 'https://openrouter.ai/auth',
-      );
-      url.search = new URLSearchParams(
-        provider === 'openai'
-          ? {
-              client_id: saved?.clientId ?? 'dynamic_agent_client',
-              agent_name_hint: 'Otto',
-              ext_agent_host_id: hostId,
-              response_type: 'code',
-              redirect_uri: redirectUri,
-              resource,
-              scope: `openid profile email offline_access resource.invoke ${planScope}`,
-              state,
-              nonce,
-              code_challenge: challenge,
-              code_challenge_method: 'S256',
-              ...(saved ? { id_token_hint: saved.idToken } : {}),
-            }
-          : {
-              callback_url: redirectUri,
-              state,
-              code_challenge: challenge,
-              code_challenge_method: 'S256',
-              key_label: 'Otto',
-            },
-      ).toString();
-      return {
-        url: url.toString(),
+      const url = new URL('https://openrouter.ai/auth');
+      url.search = new URLSearchParams({
+        callback_url: redirectUri,
         state,
-        secret: { state, verifier, nonce, redirectUri, ...(saved ? { previous: saved } : {}) },
-      };
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        key_label: 'Otto',
+      }).toString();
+      return { url: url.toString(), state, secret: { state, verifier, redirectUri } };
     },
-    async exchange(provider, secret, callback) {
+    async exchange(_provider, secret, callback) {
       const s = z
-        .object({
-          state: z.string(),
-          verifier: z.string(),
-          nonce: z.string(),
-          redirectUri: z.string(),
-          previous: z.unknown().optional(),
-        })
+        .object({ state: z.string(), verifier: z.string(), redirectUri: z.string() })
         .parse(secret);
       if (
         callback.searchParams.getAll('state').length !== 1 ||
@@ -336,70 +345,67 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
       const expected = new URL(s.redirectUri);
       if (callback.origin !== expected.origin || callback.pathname !== expected.pathname)
         throw new Error('Invalid sign-in callback.');
-      const code = callback.searchParams.get('code')!;
-      if (provider === 'openrouter') {
-        const result = z.object({ key: z.string().min(1).max(32000) }).parse(
-          await json('https://openrouter.ai/api/v1/auth/keys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              code,
-              code_verifier: s.verifier,
-              code_challenge_method: 'S256',
-            }),
+      const result = z.object({ key: z.string().min(1).max(32000) }).parse(
+        await json('https://openrouter.ai/api/v1/auth/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: callback.searchParams.get('code')!,
+            code_verifier: s.verifier,
+            code_challenge_method: 'S256',
           }),
-        );
-        return { type: 'api_key', key: result.key };
-      }
-      const previous = s.previous as Extract<ModelCredential, { type: 'oauth' }> | undefined;
-      const clientId = previous?.clientId ?? callback.searchParams.get('client_id');
-      if (
-        !clientId ||
-        clientId === 'dynamic_agent_client' ||
-        callback.searchParams.getAll('client_id').length > 1
-      )
-        throw new Error('The account registration is incomplete.');
-      return tokens(
-        new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: clientId,
-          code,
-          code_verifier: s.verifier,
-          redirect_uri: s.redirectUri,
-          resource,
         }),
-        previous,
-        s.nonce,
       );
+      return { type: 'api_key', key: result.key };
     },
     async refresh(credential) {
       if (credential.type === 'api_key') return credential;
-      return tokens(
-        new URLSearchParams({
-          grant_type: 'refresh_token',
-          client_id: credential.clientId,
-          refresh_token: credential.refresh,
-          resource,
-        }),
-        credential,
-      );
+      const current = codexCredential(credential);
+      try {
+        const next = codexCredential(await oauth.refresh(current, AbortSignal.timeout(15000)));
+        if (next.accountId !== current.accountId)
+          throw new ModelAuthError('The ChatGPT account changed. Reconnect in Models.', true);
+        return { ...next, ...(current.email ? { email: current.email } : {}) };
+      } catch (error) {
+        if (error instanceof ModelAuthError) throw error;
+        const terminal =
+          error instanceof Error &&
+          /^OpenAI Codex token refresh failed \((400|401|403)\):/.test(error.message);
+        throw new ModelAuthError(
+          terminal
+            ? 'Reconnect your ChatGPT account in Models.'
+            : 'ChatGPT is temporarily unavailable. Try again.',
+          terminal,
+        );
+      }
     },
   };
 }
 
 export async function createPiModelRuntime(access: ModelAccess) {
+  const subscription = access.method === 'subscription';
+  const provider = subscription ? 'openai-codex' : access.provider;
+  if (
+    subscription &&
+    (access.definition.spec.provider !== provider ||
+      access.definition.spec.api !== 'openai-codex-responses' ||
+      access.definition.spec.baseUrl !== 'https://chatgpt.com/backend-api')
+  )
+    throw new ModelAuthError('Reconnect your ChatGPT account in Models.', true);
   const secrets = new Set<string>();
   const credentials: CredentialStore = {
     async read(providerId) {
-      if (providerId !== access.provider) return undefined;
+      if (providerId !== provider) return undefined;
       const credential = await access.read();
       if (!credential) throw new Error('The selected model connection is unavailable.');
-      const key = credential.type === 'api_key' ? credential.key : credential.access;
-      secrets.add(key);
-      return { type: 'api_key', key };
+      const value = subscription ? codexCredential(credential) : credential;
+      const key = value.type === 'api_key' ? value.key : value.access;
+      for (const secret of value.type === 'api_key' ? [key] : [key, value.refresh, value.accountId])
+        secrets.add(secret);
+      return subscription ? { ...codexCredential(value), refresh: '' } : { type: 'api_key', key };
     },
     async list() {
-      return [{ providerId: access.provider, type: 'api_key' }];
+      return [{ providerId: provider, type: subscription ? 'oauth' : 'api_key' }];
     },
     async modify() {
       throw new Error('Model credentials are managed by Otto.');
@@ -414,7 +420,7 @@ export async function createPiModelRuntime(access: ModelAccess) {
     refreshOnCreate: false,
     allowModelNetwork: false,
   });
-  runtime.registerProvider(access.provider, {
+  runtime.registerProvider(provider, {
     models: [access.definition.spec as unknown as ProviderModelConfig],
   });
   await runtime.refresh({ allowNetwork: false });
@@ -423,62 +429,34 @@ export async function createPiModelRuntime(access: ModelAccess) {
     const events = stream(model, context, {
       ...options,
       maxRetries: 0,
+      ...(subscription ? { transport: 'sse' as const } : {}),
       onPayload: async (payload, target) => {
         const changed = await options?.onPayload?.(payload, target);
         const body = (changed ?? payload) as Record<string, unknown>;
         if (access.provider === 'openrouter')
           body.provider = { require_parameters: true, allow_fallbacks: false };
-        if (access.method === 'subscription') {
-          for (const key of [
-            'background',
-            'conversation',
-            'max_output_tokens',
-            'max_tool_calls',
-            'metadata',
-            'moderation',
-            'multi_agent',
-            'prompt',
-            'prompt_cache_retention',
-            'safety_identifier',
-            'temperature',
-            'top_logprobs',
-            'top_p',
-            'truncation',
-            'user',
-            'previous_response_id',
-          ])
-            delete body[key];
-          body.store = false;
-          body.stream = true;
-          if (Array.isArray(body.input))
-            body.input = body.input.map((item) =>
-              item.role === 'system' ? { ...item, role: 'developer' } : item,
-            );
-          if (Array.isArray(body.tools)) {
-            const functions = body.tools.filter((tool) =>
-              ['function', 'custom'].includes(tool.type),
-            );
-            body.tools = [
-              ...body.tools.filter((tool) => !['function', 'custom'].includes(tool.type)),
-              ...(functions.length
-                ? [{ type: 'namespace', name: 'otto', description: 'Otto tools', tools: functions }]
-                : []),
-            ];
-          }
-        }
+
         return body;
       },
     });
     const push = events.push.bind(events);
     events.push = (event) => {
       if (event.type === 'error')
-        for (const secret of secrets)
-          event.error.errorMessage = event.error.errorMessage?.replaceAll(secret, '[redacted]');
+        Object.assign(
+          event.error,
+          JSON.parse(
+            JSON.stringify(event.error, (_key, value) => {
+              if (typeof value !== 'string') return value;
+              for (const secret of secrets) value = value.replaceAll(secret, '[redacted]');
+              return value;
+            }),
+          ),
+        );
       push(event);
     };
     return events;
   };
-  const model = runtime.getModel(access.provider, access.definition.choice.id);
+  const model = runtime.getModel(provider, access.definition.choice.id);
   if (!model) throw new Error('The selected model is unavailable. Refresh the model list.');
   return { runtime, model };
 }

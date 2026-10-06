@@ -161,8 +161,9 @@ export function createPiAgent(options: {
       }
       const directory = resolve(options.sessionRoot, threadIdentity(input.threadId));
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      const runtime = access
-        ? (await createPiModelRuntime(access)).runtime
+      const connection = access ? await createPiModelRuntime(access) : undefined;
+      const runtime = connection
+        ? connection.runtime
         : await ModelRuntime.create({
             credentials: new InMemoryCredentialStore(),
             modelsPath: null,
@@ -174,7 +175,7 @@ export function createPiAgent(options: {
         access?.definition.choice.id ||
         options.model ||
         agentModels[options.provider as keyof typeof agentModels];
-      const selectedModel = runtime.getModel(access?.provider || options.provider, modelId);
+      const selectedModel = connection?.model ?? runtime.getModel(options.provider, modelId);
       if (!selectedModel)
         throw new Error('The configured model is not present in the installed Pi catalog.');
       const model =

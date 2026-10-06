@@ -1,5 +1,4 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
 import type { Pool, PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -9,6 +8,7 @@ import type {
   ModelCredential,
   ModelDefinition,
 } from '../ports/models.ts';
+import { ModelAuthError } from '../ports/models.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type {
   ModelMethod,
@@ -34,7 +34,7 @@ interface Row {
   provider: ModelProvider;
   method: ModelMethod;
   label: string;
-  status: 'connected' | 'reconnect';
+  status: 'connected' | 'reconnect' | 'loading';
   models: ModelDefinition[];
   managed: boolean;
 }
@@ -57,8 +57,8 @@ export function createModelService(options: {
   let vault: Awaited<ReturnType<typeof createAppGrantVault>>;
   let rows: Row[] = [];
   let selection: ModelSelection | null = null;
-  let hostId: string;
-  let listener: Promise<Server> | undefined;
+  let starting: Promise<unknown> = Promise.resolve();
+  const pendingControllers = new Set<AbortController>();
   let closed = false;
   const secrets = new Set<string>();
   const observers = new Set<(values: string[]) => void>();
@@ -66,6 +66,9 @@ export function createModelService(options: {
     string,
     {
       provider: 'openai' | 'openrouter';
+      state: string;
+      controller: AbortController;
+      complete?(callback: URL): void;
       connectionId?: string;
       secret: Record<string, unknown>;
       expires: number;
@@ -75,14 +78,27 @@ export function createModelService(options: {
       completion?: Promise<void>;
     }
   >();
-  function forgetAttempt(state: string) {
-    clearTimeout(attempts.get(state)?.timer);
+  async function cancel(state: string) {
+    const attempt = attempts.get(state);
+    if (!attempt) return;
+    clearTimeout(attempt.timer);
     attempts.delete(state);
+    attempt.controller.abort();
+    await attempt.completion?.catch(() => {});
+  }
+  function active(attempt: NonNullable<ReturnType<typeof attempts.get>>) {
+    if (
+      closed ||
+      attempt.controller.signal.aborted ||
+      attempt.expires < Date.now() ||
+      attempts.get(attempt.state) !== attempt
+    )
+      throw new ConnectionError('This sign-in request has expired. Start a new connection.');
   }
   function remember(value: ModelCredential) {
-    const values = (
-      value.type === 'api_key' ? [value.key] : [value.access, value.refresh, value.idToken]
-    ).filter((secret) => !secrets.has(secret));
+    const values = (value.type === 'api_key' ? [value.key] : [value.access, value.refresh]).filter(
+      (secret) => !secrets.has(secret),
+    );
     for (const secret of values) secrets.add(secret);
     if (values.length) for (const observer of observers) observer(values);
   }
@@ -102,13 +118,19 @@ export function createModelService(options: {
       ).rows[0]?.selection ?? null;
     options.changed?.();
   }
-  async function locked<T>(id: string, run: (client: PoolClient) => Promise<T>) {
+  async function locked<T>(
+    id: string,
+    run: (client: PoolClient) => Promise<T>,
+    signal?: AbortSignal,
+  ) {
     const client = await database.connect();
     const lock = createHash('sha256').update(`model:${ownerId}:${id}`).digest().readBigInt64BE();
     try {
+      signal?.throwIfAborted();
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [lock.toString()]);
       const result = await run(client);
+      signal?.throwIfAborted();
       await client.query('COMMIT');
       return result;
     } catch (error) {
@@ -121,7 +143,7 @@ export function createModelService(options: {
   async function credential(id: string, client: Pool | PoolClient = database) {
     const row = (
       await client.query<Row>(
-        'SELECT provider,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
+        'SELECT provider,method,models,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
         [id, ownerId],
       )
     ).rows[0];
@@ -133,49 +155,69 @@ export function createModelService(options: {
         : undefined
       : (JSON.parse((await vault.read(id, client)).value) as ModelCredential);
     if (!value) return undefined;
+    if (
+      value.type === 'oauth' &&
+      (!value.accountId ||
+        (row.method === 'subscription' &&
+          row.models.some(
+            (model) =>
+              model.spec.api !== 'openai-codex-responses' ||
+              model.spec.provider !== 'openai-codex' ||
+              model.spec.baseUrl !== 'https://chatgpt.com/backend-api',
+          )))
+    )
+      throw new ModelAuthError('Reconnect the selected ChatGPT account in Models.', true);
     remember(value);
     return value;
   }
-  async function read(id: string) {
-    let failed = false;
-    const value = await locked(id, async (client) => {
-      const row = (
-        await client.query<Row>(
-          'SELECT status FROM model_connections WHERE id=$1 AND owner_id=$2',
-          [id, ownerId],
-        )
-      ).rows[0];
-      if (row?.status === 'reconnect')
-        throw new ConnectionError('Reconnect the selected account in Models.');
+  async function readLocked(id: string, client: PoolClient) {
+    const row = (
+      await client.query<Row>('SELECT status FROM model_connections WHERE id=$1 AND owner_id=$2', [
+        id,
+        ownerId,
+      ])
+    ).rows[0];
+    if (!row) return {};
+    if (row.status === 'reconnect')
+      throw new ConnectionError('Reconnect the selected account in Models.');
+    try {
       const current = await credential(id, client);
-      if (current?.type !== 'oauth' || current.expires > Date.now() + 300000) return current;
-      let next: ModelCredential;
-      try {
-        next = await backend.refresh(current);
-      } catch {
-        failed = true;
-        await client.query(
-          "UPDATE model_connections SET status='reconnect' WHERE id=$1 AND owner_id=$2",
-          [id, ownerId],
-        );
-        return undefined;
-      }
+      if (current?.type !== 'oauth' || current.expires > Date.now() + 300000)
+        return { value: current };
+      const next = await backend.refresh(current);
       remember(next);
       await vault.put(id, JSON.stringify(next), client);
-      return next;
-    });
-    if (failed) {
+      return { value: next };
+    } catch (error) {
+      if (!(error instanceof ModelAuthError) || !error.requiresReconnect)
+        throw new ConnectionError(
+          error instanceof ModelAuthError
+            ? error.message
+            : 'The model service is temporarily unavailable. Try again.',
+        );
+      await client.query(
+        "UPDATE model_connections SET status='reconnect' WHERE id=$1 AND owner_id=$2",
+        [id, ownerId],
+      );
+      return { reconnect: true };
+    }
+  }
+  async function read(id: string) {
+    const result = await locked(id, (client) => readLocked(id, client));
+    if (result.reconnect) {
       await reload();
       throw new ConnectionError('Reconnect the selected ChatGPT account in Models.');
     }
-    return value;
+    return result.value;
   }
   async function catalog(provider: ModelProvider, method: ModelMethod, value?: ModelCredential) {
     try {
       return await backend.catalog(provider, method, value);
-    } catch {
+    } catch (error) {
       throw new ConnectionError(
-        'The model list could not be loaded. Check the key and account access.',
+        error instanceof ModelAuthError
+          ? error.message
+          : 'The model list could not be loaded. Try refreshing the connection.',
       );
     }
   }
@@ -189,7 +231,8 @@ export function createModelService(options: {
       managed = false,
       replace = false,
       status = 'connected',
-    }: { managed?: boolean; replace?: boolean; status?: Row['status'] } = {},
+      signal,
+    }: { managed?: boolean; replace?: boolean; status?: Row['status']; signal?: AbortSignal } = {},
   ) {
     remember(value);
     if (!managed && !options.keyStore.configured)
@@ -198,57 +241,123 @@ export function createModelService(options: {
       );
     if (status === 'connected' && !definitions.length)
       throw new ConnectionError('This connection has no supported models.');
-    await locked(id, async (client) => {
-      const exists = await credential(id, client);
-      if (replace && !exists)
-        throw new ConnectionError('This model connection was removed. Start a new connection.');
-      await client.query('SELECT owner_id FROM model_settings WHERE owner_id=$1 FOR UPDATE', [
-        ownerId,
-      ]);
-      const count = (
-        await client.query<{ count: number }>(
-          'SELECT count(*)::int AS count FROM model_connections WHERE owner_id=$1',
-          [ownerId],
-        )
-      ).rows[0].count;
-      if (!exists && count >= 20)
-        throw new ConnectionError('Remove an unused model connection before adding another.');
-      if (!managed) await vault.put(id, JSON.stringify(value), client);
-      const label =
-        value.type === 'oauth'
-          ? (value.email ?? 'ChatGPT account')
-          : modelSource({ provider, method });
-      await client.query(
-        `INSERT INTO model_connections(id,owner_id,provider,method,label,models,managed,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-        ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status=excluded.status WHERE model_connections.owner_id=excluded.owner_id`,
-        [id, ownerId, provider, method, label, JSON.stringify(definitions), managed, status],
-      );
-      const preferredId =
-        managed && options.bootstrap?.provider === provider
-          ? (options.bootstrap.model ?? agentModels[provider])
-          : agentModels[provider];
-      const preferred = definitions.find((model) => model.choice.id === preferredId);
-      if (
-        preferred &&
-        status === 'connected' &&
-        (!managed || options.bootstrap?.provider === provider)
-      )
-        await client.query(
-          'UPDATE model_settings SET selection=$2,selection_set=true WHERE owner_id=$1 AND NOT selection_set',
-          [
+    await locked(
+      id,
+      async (client) => {
+        const exists = (
+          await client.query('SELECT id FROM model_connections WHERE id=$1 AND owner_id=$2', [
+            id,
             ownerId,
-            JSON.stringify({
-              connectionId: id,
-              modelId: preferred.choice.id,
-              effort: preferred.choice.efforts.includes('high')
-                ? 'high'
-                : preferred.choice.efforts[0],
-            }),
-          ],
+          ])
+        ).rows[0];
+        if (replace && !exists)
+          throw new ConnectionError('This model connection was removed. Start a new connection.');
+        if (replace && value.type === 'oauth') {
+          let previous: ModelCredential | undefined;
+          try {
+            previous = JSON.parse((await vault.read(id, client)).value) as ModelCredential;
+          } catch {}
+          if (
+            previous?.type === 'oauth' &&
+            previous.accountId &&
+            previous.accountId !== value.accountId
+          )
+            throw new ConnectionError('Use Add connection for a different ChatGPT account.');
+        }
+        await client.query('SELECT owner_id FROM model_settings WHERE owner_id=$1 FOR UPDATE', [
+          ownerId,
+        ]);
+        const count = (
+          await client.query<{ count: number }>(
+            'SELECT count(*)::int AS count FROM model_connections WHERE owner_id=$1',
+            [ownerId],
+          )
+        ).rows[0].count;
+        if (!exists && count >= 20)
+          throw new ConnectionError('Remove an unused model connection before adding another.');
+        if (!managed) await vault.put(id, JSON.stringify(value), client);
+        const label =
+          value.type === 'oauth'
+            ? (value.email ?? 'ChatGPT account')
+            : modelSource({ provider, method });
+        await client.query(
+          `INSERT INTO model_connections(id,owner_id,provider,method,label,models,managed,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT(id) DO UPDATE SET models=excluded.models,label=excluded.label,status=excluded.status WHERE model_connections.owner_id=excluded.owner_id`,
+          [id, ownerId, provider, method, label, JSON.stringify(definitions), managed, status],
         );
-    });
+        await selectDefault(client, provider, definitions, id, managed, status);
+      },
+      signal,
+    );
     await reload();
     return id;
+  }
+  async function selectDefault(
+    client: PoolClient,
+    provider: ModelProvider,
+    definitions: ModelDefinition[],
+    id: string,
+    managed: boolean,
+    status: Row['status'],
+  ) {
+    const preferredId =
+      managed && options.bootstrap?.provider === provider
+        ? (options.bootstrap.model ?? agentModels[provider])
+        : agentModels[provider];
+    const preferred = definitions.find((model) => model.choice.id === preferredId);
+    if (
+      preferred &&
+      status === 'connected' &&
+      (!managed || options.bootstrap?.provider === provider)
+    )
+      await client.query(
+        'UPDATE model_settings SET selection=$2,selection_set=true WHERE owner_id=$1 AND NOT selection_set',
+        [
+          ownerId,
+          JSON.stringify({
+            connectionId: id,
+            modelId: preferred.choice.id,
+            effort: preferred.choice.efforts.includes('high')
+              ? 'high'
+              : preferred.choice.efforts[0],
+          }),
+        ],
+      );
+  }
+  async function updateCatalog(id: string, signal?: AbortSignal) {
+    await locked(
+      id,
+      async (client) => {
+        const row = (
+          await client.query<Row>(
+            'SELECT provider,method,status,managed FROM model_connections WHERE id=$1 AND owner_id=$2',
+            [id, ownerId],
+          )
+        ).rows[0];
+        if (!row) throw new ConnectionError('This model connection is unavailable.');
+        if (!row.managed && row.status === 'reconnect')
+          throw new ConnectionError('Reconnect the selected account in Models.');
+        const value = await credential(id, client);
+        if (!value) throw new ConnectionError('This model connection is unavailable.');
+        const definitions = await catalog(row.provider, row.method, value);
+        if (!definitions.length)
+          throw new ConnectionError('This connection has no supported models.');
+        signal?.throwIfAborted();
+        await client.query(
+          "UPDATE model_connections SET models=$3,status='connected' WHERE id=$1 AND owner_id=$2",
+          [id, ownerId, JSON.stringify(definitions)],
+        );
+        await selectDefault(client, row.provider, definitions, id, row.managed, 'connected');
+      },
+      signal,
+    );
+    await reload();
+  }
+  async function refreshCatalog(id: string) {
+    const row = rows.find((row) => row.id === id);
+    if (!row) throw new ConnectionError('This model connection is unavailable.');
+    if (!row.managed) await read(id);
+    await updateCatalog(id);
   }
   function signInStatus(state: string) {
     const attempt = attempts.get(state);
@@ -262,33 +371,57 @@ export function createModelService(options: {
   async function complete(callback: URL) {
     const state = callback.searchParams.get('state') ?? '';
     const attempt = attempts.get(state);
-    if (!attempt || closed || attempt.expires < Date.now() || attempt.status !== 'waiting')
+    if (!attempt || attempt.status !== 'waiting')
       throw new ConnectionError('This sign-in request has expired. Start a new connection.');
+    active(attempt);
     attempt.status = 'completing';
-    attempt.completion = finish(attempt, callback);
-    attempt.completion.catch(() => {});
+    if (attempt.provider === 'openai') {
+      try {
+        attempt.complete!(callback);
+      } catch (error) {
+        await cancel(state);
+        throw error;
+      }
+    } else {
+      attempt.completion = finish(
+        attempt,
+        backend.exchange('openrouter', attempt.secret, callback),
+      );
+      attempt.completion.catch(() => {});
+    }
     return attempt.completion;
   }
-  async function finish(attempt: NonNullable<ReturnType<typeof attempts.get>>, callback: URL) {
+  async function finish(
+    attempt: NonNullable<ReturnType<typeof attempts.get>>,
+    result: Promise<ModelCredential>,
+  ) {
     try {
-      let value: ModelCredential;
-      try {
-        value = await backend.exchange(attempt.provider, attempt.secret, callback);
-      } catch {
-        throw new ConnectionError('Sign-in failed. Start a new connection and grant model access.');
-      }
-      remember(value);
+      const value = await result;
+      active(attempt);
+      attempt.status = 'completing';
       const method = attempt.provider === 'openai' ? 'subscription' : 'oauth';
-      const definitions = await catalog(attempt.provider, method, value);
-      if (closed) throw new ConnectionError('Model connections have stopped.');
-      await save(attempt.provider, method, value, definitions, attempt.connectionId, {
+      const id = await save(attempt.provider, method, value, [], attempt.connectionId, {
         replace: !!attempt.connectionId,
+        status: 'loading',
+        signal: attempt.controller.signal,
       });
+      attempt.connectionId = id;
+      active(attempt);
+      try {
+        await updateCatalog(id, attempt.controller.signal);
+      } catch (error) {
+        active(attempt);
+        attempt.error =
+          error instanceof ConnectionError
+            ? error.message
+            : 'Account connected. Refresh the connection to load its models.';
+      }
+      active(attempt);
       attempt.status = 'connected';
     } catch (error) {
       attempt.status = 'failed';
       attempt.error =
-        error instanceof ConnectionError
+        error instanceof ConnectionError || error instanceof ModelAuthError
           ? error.message
           : 'Sign-in failed. Start a new connection.';
       throw error;
@@ -298,11 +431,19 @@ export function createModelService(options: {
   }
   async function completeCallback(callback: URL) {
     const attempt = attempts.get(callback.searchParams.get('state') ?? '');
-    await (attempt?.completion && !closed && attempt.expires >= Date.now()
+    await (attempt?.completion &&
+    attempt.status !== 'waiting' &&
+    !closed &&
+    attempt.expires >= Date.now()
       ? attempt.completion
       : complete(callback));
   }
-  async function start(provider: 'openai' | 'openrouter', connectionId?: string) {
+  function start(provider: 'openai' | 'openrouter', connectionId?: string) {
+    const result = starting.then(() => begin(provider, connectionId));
+    starting = result.catch(() => {});
+    return result;
+  }
+  async function begin(provider: 'openai' | 'openrouter', connectionId?: string) {
     if (closed) throw new ConnectionError('Model connections have stopped.');
     if (!options.keyStore.configured)
       throw new ConnectionError(
@@ -319,75 +460,65 @@ export function createModelService(options: {
         )
       : undefined;
     if (connectionId && !row) throw new ConnectionError('This model connection is unavailable.');
-    for (const [state, attempt] of attempts) if (attempt.expires < Date.now()) forgetAttempt(state);
+    for (const [state, attempt] of attempts)
+      if (
+        attempt.expires < Date.now() ||
+        (provider === 'openai' &&
+          attempt.provider === provider &&
+          ['waiting', 'completing'].includes(attempt.status))
+      )
+        await cancel(state);
     if (
       [...attempts.values()].filter((attempt) => ['waiting', 'completing'].includes(attempt.status))
         .length >= 5
     )
       throw new ConnectionError('Complete a pending sign-in before starting another.');
-    if (provider === 'openai') {
-      listener ??= new Promise<Server>((resolve, reject) => {
-        const server = createServer((request, response) => {
-          const callback = new URL(request.url ?? '/', 'http://127.0.0.1:1455');
-          if (request.method !== 'GET' || callback.pathname !== '/auth/callback') {
-            response.writeHead(404);
-            response.end();
-            return;
-          }
-          void completeCallback(callback).then(
-            () => {
-              response.writeHead(200, {
-                'Content-Type': 'text/html; charset=utf-8',
-                'Cache-Control': 'no-store',
-                'Referrer-Policy': 'no-referrer',
-                'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
-              });
-              response.end(
-                '<!doctype html><title>Otto</title><h1>ChatGPT connected</h1><p>Return to Otto. Your models are ready.</p>',
-              );
-            },
-            () => {
-              response.writeHead(400, {
-                'Content-Type': 'text/plain',
-                'Cache-Control': 'no-store',
-              });
-              response.end('Sign-in failed. Return to Otto and start a new connection.');
-            },
-          );
-        });
-        server.once('error', reject);
-        server.listen(1455, '127.0.0.1', () => resolve(server));
-      });
-      try {
-        await listener;
-      } catch {
-        listener = undefined;
-        throw new ConnectionError(
-          'Close the other sign-in on port 1455, then connect ChatGPT again.',
-        );
+    if (closed) throw new ConnectionError('Model connections have stopped.');
+    const controller = new AbortController();
+    pendingControllers.add(controller);
+    let flow: Awaited<ReturnType<ModelBackend['signIn']>> | undefined;
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    timeout.unref();
+    try {
+      const auth =
+        provider === 'openai'
+          ? await backend.signIn({ signal: controller.signal })
+          : backend.authorize({
+              provider,
+              redirectUri: `${options.origin}/api/models/oauth/callback`,
+            });
+      flow = 'result' in auth ? auth : undefined;
+      flow?.result.catch(() => {});
+      controller.signal.throwIfAborted();
+      const timer = setTimeout(() => {
+        void cancel(auth.state);
+      }, 600000);
+      timer.unref();
+      const attempt: NonNullable<ReturnType<typeof attempts.get>> = {
+        provider,
+        state: auth.state,
+        controller,
+        complete: flow?.complete,
+        connectionId,
+        secret: 'secret' in auth ? auth.secret : {},
+        expires: Date.now() + 600000,
+        timer,
+        status: 'waiting',
+      };
+      attempts.set(auth.state, attempt);
+      if (flow) {
+        attempt.completion = finish(attempt, flow.result);
+        attempt.completion.catch(() => {});
       }
+      return { url: auth.url, attempt: auth.state };
+    } catch (error) {
+      controller.abort();
+      await flow?.result.catch(() => {});
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      pendingControllers.delete(controller);
     }
-    const redirectUri =
-      provider === 'openai'
-        ? 'http://127.0.0.1:1455/auth/callback'
-        : `${options.origin}/api/models/oauth/callback`;
-    const auth = backend.authorize({
-      provider,
-      redirectUri,
-      hostId,
-      previous: row ? await credential(row.id) : undefined,
-    });
-    const timer = setTimeout(() => forgetAttempt(auth.state), 600000);
-    timer.unref();
-    attempts.set(auth.state, {
-      provider,
-      connectionId,
-      secret: auth.secret,
-      expires: Date.now() + 600000,
-      timer,
-      status: 'waiting',
-    });
-    return { url: auth.url, attempt: auth.state };
   }
   const service = {
     get configured() {
@@ -444,12 +575,6 @@ export function createModelService(options: {
         'INSERT INTO model_settings(owner_id,host_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
         [ownerId, `urn:uuid:${randomUUID()}`],
       );
-      hostId = (
-        await database.query<{ host_id: string }>(
-          'SELECT host_id FROM model_settings WHERE owner_id=$1',
-          [ownerId],
-        )
-      ).rows[0].host_id;
       await reload();
       for (const row of rows) {
         try {
@@ -520,8 +645,7 @@ export function createModelService(options: {
       await reload();
     },
     async remove(id: string) {
-      for (const [state, attempt] of attempts)
-        if (attempt.connectionId === id) forgetAttempt(state);
+      for (const [state, attempt] of attempts) if (attempt.connectionId === id) await cancel(state);
       await locked(id, async (client) => {
         const row = (
           await client.query<Row>(
@@ -543,22 +667,7 @@ export function createModelService(options: {
       });
       await reload();
     },
-    async refreshCatalog(id: string) {
-      const row = rows.find((row) => row.id === id);
-      if (!row) throw new ConnectionError('This model connection is unavailable.');
-      const value = row.managed ? await credential(id) : await read(id);
-      if (!value) throw new ConnectionError('This model connection is unavailable.');
-      const definitions = await catalog(row.provider, row.method, value);
-      if (!definitions.length)
-        throw new ConnectionError('This connection has no supported models.');
-      await locked(id, async (client) => {
-        await client.query(
-          "UPDATE model_connections SET models=$3,status='connected' WHERE id=$1 AND owner_id=$2",
-          [id, ownerId, JSON.stringify(definitions)],
-        );
-      });
-      await reload();
-    },
+    refreshCatalog,
     async resolve(auxiliary = false): Promise<ModelAccess> {
       const selected = selection && { ...selection };
       const row = rows.find(
@@ -584,6 +693,7 @@ export function createModelService(options: {
       };
     },
     start,
+    cancel,
     complete,
     signInStatus,
     register(app: FastifyInstance) {
@@ -591,7 +701,7 @@ export function createModelService(options: {
         routes.setErrorHandler((error, _request, reply) =>
           reply.code(400).send({
             error:
-              error instanceof ConnectionError
+              error instanceof ConnectionError || error instanceof ModelAuthError
                 ? error.message
                 : 'The model connection request failed. Check the service and try again.',
           }),
@@ -640,9 +750,21 @@ export function createModelService(options: {
             return signInStatus(
               z
                 .string()
-                .regex(/^[A-Za-z0-9_-]{43}$/)
+                .regex(/^[A-Za-z0-9_-]{32,128}$/)
                 .parse(request.params.attempt),
             );
+          },
+        );
+        routes.delete<{ Params: { attempt: string } }>(
+          '/api/models/oauth/:attempt',
+          async (request) => {
+            await cancel(
+              z
+                .string()
+                .regex(/^[A-Za-z0-9_-]{32,128}$/)
+                .parse(request.params.attempt),
+            );
+            return service.view();
           },
         );
         routes.post('/api/models/oauth/complete', async (request) => {
@@ -675,13 +797,9 @@ export function createModelService(options: {
     },
     async close() {
       closed = true;
-      for (const state of attempts.keys()) forgetAttempt(state);
-      const server = await listener?.catch(() => undefined);
-      listener = undefined;
-      if (server) {
-        server.closeAllConnections();
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-      }
+      for (const controller of pendingControllers) controller.abort();
+      await starting;
+      await Promise.all([...attempts.keys()].map(cancel));
       observers.clear();
       secrets.clear();
     },

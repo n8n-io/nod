@@ -7,12 +7,18 @@ export type ModelCredential =
       access: string;
       refresh: string;
       expires: number;
-      clientId: string;
-      subject: string;
-      idToken: string;
-      scopes: string[];
+      accountId: string;
       email?: string;
     };
+
+export class ModelAuthError extends Error {
+  constructor(
+    message: string,
+    readonly requiresReconnect = false,
+  ) {
+    super(message);
+  }
+}
 
 export interface ModelDefinition {
   choice: ModelChoice;
@@ -28,19 +34,24 @@ export interface ModelAccess {
 }
 
 export interface ModelBackend {
+  signIn(input: { signal: AbortSignal }): Promise<{
+    url: string;
+    state: string;
+    result: Promise<ModelCredential>;
+    complete(callback: URL): void;
+  }>;
   catalog(
     provider: ModelProvider,
     method: ModelMethod,
     credential?: ModelCredential,
   ): Promise<ModelDefinition[]>;
-  authorize(input: {
-    provider: 'openai' | 'openrouter';
-    redirectUri: string;
-    hostId: string;
-    previous?: ModelCredential;
-  }): { url: string; state: string; secret: Record<string, unknown> };
+  authorize(input: { provider: 'openrouter'; redirectUri: string }): {
+    url: string;
+    state: string;
+    secret: Record<string, unknown>;
+  };
   exchange(
-    provider: 'openai' | 'openrouter',
+    provider: 'openrouter',
     secret: Record<string, unknown>,
     callback: URL,
   ): Promise<ModelCredential>;

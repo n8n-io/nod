@@ -1090,7 +1090,49 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       await root.query(`DROP SCHEMA ${schema} CASCADE`);
       await root.end();
     });
-    return { create, database, backend };
+    return { create, database, backend, keyStore };
+  }
+
+  function subscriptionCredential(expires = Date.now() + 3600000) {
+    return {
+      type: 'oauth' as const,
+      access: 'fixture-access',
+      refresh: 'fixture-refresh',
+      expires,
+      accountId: 'fixture-account',
+    };
+  }
+
+  function stubSignIn(
+    exchange: () => Promise<import('../src/ports/models.ts').ModelCredential>,
+    aborted?: () => void,
+  ): import('../src/ports/models.ts').ModelBackend['signIn'] {
+    return async ({ signal }) => {
+      const state = randomBytes(16).toString('hex');
+      let resolve!: (value: import('../src/ports/models.ts').ModelCredential) => void;
+      let reject!: (error: Error) => void;
+      const result = new Promise<import('../src/ports/models.ts').ModelCredential>((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      signal.addEventListener(
+        'abort',
+        () => {
+          aborted?.();
+          reject(new Error('Sign-in cancelled.'));
+        },
+        { once: true },
+      );
+      return {
+        url: `https://auth.openai.com/authorize?state=${state}`,
+        state,
+        result,
+        complete(callback) {
+          assert.equal(callback.searchParams.get('state'), state);
+          void exchange().then(resolve, reject);
+        },
+      };
+    };
   }
 
   test('saved keys stay encrypted and owner-scoped; a removed connection cannot supply a later turn', async (t) => {
@@ -1371,10 +1413,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
           access: 'fixture-old-access',
           refresh: 'fixture-old-refresh',
           expires: 0,
-          clientId: 'fixture-client',
-          subject: 'fixture-owner',
-          idToken: 'fixture-id-token',
-          scopes: ['chatgpt.tokens.use.direct'],
+          accountId: 'fixture-account',
         };
       },
       async refresh(value: import('../src/ports/models.ts').ModelCredential) {
@@ -1390,6 +1429,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         };
       },
     };
+    backend.signIn = stubSignIn(() => backend.exchange());
     const owner = await f.create('fixture-owner', backend);
     const captured: AnalyticsEvent[] = [];
     const app = Fastify();
@@ -1550,5 +1590,327 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(owner.signInStatus(signIn.attempt).status, 'failed');
     t.mock.timers.reset();
     assert.equal(failed.signInStatus(expiring.attempt).status, 'failed');
+  });
+  test('a verified account survives catalog failure and recovers without repeating sign-in', async (t) => {
+    const f = await fixture(t);
+    let exchanges = 0;
+    let unavailable = true;
+    const backend = {
+      ...f.backend,
+      signIn: stubSignIn(async () => {
+        exchanges++;
+        return subscriptionCredential();
+      }),
+      async catalog(...args: Parameters<typeof f.backend.catalog>) {
+        if (unavailable) throw new Error('fixture-catalog-outage');
+        return f.backend.catalog(args[0], args[1]);
+      },
+    };
+    const owner = await f.create('fixture-owner', backend);
+    const started = await owner.start('openai');
+    await owner.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${started.attempt}&code=fixture`),
+    );
+    assert.equal(exchanges, 1);
+    assert.equal(owner.signInStatus(started.attempt).status, 'connected');
+    assert.match(owner.signInStatus(started.attempt).error!, /model list/);
+    assert.equal(owner.view().connections[0].status, 'loading');
+    assert.equal(owner.configured, false);
+    assert.equal(
+      (await f.database.query('SELECT count(*)::int AS count FROM vault_app_grants')).rows[0].count,
+      1,
+    );
+    const restarted = await f.create('fixture-owner', backend);
+    assert.equal(restarted.view().connections[0].status, 'loading');
+    unavailable = false;
+    await restarted.refreshCatalog(restarted.view().connections[0].id);
+    assert.equal(restarted.view().connections[0].status, 'connected');
+    assert.equal(restarted.configured, true);
+    const credential = await (await restarted.resolve()).read();
+    assert.equal(credential?.type, 'oauth');
+    assert.equal((credential as { accountId: string }).accountId, 'fixture-account');
+    assert.equal(exchanges, 1);
+  });
+
+  test('cancelling and replacing pending ChatGPT sign-ins releases each flow and fences late completion', async (t) => {
+    const f = await fixture(t);
+    let aborted = 0;
+    let release!: (value: import('../src/ports/models.ts').ModelCredential) => void;
+    const pending = new Promise<import('../src/ports/models.ts').ModelCredential>((resolve) => {
+      release = resolve;
+    });
+    const backend = {
+      ...f.backend,
+      signIn: stubSignIn(
+        () => pending,
+        () => aborted++,
+      ),
+    };
+    const owner = await f.create('fixture-owner', backend);
+    const other = await f.create('fixture-other', backend);
+    const app = Fastify();
+    const otherApp = Fastify();
+    owner.register(app);
+    other.register(otherApp);
+    t.after(() => app.close());
+    t.after(() => otherApp.close());
+    const first = await owner.start('openai');
+    await otherApp.inject({ method: 'DELETE', url: `/api/models/oauth/${first.attempt}` });
+    assert.equal(owner.signInStatus(first.attempt).status, 'waiting');
+    assert.equal(aborted, 0);
+    const completing = owner.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${first.attempt}&code=fixture`),
+    );
+    const rejected = assert.rejects(completing);
+    const cancelled = await app.inject({
+      method: 'DELETE',
+      url: `/api/models/oauth/${first.attempt}`,
+    });
+    assert.equal(cancelled.statusCode, 200);
+    await rejected;
+    release(subscriptionCredential());
+    await Promise.resolve();
+    assert.equal(aborted, 1);
+    assert.equal(owner.view().connections.length, 0);
+    assert.equal(
+      (await f.database.query('SELECT count(*)::int AS count FROM vault_app_grants')).rows[0].count,
+      0,
+    );
+    for (let count = 0; count < 7; count++) await owner.start('openai');
+    assert.equal(aborted, 7);
+    const parallel = await Promise.all([owner.start('openai'), owner.start('openai')]);
+    assert.equal(owner.signInStatus(parallel[0].attempt).status, 'failed');
+    assert.equal(owner.signInStatus(parallel[1].attempt).status, 'waiting');
+    await owner.cancel(parallel[1].attempt);
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    const expires = await owner.start('openai');
+    t.mock.timers.tick(600001);
+    const afterExpiry = await owner.start('openai');
+    assert.equal(owner.signInStatus(expires.attempt).status, 'failed');
+    t.mock.timers.reset();
+    assert.equal(owner.signInStatus(afterExpiry.attempt).status, 'waiting');
+    await owner.close();
+    assert.equal(owner.signInStatus(afterExpiry.attempt).status, 'failed');
+  });
+
+  test('failed initiation leaves no attempt and shutdown awaits an aborted starting flow', async (t) => {
+    const { ModelAuthError } = await import('../src/ports/models.ts');
+    const f = await fixture(t);
+    let failed = false;
+    let entered!: () => void;
+    const enteredFlow = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let aborted!: () => void;
+    const abortedFlow = new Promise<void>((resolve) => {
+      aborted = resolve;
+    });
+    let ready!: (flow: Awaited<ReturnType<typeof f.backend.signIn>>) => void;
+    const pendingFlow = new Promise<Awaited<ReturnType<typeof f.backend.signIn>>>((resolve) => {
+      ready = resolve;
+    });
+    let cleaned!: (error: Error) => void;
+    const result = new Promise<import('../src/ports/models.ts').ModelCredential>(
+      (_resolve, reject) => {
+        cleaned = reject;
+      },
+    );
+    void result.catch(() => {});
+    const owner = await f.create('fixture-owner', {
+      ...f.backend,
+      async signIn({ signal }) {
+        if (!failed) {
+          failed = true;
+          throw new ModelAuthError('Fixture sign-in unavailable.');
+        }
+        signal.addEventListener('abort', aborted, { once: true });
+        entered();
+        return pendingFlow;
+      },
+    });
+    await assert.rejects(owner.start('openai'), /unavailable/);
+    const starting = owner.start('openai');
+    const rejection = assert.rejects(starting);
+    await enteredFlow;
+    let closed = false;
+    const closing = owner.close().then(() => {
+      closed = true;
+    });
+    await abortedFlow;
+    ready({
+      url: 'https://auth.openai.com/authorize',
+      state: 'a'.repeat(32),
+      result,
+      complete() {},
+    });
+    await Promise.resolve();
+    assert.equal(closed, false);
+    cleaned(new Error('Fixture listener cleanup complete.'));
+    await Promise.all([closing, rejection]);
+    assert.equal(closed, true);
+    assert.equal(owner.view().connections.length, 0);
+    assert.equal(
+      (await f.database.query('SELECT count(*)::int AS count FROM vault_app_grants')).rows[0].count,
+      0,
+    );
+  });
+
+  test('temporary refresh failures retain the account while terminal failures require reconnect', async (t) => {
+    const { ModelAuthError } = await import('../src/ports/models.ts');
+    const f = await fixture(t);
+    let failure: 'temporary' | 'terminal' | null = 'temporary';
+    let catalogFailure = false;
+    let refreshes = 0;
+    const backend = {
+      ...f.backend,
+      signIn: stubSignIn(async () => subscriptionCredential(0)),
+      catalog: (
+        provider: Parameters<typeof f.backend.catalog>[0],
+        method: Parameters<typeof f.backend.catalog>[1],
+      ) => {
+        if (catalogFailure) throw new Error('fixture-catalog-outage');
+        return f.backend.catalog(provider, method);
+      },
+      async refresh(value: import('../src/ports/models.ts').ModelCredential) {
+        refreshes++;
+        if (failure)
+          throw new ModelAuthError('ChatGPT temporarily unavailable.', failure === 'terminal');
+        if (value.type !== 'oauth') throw new Error('Expected OAuth credential.');
+        return { ...value, refresh: 'fixture-rotated-refresh', expires: Date.now() + 3600000 };
+      },
+    };
+    const owner = await f.create('fixture-owner', backend);
+    const started = await owner.start('openai');
+    await owner.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${started.attempt}&code=fixture`),
+    );
+    const access = await owner.resolve();
+    await assert.rejects(access.read(), /temporarily unavailable/);
+    assert.equal(owner.view().connections[0].status, 'connected');
+    failure = null;
+    catalogFailure = true;
+    await assert.rejects(owner.refreshCatalog(owner.view().connections[0].id), /model list/);
+    const refreshed = await access.read();
+    assert.equal(refreshed?.type, 'oauth');
+    assert.equal((refreshed as { refresh: string }).refresh, 'fixture-rotated-refresh');
+    assert.equal(refreshes, 2);
+    failure = 'terminal';
+    catalogFailure = false;
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 3600000 });
+    await assert.rejects(access.read(), /Reconnect/);
+    t.mock.timers.reset();
+    assert.equal(owner.view().connections[0].status, 'reconnect');
+    await assert.rejects(access.read(), /Reconnect/);
+    assert.equal(refreshes, 3);
+  });
+
+  test('reconnect cannot replace the ChatGPT account behind an existing connection', async (t) => {
+    const f = await fixture(t);
+    let accountId = 'fixture-original-account';
+    const backend = {
+      ...f.backend,
+      signIn: stubSignIn(async () => ({ ...subscriptionCredential(), accountId })),
+      catalog: (
+        provider: Parameters<typeof f.backend.catalog>[0],
+        method: Parameters<typeof f.backend.catalog>[1],
+      ) => f.backend.catalog(provider, method),
+    };
+    const owner = await f.create('fixture-owner', backend);
+    const started = await owner.start('openai');
+    await owner.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${started.attempt}&code=fixture`),
+    );
+    const id = owner.view().connections[0].id;
+    const selection = owner.view().selection;
+    const access = await owner.resolve();
+    const before = (
+      await f.database.query('SELECT ciphertext FROM vault_app_grants WHERE id=$1', [id])
+    ).rows[0].ciphertext;
+    accountId = 'fixture-different-account';
+    const reconnect = await owner.start('openai', id);
+    await assert.rejects(
+      owner.complete(
+        new URL(`http://127.0.0.1:1455/auth/callback?state=${reconnect.attempt}&code=fixture`),
+      ),
+      /Add connection/,
+    );
+    assert.deepEqual(owner.view().selection, selection);
+    assert.equal(owner.view().connections[0].status, 'connected');
+    assert.equal(
+      ((await access.read()) as { accountId: string }).accountId,
+      'fixture-original-account',
+    );
+    assert.equal(
+      (await f.database.query('SELECT ciphertext FROM vault_app_grants WHERE id=$1', [id])).rows[0]
+        .ciphertext,
+      before,
+    );
+    const added = await owner.start('openai');
+    await owner.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${added.attempt}&code=fixture`),
+    );
+    assert.equal(owner.view().connections.length, 2);
+    assert.deepEqual(owner.view().selection, selection);
+  });
+
+  test('legacy direct credentials and model transports require reconnect without using old tokens', async (t) => {
+    const f = await fixture(t);
+    let refreshes = 0;
+    const backend = {
+      ...f.backend,
+      signIn: stubSignIn(async () => subscriptionCredential()),
+      catalog: (
+        provider: Parameters<typeof f.backend.catalog>[0],
+        method: Parameters<typeof f.backend.catalog>[1],
+      ) => f.backend.catalog(provider, method),
+      async refresh() {
+        refreshes++;
+        throw new Error('Old token reached refresh.');
+      },
+    };
+    const owner = await f.create('fixture-owner', backend);
+    const started = await owner.start('openai');
+    await owner.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${started.attempt}&code=fixture`),
+    );
+    const id = owner.view().connections[0].id;
+    const access = await owner.resolve();
+    await f.database.query(
+      "UPDATE model_connections SET models=jsonb_set(models,'{0,spec,api}','\"openai-responses\"') WHERE id=$1",
+      [id],
+    );
+    const restored = await f.create('fixture-owner', backend);
+    assert.equal(restored.view().connections[0].status, 'reconnect');
+    await assert.rejects(access.read(), /Reconnect/);
+    assert.equal(refreshes, 0);
+    await f.database.query("UPDATE vault_app_grants SET ciphertext='invalid' WHERE id=$1", [id]);
+    const reconnect = await restored.start('openai', id);
+    await restored.complete(
+      new URL(`http://127.0.0.1:1455/auth/callback?state=${reconnect.attempt}&code=fixture`),
+    );
+    assert.equal(restored.view().connections[0].status, 'connected');
+    assert.equal(restored.view().connections[0].id, id);
+    const { createAppGrantVault } = await import('../src/server/vault-app-grants.ts');
+    const vault = await createAppGrantVault(f.database, {
+      ownerId: 'fixture-owner',
+      keyStore: f.keyStore,
+    });
+    await vault.put(
+      id,
+      JSON.stringify({
+        type: 'oauth',
+        access: 'fixture-direct-access',
+        refresh: 'fixture-direct-refresh',
+        expires: 0,
+        clientId: 'fixture-direct-client',
+        subject: 'fixture-owner',
+        idToken: 'fixture-id-token',
+        scopes: ['chatgpt.tokens.use.direct'],
+      }),
+    );
+    const migrated = await f.create('fixture-owner', backend);
+    assert.equal(migrated.view().connections[0].status, 'reconnect');
+    await assert.rejects((await restored.resolve()).read(), /Reconnect/);
+    assert.equal(refreshes, 0);
   });
 });

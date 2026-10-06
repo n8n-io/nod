@@ -2301,137 +2301,294 @@ test('every Otto tool schema reaches a model provider as a root object with its 
   assert.deepEqual(merged.required, ['origin']);
 });
 
-test('model sign-in verifies account identity, permissions and PKCE on the public endpoint', async () => {
+function codexFixtureAccess(accountId = 'fixture-owner') {
+  return `fixture.${Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })).toString('base64url')}.signature`;
+}
+
+test('Pi ChatGPT sign-in validates callbacks, exchanges PKCE once and drains cancellation', async (t) => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
-  const { generateKeyPair, exportJWK, SignJWT } = await import('jose');
-  const { privateKey, publicKey } = await generateKeyPair('RS256');
-  const jwk = { ...(await exportJWK(publicKey)), kid: 'fixture-key' };
-  let nonce = '';
-  let audience = 'fixture-client';
-  let issuer = 'https://auth.openai.com';
-  let scope: string | undefined = 'openid chatgpt.tokens.use.direct';
-  let subject = 'fixture-owner';
-  let grant = new URLSearchParams();
+  const { ModelAuthError } = await import('../src/ports/models.ts');
+  const { Server } = await import('node:http');
+  const listen = Server.prototype.listen;
+  const originalFetch = globalThis.fetch;
+  const servers: import('node:http').Server[] = [];
+  let port = 0;
+  let abortOnListen: AbortController | undefined;
+  t.mock.method(
+    Server.prototype,
+    'listen',
+    function (this: import('node:http').Server, ...args: unknown[]) {
+      assert.equal(args[0], 1455);
+      args[0] = 0;
+      servers.push(this);
+      this.once('listening', () => {
+        port = (this.address() as import('node:net').AddressInfo).port;
+        abortOnListen?.abort();
+      });
+      return Reflect.apply(listen, this, args);
+    },
+  );
+  const grants: URLSearchParams[] = [];
+  let tokenStatus = 200;
+  let holdExchange = false;
+  let exchangeStarted!: () => void;
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.hostname === '127.0.0.1') {
+      assert.equal(url.port, String(port));
+      return originalFetch(input, { ...init, headers: { connection: 'close' } });
+    }
+    assert.equal(url.href, 'https://auth.openai.com/oauth/token');
+    grants.push(new URLSearchParams(String(init?.body)));
+    if (holdExchange) {
+      exchangeStarted();
+      return new Promise<Response>((_resolve, reject) => {
+        const cancel = () => reject(new Error('Canceled fixture-secret fixture-owner'));
+        if (init?.signal?.aborted) cancel();
+        else init?.signal?.addEventListener('abort', cancel, { once: true });
+      });
+    }
+    return tokenStatus === 200
+      ? Response.json({
+          access_token: codexFixtureAccess(),
+          refresh_token: 'fixture-refresh',
+          expires_in: 3600,
+        })
+      : Response.json(
+          { error: 'fixture-secret fixture-owner fixture-refresh' },
+          { status: tokenStatus },
+        );
+  });
+  const backend = createPiModelBackend();
+  const controller = new AbortController();
+  t.after(() => {
+    controller.abort();
+    for (const server of servers) {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+  const signIn = await backend.signIn({ signal: controller.signal });
+  const authorization = new URL(signIn.url);
+  assert.equal(
+    authorization.origin + authorization.pathname,
+    'https://auth.openai.com/oauth/authorize',
+  );
+  assert.equal(authorization.searchParams.get('client_id'), 'app_EMoamEEZ73f0CkXaXp7hrann');
+  assert.equal(authorization.searchParams.get('scope'), 'openid profile email offline_access');
+  assert.equal(authorization.searchParams.get('code_challenge_method'), 'S256');
+  const callback = new URL(authorization.searchParams.get('redirect_uri')!);
+  callback.search = new URLSearchParams({ state: signIn.state, code: 'fixture-code' }).toString();
+  for (const invalid of [
+    `${callback}&state=foreign`,
+    `${callback}&code=second`,
+    `${callback}&error=denied`,
+    callback.href.replace(signIn.state, 'foreign'),
+    callback.href.replace('localhost', '127.0.0.1'),
+    callback.href.replace('/auth/callback', '/wrong'),
+    `${callback}#fragment`,
+  ])
+    assert.throws(() => signIn.complete(new URL(invalid)), ModelAuthError);
+  const wrong = new URL(`http://127.0.0.1:${port}/auth/callback?state=foreign&code=fixture-code`);
+  assert.equal((await fetch(wrong)).status, 400);
+  assert.equal(grants.length, 0);
+  const local = new URL(callback);
+  local.hostname = '127.0.0.1';
+  local.port = String(port);
+  assert.equal((await fetch(local)).status, 200);
+  const credential = await signIn.result;
+  assert.equal(credential.type, 'oauth');
+  if (credential.type !== 'oauth') throw new Error('Expected OAuth.');
+  assert.equal(credential.accountId, 'fixture-owner');
+  assert.equal(credential.access, codexFixtureAccess());
+  assert.equal(grants.length, 1);
+  assert.equal(grants[0].get('grant_type'), 'authorization_code');
+  assert.equal(grants[0].get('client_id'), authorization.searchParams.get('client_id'));
+  assert.equal(grants[0].get('redirect_uri'), 'http://localhost:1455/auth/callback');
+  assert.equal(
+    createHash('sha256').update(grants[0].get('code_verifier')!).digest('base64url'),
+    authorization.searchParams.get('code_challenge'),
+  );
+  assert.equal(servers.at(-1)!.listening, false);
+  assert.throws(() => signIn.complete(callback), /expired/);
+
+  const manual = await backend.signIn({ signal: controller.signal });
+  manual.complete(
+    new URL(`http://localhost:1455/auth/callback?state=${manual.state}&code=manual-code`),
+  );
+  assert.equal((await manual.result).type, 'oauth');
+  assert.equal(grants.at(-1)!.get('code'), 'manual-code');
+  assert.equal(servers.at(-1)!.listening, false);
+
+  const cancel = new AbortController();
+  const pending = await backend.signIn({ signal: cancel.signal });
+  cancel.abort();
+  await assert.rejects(pending.result, /canceled/);
+  assert.equal(servers.at(-1)!.listening, false);
+
+  abortOnListen = new AbortController();
+  await assert.rejects(backend.signIn({ signal: abortOnListen.signal }), /canceled/);
+  assert.equal(servers.at(-1)!.listening, false);
+  abortOnListen = undefined;
+
+  tokenStatus = 403;
+  const denied = await backend.signIn({ signal: controller.signal });
+  denied.complete(
+    new URL(`http://localhost:1455/auth/callback?state=${denied.state}&code=denied-code`),
+  );
+  await assert.rejects(denied.result, (error: Error) => {
+    assert.ok(error instanceof ModelAuthError);
+    assert.doesNotMatch(error.message, /fixture-secret|fixture-owner|fixture-refresh/);
+    return true;
+  });
+  assert.equal(servers.at(-1)!.listening, false);
+
+  holdExchange = true;
+  const started = new Promise<void>((resolve) => {
+    exchangeStarted = resolve;
+  });
+  const interrupted = new AbortController();
+  const active = await backend.signIn({ signal: interrupted.signal });
+  active.complete(
+    new URL(`http://localhost:1455/auth/callback?state=${active.state}&code=interrupted-code`),
+  );
+  await started;
+  interrupted.abort();
+  await assert.rejects(active.result, /canceled/);
+  assert.equal(servers.at(-1)!.listening, false);
+});
+
+test('Pi ChatGPT refresh distinguishes rejected credentials from transient service failures', async (t) => {
+  const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
+  const { ModelAuthError } = await import('../src/ports/models.ts');
+  const credential = {
+    type: 'oauth' as const,
+    access: codexFixtureAccess(),
+    refresh: 'fixture-refresh',
+    expires: 1,
+    accountId: 'fixture-owner',
+  };
+  let status = 200;
+  let changed = false;
+  let offline = false;
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls++;
+    assert.equal(String(input), 'https://auth.openai.com/oauth/token');
+    assert.ok(init?.signal);
+    const body = new URLSearchParams(String(init?.body));
+    assert.equal(body.get('grant_type'), 'refresh_token');
+    assert.equal(body.get('refresh_token'), 'fixture-refresh');
+    assert.equal(body.get('client_id'), 'app_EMoamEEZ73f0CkXaXp7hrann');
+    if (offline) throw new Error('Offline fixture-refresh fixture-owner');
+    return status === 200
+      ? Response.json({
+          access_token: codexFixtureAccess(changed ? 'foreign' : 'fixture-owner'),
+          refresh_token: 'fixture-rotated',
+          expires_in: 3600,
+        })
+      : Response.json({ error: 'invalid_grant fixture-refresh fixture-owner' }, { status });
+  });
+  const backend = createPiModelBackend();
+  const renewed = await backend.refresh(credential);
+  assert.equal(renewed.type, 'oauth');
+  if (renewed.type !== 'oauth') throw new Error('Expected OAuth.');
+  assert.equal(renewed.refresh, 'fixture-rotated');
+  assert.equal(renewed.accountId, credential.accountId);
+  for (const code of [400, 401, 403, 429, 500, 503]) {
+    status = code;
+    const before = calls;
+    await assert.rejects(backend.refresh(credential), (error: Error) => {
+      assert.ok(error instanceof ModelAuthError);
+      assert.equal(error.requiresReconnect, [400, 401, 403].includes(code));
+      assert.doesNotMatch(error.message, /fixture-refresh|fixture-owner/);
+      return true;
+    });
+    assert.equal(calls, before + 1);
+  }
+  offline = true;
+  await assert.rejects(
+    backend.refresh(credential),
+    (error: Error) => error instanceof ModelAuthError && !error.requiresReconnect,
+  );
+  offline = false;
+  status = 200;
+  changed = true;
+  await assert.rejects(
+    backend.refresh(credential),
+    (error: Error) => error instanceof ModelAuthError && error.requiresReconnect,
+  );
+  const before = calls;
+  await assert.rejects(
+    backend.refresh({ ...credential, accountId: undefined } as unknown as typeof credential),
+    /Reconnect/,
+  );
+  assert.equal(calls, before);
+});
+
+test('ChatGPT catalog and requests use Codex account access, history and tools without retries', async () => {
+  const { createPiModelBackend, createPiModelRuntime } =
+    await import('../src/providers/pi/models.ts');
+  const access = codexFixtureAccess();
+  const credential = {
+    type: 'oauth' as const,
+    access,
+    refresh: 'fixture-refresh',
+    expires: Date.now() + 3600000,
+    accountId: 'fixture-owner',
+  };
+  let catalogCalls = 0;
   const backend = createPiModelBackend({
     fetch: async (input, init) => {
-      const url = String(input);
-      if (url.endsWith('/.well-known/jwks.json')) return Response.json({ keys: [jwk] });
-      if (url === 'https://api.openai.com/v1/models') {
-        assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fixture-access');
-        return Response.json({
-          models: [
-            { slug: 'gpt-6.1-sol', visibility: 'list' },
-            { slug: 'gpt-6-luna', visibility: 'hidden' },
-          ],
-        });
-      }
-      assert.equal(url, 'https://auth.openai.com/api/accounts/oauth/token');
-      grant = new URLSearchParams(String(init?.body));
-      const id_token = await new SignJWT({ nonce, email: 'fixture@example.test' })
-        .setProtectedHeader({ alg: 'RS256', kid: jwk.kid })
-        .setIssuer(issuer)
-        .setAudience(audience)
-        .setSubject(subject)
-        .setExpirationTime('5m')
-        .sign(privateKey);
+      catalogCalls++;
+      assert.equal(
+        String(input),
+        'https://chatgpt.com/backend-api/codex/models?client_version=0.155.1',
+      );
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${access}`);
+      assert.equal(new Headers(init?.headers).get('chatgpt-account-id'), 'fixture-owner');
+      assert.equal(init?.redirect, 'error');
       return Response.json({
-        access_token: 'fixture-access',
-        refresh_token: 'fixture-refresh',
-        id_token,
-        token_type: 'Bearer',
-        expires_in: 3600,
-        scope,
+        models: [
+          { slug: 'gpt-6.1-sol', visibility: 'list' },
+          { slug: 'gpt-6-luna', visibility: 'hidden' },
+        ],
       });
     },
   });
-  const auth = backend.authorize({
-    provider: 'openai',
-    hostId: 'urn:uuid:fixture',
-    redirectUri: 'http://127.0.0.1:1455/auth/callback',
-  });
-  const url = new URL(auth.url);
-  nonce = String(auth.secret.nonce);
-  assert.equal(url.searchParams.get('agent_name_hint'), 'Otto');
-  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
-  assert.equal(
-    url.searchParams.get('code_challenge'),
-    createHash('sha256').update(String(auth.secret.verifier)).digest('base64url'),
-  );
-  const callback = new URL(
-    `http://127.0.0.1:1455/auth/callback?state=${auth.state}&code=fixture-code&client_id=fixture-client`,
-  );
-  const value = await backend.exchange('openai', auth.secret, callback);
-  assert.equal(value.type, 'oauth');
-  if (value.type !== 'oauth') throw new Error('Expected an account credential.');
-  assert.equal(value.subject, 'fixture-owner');
-  assert.equal(grant.get('code_verifier'), auth.secret.verifier);
-  assert.equal(grant.get('resource'), 'https://api.openai.com/v1');
+  const definitions = await backend.catalog('openai', 'subscription', credential);
   assert.deepEqual(
-    (await backend.catalog('openai', 'subscription', value)).map((model) => model.choice.id),
+    definitions.map((model) => model.choice.id),
     ['gpt-6.1-sol'],
   );
-  for (const invalid of ['nonce', 'audience', 'issuer', 'scope']) {
-    const saved: { nonce: string; audience: string; issuer: string; scope: string | undefined } = {
-      nonce,
-      audience,
-      issuer,
-      scope,
-    };
-    if (invalid === 'nonce') nonce = 'foreign';
-    if (invalid === 'audience') audience = 'foreign';
-    if (invalid === 'issuer') issuer = 'https://foreign.example.test';
-    if (invalid === 'scope') scope = 'openid';
-    await assert.rejects(backend.exchange('openai', auth.secret, callback));
-    ({ nonce, audience, issuer, scope } = saved);
-  }
-  scope = undefined;
-  await assert.rejects(backend.exchange('openai', auth.secret, callback));
-  const refreshed = await backend.refresh(value);
-  assert.equal(refreshed.type, 'oauth');
-  if (refreshed.type !== 'oauth') throw new Error('Expected an account credential.');
-  assert.deepEqual(refreshed.scopes, value.scopes);
-  scope = 'openid';
-  await assert.rejects(backend.refresh(value));
-  scope = 'openid chatgpt.tokens.use.direct';
-  await assert.rejects(
-    backend.exchange('openai', auth.secret, new URL(`${callback}&state=second`)),
-  );
-  await assert.rejects(
-    backend.exchange(
-      'openai',
-      auth.secret,
-      new URL(callback.href.replace('127.0.0.1', 'localhost')),
-    ),
-  );
-  subject = 'another-owner';
-  await assert.rejects(backend.refresh(value));
-  const reconnect = new URL(
-    backend.authorize({
-      provider: 'openai',
-      hostId: 'urn:uuid:fixture',
-      redirectUri: callback.origin + callback.pathname,
-      previous: value,
-    }).url,
-  );
-  assert.equal(reconnect.searchParams.get('client_id'), 'fixture-client');
-});
-
-test('ChatGPT requests keep full history and namespaced tool calls and make one failed request', async () => {
-  const { createPiModelBackend, createPiModelRuntime } =
-    await import('../src/providers/pi/models.ts');
-  const definitions = await createPiModelBackend({
-    fetch: async () => {
-      throw new Error('Unexpected catalog request.');
-    },
-  }).catalog('openai', 'subscription');
-  const definition = definitions.find((model) => model.choice.id === 'gpt-6.1-sol')!;
-  const { runtime, model } = await createPiModelRuntime({
-    provider: 'openai',
-    method: 'subscription',
+  const definition = definitions[0];
+  assert.equal(definition.spec.provider, 'openai-codex');
+  assert.equal(definition.spec.api, 'openai-codex-responses');
+  const old = {
+    type: 'oauth',
+    access,
+    refresh: 'fixture-refresh',
+    expires: 1,
+    clientId: 'old-direct',
+  } as unknown as typeof credential;
+  await assert.rejects(backend.catalog('openai', 'subscription', old), /Reconnect/);
+  assert.equal(catalogCalls, 1);
+  const selection = {
+    provider: 'openai' as const,
+    method: 'subscription' as const,
     definition,
-    effort: 'high',
-    read: async () => ({ type: 'api_key', key: 'fixture-subscription-access' }),
-  });
+    effort: 'high' as const,
+    read: async () => credential,
+  };
+  await assert.rejects(
+    createPiModelRuntime({
+      ...selection,
+      definition: { ...definition, spec: { ...definition.spec, api: 'openai-responses' } },
+    }),
+    /Reconnect/,
+  );
+  const { runtime, model } = await createPiModelRuntime(selection);
+  assert.equal(model.provider, 'openai-codex');
   let calls = 0;
   let payload: Record<string, any>;
   const item = {
@@ -2439,7 +2596,6 @@ test('ChatGPT requests keep full history and namespaced tool calls and make one 
     id: 'fc_fixture',
     call_id: 'call_fixture',
     name: 'read_fixture',
-    namespace: 'otto',
     arguments: '{}',
   };
   const message = await runtime.completeSimple(
@@ -2449,7 +2605,27 @@ test('ChatGPT requests keep full history and namespaced tool calls and make one 
       tools: [
         { name: 'read_fixture', description: 'Read synthetic data.', parameters: Type.Object({}) },
       ],
-      messages: [{ role: 'user', content: 'Read the fixture', timestamp: 1 }],
+      messages: [
+        { role: 'user', content: 'Earlier question', timestamp: 1 },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Earlier answer' }],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: 'stop',
+          timestamp: 2,
+        },
+        { role: 'user', content: 'Read the fixture', timestamp: 3 },
+      ],
     },
     {
       reasoning: 'high',
@@ -2457,12 +2633,16 @@ test('ChatGPT requests keep full history and namespaced tool calls and make one 
       temperature: 0.3,
       fetch: async (input, init) => {
         calls++;
-        assert.equal(String(input), 'https://api.openai.com/v1/responses');
-        assert.equal(
-          new Headers(init?.headers).get('authorization'),
-          'Bearer fixture-subscription-access',
-        );
-        payload = JSON.parse(String(init?.body));
+        assert.equal(String(input), 'https://chatgpt.com/backend-api/codex/responses');
+        assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${access}`);
+        assert.equal(new Headers(init?.headers).get('chatgpt-account-id'), 'fixture-owner');
+        const raw =
+          new Headers(init?.headers).get('content-encoding') === 'zstd'
+            ? (await import('node:zlib'))
+                .zstdDecompressSync(Buffer.from(init!.body as Uint8Array))
+                .toString()
+            : String(init?.body);
+        payload = JSON.parse(raw);
         return new Response(
           [
             {
@@ -2492,20 +2672,18 @@ test('ChatGPT requests keep full history and namespaced tool calls and make one 
   assert.equal(calls, 1, message.errorMessage);
   assert.equal(message.stopReason, 'toolUse', message.errorMessage);
   assert.ok(
-    message.content.some(
-      (block) =>
-        block.type === 'toolCall' && block.name === 'read_fixture' && block.namespace === 'otto',
-    ),
+    message.content.some((block) => block.type === 'toolCall' && block.name === 'read_fixture'),
   );
   assert.equal(payload!.store, false);
   assert.equal(payload!.stream, true);
-  assert.equal(payload!.max_output_tokens, undefined);
-  assert.equal(payload!.temperature, undefined);
+  assert.equal(payload!.instructions, 'Fixture system');
   assert.equal(payload!.previous_response_id, undefined);
-  assert.ok(payload!.input.some((item: any) => item.role === 'developer'));
+  assert.match(JSON.stringify(payload!.input), /Earlier question/);
+  assert.match(JSON.stringify(payload!.input), /Earlier answer/);
+  assert.match(JSON.stringify(payload!.input), /Read the fixture/);
   assert.deepEqual(
     payload!.tools.map((tool: any) => tool.type),
-    ['namespace'],
+    ['function'],
   );
   assert.equal(payload!.reasoning.effort, 'high');
   const failed = await runtime.completeSimple(
@@ -2518,17 +2696,33 @@ test('ChatGPT requests keep full history and namespaced tool calls and make one 
         return Response.json(
           {
             error: {
-              message: 'Synthetic rate limit fixture-subscription-access',
-              type: 'rate_limit_error',
+              message: `Synthetic service failure ${access} fixture-refresh fixture-owner`,
+              type: 'server_error',
             },
           },
-          { status: 429 },
+          { status: 503 },
         );
       },
     },
   );
   assert.equal(failed.stopReason, 'error');
-  assert.match(failed.errorMessage ?? '', /Synthetic rate limit \[redacted\]/);
+  assert.match(failed.errorMessage ?? '', /Synthetic service failure \[redacted\]/);
+  assert.doesNotMatch(JSON.stringify(failed), /fixture-refresh|fixture-owner/);
+  assert.ok(!JSON.stringify(failed).includes(access));
+  assert.equal(calls, 2);
+  const rejected = await createPiModelRuntime({ ...selection, read: async () => old });
+  const rejectedMessage = await rejected.runtime.completeSimple(
+    rejected.model,
+    { messages: [{ role: 'user', content: 'Fixture', timestamp: 1 }] },
+    {
+      fetch: async () => {
+        calls++;
+        throw new Error('Old credentials reached network');
+      },
+    },
+  );
+  assert.equal(rejectedMessage.stopReason, 'error');
+  assert.match(rejectedMessage.errorMessage ?? '', /Reconnect/);
   assert.equal(calls, 2);
 });
 
@@ -2610,10 +2804,7 @@ test('OpenAI catalog discovery tolerates only model-list permission restrictions
       access: key,
       refresh: 'fixture-refresh',
       expires: Date.now() + 60000,
-      clientId: 'fixture-client',
-      subject: 'fixture-owner',
-      idToken: 'fixture-identity',
-      scopes: [],
+      accountId: 'fixture-owner',
     }),
   );
   await assert.rejects(backend.catalog('openrouter', 'api_key', credential));
@@ -2903,6 +3094,9 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
   const anthropic = (await backend.catalog('anthropic', 'api_key')).find(
     (item) => item.choice.id === 'claude-opus-5-5',
   )!;
+  const codex = (await backend.catalog('openai', 'subscription')).find(
+    (item) => item.choice.id === 'gpt-6.1-sol',
+  )!;
   const directory = await mkdtemp(join(tmpdir(), 'otto-model-switch-'));
   const requests: Array<{ provider: string; effort: string; history: string }> = [];
   let selected: import('../src/ports/models.ts').ModelAccess = {
@@ -2978,6 +3172,26 @@ test('the Pi transcript keeps model changes for the next turn and leaves backgro
     assert.ok(!requests[2].history.includes('Run the synthetic schedule.'));
     assert.ok(!requests[2].history.includes('fixture-openai-key'));
     assert.ok(!requests[2].history.includes('fixture-anthropic-key'));
+    selected = {
+      provider: 'openai',
+      method: 'subscription',
+      definition: codex,
+      effort: 'high',
+      read: async () => ({
+        type: 'oauth',
+        access: codexFixtureAccess(),
+        refresh: 'fixture-refresh',
+        expires: Date.now() + 3600000,
+        accountId: 'fixture-owner',
+      }),
+    };
+    const subscription = await open();
+    await subscription.prompt('Use the ChatGPT plan for the same label.', []);
+    await subscription.dispose();
+    assert.equal(requests[3].provider, 'openai-codex');
+    assert.equal(requests[3].effort, 'high');
+    assert.ok(requests[3].history.includes('Remember the synthetic blue label.'));
+    assert.ok(!requests[3].history.includes(codexFixtureAccess()));
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });

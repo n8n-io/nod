@@ -69,6 +69,8 @@ export function ModelSettings({
   const [key, setKey] = useState('');
   const [signingIn, setSigningIn] = useState(false);
   const [signIn, setSignIn] = useState<{ url: string; attempt: string } | null>(null);
+  const activeAttempt = useRef<string | null>(null);
+  const mounted = useRef(true);
   const [callback, setCallback] = useState('');
   const dirty = models.busy || signingIn || !!signIn || Boolean(key.trim());
   const [chooseSignal, setChooseSignal] = useState(0);
@@ -76,6 +78,16 @@ export function ModelSettings({
     (connection) => connection.status === 'connected' && connection.models.length > 0,
   ).length;
   const seen = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (activeAttempt.current)
+        void api(`/api/models/oauth/${activeAttempt.current}`, { method: 'DELETE' }).catch(
+          () => {},
+        );
+    };
+  }, []);
   useEffect(() => {
     if (available === undefined) return;
     if (onboarding && seen.current !== undefined && available > seen.current)
@@ -101,13 +113,15 @@ export function ModelSettings({
         if (result.status === 'connected') {
           await models.refresh();
           if (!controller.signal.aborted) {
-            models.setError('');
+            models.setError(result.error ?? '');
+            activeAttempt.current = null;
             setSignIn(null);
           }
           return;
         }
         if (result.status === 'failed') {
           models.setError(result.error ?? 'Sign-in failed. Start a new connection.');
+          activeAttempt.current = null;
           setSignIn(null);
           return;
         }
@@ -117,6 +131,8 @@ export function ModelSettings({
       }
       if (Date.now() >= expires) {
         models.setError('Sign-in expired. Start a new connection.');
+        void api(`/api/models/oauth/${signIn!.attempt}`, { method: 'DELETE' }).catch(() => {});
+        activeAttempt.current = null;
         setSignIn(null);
       } else timer = setTimeout(() => void check(), 2000);
     }
@@ -126,6 +142,22 @@ export function ModelSettings({
       clearTimeout(timer);
     };
   }, [signIn, models.refresh]);
+  async function cancelSignIn() {
+    if (!signIn) return;
+    setSigningIn(true);
+    try {
+      await api(`/api/models/oauth/${signIn.attempt}`, { method: 'DELETE' });
+      activeAttempt.current = null;
+      if (mounted.current) {
+        setSignIn(null);
+        setCallback('');
+      }
+    } catch (cause) {
+      if (mounted.current) models.setError(errorMessage(cause));
+    } finally {
+      if (mounted.current) setSigningIn(false);
+    }
+  }
   async function connect(provider: 'openai' | 'openrouter', connectionId?: string) {
     if (signingIn || signIn) return;
     const desktop = desktopLinksAvailable();
@@ -138,16 +170,31 @@ export function ModelSettings({
         provider,
         connectionId,
       });
+      activeAttempt.current = response.attempt;
+      if (!mounted.current) {
+        await api(`/api/models/oauth/${response.attempt}`, { method: 'DELETE' });
+        activeAttempt.current = null;
+        popup?.close();
+        return;
+      }
       const url = connectionUrl(response.url, window.location.origin);
       setSignIn({ url, attempt: response.attempt });
       if (desktop) await openConnection(url);
       else if (popup) popup.location.replace(url);
     } catch (cause) {
       popup?.close();
-      setSignIn(null);
-      models.setError(errorMessage(cause));
+      if (activeAttempt.current) {
+        await api(`/api/models/oauth/${activeAttempt.current}`, { method: 'DELETE' }).catch(
+          () => {},
+        );
+        activeAttempt.current = null;
+      }
+      if (mounted.current) {
+        setSignIn(null);
+        models.setError(errorMessage(cause));
+      }
     } finally {
-      setSigningIn(false);
+      if (mounted.current) setSigningIn(false);
     }
   }
   if (!models.data) return models.loading ? <Loading /> : <Notice>{models.error}</Notice>;
@@ -274,7 +321,9 @@ export function ModelSettings({
                       <span>
                         {connection.status === 'reconnect'
                           ? 'Reconnect to continue'
-                          : `${modelSource(connection)} · ${connection.models.length} models`}
+                          : connection.status === 'loading'
+                            ? 'Connected · Load models to continue'
+                            : `${modelSource(connection)} · ${connection.models.length} models`}
                         {data.selection?.connectionId === connection.id && ' · Selected'}
                         {connection.managed && ' · Server settings'}
                       </span>
@@ -297,7 +346,7 @@ export function ModelSettings({
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon"
+                      size={connection.status === 'loading' ? 'sm' : 'icon'}
                       aria-label={`Refresh ${connection.label} models`}
                       disabled={busy}
                       onClick={() =>
@@ -308,6 +357,7 @@ export function ModelSettings({
                       }
                     >
                       <RefreshCw size={15} />
+                      {connection.status === 'loading' && 'Load models'}
                     </Button>
                     {!connection.managed && (
                       <Button
@@ -362,8 +412,14 @@ export function ModelSettings({
           >
             Open sign-in <ExternalLink size={13} />
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={() => setSignIn(null)}>
-            Dismiss
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={signingIn}
+            onClick={() => void cancelSignIn()}
+          >
+            Cancel sign-in
           </Button>
           <form
             onSubmit={(event) => {
@@ -371,7 +427,10 @@ export function ModelSettings({
               const url = callback;
               setCallback('');
               void models.change('/api/models/oauth/complete', 'POST', { url }).then((saved) => {
-                if (saved) setSignIn(null);
+                if (saved) {
+                  activeAttempt.current = null;
+                  setSignIn(null);
+                }
               });
             }}
           >

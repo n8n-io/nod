@@ -21,7 +21,7 @@ export interface ModelConnection {
   provider: ModelProvider;
   method: ModelMethod;
   label: string;
-  status: 'connected' | 'reconnect';
+  status: 'connected' | 'loading' | 'reconnect';
   models: ModelChoice[];
   managed: boolean;
 }

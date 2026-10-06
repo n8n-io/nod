@@ -3287,6 +3287,83 @@ test('native Settings and feedback preserve the active credential form and its r
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
+test('model sign-in cancellation reaches the server on dismissal, unmount and a late start response', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        IS_REACT_ACT_ENVIRONMENT: true,
+      });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const connections = { connections: [], selection: null, subscriptionAvailable: true };
+      const cancelled = [];
+      let starts = 0;
+      let releaseCancel;
+      let releaseStart;
+      let delayStart = false;
+      const popups = [];
+      window.open = () => {
+        const popup = { closed: false, location: { replace() {} }, close() { this.closed = true; } };
+        popups.push(popup);
+        return popup;
+      };
+      globalThis.fetch = async (path, options = {}) => {
+        if (path === '/api/models') return Response.json(connections);
+        if (path === '/api/models/oauth') {
+          const attempt = String(++starts).repeat(32);
+          if (delayStart) await new Promise(resolve => { releaseStart = resolve; });
+          return Response.json({ attempt, url: 'https://auth.openai.com/oauth/authorize?state=' + attempt });
+        }
+        if (options.method === 'DELETE') {
+          cancelled.push(path.split('/').at(-1));
+          if (cancelled.length === 1) await new Promise(resolve => { releaseCancel = resolve; });
+          return Response.json(connections);
+        }
+        if (path.startsWith('/api/models/oauth/status/')) return Response.json({ status: 'waiting' });
+        throw new Error('Unexpected request: ' + path);
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { ModelSettings } = await import('./src/web/components/models.tsx');
+      const root = createRoot(document.querySelector('#root'));
+      const find = text => [...document.querySelectorAll('button')].find(button => button.textContent.includes(text));
+      const click = async text => {
+        const button = find(text);
+        assert.ok(button);
+        await act(async () => button.click());
+      };
+      try {
+        await act(async () => root.render(createElement(ModelSettings)));
+        await click('Connect ChatGPT');
+        await click('Cancel sign-in');
+        assert.deepEqual(cancelled, ['1'.repeat(32)]);
+        assert.equal(find('Connect ChatGPT').disabled, true);
+        await act(async () => releaseCancel());
+        assert.equal(find('Connect ChatGPT').disabled, false);
+        await click('Connect ChatGPT');
+        await act(async () => root.render(null));
+        assert.deepEqual(cancelled, ['1'.repeat(32), '2'.repeat(32)]);
+        await act(async () => root.render(createElement(ModelSettings)));
+        delayStart = true;
+        await click('Connect ChatGPT');
+        await act(async () => root.render(null));
+        await act(async () => releaseStart());
+        assert.deepEqual(cancelled, ['1'.repeat(32), '2'.repeat(32), '3'.repeat(32)]);
+        assert.equal(popups[2].closed, true);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test('feedback copies the submitted snapshot and cancels pending copies when closed', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
