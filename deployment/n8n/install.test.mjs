@@ -94,7 +94,7 @@ const stop=()=>process.exit(1),print=value=>process.stdout.write(String(value)+'
 if(command==='uname')print(args[0]==='-s'?'Darwin':'arm64');
 else if(command==='sw_vers')print('14.7.1');
 else if(command==='id')print('1000');
-else if(command==='stat'){const info=statSync(args[2]);print(args[1]==='%u'?0:args[1]==='%d:%i'?info.dev+':'+info.ino:info.size)}
+else if(command==='stat'){const info=statSync(args[2]);print(args[1]==='%d:%i'?info.dev+':'+info.ino:info.size)}
 else if(command==='pgrep')process.exit(options.running?0:1);
 else if(command==='file')print('Mach-O 64-bit executable arm64');
 else if(command==='plutil'){let value=JSON.parse(readFileSync(args.at(-1),'utf8'));for(const key of args[1].split('.'))value=value?.[key];const type=args[args.indexOf('-expect')+1];if((type==='string'&&typeof value!=='string')||(type==='bool'&&typeof value!=='boolean')||(type==='integer'&&!Number.isInteger(value)))stop();print(value)}
@@ -134,6 +134,8 @@ else stop();
     await rm(target, { recursive: true });
     await symlink(app, target);
   }
+  const userHome = options.symlinkHome ? join(directory, 'home-link') : home;
+  if (options.symlinkHome) await symlink(home, userHome);
   return {
     directory,
     home,
@@ -146,7 +148,7 @@ else stop();
         timeout: 30_000,
         env: {
           ...process.env,
-          HOME: home,
+          HOME: userHome,
           FIXTURE_ROOT: directory,
           FIXTURE_OPTIONS: JSON.stringify(options),
         },
@@ -174,35 +176,55 @@ test('CLI-INSTALL: hosted script installs verified bytes and preserves the exist
   }
 });
 
-test(
-  'CLI-INSTALL: an unwritable installation destination leaves the app and profile untouched',
-  { skip: process.getuid?.() === 0 },
-  async (t) => {
-    for (const [kind, error] of [
-      ['folder', /permission to install apps in \/Applications/],
-      ['app', /permission to replace \/Applications\/Otto.app/],
-    ])
-      await t.test(kind, async () => {
-        const state = await fixture();
-        const path = kind === 'folder' ? dirname(state.target) : state.target;
+test('CLI-INSTALL: a symbolic-link home does not block the system installation or change its profile', async () => {
+  const state = await fixture({ symlinkHome: true });
+  try {
+    const result = state.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      JSON.parse(await readFile(join(state.target, 'Contents/Resources/app/package.json'), 'utf8'))
+        .ottoBuild.source,
+      source,
+    );
+    assert.equal(await readFile(state.profile, 'utf8'), 'keep synthetic keys and conversations');
+    assert.deepEqual(await readdir(dirname(state.target)), ['Otto.app']);
+  } finally {
+    await state.close();
+  }
+});
+
+test('CLI-INSTALL: an unwritable installation destination leaves the app and profile untouched', async (t) => {
+  for (const [kind, error] of [
+    ['folder', /permission to install apps in \/Applications/],
+    ['app', /permission to replace \/Applications\/Otto.app/],
+  ])
+    await t.test(kind, async (t) => {
+      const state = await fixture();
+      const path = kind === 'folder' ? dirname(state.target) : state.target;
+      try {
+        await chmod(path, 0o555);
         try {
-          await chmod(path, 0o555);
-          const result = state.run();
-          assert.equal(result.status, 1);
-          assert.match(result.stderr, error);
-          assert.equal(await readFile(join(state.target, 'previous'), 'utf8'), 'previous app');
-          assert.equal(
-            await readFile(state.profile, 'utf8'),
-            'keep synthetic keys and conversations',
-          );
-          assert.deepEqual(await readdir(dirname(state.target)), ['Otto.app']);
-        } finally {
-          await chmod(path, 0o755);
-          await state.close();
+          await writeFile(join(path, 'permission-probe'), '');
+          t.skip('The runner can write to read-only directories.');
+          return;
+        } catch (reason) {
+          assert.equal(reason.code, 'EACCES');
         }
-      });
-  },
-);
+        const result = state.run();
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, error);
+        assert.equal(await readFile(join(state.target, 'previous'), 'utf8'), 'previous app');
+        assert.equal(
+          await readFile(state.profile, 'utf8'),
+          'keep synthetic keys and conversations',
+        );
+        assert.deepEqual(await readdir(dirname(state.target)), ['Otto.app']);
+      } finally {
+        await chmod(path, 0o755);
+        await state.close();
+      }
+    });
+});
 
 test('CLI-INSTALL: rejected metadata, downloads, signatures and interrupted staging retain the old app and profile', async (t) => {
   for (const [options, error] of [

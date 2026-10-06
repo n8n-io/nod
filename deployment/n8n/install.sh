@@ -119,8 +119,6 @@ os_version=$(sw_vers -productVersion)
 os_major=${os_version%%.*}
 case "$os_major" in ''|*[!0-9]*) fail 'Could not read the macOS version.' ;; esac
 [ "$os_major" -ge 14 ] || fail 'Otto requires macOS 14 or later.'
-case "$HOME" in /*) ;; *) fail 'Your home directory must be an absolute path.' ;; esac
-[ -d "$HOME" ] && [ ! -L "$HOME" ] || fail 'Your home directory is unavailable or is a symbolic link.'
 applications='/Applications'
 target="$applications/Otto.app"
 [ ! -L "$applications" ] && [ ! -L "$target" ] || fail 'The installation destination must not be a symbolic link.'
