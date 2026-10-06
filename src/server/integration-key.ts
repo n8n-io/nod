@@ -15,6 +15,7 @@ export function createIntegrationKeyService(options: {
 }) {
   const { database, ownerId, provider } = options;
   let vault: Awaited<ReturnType<typeof createAppGrantVault>>;
+  const secrets = new Set<string>();
   const observers = new Set<(values: string[]) => void>();
   const environment = provider.configured;
   async function savedId() {
@@ -27,7 +28,10 @@ export function createIntegrationKeyService(options: {
   }
   function apply(key?: string) {
     provider.setApiKey?.(key);
-    if (key) for (const observer of observers) observer([key]);
+    if (key && !secrets.has(key)) {
+      secrets.add(key);
+      for (const observer of observers) observer([key]);
+    }
     options.changed?.();
   }
   return {
@@ -41,6 +45,7 @@ export function createIntegrationKeyService(options: {
     },
     onSecrets(observer: (values: string[]) => void) {
       observers.add(observer);
+      observer([...secrets]);
       return () => observers.delete(observer);
     },
     async save(key: string) {

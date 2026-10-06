@@ -36,6 +36,7 @@ import { createDiscoveredConnections } from '../src/server/discovered-connection
 import { registerLocalAccess } from '../src/server/access.ts';
 import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
+import { createIntegrationKeyService } from '../src/server/integration-key.ts';
 import { createErrorRedactor } from '../src/server/inspector-redaction.ts';
 import { createProviderUsageStore } from '../src/server/provider-usage.ts';
 import {
@@ -1049,6 +1050,47 @@ async function appsFixture(
     callbacks,
   };
 }
+
+test(
+  'saved integration keys remain redacted after restart and replacement',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const encryptionKey = randomBytes(32);
+    const keyStore = { id: 'fixture', configured: true, getKey: async () => encryptionKey };
+    const open = async () => {
+      const service = createIntegrationKeyService({
+        database: f.pool,
+        ownerId: 'local-development',
+        keyStore,
+        provider: { ...f.provider, configured: false },
+      });
+      await service.initialize();
+      return service;
+    };
+    const original = 'synthetic-composio-original';
+    const replacement = 'synthetic-composio-replacement';
+    const initial = await open();
+    await initial.save(original);
+    const restarted = await open();
+    const secrets: string[] = [];
+    const redact = createErrorRedactor(secrets);
+    restarted.onSecrets((values) => secrets.push(...values));
+    assert.equal(redact(`Received ${original}.`), 'Received [redacted].');
+    await restarted.save(replacement);
+    await restarted.remove();
+    assert.equal(
+      redact(`Received ${original} and ${replacement}.`),
+      'Received [redacted] and [redacted].',
+    );
+    const lateSecrets: string[] = [];
+    restarted.onSecrets((values) => lateSecrets.push(...values));
+    assert.equal(
+      createErrorRedactor(lateSecrets)(`Received ${original} and ${replacement}.`),
+      'Received [redacted] and [redacted].',
+    );
+  },
+);
 
 test(
   'desktop OAuth callbacks use a public completion page and preserve owned turn continuation',
