@@ -1,5 +1,12 @@
 # Desktop changelog
 
+## 0.1.7 - 2026-10-06
+
+Source: `90caa7ad7de48b4a270ad0705d5ba0b439c22155`
+Previous release: `desktop-v0.1.6`
+
+- Apply n8n brand system to Otto (#141) (90caa7a)
+
 ## 0.1.3 - 2026-10-05
 
 Source: `4a191997bfefaa409f702ca41d16f88ce3540566`
