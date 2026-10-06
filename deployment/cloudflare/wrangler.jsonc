@@ -83,7 +83,7 @@
           "class_name": "TenantContainer",
           "image": "./Dockerfile",
           "image_build_context": "../..",
-          "instance_type": "basic",
+          "instance_type": "standard-1",
           "max_instances": 8,
           "constraints": {
             "jurisdiction": "eu",
@@ -117,7 +117,7 @@
           "class_name": "WorkspaceComputerContainer",
           "image": "./Dockerfile.workspace",
           "image_build_context": "../..",
-          "instance_type": "basic",
+          "instance_type": "standard-2",
           "max_instances": 8,
           "constraints": {
             "jurisdiction": "eu",
@@ -190,7 +190,7 @@
           "class_name": "TenantContainer",
           "image": "./Dockerfile",
           "image_build_context": "../..",
-          "instance_type": "basic",
+          "instance_type": "standard-1",
           "max_instances": 100,
           "constraints": {
             "jurisdiction": "eu",
@@ -224,7 +224,7 @@
           "class_name": "WorkspaceComputerContainer",
           "image": "./Dockerfile.workspace",
           "image_build_context": "../..",
-          "instance_type": "basic",
+          "instance_type": "standard-2",
           "max_instances": 100,
           "constraints": {
             "jurisdiction": "eu",
