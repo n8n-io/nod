@@ -470,9 +470,10 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
     safeStorage: storage.encryption,
     Notification: { isSupported: () => false },
     utilityProcess: {
-      fork() {
+      fork(_file, _args, options) {
         assert.ok(allowStart, 'The healthy engine must not restart.');
         const child = new EventEmitter();
+        child.port = options.env.PORT;
         child.stdout = { resume() {} };
         child.stderr = new EventEmitter();
         child.kill = () => {
@@ -858,7 +859,7 @@ test('settings restart displays native progress, restores Chat on success, and k
     const replacement = f.windows.at(-1);
     assert.notEqual(replacement, current);
     assert.ok(replacement.url);
-    assert.notEqual(replacement.url, current.url);
+    assert.equal(replacement.url, `http://127.0.0.1:${f.children[1].port}`);
     assert.equal(replacement.isDestroyed(), false);
     assert.equal(replacement.visible, true);
     assert.equal(replacement.isFocused(), true);
