@@ -103,37 +103,6 @@ const browserPoint = z
   .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
   .strict();
 
-const browserKeys = [
-  'Enter',
-  'Escape',
-  'Tab',
-  'Space',
-  'Backspace',
-  'Delete',
-  'Home',
-  'End',
-  'PageUp',
-  'PageDown',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-];
-
-function browserKey(value: string | undefined) {
-  const modifiers = value?.split('+') ?? [];
-  const key = modifiers.pop() ?? '';
-  if (
-    !value ||
-    value.startsWith('-') ||
-    new Set(modifiers).size !== modifiers.length ||
-    modifiers.some((modifier) => !['Control', 'Shift', 'Alt', 'Meta'].includes(modifier)) ||
-    !(browserKeys.includes(key) || /^[\x21-\x7e]$/.test(key))
-  )
-    throw new Error('Choose a supported browser key or shortcut.');
-  return value!;
-}
-
 function browserTimeZone(value: string | undefined) {
   if (!value || !/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/.test(value)) return;
   try {
@@ -1032,9 +1001,9 @@ export function createAgentBrowserComputer(options: {
             { signal },
           );
         if (input.action === 'press') {
-          const key = browserKey(input.key);
+          if (!input.key) throw new Error('Choose a key to press.');
           const tabs = await browserTabs(state, signal);
-          await command(state, ['press', key], { signal });
+          await command(state, ['press', input.key], { signal });
           await settleTabs(state, tabs, signal);
         }
         if (input.action === 'accept_dialog' || input.action === 'dismiss_dialog') {
