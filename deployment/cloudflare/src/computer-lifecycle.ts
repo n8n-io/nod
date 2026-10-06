@@ -1,7 +1,7 @@
 import { CheckpointTooLarge, type ComputerCheckpoint } from './computer-checkpoints.ts';
 import type { DeploymentInput } from '../../../src/ports/deployment.ts';
 import { cleanStoppedComputer, drainComputerForDeployment } from './computer-deployment.ts';
-import { refusedCommand } from './computer-exec.ts';
+import { withNotice } from './computer-exec.ts';
 import { environmentName, generation, ownerIdentity, RuntimeControlError } from './protocol.ts';
 
 export type ComputerIdentity = {
@@ -277,27 +277,22 @@ export function createComputerLifecycle(options: {
           await options.claimCommand(expected, ownerIdentity(previous));
         if (!(await options.claimCommand(expected, id))) throw new RuntimeControlError(409);
         await assertCurrent(state);
-        const { commands: _commands, notice, ...next } = state;
-        const refusal = input.session
-          ? [notice, next.oversize?.shown === false && next.oversize.message]
-              .filter(Boolean)
-              .join(' ')
+        const { commands: _commands, notice, oversize, ...next } = state;
+        const message = input.session
+          ? [notice, oversize?.shown === false && oversize.message].filter(Boolean).join(' ')
           : '';
-        if (refusal) {
-          await write({
-            ...next,
-            ...(next.oversize && { oversize: { ...next.oversize, shown: true } }),
-          });
-          active.add(id);
-          return refusedCommand(`${refusal} This command did not run.`);
-        }
-        await write({ ...next, ...(notice && { notice }), phase: 'dirty' });
+        await write({
+          ...next,
+          ...(oversize && { oversize: { ...oversize, shown: oversize.shown || !!message } }),
+          ...(!message && notice && { notice }),
+          phase: 'dirty',
+        });
         active.add(id);
         try {
           await assertCurrent(loaded!);
           const process = await options.launch(loaded!, input);
           await assertCurrent(loaded!);
-          return process;
+          return message ? withNotice(process, message) : process;
         } catch {
           await uncertain();
           throw unavailable();
@@ -354,18 +349,15 @@ export function createComputerLifecycle(options: {
           }
           await assertCurrent(loaded);
           if (
-            (loaded.phase === 'dirty' &&
-              (options.role !== 'browser' || !(await options.quiesce(loaded, false)))) ||
-            (loaded.phase === 'unsaved' && loaded.oversize?.shown === false)
+            loaded.phase === 'dirty' &&
+            (options.role !== 'browser' || !(await options.quiesce(loaded, false)))
           )
             return false;
           if (
             (loaded.phase === 'dirty' || loaded.phase === 'unsaved') &&
             !(await checkpoint(loaded))
-          ) {
-            if (loaded.phase === 'unsaved' && !loaded.oversize?.shown) return false;
+          )
             await write(discarded(loaded));
-          }
           await destroy();
           return true;
         } catch {

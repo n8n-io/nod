@@ -240,13 +240,13 @@ export function createCommandWorkspace(options: {
       return {
         path: `/workspace/${id}`,
         instructions: options.instructions,
-        async exec(script, { input: stdin, signal, timeoutMs = 600_000, onData } = {}) {
+        async exec(script, { input: stdin, signal, timeoutMs = 600_000, onData, notices } = {}) {
           const result = await command(id, ['bash', '-c', script], {
             input: stdin,
             signal: signal ? AbortSignal.any([signal, input.signal]) : input.signal,
             timeoutMs: Math.max(1000, Math.min(timeoutMs, 3_600_000)),
             onData: onData ?? (() => {}),
-            session: true,
+            session: notices,
           });
           return { exitCode: result.exitCode };
         },

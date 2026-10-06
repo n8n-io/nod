@@ -670,9 +670,9 @@ test('a workspace too large to save stays running and refuses the next model com
   ])
     assert.ok(message.includes(part), part);
   assert.equal(await run(false), '');
-  const refused = JSON.parse(await run(true));
-  assert.equal(refused.reason, 'refused');
-  assert.equal(refused.message, `${message} This command did not run.`);
+  const notice = JSON.parse(await run(true));
+  assert.equal(notice.type, 'stdout');
+  assert.equal(Buffer.from(notice.data, 'base64').toString(), `${message}\n\n`);
   assert.equal(current.state().oversize!.shown, true);
   assert.equal(await run(true), '');
   assert.equal(current.container.running, true);

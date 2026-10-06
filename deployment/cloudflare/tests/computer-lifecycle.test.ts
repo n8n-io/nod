@@ -560,17 +560,15 @@ async function session(f: ReturnType<typeof fixture>, generation = '1') {
     threadId: 'thread',
     session: true,
   });
-  if (!process.stdin) return { id };
-  await process.stdin.getWriter().write(new TextEncoder().encode('{"args":["true"]}\n'));
-  const frame = JSON.parse(await new Response(process.stdout).text());
-  assert.equal(await process.exitCode, 0);
-  assert.equal(frame.type, 'exit');
-  assert.equal(frame.reason, 'refused');
+  const output = process.stdout ? await new Response(process.stdout).text() : '';
   await f.completed(id, generation);
-  return { id, message: frame.message as string };
+  if (!output) return { id };
+  const frame = JSON.parse(output);
+  assert.equal(frame.type, 'stdout');
+  return { id, message: Buffer.from(frame.data, 'base64').toString('utf8').trim() };
 }
 
-test('a workspace too large to save keeps running, tells the next command once and is discarded only after that', async () => {
+test('a workspace too large to save keeps running and tells the next bash command once without refusing it', async () => {
   const f = fixture();
   const first = randomUUID();
   await f.launch(first);
@@ -591,24 +589,16 @@ test('a workspace too large to save keeps running, tells the next command once a
     shown: false,
   });
   assert.equal(f.running(), true);
-  const attempts = f.events.filter((event) => event === 'checkpoint').length;
-  assert.equal(await f.lifecycle.idle(), false);
-  assert.equal(f.running(), true);
-  assert.equal(f.events.filter((event) => event === 'checkpoint').length, attempts);
   const launches = f.events.filter((event) => event === 'launch').length;
   const helper = randomUUID();
   await f.launch(helper);
   await f.completed(helper);
-  assert.equal(f.events.filter((event) => event === 'launch').length, launches + 1);
-  assert.equal(
-    (await session(f)).message,
-    'Synthetic report: 2 GiB to save. This command did not run.',
-  );
+  assert.equal(f.state()?.oversize?.shown, false);
+  assert.equal((await session(f)).message, 'Synthetic report: 2 GiB to save.');
   assert.equal(f.state()?.oversize?.shown, true);
-  const ran = await session(f);
-  assert.equal(ran.message, undefined);
-  assert.equal(f.events.filter((event) => event === 'launch').length, launches + 2);
-  await f.completed(ran.id);
+  assert.equal((await session(f)).message, undefined);
+  assert.equal(f.events.filter((event) => event === 'launch').length, launches + 3);
+  await f.settled();
   assert.equal(await f.lifecycle.idle(), true);
   assert.equal(f.running(), false);
   assert.equal(f.state()?.phase, 'ready');
@@ -616,7 +606,7 @@ test('a workspace too large to save keeps running, tells the next command once a
   assert.equal(f.state()?.oversize, undefined);
   assert.match(f.state()!.notice!, /too large/);
   f.beforeCheckpoint(async () => {});
-  assert.match((await session(f)).message!, /too large.*This command did not run\.$/);
+  assert.match((await session(f)).message!, /too large/);
   assert.deepEqual(f.restored.at(-1)?.checkpoint, checkpoint);
   assert.equal(f.state()?.notice, undefined);
   assert.notEqual(f.state()?.phase, 'uncertain');
@@ -668,6 +658,7 @@ test('unsaved workspace changes lost with their computer, stop or deployment are
       const { message } = await session(f, generation);
       assert.match(message!, event.startsWith('vm') ? /stopped/ : /too large/);
       assert.deepEqual(f.restored.at(-1)?.checkpoint, checkpoint);
+      await f.settled();
       assert.equal(f.state()?.phase, 'ready');
       assert.equal(f.state()?.notice, undefined);
       await f.launch(randomUUID(), generation);

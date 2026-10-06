@@ -81,42 +81,32 @@ export function launchComputerExec(options: Omit<ExecOptions<ExecProcess>, 'cons
   return useComputerExec({ ...options, consume: async (process) => process }, true);
 }
 
-export function refusedCommand(message: string): ExecProcess {
-  let respond = () => {};
+export function withNotice(process: ExecProcess, notice: string): ExecProcess {
+  const frame = new TextEncoder().encode(
+    JSON.stringify({ type: 'stdout', data: Buffer.from(`${notice}\n\n`).toString('base64') }) +
+      '\n',
+  );
+  const reader = process.stdout?.getReader();
   return {
-    pid: 0,
-    isPty: false,
-    stdin: new WritableStream<Uint8Array>({
-      write(chunk) {
-        if (chunk.includes(10)) respond();
-      },
-      close() {
-        respond();
-      },
-    }),
+    pid: process.pid,
+    isPty: process.isPty,
+    stdin: process.stdin,
     stdout: new ReadableStream<Uint8Array>({
       start(controller) {
-        respond = () => {
-          respond = () => {};
-          controller.enqueue(
-            new TextEncoder().encode(
-              JSON.stringify({ type: 'exit', code: 0, reason: 'refused', message }) + '\n',
-            ),
-          );
-          controller.close();
-        };
+        controller.enqueue(frame);
+        if (!reader) controller.close();
       },
-    }),
-    stderr: new ReadableStream({
-      start(controller) {
-        controller.close();
+      async pull(controller) {
+        const next = await reader!.read();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
       },
+      cancel: (reason) => reader?.cancel(reason),
     }),
-    exitCode: Promise.resolve(0),
-    async output() {
-      throw unavailable();
-    },
-    kill() {},
-    resize() {},
+    stderr: process.stderr,
+    exitCode: process.exitCode,
+    output: () => process.output(),
+    kill: (signal) => process.kill(signal),
+    resize: (columns, rows) => process.resize(columns, rows),
   };
 }

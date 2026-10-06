@@ -1190,7 +1190,7 @@ test('native Pi tools run only through workspace exec on sandbox paths that do n
   assert.ok(calls.length >= 8);
   assert.ok(
     calls.every(({ options }) =>
-      options.every((key) => ['input', 'onData', 'signal', 'timeoutMs'].includes(key)),
+      options.every((key) => ['input', 'onData', 'signal', 'timeoutMs', 'notices'].includes(key)),
     ),
   );
   assert.equal(existsSync(prefix), false);

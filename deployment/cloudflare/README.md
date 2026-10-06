@@ -69,7 +69,7 @@ A checkpoint is a gzip tar of `/home/node/state` (workspace) or the owner's brow
 
 The browser checkpoints when it goes idle, which closes its pages. When a foreground turn ends waiting on the user (a question, approval or credential request) and the browser is running, the tenant holds it for up to 30 minutes; the next turn or a reset releases it. A hold never starts a stopped browser. The workspace checkpoints about 20 seconds after its last command finishes and before it sleeps, stops or is drained, not after every command. Durability trade-off: if the workspace container is lost in that window, changes since the last checkpoint are lost and the model is told on its next command; the computer is not fenced.
 
-A workspace too large to save keeps running with its previous checkpoint. The model's next command is refused once with the sizes, the largest files and what to delete. The unsaved changes are discarded when the workspace sleeps after that notice was shown, or when it is stopped or drained (the model is then told on its next command). Neither case fences the computer or blocks a deploy.
+A workspace too large to save keeps running with its previous checkpoint, and every command still runs. The output of the model's next bash command starts with the sizes, the largest files and what to delete. The unsaved changes are discarded when the workspace sleeps, stops or is drained, and the next bash command says so. Neither case fences the computer or blocks a deploy.
 
 ## CI and rollout
 

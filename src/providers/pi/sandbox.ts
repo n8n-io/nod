@@ -222,6 +222,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       signal: options.signal,
       timeoutMs: (seconds + 30) * 1000,
       onData: (chunk) => chunks.push(chunk),
+      notices: true,
     });
     const output = Buffer.concat(chunks);
     const timedOut = output.toString('latin1').endsWith(marker);

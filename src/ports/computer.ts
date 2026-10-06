@@ -123,6 +123,7 @@ export interface WorkspaceExecOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   onData?(chunk: Buffer): void;
+  notices?: boolean;
 }
 export interface WorkspaceSession {
   path: string;
