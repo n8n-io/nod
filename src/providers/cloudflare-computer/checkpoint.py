@@ -1,21 +1,38 @@
 import argparse
 import hashlib
+import heapq
 import hmac
+import json
 import os
 import re
 import secrets
 import stat
 import sys
 import tarfile
+import zlib
 
 
 LIMITS = {
-    "max_bytes": 256 * 1024 * 1024,
-    "max_file_bytes": 64 * 1024 * 1024,
-    "max_entries": 20000,
+    "max_bytes": 1024 * 1024 * 1024,
+    "max_file_bytes": 512 * 1024 * 1024,
+    "max_entries": 100000,
     "max_path_bytes": 4096,
 }
 ERROR = b"Computer checkpoint failed.\n"
+SKIPPED = frozenset(("__pycache__", ".cache"))
+BROWSER_CACHES = frozenset((
+    "Cache",
+    "Code Cache",
+    "GPUCache",
+    "GrShaderCache",
+    "GraphiteDawnCache",
+    "ShaderCache",
+    "DawnGraphiteCache",
+    "DawnWebGPUCache",
+    "component_crx_cache",
+    "extensions_crx_cache",
+))
+LEVEL = 1
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 REGULAR = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 BLOCK = 512
@@ -23,6 +40,12 @@ BLOCK = 512
 
 class Failure(Exception):
     pass
+
+
+class TooLarge(Exception):
+    def __init__(self, report):
+        super().__init__()
+        self.report = report
 
 
 class Parser(argparse.ArgumentParser):
@@ -142,10 +165,17 @@ class Output:
     def __init__(self, maximum):
         self.maximum = maximum
         self.total = 0
+        self.compressor = zlib.compressobj(LEVEL, zlib.DEFLATED, 31)
 
     def write(self, data):
         require(self.total + len(data) <= self.maximum)
         self.total += len(data)
+        self.emit(self.compressor.compress(data))
+
+    def finish(self):
+        self.emit(self.compressor.flush())
+
+    def emit(self, data):
         remaining = memoryview(data)
         while remaining:
             written = os.write(1, remaining)
@@ -157,13 +187,62 @@ class Input:
     def __init__(self, maximum):
         self.maximum = maximum
         self.total = 0
+        self.raw_maximum = compressed_limit(maximum)
+        self.raw_total = 0
         self.digest = hashlib.sha256()
+        self.pending = bytearray()
+        self.tail = b""
+        self.inflater = None
+        self.ended = False
+        head = bytearray()
+        while len(head) < 2:
+            data = self.raw(2 - len(head))
+            if not data:
+                break
+            head += data
+        if head == b"\x1f\x8b":
+            self.inflater = zlib.decompressobj(31)
+            self.tail = bytes(head)
+        else:
+            self.accept(head)
 
-    def read(self, length):
-        data = os.read(0, min(length, max(1, self.maximum - self.total + 1)))
+    def raw(self, length=65536):
+        data = os.read(0, min(length, max(1, self.raw_maximum - self.raw_total + 1)))
+        self.raw_total += len(data)
+        require(self.raw_total <= self.raw_maximum)
+        self.digest.update(data)
+        return data
+
+    def accept(self, data):
         self.total += len(data)
         require(self.total <= self.maximum)
-        self.digest.update(data)
+        self.pending += data
+
+    def more(self):
+        if self.ended:
+            return False
+        if self.inflater is None:
+            data = self.raw()
+            self.accept(data)
+            self.ended = not data
+            return bool(data)
+        while not self.inflater.eof:
+            data = self.tail or self.raw()
+            require(bool(data))
+            output = self.inflater.decompress(data, 65536)
+            self.tail = self.inflater.unconsumed_tail
+            if output:
+                self.accept(output)
+                return True
+        require(not self.tail and not self.inflater.unused_data and not self.raw(1))
+        self.ended = True
+        return False
+
+    def read(self, length):
+        while not self.pending and self.more():
+            pass
+        data = bytes(self.pending[:length])
+        del self.pending[:length]
         return data
 
     def exact(self, length):
@@ -189,8 +268,65 @@ class Input:
         require(self.total % BLOCK == 0)
 
 
+def compressed_limit(maximum):
+    return maximum + maximum // 1000 + 65536
+
+
+class Usage:
+    def __init__(self, options):
+        self.options = options
+        self.bytes = 2 * BLOCK
+        self.entries = 0
+        self.largest = []
+        self.complete = True
+
+    def add(self, path, entry):
+        kind, target, details = entry
+        name = "/".join(path) + ("/" if kind == "directory" else "")
+        records = 90 if kind == "file" else 0
+        if len(name) > 99 or not name.isascii():
+            records += len(name.encode("utf-8")) + 30
+        if kind == "symlink" and (len(target) > 99 or not target.isascii()):
+            records += len(target.encode("utf-8")) + 30
+        self.bytes += BLOCK + (BLOCK + -(-records // BLOCK) * BLOCK if records else 0)
+        self.entries += 1
+        if kind == "file":
+            self.bytes += -(-details.st_size // BLOCK) * BLOCK
+            item = (details.st_size, "/".join(path))
+            if len(self.largest) < 5:
+                heapq.heappush(self.largest, item)
+            else:
+                heapq.heappushpop(self.largest, item)
+        if self.entries > self.options.max_entries * 5:
+            self.complete = False
+            raise TooLarge(self.report())
+
+    def check(self):
+        options = self.options
+        if (
+            self.bytes > options.max_bytes
+            or self.entries + 1 > options.max_entries
+            or any(size > options.max_file_bytes for size, _ in self.largest)
+        ):
+            raise TooLarge(self.report())
+
+    def report(self):
+        options = self.options
+        return {
+            "bytes": self.bytes,
+            "max_bytes": options.max_bytes,
+            "entries": self.entries,
+            "max_entries": options.max_entries,
+            "max_file_bytes": options.max_file_bytes,
+            "complete": self.complete,
+            "largest": [[path, size] for size, path in sorted(self.largest, reverse=True)],
+        }
+
+
 def collect(root, options):
+    skipped = SKIPPED | (BROWSER_CACHES if options.browser else frozenset())
     entries = {(): ("directory", None, os.fstat(root))}
+    usage = Usage(options)
     pending = [()]
     while pending:
         path = pending.pop()
@@ -201,22 +337,24 @@ def collect(root, options):
                 for item in iterator:
                     child = path + (item.name,)
                     path_parts("/".join(child), options.max_path_bytes)
-                    require(len(entries) < options.max_entries)
                     details = os.stat(item.name, dir_fd=descriptor, follow_symlinks=False)
                     if stat.S_ISDIR(details.st_mode):
+                        if item.name in skipped:
+                            continue
                         entries[child] = ("directory", None, details)
                         pending.append(child)
                     elif stat.S_ISREG(details.st_mode):
-                        require(details.st_size <= options.max_file_bytes)
                         entries[child] = ("file", None, details)
                     elif stat.S_ISLNK(details.st_mode):
                         target = os.readlink(item.name, dir_fd=descriptor)
                         link_target(target, options.max_path_bytes)
                         entries[child] = ("symlink", target, details)
                     else:
-                        raise Failure()
+                        continue
+                    usage.add(child, entries[child])
         finally:
             os.close(descriptor)
+    usage.check()
     validate_links(entries, options.max_path_bytes)
     return entries
 
@@ -293,6 +431,7 @@ def create(root, options):
         finally:
             os.close(parent)
     output.write(bytes(BLOCK * 2))
+    output.finish()
 
 
 def pax_headers(data):
@@ -385,7 +524,6 @@ def extract(root, options):
                 source.padding(member.size)
                 os.fchmod(descriptor, mode)
                 os.utime(descriptor, (member.mtime, member.mtime))
-                os.fsync(descriptor)
             finally:
                 if descriptor is not None:
                     os.close(descriptor)
@@ -405,7 +543,6 @@ def extract(root, options):
         try:
             os.fchmod(descriptor, mode)
             os.utime(descriptor, (modified, modified))
-            os.fsync(descriptor)
         finally:
             os.close(descriptor)
 
@@ -446,6 +583,7 @@ def restore(parent, name, options):
     try:
         descriptor = os.open(staging, DIRECTORY, dir_fd=parent)
         extract(descriptor, options)
+        os.sync()
         require(empty_target(parent, name) == original)
         os.rename(staging, name, src_dir_fd=parent, dst_dir_fd=parent)
         staging = None
@@ -465,10 +603,12 @@ def main():
     for name, maximum in LIMITS.items():
         parser.add_argument("--" + name.replace("_", "-"), type=int, default=maximum)
     parser.add_argument("--sha256")
+    parser.add_argument("--browser", action="store_true")
     options = parser.parse_args()
     for name, maximum in LIMITS.items():
         require(0 < getattr(options, name) <= maximum)
     require(options.sha256 is None or (options.operation == "restore" and re.fullmatch(r"[0-9a-f]{64}", options.sha256)))
+    require(not options.browser or options.operation == "create")
     os.umask(0o077)
     parent, name = open_parent(options.root)
     try:
@@ -487,6 +627,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except TooLarge as error:
+        os.write(2, json.dumps(error.report).encode("utf-8") + b"\n")
+        os._exit(0)
     except (Exception, KeyboardInterrupt):
         try:
             os.write(2, ERROR)

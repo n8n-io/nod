@@ -285,10 +285,17 @@ abstract class ComputerContainer extends Container<Bindings> {
         return runComputerExec({
           timeoutMs: 120_000,
           launch: (signal) =>
-            this.exec(['python3', '-u', '/opt/otto/checkpoint.py', 'create', path], {
-              stderr: 'ignore',
-              signal,
-            }),
+            this.exec(
+              [
+                'python3',
+                '-u',
+                '/opt/otto/checkpoint.py',
+                'create',
+                path,
+                ...(this.role === 'browser' ? ['--browser'] : []),
+              ],
+              { stderr: 'ignore', signal },
+            ),
           consume: (process, signal) => {
             if (!process.stdout) throw unavailable();
             return checkpoints(assertCurrent).save({

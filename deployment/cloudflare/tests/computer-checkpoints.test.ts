@@ -139,7 +139,7 @@ test('computer checkpoints stream multipart bytes with scoped identity and integ
   assert.equal(fixture.uploads.length, 1);
   assert.equal(
     fixture.uploads[0].key,
-    `development/${fixture.options.ownerId}/computers/workspace/${saved.id}.tar`,
+    `development/${fixture.options.ownerId}/computers/workspace/${saved.id}.tar.gz`,
   );
   assert.deepEqual(fixture.uploads[0].sizes, [8 * 1024 * 1024, 2 * 1024 * 1024 + 19]);
   assert.ok(fixture.checks() >= 4);
@@ -147,6 +147,16 @@ test('computer checkpoints stream multipart bytes with scoped identity and integ
     await new Response(await fixture.store.open(saved)).arrayBuffer(),
   );
   assert.deepEqual(restored, bytes);
+  const legacy = { ...saved, format: 'otto-computer-tar-v1' as const };
+  fixture.objects.set(
+    `development/${fixture.options.ownerId}/computers/workspace/${saved.id}.tar`,
+    fixture.objects.get(fixture.uploads[0].key)!,
+  );
+  assert.deepEqual(
+    new Uint8Array(await new Response(await fixture.store.open(legacy)).arrayBuffer()),
+    bytes,
+  );
+  await fixture.store.remove(legacy);
   await fixture.store.remove(saved);
   assert.equal(fixture.objects.size, 0);
 });

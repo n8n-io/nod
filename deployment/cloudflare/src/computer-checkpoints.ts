@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { environmentName, ownerIdentity, RuntimeControlError } from './protocol.ts';
 
 export type ComputerCheckpoint = {
-  format: 'otto-computer-tar-v1';
+  format: 'otto-computer-tar-v1' | 'otto-computer-tar-gzip-v1';
   id: string;
   ownerId: string;
   environment: string;
@@ -12,7 +12,9 @@ export type ComputerCheckpoint = {
   etag: string;
 };
 
-const maximumBytes = 256 * 1024 * 1024;
+const archiveBytes = 1024 * 1024 * 1024;
+const maximumBytes = archiveBytes + Math.floor(archiveBytes / 1000) + 65536;
+const minimumBytes = 20;
 const partBytes = 8 * 1024 * 1024;
 const unavailable = () => new RuntimeControlError(503);
 
@@ -42,8 +44,8 @@ export function createComputerCheckpoints(options: {
   )
     throw unavailable();
 
-  const key = (id: string) =>
-    `${environment}/${ownerId}/computers/${role}/${ownerIdentity(id)}.tar`;
+  const key = (id: string, format: ComputerCheckpoint['format']) =>
+    `${environment}/${ownerId}/computers/${role}/${ownerIdentity(id)}.${format === 'otto-computer-tar-v1' ? 'tar' : 'tar.gz'}`;
 
   function background(promise: Promise<unknown>) {
     const pending = promise.catch(() => {});
@@ -91,18 +93,18 @@ export function createComputerCheckpoints(options: {
 
   function validate(checkpoint: ComputerCheckpoint) {
     if (
-      checkpoint.format !== 'otto-computer-tar-v1' ||
+      !['otto-computer-tar-v1', 'otto-computer-tar-gzip-v1'].includes(checkpoint.format) ||
       checkpoint.ownerId !== ownerId ||
       checkpoint.environment !== environment ||
       checkpoint.role !== role ||
       !Number.isSafeInteger(checkpoint.bytes) ||
-      checkpoint.bytes < 1024 ||
+      checkpoint.bytes < minimumBytes ||
       checkpoint.bytes > limit ||
       !/^[a-f0-9]{64}$/.test(checkpoint.sha256) ||
       !/^[^"\u0000-\u0020]{1,200}$/.test(checkpoint.etag)
     )
       throw unavailable();
-    return key(checkpoint.id);
+    return key(checkpoint.id, checkpoint.format);
   }
 
   function matches(
@@ -130,7 +132,7 @@ export function createComputerCheckpoints(options: {
   }): Promise<ComputerCheckpoint> {
     const bound = deadline(input.signal);
     const id = randomUUID();
-    const objectKey = key(id);
+    const objectKey = key(id, 'otto-computer-tar-gzip-v1');
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let creation: Promise<R2MultipartUpload> | undefined;
     let completion: Promise<R2Object> | undefined;
@@ -144,7 +146,7 @@ export function createComputerCheckpoints(options: {
       await bound.run(options.assertCurrent);
       const upload = await bound.run(() => {
         creation = options.bucket.createMultipartUpload(objectKey, {
-          httpMetadata: { contentType: 'application/x-tar', cacheControl: 'no-store' },
+          httpMetadata: { contentType: 'application/gzip', cacheControl: 'no-store' },
         });
         return creation;
       });
@@ -179,7 +181,7 @@ export function createComputerCheckpoints(options: {
           if (used === partBytes) await flush();
         }
       }
-      if (size < 1024 || (await bound.run(() => exit)) !== 0) throw unavailable();
+      if (size < minimumBytes || (await bound.run(() => exit)) !== 0) throw unavailable();
       await flush();
       await bound.run(options.assertCurrent);
       const object = await bound.run(() => {
@@ -189,7 +191,7 @@ export function createComputerCheckpoints(options: {
       if (object.size !== size || object.key !== objectKey) throw unavailable();
       await bound.run(options.assertCurrent);
       const checkpoint: ComputerCheckpoint = {
-        format: 'otto-computer-tar-v1',
+        format: 'otto-computer-tar-gzip-v1',
         id,
         ownerId,
         environment,

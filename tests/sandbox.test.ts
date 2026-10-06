@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import type { WorkspaceSession } from '../src/ports/computer.ts';
 import { threadIdentity } from '../src/ports/thread-identity.ts';
 import { isPublicAddress, publicUrl } from '../src/providers/agent-browser/network.ts';
@@ -673,28 +674,49 @@ test('checkpoint roundtrip preserves private files, executable modes, npm-style 
 test('restore rejects header corruption, content corruption, truncation and unconsumed trailing data', async () => {
   const f = await fixture();
   try {
-    await writeFile(join(f.source, 'secret-file'), 'synthetic secret payload');
+    await writeFile(join(f.source, 'secret-file'), 'synthetic secret payload '.repeat(4096));
     const captured = await f.create();
     assert.equal(captured.code, 0, captured.stderr);
-    const damagedHeader = Buffer.from(captured.stdout);
-    damagedHeader[0] ^= 1;
-    const damagedContent = Buffer.from(captured.stdout);
-    damagedContent[damagedContent.indexOf('synthetic secret payload')] ^= 1;
+    assert.deepEqual([...captured.stdout.subarray(0, 2)], [0x1f, 0x8b]);
+    const legacy = gunzipSync(captured.stdout);
+    assert.ok(captured.stdout.length * 10 < legacy.length);
+    const damaged = (input: Buffer, offset: number) => {
+      const value = Buffer.from(input);
+      value[offset] ^= 1;
+      return value;
+    };
     for (const input of [
-      damagedHeader,
-      damagedContent,
-      captured.stdout.subarray(0, captured.stdout.indexOf('synthetic secret payload') + 3),
+      damaged(captured.stdout, 0),
+      damaged(captured.stdout, captured.stdout.length >> 1),
+      damaged(captured.stdout, captured.stdout.length - 5),
+      captured.stdout.subarray(0, captured.stdout.length >> 1),
       captured.stdout.subarray(0, captured.stdout.length - 1),
-      captured.stdout.subarray(0, captured.stdout.length - 512),
       Buffer.concat([captured.stdout, Buffer.from('private trailing text')]),
-      Buffer.concat([captured.stdout, Buffer.alloc(1)]),
+      Buffer.concat([captured.stdout, Buffer.alloc(512)]),
+      Buffer.concat([captured.stdout, captured.stdout]),
+      damaged(legacy, 0),
+      damaged(legacy, legacy.indexOf('synthetic secret payload')),
+      legacy.subarray(0, legacy.indexOf('synthetic secret payload') + 3),
+      legacy.subarray(0, legacy.length - 1),
+      legacy.subarray(0, legacy.length - 512),
+      Buffer.concat([legacy, Buffer.from('private trailing text')]),
+      Buffer.concat([legacy, Buffer.alloc(1)]),
       Buffer.alloc(1024),
     ]) {
       rejected(await f.restore(input));
       await assert.rejects(lstat(f.target), { code: 'ENOENT' });
       await f.noStaging();
     }
-    assert.equal((await f.restore(Buffer.concat([captured.stdout, Buffer.alloc(512)]))).code, 0);
+    for (const input of [captured.stdout, legacy, Buffer.concat([legacy, Buffer.alloc(512)])]) {
+      const restored = await f.restore(input, '--sha256', hash(input));
+      assert.equal(restored.code, 0, restored.stderr);
+      assert.equal(
+        await readFile(join(f.target, 'secret-file'), 'utf8'),
+        'synthetic secret payload '.repeat(4096),
+      );
+      await rm(f.target, { recursive: true });
+    }
+    rejected(await f.restore(captured.stdout, '--sha256', hash(legacy)));
   } finally {
     await f.close();
   }
@@ -766,7 +788,7 @@ test('restore preserves nonempty targets and refuses target or parent symlinks',
   }
 });
 
-test('create rejects escaping or cyclic links, FIFOs and sockets without leaking private paths', async () => {
+test('create rejects escaping or cyclic links without leaking private paths and skips FIFOs and sockets', async () => {
   const f = await fixture();
   try {
     const privateName = 'synthetic-private-token';
@@ -790,19 +812,90 @@ test('create rejects escaping or cyclic links, FIFOs and sockets without leaking
     ]);
     const [code] = await once(fifo, 'close');
     assert.equal(code, 0);
-    rejected(await f.create());
-    await rm(join(f.source, privateName));
+    await writeFile(join(f.source, 'kept'), 'synthetic kept file');
     const server = createServer();
     const socket = join(f.source, 'socket');
     server.listen(socket);
     await once(server, 'listening');
     try {
-      rejected(await f.create());
+      const captured = await f.create();
+      assert.equal(captured.code, 0, captured.stderr);
+      assert.equal(captured.stderr, '');
+      assert.equal((await f.restore(captured.stdout)).code, 0);
+      assert.deepEqual((await readdir(f.target)).sort(), ['kept']);
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
+    await f.noStaging();
+  } finally {
+    await f.close();
+  }
+});
+
+test('checkpoints leave out regenerable caches and keep browser site data', async () => {
+  const f = await fixture();
+  try {
+    const caches = ['Cache', 'Code Cache', 'GPUCache', 'GrShaderCache', 'DawnWebGPUCache'];
+    const kept = ['Local Storage', 'IndexedDB', 'Service Worker', 'Network'];
+    for (const name of [...caches, ...kept, 'tool/__pycache__', 'project/.cache'])
+      await mkdir(join(f.source, 'Default', name), { recursive: true });
+    for (const name of [...caches, ...kept, 'tool/__pycache__', 'project/.cache'])
+      await writeFile(join(f.source, 'Default', name, 'data'), `synthetic ${name}`);
+    await writeFile(join(f.source, 'Default', '.cache'), 'synthetic file named like a cache');
+    const restored = async (...args: string[]) => {
+      const captured = await f.create(...args);
+      assert.equal(captured.code, 0, captured.stderr);
+      assert.equal((await f.restore(captured.stdout)).code, 0);
+      const names = (await readdir(join(f.target, 'Default'))).sort();
+      assert.deepEqual(await readdir(join(f.target, 'Default', 'tool')), []);
+      assert.deepEqual(await readdir(join(f.target, 'Default', 'project')), []);
+      await rm(f.target, { recursive: true });
+      return names;
+    };
+    assert.deepEqual(await restored(), [...caches, ...kept, '.cache', 'project', 'tool'].sort());
+    assert.deepEqual(await restored('--browser'), [...kept, '.cache', 'project', 'tool'].sort());
+    rejected(await run(['restore', f.target, '--browser'], Buffer.alloc(1024)));
+  } finally {
+    await f.close();
+  }
+});
+
+test('an oversized checkpoint reports its size, entries and largest files instead of an archive', async () => {
+  const f = await fixture();
+  try {
+    await mkdir(join(f.source, 'workspace', 'thread'), { recursive: true });
+    await writeFile(join(f.source, 'workspace', 'thread', 'large.bin'), Buffer.alloc(9000));
+    await writeFile(join(f.source, 'workspace', 'thread', 'small.txt'), 'synthetic');
+    const within = await f.create('--max-bytes', '16384');
+    assert.equal(within.code, 0, within.stderr);
+    assert.equal(within.stderr, '');
+    for (const [args, limit] of [
+      [['--max-bytes', '8192'], 'bytes'],
+      [['--max-entries', '4'], 'entries'],
+      [['--max-file-bytes', '8999'], 'file'],
+    ] as const) {
+      const captured = await f.create(...args);
+      assert.equal(captured.code, 0, limit);
+      assert.equal(captured.stdout.length, 0, limit);
+      const report = JSON.parse(captured.stderr);
+      assert.equal(report.entries, 4);
+      assert.equal(report.complete, true);
+      assert.ok(report.bytes > 9000 && report.bytes < 16384);
+      assert.deepEqual(report.largest, [
+        ['workspace/thread/large.bin', 9000],
+        ['workspace/thread/small.txt', 9],
+      ]);
+      if (limit === 'bytes') assert.ok(report.bytes > report.max_bytes);
+      if (limit === 'entries') assert.equal(report.max_entries, 4);
+      if (limit === 'file') assert.equal(report.max_file_bytes, 8999);
+    }
+    for (let index = 0; index < 30; index++)
+      await writeFile(join(f.source, `file-${index}`), 'synthetic');
+    const truncated = JSON.parse((await f.create('--max-entries', '4')).stderr);
+    assert.equal(truncated.complete, false);
+    assert.equal(truncated.entries, 21);
     await f.noStaging();
   } finally {
     await f.close();
