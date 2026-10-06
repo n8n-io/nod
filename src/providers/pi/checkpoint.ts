@@ -86,22 +86,10 @@ async function readSession(store: PrivateObjectStore, threadId: string) {
 }
 
 function chunks(rows: object[]) {
+  const bytes = Buffer.from(rows.map((row) => JSON.stringify(row) + '\n').join(''));
   const result: Buffer[] = [];
-  let lines: string[] = [];
-  let size = 0;
-  for (const row of rows) {
-    const line = JSON.stringify(row) + '\n';
-    const bytes = Buffer.byteLength(line);
-    if (bytes > objectBytes) throw failure();
-    if (size && size + bytes > partBytes) {
-      result.push(Buffer.from(lines.join('')));
-      lines = [];
-      size = 0;
-    }
-    lines.push(line);
-    size += bytes;
-  }
-  if (lines.length) result.push(Buffer.from(lines.join('')));
+  for (let offset = 0; offset < bytes.length; offset += partBytes)
+    result.push(bytes.subarray(offset, offset + partBytes));
   return result;
 }
 

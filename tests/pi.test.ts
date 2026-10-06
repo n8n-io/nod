@@ -772,6 +772,23 @@ test('a session saved as one file before part uploads restores and keeps saving'
   }
 });
 
+test('a session entry larger than one stored object is saved and restored', async () => {
+  const f = await fixture();
+  try {
+    const saved = await createPiCheckpoint({ ...f, directory: join(f.directory, 'old') });
+    saved.manager.appendMessage({
+      role: 'user',
+      content: 'y'.repeat(20 * 1024 * 1024),
+      timestamp: 1,
+    });
+    await saved.checkpoint();
+    const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'new') });
+    assert.deepEqual(visibleContext(restored.manager), visibleContext(saved.manager));
+  } finally {
+    await f.close();
+  }
+});
+
 test('a stale Pi writer cannot overwrite a newer session checkpoint', async () => {
   const f = await fixture();
   try {
@@ -2673,6 +2690,59 @@ test('OpenRouter catalogs and both request formats retain tools, effort and one 
     );
     assert.equal(failed.stopReason, 'error');
     assert.equal(calls, 1, failed.errorMessage);
+  }
+});
+
+test('Pi retries a transient provider error and the turn completes with the retried answer', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-pi-retry-'));
+  let calls = 0;
+  const finals: string[] = [];
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: directory,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model) => {
+        const failed = ++calls === 1;
+        const message: AssistantMessage = {
+          ...fauxAssistantMessage([{ type: 'text', text: failed ? '' : 'Recovered' }]),
+          provider: model.provider,
+          model: model.id,
+          api: model.api,
+          stopReason: failed ? 'error' : 'stop',
+          ...(failed ? { errorMessage: '529 overloaded_error: Overloaded' } : {}),
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push(
+          failed
+            ? { type: 'error', reason: 'error', error: message }
+            : { type: 'done', reason: 'stop', message },
+        );
+        return stream;
+      };
+      return result;
+    },
+  });
+  try {
+    const session = await agent.open({
+      threadId: randomUUID(),
+      turnId: randomUUID(),
+      systemPrompt: 'Synthetic fixture',
+      ...sandbox,
+      tools: [],
+      shouldStop: () => false,
+      onEvent: (event) => {
+        if (event.type === 'final') finals.push(event.text);
+      },
+    });
+    await session.prompt('Synthetic question', []);
+    await session.dispose();
+    assert.equal(calls, 2);
+    assert.deepEqual(finals, ['Recovered']);
+  } finally {
+    await agent.dispose();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

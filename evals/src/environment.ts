@@ -102,7 +102,11 @@ async function provisionDatabase(root: string, provision: boolean) {
 
 export async function evalImages(environment: Record<string, string | undefined>) {
   const build = async (fromEnv: string | undefined, tag: string, dockerfile: string) => {
-    if (fromEnv) return fromEnv;
+    if (fromEnv) {
+      if ((await docker('image', 'inspect', fromEnv, '--format', '{{.Id}}')).exitCode)
+        throw new Error(`Docker image ${fromEnv} is missing.`);
+      return fromEnv;
+    }
     const built = await runProcess('docker', ['build', '-q', '-f', dockerfile, '-t', tag, '.'], {
       cwd: repository,
       timeoutMs: 1_800_000,

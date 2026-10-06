@@ -86,7 +86,7 @@ async function readHostOutput(path: string, owned: string[]) {
     if (!info.isFile() || info.nlink !== 1 || (process.getuid && info.uid !== process.getuid()))
       throw new Error();
     owned.push(path);
-    if (info.size > 16 * 1024 * 1024) throw new Error();
+    if (info.size > 64 * 1024 * 1024) throw new Error();
     const bytes = Buffer.alloc(info.size + 1);
     let length = 0;
     while (length < bytes.length) {
