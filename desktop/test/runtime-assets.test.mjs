@@ -120,40 +120,12 @@ test('release gate rejects malformed metadata, uncommitted notes and source drif
   );
 });
 
-test('automatic patches skip unchanged product trees and bind generated notes to clean source', async (t) => {
+test('automatic patches release unchanged source and bind generated notes across midnight', async (t) => {
   const f = await releaseRepository(t);
   await prepareRelease(f.root, '0.1.0');
-  f.commit();
+  const source = f.commit();
   f.git('tag', 'desktop-v0.1.0');
   const releases = [{ tag_name: 'desktop-v0.1.0', draft: false }];
-  assert.equal(automaticRelease(f.root, releases, 'synthetic/otto'), undefined);
-  await mkdir(join(f.root, 'desktop/test'));
-  await writeFile(join(f.root, 'desktop/test/fixture.mjs'), 'export const fixture = true;\n');
-  await writeFile(join(f.root, 'desktop/README.md'), 'Synthetic documentation update.\n');
-  for (const file of ['desktop/package.json', 'desktop/package-lock.json']) {
-    const path = join(f.root, file);
-    const value = JSON.parse(await readFile(path, 'utf8'));
-    value.version = '0.1.1';
-    if (value.packages) value.packages[''].version = '0.1.1';
-    await writeFile(path, JSON.stringify(value));
-  }
-  const unchanged = f.commit();
-  assert.equal(automaticRelease(f.root, releases, 'synthetic/otto'), undefined);
-  for (const file of [
-    'public/otto-logo.png',
-    'index.html',
-    'vite.config.ts',
-    'tsconfig.json',
-    'src/skills/example/SKILL.md',
-  ]) {
-    await mkdir(dirname(join(f.root, file)), { recursive: true });
-    await writeFile(join(f.root, file), 'Synthetic packaged input change.\n');
-    const changed = f.commit();
-    assert.equal(automaticRelease(f.root, releases, 'synthetic/otto').source, changed, file);
-    f.git('reset', '--hard', unchanged);
-  }
-  await writeFile(join(f.root, 'desktop/main.mjs'), 'export const updated = true;\n');
-  const source = f.commit();
   const plan = automaticRelease(f.root, releases, 'synthetic/otto');
   assert.equal(plan.version, '0.1.1');
   assert.equal(plan.source, source);
@@ -164,7 +136,12 @@ test('automatic patches skip unchanged product trees and bind generated notes to
   const digest = createHash('sha256').update(bytes).digest('hex');
   await writeFile(path, bytes);
   assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
-  const tampered = JSON.stringify({ ...plan, notes: plan.notes.replace('Synthetic', 'Altered') });
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 24 * 60 * 60 * 1000 });
+  assert.deepEqual(await checkReleasePlan(f.root, plan.version, path, digest), plan);
+  const nextDay = automaticRelease(f.root, releases, 'synthetic/otto');
+  assert.notEqual(nextDay.date, plan.date);
+  t.mock.timers.reset();
+  const tampered = JSON.stringify({ ...plan, notes: plan.notes + '\nAltered release.\n' });
   await writeFile(path, tampered);
   await assert.rejects(checkReleasePlan(f.root, plan.version, path, digest), /checksum/);
   await assert.rejects(
@@ -214,8 +191,8 @@ test('automatic patches resume the matching draft and never reuse an occupied or
   assert.equal(automaticRelease(f.root, [published, stale], 'synthetic/otto').version, '0.1.3');
   f.git('tag', 'desktop-v0.1.1');
   assert.equal(
-    automaticRelease(f.root, [published, { ...pending, draft: false }], 'synthetic/otto'),
-    undefined,
+    automaticRelease(f.root, [published, { ...pending, draft: false }], 'synthetic/otto').version,
+    '0.1.3',
   );
   assert.throws(
     () =>
@@ -712,8 +689,15 @@ test('automatic delivery requires current exact-main CI and publishes only its c
   assert.equal(published.created, 2);
   assert.deepEqual(published.releases['desktop-v0.1.0'], initial.releases['desktop-v0.1.0']);
   f.git('tag', f.appTag);
-  const repeated = JSON.parse((await f.invoke('plan', true, { APPLE_CONFIGURED: 'false' })).stdout);
-  assert.equal(repeated.release_needed, 'false');
+  await assert.rejects(
+    f.invoke('plan', true, { APPLE_CONFIGURED: 'false' }),
+    /Configure signing credentials/,
+  );
+  const repeated = JSON.parse((await f.invoke('plan')).stdout);
+  assert.equal(repeated.release_needed, 'true');
+  assert.equal(repeated.version, '0.1.2');
+  assert.equal(repeated.runtime_reused, 'true');
+  assert.deepEqual((await f.readState()).releases, published.releases);
   assert.equal((await f.readState()).created, 2);
 });
 

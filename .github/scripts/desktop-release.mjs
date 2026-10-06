@@ -180,14 +180,6 @@ async function plan() {
         sourceRepository,
       )
     : await configuredRelease(root);
-  if (!release) {
-    await outputValues({
-      source,
-      release_needed: 'false',
-      reason: 'No product changes since the latest published desktop release.',
-    });
-    return;
-  }
   if (process.env.APPLE_CONFIGURED !== 'true')
     throw new Error(
       'Configure signing credentials and public certificate metadata in mac-release.',

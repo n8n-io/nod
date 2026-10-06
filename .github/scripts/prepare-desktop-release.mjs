@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDeepStrictEqual } from 'node:util';
 
 const releaseFiles = [
   'desktop/package.json',
@@ -13,23 +12,6 @@ const releaseFiles = [
 ];
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const maximumNotesBytes = 64 * 1024;
-const productPaths = [
-  'src',
-  'desktop',
-  'public',
-  'index.html',
-  'vite.config.ts',
-  'tsconfig.json',
-  'package.json',
-  'package-lock.json',
-  'Dockerfile.workspace',
-  'Dockerfile.browser',
-  '.dockerignore',
-  '.github/scripts/with-apple-signing.mjs',
-  ':(exclude)desktop/test',
-  ':(exclude)desktop/*.md',
-  ':(exclude)desktop/release.json',
-];
 
 export function releaseVersion(value) {
   if (typeof value !== 'string' || value.length > 64 || !versionPattern.test(value))
@@ -96,10 +78,11 @@ function packageVersions(pkg, lock) {
   return current;
 }
 
-function releaseCommits(root, previousTag, source) {
+function releaseCommits(root, previousTag, source, allowEmpty = false) {
   const exclusions = [':(exclude)desktop/release.json', ':(exclude)desktop/CHANGELOG.md'];
   const scope = previousTag ? ['.', ...exclusions] : ['desktop', ...exclusions];
   if (
+    !allowEmpty &&
     previousTag &&
     !git(root, ['diff', '--name-only', previousTag, source, '--', ...scope]).trim()
   )
@@ -121,7 +104,7 @@ function releaseCommits(root, previousTag, source) {
       throw new Error('Commit history cannot be represented as bounded release notes.');
     commits.push({ sha, subject });
   }
-  if (!commits.length) throw new Error('There are no desktop changes to release.');
+  if (!commits.length && !allowEmpty) throw new Error('There are no desktop changes to release.');
   return commits;
 }
 
@@ -136,43 +119,8 @@ export function currentNotes(changelog, version) {
   return notes;
 }
 
-function productChanged(root, previousTag, source) {
-  const changed = git(root, [
-    'diff',
-    '--name-only',
-    '-z',
-    previousTag,
-    source,
-    '--',
-    ...productPaths,
-  ])
-    .split('\0')
-    .filter(Boolean);
-  return changed.some((file) => {
-    if (
-      ![
-        'package.json',
-        'package-lock.json',
-        'desktop/package.json',
-        'desktop/package-lock.json',
-      ].includes(file)
-    )
-      return true;
-    const withoutVersion = (ref) => {
-      const value = JSON.parse(git(root, ['show', `${ref}:${file}`]));
-      delete value.version;
-      if (value.packages?.['']) delete value.packages[''].version;
-      return value;
-    };
-    return !isDeepStrictEqual(withoutVersion(previousTag), withoutVersion(source));
-  });
-}
-
-function automaticNotes(root, version, previousTag, source) {
-  const date = new Date(git(root, ['show', '-s', '--format=%cI', source]).trim())
-    .toISOString()
-    .slice(0, 10);
-  const commits = releaseCommits(root, previousTag, source);
+function automaticNotes(root, version, previousTag, source, date) {
+  const commits = releaseCommits(root, previousTag, source, true);
   const notes = [
     `## ${version} - ${date}`,
     '',
@@ -180,6 +128,7 @@ function automaticNotes(root, version, previousTag, source) {
     `Previous release: \`${previousTag}\``,
     '',
     ...commits.slice(0, 100).map(({ sha, subject }) => `- ${subject} (${sha.slice(0, 7)})`),
+    ...(!commits.length ? ['- Daily build of the same tested source.'] : []),
     ...(commits.length > 100
       ? ['', 'More commits are included; review the full Git history.']
       : []),
@@ -208,7 +157,6 @@ export function automaticRelease(root, releases, sourceRepository) {
     git(root, ['merge-base', '--is-ancestor', previousTag, source], true) === null
   )
     throw new Error('The latest published desktop tag must belong to this source history.');
-  if (!productChanged(root, previousTag, source)) return;
   const marker = `Source: https://github.com/${sourceRepository}/commit/${source}`;
   const pending = desktop.find(
     (release) => release.draft === true && release.target_commitish === source,
@@ -231,11 +179,13 @@ export function automaticRelease(root, releases, sourceRepository) {
     while (reserved.has(`desktop-v${major}.${minor}.${next}`)) next++;
     version = releaseVersion(`${major}.${minor}.${next}`);
   }
+  const date = new Date().toISOString().slice(0, 10);
   return {
     version,
     previousTag,
     source,
-    notes: automaticNotes(root, version, previousTag, source),
+    date,
+    notes: automaticNotes(root, version, previousTag, source, date),
   };
 }
 
@@ -251,9 +201,13 @@ export async function checkReleasePlan(root, input, path, digest) {
   const plan = JSON.parse(bytes.toString('utf8'));
   const source = repository(root);
   if (
-    Object.keys(plan).sort().join(',') !== 'notes,previousTag,source,version' ||
+    Object.keys(plan).sort().join(',') !== 'date,notes,previousTag,source,version' ||
     plan.version !== releaseVersion(input) ||
     plan.source !== source ||
+    typeof plan.date !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(plan.date) ||
+    !Number.isFinite(Date.parse(plan.date)) ||
+    new Date(plan.date).toISOString().slice(0, 10) !== plan.date ||
     !/^desktop-v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(plan.previousTag) ||
     compareVersions(plan.version, plan.previousTag.slice(9)) <= 0 ||
     !tagExists(root, plan.previousTag) ||
@@ -261,10 +215,7 @@ export async function checkReleasePlan(root, input, path, digest) {
     git(root, ['status', '--porcelain', '--untracked-files=no']).trim()
   )
     throw new Error('The release plan does not match the clean tested source.');
-  if (
-    !productChanged(root, plan.previousTag, source) ||
-    plan.notes !== automaticNotes(root, plan.version, plan.previousTag, source)
-  )
+  if (plan.notes !== automaticNotes(root, plan.version, plan.previousTag, source, plan.date))
     throw new Error('The release plan notes do not match the source changes.');
   if (
     tagExists(root, `desktop-v${plan.version}`) &&
