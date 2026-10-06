@@ -9,7 +9,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci && npm cache clean --force
 COPY src ./src
-RUN chmod 555 src/providers/container-browser/chromium.sh
+RUN chmod 555 src/providers/container-browser/chromium.sh && install -m 555 src/providers/container-browser/xvfb.sh /usr/local/bin/Xvfb
 COPY deployment/e2b/browser-ready.ts ./deployment/e2b/browser-ready.ts
 COPY workspace-command.py /opt/otto/workspace-command.py
 COPY deployment/e2b/computer-guard.py /opt/otto/computer-guard.py

@@ -197,6 +197,10 @@ test('template contexts reject symlinked source and do not copy unrelated local 
       join(root, 'src/providers/container-browser/chromium.sh'),
       '#!/bin/sh\nexec /usr/bin/chromium "$@" 2>/dev/null\n',
     ),
+    writeFile(
+      join(root, 'src/providers/container-browser/xvfb.sh'),
+      '#!/bin/sh\nexec /usr/bin/Xvfb "$@"\n',
+    ),
     writeFile(join(root, 'deployment/e2b/browser-ready.ts'), 'export {};\n'),
     writeFile(
       join(root, 'src/providers/container-browser/.env'),

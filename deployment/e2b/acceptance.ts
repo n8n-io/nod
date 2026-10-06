@@ -136,6 +136,7 @@ export async function acceptanceSourceHash(sourceRoot = root) {
     'src/providers/container-browser/worker.ts',
     'src/providers/container-browser/bridge.ts',
     'src/providers/container-browser/chromium.sh',
+    'src/providers/container-browser/xvfb.sh',
     'package.json',
     'package-lock.json',
   ];
