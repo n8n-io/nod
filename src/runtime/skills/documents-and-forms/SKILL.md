@@ -9,7 +9,7 @@ Identify the source file, required format, recipient and final use. Inspect the 
 
 Map each requested field to a verified fact or document. Preserve names, identifiers, dates, units and exact legal wording. Mark unknown fields for the user. A blank, zero and not-applicable answer can have different meanings. Do not invent an eligibility fact or select a declaration from a guess.
 
-For PDF forms, check whether fields are interactive or the page is an image. Check whether text extraction misses a scanned page. Preserve the original and work on a copy. A visual mark can fail to set the form's actual checkbox value.
+For PDF forms, check whether fields are interactive or the page is an image. Check whether text extraction misses a scanned page. Preserve the original and work on a copy. A visual mark can fail to set the form's actual checkbox value: list interactive fields with pypdf, fill them by field name, then render the filled pages to confirm. Use qpdf to repair, merge or split, and Ghostscript to shrink a PDF to an upload limit. LibreOffice opens .doc, .odt and .rtf files.
 
 For contracts, extract parties, dates, fees, renewal, termination and obligations with page references. Distinguish a contract term from its legal enforceability. Use current official sources for legal rules; do not state a legal conclusion from a clause alone.
 

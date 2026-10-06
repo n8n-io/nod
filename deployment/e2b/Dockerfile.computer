@@ -1,8 +1,8 @@
 FROM node:24.21.0-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends chromium xvfb xauth xdotool ffmpeg poppler-utils jq tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu tesseract-ocr-por tesseract-ocr-spa tesseract-ocr-fra fonts-liberation ca-certificates python3 python-is-python3 python3-pip python3-venv python3-requests python3-bs4 pipx curl git unzip ripgrep nftables iproute2 libcap2-bin util-linux && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends chromium xvfb xauth xdotool ffmpeg poppler-utils jq tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu tesseract-ocr-por tesseract-ocr-spa tesseract-ocr-fra fonts-liberation ca-certificates python3 python-is-python3 python3-pip python3-venv python3-requests python3-bs4 pipx curl git unzip ripgrep libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui fonts-crosextra-carlito fonts-crosextra-caladea fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji qpdf ghostscript zip xz-utils file sqlite3 tesseract-ocr-cat tesseract-ocr-ita tesseract-ocr-nld nftables iproute2 libcap2-bin util-linux && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/yt-dlp && /opt/yt-dlp/bin/pip install --no-cache-dir "yt-dlp[pin,pin-curl-cffi,pin-deno]==2026.8.19" && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
 COPY --chmod=555 save-video /usr/local/bin/save-video
-RUN python3 -m venv --system-site-packages /opt/otto-artifacts && /opt/otto-artifacts/bin/pip install --no-cache-dir reportlab==5.0.1 matplotlib==3.11.2 openpyxl==3.1.5 python-docx==1.2.0 python-pptx==1.0.2 pillow==12.3.0 pandas==3.0.6 pdfplumber==0.11.10 pillow-heif==1.8.0
+RUN python3 -m venv --system-site-packages /opt/otto-artifacts && /opt/otto-artifacts/bin/pip install --no-cache-dir reportlab==5.0.1 matplotlib==3.11.2 openpyxl==3.1.5 python-docx==1.2.0 python-pptx==1.0.2 pillow==12.3.0 pandas==3.0.6 pdfplumber==0.11.10 pillow-heif==1.8.0 pypdf==6.19.0 xlrd==2.0.2 odfpy==1.4.1 icalendar==7.3.0
 RUN groupadd --gid 1001 otto-browser && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin otto-browser
 RUN groupadd --gid 1002 otto-connected && useradd --uid 1002 --gid 1002 --create-home --shell /usr/sbin/nologin otto-connected && chmod 700 /home/otto-connected
 WORKDIR /app
@@ -14,6 +14,7 @@ COPY deployment/e2b/browser-ready.ts ./deployment/e2b/browser-ready.ts
 COPY workspace-command.py /opt/otto/workspace-command.py
 COPY deployment/e2b/computer-guard.py /opt/otto/computer-guard.py
 RUN mkdir -p /data /workspace /home/node/.local/bin /run/otto && chown otto-browser:otto-browser /data /home/otto-browser && chmod 700 /data /home/otto-browser /run/otto && chown -R node:node /workspace /home/node && chown -R root:root /app /opt/otto && chmod -R go-w /app /opt/otto && chmod 555 /opt/otto && chmod 444 /opt/otto/*.py && find / -xdev -type f -perm /6000 -exec chmod a-s {} + && getcap -r /usr /opt /app 2>/dev/null | cut -d ' ' -f 1 | xargs -r setcap -r
+ENV LANG=C.UTF-8
 ENV NPM_CONFIG_PREFIX=/home/node/.local
 ENV PIPX_HOME=/home/node/.local/pipx
 ENV PIPX_BIN_DIR=/home/node/.local/bin
