@@ -16,7 +16,7 @@
     "sha256": "de54e37157f45a43f42f6271302372d95c0eb992cc35ecaee74989bb14058c94"
   },
   "guest": {
-    "url": "https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-arm64.img",
-    "sha256": "1d6bffe64b848468ac97f821d369a4846d983de1800ccf6b5ec8853e85cefc55"
+    "url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261001/ubuntu-24.04-minimal-cloudimg-arm64.img",
+    "sha256": "fbf6b15c50c474dc6dee5b3c74da212bb687a2625e877227828e6492d88dc151"
   }
 }
