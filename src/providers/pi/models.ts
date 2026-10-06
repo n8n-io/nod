@@ -388,15 +388,15 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
 }
 
 export async function createPiModelRuntime(access: ModelAccess) {
+  const secrets = new Set<string>();
   const credentials: CredentialStore = {
     async read(providerId) {
       if (providerId !== access.provider) return undefined;
       const credential = await access.read();
       if (!credential) throw new Error('The selected model connection is unavailable.');
-      return {
-        type: 'api_key',
-        key: credential.type === 'api_key' ? credential.key : credential.access,
-      };
+      const key = credential.type === 'api_key' ? credential.key : credential.access;
+      secrets.add(key);
+      return { type: 'api_key', key };
     },
     async list() {
       return [{ providerId: access.provider, type: 'api_key' }];
@@ -471,9 +471,9 @@ export async function createPiModelRuntime(access: ModelAccess) {
     });
     const push = events.push.bind(events);
     events.push = (event) => {
-      if (event.type === 'error' && event.reason === 'error')
-        event.error.errorMessage =
-          'The model request failed. Check account access and limits in Models.';
+      if (event.type === 'error')
+        for (const secret of secrets)
+          event.error.errorMessage = event.error.errorMessage?.replaceAll(secret, '[redacted]');
       push(event);
     };
     return events;

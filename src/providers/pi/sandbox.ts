@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { posix } from 'node:path';
+import { constants } from 'node:fs';
+import { open, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, posix } from 'node:path';
 import {
   createBashToolDefinition,
   createEditToolDefinition,
@@ -7,13 +10,11 @@ import {
   createLsToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
-  truncateTail,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { WorkspaceSession } from '../../ports/computer.ts';
 
-const outputBytes = 40_000;
-const outputLines = 1_800;
+const streamBytes = 1024 * 1024;
 const imageTypes: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -29,44 +30,159 @@ function quote(value: string) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
-  async function run(script: string, options: { input?: string; signal?: AbortSignal } = {}) {
-    const chunks: Buffer[] = [];
-    const { exitCode } = await workspace.exec(script, {
-      ...options,
-      onData: (chunk) => chunks.push(chunk),
-    });
-    return { exitCode, output: Buffer.concat(chunks) };
+async function run(
+  workspace: WorkspaceSession,
+  script: string,
+  options: { input?: string; signal?: AbortSignal } = {},
+) {
+  const chunks: Buffer[] = [];
+  const { exitCode } = await workspace.exec(script, {
+    ...options,
+    onData: (chunk) => chunks.push(chunk),
+  });
+  return { exitCode, output: Buffer.concat(chunks) };
+}
+
+export async function writeWorkspaceFile(
+  workspace: WorkspaceSession,
+  path: string,
+  bytes: Buffer,
+  signal?: AbortSignal,
+) {
+  const step = 512 * 1024;
+  const temporary = posix.join(posix.dirname(path), `.${posix.basename(path)}.${randomUUID()}.tmp`);
+  try {
+    for (let offset = 0; offset === 0 || offset < bytes.length; offset += step) {
+      const { exitCode } = await run(
+        workspace,
+        `base64 -d ${offset ? '>>' : '>'} ${quote(temporary)}`,
+        { input: bytes.subarray(offset, offset + step).toString('base64'), signal },
+      );
+      if (exitCode) throw new Error(`Could not write ${path}.`);
+    }
+    const mode = `[ ! -e ${quote(path)} ] || chmod --reference=${quote(path)} ${quote(temporary)} 2>/dev/null`;
+    const replace = `[ ! -d ${quote(path)} ] && { ${mode}; mv -f -- ${quote(temporary)} ${quote(path)}; }`;
+    if ((await run(workspace, replace, { signal })).exitCode)
+      throw new Error(`Could not write ${path}.`);
+  } catch (error) {
+    await run(workspace, `rm -f -- ${quote(temporary)}`).catch(() => {});
+    throw error;
   }
+}
+
+function hostOutputs(text: string) {
+  const root = tmpdir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `${root}/pi-(?:bash|codemode)-[a-f0-9]{16}\\.(?:log|txt|png|jpg|gif|webp)`,
+    'g',
+  );
+  return text.match(pattern) ?? [];
+}
+
+async function readHostOutput(path: string, owned: string[]) {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.nlink !== 1 || (process.getuid && info.uid !== process.getuid()))
+      throw new Error();
+    owned.push(path);
+    if (info.size > 16 * 1024 * 1024) throw new Error();
+    const bytes = Buffer.alloc(info.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length !== info.size) throw new Error();
+    return bytes.subarray(0, length);
+  } finally {
+    await file.close();
+  }
+}
+
+async function moveHostOutputs(texts: string[], workspace: WorkspaceSession, signal?: AbortSignal) {
+  const paths = [...new Set(texts.flatMap(hostOutputs))];
+  const moved = new Map<string, string>();
+  const owned: string[] = [];
+  if (!paths.length) return moved;
+  try {
+    const directory = posix.join(workspace.path, '.otto/outputs');
+    for (const path of paths) {
+      const bytes = await readHostOutput(path, owned);
+      signal?.throwIfAborted();
+      if (!moved.size && (await workspace.exec(`mkdir -p -- '${directory}'`, { signal })).exitCode)
+        throw new Error();
+      const target = posix.join(directory, basename(path));
+      await writeWorkspaceFile(workspace, target, bytes, signal);
+      moved.set(path, target);
+    }
+    return moved;
+  } catch {
+    throw new Error('The full output could not be saved in the workspace.');
+  } finally {
+    await Promise.all(owned.map((path) => unlink(path).catch(() => {})));
+  }
+}
+
+export async function workspaceOutputs(
+  run: () => Promise<Awaited<ReturnType<ToolDefinition['execute']>>>,
+  workspace: WorkspaceSession,
+  signal?: AbortSignal,
+) {
+  let result;
+  try {
+    result = await run();
+  } catch (error) {
+    if (error instanceof Error && hostOutputs(error.message).length)
+      for (const [from, to] of await moveHostOutputs([error.message], workspace, signal))
+        error.message = error.message.replaceAll(from, to);
+    throw error;
+  }
+  const details = result.details as { fullOutputPath?: unknown } | undefined;
+  const structured = result.structuredContent as { full_output_path?: unknown } | undefined;
+  const moved = await moveHostOutputs(
+    [
+      ...result.content.flatMap((item) => (item.type === 'text' ? [item.text] : [])),
+      ...[details?.fullOutputPath, structured?.full_output_path].filter(
+        (path): path is string => typeof path === 'string',
+      ),
+    ],
+    workspace,
+    signal,
+  );
+  if (!moved.size) return result;
+  const swap = (text: string) =>
+    [...moved].reduce((value, [from, to]) => value.replaceAll(from, to), text);
+  return {
+    ...result,
+    content: result.content.map((item) =>
+      item.type === 'text' ? { ...item, text: swap(item.text) } : item,
+    ),
+    ...(typeof details?.fullOutputPath === 'string'
+      ? { details: { ...details, fullOutputPath: swap(details.fullOutputPath) } }
+      : {}),
+    ...(typeof structured?.full_output_path === 'string'
+      ? {
+          structuredContent: {
+            ...structured,
+            full_output_path: swap(structured.full_output_path),
+          },
+        }
+      : {}),
+  };
+}
+
+export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
   async function check(script: string) {
-    return (await run(script)).exitCode === 0;
+    return (await run(workspace, script)).exitCode === 0;
   }
   async function readBytes(path: string) {
-    const { exitCode, output } = await run(`cat -- ${quote(path)}`);
+    const { exitCode, output } = await run(workspace, `cat -- ${quote(path)}`);
     if (exitCode) throw new Error(`File not found or not readable: ${path}`);
     return output;
   }
-  async function writeBytes(path: string, bytes: Buffer) {
-    const step = 512 * 1024;
-    const temporary = posix.join(
-      posix.dirname(path),
-      `.${posix.basename(path)}.${randomUUID()}.tmp`,
-    );
-    try {
-      for (let offset = 0; offset === 0 || offset < bytes.length; offset += step) {
-        const { exitCode } = await run(`base64 -d ${offset ? '>>' : '>'} ${quote(temporary)}`, {
-          input: bytes.subarray(offset, offset + step).toString('base64'),
-        });
-        if (exitCode) throw new Error(`Could not write ${path}.`);
-      }
-      const mode = `[ ! -e ${quote(path)} ] || chmod --reference=${quote(path)} ${quote(temporary)} 2>/dev/null`;
-      const replace = `[ ! -d ${quote(path)} ] && { ${mode}; mv -f -- ${quote(temporary)} ${quote(path)}; }`;
-      if (!(await check(replace))) throw new Error(`Could not write ${path}.`);
-    } catch (error) {
-      await run(`rm -f -- ${quote(temporary)}`).catch(() => {});
-      throw error;
-    }
-  }
+  const writeBytes = (path: string, bytes: Buffer) => writeWorkspaceFile(workspace, path, bytes);
   const directories = new Map<string, boolean>();
   async function bash(
     command: string,
@@ -83,10 +199,12 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       'start=$(date +%s)',
       `timeout -k 5 ${seconds} bash -c ${quote(command)} > ${quote(file)} 2>&1 < /dev/null`,
       'code=$?',
-      `size=$(wc -c < ${quote(file)}); lines=$(wc -l < ${quote(file)})`,
-      `if [ "$size" -gt ${outputBytes} ] || [ "$lines" -gt ${outputLines} ]; then`,
-      `  tail -n ${outputLines} ${quote(file)} | tail -c ${outputBytes}`,
-      `  printf '\\n\\n[Output truncated: %s bytes, %s lines in total. Full output: %s]\\n' "$size" "$lines" ${quote(file)}`,
+      `size=$(($(wc -c < ${quote(file)})))`,
+      `if [ "$size" -gt ${streamBytes} ]; then`,
+      `  head -c ${streamBytes / 2} ${quote(file)}`,
+      `  printf '\\n\\n[... %s bytes omitted ...]\\n\\n' $((size - ${streamBytes}))`,
+      `  tail -c ${streamBytes / 2} ${quote(file)}`,
+      `  printf '\\n\\n[Complete output (%s bytes): %s]\\n' "$size" ${quote(file)}`,
       `else cat -- ${quote(file)}; rm -f -- ${quote(file)}; fi`,
       `if [ "$code" -eq 124 ] && [ $(($(date +%s) - start)) -ge ${seconds} ]; then printf %s ${quote(marker)}; fi`,
       'exit $code',
@@ -97,15 +215,11 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       timeoutMs: (seconds + 30) * 1000,
       onData: (chunk) => chunks.push(chunk),
     });
-    const output = Buffer.concat(chunks).toString('utf8');
-    const timedOut = output.endsWith(marker);
-    const text = truncateTail(timedOut ? output.slice(0, -marker.length) : output, {
-      maxBytes: outputBytes + 5_000,
-      maxLines: outputLines + 100,
-    }).content;
-    if (text) options.onData(Buffer.from(text));
+    const output = Buffer.concat(chunks);
+    const timedOut = output.toString('latin1').endsWith(marker);
+    const text = timedOut ? output.subarray(0, output.length - Buffer.byteLength(marker)) : output;
+    if (text.length) options.onData(text);
     if (timedOut) throw new Error(`timeout:${seconds}`);
-    if (exitCode) throw new Error(`${text}\n\nCommand exited with code ${exitCode}`);
     return { exitCode };
   }
   const glob = async (
@@ -132,13 +246,14 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       '   if found>=limit: sys.exit(0)',
     ].join('\n');
     const { exitCode, output } = await run(
+      workspace,
       `python3 -c ${quote(program)} ${quote(root)} ${quote(pattern)} ${options.limit} ${quote(JSON.stringify(options.ignore))}`,
     );
     if (exitCode) throw new Error(`Could not search ${root}.`);
     return output.toString('utf8').split('\0').filter(Boolean);
   };
   const cwd = workspace.path;
-  return [
+  const tools = [
     createReadToolDefinition(cwd, {
       operations: {
         readFile: readBytes,
@@ -179,7 +294,10 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
           return { isDirectory: () => directory };
         },
         readdir: async (path) => {
-          const { exitCode, output } = await run(`python3 -c ${quote(listProgram)} ${quote(path)}`);
+          const { exitCode, output } = await run(
+            workspace,
+            `python3 -c ${quote(listProgram)} ${quote(path)}`,
+          );
           if (exitCode) throw new Error(`Cannot read directory: ${path}`);
           const parts = output.toString('utf8').split('\0');
           const names: string[] = [];
@@ -192,4 +310,13 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       },
     }),
   ] as ToolDefinition[];
+  return tools.map((definition): ToolDefinition => ({
+    ...definition,
+    execute: (id, params, signal, onUpdate, context) =>
+      workspaceOutputs(
+        () => definition.execute(id, params, signal, onUpdate, context),
+        workspace,
+        signal,
+      ),
+  }));
 }

@@ -1,7 +1,6 @@
-import { constants, existsSync, statSync } from 'node:fs';
-import { mkdir, open, unlink } from 'node:fs/promises';
-import { basename, join, posix, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { existsSync, statSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Type, type TObject } from '@sinclair/typebox';
@@ -13,6 +12,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type ExtensionAPI,
   type ResourceLoader,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
@@ -30,7 +30,7 @@ import {
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
 import { agentModels } from '../../shared/model-defaults.ts';
-import { createSandbox } from './sandbox.ts';
+import { createSandbox, workspaceOutputs } from './sandbox.ts';
 
 function isFinalAnswer(signature: string | undefined) {
   if (!signature?.startsWith('{')) return false;
@@ -62,64 +62,42 @@ function resources(
   };
 }
 
-async function workspaceCodemodeOutput(
-  result: Awaited<ReturnType<ToolDefinition['execute']>>,
-  workspace: WorkspaceSession,
-  writer: ToolDefinition,
-  signal?: AbortSignal,
-) {
-  const details = result.details as { fullOutputPath?: unknown } | undefined;
-  if (!details?.fullOutputPath) return result;
-  const path = details.fullOutputPath;
-  try {
-    if (
-      typeof path !== 'string' ||
-      !/^pi-codemode-[a-f0-9]{16}\.txt$/.test(basename(path)) ||
-      path !== join(tmpdir(), basename(path))
-    )
-      throw new Error();
-    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    let owned = false;
-    try {
-      const info = await file.stat();
-      if (!info.isFile() || info.nlink !== 1 || (process.getuid && info.uid !== process.getuid()))
-        throw new Error();
-      owned = true;
-      if (info.size > 16 * 1024 * 1024) throw new Error();
-      const bytes = Buffer.alloc(info.size + 1);
-      let length = 0;
-      while (length < bytes.length) {
-        const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
-        if (!bytesRead) break;
-        length += bytesRead;
-      }
-      if (length !== info.size) throw new Error();
-      signal?.throwIfAborted();
-      const output = posix.join(workspace.path, '.otto/outputs', `codemode-${randomUUID()}.txt`);
-      await writer.execute(
-        randomUUID(),
-        { path: output, content: bytes.subarray(0, length).toString('utf8') },
-        signal,
-        undefined,
-        undefined as never,
-      );
-      return {
-        ...result,
-        details: { ...details, fullOutputPath: output },
-        content: result.content.map((item) =>
-          item.type === 'text' ? { ...item, text: item.text.replaceAll(path, output) } : item,
-        ),
-      };
-    } finally {
-      try {
-        await file.close();
-      } finally {
-        if (owned) await unlink(path);
-      }
-    }
-  } catch {
-    throw new Error('The full script output could not be saved in the workspace.');
-  }
+const compactAt = 256_000;
+const keptImages = 4;
+const imageStep = 8;
+
+type ModelUsage = { input?: number; output?: number; cost?: { total?: number } };
+
+function recentImages(pi: ExtensionAPI) {
+  pi.on('context', ({ messages }) => {
+    const total = messages.reduce(
+      (count, message) =>
+        message.role === 'toolResult'
+          ? count + message.content.filter((part) => part.type === 'image').length
+          : count,
+      0,
+    );
+    if (total <= keptImages + imageStep) return;
+    const cut = Math.floor((total - keptImages) / imageStep) * imageStep;
+    let seen = 0;
+    return {
+      messages: messages.map((message) =>
+        message.role === 'toolResult' && message.content.some((part) => part.type === 'image')
+          ? {
+              ...message,
+              content: message.content.map((part) =>
+                part.type === 'image' && seen++ < cut
+                  ? {
+                      type: 'text' as const,
+                      text: 'An earlier screenshot was removed from context. Take a new one if you need to see the page again.',
+                    }
+                  : part,
+              ),
+            }
+          : message,
+      ),
+    };
+  });
 }
 
 export function createPiAgent(options: {
@@ -253,7 +231,7 @@ export function createPiAgent(options: {
         additionalExtensionPaths: [
           fileURLToPath(import.meta.resolve('pi-web-access/dist/index.js')),
         ],
-        extensionFactories: [createCodemodeExtension({ mode: 'on', models: false })],
+        extensionFactories: [createCodemodeExtension(), recentImages],
         noExtensions: true,
         noSkills: true,
         noPromptTemplates: true,
@@ -287,30 +265,50 @@ export function createPiAgent(options: {
                 const result = await input.runTool(
                   name,
                   args,
-                  async () => {
-                    const output = await registered.definition.execute(
-                      id,
-                      args,
+                  () =>
+                    workspaceOutputs(
+                      () => registered.definition.execute(id, args, signal, onUpdate, context),
+                      input.workspace,
                       signal,
-                      onUpdate,
-                      context,
-                    );
-                    return name === 'codemode'
-                      ? workspaceCodemodeOutput(
-                          output,
-                          input.workspace,
-                          sandboxTools.find((tool) => tool.name === 'write')!,
-                          signal,
-                        )
-                      : output;
-                  },
+                    ),
                   { nested: id.includes('/') },
                 );
+                const usage = (result as { usage?: ModelUsage }).usage;
+                if (usage)
+                  input.onEvent({
+                    type: 'provider_usage',
+                    usage: {
+                      id: randomUUID(),
+                      provider: 'codemode',
+                      category: 'agent',
+                      operation: 'models',
+                      turnId: input.turnId,
+                      status: 'succeeded',
+                      durationMs: 0,
+                      inputTokens: usage.input,
+                      outputTokens: usage.output,
+                      costUsd: Number.isFinite(usage.cost?.total) ? usage.cost!.total : null,
+                      pricing: Number.isFinite(usage.cost?.total) ? 'sdk_estimate' : 'unavailable',
+                    },
+                  });
                 return { ...result, details: result.details ?? {} };
               },
             },
           });
         }
+      const guidelines = [
+        ...new Set(
+          [
+            ...tools,
+            ...extensions.extensions.flatMap((extension) =>
+              [...extension.tools.values()].map((tool) => tool.definition),
+            ),
+          ].flatMap((tool) => tool.promptGuidelines ?? []),
+        ),
+      ];
+      const systemPrompt = guidelines.length
+        ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`
+        : input.systemPrompt;
       const resumed = manager.buildSessionContext().messages.length > 0;
       const { session } = await (options.createSession ?? createAgentSession)({
         cwd: input.workspace.path,
@@ -324,11 +322,13 @@ export function createPiAgent(options: {
         ],
         customTools: tools,
         noTools: 'builtin',
-        resourceLoader: resources(input.systemPrompt, input.systemContext, extensions),
+        resourceLoader: resources(systemPrompt, input.systemContext, extensions),
         sessionManager: manager,
         settingsManager: SettingsManager.inMemory({
-          compaction: { enabled: true },
-          retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
+          compaction: {
+            enabled: true,
+            reserveTokens: Math.max(16_384, (model.contextWindow || 0) - compactAt),
+          },
           transport: 'sse',
           steeringMode: 'all',
         }),

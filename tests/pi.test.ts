@@ -1386,29 +1386,38 @@ test('a saved flow uses the current agent-browser session on a synthetic page', 
 });
 
 test('bash output larger than Pi limits stays in the sandbox and never creates host temp files', async (t) => {
-  const { prefix, root, run } = await hostSandbox(t);
+  const { prefix, root, tools, run } = await hostSandbox(t);
   const before = (await readdir(tmpdir())).filter((name) => name.startsWith('pi-bash-'));
   const output = await run('bash', { command: 'seq 1 100000' });
-  assert.ok(Buffer.byteLength(output) < 50 * 1024);
+  assert.ok(Buffer.byteLength(output) < 60 * 1024);
   assert.match(output, /100000\n/);
   const path = output.match(/Full output: (\S+)\]/)?.[1];
-  assert.ok(path?.includes('/workspace/.otto/outputs/bash-'));
+  assert.ok(path?.startsWith(`${prefix}/workspace/.otto/outputs/pi-bash-`));
   const saved = await readFile(path!.replace(prefix, root), 'utf8');
   assert.equal(saved.split('\n').length, 100001);
-  await assert.rejects(
-    run('bash', { command: 'echo failed; seq 1 100000; exit 3' }),
-    (error: Error) => {
-      assert.ok(Buffer.byteLength(error.message) < 50 * 1024);
-      assert.match(error.message, /Output truncated/);
-      assert.match(error.message, /Command exited with code 3/);
-      return true;
-    },
+  const huge = await run('bash', { command: 'seq 1 400000' });
+  const complete = huge.match(/Complete output \(\d+ bytes\): (\S+)\]/)?.[1];
+  assert.ok(complete?.startsWith(`${prefix}/workspace/.otto/outputs/bash-`));
+  assert.equal(
+    (await readFile(complete!.replace(prefix, root), 'utf8')).split('\n').length,
+    400001,
   );
+  const failed = await (tools.bash as ToolDefinition).execute(
+    randomUUID(),
+    { command: 'echo failed; seq 1 100000; exit 3' },
+    undefined,
+    undefined,
+    undefined as never,
+  );
+  assert.equal(failed.isError, true);
+  const failure = failed.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+  assert.ok(Buffer.byteLength(failure) < 60 * 1024);
+  assert.match(failure, /Command exited with code 3/);
   await assert.rejects(
     run('bash', { command: 'sleep 5', timeout: 1 }),
     /timed out after 1 seconds/,
   );
-  await assert.rejects(run('bash', { command: 'exit 124' }), /Command exited with code 124/);
+  assert.match(await run('bash', { command: 'exit 124' }), /Command exited with code 124/);
   const after = (await readdir(tmpdir())).filter((name) => name.startsWith('pi-bash-'));
   assert.deepEqual(after, before);
 });
@@ -2412,7 +2421,7 @@ test('ChatGPT requests keep full history and namespaced tool calls and make one 
     },
   );
   assert.equal(failed.stopReason, 'error');
-  assert.ok(!failed.errorMessage?.includes('fixture-subscription-access'));
+  assert.match(failed.errorMessage ?? '', /Synthetic rate limit \[redacted\]/);
   assert.equal(calls, 2);
 });
 
@@ -2633,6 +2642,91 @@ test('OpenRouter catalogs and both request formats retain tools, effort and one 
     );
     assert.equal(failed.stopReason, 'error');
     assert.equal(calls, 1, failed.errorMessage);
+  }
+});
+
+test('old screenshots leave the model request in steps while the saved session keeps them', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-pi-images-'));
+  const sent: number[] = [];
+  let calls = 0;
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'fixture-key',
+    sessionRoot: directory,
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model, request) => {
+        sent.push(
+          request.messages.flatMap((message) =>
+            message.role === 'toolResult'
+              ? message.content.filter((part) => part.type === 'image')
+              : [],
+          ).length,
+        );
+        const more = sent.length <= 30;
+        const message: AssistantMessage = {
+          ...fauxAssistantMessage(
+            more
+              ? [{ type: 'toolCall', id: `snap-${sent.length}`, name: 'snap', arguments: {} }]
+              : [{ type: 'text', text: 'Done' }],
+          ),
+          stopReason: more ? 'toolUse' : 'stop',
+          provider: model.provider,
+          model: model.id,
+          api: model.api,
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'done', reason: more ? 'toolUse' : 'stop', message });
+        return stream;
+      };
+      return result;
+    },
+  });
+  const threadId = randomUUID();
+  try {
+    const session = await agent.open({
+      threadId,
+      turnId: randomUUID(),
+      systemPrompt: 'Synthetic fixture',
+      ...sandbox,
+      tools: [
+        {
+          name: 'snap',
+          description: 'Synthetic screenshot',
+          parameters: { type: 'object', properties: {} },
+          execute: async () => ({
+            content: [
+              {
+                type: 'image',
+                data: Buffer.from(`png-${calls++}`).toString('base64'),
+                mimeType: 'image/png',
+              },
+            ],
+          }),
+        },
+      ],
+      shouldStop: () => false,
+      onEvent: () => {},
+    });
+    await session.prompt('Take screenshots', []);
+    await session.dispose();
+    assert.equal(calls, 30);
+    assert.ok(Math.max(...sent) <= 12);
+    assert.ok(sent.at(-1)! >= 4);
+    assert.ok(sent.filter((count, index) => index && count < sent[index - 1]).length <= 3);
+    const saved = await readPiSessionEntries({ threadId, sessionRoot: directory });
+    assert.equal(
+      saved.filter(
+        (entry) =>
+          entry.type === 'message' &&
+          entry.message.role === 'toolResult' &&
+          JSON.stringify(entry.message.content).includes('"image"'),
+      ).length,
+      30,
+    );
+  } finally {
+    await agent.dispose();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
