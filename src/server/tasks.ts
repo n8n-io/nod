@@ -322,9 +322,8 @@ export function createTasks(options: {
         task: cards.find((card) => card.id === answer.task)?.id ?? null,
         decided: true,
       };
-    } catch (error) {
-      if (signal.aborted) throw error;
-      return fallback;
+    } catch {
+      return signal.aborted ? undefined : fallback;
     }
   }
 
