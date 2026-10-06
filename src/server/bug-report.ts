@@ -127,7 +127,8 @@ function savedToolTrace(entries: unknown[], now: number): RecordValue[] {
         const input = record(tool.arguments);
         call.input = privateTool
           ? '[redacted]'
-          : tool.name === 'browser' && input?.action === 'fill'
+          : tool.name === 'browser' &&
+              ['fill', 'type', 'accept_dialog'].includes(String(input?.action))
             ? { ...input, text: '[redacted]' }
             : tool.arguments;
         call.started_at = time;

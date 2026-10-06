@@ -791,8 +791,8 @@ async function initializeApplication(
       markUntrustedContext: (turn) => memory.markUntrusted(turn.threadId),
       flagInjection: trust.flag,
       connections: integrations.manageConnections,
-      browserConnection: (request, turn, signal) =>
-        browserConnections.request(request, turn, signal),
+      browserConnection: (request, turn, signal, launch) =>
+        browserConnections.request(request, turn, signal, launch),
       speech,
       manage: async (turn, action, args, provenance) => {
         if (

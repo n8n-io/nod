@@ -845,6 +845,11 @@ test('Pi can get an owned Vault login without putting its value in runtime obser
         selector: '#search',
         text: 'private fixture text',
       });
+      await call(tools, 'browser', {
+        action: 'type',
+        selector: '#search',
+        text: 'private typed text',
+      });
     },
     {
       observe: async (event) => {
@@ -855,6 +860,7 @@ test('Pi can get an owned Vault login without putting its value in runtime obser
   );
   assert.equal(JSON.stringify(observations).includes(secret), false);
   assert.equal(JSON.stringify(observations).includes('private fixture text'), false);
+  assert.equal(JSON.stringify(observations).includes('private typed text'), false);
 });
 
 const refusal = 'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
@@ -862,6 +868,8 @@ const refusal = 'This turn can only read. Use app reads, and browser open, snaps
 const refused: Array<[string, Record<string, unknown>]> = [
   ['browser', { action: 'click', selector: '@send' }],
   ['browser', { action: 'fill', selector: '@reply', text: 'Synthetic reply' }],
+  ['browser', { action: 'type', selector: '@reply', text: 'Synthetic reply' }],
+  ['browser', { action: 'accept_dialog' }],
   ['browser', { action: 'share_screenshot' }],
   ['browser_flow', { action: 'run', id: 'fixture' }],
   [
@@ -926,7 +934,7 @@ test('a read-only turn refuses every outside action with a fixed error and still
       computer: fakeComputer({
         act: async () => {
           sideEffects++;
-          return { text: '', url: 'https://mail.example.test/', candidates: [] };
+          return { text: '', url: 'https://mail.example.test/' };
         },
       }),
     },

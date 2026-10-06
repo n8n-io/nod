@@ -121,6 +121,7 @@ export interface ThreadDependencies {
     request: BrowserConnectionRequest,
     turn: TurnRef,
     signal: AbortSignal,
+    launch: { timeZone?: string; locale?: string },
   ) => Promise<unknown>;
   reactToMessage?: (
     input: AgentReactionInput,
@@ -1051,7 +1052,13 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
           connections(action, service, ref, proposal, newAccount),
         ),
       browserConnection:
-        browserConnection && fenced((request) => browserConnection(request, ref, signal)),
+        browserConnection &&
+        fenced((request) =>
+          browserConnection(request, ref, signal, {
+            timeZone: loaded.context.timeZone,
+            locale: loaded.context.locale,
+          }),
+        ),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
       integration: fenced(async (action, args, callSignal?: AbortSignal) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;

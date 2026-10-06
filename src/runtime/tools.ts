@@ -1,7 +1,7 @@
 import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { appConfirmation, type AgentToolMetadata, type SkillLibrary } from '../ports/agent.ts';
-import type { BrowserAction } from '../ports/computer.ts';
+import type { BrowserAction, BrowserObservation } from '../ports/computer.ts';
 import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
 import { basename } from 'node:path';
@@ -198,7 +198,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs; selector scopes it and offset pages through more); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. durationMs is at most 15000. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result within 5 seconds, with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs; selector scopes it and offset pages through more); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types up to 500 characters as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. durationMs is at most 15000. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: Enter, Escape, Tab, Space, Backspace, Delete, Home, End, PageUp, PageDown, ArrowUp/Down/Left/Right, or a shortcut with Control, Shift, Alt or Meta such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs (default 15000) for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result within 5 seconds, with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
     Type.Object({
       action: literals([
         'open',
@@ -222,6 +222,10 @@ export const toolDefinitions = {
         'share_screenshot',
         'download',
         'evaluate',
+        'type',
+        'wait',
+        'accept_dialog',
+        'dismiss_dialog',
       ]),
       url: Type.Optional(Type.String({ maxLength: 8192 })),
       script: Type.Optional(Type.String({ maxLength: 20000 })),
@@ -242,20 +246,8 @@ export const toolDefinitions = {
       durationMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 15000 })),
       path: Type.Optional(Type.String()),
       text: Type.Optional(Type.String({ maxLength: 8000 })),
-      key: Type.Optional(
-        literals([
-          'Enter',
-          'Escape',
-          'Tab',
-          'Space',
-          'ArrowDown',
-          'ArrowUp',
-          'ArrowLeft',
-          'ArrowRight',
-          'PageDown',
-          'PageUp',
-        ]),
-      ),
+      key: Type.Optional(Type.String({ maxLength: 40 })),
+      load: Type.Optional(literals(['load', 'domcontentloaded', 'networkidle'])),
       direction: Type.Optional(literals(['up', 'down'])),
       waitMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 15000 })),
       offset: Type.Optional(Type.Integer({ minimum: 0, maximum: 100000 })),
@@ -450,6 +442,10 @@ function bind<P extends TSchema>(
   } as OttoTool;
 }
 
+function pageText(page: BrowserObservation) {
+  return `URL: ${page.url}\n${page.text}`;
+}
+
 export function ottoTools(
   turn: Turn,
   browserFlows: (params: Static<typeof browserFlowParameters>) => Promise<unknown>,
@@ -540,13 +536,15 @@ export function ottoTools(
           throw new Error('Browser file upload is unavailable.');
         if (!rest.selector || !rest.path) throw new Error('Choose a file and upload field.');
         const bytes = await context.readWorkspaceFile(rest.path, browserUploadBytes);
-        return computer.upload(
-          threadId,
-          { selector: rest.selector, name: basename(rest.path), bytes },
-          signal,
+        return pageText(
+          await computer.upload(
+            threadId,
+            { selector: rest.selector, name: basename(rest.path), bytes },
+            signal,
+          ),
         );
       }
-      return computer.act(threadId, { action, ...rest } as BrowserAction, signal);
+      return pageText(await computer.act(threadId, { action, ...rest } as BrowserAction, signal));
     }),
     bind(toolDefinitions.browser_flow, browserFlows),
     bind(toolDefinitions.get_credential, async (input) => {

@@ -128,7 +128,12 @@ export async function createBrowserConnections(
       throw new BrowserConnectionError('This browser task is no longer active.');
   }
 
-  async function request(raw: BrowserConnectionRequest, turn: TurnRef, signal?: AbortSignal) {
+  async function request(
+    raw: BrowserConnectionRequest,
+    turn: TurnRef,
+    signal?: AbortSignal,
+    launch?: { timeZone?: string; locale?: string },
+  ) {
     signal?.throwIfAborted();
     const parsed = requestSchema.safeParse(raw);
     if (!parsed.success)
@@ -164,7 +169,7 @@ export async function createBrowserConnections(
         bound = true;
         const observation = await browser.act(
           turn.threadId,
-          { action: 'open', url: address.href },
+          { action: 'open', url: address.href, ...launch },
           signal,
         );
         await browser.hold(turn.threadId, Date.now() + 30 * 60_000);
@@ -218,7 +223,7 @@ export async function createBrowserConnections(
       await browser.bindProfile(turn.threadId, row.profile_id);
       const observation = await browser.act(
         turn.threadId,
-        { action: 'open', url: address.href },
+        { action: 'open', url: address.href, ...launch },
         signal,
       );
       const page = await browser.currentPage(turn.threadId);

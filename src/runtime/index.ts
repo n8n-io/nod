@@ -69,7 +69,7 @@ const readOnlyTools: Record<string, true | string[]> = {
   fetch_content: true,
   source_check: true,
   get_search_content: true,
-  browser: ['open', 'snapshot', 'scroll', 'screenshot'],
+  browser: ['open', 'snapshot', 'scroll', 'screenshot', 'wait'],
   browser_flow: ['list', 'get'],
   manage_apps: ['list'],
   manage_personal_context: [
@@ -403,7 +403,9 @@ export function createAgentRuntime(dependencies: {
             : name === 'browser' &&
                 params &&
                 typeof params === 'object' &&
-                (params as { action?: unknown }).action === 'fill'
+                ['fill', 'type', 'accept_dialog'].includes(
+                  String((params as { action?: unknown }).action),
+                )
               ? { ...params, text: '[redacted]' }
               : name === 'browser_flow' && params && typeof params === 'object'
                 ? (params as { action?: unknown }).action === 'save'
@@ -525,9 +527,18 @@ export function createAgentRuntime(dependencies: {
       signal.throwIfAborted();
       await waitFor(mkdir(context.workspacePath, { recursive: true, mode: 0o700 }));
       const workspace = dependencies.workspace.open(context);
+      const browser: Computer = {
+        ...computer,
+        act: (id, action, actionSignal) =>
+          computer.act(
+            id,
+            { ...action, timeZone: context.timeZone, locale: context.locale },
+            actionSignal,
+          ),
+      };
       const turn: Turn = {
         context,
-        computer,
+        computer: browser,
         reply,
         invite: (text) => deliverReply(text),
         pause,
@@ -545,7 +556,7 @@ export function createAgentRuntime(dependencies: {
       };
       const tools = ottoTools(
         turn,
-        createBrowserFlows(workspace, computer, threadId, signal),
+        createBrowserFlows(workspace, browser, threadId, signal),
         dependencies.skills,
       ).map(({ name, description, parameters, execute }): AgentTool => ({
         name,
