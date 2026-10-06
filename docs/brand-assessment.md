@@ -92,7 +92,9 @@ routes, API calls, action handlers, or safety checks.
 
 The access changes include visible text in control names, restore focus to
 the correct account or phone control, and make conversation tables reachable
-with the keyboard. The existing Vault safety test uses a stable field
+with the keyboard. Dialog positions use a length value when the desktop
+title bar is absent, so feedback stays visible in the web app.
+The existing Vault safety test uses a stable field
 selector after its accessible name changes.
 
 ## Contrast
@@ -128,6 +130,9 @@ and keyboard focus receive separate checks.
 The preview and screenshots are local review artifacts. They are not automated
 regression tests. No test of CSS values, copy, or configuration was added.
 
-Final command results and accessibility results are recorded with the review
-artifacts and in the task report. Live model and connected-account checks are
+The current branch passes `npm run check` and `npm run build`. The integration
+suite passes all 629 tests. Desktop tests pass 131 tests; the Linux firewall
+case is skipped on this Mac. The browser review covers 36 page layouts in
+both themes. Dialog and interaction checks are recorded separately with the
+local review artifacts. Live model and connected-account checks are
 not needed for this appearance change and were not run.

@@ -533,7 +533,7 @@ input[type='range']:disabled {
   padding: 12px;
 }
 .skip-link:focus {
-  top: calc(10px + var(--desktop-titlebar-height, 0));
+  top: calc(10px + var(--desktop-titlebar-height, 0px));
 }
 .app-shell {
   display: flex;
@@ -1631,16 +1631,16 @@ input[type='range']:disabled {
 }
 .dialog-overlay {
   position: fixed;
-  inset: var(--desktop-titlebar-height, 0) 0 0;
+  inset: var(--desktop-titlebar-height, 0px) 0 0;
   background: var(--overlay);
   z-index: 50;
   backdrop-filter: blur(3px);
 }
 .dialog-content {
-  --dialog-viewport-height: calc(100dvh - var(--desktop-titlebar-height, 0));
+  --dialog-viewport-height: calc(100dvh - var(--desktop-titlebar-height, 0px));
   position: fixed;
   z-index: 51;
-  top: calc(50% + var(--desktop-titlebar-height, 0) / 2);
+  top: calc(50% + var(--desktop-titlebar-height, 0px) / 2);
   left: 50%;
   transform: translate(-50%, -50%);
   width: min(490px, calc(100vw - 32px));
