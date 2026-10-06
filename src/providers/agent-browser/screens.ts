@@ -16,6 +16,8 @@ const storedScreen = z.object({
   profileId: z.uuid().optional(),
   resumeUrl: z.string().max(8192).optional(),
   capturedAt: z.iso.datetime().optional(),
+  timeZone: z.string().max(100).optional(),
+  locale: z.string().max(35).optional(),
 });
 export type StoredScreen = z.infer<typeof storedScreen>;
 

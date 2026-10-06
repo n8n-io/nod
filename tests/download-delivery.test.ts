@@ -236,7 +236,6 @@ test(
                     return {
                       text: 'Synthetic invoices',
                       url: `${fixture.origin}/session`,
-                      candidates: [],
                     };
                   },
                   download: async (threadId, input, signal) => {

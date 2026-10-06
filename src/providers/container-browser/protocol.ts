@@ -33,6 +33,7 @@ const browserAction = z
       'snapshot',
       'click',
       'fill',
+      'type',
       'press',
       'scroll',
       'select',
@@ -46,6 +47,9 @@ const browserAction = z
       'tab_list',
       'tab_switch',
       'evaluate',
+      'wait',
+      'accept_dialog',
+      'dismiss_dialog',
     ]),
     url: z.string().max(8192).optional(),
     script: z.string().max(20_000).optional(),
@@ -57,23 +61,13 @@ const browserAction = z
     points: z.array(point).min(2).max(100).optional(),
     durationMs: z.number().int().min(0).max(15_000).optional(),
     text: z.string().max(20_000).optional(),
-    key: z
-      .enum([
-        'Enter',
-        'Escape',
-        'Tab',
-        'Space',
-        'ArrowDown',
-        'ArrowUp',
-        'ArrowLeft',
-        'ArrowRight',
-        'PageDown',
-        'PageUp',
-      ])
-      .optional(),
+    key: z.string().max(40).optional(),
+    load: z.enum(['load', 'domcontentloaded', 'networkidle']).optional(),
     direction: z.enum(['up', 'down']).optional(),
     waitMs: z.number().int().min(0).max(15_000).optional(),
     offset: z.number().int().min(0).max(100_000).optional(),
+    timeZone: z.string().max(100).optional(),
+    locale: z.string().max(35).optional(),
   })
   .strict();
 const credential = z
@@ -198,6 +192,7 @@ export const browserResponse = z.discriminatedUnion('ok', [
         'locked',
         'navigation',
         'click_intercepted',
+        'dialog',
         'action',
         'observation',
         'unavailable',

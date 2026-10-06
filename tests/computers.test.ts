@@ -390,7 +390,6 @@ async function e2bFixture() {
           return {
             text: 'Synthetic page',
             url: input.url ?? 'https://example.test/',
-            candidates: [],
           };
         },
         screenshot: async () => Buffer.from('masked image'),
@@ -949,7 +948,7 @@ async function cloudflareFixture() {
             await waiting.release.promise;
             throw new Error('Synthetic cancellation');
           }
-          return { text: selected, url: input.url ?? 'https://example.test/', candidates: [] };
+          return { text: selected, url: input.url ?? 'https://example.test/' };
         },
         screenshot: async () => Buffer.from(selected),
         injectCredentials: async (input) => {

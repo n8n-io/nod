@@ -103,6 +103,114 @@ const browserPoint = z
   .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
   .strict();
 
+const browserKeys = [
+  'Enter',
+  'Escape',
+  'Tab',
+  'Space',
+  'Backspace',
+  'Delete',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+];
+
+function browserKey(value: string | undefined) {
+  const modifiers = value?.split('+') ?? [];
+  const key = modifiers.pop() ?? '';
+  if (
+    new Set(modifiers).size !== modifiers.length ||
+    modifiers.some((modifier) => !['Control', 'Shift', 'Alt', 'Meta'].includes(modifier)) ||
+    !(
+      browserKeys.includes(key) ||
+      (/^[a-zA-Z0-9]$/.test(key) && modifiers.some((modifier) => modifier !== 'Shift'))
+    )
+  )
+    throw new Error('Choose a supported browser key or shortcut.');
+  return value!;
+}
+
+function browserTimeZone(value: string | undefined) {
+  if (!value || !/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+){0,2}$/.test(value)) return;
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value });
+    return value;
+  } catch {}
+}
+
+function browserLocale(value: string | undefined) {
+  if (!value || !/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8}){0,3}$/.test(value)) return;
+  try {
+    return Intl.getCanonicalLocales(value)[0];
+  } catch {}
+}
+
+function daemonRequest(args: string[], input?: string): Record<string, unknown> | null {
+  switch (args[0]) {
+    case 'open':
+      return { action: 'navigate', url: args[1] };
+    case 'eval':
+      return { action: 'evaluate', script: input };
+    case 'get':
+      return args[1] === 'url'
+        ? { action: 'url' }
+        : args[1] === 'attr'
+          ? { action: 'getattribute', selector: args[2], attribute: args[3] }
+          : null;
+    case 'click':
+      return { action: 'click', selector: args[1] };
+    case 'fill':
+      return { action: 'fill', selector: args[1], value: args[2] };
+    case 'focus':
+      return { action: 'focus', selector: args[1] };
+    case 'keyboard':
+      return { action: 'keyboard', subaction: 'type', text: args[2] };
+    case 'mouse':
+      return args[1] === 'move'
+        ? { action: 'mousemove', x: Number(args[2]), y: Number(args[3]) }
+        : { action: `mouse${args[1]}`, button: 'left' };
+    case 'press':
+      return { action: 'press', key: args[1] };
+    case 'scroll':
+      return {
+        action: 'scroll',
+        direction: args[1],
+        amount: Number(args[2]),
+        ...(args[4] ? { selector: args[4] } : {}),
+      };
+    case 'screenshot':
+      return { action: 'screenshot', path: args[1], fullPage: false, annotate: false };
+    case 'download':
+      return { action: 'download', selector: args[1], path: args[2] };
+    case 'snapshot':
+      return { action: 'snapshot', compact: true, ...(args[3] ? { selector: args[3] } : {}) };
+    case 'close':
+      return { action: 'close' };
+    case 'tab':
+      return args[1] === 'list'
+        ? { action: 'tab_list' }
+        : args[1] === 'switch'
+          ? { action: 'tab_switch', tabId: args[2] }
+          : null;
+    case 'dialog':
+      return { action: 'dialog', response: args[1], ...(args[2] && { promptText: args[2] }) };
+    case 'wait':
+      return args[1] === '--url'
+        ? { action: 'waitforurl', url: args[2], timeout: Number(args[4]) }
+        : args[1] === '--load'
+          ? { action: 'waitforloadstate', state: args[2], timeout: Number(args[4]) }
+          : { action: 'wait', text: args[2], timeout: Number(args[4]) };
+    case 'set':
+      return { action: 'viewport', width: Number(args[2]), height: Number(args[3]) };
+  }
+  return null;
+}
+
 function visualGesture(input: BrowserAction) {
   if (input.x === undefined && input.y === undefined && input.points === undefined) {
     if (input.durationMs !== undefined) throw new Error('A pointer duration needs coordinates.');
@@ -150,6 +258,7 @@ export function createAgentBrowserComputer(options: {
   headless?: boolean;
   idleTimeoutMs?: number;
   maxLiveSessions?: number;
+  viewport?: { width: number; height: number };
   run?: typeof runProcess;
   daemonCommand?: typeof existingDaemonCommand;
   onDiagnostic?(event: BrowserDiagnostic): void;
@@ -167,6 +276,8 @@ export function createAgentBrowserComputer(options: {
   const screenStatuses = new Map<string, ReturnType<NonNullable<Computer['screenStatus']>>>();
   const namespace = `sk-${createHash('sha256').update(runtimeRoot).digest('hex').slice(0, 12)}`;
   const uploadRoot = resolve('/tmp/otto-browser-uploads', namespace);
+  const cachePath = (state: BrowserState) =>
+    resolve('/tmp/otto-browser-cache', namespace, state.id);
   const executable =
     options.executable ?? resolve(process.cwd(), 'node_modules/.bin/agent-browser');
   const run = options.run ?? runProcess;
@@ -180,6 +291,7 @@ export function createAgentBrowserComputer(options: {
       () => (options.daemonCommand ?? existingDaemonCommand)(...args),
     );
   const sandbox = options.sandbox !== false;
+  const viewport = options.viewport;
   const platform = options.platform ?? process.platform;
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
@@ -384,54 +496,7 @@ export function createAgentBrowserComputer(options: {
         'reload',
       ].includes(args[0])
     ) {
-      const request =
-        args[0] === 'open'
-          ? { action: 'navigate', url: args[1] }
-          : args[0] === 'eval'
-            ? { action: 'evaluate', script: options.input }
-            : args[0] === 'get' && args[1] === 'url'
-              ? { action: 'url' }
-              : args[0] === 'get' && args[1] === 'attr'
-                ? { action: 'getattribute', selector: args[2], attribute: args[3] }
-                : args[0] === 'click'
-                  ? { action: 'click', selector: args[1] }
-                  : args[0] === 'fill'
-                    ? { action: 'fill', selector: args[1], value: args[2] }
-                    : args[0] === 'mouse'
-                      ? args[1] === 'move'
-                        ? { action: 'mousemove', x: Number(args[2]), y: Number(args[3]) }
-                        : { action: `mouse${args[1]}`, button: 'left' }
-                      : args[0] === 'press'
-                        ? { action: 'press', key: args[1] }
-                        : args[0] === 'scroll'
-                          ? {
-                              action: 'scroll',
-                              direction: args[1],
-                              amount: Number(args[2]),
-                              ...(args[4] ? { selector: args[4] } : {}),
-                            }
-                          : args[0] === 'screenshot'
-                            ? {
-                                action: 'screenshot',
-                                path: args[1],
-                                fullPage: false,
-                                annotate: false,
-                              }
-                            : args[0] === 'download'
-                              ? { action: 'download', selector: args[1], path: args[2] }
-                              : args[0] === 'snapshot'
-                                ? {
-                                    action: 'snapshot',
-                                    compact: true,
-                                    ...(args[3] ? { selector: args[3] } : {}),
-                                  }
-                                : args[0] === 'close'
-                                  ? { action: 'close' }
-                                  : args[0] === 'tab' && args[1] === 'list'
-                                    ? { action: 'tab_list' }
-                                    : args[0] === 'tab' && args[1] === 'switch'
-                                      ? { action: 'tab_switch', tabId: args[2] }
-                                      : null;
+      const request = daemonRequest(args, options.input);
       if (!request) throw new Error('Reopen this page before continuing browser actions.');
       const result = await drainInterruptedCommand(state, args[0], () =>
         requestDaemon(
@@ -449,6 +514,8 @@ export function createAgentBrowserComputer(options: {
     await writeFile(config, '{}', { mode: 0o600 });
     const proxyUrl = await proxy.url();
     const profile = profilePath(state);
+    const timeZone = browserTimeZone(state.saved.timeZone);
+    const locale = browserLocale(state.saved.locale);
     const result = await drainInterruptedCommand(state, args[0], () =>
       run(
         executable,
@@ -463,13 +530,16 @@ export function createAgentBrowserComputer(options: {
           profile,
           ...(state.browserExecutable ? ['--executable-path', state.browserExecutable] : []),
           ...(headed ? ['--headed'] : []),
+          '--no-webmcp',
           '--json',
           '--proxy',
           proxyUrl,
           '--proxy-bypass',
           '<-loopback>',
           '--args',
-          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--disable-blink-features=AutomationControlled' +
+          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--enable-unsafe-swiftshader,--disable-blink-features=AutomationControlled' +
+            `,--disk-cache-dir=${cachePath(state)},--disk-cache-size=67108864` +
+            (locale ? `,--accept-lang=${locale}` : '') +
             (sandbox ? '' : ',--no-sandbox') +
             (headed && platform === 'darwin' ? ',--start-minimized' : '') +
             (state.saved.restoreSession ? ',--restore-last-session' : ''),
@@ -483,7 +553,8 @@ export function createAgentBrowserComputer(options: {
           cwd: runtimeRoot,
           env: {
             ...serviceEnvironment(),
-            AGENT_BROWSER_DEFAULT_TIMEOUT: '30000',
+            ...(timeZone && { TZ: timeZone }),
+            AGENT_BROWSER_DEFAULT_TIMEOUT: '25000',
           },
           input: options.input,
           signal: options.signal,
@@ -503,6 +574,10 @@ export function createAgentBrowserComputer(options: {
     if (args[0] === 'open') {
       await drainInterruptedCommand(state, 'connect', () => daemonSocket(state, options.signal));
       state.recovered = false;
+      if (viewport)
+        await command(state, ['set', 'viewport', String(viewport.width), String(viewport.height)], {
+          signal: options.signal,
+        });
     }
     if (
       args[0] === 'open' &&
@@ -544,7 +619,14 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
+  async function pendingDialog(state: BrowserState, signal?: AbortSignal) {
+    const dialog = await observationCommand(state, ['dialog', 'status'], { signal });
+    if (dialog.hasDialog !== true) return;
+    return `A ${String(dialog.type)} dialog blocks the page: "${redactBrowserText(String(dialog.message ?? ''), state.secrets).slice(0, 1000)}". Use accept_dialog {text?} or dismiss_dialog.`;
+  }
+
   async function currentUrl(state: BrowserState, signal?: AbortSignal): Promise<string> {
+    if (await pendingDialog(state, signal)) throw new BrowserActionError('browser_dialog_open');
     const data = await observationCommand(state, ['get', 'url'], { signal });
     const url = String(data.url ?? data.value ?? '');
     if (url === 'about:blank') return url;
@@ -704,12 +786,21 @@ export function createAgentBrowserComputer(options: {
     input?: BrowserAction,
   ): Promise<BrowserObservation> {
     if (state.injecting) throw new BrowserLockedError();
-    const url = await currentUrl(state, signal);
+    let url: string;
+    try {
+      url = await currentUrl(state, signal);
+    } catch (error) {
+      const dialog =
+        error instanceof BrowserActionError &&
+        error.code === 'browser_dialog_open' &&
+        (await pendingDialog(state, signal));
+      if (dialog) return { text: dialog, url: state.saved.url };
+      throw error;
+    }
     if (url === 'about:blank')
       return {
         text: 'The page opened a new tab that has not loaded. Take a snapshot again.',
         url,
-        candidates: [],
       };
     const scope =
       input?.action === 'snapshot' && input.selector ? selector(input.selector) : undefined;
@@ -727,26 +818,9 @@ export function createAgentBrowserComputer(options: {
       data = await snapshot();
     }
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
-    const refs = Object.entries(
-      (data.refs ?? {}) as Record<string, { role?: unknown; name?: unknown }>,
-    );
     return {
       text: `Page (${offset}-${Math.min(offset + 16_000, page.length)} of ${page.length} characters):\n${page.slice(offset, offset + 16_000)}`,
       url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
-      candidates: refs
-        .filter(([, ref]) =>
-          ['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem', 'option'].includes(
-            String(ref?.role),
-          ),
-        )
-        .slice(0, 100)
-        .map(([id, ref]) => ({
-          id: `@${id}`,
-          label: redactBrowserText(
-            `${String(ref.role)} "${String(ref.name ?? '')}"`,
-            state.secrets,
-          ).slice(0, 350),
-        })),
     };
   }
 
@@ -798,6 +872,11 @@ export function createAgentBrowserComputer(options: {
   ): Promise<BrowserObservation> {
     if (disposed) throw new Error('The browser service has stopped.');
     const gesture = visualGesture(input);
+    if (
+      input.waitMs !== undefined &&
+      (!Number.isInteger(input.waitMs) || input.waitMs < 0 || input.waitMs > 15_000)
+    )
+      throw new Error('Choose a wait of at most 15 seconds.');
     const savedProfile = input.action === 'open' ? await screens.load(id) : null;
     if (input.action === 'open' && !browsers.has(id)) await recoverBrowser(id, true);
     const existing = input.action === 'open' ? browsers.get(id) : undefined;
@@ -837,6 +916,10 @@ export function createAgentBrowserComputer(options: {
         state.saved.resumeUrl = resumeUrl.href;
         await reserveBrowser(state);
         markActivity(id);
+        if (!state.socket) {
+          state.saved.timeZone = browserTimeZone(input.timeZone);
+          state.saved.locale = browserLocale(input.locale);
+        }
         try {
           await command(state, ['open', url.href], { signal });
           state.saved.navigationFailed = false;
@@ -878,12 +961,12 @@ export function createAgentBrowserComputer(options: {
           return {
             text: new BrowserActionError('browser_navigation_failed').message,
             url: state.saved.url,
-            candidates: [],
           };
         }
         if (!state.started) throw new Error('Open a website first.');
         markActivity(id);
-        await currentUrl(state, signal);
+        if (!['snapshot', 'accept_dialog', 'dismiss_dialog'].includes(input.action))
+          await currentUrl(state, signal);
         if (input.action === 'tab_list') {
           const tabs = await browserTabs(state, signal);
           return {
@@ -894,7 +977,6 @@ export function createAgentBrowserComputer(options: {
               )
               .join('\n'),
             url: redactBrowserUrl(await currentUrl(state, signal), state.secrets, true),
-            candidates: [],
           };
         }
         if (input.action === 'tab_switch') {
@@ -909,7 +991,7 @@ export function createAgentBrowserComputer(options: {
           else await command(state, ['click', selector(input.selector)], { signal });
           await settleTabs(state, tabs, signal);
         }
-        if (input.action === 'fill') {
+        if (input.action === 'fill' || input.action === 'type') {
           const target = selector(input.selector);
           const type = await command(state, ['get', 'attr', target, 'type'], { signal });
           const autocomplete = await command(state, ['get', 'attr', target, 'autocomplete'], {
@@ -926,7 +1008,22 @@ export function createAgentBrowserComputer(options: {
             [...state.secrets].some((secret) => secret && text.includes(secret))
           )
             throw new Error('This field must use the secure credential flow.');
-          await command(state, ['fill', target, text], { signal });
+          if (input.action === 'fill') await command(state, ['fill', target, text], { signal });
+          else {
+            if (!text || text.length > 500)
+              throw new Error('Type 1 to 500 characters; use fill for longer text.');
+            await command(state, ['focus', target], { signal });
+            for (const character of text)
+              await command(
+                state,
+                /^[\x20-\x7e]$/.test(character)
+                  ? ['press', character]
+                  : character === '\n'
+                    ? ['press', 'Enter']
+                    : ['keyboard', 'type', character],
+                { signal },
+              );
+          }
         }
         if (input.action === 'scroll')
           await command(
@@ -937,25 +1034,56 @@ export function createAgentBrowserComputer(options: {
             { signal },
           );
         if (input.action === 'press') {
-          if (
-            !input.key ||
-            ![
-              'Enter',
-              'Escape',
-              'Tab',
-              'Space',
-              'ArrowDown',
-              'ArrowUp',
-              'ArrowLeft',
-              'ArrowRight',
-              'PageDown',
-              'PageUp',
-            ].includes(input.key)
-          )
-            throw new Error('Choose a supported browser key.');
+          const key = browserKey(input.key);
           const tabs = await browserTabs(state, signal);
-          await command(state, ['press', input.key], { signal });
+          await command(state, ['press', key], { signal });
           await settleTabs(state, tabs, signal);
+        }
+        if (input.action === 'accept_dialog' || input.action === 'dismiss_dialog') {
+          const text = input.action === 'accept_dialog' ? input.text : undefined;
+          if (
+            text !== undefined &&
+            (text.length > 2000 ||
+              [...state.secrets].some((secret) => secret && text.includes(secret)))
+          )
+            throw new Error('Answer the dialog without private details.');
+          await command(
+            state,
+            [
+              'dialog',
+              input.action === 'accept_dialog' ? 'accept' : 'dismiss',
+              ...(text ? [text] : []),
+            ],
+            { signal },
+          );
+        }
+        if (input.action === 'wait') {
+          const [flag, value] = input.text
+            ? ['--text', input.text]
+            : input.url
+              ? ['--url', input.url]
+              : input.load
+                ? ['--load', input.load]
+                : [];
+          if (
+            !flag ||
+            !value ||
+            value.length > 2000 ||
+            [input.text, input.url, input.load].filter(Boolean).length > 1 ||
+            (flag === '--load' && !['load', 'domcontentloaded', 'networkidle'].includes(value))
+          )
+            throw new Error('Wait for one of text, url or load.');
+          const timeout = input.waitMs || 15_000;
+          try {
+            await command(state, ['wait', flag, value, '--timeout', String(timeout)], { signal });
+          } catch (error) {
+            if (!(error instanceof DaemonCommandError)) throw error;
+            const observation = await observe(state, signal);
+            return {
+              ...observation,
+              text: `The wait condition was not met within ${timeout / 1000} seconds.\n${observation.text}`,
+            };
+          }
         }
         if (input.action === 'select') {
           const value = input.text ?? '';
@@ -996,15 +1124,10 @@ export function createAgentBrowserComputer(options: {
           return {
             text: `Script result (JSON${result.length > 20_000 ? ', first 20,000 characters' : ''}):\n${result.slice(0, 20_000)}`,
             url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
-            candidates: [],
           };
         }
       }
-      if (input.waitMs !== undefined) {
-        if (!Number.isInteger(input.waitMs) || input.waitMs < 0 || input.waitMs > 15_000)
-          throw new Error('Choose a wait of at most 15 seconds.');
-        if (input.waitMs) await delay(input.waitMs, undefined, { signal });
-      }
+      if (input.waitMs && input.action !== 'wait') await delay(input.waitMs, undefined, { signal });
       return observe(state, signal, input);
     }).catch((error: unknown) => {
       if (error instanceof DaemonCommandError)
@@ -1360,6 +1483,7 @@ export function createAgentBrowserComputer(options: {
       state.protectedSelectors.clear();
       for (const directory of state.uploads) await rm(directory, { recursive: true, force: true });
       state.uploads.clear();
+      await rm(cachePath(state), { recursive: true, force: true });
       if (browsers.get(id) === state) browsers.delete(id);
       screenStatuses.set(
         id,

@@ -2,7 +2,7 @@ import type { Computer, Workspace } from '../src/ports/computer.ts';
 
 export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
   return {
-    act: async () => ({ text: 'Fixture page', url: 'https://example.com', candidates: [] }),
+    act: async () => ({ text: 'Fixture page', url: 'https://example.com' }),
     screenshot: async () => null,
     injectCredentials: async () => {},
     currentPage: async () => ({ origin: 'https://example.com', url: 'https://example.com' }),

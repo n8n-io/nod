@@ -48,7 +48,7 @@ test(
           bindings.push(profileId);
         },
         async act() {
-          return { url: location, text: 'Synthetic page with a password field', candidates: [] };
+          return { url: location, text: 'Synthetic page with a password field' };
         },
         async currentPage() {
           if (cancelTurnId)

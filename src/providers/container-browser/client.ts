@@ -21,13 +21,7 @@ import {
 } from './protocol.ts';
 
 const observationSchema = z
-  .object({
-    text: z.string().max(256 * 1024),
-    url: z.string().max(8192),
-    candidates: z
-      .array(z.object({ id: z.string().max(500), label: z.string().max(350) }).strict())
-      .max(100),
-  })
+  .object({ text: z.string().max(256 * 1024), url: z.string().max(8192) })
   .strict();
 
 export function createBridgeComputer(options: {
@@ -207,6 +201,8 @@ export function createBridgeComputer(options: {
           return reject(new BrowserActionError('browser_navigation_failed'));
         if (response.error === 'click_intercepted')
           return reject(new BrowserActionError('browser_click_intercepted'));
+        if (response.error === 'dialog')
+          return reject(new BrowserActionError('browser_dialog_open'));
         if (response.error === 'action')
           return reject(new BrowserActionError('browser_action_failed'));
         if (response.error === 'observation')

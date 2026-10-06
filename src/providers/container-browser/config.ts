@@ -14,5 +14,6 @@ export function containerBrowserOptions(
     headless: false,
     sandbox: false,
     maxLiveSessions: 2,
+    viewport: { width: 1440, height: 900 },
   };
 }

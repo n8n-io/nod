@@ -14,6 +14,7 @@ export interface BrowserAction {
     | 'snapshot'
     | 'click'
     | 'fill'
+    | 'type'
     | 'press'
     | 'scroll'
     | 'select'
@@ -26,7 +27,10 @@ export interface BrowserAction {
     | 'reload'
     | 'tab_list'
     | 'tab_switch'
-    | 'evaluate';
+    | 'evaluate'
+    | 'wait'
+    | 'accept_dialog'
+    | 'dismiss_dialog';
   url?: string;
   script?: string;
   tabId?: string;
@@ -37,29 +41,17 @@ export interface BrowserAction {
   points?: Array<{ x: number; y: number }>;
   durationMs?: number;
   text?: string;
-  key?:
-    | 'Enter'
-    | 'Escape'
-    | 'Tab'
-    | 'Space'
-    | 'ArrowDown'
-    | 'ArrowUp'
-    | 'ArrowLeft'
-    | 'ArrowRight'
-    | 'PageDown'
-    | 'PageUp';
+  key?: string;
+  load?: 'load' | 'domcontentloaded' | 'networkidle';
   direction?: 'up' | 'down';
   waitMs?: number;
   offset?: number;
-}
-export interface BrowserCandidate {
-  id: string;
-  label: string;
+  timeZone?: string;
+  locale?: string;
 }
 export interface BrowserObservation {
   text: string;
   url: string;
-  candidates: BrowserCandidate[];
 }
 export const browserDownloadBytes = 12 * 1024 * 1024;
 export const browserUploadBytes = 12 * 1024 * 1024;

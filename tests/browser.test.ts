@@ -284,7 +284,7 @@ test(
 
 function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
   return {
-    act: async () => ({ text: 'Synthetic page', url: 'https://example.test/', candidates: [] }),
+    act: async () => ({ text: 'Synthetic page', url: 'https://example.test/' }),
     screenshot: async () => null,
     injectCredentials: async () => ({ status: 'submitted' }),
     currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
@@ -362,7 +362,7 @@ test('quiesce refuses a pending request without aborting or querying its browser
     });
     entered.resolve();
     await release.promise;
-    return { text: 'Finished', url: 'https://example.test/', candidates: [] };
+    return { text: 'Finished', url: 'https://example.test/' };
   };
   computer.dispose = async () => {
     disposals++;
@@ -646,7 +646,7 @@ for (const [method, phase] of [
       assert.deepEqual(page.entered, []);
       assert.deepEqual(
         browser.actions.slice(before),
-        phase === 'screenshot' ? ['url', phase] : [phase],
+        phase === 'screenshot' ? ['dialog', 'url', phase] : ['dialog', phase],
       );
       assert.equal(browser.diagnostics.length, 1);
       const diagnostic = browser.diagnostics[0];
@@ -1023,7 +1023,6 @@ function workerComputer() {
     return {
       text: input.text ?? 'Synthetic page',
       url: input.url ?? 'https://example.com/',
-      candidates: [],
     };
   };
   const computer: Computer = {
@@ -1284,7 +1283,7 @@ async function interruptedBrowser(fixture: Awaited<ReturnType<typeof harness>>, 
   instance.setAct(async () => {
     entered.resolve();
     await release.promise;
-    return { text: 'Late', url: 'https://example.com', candidates: [] };
+    return { text: 'Late', url: 'https://example.com' };
   });
   const controller = new AbortController();
   const cancelled = assert.rejects(
@@ -1496,10 +1495,11 @@ test('Pi can submit each staged sign-in step without exposing entered values', a
   try {
     await computer.act('login', { action: 'open', url: 'https://1.1.1.1/login' });
     const origin = 'https://1.1.1.1';
-    await assert.rejects(
-      computer.act('login', { action: 'fill', selector: '#account', text: 'not-through-chat' }),
-      /secure credential/,
-    );
+    for (const action of ['fill', 'type'] as const)
+      await assert.rejects(
+        computer.act('login', { action, selector: '#account', text: 'not-through-chat' }),
+        /secure credential/,
+      );
     const identifier = computer.injectCredentials({
       threadId: 'login',
       origin,
@@ -2151,6 +2151,41 @@ test('closing and reopening a browser fills only the new page', async () => {
     });
     assert.equal(next.input.value, 'synthetic-reopened-account');
     assert.equal(first.input.value, '');
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('the owner time zone and region reach a new browser launch without injecting browser flags', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-locale-'));
+  const fixture = stagedLoginBrowser();
+  const launches: Array<{ flags: string; zone?: string }> = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: (executable, args, options) => {
+      if (args.includes('open'))
+        launches.push({ flags: args[args.indexOf('--args') + 1], zone: options?.env?.TZ });
+      return fixture.run(executable, args, options);
+    },
+  });
+  const open = (timeZone: string, locale: string) =>
+    computer.act('fixture', {
+      action: 'open',
+      url: 'https://1.1.1.1/login',
+      timeZone,
+      locale,
+    });
+  try {
+    await open('Europe/Madrid', 'en-GB');
+    await computer.close('fixture');
+    await open('Europe/Madrid,--remote-debugging-port=9222', 'en-GB,--remote-debugging-port=9222');
+    assert.equal(launches.length, 2);
+    assert.equal(launches[0].zone, 'Europe/Madrid');
+    assert.match(launches[0].flags, /,--accept-lang=en-GB(,|$)/);
+    assert.equal(launches[1].zone, undefined);
+    assert.equal(launches[1].flags.includes('remote-debugging'), false);
+    assert.equal(launches[1].flags.includes('accept-lang'), false);
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });

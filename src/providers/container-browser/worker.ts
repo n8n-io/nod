@@ -277,14 +277,16 @@ export async function startContainerBrowserWorker(
               ? 'click_intercepted'
               : error instanceof BrowserActionError && error.code === 'browser_navigation_failed'
                 ? 'navigation'
-                : error instanceof BrowserActionError && error.code === 'browser_action_failed'
-                  ? 'action'
-                  : error instanceof BrowserActionError &&
-                      error.code === 'browser_observation_failed'
-                    ? 'observation'
-                    : error instanceof Error && 'statusCode' in error && error.statusCode === 423
-                      ? 'locked'
-                      : 'unavailable',
+                : error instanceof BrowserActionError && error.code === 'browser_dialog_open'
+                  ? 'dialog'
+                  : error instanceof BrowserActionError && error.code === 'browser_action_failed'
+                    ? 'action'
+                    : error instanceof BrowserActionError &&
+                        error.code === 'browser_observation_failed'
+                      ? 'observation'
+                      : error instanceof Error && 'statusCode' in error && error.statusCode === 423
+                        ? 'locked'
+                        : 'unavailable',
           metadata: metadata(await entry?.computer.catch(() => undefined), input),
         };
       } finally {

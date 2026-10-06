@@ -1219,7 +1219,6 @@ test('browser flows stay discoverable after a thread reset and stop when a page 
       return {
         url: 'https://market.example.test/search',
         text: page,
-        candidates: [],
       };
     },
   });
@@ -1571,7 +1570,6 @@ test('computer observations retain body text, normalize controls, protect creden
   try {
     const page = await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/' });
     assert.match(page.text, /Readable article body/);
-    assert.deepEqual(page.candidates, [{ id: '@e2', label: 'button "Continue"' }]);
     assert.deepEqual(
       protocol.filter((command) => command.action === 'snapshot'),
       [{ action: 'snapshot', compact: true }],
@@ -1590,10 +1588,11 @@ test('computer observations retain body text, normalize controls, protect creden
       (await computer.act('fixture', { action: 'snapshot' })).text.includes('fixture-secret'),
       false,
     );
-    await assert.rejects(
-      computer.act('fixture', { action: 'fill', selector: '#password', text: 'other' }),
-      /secure credential/,
-    );
+    for (const action of ['fill', 'type'] as const)
+      await assert.rejects(
+        computer.act('fixture', { action, selector: '#password', text: 'other' }),
+        /secure credential/,
+      );
     assert.deepEqual(await computer.screenshot('fixture'), fixture.png);
     await computer.close('fixture');
     assert.deepEqual(await computer.screenshot('fixture'), fixture.png);
