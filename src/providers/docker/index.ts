@@ -127,6 +127,7 @@ type CommandInput = {
   timeoutMs?: number;
   maxBytes?: number;
   onData?(chunk: Buffer): void;
+  session?: boolean;
 };
 type CommandResult = { stdout: Buffer; stderr: Buffer; exitCode: number };
 
@@ -245,6 +246,7 @@ export function createCommandWorkspace(options: {
             signal: signal ? AbortSignal.any([signal, input.signal]) : input.signal,
             timeoutMs: Math.max(1000, Math.min(timeoutMs, 3_600_000)),
             onData: onData ?? (() => {}),
+            session: true,
           });
           return { exitCode: result.exitCode };
         },

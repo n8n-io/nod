@@ -12,11 +12,12 @@ export function launchCloudflareCommand(options: {
   role: 'browser' | 'workspace';
   generation: string;
   threadId?: string;
+  session?: boolean;
   fetch?: typeof fetch;
   origin?: string;
   onUncertain(): void;
 }): CommandProcess {
-  const { role, generation, threadId: selectedThreadId, onUncertain } = options;
+  const { role, generation, threadId: selectedThreadId, session, onUncertain } = options;
   let origin: string;
   try {
     const url = new URL(options.origin ?? 'http://otto.computer');
@@ -31,7 +32,8 @@ export function launchCloudflareCommand(options: {
         !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) ||
       !['browser', 'workspace'].includes(role) ||
       !/^[1-9]\d{0,18}$/.test(generation) ||
-      (role === 'workspace' && !selectedThreadId)
+      (role === 'workspace' && !selectedThreadId) ||
+      (session && role !== 'workspace')
     )
       throw new Error();
     if (selectedThreadId !== undefined) threadIdentity(selectedThreadId);
@@ -285,7 +287,12 @@ export function launchCloudflareCommand(options: {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id, role, ...(selectedThreadId && { threadId: selectedThreadId }) }),
+        body: JSON.stringify({
+          id,
+          role,
+          ...(selectedThreadId && { threadId: selectedThreadId }),
+          ...(session && { session: true }),
+        }),
       },
       async (response) => {
         if (response.status !== 201 || !response.body) throw error();

@@ -77,7 +77,7 @@ export async function drainComputerForDeployment(options: {
   if (
     (state.phase === 'dirty' &&
       (!options.observed || !options.running() || state.role !== 'browser')) ||
-    (!options.running() && !state.checkpoint)
+    (!options.running() && !state.checkpoint && state.phase !== 'unsaved')
   )
     return result('unsafe');
   let changed = false;
@@ -99,7 +99,6 @@ export async function drainComputerForDeployment(options: {
       if (
         state.phase !== 'ready' ||
         state.stopped ||
-        !state.checkpoint ||
         state.ownerId !== options.identity.ownerId ||
         state.environment !== options.identity.environment ||
         state.role !== options.identity.role ||
@@ -109,6 +108,9 @@ export async function drainComputerForDeployment(options: {
       await assert();
       await options.stop();
       if (options.running()) throw new RuntimeControlError(503);
+    } else if (state.phase === 'unsaved') {
+      changed = true;
+      state = await options.checkpoint(state);
     }
     await assert();
     changed = true;

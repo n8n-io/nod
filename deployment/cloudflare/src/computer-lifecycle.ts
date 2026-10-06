@@ -1,6 +1,7 @@
-import type { ComputerCheckpoint } from './computer-checkpoints.ts';
+import { CheckpointTooLarge, type ComputerCheckpoint } from './computer-checkpoints.ts';
 import type { DeploymentInput } from '../../../src/ports/deployment.ts';
 import { cleanStoppedComputer, drainComputerForDeployment } from './computer-deployment.ts';
+import { refusedCommand } from './computer-exec.ts';
 import { environmentName, generation, ownerIdentity, RuntimeControlError } from './protocol.ts';
 
 export type ComputerIdentity = {
@@ -11,11 +12,20 @@ export type ComputerIdentity = {
 };
 
 export type ComputerState = ComputerIdentity & {
-  phase: 'restoring' | 'ready' | 'dirty' | 'uncertain';
+  phase: 'restoring' | 'ready' | 'dirty' | 'unsaved' | 'uncertain';
   stopped: boolean;
   commands?: string[];
   checkpoint?: ComputerCheckpoint;
   previousCheckpoint?: ComputerCheckpoint;
+  oversize?: { message: string; shown: boolean };
+  notice?: string;
+};
+
+export type ComputerCommand = {
+  id: string;
+  generation: string;
+  threadId?: string;
+  session?: boolean;
 };
 
 export function createComputerLifecycle(options: {
@@ -35,9 +45,11 @@ export function createComputerLifecycle(options: {
     assertCurrent: () => Promise<void>,
   ): Promise<void>;
   quiesce(state: ComputerState, stopping: boolean): Promise<boolean>;
-  launch(state: ComputerState, threadId?: string): Promise<ExecProcess>;
+  launch(state: ComputerState, command: ComputerCommand): Promise<ExecProcess>;
+  settleMs?: number;
 }) {
   const environment = environmentName(options.environment);
+  const settleMs = options.settleMs ?? 20_000;
   const active = new Set<string>();
   let pending: Promise<unknown> = Promise.resolve();
   let loaded: ComputerState | undefined;
@@ -45,6 +57,7 @@ export function createComputerLifecycle(options: {
   let closing = false;
   let fenced = false;
   let draining = false;
+  let settling: ReturnType<typeof setTimeout> | undefined;
 
   const unavailable = () => new RuntimeControlError(503);
   function exclusive<T>(operation: () => Promise<T>) {
@@ -73,10 +86,48 @@ export function createComputerLifecycle(options: {
     loaded = state;
   }
   async function destroy() {
+    clearTimeout(settling);
     await options.destroy();
     if (options.running()) throw unavailable();
     booted = false;
     active.clear();
+  }
+  function discarded(state: ComputerState): ComputerState {
+    const { oversize, ...rest } = state;
+    if (options.role !== 'workspace') return { ...rest, phase: 'ready' };
+    const reason = oversize
+      ? 'The workspace was too large to save, so changes made after its last save were discarded'
+      : 'The workspace stopped before its latest changes were saved, so changes made after its last save were lost';
+    return {
+      ...rest,
+      phase: 'ready',
+      notice: [state.notice, `${reason} and its files are back to that save.`]
+        .filter(Boolean)
+        .join(' '),
+    };
+  }
+  function settle() {
+    clearTimeout(settling);
+    settling = setTimeout(() => {
+      void exclusive(async () => {
+        if (
+          !loaded ||
+          loaded.phase !== 'unsaved' ||
+          active.size ||
+          fenced ||
+          closing ||
+          draining ||
+          !booted ||
+          !options.running()
+        )
+          return;
+        try {
+          await checkpoint(loaded);
+        } catch {
+          await uncertain();
+        }
+      }).catch(() => {});
+    }, settleMs);
   }
   async function assertCurrent(state: ComputerState, stopping = false) {
     if (fenced || (!stopping && closing)) throw unavailable();
@@ -105,12 +156,26 @@ export function createComputerLifecycle(options: {
       if (fenced) throw unavailable();
     };
     await assert();
-    const next = await options.checkpoint(state, assert);
+    let next: ComputerCheckpoint;
+    try {
+      next = await options.checkpoint(state, assert);
+    } catch (error) {
+      if (!(error instanceof CheckpointTooLarge)) throw error;
+      await assert();
+      if (!loaded || !matches(loaded, state) || loaded.phase === 'uncertain') throw unavailable();
+      await write({
+        ...loaded,
+        oversize: { message: error.message, shown: loaded.oversize?.shown ?? false },
+      });
+      await assert();
+      return undefined;
+    }
     await assert();
     if (!loaded || !matches(loaded, state) || loaded.phase === 'uncertain') throw unavailable();
     const previous = state.previousCheckpoint;
+    const { oversize: _oversize, ...current } = loaded;
     await write({
-      ...loaded,
+      ...current,
       phase: 'ready',
       checkpoint: next,
       previousCheckpoint: state.checkpoint,
@@ -118,6 +183,19 @@ export function createComputerLifecycle(options: {
     await assert();
     if (previous) await options.removeCheckpoint(previous, assert).catch(() => {});
     await assert();
+    return loaded!;
+  }
+  async function saveOrDiscard(
+    state: ComputerState,
+    stopping = false,
+    authorize?: () => Promise<void>,
+  ) {
+    if (state.phase === 'unsaved' && !options.running()) {
+      await write(discarded(state));
+      return loaded!;
+    }
+    if (await checkpoint(state, stopping, authorize)) return loaded!;
+    await write(discarded(loaded!));
     return loaded!;
   }
   async function prepare(expected: ComputerIdentity) {
@@ -146,6 +224,7 @@ export function createComputerLifecycle(options: {
     if (previous && matches(previous, expected) && booted && options.running()) return previous;
     loaded = previous?.generation === expected.generation ? previous : undefined;
     await destroy();
+    const notice = previous?.phase === 'unsaved' ? discarded(previous).notice : previous?.notice;
     const next: ComputerState = {
       ...expected,
       phase: 'restoring',
@@ -156,6 +235,7 @@ export function createComputerLifecycle(options: {
         }),
       checkpoint: previous?.checkpoint,
       previousCheckpoint: previous?.previousCheckpoint,
+      ...(notice && { notice }),
     };
     await write(next);
     try {
@@ -183,7 +263,8 @@ export function createComputerLifecycle(options: {
         throw unavailable();
       if (fenced || closing || draining) throw unavailable();
     },
-    launch(owner: string, input: { id: string; generation: string; threadId?: string }) {
+    launch(owner: string, input: ComputerCommand) {
+      clearTimeout(settling);
       return exclusive(async () => {
         if (draining) throw unavailable();
         const expected = identity(owner, input.generation);
@@ -195,12 +276,25 @@ export function createComputerLifecycle(options: {
           await options.claimCommand(expected, ownerIdentity(previous));
         if (!(await options.claimCommand(expected, id))) throw new RuntimeControlError(409);
         await assertCurrent(state);
-        const { commands: _commands, ...next } = state;
-        await write({ ...next, phase: 'dirty' });
+        const { commands: _commands, notice, ...next } = state;
+        const refusal = input.session
+          ? [notice, next.oversize?.shown === false && next.oversize.message]
+              .filter(Boolean)
+              .join(' ')
+          : '';
+        if (refusal) {
+          await write({
+            ...next,
+            ...(next.oversize && { oversize: { ...next.oversize, shown: true } }),
+          });
+          active.add(id);
+          return refusedCommand(`${refusal} This command did not run.`);
+        }
+        await write({ ...next, ...(notice && { notice }), phase: 'dirty' });
         active.add(id);
         try {
           await assertCurrent(loaded!);
-          const process = await options.launch(loaded!, input.threadId);
+          const process = await options.launch(loaded!, input);
           await assertCurrent(loaded!);
           return process;
         } catch {
@@ -217,8 +311,10 @@ export function createComputerLifecycle(options: {
           if (input.code !== 0) throw unavailable();
           await assertCurrent(loaded);
           if (!options.running()) throw unavailable();
-          if (options.role === 'workspace') await checkpoint(loaded);
+          if (options.role === 'workspace' && loaded.phase === 'dirty')
+            await write({ ...loaded, phase: 'unsaved' });
           active.delete(input.id);
+          if (loaded.phase === 'unsaved') settle();
         } catch {
           await uncertain();
           throw unavailable();
@@ -256,9 +352,18 @@ export function createComputerLifecycle(options: {
             return true;
           }
           await assertCurrent(loaded);
-          if (loaded.phase === 'dirty') {
-            if (options.role !== 'browser' || !(await options.quiesce(loaded, false))) return false;
-            await checkpoint(loaded);
+          if (
+            (loaded.phase === 'dirty' &&
+              (options.role !== 'browser' || !(await options.quiesce(loaded, false)))) ||
+            (loaded.phase === 'unsaved' && loaded.oversize?.shown === false)
+          )
+            return false;
+          if (
+            (loaded.phase === 'dirty' || loaded.phase === 'unsaved') &&
+            !(await checkpoint(loaded))
+          ) {
+            if (loaded.phase === 'unsaved' && !loaded.oversize?.shown) return false;
+            await write(discarded(loaded));
           }
           await destroy();
           return true;
@@ -294,7 +399,7 @@ export function createComputerLifecycle(options: {
             if (closed) loaded = state;
           },
           quiesce: (current) => options.quiesce(current, false),
-          checkpoint: (current) => checkpoint(current, false, controls.authorize),
+          checkpoint: (current) => saveOrDiscard(current, false, controls.authorize),
           stop: destroy,
           write,
           quarantine: async (current) => {
@@ -368,8 +473,9 @@ export function createComputerLifecycle(options: {
             if (state.phase === 'dirty') {
               if (options.role !== 'browser' || !(await options.quiesce(state, true)))
                 throw unavailable();
-              await checkpoint(state, true);
             }
+            if (state.phase === 'dirty' || state.phase === 'unsaved')
+              await saveOrDiscard(state, true);
             await destroy();
           } catch {
             await uncertain();

@@ -928,8 +928,10 @@ async function cloudflareFixture() {
     role: string;
     generation: string;
     threadId?: string;
+    session?: boolean;
     frames: string[];
   }> = [];
+  let refusal: string | undefined;
   let hold:
     { entered: ReturnType<typeof deferred>; release: ReturnType<typeof deferred> } | undefined;
   let failedDisposals = 0;
@@ -983,9 +985,28 @@ async function cloudflareFixture() {
         role: input.role,
         generation: input.generation,
         threadId: input.threadId,
+        session: input.session,
         frames: [] as string[],
       };
       launches.push(record);
+      if (input.session && refusal) {
+        const message = refusal;
+        refusal = undefined;
+        const child = Object.assign(new EventEmitter(), {
+          stdin: new PassThrough(),
+          stdout: new PassThrough(),
+          stderr: new PassThrough(),
+          kill: () => true,
+        });
+        child.stdin.once('data', () => {
+          child.stdout.end(
+            JSON.stringify({ type: 'exit', code: 0, reason: 'refused', message }) + '\n',
+          );
+          child.stderr.end();
+          setImmediate(() => child.emit('close', 0));
+        });
+        return child as CommandProcess;
+      }
       if (brokenRole === input.role) {
         const child = Object.assign(new EventEmitter(), {
           stdin: new PassThrough(),
@@ -1049,6 +1070,9 @@ async function cloudflareFixture() {
     },
     breakRole(role?: 'browser' | 'workspace') {
       brokenRole = role;
+    },
+    refuse(message: string) {
+      refusal = message;
     },
     async close() {
       hold?.release.resolve();
@@ -1121,6 +1145,32 @@ test('Cloudflare adapters bind owner namespaces and generations while keeping br
       a.workspace.dispose(),
       b.workspace.dispose(),
     ]);
+    await f.close();
+  }
+});
+
+test('a refused hosted model command reports its notice without running or fencing the workspace', async () => {
+  const f = await cloudflareFixture();
+  const adapters = createCloudflareAdapters(f.options(ownerA));
+  try {
+    const session = adapters.workspace.open({
+      threadId: 'same-task',
+      workspacePath: join(f.root, 'roots', ownerA, 'same-task'),
+      signal: new AbortController().signal,
+    });
+    f.refuse('Synthetic workspace notice. This command did not run.');
+    await assert.rejects(session.exec('printf ran > marker'), {
+      message: 'Synthetic workspace notice. This command did not run.',
+    });
+    assert.equal(await execute(session, 'test ! -e marker && printf clean'), 'clean');
+    await assert.rejects(adapters.workspace.readArtifact!('same-task', 'marker', 1024));
+    assert.deepEqual(
+      f.launches.map((launch) => launch.session),
+      [true, true, undefined],
+    );
+    assert.equal(adapters.workspace.status(), 'Remote Linux workspace is ready.');
+  } finally {
+    await adapters.workspace.dispose();
     await f.close();
   }
 });

@@ -8,6 +8,7 @@ import {
 } from './protocol.ts';
 import { browserRequestBytes } from '../../../src/ports/computer.ts';
 import { threadIdentity } from '../../../src/ports/thread-identity.ts';
+import type { ComputerCommand } from './computer-lifecycle.ts';
 
 type Command = {
   id: string;
@@ -38,7 +39,7 @@ const receiptLimit = 32;
 export function createComputerCommands(options: {
   role: 'browser' | 'workspace';
   authorize(generation: string): Promise<void>;
-  launch(input: { id: string; generation: string; threadId?: string }): Promise<ExecProcess>;
+  launch(input: ComputerCommand): Promise<ExecProcess>;
   completed(input: { id: string; generation: string; code: number }): Promise<void>;
   uncertain(input: { id: string; generation: string }): Promise<void>;
   timeoutMs?: number;
@@ -227,7 +228,7 @@ export function createComputerCommands(options: {
   }
 
   async function create(request: Request, version: string) {
-    let input: { id: string; role: string; threadId?: string };
+    let input: { id: string; role: string; threadId?: string; session?: boolean };
     try {
       input = JSON.parse(
         new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(
@@ -238,9 +239,10 @@ export function createComputerCommands(options: {
         !input ||
         typeof input !== 'object' ||
         Array.isArray(input) ||
-        Object.keys(input).some((key) => !['id', 'role', 'threadId'].includes(key)) ||
+        Object.keys(input).some((key) => !['id', 'role', 'threadId', 'session'].includes(key)) ||
         input.role !== options.role ||
         (input.threadId !== undefined && typeof input.threadId !== 'string') ||
+        (input.session !== undefined && (input.session !== true || options.role !== 'workspace')) ||
         (options.role === 'workspace' && !input.threadId) ||
         (options.role === 'browser' && input.threadId !== undefined)
       )
@@ -318,6 +320,7 @@ export function createComputerCommands(options: {
           id: input.id,
           generation: version,
           threadId: input.threadId,
+          ...(input.session && { session: true }),
         });
       } catch (error) {
         rejected = !command.failed && error instanceof RuntimeControlError && error.status === 409;

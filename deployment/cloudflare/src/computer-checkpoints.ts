@@ -18,6 +18,75 @@ const minimumBytes = 20;
 const partBytes = 8 * 1024 * 1024;
 const unavailable = () => new RuntimeControlError(503);
 
+export class CheckpointTooLarge extends Error {}
+
+function amount(bytes: number) {
+  return bytes >= 2 ** 30
+    ? `${(bytes / 2 ** 30).toFixed(1)} GiB`
+    : `${Math.max(1, Math.round(bytes / 2 ** 20))} MiB`;
+}
+
+export function checkpointTooLarge(output: Uint8Array, display: (path: string) => string) {
+  let report;
+  try {
+    report = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(output));
+  } catch {
+    return undefined;
+  }
+  const counts = ['bytes', 'max_bytes', 'entries', 'max_entries', 'max_file_bytes'];
+  if (
+    !report ||
+    typeof report !== 'object' ||
+    Object.keys(report).length !== counts.length + 2 ||
+    counts.some((key) => !Number.isSafeInteger(report[key]) || report[key] < 0) ||
+    typeof report.complete !== 'boolean' ||
+    !Array.isArray(report.largest) ||
+    report.largest.length > 5 ||
+    report.largest.some(
+      (item: unknown) =>
+        !Array.isArray(item) ||
+        item.length !== 2 ||
+        typeof item[0] !== 'string' ||
+        !item[0] ||
+        item[0].length > 4096 ||
+        !Number.isSafeInteger(item[1]) ||
+        item[1] < 0,
+    )
+  )
+    return undefined;
+  const largest: [string, number][] = report.largest.map(([path, bytes]: [string, number]) => {
+    const shown = display(path);
+    return [shown.length > 200 ? `…${shown.slice(-200)}` : shown, bytes];
+  });
+  const over = report.complete ? '' : 'at least ';
+  const reasons = [
+    ...(report.bytes > report.max_bytes
+      ? [
+          `it needs ${over}${amount(report.bytes)}, ${over}${amount(report.bytes - report.max_bytes)} over the ${amount(report.max_bytes)} limit`,
+        ]
+      : []),
+    ...(report.entries + 1 > report.max_entries
+      ? [
+          `it holds ${over}${report.entries} files, folders and links, over the ${report.max_entries} limit`,
+        ]
+      : []),
+    ...largest
+      .filter(([, bytes]) => bytes > report.max_file_bytes)
+      .map(
+        ([path, bytes]) =>
+          `${path} is ${amount(bytes)}, over the ${amount(report.max_file_bytes)} limit for one file`,
+      ),
+  ];
+  if (!reasons.length) return undefined;
+  return new CheckpointTooLarge(
+    `The workspace is too large to save: ${reasons.join('; ')}.${
+      largest.length
+        ? ` Largest files: ${largest.map(([path, bytes]) => `${path} (${amount(bytes)})`).join(', ')}.`
+        : ''
+    } Changes since the last save stay only while the workspace is active and are discarded when it goes idle. Delete or compress large files or folders, such as downloads, caches or build output, then run the command again.`,
+  );
+}
+
 export function createComputerCheckpoints(options: {
   bucket: Pick<R2Bucket, 'createMultipartUpload' | 'get' | 'delete'>;
   ownerId: string;

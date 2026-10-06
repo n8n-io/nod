@@ -100,7 +100,12 @@ function processFixture() {
 
 function fixture(overrides: Partial<Parameters<typeof createComputerCommands>[0]> = {}) {
   const processes: ReturnType<typeof processFixture>[] = [];
-  const launches: Array<{ id: string; generation: string; threadId?: string }> = [];
+  const launches: Array<{
+    id: string;
+    generation: string;
+    threadId?: string;
+    session?: boolean;
+  }> = [];
   const completed: Array<{ id: string; generation: string; code: number }> = [];
   const uncertain: Array<{ id: string; generation: string }> = [];
   let allowed = true;
@@ -207,6 +212,8 @@ test('computer command creation validates identities, role, thread and generatio
         { ...valid, threadId: role === 'browser' ? 'thread' : undefined },
         { ...valid, threadId: '../private' },
         { ...valid, arbitrary: 'private synthetic value' },
+        { ...valid, session: role === 'browser' },
+        { ...valid, session: 'private' },
         null,
         [],
       ]) {
@@ -235,6 +242,22 @@ test('computer command creation validates identities, role, thread and generatio
         { id, generation: '1', threadId: role === 'workspace' ? 'thread' : undefined },
       ]);
       assert.equal((await f.create(id)).status, 409);
+      if (role === 'workspace') {
+        const g = fixture({ role });
+        try {
+          const session = randomUUID();
+          const response = await g.request('/v1/commands', {
+            method: 'POST',
+            body: JSON.stringify({ ...valid, id: session, session: true }),
+          });
+          assert.equal(response.status, 201);
+          assert.deepEqual(g.launches, [
+            { id: session, generation: '1', threadId: 'thread', session: true },
+          ]);
+        } finally {
+          await g.close();
+        }
+      }
       assert.equal((await f.request(`/v1/commands/${id}/output`, {}, '2')).status, 404);
       assert.equal((await f.request(`/v1/commands/${randomUUID()}/output`)).status, 404);
     } finally {

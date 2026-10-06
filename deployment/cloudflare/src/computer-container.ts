@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Container } from '@cloudflare/containers';
 import type { DeploymentInput } from '../../../src/ports/deployment.ts';
 import { deploymentInputSchema } from '../../../src/server/deployment-auth.ts';
-import { createComputerCheckpoints } from './computer-checkpoints.ts';
+import { checkpointTooLarge, createComputerCheckpoints } from './computer-checkpoints.ts';
 import { createComputerCommands } from './computer-commands.ts';
 import { launchComputerExec, runComputerExec } from './computer-exec.ts';
 import { assertContainerStartupSettled, startContainer } from './container-startup.ts';
@@ -282,7 +282,7 @@ abstract class ComputerContainer extends Container<Bindings> {
         ]);
       },
       checkpoint: async (_state, assertCurrent) => {
-        return runComputerExec({
+        const result = await runComputerExec({
           timeoutMs: 120_000,
           launch: (signal) =>
             this.exec(
@@ -294,17 +294,30 @@ abstract class ComputerContainer extends Container<Bindings> {
                 path,
                 ...(this.role === 'browser' ? ['--browser'] : []),
               ],
-              { stderr: 'ignore', signal },
+              { signal },
             ),
-          consume: (process, signal) => {
+          consume: async (process, signal) => {
             if (!process.stdout) throw unavailable();
-            return checkpoints(assertCurrent).save({
-              stream: process.stdout,
-              exitCode: process.exitCode,
-              signal,
-            });
+            const [report, checkpoint] = await Promise.all([
+              readBytes(process.stderr, 64 * 1024, signal),
+              checkpoints(assertCurrent)
+                .save({ stream: process.stdout, exitCode: process.exitCode, signal })
+                .catch(() => undefined),
+            ]);
+            if (checkpoint && !report.byteLength) return { checkpoint };
+            const tooLarge =
+              !checkpoint &&
+              checkpointTooLarge(report, (file) =>
+                file
+                  .replace(/^workspace\//, '/workspace/')
+                  .replace(/^tools\//, '/home/node/.local/'),
+              );
+            if (!tooLarge) throw unavailable();
+            return { tooLarge };
           },
         });
+        if ('tooLarge' in result) throw result.tooLarge;
+        return result.checkpoint;
       },
       removeCheckpoint: (checkpoint, assertCurrent) =>
         checkpoints(assertCurrent).remove(checkpoint),
@@ -332,7 +345,7 @@ abstract class ComputerContainer extends Container<Bindings> {
           throw unavailable();
         return stopping || response.result === true;
       },
-      launch: async (_state, threadId) => {
+      launch: async (_state, { threadId }) => {
         this.renewActivityTimeout();
         if (this.role === 'browser')
           return launchComputerExec({

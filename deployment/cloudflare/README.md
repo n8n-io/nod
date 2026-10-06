@@ -1,6 +1,6 @@
 # Cloudflare deployment
 
-The public Worker serves `dist/web` and sends `/api/*` to one private Node gateway. The gateway authenticates Google sessions, provisions a tenant SQL role and schemas per user, and sends signed requests to that user's tenant container. Each owner also gets separate browser and workspace containers that start on first use and checkpoint to private R2 when idle. Provider keys stay in the Node runtime.
+The public Worker serves `dist/web` and sends `/api/*` to one private Node gateway. The gateway authenticates Google sessions, provisions a tenant SQL role and schemas per user, and sends signed requests to that user's tenant container. Each owner also gets separate browser and workspace containers that start on first use and checkpoint to private R2 (see [Computer checkpoints](#computer-checkpoints)). Provider keys stay in the Node runtime.
 
 | Class                        | Image tag                            | Instance type | Development max | Production max |
 | ---------------------------- | ------------------------------------ | ------------- | --------------- | -------------- |
@@ -59,6 +59,14 @@ npm --prefix deployment/cloudflare run provision:storage -- development
 npm --prefix deployment/cloudflare run provision:storage -- production
 ```
 
+## Computer checkpoints
+
+A checkpoint is a gzip tar of `/home/node/state` (workspace) or the owner's browser data directory, at most 1 GiB uncompressed, 512 MiB per file and 100,000 entries. It skips `__pycache__` and `.cache` directories, FIFOs and sockets, and for the browser Chromium's HTTP, code, GPU, shader and Dawn caches and CRX caches; cookies, Local Storage, IndexedDB and Service Worker data are kept. Restore also reads the earlier uncompressed format.
+
+The browser checkpoints when it goes idle. The workspace checkpoints about 20 seconds after its last command finishes and before it sleeps, stops or is drained, not after every command. Durability trade-off: if the workspace container is lost in that window, changes since the last checkpoint are lost and the model is told on its next command; the computer is not fenced.
+
+A workspace too large to save keeps running with its previous checkpoint. The model's next command is refused once with the sizes, the largest files and what to delete. The unsaved changes are discarded only after that notice has been shown, when the workspace sleeps, or when it is stopped or drained (the model is then told on its next command). Neither case fences the computer or blocks a deploy.
+
 ## CI and rollout
 
 `.github/workflows/ci.yml` runs root checks, PostgreSQL tests, the build, this package's checks and tests, both dry runs and the image builds. `.github/workflows/deploy.yml` runs after successful CI on the current `main` commit, in the GitHub `production` environment, which needs:
@@ -74,7 +82,7 @@ npm --prefix deployment/cloudflare run provision:storage -- production
 
 1. Pushes all three images and resolves their digests.
 2. Closes a durable admission barrier (authorized by an HMAC derived from `OTTO_MASTER_KEY`).
-3. Drains each tenant naturally, then requires clean browser/workspace checkpoints and confirmed stop of each exact generation. Active holds, uncertain state or an expired deadline block the deploy; nothing is force-cancelled.
+3. Drains each tenant naturally, then requires clean browser/workspace checkpoints and confirmed stop of each exact generation. Active holds, uncertain state or an expired deadline block the deploy; nothing is force-cancelled. A workspace too large to save is stopped without its unsaved changes.
 4. Publishes Worker code, image references and `GATEWAY_ENV` together with `wrangler deploy --secrets-file`.
 5. Verifies every container application's image and rollout, the R2 binding, and a public smoke test, then reopens admission.
 

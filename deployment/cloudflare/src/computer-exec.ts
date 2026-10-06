@@ -80,3 +80,43 @@ export function runComputerExec<T>(options: ExecOptions<T>) {
 export function launchComputerExec(options: Omit<ExecOptions<ExecProcess>, 'consume'>) {
   return useComputerExec({ ...options, consume: async (process) => process }, true);
 }
+
+export function refusedCommand(message: string): ExecProcess {
+  let respond = () => {};
+  return {
+    pid: 0,
+    isPty: false,
+    stdin: new WritableStream<Uint8Array>({
+      write(chunk) {
+        if (chunk.includes(10)) respond();
+      },
+      close() {
+        respond();
+      },
+    }),
+    stdout: new ReadableStream<Uint8Array>({
+      start(controller) {
+        respond = () => {
+          respond = () => {};
+          controller.enqueue(
+            new TextEncoder().encode(
+              JSON.stringify({ type: 'exit', code: 0, reason: 'refused', message }) + '\n',
+            ),
+          );
+          controller.close();
+        };
+      },
+    }),
+    stderr: new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    }),
+    exitCode: Promise.resolve(0),
+    async output() {
+      throw unavailable();
+    },
+    kill() {},
+    resize() {},
+  };
+}

@@ -446,10 +446,10 @@ test('restore process creation is bounded and a late native handle cannot revive
   assert.equal(current.events.filter((event) => event.startsWith('exec:')).length, 1);
 });
 
-test('checkpoint process creation is bounded and never emits a clean command exit after failure', async (t) => {
+test('a settling checkpoint process is bounded and a late native handle cannot revive the failed computer', async (t) => {
   const original = globalThis.setTimeout;
   t.mock.method(globalThis, 'setTimeout', (callback: () => void, duration: number) =>
-    original(callback, duration === 120_000 ? 10 : duration),
+    original(callback, duration === 120_000 || duration === 20_000 ? 10 : duration),
   );
   const checkpoint = deferred<ExecProcess>();
   const current = fixture('workspace', 'ready');
@@ -468,17 +468,101 @@ test('checkpoint process creation is bounded and never emits a clean command exi
   );
   const response = await current.request(`/v1/commands/${id}/output`);
   assert.equal(response.status, 200);
-  await assert.rejects(
-    Promise.race([
-      response.text(),
-      delay(500).then(() => assert.fail('Checkpointing did not respect its deadline')),
-    ]),
-  );
-  await delay(0);
+  assert.deepEqual(await response.text(), JSON.stringify({ type: 'exit', code: 0 }) + '\n');
+  assert.equal(current.state().phase, 'unsaved');
+  await delay(100);
   assert.equal(current.container.running, false);
   assert.equal(current.state().phase, 'uncertain');
   const late = nativeProcess();
   checkpoint.resolve(late.process);
   await delay(0);
   assert.deepEqual(late.killed, [9]);
+});
+
+test('a workspace too large to save stays running and refuses the next model command with the report', async (t) => {
+  const original = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', (callback: () => void, duration: number) =>
+    original(callback, duration === 20_000 ? 10 : duration),
+  );
+  const current = fixture('workspace', 'ready', true);
+  const checkpoint = current.state().checkpoint;
+  const report = {
+    bytes: 3 * 2 ** 30,
+    max_bytes: 2 ** 30,
+    entries: 12,
+    max_entries: 100000,
+    max_file_bytes: 512 * 2 ** 20,
+    complete: true,
+    largest: [
+      ['workspace/thread/synthetic-video.mp4', 2 * 2 ** 30],
+      ['tools/lib/synthetic.bin', 2 ** 20],
+    ],
+  };
+  const creates: ContainerExecOptions[] = [];
+  current.exec(async (args, options) => {
+    if (args[3] !== 'create') return nativeProcess().process;
+    creates.push(options);
+    const stream = (bytes?: Uint8Array) =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (bytes) controller.enqueue(bytes);
+          controller.close();
+        },
+      });
+    return {
+      ...nativeProcess().process,
+      stdout: stream(),
+      stderr: stream(new TextEncoder().encode(JSON.stringify(report) + '\n')),
+    };
+  });
+  t.after(() => current.computer.stopComputer(current.ownerId, '1'));
+  const run = async (session: boolean) => {
+    const id = randomUUID();
+    const created = await current.request('/v1/commands', {
+      method: 'POST',
+      body: JSON.stringify({
+        id,
+        role: 'workspace',
+        threadId: 'thread',
+        ...(session && { session: true }),
+      }),
+    });
+    assert.equal(created.status, 201);
+    const input = await current.request(`/v1/commands/${id}/input`, {
+      method: 'POST',
+      body: '{}\n',
+    });
+    assert.ok([204, 409].includes(input.status));
+    const lines = (await (await current.request(`/v1/commands/${id}/output`)).text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(lines.at(-1), { type: 'exit', code: 0 });
+    return lines
+      .filter((line) => line.type === 'stdout')
+      .map((line) => Buffer.from(line.data, 'base64').toString())
+      .join('');
+  };
+  assert.equal(await run(false), '');
+  await delay(100);
+  assert.equal(creates.length, 1);
+  assert.equal(Object.hasOwn(creates[0]!, 'stderr'), false);
+  assert.equal(current.container.running, true);
+  assert.equal(current.state().phase, 'unsaved');
+  assert.deepEqual(current.state().checkpoint, checkpoint);
+  const message = current.state().oversize!.message;
+  for (const part of [
+    '3.0 GiB',
+    '2.0 GiB over',
+    '/workspace/thread/synthetic-video.mp4',
+    '/home/node/.local/lib/synthetic.bin',
+  ])
+    assert.ok(message.includes(part), part);
+  assert.equal(await run(false), '');
+  const refused = JSON.parse(await run(true));
+  assert.equal(refused.reason, 'refused');
+  assert.equal(refused.message, `${message} This command did not run.`);
+  assert.equal(current.state().oversize!.shown, true);
+  assert.equal(await run(true), '');
+  assert.equal(current.container.running, true);
 });

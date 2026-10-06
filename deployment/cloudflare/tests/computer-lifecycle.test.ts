@@ -7,7 +7,7 @@ import {
   type ComputerIdentity,
   type ComputerState,
 } from '../src/computer-lifecycle.ts';
-import type { ComputerCheckpoint } from '../src/computer-checkpoints.ts';
+import { CheckpointTooLarge, type ComputerCheckpoint } from '../src/computer-checkpoints.ts';
 
 function deferred() {
   let resolve!: () => void;
@@ -41,6 +41,7 @@ function fixture(
   const options: Parameters<typeof createComputerLifecycle>[0] = {
     role,
     environment: 'development',
+    settleMs: 5,
     async read() {
       return stored && structuredClone(stored);
     },
@@ -154,6 +155,7 @@ function fixture(
       }),
     completed: (id: string, generation = '1', code = 0) =>
       lifecycle.completed(ownerId, { id, generation, code }),
+    settled: () => delay(30),
     restart() {
       lifecycle = createComputerLifecycle(options);
     },
@@ -222,39 +224,34 @@ test('durable dirty intent and command identity precede native launch', async ()
   assert.equal(f.lifecycle.active, 1);
 });
 
-test('workspace completion waits for checkpoint publication and rotates only older manifests', async () => {
+test('a workspace checkpoints once its commands settle and rotates only older manifests', async () => {
   const f = fixture();
-  const entered = deferred();
-  const release = deferred();
   const first = randomUUID();
   await f.launch(first);
-  f.beforeCheckpoint(async () => {
-    entered.resolve();
-    await release.promise;
-  });
-  let acknowledged = false;
-  const completing = f.completed(first).then(() => {
-    acknowledged = true;
-  });
-  await entered.promise;
-  assert.equal(acknowledged, false);
-  assert.equal(f.state()?.phase, 'dirty');
-  assert.equal(f.lifecycle.active, 1);
-  release.resolve();
-  await completing;
-  const checkpoint = f.state()!.checkpoint!;
-  assert.equal(f.state()?.phase, 'ready');
+  await f.completed(first);
+  assert.equal(f.state()?.phase, 'unsaved');
   assert.equal(f.lifecycle.active, 0);
-  f.beforeCheckpoint(async () => {});
   const second = randomUUID();
   await f.launch(second);
+  await f.settled();
+  assert.equal(f.events.includes('checkpoint'), false);
+  assert.equal(f.state()?.phase, 'dirty');
   await f.completed(second);
-  assert.deepEqual(f.state()?.previousCheckpoint, checkpoint);
-  assert.equal(f.removed.length, 0);
-  const third = randomUUID();
-  await f.launch(third);
-  await f.completed(third);
-  assert.deepEqual(f.removed, [checkpoint]);
+  await f.settled();
+  assert.deepEqual(
+    f.events.filter((event) => event === 'checkpoint'),
+    ['checkpoint'],
+  );
+  const checkpoint = f.state()!.checkpoint!;
+  assert.equal(f.state()?.phase, 'ready');
+  for (const removed of [[], [checkpoint]]) {
+    const next = randomUUID();
+    await f.launch(next);
+    await f.completed(next);
+    await f.settled();
+    assert.deepEqual(f.removed, removed);
+  }
+  assert.equal(f.running(), true);
 });
 
 test('lost isolate or VM cannot replay an uncheckpointed action', async () => {
@@ -277,7 +274,9 @@ test('clean restoration keeps durable command tombstones after a fresh controlle
   const id = randomUUID();
   await f.launch(id);
   await f.completed(id);
+  await f.settled();
   const checkpoint = f.state()?.checkpoint;
+  assert.ok(checkpoint);
   f.restart();
   await assert.rejects(f.launch(id), { status: 409 });
   assert.equal(f.events.filter((event) => event === 'launch').length, 1);
@@ -294,6 +293,7 @@ test('owner, environment, role and active generation cannot be replaced', async 
   const id = randomUUID();
   await f.launch(id);
   await f.completed(id);
+  await f.settled();
   const state = f.state();
   const destroys = f.events.filter((event) => event === 'destroy').length;
   await assert.rejects(
@@ -328,6 +328,7 @@ test('confirmed clean stop permits a newer generation while stale stop and fence
   const second = randomUUID();
   await f.launch(second, '2');
   await f.completed(second, '2');
+  await f.settled();
   const current = f.state();
   const destroys = f.events.filter((event) => event === 'destroy').length;
   await assert.rejects(f.lifecycle.stop(f.ownerId, '1'));
@@ -525,6 +526,7 @@ test('stale or foreign uncertainty cannot fence a healthy active generation', as
   await assert.rejects(f.lifecycle.uncertain(f.ownerId, '2'));
   await f.lifecycle.authorize(f.ownerId, '1');
   await f.completed(id);
+  await f.settled();
   assert.equal(f.state()?.phase, 'ready');
   assert.deepEqual(f.state()?.commands, state?.commands);
 });
@@ -534,20 +536,144 @@ test('failed checkpoint preserves its predecessor and quarantines the whole role
   const first = randomUUID();
   await f.launch(first);
   await f.completed(first);
+  await f.settled();
   const checkpoint = f.state()?.checkpoint;
   const second = randomUUID();
   await f.launch(second);
   f.beforeCheckpoint(async () => {
     throw new Error('Synthetic private checkpoint failure');
   });
-  await assert.rejects(f.completed(second), {
-    message: 'The runtime request could not be completed.',
-  });
+  await f.completed(second);
+  await f.settled();
   assert.equal(f.state()?.phase, 'uncertain');
   assert.deepEqual(f.state()?.checkpoint, checkpoint);
   assert.deepEqual(f.removed, []);
   assert.equal(f.running(), false);
   await assert.rejects(f.launch());
+});
+
+async function session(f: ReturnType<typeof fixture>, generation = '1') {
+  const id = randomUUID();
+  const process = await f.lifecycle.launch(f.ownerId, {
+    id,
+    generation,
+    threadId: 'thread',
+    session: true,
+  });
+  if (!process.stdin) return { id };
+  await process.stdin.getWriter().write(new TextEncoder().encode('{"args":["true"]}\n'));
+  const frame = JSON.parse(await new Response(process.stdout).text());
+  assert.equal(await process.exitCode, 0);
+  assert.equal(frame.type, 'exit');
+  assert.equal(frame.reason, 'refused');
+  await f.completed(id, generation);
+  return { id, message: frame.message as string };
+}
+
+test('a workspace too large to save keeps running, tells the next command once and is discarded only after that', async () => {
+  const f = fixture();
+  const first = randomUUID();
+  await f.launch(first);
+  await f.completed(first);
+  await f.settled();
+  const checkpoint = f.state()?.checkpoint;
+  f.beforeCheckpoint(async () => {
+    throw new CheckpointTooLarge('Synthetic report: 2 GiB to save.');
+  });
+  const second = randomUUID();
+  await f.launch(second);
+  await f.completed(second);
+  await f.settled();
+  assert.equal(f.state()?.phase, 'unsaved');
+  assert.deepEqual(f.state()?.checkpoint, checkpoint);
+  assert.deepEqual(f.state()?.oversize, {
+    message: 'Synthetic report: 2 GiB to save.',
+    shown: false,
+  });
+  assert.equal(f.running(), true);
+  const attempts = f.events.filter((event) => event === 'checkpoint').length;
+  assert.equal(await f.lifecycle.idle(), false);
+  assert.equal(f.running(), true);
+  assert.equal(f.events.filter((event) => event === 'checkpoint').length, attempts);
+  const launches = f.events.filter((event) => event === 'launch').length;
+  const helper = randomUUID();
+  await f.launch(helper);
+  await f.completed(helper);
+  assert.equal(f.events.filter((event) => event === 'launch').length, launches + 1);
+  assert.equal(
+    (await session(f)).message,
+    'Synthetic report: 2 GiB to save. This command did not run.',
+  );
+  assert.equal(f.state()?.oversize?.shown, true);
+  const ran = await session(f);
+  assert.equal(ran.message, undefined);
+  assert.equal(f.events.filter((event) => event === 'launch').length, launches + 2);
+  await f.completed(ran.id);
+  assert.equal(await f.lifecycle.idle(), true);
+  assert.equal(f.running(), false);
+  assert.equal(f.state()?.phase, 'ready');
+  assert.deepEqual(f.state()?.checkpoint, checkpoint);
+  assert.equal(f.state()?.oversize, undefined);
+  assert.match(f.state()!.notice!, /too large/);
+  f.beforeCheckpoint(async () => {});
+  assert.match((await session(f)).message!, /too large.*This command did not run\.$/);
+  assert.deepEqual(f.restored.at(-1)?.checkpoint, checkpoint);
+  assert.equal(f.state()?.notice, undefined);
+  assert.notEqual(f.state()?.phase, 'uncertain');
+});
+
+test('unsaved workspace changes lost with their computer, stop or deployment are reported without a fence', async (t) => {
+  for (const event of ['vm', 'stop', 'drain', 'vm-drain'] as const) {
+    await t.test(event, async () => {
+      const f = fixture();
+      const first = randomUUID();
+      await f.launch(first);
+      await f.completed(first);
+      await f.settled();
+      const checkpoint = f.state()?.checkpoint;
+      const second = randomUUID();
+      await f.launch(second);
+      if (event === 'vm') {
+        f.beforeCheckpoint(async () => {
+          throw new Error('Synthetic checkpoint that never runs');
+        });
+        await f.completed(second);
+        f.loseVm();
+        await f.settled();
+      } else {
+        f.beforeCheckpoint(async () => {
+          throw event === 'vm-drain'
+            ? new Error('Synthetic checkpoint that never runs')
+            : new CheckpointTooLarge('Synthetic report: too large.');
+        });
+        await f.completed(second);
+        if (event === 'vm-drain') f.loseVm();
+        if (event === 'stop') await f.lifecycle.stop(f.ownerId, '1');
+        else {
+          const drained = await f.lifecycle.drain(
+            f.ownerId,
+            '1',
+            { nonce: randomUUID(), targetRelease: 'a'.repeat(40), deadline: Date.now() + 60_000 },
+            { authorize: async () => {}, active: () => 0 },
+          );
+          assert.equal(drained.status, 'drained');
+        }
+        assert.equal(f.state()?.stopped, true);
+        assert.equal(f.state()?.phase, 'ready');
+        assert.equal(f.running(), false);
+        f.restart();
+      }
+      f.beforeCheckpoint(async () => {});
+      const generation = event === 'vm' ? '1' : '2';
+      const { message } = await session(f, generation);
+      assert.match(message!, event.startsWith('vm') ? /stopped/ : /too large/);
+      assert.deepEqual(f.restored.at(-1)?.checkpoint, checkpoint);
+      assert.equal(f.state()?.phase, 'ready');
+      assert.equal(f.state()?.notice, undefined);
+      await f.launch(randomUUID(), generation);
+      assert.equal(f.state()?.phase, 'dirty');
+    });
+  }
 });
 
 test('browser idle checkpoint waits for all calls and successful private quiescence', async () => {
@@ -630,6 +756,7 @@ test('a controller from a stopped generation cannot stop or fence its replacemen
   const second = randomUUID();
   await f.launch(second, '2');
   await f.completed(second, '2');
+  await f.settled();
   const state = f.state();
   const destroys = f.events.filter((event) => event === 'destroy').length;
   await assert.rejects(stale.stop(f.ownerId, '1'));
@@ -640,12 +767,13 @@ test('a controller from a stopped generation cannot stop or fence its replacemen
   await f.lifecycle.authorize(f.ownerId, '2');
 });
 
-test('checkpoint publication must persist before completion and cannot acknowledge a concurrent fence', async () => {
+test('a settling checkpoint publishes before the next command and cannot outlive a concurrent fence', async () => {
   for (const fence of [false, true]) {
     const f = fixture();
     const first = randomUUID();
     await f.launch(first);
     await f.completed(first);
+    await f.settled();
     const prior = f.state()?.checkpoint;
     const second = randomUUID();
     await f.launch(second);
@@ -657,22 +785,24 @@ test('checkpoint publication must persist before completion and cannot acknowled
         await release.promise;
       }
     });
-    let acknowledged = false;
-    const completing = f.completed(second).then(() => {
-      acknowledged = true;
-    });
-    const settled = fence ? assert.rejects(completing) : completing;
+    await f.completed(second);
     await entered.promise;
-    assert.equal(acknowledged, false);
-    assert.equal(f.state()?.phase, 'dirty');
+    assert.equal(f.state()?.phase, 'unsaved');
     assert.deepEqual(f.state()?.checkpoint, prior);
-    const uncertain = fence ? f.lifecycle.uncertain(f.ownerId, '1') : Promise.resolve();
+    let launched = false;
+    const next = fence
+      ? f.lifecycle.uncertain(f.ownerId, '1')
+      : f.launch().then(() => {
+          launched = true;
+        });
+    await delay(10);
+    assert.equal(launched, false);
     release.resolve();
-    await Promise.all([settled, uncertain]);
-    assert.equal(acknowledged, !fence);
-    assert.equal(f.state()?.phase, fence ? 'uncertain' : 'ready');
+    await next;
+    assert.equal(f.state()?.phase, fence ? 'uncertain' : 'dirty');
     assert.deepEqual(f.state()?.previousCheckpoint, prior);
     assert.deepEqual(f.removed, []);
+    assert.equal(f.running(), !fence);
   }
 });
 
@@ -786,12 +916,14 @@ test('durable claims allow more than 1024 completed commands and survive control
     assert.equal(f.state()?.commands, undefined);
   }
   assert.equal(f.claims.size, 1100);
+  await f.settled();
   f.restart();
   await assert.rejects(f.launch(first), { status: 409 });
   assert.equal(f.events.filter((event) => event === 'launch').length, 1100);
   const next = randomUUID();
   await f.launch(next);
   await f.completed(next);
+  await f.settled();
   assert.equal(f.claims.size, 1101);
   assert.equal(f.state()?.phase, 'ready');
 });
@@ -838,6 +970,7 @@ test('legacy command IDs migrate before accepted work and stay rejected after ar
   const intent = f.events.indexOf('write:dirty:false');
   for (const previous of legacy) assert.ok(f.events.indexOf(`claim:${previous}`) < intent);
   await f.completed(id);
+  await f.settled();
   f.restart();
   for (const previous of legacy) await assert.rejects(f.launch(previous), { status: 409 });
   assert.equal(f.events.filter((event) => event === 'launch').length, 1);
@@ -915,6 +1048,7 @@ test('idle recovery after controller eviction preserves clean checkpoints and qu
       const id = randomUUID();
       await f.launch(id);
       await f.completed(id);
+      await f.settled();
       const state = { ...f.state()!, phase };
       f.seed(state);
       f.restart();
@@ -944,6 +1078,7 @@ test('idle hydration refuses a foreign role or environment before destroying its
   const id = randomUUID();
   await f.launch(id);
   await f.completed(id);
+  await f.settled();
   const state = f.state();
   const previous = f.events.length;
   for (const options of [

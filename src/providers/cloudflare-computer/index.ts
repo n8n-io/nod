@@ -51,7 +51,7 @@ export function createCloudflareAdapters(options: {
     status: 'Remote Linux workspace is ready.',
     instructions:
       'Your remote Linux workspace is separate from the trusted browser. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Internet follows server provider policy. Keep outputs in this workspace.',
-    runCommand: (threadId, args, input) => {
+    runCommand: (threadId, args, { session, ...input }) => {
       if (workspaceUnavailable)
         throw new WorkspaceCommandError(
           true,
@@ -67,6 +67,7 @@ export function createCloudflareAdapters(options: {
             role: 'workspace',
             generation,
             threadId,
+            session,
             fetch: requestFetch,
             onUncertain: () => {
               workspaceUnavailable = true;

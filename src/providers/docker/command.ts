@@ -220,7 +220,7 @@ export function runSupervisedCommand(options: {
     let size = 0;
     let settled = false;
     let cancelling = false;
-    let response: { code: number; reason: string | null } | undefined;
+    let response: { code: number; reason: string | null; message?: string } | undefined;
     let drain: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => cancel(), transportGraceMs + timeoutMs + 1000);
     const cleanup = () => {
@@ -269,6 +269,14 @@ export function runSupervisedCommand(options: {
           ) {
             response = { code: frame.code, reason: frame.reason };
           } else if (
+            frame.type === 'exit' &&
+            frame.reason === 'refused' &&
+            typeof frame.message === 'string' &&
+            frame.message.length > 0 &&
+            frame.message.length <= 4000
+          ) {
+            response = { code: 1, reason: 'refused', message: frame.message };
+          } else if (
             ['stdout', 'stderr'].includes(frame.type) &&
             typeof frame.data === 'string' &&
             /^[A-Za-z0-9+/]*={0,2}$/.test(frame.data) &&
@@ -291,6 +299,7 @@ export function runSupervisedCommand(options: {
       if (code !== 0 || !response || incoming) return unavailable();
       settled = true;
       cleanup();
+      if (response.message) return reject(new WorkspaceCommandError(false, response.message));
       if (options.signal?.aborted || response.reason === 'cancelled')
         return reject(new WorkspaceCommandError(false, 'Task cancelled.'));
       if (cancelling || response.reason)
