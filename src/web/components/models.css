@@ -208,7 +208,7 @@
   white-space: nowrap;
 }
 .model-needs-reconnect {
-  color: var(--destructive);
+  color: var(--error);
 }
 .model-picker-dialog {
   width: min(540px, calc(100vw - 32px));
