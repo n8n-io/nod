@@ -19,7 +19,7 @@ Local UUID creation is atomic and the identity survives restarts. The desktop se
 
 Distinct-user metrics count installations or hosted accounts, not exact people. Multiple local installations count separately, and a shared installation counts as one. Anonymous visits are not merged with signed-in accounts. Server events share `distinctId` with the UI but carry no browser `$session_id`, so correlate them by owner and time rather than assuming they belong to one recording.
 
-For self-hosted use, `npm start` builds the app and starts its server in production mode with analytics enabled. `npm run dev` runs with automatic reload and collection disabled. Enabling collection in development alone does not put those events on the production dashboard.
+For self-hosted use, `npm start` builds the app and starts its server in production mode with analytics enabled by default. `npm run dev` runs with automatic reload and collection disabled by default. Enabling collection in development alone does not put those events on the production dashboard.
 
 Set `OTTO_ANALYTICS_ENABLED=false` to disable both recordings and server events. `true` enables collection explicitly, including development. `OTTO_ANALYTICS_ENVIRONMENT=development` or `production` optionally changes the event label without changing the enabled setting. Desktop labels follow whether the app is packaged. Restart local processes after changing their environment; hosted operators put these settings in `GATEWAY_ENV` and apply a release rollout. The gateway passes the controls to each tenant. No PostHog configuration or provider key enters the agent workspace.
 
