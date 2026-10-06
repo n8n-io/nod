@@ -217,6 +217,19 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
     timers.current.type = window.setTimeout(flushTyped, 250);
   }
 
+  function paste(event: React.ClipboardEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (!live.current || failedInput.current || finishing.current) return;
+    const text = event.clipboardData
+      .getData('text/plain')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n+$/, '');
+    if (!text) return;
+    flushTyped();
+    for (let start = 0; start < text.length; start += 200)
+      send({ type: 'type', text: text.slice(start, start + 200) });
+  }
+
   function flushScroll() {
     window.clearTimeout(timers.current.scroll);
     const deltaY = Math.max(-2000, Math.min(2000, Math.round(scrolled.current)));
@@ -298,6 +311,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
         aria-disabled={!interactive || Boolean(inputError) || returning}
         aria-label="Otto's browser. Click and type to use it."
         onKeyDown={key}
+        onPaste={paste}
       >
         {image ? (
           <img
