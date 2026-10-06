@@ -9,7 +9,7 @@ export function guestConfiguration({ assets, imageDigest, port, memory, cpus }) 
     disk: '24GiB',
     mountType: 'virtiofs',
     mounts: [{ location: assets, mountPoint: '/opt/otto-assets', writable: false }],
-    user: { name: 'otto', uid: 501, home: '/home/otto', shell: '/bin/bash' },
+    user: { name: 'otto', uid: 1000, home: '/home/otto', shell: '/bin/bash' },
     ssh: { loadDotSSHPubKeys: false, forwardAgent: false, forwardX11: false },
     containerd: { system: false, user: false },
     hostResolver: { enabled: true, ipv6: false },
