@@ -64,6 +64,43 @@ const sdkProperties = [
   '$snapshot_source',
 ];
 
+const triggerStatuses = ['trigger_activated', 'trigger_pending', 'trigger_disabled'];
+const replayProperties: Record<string, readonly unknown[]> = {
+  $recording_status: [
+    'disabled',
+    'sampled',
+    'active',
+    'buffering',
+    'paused',
+    'lazy_loading',
+    'awaiting_config',
+    'missing_config',
+    'rrweb_error',
+  ],
+  $sdk_debug_replay_url_trigger_status: triggerStatuses,
+  $sdk_debug_replay_event_trigger_status: triggerStatuses,
+  $sdk_debug_replay_linked_flag_trigger_status: triggerStatuses,
+  $sdk_debug_recording_script_not_loaded: [true, false],
+  $sdk_debug_replay_stale_config: [true, false],
+  $sdk_debug_replay_rrweb_error: [true, false],
+  $sdk_debug_rrweb_attached: [true, false],
+  $sdk_debug_rrweb_start_attempted: [true, false],
+  $sdk_debug_replay_flush_hold_reason: [
+    'no_interaction_since_recording_started',
+    'no_interaction_since_session_rotated',
+  ],
+  $session_recording_start_reason: [
+    'sampling_overridden',
+    'recording_initialized',
+    'linked_flag_matched',
+    'linked_flag_overridden',
+    'sampled',
+    'session_id_changed',
+    'url_trigger_matched',
+    'event_trigger_matched',
+  ],
+};
+
 function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event || !configuration?.enabled) return null;
   const allowed = eventProperties[event.event as keyof AnalyticsEvents];
@@ -75,6 +112,17 @@ function sanitizeEvent(event: CaptureResult | null): CaptureResult | null {
   );
   for (const [key, values] of Object.entries(allowed ?? {}))
     if (values.includes(event.properties[key])) properties[key] = event.properties[key];
+  for (const [key, values] of Object.entries(replayProperties))
+    if (values.includes(event.properties[key])) properties[key] = event.properties[key];
+  for (const key of [
+    '$sdk_debug_replay_internal_buffer_length',
+    '$sdk_debug_replay_internal_buffer_size',
+    '$sdk_debug_replay_flushed_size',
+  ]) {
+    const value: unknown = event.properties[key];
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+      properties[key] = value;
+  }
   const route = analyticsRoute(
     String(event.properties.route ?? lastPage ?? window.location.pathname),
   );

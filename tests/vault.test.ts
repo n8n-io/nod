@@ -3618,7 +3618,7 @@ globalThis.location = window.location;
 const requests=[];
 window.XMLHttpRequest = undefined;
 globalThis.XMLHttpRequest = undefined;
-window.fetch = globalThis.fetch = async (url, init={}) => { requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body}); return Response.json({sessionRecording:false,hasFeatureFlags:false,featureFlags:{},supportedCompression:[]}); };
+window.fetch = globalThis.fetch = async (url, init={}) => { requests.push({url:String(url),body:init.body instanceof ArrayBuffer ? (new Uint8Array(init.body)[0]===31 ? gunzipSync(Buffer.from(init.body)) : Buffer.from(init.body)).toString() : init.body && typeof init.body.text === 'function' ? await init.body.text() : init.body}); return Response.json(new URL(url).pathname.endsWith('/config') ? {sessionRecording:{sampleRate:null,minimumDurationMilliseconds:null,masking:{maskAllInputs:false},urlTriggers:[],eventTriggers:[],linkedFlag:null,urlBlocklist:[],scriptConfig:{script:'posthog-recorder'},version:1},hasFeatureFlags:false} : {status:1}); };
 const { recordingOptions } = await import('./src/web/lib/analytics-privacy.ts');
 const { createElement } = await import('react');
 const { renderToStaticMarkup } = await import('react-dom/server');
@@ -3665,6 +3665,28 @@ const { posthog: sdk } = await import('posthog-js/no-external');
 analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-a',deployment:'hosted',environment:'production'},'web');
 sdk.set_config({request_batching:false,disable_compression:true,api_transport:'fetch'});
 await new Promise(resolve => setTimeout(resolve,80));
+assert.equal(sdk.sessionRecordingStarted(), true);
+document.querySelector('#mutable').textContent = 'synthetic-private-recorded-mutation';
+document.querySelector('input').value = 'synthetic-private-recorded-input';
+document.querySelector('input').dispatchEvent(new window.Event('input', {bubbles:true}));
+for (let attempt = 0; attempt < 120 && !requests.some(request => new URL(request.url).pathname === '/s/'); attempt++) await new Promise(resolve => setTimeout(resolve,50));
+const recordings = requests.filter(request => new URL(request.url).pathname === '/s/').flatMap(request => JSON.parse(request.body));
+assert.ok(recordings.length > 0);
+assert.ok(recordings.every(event => event.event === '$snapshot' && event.properties.distinct_id === 'hosted:fixture-owner-a'));
+function decodeSnapshot(value) {
+  if (typeof value === 'string' && value.charCodeAt(0) === 31 && value.charCodeAt(1) === 139) return decodeSnapshot(JSON.parse(gunzipSync(Buffer.from(value,'latin1')).toString()));
+  if (Array.isArray(value)) return value.map(decodeSnapshot);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key,item]) => [key,decodeSnapshot(item)]));
+  return value;
+}
+const snapshots = recordings.flatMap(event => event.properties.$snapshot_data).map(decodeSnapshot);
+assert.ok(snapshots.some(event => event.type === 2));
+assert.ok(snapshots.some(event => event.type === 3));
+assert.equal(snapshots.find(event => event.type === 4).data.href, 'https://otto.invalid/credentials');
+assert.match(JSON.stringify(snapshots), /Settings/);
+assert.doesNotMatch(JSON.stringify(snapshots), /synthetic-private/);
+assert.equal(requests.filter(request => new URL(request.url).pathname.endsWith('/config')).length, 1);
+assert.ok(requests.every(request => !new URL(request.url).pathname.startsWith('/flags')));
 analytics.capturePageview('/credentials/synthetic-private-request?token=synthetic-private-query');
 analytics.capturePageview('/credentials/synthetic-private-other?token=synthetic-private-query');
 sdk.capture('otto_settings_viewed', {tab:'models', secret:'synthetic-private-event'}, {
@@ -3679,13 +3701,42 @@ analytics.configureAnalytics({enabled:true, distinctId:'hosted:fixture-owner-b',
 pendingActionCapture('otto_ui_error', {area:'chat',action:'send'});
 analytics.capturePageview('/');
 assert.notEqual(sdk.get_session_id(),firstSession);
+const sanitize = sdk.config.before_send;
+for (const value of ['synthetic-private-diagnostic', {message:'synthetic-private-error'}, -1, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+  const properties = sanitize({event:'$pageview',properties:{
+    $recording_status:value,
+    $sdk_debug_replay_url_trigger_status:value,
+    $sdk_debug_replay_event_trigger_status:value,
+    $sdk_debug_replay_linked_flag_trigger_status:value,
+    $sdk_debug_recording_script_not_loaded:value,
+    $sdk_debug_replay_stale_config:value,
+    $sdk_debug_replay_rrweb_error:value,
+    $sdk_debug_rrweb_attached:value,
+    $sdk_debug_rrweb_start_attempted:value,
+    $sdk_debug_replay_flush_hold_reason:value,
+    $session_recording_start_reason:value,
+    $sdk_debug_replay_internal_buffer_length:value,
+    $sdk_debug_replay_internal_buffer_size:value,
+    $sdk_debug_replay_flushed_size:value,
+    $sdk_debug_error_capturing_properties:value,
+  }}).properties;
+  assert.ok(Object.keys(properties).every(key => !key.startsWith('$sdk_debug') && key !== '$recording_status' && key !== '$session_recording_start_reason'));
+}
 analytics.configureAnalytics(undefined,'web');
 analytics.captureAnalytics('otto_ui_error', {area:'chat',action:'send'});
 await new Promise(resolve => setTimeout(resolve, 60));
-const captured = requests.filter(request => request.body).flatMap(request => JSON.parse(request.body).batch);
+const captured = requests.filter(request => request.body && new URL(request.url).pathname !== '/s/').flatMap(request => JSON.parse(request.body).batch);
 assert.deepEqual(captured.map(event => event.event), ['$pageview','otto_settings_viewed','otto_chat_stop_requested','$pageview']);
 assert.deepEqual(captured.map(event => event.properties.distinct_id), ['hosted:fixture-owner-a','hosted:fixture-owner-a','hosted:fixture-owner-a','hosted:fixture-owner-b']);
 assert.equal(captured[0].properties.route, '/credentials');
+assert.equal(captured[0].properties.$recording_status, 'active');
+assert.equal(captured[0].properties.$sdk_debug_replay_rrweb_error, false);
+assert.equal(captured[0].properties.$sdk_debug_rrweb_attached, true);
+assert.equal(captured[0].properties.$sdk_debug_replay_url_trigger_status, 'trigger_disabled');
+assert.equal(captured[0].properties.$sdk_debug_replay_event_trigger_status, 'trigger_disabled');
+assert.equal(captured[0].properties.$sdk_debug_replay_linked_flag_trigger_status, 'trigger_disabled');
+assert.ok(captured[0].properties.$sdk_debug_replay_internal_buffer_length >= 0);
+assert.ok(captured[0].properties.$sdk_debug_replay_flushed_size > 0);
 assert.equal(captured[1].properties.tab, 'models');
 assert.equal(captured[3].properties.route, '/');
 assert.notEqual(captured[0].properties.$session_id, captured[3].properties.$session_id);

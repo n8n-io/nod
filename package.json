@@ -16,7 +16,7 @@
     "build": "tsc --noEmit && vite build && node desktop/scripts/build-ui.mjs",
     "check": "tsc --noEmit && node scripts/check-architecture.mjs && node scripts/check-images.mjs && npm run format:check",
     "test": "tsx --test tests/*.test.ts",
-    "start": "tsx src/server/index.ts",
+    "start": "node scripts/start.mjs --production",
     "test:integration": "node scripts/test-integration.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

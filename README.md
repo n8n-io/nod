@@ -7,10 +7,12 @@ Otto is a personal assistant you use through one chat. Each owner has one persis
 Requirements: Node.js 24.21.0 or newer and Docker with Compose v2 (start Docker Desktop on Mac). From the repository root:
 
 ```sh
-npm run dev
+npm start
 ```
 
-The first run installs dependencies, creates `.env`, and starts PostgreSQL plus the workspace and browser containers. Open [http://localhost:4310](http://localhost:4310). Local mode serves one owner on `127.0.0.1` with no login.
+The first run installs dependencies, creates `.env`, and starts PostgreSQL plus the workspace and browser containers. Each start builds the web app and runs it in production mode. Open [http://localhost:4310](http://localhost:4310). Local mode serves one owner on `127.0.0.1` with no login.
+
+For development with automatic reload, use `npm run dev`. Development analytics and recordings are disabled by default.
 
 Configuration lives in the ignored `.env` (all local settings are listed in `.env.example`; shell variables take priority; restart after edits):
 
@@ -23,7 +25,7 @@ Configuration lives in the ignored `.env` (all local settings are listed in `.en
 
 Notion and Linear connect through their hosted MCP servers without extra keys. Telegram and WhatsApp are configured from the **Channels** page.
 
-Production web, hosted and packaged desktop builds include PostHog product analytics and masked recordings. Development collection is disabled by default. See [analytics and recording boundaries](docs/analytics.md) for the dashboard, event contract, controls and validation.
+`npm start`, production hosted deployments and packaged desktop apps include PostHog product analytics and masked recordings. Set `OTTO_ANALYTICS_ENABLED=false` in `.env` to disable local collection, then restart. See [analytics and recording boundaries](docs/analytics.md) for the dashboard, event contract, controls and validation.
 
 ### Composio key permissions
 

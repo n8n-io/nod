@@ -10,7 +10,7 @@ On 2026-10-05, permanent deletion was submitted for all 134 legacy profiles with
 
 | Runtime               | Identity                                                                                            | Default collection                                                              |
 | --------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Local web             | `local:<installation UUID>` stored in `<OTTO_DATA_ROOT>/analytics-id`                               | Enabled with `NODE_ENV=production`; disabled during development                 |
+| Local web             | `local:<installation UUID>` stored in `<OTTO_DATA_ROOT>/analytics-id`                               | Enabled with `npm start`; disabled with `npm run dev`                           |
 | Desktop               | `local:<installation UUID>` stored in the desktop profile's `analytics-id` and passed to its server | Enabled for packaged apps; disabled for unpackaged development                  |
 | Hosted                | `hosted:<authenticated owner UUID>` derived by the gateway and tenant server                        | Enabled for `OTTO_ENVIRONMENT=production`; disabled for development and staging |
 | Hosted before sign-in | Temporary browser identity held in memory                                                           | Follows hosted collection settings                                              |
@@ -19,11 +19,15 @@ Local UUID creation is atomic and the identity survives restarts. The desktop se
 
 Distinct-user metrics count installations or hosted accounts, not exact people. Multiple local installations count separately, and a shared installation counts as one. Anonymous visits are not merged with signed-in accounts. Server events share `distinctId` with the UI but carry no browser `$session_id`, so correlate them by owner and time rather than assuming they belong to one recording.
 
+For self-hosted use, `npm start` builds the app and starts its server in production mode with analytics enabled. `npm run dev` runs with automatic reload and collection disabled. Enabling collection in development alone does not put those events on the production dashboard.
+
 Set `OTTO_ANALYTICS_ENABLED=false` to disable both recordings and server events. `true` enables collection explicitly, including development. `OTTO_ANALYTICS_ENVIRONMENT=development` or `production` optionally changes the event label without changing the enabled setting. Desktop labels follow whether the app is packaged. Restart local processes after changing their environment; hosted operators put these settings in `GATEWAY_ENV` and apply a release rollout. The gateway passes the controls to each tenant. No PostHog configuration or provider key enters the agent workspace.
 
 ## Event contract
 
 Every event includes `analytics_schema`, `deployment` (`local` or `hosted`) and `environment`. UI events and recordings also include `surface` (`web` or `desktop`) and a normalized `route`. Server events include `capture_source=server`. Application event properties are finite enums or booleans, apart from the numeric turn duration. Arbitrary properties and event names are rejected.
+
+UI events retain the SDK's recording status, trigger states, boolean recorder diagnostics and buffer/upload sizes so PostHog can show recording links and explain missing capture. These fields accept only known states, booleans or nonnegative safe integers; arbitrary diagnostic strings and objects are rejected. Recordings use the masked hostname `otto.invalid`, so filter by `deployment` and `surface` rather than an installation's hostname.
 
 | Event                            | When recorded                                            | Additional properties                                                                                                                   |
 | -------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,7 +68,7 @@ npm run test:integration
 npm run build
 ```
 
-The existing account, thread and Vault tests exercise owner separation, rejected identity overrides, opaque installation IDs, private-property rejection, durable turn outcomes, real recorder masking, account switching, disabling collection and telemetry failure isolation. They use disposable data and injected or intercepted analytics transports, with no live model or PostHog calls. Cloudflare tests additionally verify that startup preserves opt-out and keeps staging traffic separate despite production Node mode; run the [deployment checks and dry runs](../deployment/cloudflare/README.md#checks) for those changes.
+The existing account, thread and Vault tests exercise owner separation, rejected identity overrides, opaque installation IDs, private-property rejection, durable turn outcomes, real SDK configuration and snapshot uploads, replay diagnostics, recorder masking, account switching, disabling collection and telemetry failure isolation. They use disposable data and injected or intercepted analytics transports, with no live model or PostHog calls. Cloudflare tests additionally verify that startup preserves opt-out and keeps staging traffic separate despite production Node mode; run the [deployment checks and dry runs](../deployment/cloudflare/README.md#checks) for those changes.
 
 After building the desktop UI with the [desktop build](../desktop/README.md), exercise the real Electron renderer and recorder:
 

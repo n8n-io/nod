@@ -212,6 +212,9 @@ await new Promise((accept) => setTimeout(accept, 0));
             event.properties.environment === 'development',
         ),
       );
+      assert.ok(
+        events.some((event) => ['active', 'sampled'].includes(event.properties.$recording_status)),
+      );
       const recordings = calls
         .filter(({ path }) => path === '/s/')
         .flatMap(({ payload }) => payload)
