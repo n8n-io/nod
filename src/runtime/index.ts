@@ -38,6 +38,7 @@ const parallelTools = new Set([
   'manage_personal_context',
 ]);
 const mixedTools = new Set(['apps', 'manage_personal_context']);
+const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'get_credential']);
 const trustedResultTools = new Set([
   'skills',
   'send_message',
@@ -181,7 +182,8 @@ export function createAgentRuntime(dependencies: {
   redactError?(text: string): string;
 }) {
   const { agent, computer } = dependencies;
-  const activeThreads = new Map<string, { abort(): void; done: Promise<void> }>();
+  const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
+  const browserQueues = new Map<string, Promise<void>>();
   let disposed = false;
   let disposal: Promise<void> | undefined;
   const completedDisposals = new Set<string>();
@@ -189,8 +191,7 @@ export function createAgentRuntime(dependencies: {
   async function runTurn(input: RuntimeContext): Promise<RuntimeResult> {
     if (disposed) throw new Error('The runtime has stopped.');
     threadIdentity(input.threadId);
-    if (activeThreads.has(input.threadId))
-      throw new Error('This thread already has an active turn.');
+    if (activeTurns.has(input.turnId)) throw new Error('This turn is already active.');
     const limits = input.limits;
     if (
       limits &&
@@ -208,6 +209,17 @@ export function createAgentRuntime(dependencies: {
     const done = new Promise<void>((resolve) => {
       finished = resolve;
     });
+    let browserReady: Promise<void> | undefined;
+    const takeBrowser = () =>
+      (browserReady ??= new Promise<void>((resolve, reject) => {
+        const previous = browserQueues.get(threadId) ?? Promise.resolve();
+        browserQueues.set(
+          threadId,
+          previous.then(() => done),
+        );
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        void previous.then(resolve);
+      }));
     let session: AgentSession | undefined;
     let status: RuntimeResult['status'] = 'succeeded';
     let waitingFor: RuntimeResult['waitingFor'];
@@ -245,7 +257,7 @@ export function createAgentRuntime(dependencies: {
       lifecycle.abort();
       abortSession();
     };
-    activeThreads.set(threadId, { abort, done });
+    activeTurns.set(context.turnId, { abort, done });
     signal.addEventListener('abort', abort, { once: true });
     const deadline = limits
       ? setTimeout(
@@ -563,14 +575,16 @@ export function createAgentRuntime(dependencies: {
         description,
         parameters,
         parallel: parallelTools.has(name),
-        execute: (params) =>
-          inTurn(name, params, () =>
+        execute: async (params) => {
+          if (browserTools.has(name)) await takeBrowser();
+          return inTurn(name, params, () =>
             guard(name, params, async () => {
               if (!Value.Check(parameters, params))
                 throw new Error('The tool arguments do not match its schema.');
               return execute(params);
             }),
-          ),
+          );
+        },
       }));
       const system = systemPrompt(workspace, dependencies.skills);
       const inspectedSystem = `${system}\n\n${systemContext({ ...context, memory: '' })}`;
@@ -605,6 +619,7 @@ export function createAgentRuntime(dependencies: {
         tools,
         workspace,
         timeZone: context.timeZone,
+        background: Boolean(context.background),
         runTool: guard,
         shouldStop: () => stopped || checkRecorded,
         nextMessages:
@@ -731,7 +746,7 @@ export function createAgentRuntime(dependencies: {
         clearTimeout(deadline);
         await Promise.allSettled([...activeToolCalls]);
         await observations.flush();
-        activeThreads.delete(threadId);
+        activeTurns.delete(context.turnId);
         finished();
       }
     }
@@ -739,7 +754,6 @@ export function createAgentRuntime(dependencies: {
 
   return {
     runTurn,
-    waitForThread: (threadId: string) => activeThreads.get(threadId)?.done ?? Promise.resolve(),
     inspectTools: () => [
       ...(agent.nativeTools ?? []).map((tool) => structuredClone(tool)),
       ...inspectToolCatalog(),
@@ -747,12 +761,12 @@ export function createAgentRuntime(dependencies: {
     status: () => ({
       browser: computer.status(),
       workspace: dependencies.workspace.status(),
-      activeThreads: activeThreads.size,
+      activeTurns: activeTurns.size,
     }),
     dispose: () => {
       disposed = true;
       disposal ??= (async () => {
-        const pending = [...activeThreads.values()];
+        const pending = [...activeTurns.values()];
         for (const task of pending) task.abort();
         let failed = false;
         for (const [name, close] of [

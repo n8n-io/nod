@@ -36,7 +36,8 @@ export const boss = new PgBoss({
   createSchema: runtimeMode !== 'tenant',
   max: runtimeMode === 'tenant' ? 2 : 10,
 });
-const running = new Map<string, { turnId: string; controller: AbortController }>();
+const running = new Map<string, AbortController>();
+const inflight = new Set<Promise<void>>();
 const heldBrowsers = new Set<string>();
 
 async function holdBrowser(
@@ -163,16 +164,14 @@ export function activeThreadSql(alias = 'm') {
 
 export async function activeThread(database: Pool | PoolClient = pool, owner = ownerId) {
   const select = () =>
-    database.query('SELECT id,status FROM threads WHERE owner_id=$1 AND archived_at IS NULL', [
-      owner,
-    ]);
+    database.query('SELECT id FROM threads WHERE owner_id=$1 AND archived_at IS NULL', [owner]);
   const found = await select();
-  if (found.rows[0]) return found.rows[0] as { id: string; status: string };
+  if (found.rows[0]) return found.rows[0] as { id: string };
   await database.query(
     'INSERT INTO threads(id,owner_id) VALUES($1,$2) ON CONFLICT (owner_id) WHERE archived_at IS NULL DO NOTHING',
     [randomUUID(), owner],
   );
-  return (await select()).rows[0] as { id: string; status: string };
+  return (await select()).rows[0] as { id: string };
 }
 
 export async function lockThread(client: PoolClient, owner = ownerId) {
@@ -414,7 +413,7 @@ export async function submitUserMessage(
         "UPDATE approvals SET confirmation_reply_id=$1 WHERE id=$2 AND owner_id=$3 AND thread_id=$4 AND status='expired'",
         [messageId, supersededApprovalId, ownerId, thread.id],
       );
-    if (thread.status !== 'running') await sendDrain(client, thread.id);
+    await sendDrain(client, thread.id);
     return { threadId: thread.id, turnId, messageId };
   };
   let result: SubmitUserMessageResult;
@@ -439,7 +438,7 @@ async function cancelQueued(client: PoolClient, threadId: string) {
 }
 
 function abortTurns(ids: string[]) {
-  for (const entry of running.values()) if (ids.includes(entry.turnId)) entry.controller.abort();
+  for (const id of ids) running.get(id)?.abort();
 }
 
 export async function stopThread() {
@@ -456,10 +455,9 @@ export async function resetThread(expectedThreadId: string) {
     if (thread.id !== expectedThreadId)
       throw httpError('This conversation has changed. Reload it before clearing messages.');
     const cancelled = await cancelQueued(client, thread.id);
-    await client.query(
-      "UPDATE threads SET archived_at=now(),status='idle',updated_at=now() WHERE id=$1",
-      [thread.id],
-    );
+    await client.query('UPDATE threads SET archived_at=now(),updated_at=now() WHERE id=$1', [
+      thread.id,
+    ]);
     return { cancelled, previousThreadId: thread.id, threadId: (await activeThread(client)).id };
   });
   abortTurns(result.cancelled);
@@ -561,14 +559,14 @@ async function resumeTurn(turnId: string, sourceId: string, prompt: string, pend
     await lockThread(client);
     const turn = (
       await client.query(
-        `SELECT u.channel,u.status,u.background,th.archived_at IS NULL AS active FROM turns u JOIN threads th ON th.id=u.thread_id
+        `SELECT u.channel,u.status,u.background,u.prompt,th.archived_at IS NULL AS active FROM turns u JOIN threads th ON th.id=u.thread_id
          WHERE u.id=$1 AND u.owner_id=$2`,
         [turnId, ownerId],
       )
     ).rows[0];
     if (pendingOnly && (!turn?.active || !['running', 'waiting'].includes(turn.status)))
       return false;
-    await enqueueTurn(prompt, {
+    await enqueueTurn(turn?.background ? `${prompt}\nThe request was: ${turn.prompt}` : prompt, {
       source: 'resume',
       sourceId,
       channel: turn?.channel ?? 'web',
@@ -681,22 +679,11 @@ async function interruptTurn(turnId: string) {
 }
 
 export async function startThreadWorkers(dependencies: ThreadDependencies) {
-  await pool.query(
-    "UPDATE turns u SET status='cancelled',finished_at=now(),error='Browser control ended during upgrade.' FROM threads th WHERE u.thread_id=th.id AND u.owner_id=th.owner_id AND u.owner_id=$1 AND u.status='queued' AND u.source_id LIKE 'control:%' AND th.status='manual_control'",
-    [ownerId],
-  );
-  await pool.query(
-    "UPDATE threads SET status='idle' WHERE owner_id=$1 AND status='manual_control'",
-    [ownerId],
-  );
   const interrupted = await pool.query(
     "SELECT id FROM turns WHERE owner_id=$1 AND status='running'",
     [ownerId],
   );
   for (const turn of interrupted.rows) await interruptTurn(turn.id);
-  await pool.query("UPDATE threads SET status='idle' WHERE owner_id=$1 AND status='running'", [
-    ownerId,
-  ]);
   await sendDrain(undefined, (await activeThread()).id);
   const start = () =>
     boss.work<{ threadId: string }>(
@@ -710,28 +697,33 @@ export async function startThreadWorkers(dependencies: ThreadDependencies) {
   if (dependencies.consumers)
     await dependencies.consumers.register({
       start,
-      stop: (id) => boss.offWork(queue, { id, wait: true }),
+      stop: async (id) => {
+        await boss.offWork(queue, { id, wait: true });
+        await Promise.allSettled([...inflight]);
+      },
     });
   else await start();
 }
 
-async function claimNextTurn(threadId: string) {
+async function claimTurns(threadId: string) {
   return transaction(async (client) => {
-    const thread = await lockThread(client);
-    if (thread.id !== threadId || thread.status !== 'idle') return undefined;
-    const next = (
-      await client.query(
-        `SELECT * FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='queued'
-         ORDER BY created_at,id LIMIT 1 FOR UPDATE`,
-        [threadId, ownerId],
-      )
-    ).rows[0];
-    if (!next) return undefined;
-    await client.query("UPDATE turns SET status='running',started_at=now() WHERE id=$1", [next.id]);
-    await client.query("UPDATE threads SET status='running',updated_at=now() WHERE id=$1", [
-      threadId,
-    ]);
-    return next;
+    if ((await lockThread(client)).id !== threadId) return [];
+    const talking = await client.query(
+      "SELECT 1 FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='running' AND NOT background",
+      [threadId, ownerId],
+    );
+    const { rows } = await client.query(
+      `SELECT * FROM turns WHERE thread_id=$1 AND owner_id=$2 AND status='queued'
+       ORDER BY created_at,id FOR UPDATE`,
+      [threadId, ownerId],
+    );
+    const next = talking.rowCount ? undefined : rows.find((row) => !row.background);
+    const claimed = rows.filter((row) => row.background || row === next);
+    await client.query(
+      "UPDATE turns SET status='running',started_at=now() WHERE id=ANY($1::uuid[])",
+      [claimed.map((row) => row.id)],
+    );
+    return claimed;
   });
 }
 
@@ -741,9 +733,9 @@ async function takeQueuedMessages(turnId: string, channel: string) {
     const { rows } = await client.query(
       `SELECT u.id,u.status,u.source,u.channel,u.message_id,u.prompt,m.attachments,m.reply_to_message_id
        FROM turns u LEFT JOIN messages m ON m.id=u.message_id AND m.owner_id=u.owner_id
-       WHERE u.thread_id=$1 AND u.owner_id=$2 AND u.status IN ('running','queued')
+       WHERE u.thread_id=$1 AND u.owner_id=$2 AND (u.status='queued' OR u.id=$3)
        ORDER BY u.created_at,u.id FOR UPDATE OF u`,
-      [thread.id, ownerId],
+      [thread.id, ownerId, turnId],
     );
     if (!rows.some((row) => row.id === turnId && row.status === 'running')) throw turnStopped();
     const queued = rows.filter((row) => row.status === 'queued');
@@ -771,33 +763,15 @@ async function takeQueuedMessages(turnId: string, channel: string) {
 }
 
 async function drainThread(threadId: string, dependencies: ThreadDependencies) {
-  if (stopping || running.has(threadId)) return;
-  const turn = await claimNextTurn(threadId);
-  if (!turn) return;
-  try {
-    await executeTurn(turn, dependencies);
-  } finally {
-    await releaseThread(threadId);
-    refresh();
+  if (stopping) return;
+  for (const turn of await claimTurns(threadId)) {
+    const work = executeTurn(turn, dependencies)
+      .then(() => (turn.background ? undefined : sendDrain(undefined, threadId)))
+      .catch(() => console.error(`Turn ${turn.id} ended without queueing the next turn.`))
+      .finally(refresh);
+    inflight.add(work);
+    void work.finally(() => inflight.delete(work));
   }
-}
-
-async function releaseThread(threadId: string) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await transaction(async (client) => {
-        await lockThread(client);
-        await client.query(
-          "UPDATE threads SET status='idle',updated_at=now() WHERE id=$1 AND status='running'",
-          [threadId],
-        );
-        await sendDrain(client, threadId);
-      });
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
-    }
-  }
-  console.error('The thread could not be released after its turn. It resets on the next start.');
 }
 
 type StoredAttachment = { id?: string; name?: string; mimeType?: string };
@@ -816,11 +790,15 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           )
         : undefined,
       pool.query(
-        `SELECT role,text,created_at AS "createdAt",reaction,attachments FROM (
-       SELECT m.role,left(m.text,6000) AS text,m.created_at,m.id,m.reaction,m.attachments FROM messages m
+        `WITH seen AS (SELECT max(started_at) AS at FROM turns
+         WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4)
+       SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
+       SELECT m.role,left(m.text,6000) AS text,m.created_at,m.id,m.reaction,m.attachments,
+       COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
+       FROM messages m CROSS JOIN seen LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id IS DISTINCT FROM $3::uuid
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
-        [ownerId, threadId, sourceMessageId],
+        [ownerId, threadId, sourceMessageId, turn.id],
       ),
       pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
       pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [
@@ -890,7 +868,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   const artifacts = dependencies.artifacts ?? localArtifacts;
   const controller = new AbortController();
   const { signal } = controller;
-  running.set(threadId, { turnId, controller });
+  running.set(turnId, controller);
   if (stopping) controller.abort();
   const current = async <T>(operation: (client: PoolClient) => Promise<T>) => {
     if (signal.aborted) throw turnStopped();
@@ -1185,12 +1163,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     void Promise.resolve()
       .then(() => dependencies.finishObservationSegment?.(turnId))
       .catch(() => {});
-    if (running.get(threadId)?.controller === controller) running.delete(threadId);
+    running.delete(turnId);
   }
 }
 
 export async function stopThreadWorkers() {
   stopping = true;
-  for (const entry of running.values()) entry.controller.abort();
+  for (const controller of running.values()) controller.abort();
   await boss.stop({ graceful: true, timeout: 5000 });
+  await Promise.race([
+    Promise.allSettled([...inflight]),
+    new Promise((resolve) => setTimeout(resolve, 5000).unref()),
+  ]);
 }

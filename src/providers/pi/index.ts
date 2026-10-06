@@ -192,14 +192,19 @@ export function createPiAgent(options: {
               },
             }
           : selectedModel;
-      const durable = options.objectStore
-        ? await createPiCheckpoint({
-            store: options.objectStore,
-            threadId: input.threadId,
-            directory,
-          })
-        : undefined;
-      let manager = durable?.manager ?? SessionManager.continueRecent(directory, directory);
+      const durable =
+        options.objectStore && !input.background
+          ? await createPiCheckpoint({
+              store: options.objectStore,
+              threadId: input.threadId,
+              directory,
+            })
+          : undefined;
+      let manager =
+        durable?.manager ??
+        (input.background
+          ? SessionManager.inMemory(directory)
+          : SessionManager.continueRecent(directory, directory));
       const file = durable ? undefined : manager.getSessionFile();
       if (file && existsSync(file) && statSync(file).size > rebaseAt)
         manager = rebaseSession(manager, SessionManager.create(directory, directory));

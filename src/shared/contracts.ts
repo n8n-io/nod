@@ -1,5 +1,4 @@
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'waiting' | 'failed' | 'cancelled';
-export type ThreadStatus = 'idle' | 'running';
 export interface Artifact {
   id: string;
   name: string;
@@ -134,7 +133,6 @@ export interface Configuration {
 }
 export interface AppState {
   threadId: string;
-  threadStatus: ThreadStatus;
   hasEarlierMessages?: boolean;
   verificationRequests?: VerificationRequest[];
   messages: Message[];

@@ -82,15 +82,15 @@ export function firstInstruction(
   resumed: boolean,
   omittedImages: Set<string>,
 ) {
-  const recentConversation = resumed
-    ? []
-    : context.history.map(({ role, text, createdAt, reaction, attachments }) => ({
-        role,
-        text,
-        ...(createdAt ? { createdAt: new Date(createdAt).toISOString() } : {}),
-        ...(reaction ? { reaction } : {}),
-        ...(attachments?.length ? { attachments } : {}),
-      }));
+  const recentConversation = (
+    resumed ? context.history.filter((item) => item.unseen) : context.history
+  ).map(({ role, text, createdAt, reaction, attachments }) => ({
+    role,
+    text,
+    ...(createdAt ? { createdAt: new Date(createdAt).toISOString() } : {}),
+    ...(reaction ? { reaction } : {}),
+    ...(attachments?.length ? { attachments } : {}),
+  }));
   const workspaceAttachments = context.attachments.map((item) => ({
     name: basename(item.path).slice(0, 200),
     mimeType: item.mimeType.slice(0, 100),
@@ -129,5 +129,5 @@ export function firstInstruction(
 }
 
 export function steeredInstruction(message: { id: string; text: string }) {
-  return `The user sent currentInstruction while you were working. It may add to, change or replace the request in progress; continue accordingly.\nRequest data (JSON):\n${JSON.stringify({ messageId: message.id, currentInstruction: message.text })}\n\n${replyStyle}`;
+  return `The user sent currentInstruction while you were working. It may add to, change or replace the request in progress, or be a separate request. Answer a separate request now, then continue the work in progress.\nRequest data (JSON):\n${JSON.stringify({ messageId: message.id, currentInstruction: message.text })}\n\n${replyStyle}`;
 }

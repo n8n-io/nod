@@ -32,7 +32,6 @@ export function useAppState(accountId?: string) {
         ? {
             ...current,
             threadId: next,
-            threadStatus: 'idle',
             messages: [],
             turns: [],
           }

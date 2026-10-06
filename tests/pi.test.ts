@@ -1630,6 +1630,61 @@ function context(directory: string): RuntimeContext {
   };
 }
 
+test('concurrent turns on one thread take the browser one turn at a time', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-turns-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const order: string[] = [];
+  let entered!: () => void;
+  const holding = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async (input) => ({
+        resumed: false,
+        abort() {},
+        dispose() {},
+        prompt: async () => {
+          order.push(`${input.turnId} started`);
+          await input.tools
+            .find((tool) => tool.name === 'browser')!
+            .execute({ action: 'snapshot' });
+          order.push(`${input.turnId} browser`);
+          if (input.turnId === 'conversation') {
+            entered();
+            await held;
+          }
+        },
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    const conversation = runtime.runTurn({ ...context(directory), turnId: 'conversation' });
+    await holding;
+    const schedule = runtime.runTurn({
+      ...context(directory),
+      turnId: 'schedule',
+      background: true,
+    });
+    await setTimeout(100);
+    assert.deepEqual(order, ['conversation started', 'conversation browser', 'schedule started']);
+    assert.equal(runtime.status().activeTurns, 2);
+    release();
+    await Promise.all([conversation, schedule]);
+    assert.deepEqual(order.slice(3), ['schedule browser']);
+  } finally {
+    release();
+    await runtime.dispose();
+  }
+});
+
 test('stalled observations release active tasks on cancellation and disposal', async (t) => {
   for (const method of ['cancel', 'dispose'] as const) {
     await t.test(method, async () => {
@@ -1689,7 +1744,7 @@ test('stalled observations release active tasks on cancellation and disposal', a
         ]);
         assert.ok(completed, 'A stalled optional observer blocked cancellation');
         assert.match(String(completed[0]), /cancelled/);
-        assert.equal(runtime.status().activeThreads, 0);
+        assert.equal(runtime.status().activeTurns, 0);
         assert.equal(executed, false);
         rejectObservation(new Error('Late private observer failure'));
         await setTimeout(0);
@@ -1751,12 +1806,12 @@ test('runtime shutdown drains tasks and releases every capability after adapter 
   });
   const running = assert.rejects(runtime.runTurn(context(directory)), /abort/i);
   await started;
-  await assert.rejects(runtime.runTurn(context(directory)), /active turn/);
+  await assert.rejects(runtime.runTurn(context(directory)), /already active/);
   const disposal = runtime.dispose();
   assert.equal(runtime.dispose(), disposal);
   await assert.rejects(disposal, /Some runtime resources could not close/);
   await running;
-  assert.equal(runtime.status().activeThreads, 0);
+  assert.equal(runtime.status().activeTurns, 0);
   assert.equal(events.filter((value) => value === 'computer').length, 1);
   assert.equal(events.filter((value) => value === 'workspace').length, 1);
   assert.ok(events.indexOf('session') < events.indexOf('computer'));
@@ -1817,7 +1872,7 @@ test('turn tool limits fence custom and native execution through the same budget
     assert.equal(appCalls, 1);
     assert.equal(nativeCalls, 1);
     assert.equal(aborts, 1);
-    assert.equal(runtime.status().activeThreads, 0);
+    assert.equal(runtime.status().activeTurns, 0);
   } finally {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -1873,11 +1928,10 @@ test('turn deadlines release stalled model, provider, native and disposal operat
         });
         if (stalledAt === 'dispose') await running;
         else await assert.rejects(running, /time limit/);
-        assert.equal(runtime.status().activeThreads, 0);
+        assert.equal(runtime.status().activeTurns, 0);
         assert.equal(workspaceSignal?.aborted, true);
         if (stalledAt !== 'dispose') assert.equal(aborted, true);
         if (stalledAt === 'provider') assert.equal(providerSignal?.aborted, true);
-        await runtime.waitForThread('fixture');
       } finally {
         await runtime.dispose();
         await rm(directory, { recursive: true, force: true });
@@ -1926,7 +1980,7 @@ test('a delayed instrumentation callback cannot begin a tool after its turn dead
     assert.ok(delayed);
     assert.throws(delayed, /time limit/);
     assert.equal(providerCalls, 0);
-    assert.equal(runtime.status().activeThreads, 0);
+    assert.equal(runtime.status().activeTurns, 0);
   } finally {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });
@@ -1950,7 +2004,7 @@ test('a session that opens after its deadline is aborted and disposed without re
       runtime.runTurn({ ...context(directory), limits: { maxToolCalls: 8, timeoutMs: 30 } }),
       /time limit/,
     );
-    assert.equal(runtime.status().activeThreads, 0);
+    assert.equal(runtime.status().activeTurns, 0);
     finishOpening({
       resumed: false,
       prompt: async () => {
@@ -2019,7 +2073,7 @@ test(
         signals.some((signal) => signal.aborted),
         false,
       );
-      assert.equal(runtime.status().activeThreads, 0);
+      assert.equal(runtime.status().activeTurns, 0);
     } finally {
       await runtime.dispose();
       await rm(directory, { recursive: true, force: true });
@@ -2830,7 +2884,7 @@ test('old screenshots leave the model request in steps while the saved session k
   }
 });
 
-test('a model change keeps the Pi transcript and applies only when the next turn opens', async () => {
+test('the Pi transcript keeps model changes for the next turn and leaves background turns out', async () => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const backend = createPiModelBackend({
     fetch: async () => {
@@ -2878,13 +2932,14 @@ test('a model change keeps the Pi transcript and applies only when the next turn
     },
   });
   const threadId = randomUUID();
-  const open = () =>
+  const open = (background = false) =>
     agent.open({
       threadId,
       turnId: randomUUID(),
       systemPrompt: 'Fixture system',
       ...sandbox,
       tools: [],
+      background,
       shouldStop: () => false,
       onEvent() {},
     });
@@ -2898,6 +2953,10 @@ test('a model change keeps the Pi transcript and applies only when the next turn
       read: async () => ({ type: 'api_key', key: 'fixture-anthropic-key' }),
     };
     await first.prompt('Remember the synthetic blue label.', []);
+    const background = await open(true);
+    assert.equal(background.resumed, false);
+    await background.prompt('Run the synthetic schedule.', []);
+    await background.dispose();
     await first.dispose();
     const next = await open();
     assert.equal(next.resumed, true);
@@ -2905,12 +2964,14 @@ test('a model change keeps the Pi transcript and applies only when the next turn
     await next.dispose();
     assert.equal(requests[0].provider, 'openai');
     assert.equal(requests[0].effort, 'high');
-    assert.equal(requests[1].provider, 'anthropic');
-    assert.equal(requests[1].effort, 'medium');
-    assert.ok(requests[1].history.includes('Remember the synthetic blue label.'));
-    assert.ok(requests[1].history.includes('Synthetic answer'));
-    assert.ok(!requests[1].history.includes('fixture-openai-key'));
-    assert.ok(!requests[1].history.includes('fixture-anthropic-key'));
+    assert.ok(!requests[1].history.includes('Remember the synthetic blue label.'));
+    assert.equal(requests[2].provider, 'anthropic');
+    assert.equal(requests[2].effort, 'medium');
+    assert.ok(requests[2].history.includes('Remember the synthetic blue label.'));
+    assert.ok(requests[2].history.includes('Synthetic answer'));
+    assert.ok(!requests[2].history.includes('Run the synthetic schedule.'));
+    assert.ok(!requests[2].history.includes('fixture-openai-key'));
+    assert.ok(!requests[2].history.includes('fixture-anthropic-key'));
   } finally {
     await agent.dispose();
     await rm(directory, { recursive: true, force: true });

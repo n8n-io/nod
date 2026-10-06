@@ -467,6 +467,12 @@ test(
     const settled = (turnId: string) => async () =>
       ['succeeded', 'waiting', 'failed', 'cancelled'].includes((await turnStatus(turnId)) ?? '');
     const ran = (turnId: string) => runs.find((context) => context.turnId === turnId);
+    const settledThread = async () =>
+      !(
+        await db.pool.query(
+          "SELECT 1 FROM turns u JOIN threads th ON th.id=u.thread_id AND th.archived_at IS NULL WHERE u.status='running'",
+        )
+      ).rowCount;
     const drainJobs = async (threadId: string) =>
       (
         await db.pool.query(`SELECT id FROM ${bossSchema}.job WHERE data->>'threadId'=$1`, [
@@ -645,27 +651,20 @@ test(
           ]);
           const foreground = randomUUID();
           const background = randomUUID();
-          const legacyControl = randomUUID();
           await db.pool.query(
             "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background,started_at) VALUES($1,'local-development',$3,'user','Do not repeat','running',false,now()),($2,'local-development',$3,'schedule','Do not repeat quietly','running',true,now())",
             [foreground, background, threadId],
           );
-          await db.pool.query(
-            "INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,status,background) VALUES($1,'local-development',$2,'resume',$3,'Old browser control','queued',false)",
-            [legacyControl, threadId, `control:${foreground}`],
-          );
-          await db.pool.query("UPDATE threads SET status='manual_control' WHERE id=$1", [threadId]);
           await thread.startThreadWorkers(dependencies);
           await waitFor(async () => (await turnStatus(missingJob)) === 'succeeded');
-          assert.equal(await turnStatus(legacyControl), 'cancelled');
-          assert.equal(
-            (
-              await db.pool.query(
-                "SELECT id FROM turns WHERE thread_id=$1 AND status IN ('queued','running')",
-                [threadId],
-              )
-            ).rowCount,
-            0,
+          await waitFor(
+            async () =>
+              (
+                await db.pool.query(
+                  "SELECT id FROM turns WHERE thread_id=$1 AND status IN ('queued','running')",
+                  [threadId],
+                )
+              ).rowCount === 0,
           );
           for (const id of [foreground, background]) {
             assert.equal(await turnStatus(id), 'failed');
@@ -685,8 +684,8 @@ test(
           assert.equal(
             (
               await db.pool.query(
-                "SELECT id FROM turns WHERE thread_id=$1 AND source='resume' AND id<>$3 AND created_at > (SELECT created_at FROM turns WHERE id=$2)",
-                [threadId, foreground, legacyControl],
+                "SELECT id FROM turns WHERE thread_id=$1 AND source='resume' AND created_at > (SELECT created_at FROM turns WHERE id=$2)",
+                [threadId, foreground],
               )
             ).rowCount,
             0,
@@ -751,7 +750,7 @@ test(
         const turn = await thread.submitUserMessage('after a drain backlog');
         await waitFor(settled(turn.turnId), 5_000);
         assert.equal(await turnStatus(turn.turnId), 'succeeded');
-        await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+        await waitFor(settledThread);
       });
 
       await t.test('turns retain owned manual and automatic region preferences', async () => {
@@ -805,7 +804,6 @@ test(
             block('steer-first');
             const first = await thread.submitUserMessage('steer-first', [], { channel: 'web' });
             await waitFor(() => Boolean(ran(first.turnId)));
-            const jobs = await drainJobs(first.threadId);
             const second = await thread.submitUserMessage('joined second', [], { channel: 'web' });
             const third = await thread.submitUserMessage('joined third', [], { channel: 'web' });
             const artifact = await storeArtifact(
@@ -817,7 +815,6 @@ test(
               channel: 'web',
             });
             const fifth = await thread.submitUserMessage('queued fifth', [], { channel: 'web' });
-            assert.equal(await drainJobs(first.threadId), jobs);
             release('steer-first');
             await waitFor(settled(fifth.turnId));
             assert.deepEqual(taken.get(first.turnId), [
@@ -861,6 +858,44 @@ test(
           } finally {
             dependencies.manage = manage;
           }
+        },
+      );
+
+      await t.test(
+        'schedules run on time beside a long conversation turn that still takes new messages',
+        async (t) => {
+          t.mock.method(dependencies, 'manage', async () => ({}));
+          block('steer-long');
+          const long = await thread.submitUserMessage('steer-long', [], { channel: 'web' });
+          await waitFor(() => Boolean(ran(long.turnId)));
+          const jumps = [];
+          for (const minute of [1, 2])
+            jumps.push(
+              await thread.enqueueTurn('jump fixture', {
+                source: 'schedule',
+                sourceId: `schedule:jump:${long.turnId}:${minute}`,
+              }),
+            );
+          const question = await thread.submitUserMessage('weather fixture', [], {
+            channel: 'web',
+          });
+          for (const jump of jumps) await waitFor(settled(jump));
+          assert.equal(await turnStatus(long.turnId), 'running');
+          release('steer-long');
+          await waitFor(settled(long.turnId));
+          assert.deepEqual(taken.get(long.turnId), [
+            { id: question.messageId, text: 'weather fixture' },
+          ]);
+          const next = await thread.submitUserMessage('after jump fixture', [], {
+            channel: 'web',
+          });
+          await waitFor(settled(next.turnId));
+          const history = ran(next.turnId)!.history;
+          assert.deepEqual(
+            history.filter((item) => item.text === 'done: jump fixture').map((item) => item.unseen),
+            [true, true],
+          );
+          assert.equal(history.find((item) => item.text === 'done: steer-long')?.unseen, false);
         },
       );
 
@@ -1026,7 +1061,7 @@ test(
       });
 
       await t.test('a waiting question does not block the next user message', async () => {
-        await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+        await waitFor(settledThread);
         const holds = browserHolds.length;
         const question = await thread.submitUserMessage('ask-question', [], { channel: 'web' });
         await waitFor(settled(question.turnId));
@@ -1049,7 +1084,7 @@ test(
           ).rows[0].count,
           1,
         );
-        await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+        await waitFor(settledThread);
         const answer = await thread.submitUserMessage('the work account', [], { channel: 'web' });
         await waitFor(settled(answer.turnId));
         assert.equal(await turnStatus(answer.turnId), 'succeeded');
@@ -1077,8 +1112,7 @@ test(
             (await request('GET', '/api/tasks'))
               .json()
               .find((item: Task) => item.title === 'Plumber quotes') as Task;
-          const idle = () =>
-            waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+          const idle = () => waitFor(settledThread);
           await db.pool.query(
             "INSERT INTO tasks(id,owner_id,title,done_when,now_text) VALUES($1,'task-other-owner','Plumber quotes','Foreign','Foreign step')",
             [randomUUID()],
@@ -1180,7 +1214,7 @@ test(
             before + 1,
           );
           assert.equal(runs.filter((context) => context.prompt === 'runtime-failure').length, 1);
-          await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+          await waitFor(settledThread);
         },
       );
 
@@ -1221,7 +1255,7 @@ test(
           ).rows[0].count,
           0,
         );
-        await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+        await waitFor(settledThread);
         const after = await thread.submitUserMessage('after stop', [], { channel: 'web' });
         await waitFor(settled(after.turnId));
         assert.equal(await turnStatus(after.turnId), 'succeeded');
@@ -1251,7 +1285,7 @@ test(
             .rowCount,
           0,
         );
-        await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+        await waitFor(settledThread);
       });
 
       await t.test('a stop during artifact delivery leaves no orphaned artifact', async () => {
@@ -1259,7 +1293,7 @@ test(
           channel: 'web',
         });
         await waitFor(settled(turn.turnId));
-        await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+        await waitFor(settledThread);
         const artifacts = (
           await db.pool.query("SELECT id FROM artifacts WHERE name='atomic.png'")
         ).rows.map((row) => row.id as string);
@@ -1280,7 +1314,7 @@ test(
         );
       });
 
-      await t.test('a failed thread release is retried so later turns still run', async (t) => {
+      await t.test('a failed drain after a turn does not keep later turns waiting', async (t) => {
         const send = thread.boss.send.bind(thread.boss) as (
           name: string,
           data?: object | null,
@@ -1318,7 +1352,7 @@ test(
             0,
           );
           await thread.stopThread();
-          await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+          await waitFor(settledThread);
           const landing = () => request('POST', '/api/account/welcome', {});
           assert.equal((await landing()).statusCode, 409);
           const complete = () => request('PATCH', '/api/account', { onboardingCompleted: true });

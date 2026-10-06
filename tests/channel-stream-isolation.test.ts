@@ -398,7 +398,6 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
   const state = (threadId: string, messages = [unreadMessage(1)]): AppState => ({
     threadId,
     messages,
-    threadStatus: 'idle',
     turns: [],
     configuration: {
       provider: 'synthetic',

@@ -869,7 +869,7 @@ export function Chat({
             replyTo={replyTo}
             clearReply={() => setReplyTo(null)}
             onSend={send}
-            onStop={working && state.threadStatus === 'running' ? () => void stop() : undefined}
+            onStop={working ? () => void stop() : undefined}
             stopping={stopping}
           />
         </div>

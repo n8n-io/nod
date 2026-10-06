@@ -2438,7 +2438,6 @@ async function handoffView(
 function requestedChatState(): AppState {
   return {
     threadId: randomUUID(),
-    threadStatus: 'idle',
     messages: [
       {
         id: randomUUID(),
@@ -2770,7 +2769,6 @@ for (const failure of ['rejected', 'disconnected'] as const)
     let controls = 0;
     const state: AppState = {
       threadId: randomUUID(),
-      threadStatus: 'idle',
       messages: [
         {
           id: randomUUID(),
@@ -2878,7 +2876,6 @@ test('chat keeps every message across refreshes after earlier messages were load
   }));
   const state = (window: Message[]): AppState => ({
     threadId,
-    threadStatus: 'idle',
     hasEarlierMessages: true,
     messages: window,
     turns: [],

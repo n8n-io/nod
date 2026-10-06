@@ -84,6 +84,7 @@ export interface RuntimeContext {
     createdAt?: string | Date;
     reaction?: string | null;
     attachments?: MessageAttachment[];
+    unseen?: boolean;
   }>;
   personalContext?: {
     profile: { name: string; location: string; phone: string; preferences: string };
@@ -207,6 +208,7 @@ export interface AgentSessionOptions {
   tools: AgentTool[];
   workspace: WorkspaceSession;
   timeZone?: string;
+  background?: boolean;
   runTool(
     name: string,
     params: unknown,

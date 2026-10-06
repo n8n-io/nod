@@ -13,7 +13,7 @@ Setup and commands are in [README](README.md); how the system works is in [archi
 ## Architecture
 
 - One thread per owner: a persistent Pi session, a sandbox workspace and a browser computer, all keyed by the thread ID and shared by web, Telegram and WhatsApp.
-- Every user message, schedule fire, event wake and resume is a turn. Turns run one at a time; every write from a turn goes through `withTurnLock`. Turns and tool calls are never retried automatically; Pi retries only a failed model request.
+- Every user message, schedule fire, event wake and resume is a turn. Conversation turns run one at a time on the thread's Pi session; schedule and event turns start when they fire, in parallel, each in its own Pi session. Every write from a turn goes through `withTurnLock`. Turns and tool calls are never retried automatically; Pi retries only a failed model request.
 - Pi-native tools (read, bash, edit, write, find, ls) run inside the sandbox through `WorkspaceSession.exec`. The pinned Pi web extension runs in the server process with its process permissions.
 - Provider keys never enter the sandbox or the browser. The Pi web extension, `create_audio` and apps run server-side.
 - `src/server/composition.ts` is the only place that selects providers and runtime implementations. Capabilities are ports in `src/ports`; vendor SDKs stay in `src/providers`; product policy stays in `src/server`; `src/web` imports only web and shared code.

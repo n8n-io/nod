@@ -72,7 +72,7 @@ export interface AppDependencies {
     'screenshot' | 'control' | 'status' | 'screenStatus' | 'currentSession' | 'discard'
   >;
   runtime?: {
-    status(): { browser: string; workspace: string; activeThreads?: number };
+    status(): { browser: string; workspace: string; activeTurns?: number };
     inspectTools?(): AgentToolMetadata[];
   };
   inspector?: Pick<InspectorStore, 'read'>;
@@ -175,7 +175,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     return {
       threadId: thread.id,
-      threadStatus: thread.status,
       hasEarlierMessages,
       messages: visibleMessages.map(messageView),
       turns: [...turns.rows, ...olderTurns],

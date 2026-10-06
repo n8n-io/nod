@@ -39,10 +39,11 @@ export async function initializeDatabase() {
     throw new Error('Run npm run dev to configure the local database, or set DATABASE_URL.');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS threads (
-      id uuid PRIMARY KEY, owner_id text NOT NULL, status text NOT NULL DEFAULT 'idle',
+      id uuid PRIMARY KEY, owner_id text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
       archived_at timestamptz
     );
+    ALTER TABLE threads DROP COLUMN IF EXISTS status;
     CREATE UNIQUE INDEX IF NOT EXISTS threads_active_owner ON threads(owner_id) WHERE archived_at IS NULL;
     CREATE TABLE IF NOT EXISTS turns (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL REFERENCES threads(id),
