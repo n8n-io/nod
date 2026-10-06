@@ -12,12 +12,13 @@ export function launchCloudflareCommand(options: {
   role: 'browser' | 'workspace';
   generation: string;
   threadId?: string;
+  connected?: boolean;
   session?: boolean;
   fetch?: typeof fetch;
   origin?: string;
   onUncertain(): void;
 }): CommandProcess {
-  const { role, generation, threadId: selectedThreadId, session, onUncertain } = options;
+  const { role, generation, threadId: selectedThreadId, connected, session, onUncertain } = options;
   let origin: string;
   try {
     const url = new URL(options.origin ?? 'http://otto.computer');
@@ -33,7 +34,8 @@ export function launchCloudflareCommand(options: {
       !['browser', 'workspace'].includes(role) ||
       !/^[1-9]\d{0,18}$/.test(generation) ||
       (role === 'workspace' && !selectedThreadId) ||
-      (session && role !== 'workspace')
+      ((connected || session) && role !== 'workspace') ||
+      (connected && session)
     )
       throw new Error();
     if (selectedThreadId !== undefined) threadIdentity(selectedThreadId);
@@ -291,6 +293,7 @@ export function launchCloudflareCommand(options: {
           id,
           role,
           ...(selectedThreadId && { threadId: selectedThreadId }),
+          ...(connected && { connected: true }),
           ...(session && { session: true }),
         }),
       },

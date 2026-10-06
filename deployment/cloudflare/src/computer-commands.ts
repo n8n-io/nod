@@ -228,7 +228,13 @@ export function createComputerCommands(options: {
   }
 
   async function create(request: Request, version: string) {
-    let input: { id: string; role: string; threadId?: string; session?: boolean };
+    let input: {
+      id: string;
+      role: string;
+      threadId?: string;
+      connected?: boolean;
+      session?: boolean;
+    };
     try {
       input = JSON.parse(
         new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(
@@ -239,10 +245,15 @@ export function createComputerCommands(options: {
         !input ||
         typeof input !== 'object' ||
         Array.isArray(input) ||
-        Object.keys(input).some((key) => !['id', 'role', 'threadId', 'session'].includes(key)) ||
+        Object.keys(input).some(
+          (key) => !['id', 'role', 'threadId', 'connected', 'session'].includes(key),
+        ) ||
         input.role !== options.role ||
         (input.threadId !== undefined && typeof input.threadId !== 'string') ||
-        (input.session !== undefined && (input.session !== true || options.role !== 'workspace')) ||
+        [input.connected, input.session].some(
+          (flag) => flag !== undefined && (flag !== true || options.role !== 'workspace'),
+        ) ||
+        (input.connected && input.session) ||
         (options.role === 'workspace' && !input.threadId) ||
         (options.role === 'browser' && input.threadId !== undefined)
       )
@@ -320,6 +331,7 @@ export function createComputerCommands(options: {
           id: input.id,
           generation: version,
           threadId: input.threadId,
+          ...(input.connected && { connected: true }),
           ...(input.session && { session: true }),
         });
       } catch (error) {

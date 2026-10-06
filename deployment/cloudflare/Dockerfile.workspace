@@ -15,6 +15,7 @@ RUN python3 -m venv --system-site-packages /opt/otto-artifacts && /opt/otto-arti
 RUN mkdir -p /opt/otto \
     && ln -s /home/node/state/workspace /workspace \
     && ln -s /home/node/state/tools /home/node/.local
+RUN groupadd --gid 1002 otto-connected && useradd --uid 1002 --gid 1002 --create-home --shell /usr/sbin/nologin otto-connected && chmod 700 /home/otto-connected
 COPY --from=helpers /workspace-command.py /opt/otto/workspace-command.py
 COPY src/providers/cloudflare-computer/entrypoint.mjs /opt/otto/entrypoint.mjs
 COPY src/providers/cloudflare-computer/checkpoint.py /opt/otto/checkpoint.py

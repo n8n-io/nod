@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { registerHooks } from 'node:module';
 import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises';
@@ -236,12 +240,92 @@ test('both computer roles preserve the pinned image user for restore helpers and
       const launched = calls.at(-1)!;
       assert.equal(launched.options.cwd, role === 'browser' ? '/app' : '/workspace/thread');
       assert.equal(launched.options.stdin, 'pipe');
+      if (role === 'workspace')
+        assert.deepEqual(launched.args.slice(0, 5), [
+          '/usr/bin/setpriv',
+          '--no-new-privs',
+          '--inh-caps=-all',
+          '--ambient-caps=-all',
+          '--',
+        ]);
       for (const call of calls) {
         assert.equal(Object.hasOwn(call.options, 'user'), false);
         assert.ok(call.options.signal instanceof AbortSignal);
       }
     });
   }
+});
+
+test('connected CLI commands run capability-free as otto-connected in its own home', async (t) => {
+  const current = fixture('workspace', 'ready', true);
+  const exit = deferred<number>();
+  const calls: { args: string[]; options: ContainerExecOptions }[] = [];
+  current.exec(async (args, options) => {
+    calls.push({ args, options });
+    return args.includes('/opt/otto/workspace-command.py')
+      ? { ...nativeProcess().process, exitCode: exit.promise }
+      : nativeProcess().process;
+  });
+  t.after(async () => {
+    await current.computer.stopComputer(current.ownerId, '1');
+    exit.resolve(137);
+  });
+  for (const body of [{ connected: true, session: true }, { connected: 'yes' }]) {
+    const refused = await current.request('/v1/commands', {
+      method: 'POST',
+      body: JSON.stringify({ id: randomUUID(), role: 'workspace', threadId: 'thread', ...body }),
+    });
+    assert.equal(refused.status, 400);
+  }
+  const response = await current.request('/v1/commands', {
+    method: 'POST',
+    body: JSON.stringify({
+      id: randomUUID(),
+      role: 'workspace',
+      threadId: 'thread',
+      connected: true,
+    }),
+  });
+  assert.equal(response.status, 201);
+  const launched = calls.at(-1)!;
+  assert.deepEqual(launched.args, [
+    '/usr/bin/setpriv',
+    '--no-new-privs',
+    '--inh-caps=-all',
+    '--ambient-caps=-all',
+    '--',
+    'python3',
+    '-u',
+    '/opt/otto/workspace-command.py',
+  ]);
+  assert.deepEqual(
+    { ...launched.options, signal: undefined },
+    {
+      user: '1002:1002',
+      cwd: '/home/otto-connected',
+      env: { HOME: '/home/otto-connected', XDG_CONFIG_HOME: '/home/otto-connected/.config' },
+      stdin: 'pipe',
+      signal: undefined,
+    },
+  );
+  assert.equal(
+    calls.some((call) => call.args.some((arg) => arg.includes('state/workspace/thread'))),
+    false,
+  );
+  const helper = calls.find((call) => call.args.includes('state/tools'))!;
+  assert.deepEqual(helper.args.slice(3), ['/home/node', 'state/workspace', 'state/tools']);
+  const root = mkdtempSync(join(tmpdir(), 'otto-shared-directories-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const run = (...paths: string[]) =>
+    spawnSync(helper.args[0]!, [...helper.args.slice(1, 3), root, ...paths]).status;
+  mkdirSync(join(root, 'state', 'tools'), { recursive: true, mode: 0o700 });
+  assert.equal(run('state/workspace', 'state/tools'), 0);
+  for (const path of ['state', 'state/workspace', 'state/tools'])
+    assert.equal(lstatSync(join(root, path)).mode & 0o777, 0o755);
+  mkdirSync(join(root, 'private'), { mode: 0o700 });
+  symlinkSync(join(root, 'private'), join(root, 'state', 'workspace', 'thread'));
+  assert.notEqual(run('state/workspace/thread'), 0);
+  assert.equal(lstatSync(join(root, 'private')).mode & 0o777, 0o700);
 });
 
 test('the same controller can launch a new generation after stopping an unused role', async (t) => {

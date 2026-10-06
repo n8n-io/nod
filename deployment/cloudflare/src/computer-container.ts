@@ -31,6 +31,18 @@ function browserNamespace(ownerId: string) {
 }
 
 const browserArgs = ['node', '--import', 'tsx', '/app/src/providers/container-browser/bridge.ts'];
+const sharedDirectories =
+  "import os,sys\nflags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC\nfor path in sys.argv[2:]:\n fd=os.open(sys.argv[1],flags)\n try:\n  for part in path.split('/'):\n   try: os.mkdir(part,0o755,dir_fd=fd)\n   except FileExistsError: pass\n   child=os.open(part,flags,dir_fd=fd)\n   os.close(fd)\n   fd=child\n   os.fchmod(fd,0o755)\n finally: os.close(fd)";
+const workspaceCommand = [
+  '/usr/bin/setpriv',
+  '--no-new-privs',
+  '--inh-caps=-all',
+  '--ambient-caps=-all',
+  '--',
+  'python3',
+  '-u',
+  '/opt/otto/workspace-command.py',
+];
 const unavailable = () => new RuntimeControlError(503);
 
 async function readBytes(stream: ReadableStream | null, limit: number, signal: AbortSignal) {
@@ -274,12 +286,16 @@ abstract class ComputerContainer extends Container<Bindings> {
           }
         }
         await assertCurrent();
-        await this.helper([
-          'python3',
-          '-c',
-          'import os,sys;os.umask(0o077);[os.makedirs(p,mode=0o700,exist_ok=True) for p in sys.argv[1:]]',
-          ...(this.role === 'browser' ? [path] : [`${path}/workspace`, `${path}/tools`]),
-        ]);
+        await this.helper(
+          this.role === 'browser'
+            ? [
+                'python3',
+                '-c',
+                'import os,sys;os.umask(0o077);os.makedirs(sys.argv[1],mode=0o700,exist_ok=True)',
+                path,
+              ]
+            : ['python3', '-c', sharedDirectories, '/home/node', 'state/workspace', 'state/tools'],
+        );
       },
       checkpoint: async (_state, assertCurrent) => {
         const result = await runComputerExec({
@@ -345,7 +361,7 @@ abstract class ComputerContainer extends Container<Bindings> {
           throw unavailable();
         return stopping || response.result === true;
       },
-      launch: async (_state, { threadId }) => {
+      launch: async (_state, { threadId, connected }) => {
         this.renewActivityTimeout();
         if (this.role === 'browser')
           return launchComputerExec({
@@ -353,20 +369,32 @@ abstract class ComputerContainer extends Container<Bindings> {
             launch: (signal) => this.exec(browserArgs, { cwd: '/app', stdin: 'pipe', signal }),
           });
         if (!threadId || !/^[a-zA-Z0-9_-]{1,100}$/.test(threadId)) throw unavailable();
-        await this.helper([
-          'python3',
-          '-c',
-          'import os,sys;os.umask(0o077);os.makedirs(sys.argv[1],mode=0o700,exist_ok=True)',
-          `/workspace/${threadId}`,
-        ]);
+        if (!connected)
+          await this.helper([
+            'python3',
+            '-c',
+            sharedDirectories,
+            '/home/node',
+            `state/workspace/${threadId}`,
+          ]);
         return launchComputerExec({
           timeoutMs: 30_000,
           launch: (signal) =>
-            this.exec(['python3', '-u', '/opt/otto/workspace-command.py'], {
-              cwd: `/workspace/${threadId}`,
-              stdin: 'pipe',
-              signal,
-            }),
+            this.exec(
+              workspaceCommand,
+              connected
+                ? {
+                    user: '1002:1002',
+                    cwd: '/home/otto-connected',
+                    env: {
+                      HOME: '/home/otto-connected',
+                      XDG_CONFIG_HOME: '/home/otto-connected/.config',
+                    },
+                    stdin: 'pipe',
+                    signal,
+                  }
+                : { cwd: `/workspace/${threadId}`, stdin: 'pipe', signal },
+            ),
         });
       },
     });

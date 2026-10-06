@@ -928,6 +928,7 @@ async function cloudflareFixture() {
     role: string;
     generation: string;
     threadId?: string;
+    connected?: boolean;
     session?: boolean;
     frames: string[];
   }> = [];
@@ -985,6 +986,7 @@ async function cloudflareFixture() {
         role: input.role,
         generation: input.generation,
         threadId: input.threadId,
+        connected: input.connected,
         session: input.session,
         frames: [] as string[],
       };
@@ -1169,6 +1171,42 @@ test('a refused hosted model command reports its notice without running or fenci
       [true, true, undefined],
     );
     assert.equal(adapters.workspace.status(), 'Remote Linux workspace is ready.');
+  } finally {
+    await adapters.workspace.dispose();
+    await f.close();
+  }
+});
+
+test('Cloudflare connected CLI commands use the connected path with one secret and a private home', async () => {
+  const f = await cloudflareFixture();
+  const adapters = createCloudflareAdapters(f.options(ownerA));
+  try {
+    assert.equal(adapters.workspace.connectedCliAvailable, true);
+    const session = adapters.workspace.open({
+      threadId: 'same-task',
+      workspacePath: join(f.root, 'roots', ownerA, 'same-task'),
+      signal: new AbortController().signal,
+    });
+    const result = await session.executeProgram!(
+      'python3',
+      [
+        '-c',
+        'import os;e=os.environ;print(e["SYNTHETIC_API_KEY"], os.path.samefile(os.getcwd(), e["HOME"]), e["XDG_CONFIG_HOME"] == e["HOME"] + "/.config")',
+      ],
+      { SYNTHETIC_API_KEY: 'synthetic-connected-value' },
+      5,
+    );
+    assert.deepEqual(result, { exitCode: 0, output: 'synthetic-connected-value True True\n' });
+    await execute(session, 'printf model');
+    assert.deepEqual(
+      f.launches.map((launch) => [launch.connected, launch.session]),
+      [
+        [true, undefined],
+        [undefined, true],
+      ],
+    );
+    assert.ok(f.launches[0]!.frames.join('').includes('synthetic-connected-value'));
+    assert.equal(f.launches[1]!.frames.join('').includes('synthetic-connected-value'), false);
   } finally {
     await adapters.workspace.dispose();
     await f.close();

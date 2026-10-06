@@ -59,13 +59,17 @@ npm --prefix deployment/cloudflare run provision:storage -- development
 npm --prefix deployment/cloudflare run provision:storage -- production
 ```
 
+## Workspace users
+
+Workspace commands run as `node` and connected CLI commands as `otto-connected` (uid 1002, private home, single secret in the environment), as in local Docker. A deployed container gives every process root's capabilities whatever its user, so both start through `setpriv --no-new-privs` with inheritable and ambient capabilities cleared; otherwise a workspace command could read a CLI token from `/proc`. `/home/node/state` and its `workspace` and `tools` directories are mode 755 so `otto-connected` can run installed CLIs and read shared workspace files but not write them.
+
 ## Computer checkpoints
 
 A checkpoint is a gzip tar of `/home/node/state` (workspace) or the owner's browser data directory, at most 1 GiB uncompressed, 512 MiB per file and 100,000 entries. It skips `__pycache__` and `.cache` directories, FIFOs and sockets, and for the browser Chromium's HTTP, code, GPU, shader and Dawn caches and CRX caches; cookies, Local Storage, IndexedDB and Service Worker data are kept. Restore also reads the earlier uncompressed format.
 
 The browser checkpoints when it goes idle. The workspace checkpoints about 20 seconds after its last command finishes and before it sleeps, stops or is drained, not after every command. Durability trade-off: if the workspace container is lost in that window, changes since the last checkpoint are lost and the model is told on its next command; the computer is not fenced.
 
-A workspace too large to save keeps running with its previous checkpoint. The model's next command is refused once with the sizes, the largest files and what to delete. The unsaved changes are discarded only after that notice has been shown, when the workspace sleeps, or when it is stopped or drained (the model is then told on its next command). Neither case fences the computer or blocks a deploy.
+A workspace too large to save keeps running with its previous checkpoint. The model's next command is refused once with the sizes, the largest files and what to delete. The unsaved changes are discarded when the workspace sleeps after that notice was shown, or when it is stopped or drained (the model is then told on its next command). Neither case fences the computer or blocks a deploy.
 
 ## CI and rollout
 
