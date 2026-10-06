@@ -104,7 +104,7 @@ node deployment/cloudflare/scripts/recover.mjs production complete  # only after
 
 A failed or expired deployment never reopens automatically. Do not delete the barrier, substitute a nonce or clear a fence to get past a failure.
 
-Before a rollback, confirm the previous code supports the current SQL schema, Durable Object classes, checkpoint format and keys, and stop the current tenant and computer generations. Worker rollback does not revert PostgreSQL, R2 or completed external actions; prefer a forward fix.
+Before a rollback, confirm the previous code supports the current SQL schema, Durable Object classes, checkpoint format and keys, and stop the current tenant and computer generations. Releases before gzip checkpoints cannot restore them. Worker rollback does not revert PostgreSQL, R2 or completed external actions; prefer a forward fix.
 
 ## Database reset
 
