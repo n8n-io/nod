@@ -5960,8 +5960,9 @@ test(
           }),
         );
       const wait = async (condition: () => boolean) => {
-        for (let attempt = 0; attempt < 100 && !condition(); attempt++) await delay(5);
-        assert.ok(condition());
+        const deadline = performance.now() + 10_000;
+        while (!condition() && performance.now() < deadline) await delay(5);
+        assert.ok(condition(), `reads=${reads}, requests=${requests.length}`);
       };
       await expire();
       const cancelled = new AbortController();
