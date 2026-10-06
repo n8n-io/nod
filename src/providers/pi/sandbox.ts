@@ -73,7 +73,7 @@ export async function writeWorkspaceFile(
 function hostOutputs(text: string) {
   const root = tmpdir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(
-    `${root}/pi-(?:bash|codemode)-[a-f0-9]{16}\\.(?:log|txt|png|jpg|gif|webp)`,
+    `${root}/(?:pi-(?:bash|codemode)-[a-f0-9]{16}\\.(?:log|txt|png|jpg|gif|webp)|pi-web-pdf/[a-z0-9-]{1,100}\\.md)`,
     'g',
   );
   return text.match(pattern) ?? [];
@@ -109,11 +109,19 @@ async function moveHostOutputs(texts: string[], workspace: WorkspaceSession, sig
   try {
     const directory = posix.join(workspace.path, '.otto/outputs');
     for (const path of paths) {
-      const bytes = await readHostOutput(path, owned);
+      const bytes = await readHostOutput(path, owned).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined;
+        throw error;
+      });
+      if (!bytes) continue;
       signal?.throwIfAborted();
       if (!moved.size && (await workspace.exec(`mkdir -p -- '${directory}'`, { signal })).exitCode)
         throw new Error();
-      const target = posix.join(directory, basename(path));
+      const name = basename(path);
+      const target = posix.join(
+        directory,
+        name.startsWith('pi-') ? name : `pdf-${randomUUID().slice(0, 8)}-${name}`,
+      );
       await writeWorkspaceFile(workspace, target, bytes, signal);
       moved.set(path, target);
     }

@@ -298,6 +298,7 @@ export function createDefaultAdapters(
       provider,
       model,
       sessionRoot: join(dataRoot, 'sessions'),
+      configRoot: join(dataRoot, 'pi'),
       objectStore,
     }),
     computer:

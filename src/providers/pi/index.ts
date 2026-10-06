@@ -1,7 +1,8 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Type, type TObject } from '@sinclair/typebox';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
@@ -67,6 +68,21 @@ function resources(
 const compactAt = 256_000;
 const imageStep = 8;
 
+const webAccess = { toolActivation: 'eager', workflow: 'none', githubClone: { enabled: false } };
+
+function configureWebAccess(root: string) {
+  process.env.PI_CODING_AGENT_DIR = root;
+  const path = join(root, 'web-search.json');
+  let saved = {};
+  try {
+    saved = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    saved = {};
+  }
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify({ ...saved, ...webAccess }, null, 2) + '\n', { mode: 0o600 });
+}
+
 type ModelUsage = { input?: number; output?: number; cost?: { total?: number } };
 
 function recentImages(pi: ExtensionAPI) {
@@ -104,9 +120,11 @@ export function createPiAgent(options: {
   model?: string;
   apiKey?: string;
   sessionRoot: string;
+  configRoot?: string;
   objectStore?: PrivateObjectStore;
   createSession?: typeof createAgentSession;
 }): Agent {
+  configureWebAccess(options.configRoot ?? join(tmpdir(), 'otto-pi'));
   const active = new Map<
     Awaited<ReturnType<typeof createAgentSession>>['session'],
     () => Promise<void>

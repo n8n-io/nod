@@ -534,7 +534,7 @@ test('codemode scripts reach only workspace and web tools, each call through the
   const ran: string[] = [];
   const requests: string[] = [];
   const code =
-    "const [, , stored] = await Promise.all([tools.ls({}), tools.find({ pattern: '*' }), tools.get_search_content({ responseId: 'synthetic-missing' })]); return JSON.stringify({ stored: String(stored).includes('No stored results'), ottoTool: 'fixture_tool' in tools, apps: 'apps' in tools });";
+    "const [, , stored] = await Promise.allSettled([tools.ls({}), tools.find({ pattern: '*' }), tools.get_search_content({ responseId: 'synthetic-missing' })]); return JSON.stringify({ stored: String(stored.reason).includes('No stored results'), ottoTool: 'fixture_tool' in tools, apps: 'apps' in tools });";
   const agent = createPiAgent({
     provider: 'openai',
     apiKey: 'fixture-key',
