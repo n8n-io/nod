@@ -13,7 +13,7 @@ npm run eval:capability -- doctor --fix      # checks Docker, images, database a
 npm run eval:capability -- run --tier pr     # the small, stable suite: pass rate, trust profile, what went wrong
 ```
 
-You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in the environment or `.env`). `doctor --fix` starts a throwaway Postgres container for the eval's own `eval_*` schemas if you have no test database (it never touches your normal tables) and builds the two images if they are missing. Set `ANTHROPIC_API_KEY` as well to get an independent judge: the judge defaults to `anthropic/claude-sonnet-5-5` and stays fixed while you change the agent model, so runs stay comparable.
+You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in the environment or `.env`). `doctor --fix` starts a throwaway Postgres container for the eval's own `eval_*` schemas if you have no test database (it never touches your normal tables) and builds the two images. Every run builds `otto-eval-workspace` and `otto-eval-browser` from this checkout first (Docker's cache makes an unchanged build quick), so results always measure the current Dockerfiles; set `OTTO_EVAL_WORKSPACE_IMAGE` and `OTTO_EVAL_BROWSER_IMAGE` to pin other images. Set `ANTHROPIC_API_KEY` as well to get an independent judge: the judge defaults to `anthropic/claude-sonnet-5-5` and stays fixed while you change the agent model, so runs stay comparable.
 
 | Task                   | Command                                                                               |
 | ---------------------- | ------------------------------------------------------------------------------------- |

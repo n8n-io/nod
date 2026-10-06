@@ -7,7 +7,7 @@ import { runProcess } from '../../src/providers/process.ts';
 import { agentModels } from '../../src/shared/model-defaults.ts';
 import { summarize } from './aggregate.ts';
 import { diagnoseAll } from './diagnose.ts';
-import { ensureDatabase, imageNames } from './environment.ts';
+import { ensureDatabase, evalImages } from './environment.ts';
 import { html, terminal } from './report.ts';
 import type { AttemptResult, RunManifest } from './results.ts';
 import { scenarios } from './scenarios/index.ts';
@@ -60,17 +60,9 @@ export async function prepare(root: string) {
     throw new Error('Docker is not running. Start it, then run: npm run eval:capability -- doctor');
   const database = await ensureDatabase(root, environment, true);
   process.env.TEST_DATABASE_URL = database.url;
-  const names = await imageNames(environment);
-  for (const [name, variable] of [
-    [names.workspace, 'OTTO_EVAL_WORKSPACE_IMAGE'],
-    [names.browser, 'OTTO_EVAL_BROWSER_IMAGE'],
-  ] as const) {
-    if (!(await names.has(name)))
-      throw new Error(
-        `Docker image ${name} is missing. Run: npm run eval:capability -- doctor --fix`,
-      );
-    process.env[variable] = name;
-  }
+  const images = await evalImages(environment);
+  process.env.OTTO_EVAL_WORKSPACE_IMAGE = images.workspace;
+  process.env.OTTO_EVAL_BROWSER_IMAGE = images.browser;
   return { ...environment, ...process.env } as Record<string, string | undefined>;
 }
 

@@ -137,8 +137,8 @@ export async function startStack(options: {
     await admin.end().catch(() => {});
   }
   try {
-    const workspaceImage = environment.OTTO_EVAL_WORKSPACE_IMAGE || 'otto-local-workspace';
-    const browserImage = environment.OTTO_EVAL_BROWSER_IMAGE || 'otto-local-browser';
+    const workspaceImage = environment.OTTO_EVAL_WORKSPACE_IMAGE || 'otto-eval-workspace';
+    const browserImage = environment.OTTO_EVAL_BROWSER_IMAGE || 'otto-eval-browser';
     for (const image of [workspaceImage, browserImage]) {
       const inspected = await runProcess('docker', [
         'image',
@@ -149,7 +149,7 @@ export async function startStack(options: {
       ]);
       if (inspected.exitCode)
         throw new Error(
-          `Docker image ${image} is missing. Run npm run dev once, or set OTTO_EVAL_WORKSPACE_IMAGE and OTTO_EVAL_BROWSER_IMAGE.`,
+          `Docker image ${image} is missing. Run npm run eval:capability -- doctor --fix, or set OTTO_EVAL_WORKSPACE_IMAGE and OTTO_EVAL_BROWSER_IMAGE.`,
         );
     }
     const started = await runProcess('docker', [

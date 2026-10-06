@@ -100,24 +100,31 @@ async function provisionDatabase(root: string, provision: boolean) {
   );
 }
 
-export async function imageNames(environment: Record<string, string | undefined>) {
-  const has = async (name: string) =>
-    (await docker('image', 'inspect', name, '--format', '{{.Id}}')).exitCode === 0;
-  const pick = async (fromEnv: string | undefined, candidates: string[]) => {
+export async function evalImages(environment: Record<string, string | undefined>) {
+  const build = async (fromEnv: string | undefined, tag: string, dockerfile: string) => {
     if (fromEnv) return fromEnv;
-    for (const name of candidates) if (await has(name)) return name;
-    return candidates[0];
+    const built = await runProcess('docker', ['build', '-q', '-f', dockerfile, '-t', tag, '.'], {
+      cwd: repository,
+      timeoutMs: 1_800_000,
+      maxBytes: 64 * 1024 * 1024,
+    });
+    if (built.exitCode)
+      throw new Error(
+        `Could not build ${tag} from ${dockerfile}: ${built.stderr.trim().slice(-300)}`,
+      );
+    return tag;
   };
   return {
-    workspace: await pick(environment.OTTO_EVAL_WORKSPACE_IMAGE, [
-      'otto-local-workspace',
+    workspace: await build(
+      environment.OTTO_EVAL_WORKSPACE_IMAGE,
       'otto-eval-workspace',
-    ]),
-    browser: await pick(environment.OTTO_EVAL_BROWSER_IMAGE, [
-      'otto-local-browser',
+      'Dockerfile.workspace',
+    ),
+    browser: await build(
+      environment.OTTO_EVAL_BROWSER_IMAGE,
       'otto-eval-browser',
-    ]),
-    has,
+      'Dockerfile.browser',
+    ),
   };
 }
 
@@ -133,32 +140,22 @@ export async function doctor(root: string, fix: boolean) {
     fix: 'Start Docker Desktop (or the Docker daemon).',
   });
   if (daemon.exitCode === 0) {
-    const names = await imageNames(environment);
-    for (const [label, name, dockerfile] of [
-      ['Workspace image', names.workspace, 'Dockerfile.workspace'],
-      ['Browser image', names.browser, 'Dockerfile.browser'],
-    ] as const) {
-      let ok = await names.has(name);
-      if (!ok && fix) {
-        const tag = name.startsWith('otto-local') ? name.replace('otto-local', 'otto-eval') : name;
-        const built = await runProcess('docker', ['build', '-f', dockerfile, '-t', tag, '.'], {
-          cwd: repository,
-          timeoutMs: 1_800_000,
-          maxBytes: 64 * 1024 * 1024,
-        });
-        ok = built.exitCode === 0;
-        if (ok)
-          process.env[
-            label.startsWith('Workspace') ? 'OTTO_EVAL_WORKSPACE_IMAGE' : 'OTTO_EVAL_BROWSER_IMAGE'
-          ] = tag;
-      }
-      checks.push({
-        name: label,
-        ok,
-        detail: ok ? name : `${name} is missing`,
-        fix: `Run npm run dev once, or: npm run eval:capability -- doctor --fix (builds ${dockerfile})`,
+    let images: Awaited<ReturnType<typeof evalImages>> | undefined;
+    let problem = '';
+    if (fix)
+      images = await evalImages(environment).catch((error: Error) => {
+        problem = error.message;
+        return undefined;
       });
-    }
+    checks.push({
+      name: 'Images',
+      ok: !fix || Boolean(images),
+      detail: images
+        ? `${images.workspace}, ${images.browser}`
+        : problem ||
+          'built from Dockerfile.workspace and Dockerfile.browser at the start of each run',
+      fix: 'Check that Docker can build Dockerfile.workspace and Dockerfile.browser.',
+    });
     try {
       const database = await ensureDatabase(root, environment, fix);
       checks.push({
