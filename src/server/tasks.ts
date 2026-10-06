@@ -176,11 +176,12 @@ export function createTasks(options: {
       turnId,
       ownerId,
     ]);
-    await client.query('UPDATE tasks SET turn_id=$2 WHERE id=$1 AND owner_id=$3', [
-      taskId,
-      turnId,
-      ownerId,
-    ]);
+    await client.query(
+      `UPDATE tasks t SET turn_id=$2 WHERE t.id=$1 AND t.owner_id=$3
+         AND NOT EXISTS(SELECT 1 FROM turns c JOIN turns u ON u.id=$2
+           WHERE c.id=t.turn_id AND (c.created_at,c.id)>(u.created_at,u.id))`,
+      [taskId, turnId, ownerId],
+    );
   }
 
   async function act(client: PoolClient, turn: TurnRef, raw: unknown) {
@@ -363,13 +364,14 @@ export function createTasks(options: {
         )
       ).rows[0];
       if (!turn || turn.task_id) return false;
-      const chosen = taskId && (await isOpen(client, taskId)) ? taskId : null;
-      if (chosen) await link(client, turnId, chosen);
-      await client.query(
-        `UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now()
-         WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND id IS DISTINCT FROM $3 AND auto AND state='open'`,
-        [ownerId, offered, chosen],
-      );
+      if (taskId) {
+        if (await isOpen(client, taskId)) await link(client, turnId, taskId);
+      } else
+        await client.query(
+          `UPDATE tasks SET state='cancelled',closed_at=now(),updated_at=now()
+           WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND auto AND state='open'`,
+          [ownerId, offered],
+        );
       return true;
     });
     if (linked) refresh();

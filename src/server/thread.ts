@@ -908,6 +908,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
     refresh();
   };
   try {
+    unwatch = dependencies.watchTurn?.({ ...ref, source: turn.source });
     if (heldBrowsers.delete(threadId)) await holdBrowser(dependencies, threadId, null);
     const workspacePath = join(dataRoot, 'workspaces', threadId);
     await mkdir(workspacePath, { recursive: true });
@@ -1028,7 +1029,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       inspectPrompt,
     } = dependencies;
     await emit('started', 'Turn started.');
-    unwatch = dependencies.watchTurn?.({ ...ref, source: turn.source });
     const result = await dependencies.runTurn({
       threadId,
       turnId,

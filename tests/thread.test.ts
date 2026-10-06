@@ -383,6 +383,14 @@ test(
         }
         if (context.prompt.startsWith('watch-')) {
           await context.emit('tool_start', 'web search');
+          if (context.prompt === 'watch-update-fixture') {
+            const { tasks } = (await context.task!({ action: 'list' })) as { tasks: Task[] };
+            await context.task!({
+              action: 'update',
+              id: tasks.find((task) => task.title === 'Kayak trip')!.id,
+              now: 'Booking the touring kayak',
+            });
+          }
           await waiting.get(context.prompt);
           if (context.prompt === 'watch-ask-fixture') {
             await context.waitForUser!('Which kayak do you mean?');
@@ -1257,12 +1265,6 @@ test(
             task: input.cards.at(0)?.id ?? foreign.id,
           });
 
-          const quick = await thread.submitUserMessage('quick watched question');
-          await waitFor(settled(quick.turnId));
-          await idle();
-          await delay(300);
-          assert.equal(await autoCards(), 0);
-
           block('watch-ask-fixture');
           const asked = await thread.submitUserMessage('watch-ask-fixture');
           await waitFor(async () =>
@@ -1335,6 +1337,45 @@ test(
             'Reading the spec sheets',
           );
           assert.equal(await autoCards(), 1);
+
+          progressGate = undefined;
+          progressAnswer = (input) => ({
+            title: 'Kayak trip',
+            now: 'Checking the trip',
+            task: input.cards.find((offered) => offered.title === 'Kayak trip')?.id ?? null,
+          });
+          block('watch-ask-fixture');
+          const trip = await thread.submitUserMessage('watch-ask-fixture');
+          await waitFor(async () =>
+            (await cards()).some(
+              (item) => item.title === 'Kayak trip' && item.status === 'working',
+            ),
+          );
+          release('watch-ask-fixture');
+          await waitFor(settled(trip.turnId));
+          await idle();
+          const tripId = (await cards()).find((item) => item.title === 'Kayak trip')!.id;
+          progressGate = new Promise((resolve) => {
+            releaseProgress = resolve;
+          });
+          const decisions = progressInputs.length;
+          const reply = await thread.submitUserMessage('the sea kayak');
+          await waitFor(() => progressInputs.length > decisions);
+          await waitFor(settled(reply.turnId));
+          await idle();
+          block('watch-update-fixture');
+          const updating = await thread.submitUserMessage('watch-update-fixture');
+          await waitFor(
+            async () =>
+              (await cards()).find((item) => item.id === tripId)?.now ===
+              'Booking the touring kayak',
+          );
+          releaseProgress();
+          await waitFor(async () => (await turnTask(reply.turnId)) === tripId);
+          assert.equal((await cards()).find((item) => item.id === tripId)!.status, 'working');
+          release('watch-update-fixture');
+          await waitFor(settled(updating.turnId));
+          await idle();
 
           assert.ok(
             progressInputs.every((input) =>
