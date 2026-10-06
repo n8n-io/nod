@@ -5,8 +5,15 @@ import { join } from 'node:path';
 import type { PrivateObjectStore } from '../../ports/object-storage.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 
-const maximum = 15 * 1024 * 1024;
+const objectBytes = 15 * 1024 * 1024;
+const partBytes = 8 * 1024 * 1024;
+const maximum = 64 * 1024 * 1024;
+const maxParts = 64;
+const partId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export const rebaseAt = 8 * 1024 * 1024;
+export const keptImages = 4;
+export const removedImage =
+  'An earlier screenshot was removed from context. Take a new one if you need to see the page again.';
 const failure = () =>
   new Error(
     'The assistant session could not be saved. Stop and restore storage before continuing.',
@@ -47,6 +54,57 @@ function entries(bytes: Uint8Array): FileEntry[] {
   }
 }
 
+async function readSession(store: PrivateObjectStore, threadId: string) {
+  const saved = await store.read(`sessions/${threadId}.jsonl`, objectBytes);
+  if (!saved) return undefined;
+  let manifest: { type?: unknown; parts?: unknown } | undefined;
+  try {
+    manifest = JSON.parse(Buffer.from(saved.bytes).toString('utf8'));
+  } catch {
+    manifest = undefined;
+  }
+  if (manifest?.type !== 'otto_session_parts')
+    return { bytes: Buffer.from(saved.bytes), version: saved.version, parts: [] as string[] };
+  const parts = manifest.parts;
+  if (
+    !Array.isArray(parts) ||
+    !parts.length ||
+    parts.length > maxParts + maximum / partBytes ||
+    !parts.every((part) => typeof part === 'string' && partId.test(part))
+  )
+    throw failure();
+  const chunks = await Promise.all(
+    parts.map(async (part: string) => {
+      const object = await store.read(`sessions/${threadId}/${part}.jsonl`, objectBytes);
+      if (!object) throw failure();
+      return Buffer.from(object.bytes);
+    }),
+  );
+  const bytes = Buffer.concat(chunks);
+  if (bytes.byteLength > maximum) throw failure();
+  return { bytes, version: saved.version, parts: parts as string[] };
+}
+
+function chunks(rows: object[]) {
+  const result: Buffer[] = [];
+  let lines: string[] = [];
+  let size = 0;
+  for (const row of rows) {
+    const line = JSON.stringify(row) + '\n';
+    const bytes = Buffer.byteLength(line);
+    if (bytes > objectBytes) throw failure();
+    if (size && size + bytes > partBytes) {
+      result.push(Buffer.from(lines.join('')));
+      lines = [];
+      size = 0;
+    }
+    lines.push(line);
+    size += bytes;
+  }
+  if (lines.length) result.push(Buffer.from(lines.join('')));
+  return result;
+}
+
 export async function readPiSessionEntries(options: {
   threadId: string;
   sessionRoot: string;
@@ -54,7 +112,7 @@ export async function readPiSessionEntries(options: {
 }) {
   const threadId = threadIdentity(options.threadId);
   if (options.objectStore) {
-    const saved = await options.objectStore.read(`sessions/${threadId}.jsonl`, maximum);
+    const saved = await readSession(options.objectStore, threadId);
     return saved ? entries(saved.bytes).slice(1) : [];
   }
   const directory = join(options.sessionRoot, threadId);
@@ -79,11 +137,32 @@ export async function readPiSessionEntries(options: {
 }
 
 export function rebaseSession(source: SessionManager, next: SessionManager) {
-  for (const entry of source.buildContextEntries()) {
+  const context = source.buildContextEntries();
+  let images = context.reduce(
+    (count, entry) =>
+      entry.type === 'message' && entry.message.role === 'toolResult'
+        ? count + entry.message.content.filter((part) => part.type === 'image').length
+        : count,
+    0,
+  );
+  for (const entry of context) {
     if (entry.type === 'compaction')
       next.appendCompaction(entry.summary, null, entry.tokensBefore, entry.details);
-    else if (entry.type === 'message')
-      next.appendMessage(entry.message as Parameters<typeof next.appendMessage>[0]);
+    else if (entry.type === 'message') {
+      const message = entry.message;
+      next.appendMessage(
+        (message.role === 'toolResult'
+          ? {
+              ...message,
+              content: message.content.map((part) =>
+                part.type === 'image' && images-- > keptImages
+                  ? { type: 'text' as const, text: removedImage }
+                  : part,
+              ),
+            }
+          : message) as Parameters<typeof next.appendMessage>[0],
+      );
+    }
   }
   return next;
 }
@@ -123,15 +202,21 @@ export async function createPiCheckpoint(options: {
   threadId: string;
   directory: string;
 }) {
-  const key = `sessions/${options.threadId}.jsonl`;
-  const saved = await options.store.read(key, maximum);
+  const { store, threadId } = options;
+  const key = `sessions/${threadId}.jsonl`;
+  const saved = await readSession(store, threadId);
   let manager = SessionManager.inMemory(
     options.directory,
     undefined,
     saved ? entries(saved.bytes) : undefined,
   );
-  if ((saved?.bytes.byteLength ?? 0) > rebaseAt)
+  let parts = saved?.parts ?? [];
+  let stored = saved?.bytes.byteLength ?? 0;
+  if (stored > rebaseAt) {
     manager = rebaseSession(manager, SessionManager.inMemory(options.directory));
+    parts = [];
+  }
+  let persisted = parts.length ? manager.getEntries().length : 0;
   closeInterruptedCalls(manager);
   let version = saved?.version ?? null;
   let failed = false;
@@ -139,16 +224,41 @@ export async function createPiCheckpoint(options: {
   function checkpoint() {
     const next = tail.then(async () => {
       if (failed) throw failure();
+      const written: string[] = [];
       try {
-        const bytes = Buffer.from(
-          [{ ...manager.getHeader(), ottoRevision: randomUUID() }, ...manager.getEntries()]
-            .map((entry) => JSON.stringify(entry))
-            .join('\n') + '\n',
+        const all = manager.getEntries();
+        const fresh = !parts.length || parts.length >= maxParts;
+        const rows = fresh ? [{ ...manager.getHeader() }, ...all] : all.slice(persisted);
+        let size = fresh ? 0 : stored;
+        for (const bytes of chunks(rows)) {
+          size += bytes.byteLength;
+          if (size > maximum) throw failure();
+          const id = randomUUID();
+          written.push(id);
+          await store.write(`sessions/${threadId}/${id}.jsonl`, bytes, { expectedVersion: null });
+        }
+        const nextParts = fresh ? written : [...parts, ...written];
+        version = await store.write(
+          key,
+          Buffer.from(
+            JSON.stringify({
+              type: 'otto_session_parts',
+              revision: randomUUID(),
+              parts: nextParts,
+            }),
+          ),
+          { expectedVersion: version },
         );
-        if (bytes.byteLength > maximum) throw failure();
-        version = await options.store.write(key, bytes, { expectedVersion: version });
+        if (fresh)
+          for (const old of parts)
+            void store.remove(`sessions/${threadId}/${old}.jsonl`).catch(() => {});
+        parts = nextParts;
+        persisted = all.length;
+        stored = size;
       } catch {
         failed = true;
+        for (const id of written)
+          void store.remove(`sessions/${threadId}/${id}.jsonl`).catch(() => {});
         throw failure();
       }
     });

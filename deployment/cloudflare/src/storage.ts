@@ -13,10 +13,15 @@ function objectKey(request: Request) {
     throw new RuntimeControlError();
   }
   if (key === 'memory/MEMORY.md') return key;
-  const match = /^(artifacts|sessions)\/([0-9a-f-]{36})(\.jsonl)?$/.exec(key);
-  if (!match || (match[1] === 'sessions') !== (match[3] === '.jsonl'))
+  const match = /^(artifacts|sessions)\/([0-9a-f-]{36})(?:\/([0-9a-f-]{36}))?(\.jsonl)?$/.exec(key);
+  if (
+    !match ||
+    (match[1] === 'sessions') !== (match[4] === '.jsonl') ||
+    (match[3] !== undefined && match[1] !== 'sessions')
+  )
     throw new RuntimeControlError();
   ownerIdentity(match[2]);
+  if (match[3] !== undefined) ownerIdentity(match[3]);
   return key;
 }
 

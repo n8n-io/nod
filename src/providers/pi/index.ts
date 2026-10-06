@@ -24,8 +24,10 @@ import type { PrivateObjectStore } from '../../ports/object-storage.ts';
 import {
   closeInterruptedCalls,
   createPiCheckpoint,
+  keptImages,
   rebaseAt,
   rebaseSession,
+  removedImage,
 } from './checkpoint.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import { createPiUsageTracker, piUsageMetrics, usageId } from './usage.ts';
@@ -63,7 +65,6 @@ function resources(
 }
 
 const compactAt = 256_000;
-const keptImages = 4;
 const imageStep = 8;
 
 type ModelUsage = { input?: number; output?: number; cost?: { total?: number } };
@@ -87,10 +88,7 @@ function recentImages(pi: ExtensionAPI) {
               ...message,
               content: message.content.map((part) =>
                 part.type === 'image' && seen++ < cut
-                  ? {
-                      type: 'text' as const,
-                      text: 'An earlier screenshot was removed from context. Take a new one if you need to see the page again.',
-                    }
+                  ? { type: 'text' as const, text: removedImage }
                   : part,
               ),
             }

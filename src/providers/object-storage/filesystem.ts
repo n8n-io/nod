@@ -15,8 +15,7 @@ export function createFilesystemObjectStore(root: string): PrivateObjectStore {
   const path = (key: string) => join(directory, objectKey(key));
   async function verifyDirectory(key: string) {
     const root = await realpath(directory);
-    if ((await realpath(dirname(path(key)))) !== join(root, key.split('/')[0]))
-      throw objectFailure();
+    if ((await realpath(dirname(path(key)))) !== join(root, dirname(key))) throw objectFailure();
   }
   const version = (bytes: Uint8Array) =>
     '"' + createHash('sha256').update(bytes).digest('hex') + '"';

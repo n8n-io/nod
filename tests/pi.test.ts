@@ -613,6 +613,15 @@ async function fixture() {
   };
 }
 
+async function savedText(f: Awaited<ReturnType<typeof fixture>>) {
+  const entries = await readPiSessionEntries({
+    threadId: f.threadId,
+    sessionRoot: f.directory,
+    objectStore: f.store,
+  });
+  return entries.map((entry) => JSON.stringify(entry)).join('\n');
+}
+
 function visibleContext(manager: SessionManager) {
   return manager
     .buildSessionContext()
@@ -650,9 +659,8 @@ test('a durable saved session above the rebase size is rebased on load with the 
     });
     compactedHistory(original.manager, 'x'.repeat(Math.ceil(rebaseAt / 5)));
     await original.checkpoint();
-    const key = `sessions/${f.threadId}.jsonl`;
-    const saved = await f.store.read(key, 16 * 1024 * 1024);
-    assert.ok(saved!.bytes.byteLength > rebaseAt);
+    const saved = Buffer.byteLength(await savedText(f));
+    assert.ok(saved > rebaseAt);
     const restored = await createPiCheckpoint({
       store: f.store,
       threadId: f.threadId,
@@ -660,9 +668,9 @@ test('a durable saved session above the rebase size is rebased on load with the 
     });
     assert.deepEqual(visibleContext(restored.manager), visibleContext(original.manager));
     assert.ok(restored.manager.getEntries().length < original.manager.getEntries().length);
-    const rewritten = await f.store.read(key, 16 * 1024 * 1024);
-    assert.ok(rewritten!.bytes.byteLength < saved!.bytes.byteLength);
-    assert.ok(rewritten!.bytes.byteLength < rebaseAt);
+    const rewritten = Buffer.byteLength(await savedText(f));
+    assert.ok(rewritten < saved);
+    assert.ok(rewritten < rebaseAt);
   } finally {
     await f.close();
   }
@@ -737,6 +745,30 @@ test('closeInterruptedCalls leaves aborted and failed assistant messages alone b
     dangling(manager, [], stopReason);
     closeInterruptedCalls(manager);
     assert.equal(toolResults(manager).length, 0, stopReason);
+  }
+});
+
+test('a session saved as one file before part uploads restores and keeps saving', async () => {
+  const f = await fixture();
+  try {
+    const legacy = SessionManager.inMemory(f.directory);
+    compactedHistory(legacy);
+    await f.store.write(
+      `sessions/${f.threadId}.jsonl`,
+      Buffer.from(
+        [legacy.getHeader(), ...legacy.getEntries()].map((row) => JSON.stringify(row)).join('\n'),
+      ),
+      { expectedVersion: null },
+    );
+    const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'new') });
+    assert.deepEqual(visibleContext(restored.manager), visibleContext(legacy));
+    restored.manager.appendMessage({ role: 'user', content: 'after upgrade', timestamp: 3000 });
+    await restored.checkpoint();
+    const again = await createPiCheckpoint({ ...f, directory: join(f.directory, 'again') });
+    assert.match(JSON.stringify(visibleContext(again.manager)), /after upgrade/);
+    assert.match(JSON.stringify(visibleContext(again.manager)), /Later fixture message 2/);
+  } finally {
+    await f.close();
   }
 });
 
@@ -966,9 +998,9 @@ test('real Pi persists its user message and tool call before a side effect and r
           description: 'fixture',
           parameters: { type: 'object', properties: {} },
           async execute() {
-            const saved = await f.store.read(`sessions/${f.threadId}.jsonl`, 1024 * 1024);
-            assert.match(saved!.bytes.toString(), /synthetic user request/);
-            assert.match(saved!.bytes.toString(), /toolCall/);
+            const saved = await savedText(f);
+            assert.match(saved, /synthetic user request/);
+            assert.match(saved, /toolCall/);
             executed++;
             return { content: [{ type: 'text', text: 'durable receipt' }] };
           },
@@ -1008,8 +1040,7 @@ test('a restored durable session closes dangling tool calls before the next prom
   dangling(saved.manager, ['call-one']);
   await saved.checkpoint();
   await createPiCheckpoint({ ...f, directory: join(f.directory, 'reload') });
-  const persisted = await f.store.read(`sessions/${f.threadId}.jsonl`, 16 * 1024 * 1024);
-  assert.match(Buffer.from(persisted!.bytes).toString('utf8'), /outcome is unknown/);
+  assert.match(await savedText(f), /outcome is unknown/);
   const agent = createPiAgent({
     provider: 'openai',
     apiKey: 'fixture',

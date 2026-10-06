@@ -145,6 +145,10 @@ test('private storage rejects arbitrary paths, invalid owners and oversized obje
     'sessions/../../other',
     'artifacts/not-a-uuid',
     `sessions/${randomUUID()}`,
+    `sessions/${randomUUID()}/${randomUUID()}`,
+    `sessions/${randomUUID()}/../${randomUUID()}.jsonl`,
+    `sessions/${randomUUID()}/not-a-part.jsonl`,
+    `artifacts/${randomUUID()}/${randomUUID()}`,
     `artifacts/${randomUUID()}.jsonl`,
     'memory/../MEMORY.md',
   ])
