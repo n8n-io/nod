@@ -156,6 +156,7 @@ test(
         id: 'fixture',
         configured: true,
         curate: async ({ input }) => {
+          if (!('cards' in input)) return null;
           progressInputs.push(structuredClone(input) as ProgressInput);
           await progressGate;
           return progressAnswer(input as ProgressInput);
