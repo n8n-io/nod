@@ -1070,6 +1070,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
       selectedBackend = backend,
       local = true,
       bootstrap?: Parameters<typeof createModelService>[0]['bootstrap'],
+      changed?: () => void,
     ) => {
       const service = createModelService({
         database,
@@ -1079,6 +1080,7 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
         origin: 'http://127.0.0.1:4310',
         local,
         bootstrap,
+        changed,
       });
       await service.initialize();
       services.push(service);
@@ -1691,6 +1693,73 @@ describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {
     assert.equal(owner.signInStatus(afterExpiry.attempt).status, 'waiting');
     await owner.close();
     assert.equal(owner.signInStatus(afterExpiry.attempt).status, 'failed');
+  });
+
+  test('a new ChatGPT sign-in waits for cancellation already draining its callback listener', async (t) => {
+    const f = await fixture(t);
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let starts = 0;
+    let reloaded = () => {};
+    const owner = await f.create(
+      'fixture-owner',
+      {
+        ...f.backend,
+        async signIn({ signal }) {
+          const first = ++starts === 1;
+          const state = randomBytes(16).toString('hex');
+          const result = new Promise<import('../src/ports/models.ts').ModelCredential>(
+            (_resolve, reject) => {
+              signal.addEventListener(
+                'abort',
+                () => {
+                  void (first ? cleanup : Promise.resolve()).then(() =>
+                    reject(new Error('Fixture listener closed.')),
+                  );
+                },
+                { once: true },
+              );
+            },
+          );
+          return {
+            url: `https://auth.openai.com/authorize?state=${state}`,
+            state,
+            result,
+            complete() {},
+          };
+        },
+      },
+      true,
+      undefined,
+      () => reloaded(),
+    );
+    const first = await owner.start('openai');
+    const cancelling = owner.cancel(first.attempt);
+    let cancellationComplete = false;
+    const repeated = owner.cancel(first.attempt).then(() => {
+      cancellationComplete = true;
+    });
+    const startedReload = new Promise<void>((resolve) => {
+      reloaded = resolve;
+    });
+    const starting = owner.start('openai');
+    try {
+      await startedReload;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(starts, 1);
+      assert.equal(cancellationComplete, false);
+      release();
+      await Promise.all([cancelling, repeated]);
+      const second = await starting;
+      assert.equal(starts, 2);
+      assert.equal(owner.signInStatus(second.attempt).status, 'waiting');
+      await owner.cancel(second.attempt);
+    } finally {
+      release();
+      await Promise.allSettled([cancelling, repeated, starting]);
+    }
   });
 
   test('failed initiation leaves no attempt and shutdown awaits an aborted starting flow', async (t) => {

@@ -82,9 +82,10 @@ export function createModelService(options: {
     const attempt = attempts.get(state);
     if (!attempt) return;
     clearTimeout(attempt.timer);
-    attempts.delete(state);
+    attempt.status = 'failed';
     attempt.controller.abort();
     await attempt.completion?.catch(() => {});
+    if (attempts.get(state) === attempt) attempts.delete(state);
   }
   function active(attempt: NonNullable<ReturnType<typeof attempts.get>>) {
     if (
@@ -465,7 +466,7 @@ export function createModelService(options: {
         attempt.expires < Date.now() ||
         (provider === 'openai' &&
           attempt.provider === provider &&
-          ['waiting', 'completing'].includes(attempt.status))
+          (attempt.controller.signal.aborted || ['waiting', 'completing'].includes(attempt.status)))
       )
         await cancel(state);
     if (

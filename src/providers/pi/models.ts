@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { createServer, type RequestListener } from 'node:http';
 import {
   getSupportedThinkingLevels,
   type Api,
@@ -96,10 +97,93 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
     async signIn({ signal: requestedSignal }) {
       const controller = new AbortController();
       const signal = AbortSignal.any([requestedSignal, controller.signal]);
+      if (signal.aborted) throw new ModelAuthError('ChatGPT sign-in was canceled.');
+      const callbackHost = process.env.PI_OAUTH_CALLBACK_HOST;
+      if (callbackHost && !['127.0.0.1', '::1'].includes(callbackHost))
+        throw new ModelAuthError('ChatGPT sign-in requires a loopback callback host.');
       let resolveManual!: (value: string) => void;
       const manual = new Promise<string>((resolve) => {
         resolveManual = resolve;
       });
+      let completeCallback: ((callback: URL) => void) | undefined;
+      let authenticated!: Promise<ModelCredential>;
+      const receive: RequestListener = (request, response) => {
+        const send = (status: number, message: string) => {
+          response.writeHead(status, {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'Referrer-Policy': 'no-referrer',
+            'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+            Connection: 'close',
+          });
+          response.end(`<!doctype html><title>Otto</title><p>${message}</p>`);
+        };
+        try {
+          const callback = new URL(request.url ?? '/', 'http://localhost:1455');
+          if (request.method !== 'GET' || callback.pathname !== '/auth/callback') {
+            send(404, 'This page is not available.');
+            return;
+          }
+          if (!completeCallback) throw new Error();
+          completeCallback(callback);
+          void authenticated.then(
+            () => send(200, 'Sign-in received. Return to Otto to finish connecting.'),
+            () => send(400, 'Sign-in could not finish. Return to Otto and try again.'),
+          );
+        } catch {
+          send(400, 'This sign-in callback is invalid. Return to Otto and try again.');
+        }
+      };
+      const servers = [createServer(receive), createServer(receive)];
+      let closing: Promise<void> | undefined;
+      const close = () =>
+        (closing ??= Promise.all(
+          servers.map(
+            (server) =>
+              new Promise<void>((resolve) => {
+                const timeout = setTimeout(() => server.closeAllConnections(), 1000);
+                timeout.unref();
+                server.close(() => {
+                  clearTimeout(timeout);
+                  resolve();
+                });
+                server.closeIdleConnections();
+              }),
+          ),
+        ).then(() => {}));
+      try {
+        for (const [index, host] of ['127.0.0.1', '::1'].entries()) {
+          const server = servers[index];
+          try {
+            await new Promise<void>((resolve, reject) => {
+              server.once('error', reject);
+              server.listen(1455, host, () => {
+                server.off('error', reject);
+                resolve();
+              });
+            });
+          } catch (error) {
+            if (
+              host === '::1' &&
+              error instanceof Error &&
+              'code' in error &&
+              ['EADDRNOTAVAIL', 'EAFNOSUPPORT', 'EPROTONOSUPPORT'].includes(String(error.code))
+            )
+              continue;
+            throw error;
+          }
+          server.on('error', () => controller.abort());
+          if (signal.aborted) throw new ModelAuthError('ChatGPT sign-in was canceled.');
+        }
+      } catch (error) {
+        await close();
+        if (error instanceof ModelAuthError) throw error;
+        throw new ModelAuthError(
+          error instanceof Error && 'code' in error && error.code === 'EADDRINUSE'
+            ? 'Port 1455 is already in use. Close the other Otto app or another sign-in, then try again.'
+            : 'ChatGPT sign-in could not start. Try again.',
+        );
+      }
       let resolveReady!: (value: Awaited<ReturnType<ModelBackend['signIn']>>) => void;
       let rejectReady!: (error: Error) => void;
       const ready = new Promise<Awaited<ReturnType<ModelBackend['signIn']>>>((resolve, reject) => {
@@ -107,7 +191,9 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         rejectReady = reject;
       });
       let settled = false;
-      const result = oauth
+      let claimed = false;
+      let failure: ModelAuthError | undefined;
+      authenticated = oauth
         .login({
           signal,
           async prompt(prompt) {
@@ -136,44 +222,58 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
               controller.abort();
               return;
             }
-            resolveReady({
-              url: event.url,
-              state,
-              result,
-              complete(callback) {
-                if (settled || signal.aborted)
-                  throw new ModelAuthError(
-                    'This sign-in request has expired. Start a new connection.',
-                  );
+            completeCallback = (callback) => {
+              if (settled || claimed || signal.aborted)
+                throw new ModelAuthError(
+                  'This sign-in request has expired. Start a new connection.',
+                );
+              if (
+                callback.origin !== redirect.origin ||
+                callback.pathname !== redirect.pathname ||
+                callback.username ||
+                callback.password ||
+                callback.hash ||
+                callback.searchParams.getAll('state').length !== 1 ||
+                callback.searchParams.get('state') !== state
+              )
+                throw new ModelAuthError('This sign-in callback is invalid or was declined.');
+              if (callback.searchParams.has('error')) {
                 if (
-                  callback.origin !== redirect.origin ||
-                  callback.pathname !== redirect.pathname ||
-                  callback.username ||
-                  callback.password ||
-                  callback.hash ||
-                  callback.searchParams.getAll('state').length !== 1 ||
-                  callback.searchParams.get('state') !== state ||
-                  callback.searchParams.getAll('code').length !== 1 ||
-                  !callback.searchParams.get('code') ||
-                  callback.searchParams.has('error')
+                  callback.searchParams.getAll('error').length !== 1 ||
+                  !callback.searchParams.get('error') ||
+                  callback.searchParams.has('code')
                 )
-                  throw new ModelAuthError('This sign-in callback is invalid or was declined.');
-                resolveManual(callback.href);
-              },
-            });
+                  throw new ModelAuthError('This sign-in callback is invalid.');
+                failure = new ModelAuthError(
+                  'ChatGPT sign-in was declined. Start a new connection.',
+                );
+                controller.abort();
+                throw failure;
+              }
+              if (
+                callback.searchParams.getAll('code').length !== 1 ||
+                !callback.searchParams.get('code')
+              )
+                throw new ModelAuthError('This sign-in callback is invalid.');
+              claimed = true;
+              resolveManual(callback.href);
+            };
+            resolveReady({ url: event.url, state, result, complete: completeCallback });
           },
         })
         .then(codexCredential)
         .catch(() => {
+          if (failure) throw failure;
           throw new ModelAuthError(
             signal.aborted
               ? 'ChatGPT sign-in was canceled.'
               : 'ChatGPT sign-in failed. Start a new connection and check your account access.',
           );
-        })
-        .finally(() => {
-          settled = true;
         });
+      const result = authenticated.finally(async () => {
+        settled = true;
+        await close();
+      });
       void result.catch(rejectReady);
       return ready;
     },
