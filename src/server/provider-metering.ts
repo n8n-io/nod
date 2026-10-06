@@ -228,7 +228,8 @@ export function meterMemoryCurator(
       usage.track(
         {
           provider: provider.id,
-          category: request.task === 'review' ? 'review' : 'memory',
+          category:
+            request.task === 'review' ? 'review' : request.task === 'progress' ? 'tasks' : 'memory',
           operation: request.task,
         },
         () => provider.curate(request, signal),

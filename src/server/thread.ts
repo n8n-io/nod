@@ -113,6 +113,7 @@ export interface ThreadDependencies {
   activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
   memoryContext?: () => Promise<RuntimeContext['memory']>;
   task?: (turn: TurnRef, input: unknown) => Promise<unknown>;
+  watchTurn?: (turn: TurnRef & { source: TurnSource }) => () => void;
   markUntrustedContext?: (turn: TurnRef) => Promise<void>;
   flagInjection?: (turn: TurnRef, findings: string[]) => Promise<void>;
   holdBrowser?: (threadId: string, until: number | null) => Promise<void>;
@@ -872,6 +873,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
   };
   let outcome: Extract<AnalyticsEvent, { event: 'otto_turn_completed' }>['properties']['outcome'] =
     'failed';
+  let unwatch: (() => void) | undefined;
   dependencies.analytics?.({ event: 'otto_turn_started', properties: analyticsProperties });
   const turnId = turn.id as string;
   const threadId = turn.thread_id as string;
@@ -1026,6 +1028,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       inspectPrompt,
     } = dependencies;
     await emit('started', 'Turn started.');
+    unwatch = dependencies.watchTurn?.({ ...ref, source: turn.source });
     const result = await dependencies.runTurn({
       threadId,
       turnId,
@@ -1163,6 +1166,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         .catch(() => {});
     }
   } finally {
+    unwatch?.();
     dependencies.analytics?.({
       event: 'otto_turn_completed',
       properties: {

@@ -3,7 +3,7 @@ export interface MemoryCurator {
   configured: boolean;
   curate(
     request: {
-      task: 'reflect' | 'consolidate' | 'search' | 'review';
+      task: 'reflect' | 'consolidate' | 'search' | 'review' | 'progress';
       instructions: string;
       input: object;
     },

@@ -26,6 +26,7 @@ import { ownerId as owner } from './config.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { TurnRef } from './thread.ts';
+import { parentTurnSql } from './turn-chain.ts';
 const passwordInput = z
   .object({
     kind: z.literal('login').optional(),
@@ -715,8 +716,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
   }
 
   async function rootTurn(database: Pick<PoolClient, 'query'>, turn: TurnRef, ownerId: string) {
-    const link = `COALESCE(CASE WHEN u.source='resume' THEN substring(u.source_id from '^(?:credentials|credentials-retry|connection|control):([0-9a-f-]{36})(?::|$)')::uuid END,
-      (SELECT a.turn_id FROM approvals a WHERE a.execution_turn_id=u.id AND a.owner_id=u.owner_id AND a.turn_id<>u.id LIMIT 1))`;
+    const link = parentTurnSql('u');
     const { rows } = await database.query<{ id: string }>(
       `WITH RECURSIVE chain(id,next,thread_id) AS (
          SELECT u.id,${link},u.thread_id FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3

@@ -3,6 +3,7 @@ export type ProviderCategory =
   | 'relevance'
   | 'memory'
   | 'review'
+  | 'tasks'
   | 'browser'
   | 'integration'
   | 'speech'

@@ -65,7 +65,7 @@ export function TaskCard({ task }: { task: Task }) {
         </span>
       </div>
       <p className="task-now">{headline(task)}</p>
-      {!closed(task) && (
+      {!closed(task) && (task.waitingFor.length > 0 || task.nextCheck || task.doneWhen) && (
         <ul className="task-facts">
           {task.waitingFor.map((wait) => (
             <li key={`${wait.who}:${wait.via}`}>
@@ -79,10 +79,12 @@ export function TaskCard({ task }: { task: Task }) {
               {when(task.nextCheck)}
             </li>
           )}
-          <li>
-            <span>Done when</span>
-            {task.doneWhen}
-          </li>
+          {task.doneWhen && (
+            <li>
+              <span>Done when</span>
+              {task.doneWhen}
+            </li>
+          )}
         </ul>
       )}
       <p className="saved-plan-footer">

@@ -142,7 +142,26 @@ test(
       onboard: (_timeZone, threadId) => thread.restartOnboarding(threadId),
       startOnboarding: thread.startOnboarding,
     });
-    const tasks = createTasks({ pool: db.pool, ownerId });
+    type ProgressInput = { steps: string[]; cards: Array<{ id: string; title: string }> };
+    const progressInputs: ProgressInput[] = [];
+    let progressAnswer: (input: ProgressInput) => unknown = () => null;
+    let progressGate: Promise<void> | undefined;
+    let watching = false;
+    const tasks = createTasks({
+      pool: db.pool,
+      ownerId,
+      withTurnLock: thread.withTurnLock,
+      everyMs: 100,
+      curator: {
+        id: 'fixture',
+        configured: true,
+        curate: async ({ input }) => {
+          progressInputs.push(structuredClone(input) as ProgressInput);
+          await progressGate;
+          return progressAnswer(input as ProgressInput);
+        },
+      },
+    });
     await tasks.initialize();
     personal.registerRoutes(app);
     tasks.registerRoutes(app);
@@ -279,6 +298,7 @@ test(
       },
       task: (turn, input) =>
         thread.withTurnLock(turn.turnId, (client) => tasks.act(client, turn, input)),
+      watchTurn: (turn) => (watching ? tasks.watch(turn) : () => {}),
       artifacts: {
         ...localArtifacts,
         storeArtifact: async (...input) => {
@@ -359,6 +379,23 @@ test(
         if (context.prompt === 'Fresh conversation') {
           context.delta('Fresh stream', randomUUID());
           await context.reply('Fresh answer.');
+          return { status: 'succeeded' };
+        }
+        if (context.prompt.startsWith('watch-')) {
+          await context.emit('tool_start', 'web search');
+          await waiting.get(context.prompt);
+          if (context.prompt === 'watch-ask-fixture') {
+            await context.waitForUser!('Which kayak do you mean?');
+            return { status: 'waiting_user' };
+          }
+          if (context.prompt === 'watch-pi-fixture')
+            await context.task!({
+              action: 'start',
+              title: 'Kayak comparison',
+              doneWhen: 'A sourced comparison is shared',
+              now: 'Reading the spec sheets',
+            });
+          await context.reply('**Owners like** the stable hull. More detail follows.');
           return { status: 'succeeded' };
         }
         const gate = waiting.get(context.prompt);
@@ -1182,6 +1219,134 @@ test(
           assert.equal(current.result, 'Rui is booked for Saturday at 10:00 for 180 EUR.');
           assert.deepEqual([current.nextCheck, current.waitingFor], [null, []]);
           assert.ok(current.closedAt);
+        },
+      );
+
+      await t.test(
+        'the watcher keeps one card per job across checks, replies and Pi reports, and never writes late',
+        async (t) => {
+          const logged = t.mock.method(console, 'error', () => {});
+          watching = true;
+          t.after(() => {
+            watching = false;
+            progressGate = undefined;
+          });
+          const idle = () =>
+            waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+          const cards = async () => (await request('GET', '/api/tasks')).json() as Task[];
+          const autoCards = async () =>
+            (
+              await db.pool.query(
+                'SELECT count(*)::int AS count FROM tasks WHERE owner_id=$1 AND auto',
+                [ownerId],
+              )
+            ).rows[0].count as number;
+          const turnTask = async (turnId: string) =>
+            (await db.pool.query('SELECT task_id FROM turns WHERE id=$1', [turnId])).rows[0]
+              .task_id as string | null;
+          const foreignCard = async () =>
+            (
+              await db.pool.query(
+                "SELECT id,now_text,turn_id,state FROM tasks WHERE owner_id='task-other-owner'",
+              )
+            ).rows[0];
+          const foreign = await foreignCard();
+          progressAnswer = (input) => ({
+            title: 'Kayak reviews',
+            now: `Searched ${input.steps.length} times`,
+            task: input.cards.at(0)?.id ?? foreign.id,
+          });
+
+          const quick = await thread.submitUserMessage('quick watched question');
+          await waitFor(settled(quick.turnId));
+          await idle();
+          await delay(300);
+          assert.equal(await autoCards(), 0);
+
+          block('watch-ask-fixture');
+          const asked = await thread.submitUserMessage('watch-ask-fixture');
+          await waitFor(async () =>
+            (await cards()).some(
+              (card) => card.title === 'Kayak reviews' && card.status === 'working',
+            ),
+          );
+          await delay(400);
+          const working = (await cards()).filter((card) => card.title === 'Kayak reviews');
+          assert.equal(working.length, 1);
+          assert.equal(working[0].now, 'Searched 1 times');
+          release('watch-ask-fixture');
+          await waitFor(settled(asked.turnId));
+          await idle();
+          let card = (await cards()).find((item) => item.id === working[0].id)!;
+          assert.deepEqual([card.status, card.question], ['needs_you', 'Which kayak do you mean?']);
+          const answered = await thread.submitUserMessage('the touring one');
+          await waitFor(
+            async () =>
+              (await cards()).find((item) => item.id === working[0].id)?.status === 'done',
+          );
+          card = (await cards()).find((item) => item.id === working[0].id)!;
+          assert.equal(card.result, 'done: the touring one');
+          assert.equal(await turnTask(answered.turnId), working[0].id);
+          assert.equal(await autoCards(), 1);
+
+          block('watch-pi-fixture');
+          const reported = await thread.submitUserMessage('watch-pi-fixture');
+          await waitFor(async () => (await autoCards()) === 2);
+          const auto = (
+            await db.pool.query(
+              "SELECT id FROM tasks WHERE owner_id=$1 AND auto AND state='open'",
+              [ownerId],
+            )
+          ).rows[0].id as string;
+          release('watch-pi-fixture');
+          await waitFor(settled(reported.turnId));
+          await idle();
+          card = (await cards()).find((item) => item.id === auto)!;
+          assert.deepEqual(
+            [card.title, card.doneWhen, card.now, card.status],
+            [
+              'Kayak comparison',
+              'A sourced comparison is shared',
+              'Reading the spec sheets',
+              'stalled',
+            ],
+          );
+          assert.equal((await cards()).filter((item) => item.title.startsWith('Kayak')).length, 2);
+          assert.equal(await autoCards(), 1);
+          assert.equal(await turnTask(reported.turnId), auto);
+
+          let releaseProgress!: () => void;
+          progressGate = new Promise((resolve) => {
+            releaseProgress = resolve;
+          });
+          const asks = progressInputs.length;
+          block('watch-late-fixture');
+          const late = await thread.submitUserMessage('watch-late-fixture');
+          await waitFor(() => progressInputs.length > asks);
+          assert.ok(progressInputs.at(-1)!.cards.some((offered) => offered.id === auto));
+          release('watch-late-fixture');
+          await waitFor(settled(late.turnId));
+          await idle();
+          releaseProgress();
+          await delay(300);
+          assert.equal(await turnTask(late.turnId), null);
+          assert.equal(
+            (await cards()).find((item) => item.id === auto)!.now,
+            'Reading the spec sheets',
+          );
+          assert.equal(await autoCards(), 1);
+
+          assert.ok(
+            progressInputs.every((input) =>
+              input.cards.every((offered) => offered.id !== foreign.id),
+            ),
+          );
+          assert.deepEqual(await foreignCard(), foreign);
+          assert.equal(
+            logged.mock.calls.filter((call) => String(call.arguments[0]).includes('task watcher'))
+              .length,
+            0,
+          );
         },
       );
 

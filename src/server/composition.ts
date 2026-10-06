@@ -636,7 +636,7 @@ async function initializeApplication(
   });
   await memory.initialize();
   await personal.initialize({ workers: options.workers });
-  const tasks = createTasks({ pool, ownerId });
+  const tasks = createTasks({ pool, ownerId, curator, withTurnLock, refresh });
   await tasks.initialize();
   const triage = createTriage({
     consumers,
@@ -807,6 +807,7 @@ async function initializeApplication(
         refresh();
         return result;
       },
+      watchTurn: tasks.watch,
       markUntrustedContext: (turn) => memory.markUntrusted(turn.threadId),
       flagInjection: trust.flag,
       holdBrowser: adapters.holdWaitingBrowser,

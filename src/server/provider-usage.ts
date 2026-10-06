@@ -19,6 +19,7 @@ const schema = z
       'relevance',
       'memory',
       'review',
+      'tasks',
       'browser',
       'integration',
       'speech',
