@@ -272,7 +272,12 @@ test('computer command creation validates identities, role, thread and generatio
 });
 
 test('computer status reports liveness without launching and only to the current generation', async () => {
-  const f = fixture({ role: 'browser' });
+  const f = fixture({
+    role: 'browser',
+    async authorize(version) {
+      if (version !== '1') throw new RuntimeControlError(403);
+    },
+  });
   try {
     const status = async () => {
       const response = await f.request('/v1/status');
@@ -283,8 +288,7 @@ test('computer status reports liveness without launching and only to the current
     assert.deepEqual(await status(), { status: 200, body: '{"live":true}' });
     assert.equal((await f.request('/v1/status', { method: 'POST' })).status, 404);
     assert.equal((await f.request('/v1/status?live=1')).status, 404);
-    f.revoke();
-    assert.notEqual((await f.request('/v1/status')).status, 200);
+    assert.notEqual((await f.request('/v1/status', {}, '2')).status, 200);
     assert.equal(f.launches.length, 0);
   } finally {
     await f.close();

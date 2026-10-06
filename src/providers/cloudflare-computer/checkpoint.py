@@ -275,7 +275,7 @@ def compressed_limit(maximum):
 class Usage:
     def __init__(self, options):
         self.options = options
-        self.bytes = 2 * BLOCK
+        self.bytes = 3 * BLOCK
         self.entries = 0
         self.largest = []
         self.complete = True
