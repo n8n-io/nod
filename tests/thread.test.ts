@@ -1314,30 +1314,46 @@ test(
         );
       });
 
-      await t.test('a failed drain after a turn does not keep later turns waiting', async (t) => {
-        const send = thread.boss.send.bind(thread.boss) as (
-          name: string,
-          data?: object | null,
-          options?: object,
-        ) => Promise<string | null>;
-        t.mock.method(
-          thread.boss,
-          'send',
-          async (name: string, data?: object | null, options?: object) => {
-            if (failRelease > 0) {
-              failRelease--;
-              throw new Error('Synthetic queue failure');
-            }
-            return send(name, data, options);
-          },
-        );
-        const first = await thread.submitUserMessage('release-retry', [], { channel: 'web' });
-        await waitFor(settled(first.turnId));
-        const next = await thread.submitUserMessage('after release retry', [], { channel: 'web' });
-        await waitFor(settled(next.turnId));
-        assert.equal(failRelease, 0);
-        assert.equal(await turnStatus(next.turnId), 'succeeded');
-      });
+      await t.test(
+        'a failed drain after a turn is retried so queued turns still run',
+        async (t) => {
+          const send = thread.boss.send.bind(thread.boss) as (
+            name: string,
+            data?: object | null,
+            options?: object,
+          ) => Promise<string | null>;
+          t.mock.method(
+            thread.boss,
+            'send',
+            async (name: string, data?: object | null, options?: object) => {
+              if (failRelease > 0) {
+                failRelease--;
+                throw new Error('Synthetic queue failure');
+              }
+              return send(name, data, options);
+            },
+          );
+          block('release-retry');
+          const first = await thread.submitUserMessage('release-retry', [], { channel: 'web' });
+          await waitFor(() => Boolean(ran(first.turnId)));
+          const next = await thread.submitUserMessage('after release retry', [], {
+            channel: 'web',
+          });
+          await waitFor(
+            async () =>
+              !(
+                await db.pool.query(
+                  `SELECT 1 FROM ${bossSchema}.job WHERE name='thread-drain' AND state<>'completed'`,
+                )
+              ).rowCount,
+          );
+          assert.equal(await turnStatus(next.turnId), 'queued');
+          release('release-retry');
+          await waitFor(settled(next.turnId));
+          assert.equal(failRelease, 0);
+          assert.equal(await turnStatus(next.turnId), 'succeeded');
+        },
+      );
 
       await t.test(
         'completing onboarding starts one read-only welcome without a user message',

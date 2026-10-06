@@ -766,12 +766,23 @@ async function drainThread(threadId: string, dependencies: ThreadDependencies) {
   if (stopping) return;
   for (const turn of await claimTurns(threadId)) {
     const work = executeTurn(turn, dependencies)
-      .then(() => (turn.background ? undefined : sendDrain(undefined, threadId)))
-      .catch(() => console.error(`Turn ${turn.id} ended without queueing the next turn.`))
+      .catch((error) => console.error(`Turn ${turn.id} did not finish: ${describeFailure(error)}`))
+      .then(() => (turn.background ? undefined : drainNext(threadId)))
       .finally(refresh);
     inflight.add(work);
     void work.finally(() => inflight.delete(work));
   }
+}
+
+async function drainNext(threadId: string) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await sendDrain(undefined, threadId);
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+    }
+  }
+  console.error('The next turn could not be queued. It runs on the next message or start.');
 }
 
 type StoredAttachment = { id?: string; name?: string; mimeType?: string };

@@ -1642,6 +1642,10 @@ test('concurrent turns on one thread take the browser one turn at a time', async
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
+  let queued!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    queued = resolve;
+  });
   const runtime = createAgentRuntime({
     agent: {
       open: async (input) => ({
@@ -1650,6 +1654,7 @@ test('concurrent turns on one thread take the browser one turn at a time', async
         dispose() {},
         prompt: async () => {
           order.push(`${input.turnId} started`);
+          if (input.turnId === 'schedule') queued();
           await input.tools
             .find((tool) => tool.name === 'browser')!
             .execute({ action: 'snapshot' });
@@ -1673,7 +1678,8 @@ test('concurrent turns on one thread take the browser one turn at a time', async
       turnId: 'schedule',
       background: true,
     });
-    await setTimeout(100);
+    await waiting;
+    await setTimeout(50);
     assert.deepEqual(order, ['conversation started', 'conversation browser', 'schedule started']);
     assert.equal(runtime.status().activeTurns, 2);
     release();
