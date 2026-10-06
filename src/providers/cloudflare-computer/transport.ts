@@ -344,3 +344,21 @@ export function launchCloudflareCommand(options: {
     },
   });
 }
+
+export async function cloudflareBrowserLive(options: { generation: string; fetch?: typeof fetch }) {
+  if (!/^[1-9]\d{0,18}$/.test(options.generation))
+    throw new Error('The remote computer configuration is invalid.');
+  try {
+    const response = await (options.fetch ?? fetch)('http://otto.computer/v1/status', {
+      headers: { 'x-otto-generation': options.generation, 'x-otto-computer-role': 'browser' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(10_000),
+    });
+    const value: { live?: unknown } | undefined =
+      response.status === 200 ? await response.json() : undefined;
+    await response.body?.cancel().catch(() => {});
+    return value?.live === true;
+  } catch {
+    return false;
+  }
+}

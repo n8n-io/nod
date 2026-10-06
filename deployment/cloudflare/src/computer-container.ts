@@ -404,6 +404,7 @@ abstract class ComputerContainer extends Container<Bindings> {
       launch: (input) => lifecycle.launch(ownerId, input),
       completed: (input) => lifecycle.completed(ownerId, input),
       uncertain: (input) => lifecycle.uncertain(ownerId, input.generation),
+      live: () => lifecycle.live,
     });
     this.current = { ownerId, generation: version, lifecycle, commands };
     return this.current;

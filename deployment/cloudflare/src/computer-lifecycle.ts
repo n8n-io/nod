@@ -488,5 +488,8 @@ export function createComputerLifecycle(options: {
     get active() {
       return active.size;
     },
+    get live() {
+      return booted && !fenced && !closing && !draining && !loaded?.stopped && options.running();
+    },
   };
 }

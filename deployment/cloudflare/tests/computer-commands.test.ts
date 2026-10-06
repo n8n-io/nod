@@ -109,6 +109,7 @@ function fixture(overrides: Partial<Parameters<typeof createComputerCommands>[0]
   const completed: Array<{ id: string; generation: string; code: number }> = [];
   const uncertain: Array<{ id: string; generation: string }> = [];
   let allowed = true;
+  let live = false;
   const role = overrides.role ?? 'workspace';
   const registry = createComputerCommands({
     role,
@@ -127,6 +128,7 @@ function fixture(overrides: Partial<Parameters<typeof createComputerCommands>[0]
     async uncertain(input) {
       uncertain.push(input);
     },
+    live: () => live,
     ...overrides,
   });
   const request = (path: string, init: RequestInit = {}, version = '1') =>
@@ -154,6 +156,9 @@ function fixture(overrides: Partial<Parameters<typeof createComputerCommands>[0]
       ),
     revoke() {
       allowed = false;
+    },
+    live(value: boolean) {
+      live = value;
     },
     async close() {
       await registry.stop();
@@ -263,6 +268,26 @@ test('computer command creation validates identities, role, thread and generatio
     } finally {
       await f.close();
     }
+  }
+});
+
+test('computer status reports liveness without launching and only to the current generation', async () => {
+  const f = fixture({ role: 'browser' });
+  try {
+    const status = async () => {
+      const response = await f.request('/v1/status');
+      return { status: response.status, body: await response.text() };
+    };
+    assert.deepEqual(await status(), { status: 200, body: '{"live":false}' });
+    f.live(true);
+    assert.deepEqual(await status(), { status: 200, body: '{"live":true}' });
+    assert.equal((await f.request('/v1/status', { method: 'POST' })).status, 404);
+    assert.equal((await f.request('/v1/status?live=1')).status, 404);
+    f.revoke();
+    assert.notEqual((await f.request('/v1/status')).status, 200);
+    assert.equal(f.launches.length, 0);
+  } finally {
+    await f.close();
   }
 });
 

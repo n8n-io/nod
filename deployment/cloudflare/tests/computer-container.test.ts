@@ -256,6 +256,33 @@ test('both computer roles preserve the pinned image user for restore helpers and
   }
 });
 
+test('browser status never starts the computer and is live only while this controller runs it', async (t) => {
+  const current = fixture('browser', 'ready', true);
+  const live = async () => {
+    const response = await current.request('/v1/status');
+    return response.status === 200 && (await response.json<{ live: boolean }>()).live;
+  };
+  assert.equal(await live(), false);
+  assert.equal(current.events.length, 0);
+  const exit = deferred<number>();
+  current.exec(async (args) =>
+    args.includes('/app/src/providers/container-browser/bridge.ts')
+      ? { ...nativeProcess().process, exitCode: exit.promise }
+      : nativeProcess().process,
+  );
+  t.after(async () => {
+    exit.resolve(137);
+  });
+  const created = await current.request('/v1/commands', {
+    method: 'POST',
+    body: JSON.stringify({ id: randomUUID(), role: 'browser' }),
+  });
+  assert.equal(created.status, 201);
+  assert.equal(await live(), true);
+  await current.computer.stopComputer(current.ownerId, '1');
+  assert.equal(await live(), false);
+});
+
 test('connected CLI commands run capability-free as otto-connected in its own home', async (t) => {
   const current = fixture('workspace', 'ready', true);
   const exit = deferred<number>();

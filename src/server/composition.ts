@@ -142,6 +142,7 @@ export interface ApplicationAdapters {
   channelAccounts?: ChannelAccountRegistry;
   agent: Agent;
   computer: Computer;
+  holdWaitingBrowser?: Computer['hold'];
   workspace: Workspace;
   speech: SpeechProvider;
   integrations: IntegrationProvider;
@@ -235,14 +236,15 @@ export function createDefaultAdapters(
           : {}),
       })
     : undefined;
-  const remote =
+  const cloudflare =
     computerProvider === 'cloudflare'
       ? createCloudflareAdapters({
           ownerId,
           generation: runtimeGeneration,
           workspaceRoot: join(dataRoot, 'workspaces'),
         })
-      : e2b;
+      : undefined;
+  const remote = cloudflare ?? e2b;
   const databaseObjects =
     env.OBJECT_STORAGE_PROVIDER === 'postgres'
       ? createPostgresObjectStore({ database: pool, ownerId })
@@ -304,6 +306,7 @@ export function createDefaultAdapters(
     computer:
       remote?.computer ??
       createContainerBrowserComputer({ dataRoot, container: env.BROWSER_CONTAINER }),
+    ...(cloudflare && { holdWaitingBrowser: cloudflare.computer.hold }),
     workspace:
       remote?.workspace ??
       createDockerWorkspace({
@@ -790,6 +793,7 @@ async function initializeApplication(
       },
       markUntrustedContext: (turn) => memory.markUntrusted(turn.threadId),
       flagInjection: trust.flag,
+      holdBrowser: adapters.holdWaitingBrowser,
       connections: integrations.manageConnections,
       browserConnection: (request, turn, signal, launch) =>
         browserConnections.request(request, turn, signal, launch),

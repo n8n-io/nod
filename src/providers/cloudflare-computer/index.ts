@@ -4,7 +4,7 @@ import type { Computer, Workspace } from '../../ports/computer.ts';
 import { createBridgeComputer } from '../container-browser/client.ts';
 import { createCommandWorkspace } from '../docker/index.ts';
 import { runSupervisedCommand, WorkspaceCommandError } from '../docker/command.ts';
-import { launchCloudflareCommand } from './transport.ts';
+import { cloudflareBrowserLive, launchCloudflareCommand } from './transport.ts';
 
 export function createCloudflareAdapters(options: {
   ownerId: string;
@@ -86,6 +86,14 @@ export function createCloudflareAdapters(options: {
   return {
     computer: {
       ...computer,
+      async hold(threadId, until) {
+        if (
+          browserUsed &&
+          !browserDisposed &&
+          (await cloudflareBrowserLive({ generation, fetch: requestFetch }))
+        )
+          await computer.hold(threadId, until);
+      },
       status: () => (browserDisposed ? 'Workspace browser is stopped.' : computer.status()),
       async dispose() {
         if (browserUsed) await computer.dispose();

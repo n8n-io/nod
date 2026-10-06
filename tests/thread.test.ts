@@ -253,8 +253,12 @@ test(
     let failRelease = 0;
     let taskHold = Promise.resolve();
 
+    const browserHolds: Array<{ threadId: string; until: number | null; runs: number }> = [];
     const dependencies: ThreadDependencies = {
       analytics: captureAnalytics,
+      holdBrowser: async (threadId, until) => {
+        browserHolds.push({ threadId, until, runs: runs.length });
+      },
       connectedApps: readConnectedApps,
       activityCheck: async (turn) => activityLookup?.(turn),
       speech: {
@@ -1022,8 +1026,14 @@ test(
       });
 
       await t.test('a waiting question does not block the next user message', async () => {
+        await waitFor(async () => (await thread.activeThread(db.pool)).status === 'idle');
+        const holds = browserHolds.length;
         const question = await thread.submitUserMessage('ask-question', [], { channel: 'web' });
         await waitFor(settled(question.turnId));
+        const held = browserHolds.slice(holds);
+        assert.equal(held.length, 1);
+        assert.equal(held[0]!.threadId, question.threadId);
+        assert.ok(Math.abs(held[0]!.until! - Date.now() - 30 * 60_000) < 60_000);
         const row = (
           await db.pool.query('SELECT status,waiting_reason FROM turns WHERE id=$1', [
             question.turnId,
@@ -1043,6 +1053,13 @@ test(
         const answer = await thread.submitUserMessage('the work account', [], { channel: 'web' });
         await waitFor(settled(answer.turnId));
         assert.equal(await turnStatus(answer.turnId), 'succeeded');
+        assert.deepEqual(browserHolds.slice(holds + 1), [
+          {
+            threadId: question.threadId,
+            until: null,
+            runs: runs.findIndex((context) => context.turnId === answer.turnId),
+          },
+        ]);
         assert.equal(ran(answer.turnId)?.threadId, question.threadId);
         assert.ok(
           ran(answer.turnId)?.history.some(

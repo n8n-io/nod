@@ -42,6 +42,7 @@ export function createComputerCommands(options: {
   launch(input: ComputerCommand): Promise<ExecProcess>;
   completed(input: { id: string; generation: string; code: number }): Promise<void>;
   uncertain(input: { id: string; generation: string }): Promise<void>;
+  live(): boolean;
   timeoutMs?: number;
   authorizationIntervalMs?: number;
   receiptTimeoutMs?: number;
@@ -443,6 +444,13 @@ export function createComputerCommands(options: {
         if (url.pathname === '/v1/commands' && request.method === 'POST') {
           await options.authorize(version);
           return await create(request, version);
+        }
+        if (url.pathname === '/v1/status' && request.method === 'GET') {
+          await options.authorize(version);
+          return Response.json(
+            { live: !fenced && options.live() },
+            { headers: { 'cache-control': 'no-store' } },
+          );
         }
         const match = /^\/v1\/commands\/([0-9a-f-]{36})\/(input|end|kill|output)$/.exec(
           url.pathname,
