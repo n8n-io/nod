@@ -290,11 +290,16 @@ export function createTasks(options: {
       ),
     ]);
     const request = own.rows.filter((row) => row.role === 'user').map((row) => row.text);
-    const otto = own.rows.filter((row) => row.role === 'assistant');
+    const otto = own.rows.filter((row) => row.role === 'assistant').slice(-6);
     const after = <T extends { created_at: Date }>(rows: T[]) =>
       rows.filter((row) => since && row.created_at > since);
     return {
-      request: request.length ? request : [turn.prompt],
+      request:
+        request.length > 6
+          ? [request[0], ...request.slice(-5)]
+          : request.length
+            ? request
+            : [turn.prompt],
       earlier: earlier.rows,
       otto: otto.map((row) => row.text.slice(0, 600)),
       steps: steps.rows.map((row) => row.summary),
@@ -329,7 +334,15 @@ export function createTasks(options: {
           {
             task: 'progress',
             instructions: progressInstructions,
-            input: { ...context, card, cards },
+            input:
+              card && since
+                ? {
+                    request: context.request,
+                    card,
+                    newSteps: context.newSteps,
+                    newMessages: context.newMessages,
+                  }
+                : { ...context, card, cards },
           },
           signal,
         ),
