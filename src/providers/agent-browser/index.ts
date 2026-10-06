@@ -921,6 +921,7 @@ export function createAgentBrowserComputer(options: {
           state.saved.locale = browserLocale(input.locale);
         }
         try {
+          if (!state.socket && viewport) await command(state, ['open', 'about:blank'], { signal });
           await command(state, ['open', url.href], { signal });
           state.saved.navigationFailed = false;
         } catch (error) {

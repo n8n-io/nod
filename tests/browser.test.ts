@@ -1742,7 +1742,9 @@ test(
     const directory = await mkdtemp(join(tmpdir(), 'otto-stderr-native-'));
     const server = createHttpServer((_request, response) => {
       response.setHeader('content-type', 'text/html');
-      response.end('<button onclick="this.textContent=\'Accepted\'">Continue</button>');
+      response.end(
+        '<button style="width:100vw;height:100vh" onclick="this.textContent=\'Accepted\'">Continue</button>',
+      );
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -1780,7 +1782,7 @@ test(
         0,
         'Chromium stderr must not block when browser output exceeds pipe capacity',
       );
-      await computer.control!('fixture', { type: 'click', x: 0.03, y: 0.035 });
+      await computer.control!('fixture', { type: 'click', x: 0.5, y: 0.5 });
       const page = await computer.act('fixture', { action: 'snapshot' });
       assert.match(page.text, /Accepted/);
       const screenshot = await computer.screenshot('fixture');
