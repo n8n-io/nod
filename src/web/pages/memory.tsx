@@ -615,7 +615,7 @@ export function Memory() {
             <Button
               variant="ghost"
               size="sm"
-              disabled={exporting}
+              disabled={exporting || !view}
               onClick={() => {
                 setExporting(true);
                 setSettingError('');

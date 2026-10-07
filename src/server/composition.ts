@@ -104,6 +104,7 @@ import { createMemoryLearning, initializeMemoryLearning } from './memory-learnin
 import { createMemoryService } from './memory.ts';
 import { createSpeech } from './speech.ts';
 import {
+  activeThread,
   boss,
   createUserMessageService,
   enqueueTurn,
@@ -1100,6 +1101,7 @@ async function initializeApplication(
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: meterMessaging(messaging, providerUsage),
       acceptVerification: (text, input) => chatVerification.accept(text, input),
+      activeThread: (client) => activeThread(client),
       memoryReply: async (client, threadId, link) => {
         const view = await personal.memoryView();
         const now = new Date();

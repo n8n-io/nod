@@ -665,7 +665,12 @@ export function AccountSettings({
               {tab === 'Preferences' && (
                 <>
                   <PreferencesForm onDirtyChange={setPreferencesDirty} />
-                  <MemoryRow onView={onViewMemory} />
+                  <MemoryRow
+                    onView={() => {
+                      if (pending.current) setError('Save or cancel your changes first.');
+                      else onViewMemory();
+                    }}
+                  />
                 </>
               )}
               {tab === 'Models' && (

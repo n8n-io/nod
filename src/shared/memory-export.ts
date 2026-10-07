@@ -123,7 +123,7 @@ export function memoryMarkdown(view: MemoryView, exported: Date) {
 
 export function memoryDigest(view: MemoryView, link: string | null, limit = 3800) {
   const lines = ['**What Otto remembers about you**'];
-  const saved = profile(view);
+  const saved = profile(view).map((line) => (line.length > 300 ? `${line.slice(0, 299)}…` : line));
   if (saved.length) lines.push('', ...saved);
   for (const { status, label } of statuses) {
     const notes = view.notes.filter((entry) => entry.status === status);
@@ -146,7 +146,9 @@ export function memoryDigest(view: MemoryView, link: string | null, limit = 3800
   let used = footer.length;
   for (const [index, line] of lines.entries()) {
     if (used + line.length + 1 > limit) {
-      body.push(`…and ${lines.slice(index).filter((rest) => rest.startsWith('•')).length} more`);
+      body.push(
+        `…and ${lines.slice(index).filter((rest) => rest && !rest.startsWith('**')).length} more`,
+      );
       break;
     }
     body.push(line);

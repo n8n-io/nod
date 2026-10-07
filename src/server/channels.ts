@@ -40,6 +40,7 @@ interface ChannelOptions {
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   appOrigin?: string;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
+  activeThread?: (client: PoolClient) => Promise<{ id: string }>;
   memoryReply?: (
     client: PoolClient,
     threadId: string | null,
@@ -200,12 +201,13 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       ],
     );
     if (!receipt.rowCount) return;
-    const thread =
-      (
-        await client.query('SELECT id FROM threads WHERE owner_id=$1 AND archived_at IS NULL', [
-          ownerId,
-        ])
-      ).rows[0]?.id ?? null;
+    const thread: string | null = options.activeThread
+      ? (await options.activeThread(client)).id
+      : ((
+          await client.query('SELECT id FROM threads WHERE owner_id=$1 AND archived_at IS NULL', [
+            ownerId,
+          ])
+        ).rows[0]?.id ?? null);
     const reply = await compose(thread);
     const replyId = randomUUID();
     await client.query(
@@ -295,6 +297,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             memoryReply(client, thread, appOrigin ? `${appOrigin}/memory` : null),
           ),
         );
+        options.refresh?.();
         void drain();
         return;
       }
