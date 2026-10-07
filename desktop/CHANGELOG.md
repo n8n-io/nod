@@ -1,5 +1,18 @@
 # Desktop changelog
 
+## 0.1.8 - 2026-10-07
+
+Source: `5ad2b77f4aaa47f5f617cc24054160c961c071df`
+Previous release: `desktop-v0.1.7`
+
+- feat: Export memory as Markdown and send it with /memory on Telegram (#149) (5ad2b77)
+- feat: Add a Memory page that shows what Otto knows and where it learned it (#148) (c6994ee)
+- Save app files in the workspace and show returned images (#146) (0fa975a)
+- Restart desktop updates like Quit and ask only when work would stop (#147) (5c76981)
+- feat: Merge Schedule into Tasks with current, scheduled and previous views (#145) (00723b9)
+- Add workspace attachment uploads for app actions (#144) (388be19)
+- Fix browser handoffs and check answered requests (#143) (5911bfa)
+
 ## 0.1.7 - 2026-10-06
 
 Otto has a new look based on the updated n8n design.
