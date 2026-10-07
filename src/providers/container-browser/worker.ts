@@ -18,6 +18,8 @@ import {
   browserSocketPath,
   imageBytes,
   responseBytes,
+  viewBytes,
+  viewFrame,
   type BrowserMetadata,
   type BrowserRequest,
   type BrowserResponse,
@@ -96,9 +98,6 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
         throw new Error();
       return computer.upload(request.threadId, { ...input, bytes }, signal);
     }
-    case 'control':
-      if (!computer.control) throw new Error();
-      return computer.control(request.threadId, request.input, signal);
     case 'screenshot': {
       const image = await computer.screenshot(request.threadId, signal);
       if (image && image.length > imageBytes) throw new Error();
@@ -117,6 +116,7 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return computer.discard(request.threadId);
     case 'status':
       return null;
+    case 'view':
     case 'dispose':
     case 'quiesce':
       throw new Error();
@@ -222,6 +222,8 @@ export async function startContainerBrowserWorker(
     let request: BrowserRequest | undefined;
     const controller = new AbortController();
     let terminal = false;
+    let viewing: Promise<Computer> | undefined;
+    let inputs = Promise.resolve();
     const stop = () => {
       controller.abort();
       socket.destroy();
@@ -230,10 +232,26 @@ export async function startContainerBrowserWorker(
     socket.on('close', () => {
       controller.abort();
       connections.delete(socket);
-      if (!terminal && request && request.method !== 'quiesce')
+      if (!terminal && request && !['quiesce', 'view'].includes(request.method))
         void dispose(request.namespace).catch(() => {});
     });
     socket.setTimeout(90_000, stop);
+    const view = async (computer: Computer, threadId: string, id: string) => {
+      if (!computer.view || !computer.control) throw new Error();
+      let sent = 0;
+      for await (const image of computer.view(threadId, controller.signal)) {
+        const line =
+          JSON.stringify(viewFrame.parse({ id, frame: image.toString('base64') })) + '\n';
+        sent += line.length;
+        if (!socket.write(line))
+          await new Promise((resolve) => {
+            socket.once('drain', resolve);
+            socket.once('close', resolve);
+          });
+        if (sent > viewBytes || socket.destroyed) break;
+      }
+      return null;
+    };
     const execute = async (input: BrowserRequest) => {
       let entry: Namespace | undefined;
       let registered = false;
@@ -253,8 +271,11 @@ export async function startContainerBrowserWorker(
           entry = namespace(input.namespace);
           if (entry.pending.has(input.id)) throw new Error();
           if (entry.pending.size >= (options.maxPendingPerNamespace ?? 32)) throw new Error();
+          if (input.method === 'view') viewing = entry.computer;
           const done = entry.computer.then((computer) =>
-            dispatch(computer, input, controller.signal),
+            input.method === 'view'
+              ? view(computer, input.threadId, input.id)
+              : dispatch(computer, input, controller.signal),
           );
           entry.pending.set(input.id, { controller, done });
           registered = true;
@@ -318,6 +339,13 @@ export async function startContainerBrowserWorker(
             if (request) return stop();
             request = frame.request;
             void execute(request);
+          } else if (frame.type === 'input') {
+            if (request?.method !== 'view' || frame.id !== request.id || !viewing) return stop();
+            const { threadId } = request;
+            const computer = viewing;
+            inputs = inputs
+              .then(async () => (await computer).control!(threadId, frame.input, controller.signal))
+              .catch(() => {});
           } else {
             if (!request || frame.id !== request.id) return stop();
             controller.abort();

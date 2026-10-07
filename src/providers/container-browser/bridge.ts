@@ -44,7 +44,7 @@ export function runBrowserBridge(options: {
             requestId = frame.request.id;
           } else {
             if (!requestId || cancelled || frame.id !== requestId) return finish(1);
-            cancelled = true;
+            if (frame.type === 'cancel') cancelled = true;
           }
           socket.write(JSON.stringify(frame) + '\n');
         } catch {

@@ -1,24 +1,37 @@
 import { z } from 'zod';
 
-export const browserHandoffKeys = [
-  'Enter',
-  'Tab',
-  'Backspace',
-  'Delete',
-  'Escape',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-] as const;
+const fraction = z.number().min(0).max(1);
 
 export const browserHandoffInput = z.discriminatedUnion('type', [
   z
-    .object({ type: z.literal('click'), x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+    .object({
+      type: z.literal('mouse'),
+      event: z.enum(['move', 'down', 'up']),
+      x: fraction,
+      y: fraction,
+      button: z.enum(['left', 'middle', 'right']).optional(),
+    })
     .strict(),
-  z.object({ type: z.literal('scroll'), deltaY: z.number().int().min(-2000).max(2000) }).strict(),
-  z.object({ type: z.literal('type'), text: z.string().min(1).max(200) }).strict(),
-  z.object({ type: z.literal('key'), key: z.enum(browserHandoffKeys) }).strict(),
+  z
+    .object({
+      type: z.literal('wheel'),
+      deltaX: z.number().int().min(-2000).max(2000),
+      deltaY: z.number().int().min(-2000).max(2000),
+    })
+    .strict(),
+  z.object({ type: z.literal('text'), text: z.string().min(1).max(2000) }).strict(),
+  z
+    .object({
+      type: z.literal('key'),
+      key: z
+        .string()
+        .min(1)
+        .max(40)
+        .regex(/^[A-Za-z0-9+]+$/),
+    })
+    .strict(),
 ]);
+
+export const browserHandoffInputs = z.array(browserHandoffInput).min(1).max(100);
 
 export type BrowserHandoffInput = z.infer<typeof browserHandoffInput>;

@@ -33,7 +33,7 @@ import { registerRuntimeAccess } from './runtime-auth.ts';
 import { createMultipartReader } from './multipart.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
-import { browserHandoffInput } from '../shared/browser-handoff.ts';
+import { browserHandoffInputs } from '../shared/browser-handoff.ts';
 import type {
   Configuration,
   Message,
@@ -69,7 +69,14 @@ export interface AppDependencies {
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
   computer?: Pick<
     Computer,
-    'screenshot' | 'control' | 'status' | 'screenStatus' | 'currentSession' | 'discard'
+    | 'act'
+    | 'screenshot'
+    | 'control'
+    | 'view'
+    | 'status'
+    | 'screenStatus'
+    | 'currentSession'
+    | 'discard'
   >;
   runtime?: {
     status(): { browser: string; workspace: string; activeTurns?: number };
@@ -499,14 +506,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
   }
   const handoffClosed = 'The browser opens here when Otto hands it to you.';
-  async function readBrowserScreen(reply: FastifyReply, handoff = false) {
+  async function readBrowserScreen(reply: FastifyReply) {
     const thread = await activeThread(pool);
-    const blocked = async () =>
-      handoff ? !(await handoffOpen(thread.id)) : await credentialEntryOpen(thread.id);
-    if (await blocked())
-      return reply.code(423).send({
-        error: handoff ? handoffClosed : 'Browser observations are paused during credential entry.',
-      });
+    const blocked = () => credentialEntryOpen(thread.id);
+    const paused = 'Browser observations are paused during credential entry.';
+    if (await blocked()) return reply.code(423).send({ error: paused });
     let screen: Buffer | null | undefined;
     try {
       screen = await dependencies.computer?.screenshot(thread.id);
@@ -520,10 +524,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const current = await activeThread(pool);
     if (current.id !== thread.id)
       return reply.code(409).send({ error: 'The browser session changed. Request a new view.' });
-    if (await blocked())
-      return reply.code(423).send({
-        error: handoff ? handoffClosed : 'Browser observations are paused during credential entry.',
-      });
+    if (await blocked()) return reply.code(423).send({ error: paused });
     if (!screen) return reply.code(404).send({ error: 'There is no browser screen yet.' });
     const screenStatus = dependencies.computer?.screenStatus?.(thread.id);
     reply.header('X-Screen-State', screenStatus?.state ?? 'live');
@@ -536,21 +537,88 @@ export async function createApp(dependencies: AppDependencies = {}) {
       return reply.code(404).send({ error: 'Inspector is disabled.' });
     return readBrowserScreen(reply);
   });
-  app.get('/api/browser-handoff/screen', (_request, reply) => readBrowserScreen(reply, true));
+  app.get('/api/browser-handoff/stream', async (_request, reply) => {
+    const view = dependencies.computer?.view;
+    if (!view) return reply.code(404).send({ error: 'The browser is unavailable.' });
+    const thread = await activeThread(pool);
+    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    const controller = new AbortController();
+    const check = setInterval(
+      () =>
+        void handoffOpen(thread.id).then(
+          (open) => open || controller.abort(),
+          () => controller.abort(),
+        ),
+      1000,
+    );
+    reply.hijack();
+    streams.add(reply.raw);
+    reply.raw.on('close', () => {
+      streams.delete(reply.raw);
+      clearInterval(check);
+      controller.abort();
+    });
+    reply.raw.writeHead(200, {
+      'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Accel-Buffering': 'no',
+    });
+    try {
+      for (let frames = 1; frames && !controller.signal.aborted;) {
+        frames = 0;
+        for await (const image of view(thread.id, controller.signal)) {
+          frames++;
+          reply.raw.write(
+            `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${image.length}\r\n\r\n`,
+          );
+          reply.raw.write(image);
+          if (!reply.raw.write('\r\n'))
+            await new Promise((resolve) => {
+              reply.raw.once('drain', resolve);
+              reply.raw.once('close', resolve);
+            });
+        }
+      }
+    } catch {}
+    clearInterval(check);
+    reply.raw.end();
+  });
   app.post('/api/browser-handoff', async (request, reply) => {
-    const input = browserHandoffInput.safeParse(request.body);
-    if (!input.success)
-      return reply.code(400).send({ error: 'Send a click, scroll, key or text.' });
+    const body = z.object({ inputs: browserHandoffInputs }).strict().safeParse(request.body);
+    if (!body.success)
+      return reply.code(400).send({ error: 'Send pointer, wheel, key or text input.' });
     const control = dependencies.computer?.control;
     if (!control) return reply.code(404).send({ error: 'The browser is unavailable.' });
     const thread = await activeThread(pool);
     if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
     try {
-      await control(thread.id, input.data);
+      for (const input of body.data.inputs) await control(thread.id, input);
     } catch (error) {
-      if (error instanceof BrowserActionError)
-        return reply.code(409).send({ code: error.code, error: browserErrorMessage(error.code) });
-      throw error;
+      const code = error instanceof BrowserActionError ? error.code : undefined;
+      return reply
+        .code(409)
+        .send({ error: browserErrorMessage(code) ?? 'The browser did not take that input.' });
+    }
+    return { ok: true };
+  });
+  app.post('/api/browser-handoff/navigate', async (request, reply) => {
+    const body = z
+      .object({ action: z.enum(['back', 'reload']) })
+      .strict()
+      .safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: 'Choose back or reload.' });
+    const act = dependencies.computer?.act;
+    if (!act) return reply.code(404).send({ error: 'The browser is unavailable.' });
+    const thread = await activeThread(pool);
+    if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    try {
+      await act(thread.id, { action: body.data.action });
+    } catch (error) {
+      const code = error instanceof BrowserActionError ? error.code : undefined;
+      return reply
+        .code(409)
+        .send({ error: browserErrorMessage(code) ?? 'The page did not finish loading.' });
     }
     return { ok: true };
   });

@@ -815,11 +815,14 @@ input[type='range']:disabled {
 .browser-handoff-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 8px 8px 8px 12px;
+  padding: 6px 8px;
   color: var(--muted-foreground);
   font-size: var(--text-control);
+}
+.browser-handoff-bar > [role='status'] {
+  flex: 1;
+  min-width: 0;
 }
 .browser-handoff-actions {
   display: flex;

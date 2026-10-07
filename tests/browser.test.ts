@@ -125,6 +125,14 @@ test(
         control: async (id, input) => {
           controls.push([id, input]);
         },
+        act: async (id, input) => {
+          controls.push([id, input]);
+          return { text: 'Synthetic page', url: 'https://example.test/' };
+        },
+        view: async function* (_id, signal) {
+          yield Buffer.from('synthetic-live-frame');
+          await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+        },
       },
     });
     const request = (path: string) =>
@@ -240,44 +248,61 @@ test(
       assert.deepEqual((await request('/api/browser')).json(), { currentBrowser: null });
 
       fail = false;
-      const click = { type: 'click', x: 0.5, y: 0.25 };
-      const handoff = async (input: unknown = click) => [
-        (await request('/api/browser-handoff/screen')).statusCode,
-        (
-          await app.inject({
-            method: 'POST',
-            url: '/api/browser-handoff',
-            payload: input as object,
-            headers: { host: `localhost:${port}` },
-          })
-        ).statusCode,
-      ];
-      assert.deepEqual(await handoff(), [423, 423]);
+      const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
+      const frames: string[] = [];
+      const post = (url: string, payload: object) =>
+        app.inject({ method: 'POST', url, payload, headers: { host: `localhost:${port}` } });
+      const handoff = async (input: unknown = click) => {
+        const controller = new AbortController();
+        const stream = await app.inject({
+          url: '/api/browser-handoff/stream',
+          headers: { host: `localhost:${port}` },
+          payloadAsStream: true,
+          signal: controller.signal,
+        });
+        if (stream.statusCode === 200)
+          frames.push(
+            await new Promise<string>((resolve) =>
+              stream.stream().once('data', (chunk) => resolve(String(chunk))),
+            ),
+          );
+        controller.abort();
+        return [
+          stream.statusCode,
+          (await post('/api/browser-handoff', { inputs: [input] })).statusCode,
+          (await post('/api/browser-handoff/navigate', { action: 'back' })).statusCode,
+        ];
+      };
+      assert.deepEqual(await handoff(), [423, 423, 423]);
       await db.pool.query(
         "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
         [nextTurnId],
       );
-      assert.deepEqual(await handoff(), [423, 423]);
+      assert.deepEqual(await handoff(), [423, 423, 423]);
       await db.pool.query("UPDATE turns SET waiting_reason='question' WHERE id=$1", [nextTurnId]);
-      assert.deepEqual(await handoff(), [200, 200]);
-      assert.deepEqual(controls, [[next.id, click]]);
-      assert.deepEqual(await handoff({ type: 'click', x: 2, y: 0 }), [200, 400]);
+      assert.deepEqual(await handoff(), [200, 200, 200]);
+      assert.match(frames[0], /^--frame\r\nContent-Type: image\/jpeg\r\n/);
+      assert.deepEqual(controls, [
+        [next.id, click],
+        [next.id, { action: 'back' }],
+      ]);
+      assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Check','running',true)",
         [randomUUID(), ownerId, next.id],
       );
-      assert.deepEqual(await handoff(), [200, 200]);
+      assert.deepEqual(await handoff(), [200, 200, 200]);
       browserHeld = true;
-      assert.deepEqual(await handoff(), [423, 423]);
+      assert.deepEqual(await handoff(), [423, 423, 423]);
       browserHeld = false;
-      assert.deepEqual(await handoff(), [200, 200]);
-      assert.equal(controls.length, 3);
+      assert.deepEqual(await handoff(), [200, 200, 200]);
+      assert.equal(controls.length, 7);
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Done','queued')",
         [randomUUID(), ownerId, next.id],
       );
-      assert.deepEqual(await handoff(), [423, 423]);
-      assert.equal(controls.length, 3);
+      assert.deepEqual(await handoff(), [423, 423, 423]);
+      assert.equal(controls.length, 7);
     } finally {
       await app.close();
       await db.pool.end();
@@ -1237,6 +1262,49 @@ async function harness(control: { beforeFirstBridge?: Promise<void>; computer?: 
   };
 }
 
+test('a live view streams frames and carries input over one bridge call, and closing it keeps the browser', async () => {
+  const inputs: unknown[] = [];
+  let disposals = 0;
+  const computer: Computer = {
+    ...syntheticComputer(),
+    dispose: async () => {
+      disposals++;
+    },
+    control: async (_id, input) => {
+      inputs.push(input);
+    },
+    view: async function* (_id, signal) {
+      yield Buffer.from('first frame');
+      while (inputs.length < 2 && !signal.aborted) await delay(5);
+      yield Buffer.from('second frame');
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+    },
+  };
+  const fixture = await harness({ computer });
+  try {
+    const client = fixture.client('/synthetic/live-view');
+    const frames: string[] = [];
+    for await (const frame of client.view!('task', new AbortController().signal)) {
+      frames.push(String(frame));
+      if (frames.length === 1) {
+        await client.control!('task', { type: 'mouse', event: 'move', x: 0.5, y: 0.5 });
+        await client.control!('task', { type: 'text', text: 'hi' });
+      } else break;
+    }
+    assert.deepEqual(frames, ['first frame', 'second frame']);
+    assert.deepEqual(inputs, [
+      { type: 'mouse', event: 'move', x: 0.5, y: 0.5 },
+      { type: 'text', text: 'hi' },
+    ]);
+    assert.equal(fixture.launches.length, 1);
+    await assert.rejects(client.control!('task', { type: 'text', text: 'late' }), /not open/);
+    assert.match((await client.act('task', { action: 'snapshot' })).text, /Synthetic page/);
+    assert.equal(disposals, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('Vault broker metadata stays local while identifier, password and OTP inputs reach the browser', async () => {
   const fixture = await harness();
   const dataRoot = '/synthetic/vault-broker';
@@ -1683,7 +1751,7 @@ test('a sign-in approval can be observed after a wait, and Stop cancels the wait
   }
 });
 
-test('the user can click, type and scroll in the handed-off browser at page coordinates', async () => {
+test('the user can point, click, type and scroll in the handed-off browser at page coordinates', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-'));
   const fixture = stagedLoginBrowser();
   const commands: Record<string, unknown>[] = [];
@@ -1695,20 +1763,31 @@ test('the user can click, type and scroll in the handed-off browser at page coor
   try {
     await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
     commands.length = 0;
-    await computer.control!('fixture', { type: 'click', x: 0.5, y: 0.25 });
-    await computer.control!('fixture', { type: 'type', text: 'ab' });
-    await computer.control!('fixture', { type: 'key', key: 'Enter' });
-    await computer.control!('fixture', { type: 'scroll', deltaY: 300 });
+    await computer.control!('fixture', { type: 'mouse', event: 'move', x: 0.25, y: 0.5 });
+    await computer.control!('fixture', { type: 'mouse', event: 'down', x: 0.5, y: 0.25 });
+    await computer.control!('fixture', { type: 'mouse', event: 'up', x: 0.5, y: 0.25 });
+    await computer.control!('fixture', { type: 'text', text: 'ab' });
+    await computer.control!('fixture', { type: 'key', key: 'Control+a' });
+    await computer.control!('fixture', { type: 'wheel', deltaX: 0, deltaY: 300 });
+    assert.equal(
+      commands.filter(
+        (command) =>
+          command.action === 'evaluate' && command.script === '[innerWidth, innerHeight]',
+      ).length,
+      1,
+    );
     assert.deepEqual(
       commands
         .filter((command) => !['url', 'evaluate'].includes(String(command.action)))
         .map(({ id: _id, plugins: _plugins, ...command }) => command),
       [
+        { action: 'mousemove', x: 256, y: 384 },
         { action: 'mousemove', x: 512, y: 192 },
         { action: 'mousedown', button: 'left' },
+        { action: 'mousemove', x: 512, y: 192 },
         { action: 'mouseup', button: 'left' },
         { action: 'keyboard', subaction: 'type', text: 'ab' },
-        { action: 'press', key: 'Enter' },
+        { action: 'press', key: 'Control+a' },
         { action: 'wheel', deltaX: 0, deltaY: 300 },
       ],
     );
@@ -1840,7 +1919,7 @@ test('visual browser actions fence the session when releasing the pointer fails'
 });
 
 test(
-  'native container browser stays responsive after output exceeds stderr pipe capacity',
+  'native container browser stays responsive, streams live frames and refuses passkeys after heavy stderr output',
   {
     skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true' || process.platform !== 'linux',
     timeout: 30_000,
@@ -1889,12 +1968,23 @@ test(
         0,
         'Chromium stderr must not block when browser output exceeds pipe capacity',
       );
-      await computer.control!('fixture', { type: 'click', x: 0.5, y: 0.5 });
+      await computer.control!('fixture', { type: 'mouse', event: 'down', x: 0.5, y: 0.5 });
+      await computer.control!('fixture', { type: 'mouse', event: 'up', x: 0.5, y: 0.5 });
       const page = await computer.act('fixture', { action: 'snapshot' });
       assert.match(page.text, /Accepted/);
       const screenshot = await computer.screenshot('fixture');
       assert.ok(screenshot?.length);
       assert.equal(computer.screenStatus!('fixture').state, 'live');
+      for await (const frame of computer.view!('fixture', new AbortController().signal)) {
+        assert.deepEqual([...frame.subarray(0, 2)], [0xff, 0xd8]);
+        break;
+      }
+      const passkey = await computer.act('fixture', {
+        action: 'evaluate',
+        script:
+          "navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32) } }).then(() => 'resolved', (error) => error.name)",
+      });
+      assert.match(passkey.text, /NotAllowedError/);
     } finally {
       if (stderrPath) {
         const pipe = await open(stderrPath, constants.O_RDONLY | constants.O_NONBLOCK).catch(
@@ -2046,8 +2136,8 @@ test('a password typed through the handoff in several pauses hides only the fini
     fixture.pages.get('fixture')!.stage = 'password';
     fixture.pages.get('fixture')!.render();
     await computer.act('fixture', { action: 'click', selector: '#account' });
-    await computer.control!('fixture', { type: 'type', text: 'Sign' });
-    await computer.control!('fixture', { type: 'type', text: secret.slice(4) });
+    await computer.control!('fixture', { type: 'text', text: 'Sign' });
+    await computer.control!('fixture', { type: 'text', text: secret.slice(4) });
     assert.equal(fixture.pages.get('fixture')!.input.value, secret);
     for (const observation of [
       await computer.act('fixture', { action: 'snapshot' }),
@@ -2064,7 +2154,7 @@ test('a password typed through the handoff in several pauses hides only the fini
     other.type = 'password';
     page.dom.window.document.body.append(other);
     other.focus();
-    await computer.control!('fixture', { type: 'type', text: `${secret}2` });
+    await computer.control!('fixture', { type: 'text', text: `${secret}2` });
     const first = await computer.act('fixture', {
       action: 'evaluate',
       script: "document.querySelector('#account').value",
@@ -2419,12 +2509,6 @@ test('short secret masking does not scan replacement markers again', () => {
   assert.equal(redact('red a'), '[redacted] [redacted]');
 });
 
-function handoffScreen(state = 'live', text = 'Synthetic screen') {
-  return new Response(text, {
-    headers: { 'Content-Type': 'image/png', 'X-Screen-State': state },
-  });
-}
-
 async function handoffView(
   request: (path: string, options?: RequestInit) => Promise<Response>,
   content?: React.ReactNode,
@@ -2453,26 +2537,6 @@ async function handoffView(
   );
   Object.assign(globalThis, replacements);
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
-  const createUrl = URL.createObjectURL;
-  const revokeUrl = URL.revokeObjectURL;
-  const images = new Map<string, Blob>();
-  let serial = 0;
-  URL.createObjectURL = (blob) => {
-    assert.ok(blob instanceof Blob);
-    const url = `blob:handoff-${++serial}`;
-    images.set(url, blob);
-    return url;
-  };
-  URL.revokeObjectURL = (url) => images.delete(url);
-  let poll: () => void = () => {};
-  dom.window.setInterval = (handler) => {
-    assert.equal(typeof handler, 'function');
-    poll = handler as () => void;
-    return 1;
-  };
-  dom.window.clearInterval = () => {
-    poll = () => {};
-  };
   let completions = 0;
   let unmounted = false;
   const root = createRoot(dom.window.document.querySelector('#root')!);
@@ -2491,19 +2555,22 @@ async function handoffView(
     assert.ok(value, selector);
     return value;
   };
+  const pointer = async (type: string, clientX = 110, clientY = 70) => {
+    const image = element<HTMLImageElement>('.browser-handoff img');
+    await act(async () => {
+      image.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true, clientX, clientY }));
+    });
+  };
   return {
     dom,
-    images,
     element,
     completions: () => completions,
-    async poll() {
-      await act(async () => poll());
-    },
+    pointer,
     async render(next: React.ReactNode) {
       await act(async () => root.render(next));
     },
-    async clickImage() {
-      const image = element<HTMLImageElement>('img');
+    async showFrame() {
+      const image = element<HTMLImageElement>('.browser-handoff img');
       image.getBoundingClientRect = () =>
         ({ left: 10, top: 20, width: 200, height: 100 }) as DOMRect;
       Object.defineProperties(image, {
@@ -2511,10 +2578,13 @@ async function handoffView(
         naturalHeight: { value: 200 },
       });
       await act(async () => {
-        image.dispatchEvent(
-          new dom.window.MouseEvent('click', { bubbles: true, clientX: 110, clientY: 70 }),
-        );
+        image.dispatchEvent(new dom.window.Event('load'));
       });
+    },
+    async clickImage() {
+      await this.showFrame();
+      await pointer('mousedown');
+      await pointer('mouseup');
     },
     async button(label: string) {
       const button = [...dom.window.document.querySelectorAll('button')].find(
@@ -2532,8 +2602,6 @@ async function handoffView(
       if (!unmounted) await act(async () => root.unmount());
       await act(async () => delay(10));
       dom.window.close();
-      URL.createObjectURL = createUrl;
-      URL.revokeObjectURL = revokeUrl;
       for (const [key, descriptor] of previous) {
         if (descriptor) Object.defineProperty(globalThis, key, descriptor);
         else Reflect.deleteProperty(globalThis, key);
@@ -2897,9 +2965,8 @@ test('chat keeps a waiting browser handoff after a background message and closes
   const controls: unknown[] = [];
   const view = await handoffView(async (path, options) => {
     if (path === '/api/apps') return Response.json([]);
-    if (path === '/api/browser-handoff/screen') return handoffScreen();
     assert.equal(path, '/api/browser-handoff');
-    controls.push(JSON.parse(String(options?.body)));
+    controls.push(...JSON.parse(String(options?.body)).inputs);
     return Response.json({ ok: true });
   }, chat());
   try {
@@ -2929,8 +2996,11 @@ test('chat keeps a waiting browser handoff after a background message and closes
     await view.render(chat());
     assert.equal(view.element('.browser-handoff'), original);
     await view.clickImage();
-    await act(async () => delay(350));
-    assert.deepEqual(controls, [{ type: 'click', x: 0.5, y: 0.5 }]);
+    await act(async () => delay(10));
+    assert.deepEqual(controls, [
+      { type: 'mouse', event: 'down', x: 0.5, y: 0.5, button: 'left' },
+      { type: 'mouse', event: 'up', x: 0.5, y: 0.5, button: 'left' },
+    ]);
     state.turns = [
       {
         id: randomUUID(),
@@ -2980,9 +3050,8 @@ for (const failure of ['rejected', 'disconnected'] as const)
     const view = await handoffView(
       async (path, options) => {
         if (path === '/api/apps') return Response.json([]);
-        if (path === '/api/browser-handoff/screen') return handoffScreen();
         if (path === '/api/browser-handoff') {
-          controls++;
+          controls += JSON.parse(String(options?.body)).inputs.length;
           return Response.json({ ok: true });
         }
         assert.equal(path, '/api/messages');
@@ -3003,36 +3072,34 @@ for (const failure of ['rejected', 'disconnected'] as const)
     try {
       const original = view.element('.browser-handoff');
       await view.clickImage();
-      await act(async () => delay(350));
+      await act(async () => delay(10));
       await view.button('Done');
       assert.equal(submissions.length, 1);
       assert.equal(view.element('.browser-handoff'), original);
       assert.equal(
-        view.element<HTMLButtonElement>('.browser-handoff-actions button:last-child').disabled,
+        view.element<HTMLButtonElement>('.browser-handoff-bar > :last-child > button:last-child')
+          .disabled,
         true,
       );
       assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 1);
       await view.clickImage();
-      await view.poll();
       assert.equal(submissions.length, 1);
-      assert.equal(controls, 1);
+      assert.equal(controls, 2);
       await act(async () =>
         first.resolve(Response.json({ error: 'Synthetic request rejected' }, { status: 503 })),
       );
       assert.equal(view.element('.browser-handoff'), original);
       assert.equal(
-        view.element<HTMLButtonElement>('.browser-handoff-actions button:last-child').disabled,
+        view.element<HTMLButtonElement>('.browser-handoff-bar > :last-child > button:last-child')
+          .disabled,
         false,
       );
       assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 0);
-      const failureStatus = view.element('.browser-handoff [role="status"]').textContent;
-      await view.poll();
-      assert.equal(view.element('.browser-handoff [role="status"]').textContent, failureStatus);
       await view.button('Done');
       assert.equal(submissions.length, 2);
       assert.equal(submissions[1].clientMessageId, submissions[0].clientMessageId);
       assert.equal(view.element('.browser-handoff'), original);
-      assert.equal(controls, 1);
+      assert.equal(controls, 2);
       await act(async () =>
         second.resolve(
           Response.json({
@@ -3044,13 +3111,58 @@ for (const failure of ['rejected', 'disconnected'] as const)
       );
       assert.equal(view.dom.window.document.querySelector('.browser-handoff'), null);
       assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 1);
-      assert.equal(controls, 1);
+      assert.equal(controls, 2);
     } finally {
       first.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
       second.resolve(Response.json({ error: 'Synthetic rejected request' }, { status: 503 }));
       await view.close();
     }
   });
+
+test('the live handoff waits for a frame, merges moves and typing behind a pending request, and sends everything before Done', async () => {
+  const first = deferred<Response>();
+  const posted: unknown[] = [];
+  const view = await handoffView(async (path, options) => {
+    assert.equal(path, '/api/browser-handoff');
+    posted.push(JSON.parse(String(options?.body)).inputs);
+    return posted.length === 1 ? first.promise : Response.json({ ok: true });
+  });
+  const type = async (key: string) => {
+    const screen = view.element('.browser-handoff-screen');
+    await act(async () => {
+      screen.dispatchEvent(new view.dom.window.KeyboardEvent('keydown', { key, bubbles: true }));
+    });
+  };
+  try {
+    assert.equal(
+      view.element('.browser-handoff img').getAttribute('src'),
+      '/api/browser-handoff/stream?view=0',
+    );
+    await view.pointer('mousemove');
+    assert.deepEqual(posted, []);
+    await view.showFrame();
+    await view.pointer('mousedown');
+    await view.pointer('mousemove', 60, 30);
+    await view.pointer('mousemove', 160, 120);
+    await type('a');
+    await type('b');
+    await view.button('Done');
+    assert.equal(view.completions(), 0);
+    await act(async () => first.resolve(Response.json({ ok: true })));
+    await act(async () => delay(10));
+    assert.deepEqual(posted, [
+      [{ type: 'mouse', event: 'down', x: 0.5, y: 0.5, button: 'left' }],
+      [
+        { type: 'mouse', event: 'move', x: 0.75, y: 1 },
+        { type: 'text', text: 'ab' },
+      ],
+    ]);
+    assert.equal(view.completions(), 1);
+  } finally {
+    first.resolve(Response.json({ ok: true }));
+    await view.close();
+  }
+});
 
 test('chat keeps every message across refreshes after earlier messages were loaded', async () => {
   const threadId = randomUUID();
@@ -3108,125 +3220,6 @@ test('chat keeps every message across refreshes after earlier messages were load
       shown(),
       messages.map((message) => message.id),
     );
-  } finally {
-    await view.close();
-  }
-});
-
-for (const failure of ['rejected', 'disconnected'] as const)
-  test(`browser handoff preserves a ${failure} input failure through Done and polling without replay`, async () => {
-    const input = deferred<Response>();
-    let inputs = 0;
-    const view = await handoffView(async (_path, options) => {
-      if (options?.method !== 'POST') return handoffScreen();
-      inputs++;
-      const response = await input.promise;
-      if (failure === 'disconnected') throw new Error('Synthetic connection lost');
-      return response;
-    });
-    try {
-      await view.clickImage();
-      await view.button('Done');
-      assert.ok(view.element('.browser-handoff'));
-      assert.equal(view.completions(), 0);
-      assert.equal(
-        view.element<HTMLButtonElement>('.browser-handoff-actions button:last-child').disabled,
-        true,
-      );
-      await act(async () => {
-        input.resolve(
-          new Response(JSON.stringify({ error: 'Synthetic input rejected' }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-        );
-      });
-      await view.poll();
-      assert.equal(view.completions(), 0);
-      assert.match(view.element('[role="status"]').textContent!, /Refresh the view/);
-      await view.clickImage();
-      assert.equal(inputs, 1);
-      await view.button('Refresh view');
-      await view.button('Done');
-      assert.equal(inputs, 1);
-      assert.equal(view.completions(), 1);
-      assert.equal(view.dom.window.document.querySelector('.browser-handoff'), null);
-    } finally {
-      await view.close();
-    }
-  });
-
-test('browser handoff prevents input on saved frames and recovers an observation failure without replay', async () => {
-  let state = 'last_known';
-  let failScreen = false;
-  let inputs = 0;
-  const view = await handoffView(async (_path, options) => {
-    if (options?.method === 'POST') {
-      inputs++;
-      failScreen = true;
-      return Response.json({ ok: true });
-    }
-    return failScreen
-      ? Response.json({ error: 'Synthetic capture failed' }, { status: 500 })
-      : handoffScreen(state);
-  });
-  try {
-    await view.clickImage();
-    await view.button('Done');
-    assert.equal(inputs, 0);
-    assert.equal(view.completions(), 0);
-    assert.equal(view.element('[role="application"]').getAttribute('aria-disabled'), 'true');
-    state = 'live';
-    await view.poll();
-    await view.clickImage();
-    await act(async () => delay(350));
-    assert.equal(inputs, 1);
-    assert.match(view.element('[role="status"]').textContent!, /capture failed/);
-    await view.clickImage();
-    assert.equal(inputs, 1);
-    failScreen = false;
-    await view.poll();
-    await view.button('Done');
-    assert.equal(view.completions(), 1);
-    assert.equal(inputs, 1);
-  } finally {
-    await view.close();
-  }
-});
-
-test('browser handoff cancels queued controls when the preceding view cannot be observed', async () => {
-  const first = deferred<Response>();
-  const inputs: unknown[] = [];
-  let failScreen = false;
-  const view = await handoffView(async (_path, options) => {
-    if (options?.method === 'POST') {
-      inputs.push(JSON.parse(String(options.body)));
-      failScreen = true;
-      return first.promise;
-    }
-    return failScreen
-      ? Response.json({ error: 'Synthetic capture failed' }, { status: 500 })
-      : handoffScreen();
-  });
-  try {
-    await view.clickImage();
-    await view.clickImage();
-    await view.button('Done');
-    await act(async () => {
-      first.resolve(Response.json({ ok: true }));
-      await delay(350);
-    });
-    assert.equal(inputs.length, 1);
-    assert.equal(view.completions(), 0);
-    assert.match(view.element('[role="status"]').textContent!, /pending action was not sent/);
-    failScreen = false;
-    await view.poll();
-    await view.button('Done');
-    assert.equal(view.completions(), 0);
-    await view.button('Refresh view');
-    assert.equal(inputs.length, 1);
-    await view.button('Done');
-    assert.equal(view.completions(), 1);
   } finally {
     await view.close();
   }

@@ -126,14 +126,7 @@ export const browserRequest = z.discriminatedUnion('method', [
     })
     .strict(),
   z.object({ ...identity, method: z.literal('screenshot'), threadId: thread }).strict(),
-  z
-    .object({
-      ...identity,
-      method: z.literal('control'),
-      threadId: thread,
-      input: browserHandoffInput,
-    })
-    .strict(),
+  z.object({ ...identity, method: z.literal('view'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('currentPage'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('injectCredentials'), input: credential }).strict(),
   z
@@ -160,7 +153,18 @@ export type BrowserCall = BrowserRequest extends infer R
 export const browserFrame = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request'), request: browserRequest }).strict(),
   z.object({ type: z.literal('cancel'), id: z.uuid() }).strict(),
+  z.object({ type: z.literal('input'), id: z.uuid(), input: browserHandoffInput }).strict(),
 ]);
+export const viewFrame = z
+  .object({
+    id: z.uuid(),
+    frame: z
+      .string()
+      .max(4 * 1024 * 1024)
+      .regex(/^[A-Za-z0-9+/]*={0,2}$/),
+  })
+  .strict();
+export const viewBytes = 12 * 1024 * 1024;
 export const browserMetadata = z
   .object({
     status: z.string().max(256),

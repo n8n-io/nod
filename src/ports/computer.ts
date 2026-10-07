@@ -106,6 +106,7 @@ export interface Computer {
   ): Promise<BrowserObservation>;
   screenshot(threadId: string, signal?: AbortSignal): Promise<Buffer | null>;
   control?(threadId: string, input: BrowserHandoffInput, signal?: AbortSignal): Promise<void>;
+  view?(threadId: string, signal: AbortSignal): AsyncIterable<Buffer>;
   screenStatus?(threadId: string): {
     state: 'live' | 'last_known' | 'unavailable';
     capturedAt?: string;

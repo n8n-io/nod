@@ -11,15 +11,18 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import type { CommandProcess } from '../command-process.ts';
 import { browserUrl } from '../agent-browser/network.ts';
 import {
+  browserFrame,
   browserRequest,
   browserResponse,
   imageBytes,
   responseBytes,
+  viewFrame,
   type BrowserCall,
   type BrowserMetadata,
   type BrowserResponse,
 } from './protocol.ts';
 
+const viewFrameLine = 4 * 1024 * 1024 + 256;
 const observationSchema = z
   .object({ text: z.string().max(256 * 1024), url: z.string().max(8192) })
   .strict();
@@ -45,6 +48,7 @@ export function createBridgeComputer(options: {
   >();
   const pending = new Set<Promise<unknown>>();
   const cancellations = new Set<() => void>();
+  const views = new Map<string, { write(input: unknown): void }>();
   let disposing: Promise<void> | undefined;
   let recovering: Promise<void> | undefined;
   const reopenNotice =
@@ -221,6 +225,61 @@ export function createBridgeComputer(options: {
     return result;
   }
 
+  async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
+    const threadId = threadIdentity(id);
+    signal.throwIfAborted();
+    if (disposed || uncertain || options.available?.({ method: 'view', threadId }) === false)
+      throw new Error('The workspace browser is unavailable.');
+    const request = browserRequest.parse({
+      method: 'view',
+      threadId,
+      id: randomUUID(),
+      namespace: options.namespace,
+    });
+    const child = options.launch({ method: 'view', threadId });
+    let closed = false;
+    child.on('close', () => (closed = true));
+    child.on('error', () => (closed = true));
+    child.stdin.on('error', () => {});
+    child.stderr.resume();
+    let lines = '';
+    const write = (frame: unknown) => {
+      if (closed) return;
+      if (!lines)
+        setImmediate(() => {
+          if (!closed) child.stdin.write(lines);
+          lines = '';
+        });
+      lines += JSON.stringify(browserFrame.parse(frame)) + '\n';
+    };
+    const current = { write: (input: unknown) => write({ type: 'input', id: request.id, input }) };
+    const cancel = () => write({ type: 'cancel', id: request.id });
+    views.set(threadId, current);
+    signal.addEventListener('abort', cancel, { once: true });
+    cancellations.add(cancel);
+    write({ type: 'request', request });
+    try {
+      let buffered = '';
+      child.stdout.setEncoding('utf8');
+      for await (const chunk of child.stdout) {
+        buffered += chunk;
+        if (buffered.length > viewFrameLine) return;
+        for (let end = buffered.indexOf('\n'); end >= 0; end = buffered.indexOf('\n')) {
+          const frame = viewFrame.safeParse(JSON.parse(buffered.slice(0, end)));
+          buffered = buffered.slice(end + 1);
+          if (!frame.success || frame.data.id !== request.id) return;
+          yield Buffer.from(frame.data.frame, 'base64');
+        }
+      }
+    } finally {
+      if (views.get(threadId) === current) views.delete(threadId);
+      signal.removeEventListener('abort', cancel);
+      cancellations.delete(cancel);
+      cancel();
+      if (!closed) setTimeout(() => closed || child.kill('SIGKILL'), 5_000).unref();
+    }
+  }
+
   async function image(id: string, signal?: AbortSignal) {
     const value = await call({ method: 'screenshot', threadId: threadIdentity(id) }, signal);
     if (value === null) return null;
@@ -259,9 +318,12 @@ export function createBridgeComputer(options: {
         await call({ method: 'act', threadId: threadIdentity(id), input }, signal),
       ),
     screenshot: image,
-    control: async (id, input, signal) => {
-      await call({ method: 'control', threadId: threadIdentity(id), input }, signal);
+    control: async (id, input) => {
+      const current = views.get(threadIdentity(id));
+      if (!current) throw new Error('The browser view is not open.');
+      current.write(input);
     },
+    view,
     upload: async (id, input, signal) => {
       if (!input.bytes.length || input.bytes.length > browserUploadBytes)
         throw new Error('The browser file is too large.');

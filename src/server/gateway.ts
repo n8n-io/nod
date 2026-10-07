@@ -438,7 +438,8 @@ export async function createGateway(options: {
     });
     await syncProfile(session).catch(() => {});
     let result = await options.runtimes.fetch(session.user.id, forwarded, { developer });
-    if (url.pathname === '/api/events')
+    const streamed = ['/api/events', '/api/browser-handoff/stream'].includes(url.pathname);
+    if (streamed)
       try {
         const current = await options.authentication.session(authenticationHeaders(request));
         if (
@@ -455,7 +456,7 @@ export async function createGateway(options: {
         return reply.code(503).send({ error: 'This request could not be completed. Try again.' });
       }
     result = privateRuntimeResponse(result, url.pathname.startsWith('/api/artifacts/'));
-    if (url.pathname === '/api/events' && result.ok)
+    if (streamed && result.ok)
       result = guardedStream(result, {
         authentication: options.authentication,
         session,

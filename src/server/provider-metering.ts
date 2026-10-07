@@ -60,12 +60,6 @@ export function meterComputer(computer: Computer, usage: ProviderUsageStore): Co
       usage.track({ ...base, operation: 'current_page' }, () => computer.currentPage(id)),
     injectCredentials: (input) =>
       usage.track({ ...base, operation: 'secure_entry' }, () => computer.injectCredentials(input)),
-    control: computer.control
-      ? (id, input, signal) =>
-          usage.track({ ...base, operation: `handoff_${input.type}` }, () =>
-            computer.control!(id, input, signal),
-          )
-      : undefined,
   };
 }
 

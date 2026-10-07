@@ -42,6 +42,7 @@ interface BrowserState {
   secrets: Set<string>;
   secretsByOrigin: Map<string, Set<string>>;
   typed?: { value: string; origin: string; field: number; fresh: boolean };
+  pageSize?: [number, number];
   protectedSelectors: Set<string>;
   uploads: Set<string>;
   started: boolean;
@@ -62,6 +63,27 @@ export interface BrowserDiagnostic {
     'completed' | 'daemon_rejected' | 'action_rejected' | 'failed' | DaemonTransportError['kind'];
   elapsedMs: number;
 }
+
+const streamFrame = z.object({
+  type: z.literal('frame'),
+  seq: z.number().int(),
+  data: z.string().max(4 * 1024 * 1024),
+});
+
+const withoutPasskeys = `(() => {
+  const credentials = navigator.credentials;
+  if (!credentials) return;
+  const unavailable = () =>
+    Promise.reject(new DOMException('Passkeys are not available in this browser.', 'NotAllowedError'));
+  const get = credentials.get.bind(credentials);
+  const create = credentials.create.bind(credentials);
+  credentials.get = (options) => (options && options.publicKey ? unavailable() : get(options));
+  credentials.create = (options) => (options && options.publicKey ? unavailable() : create(options));
+  if (window.PublicKeyCredential) {
+    PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);
+    PublicKeyCredential.isConditionalMediationAvailable = () => Promise.resolve(false);
+  }
+})();`;
 
 class BrowserLockedError extends Error {
   statusCode = 423;
@@ -480,6 +502,8 @@ export function createAgentBrowserComputer(options: {
     await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
     const config = resolve(runtimeRoot, 'browser-config.json');
     await writeFile(config, '{}', { mode: 0o600 });
+    const initScript = resolve(runtimeRoot, 'browser-init.js');
+    await writeFile(initScript, withoutPasskeys, { mode: 0o600 });
     const proxyUrl = await proxy.url();
     const profile = profilePath(state);
     const timeZone = browserTimeZone(state.saved.timeZone);
@@ -499,6 +523,8 @@ export function createAgentBrowserComputer(options: {
           ...(state.browserExecutable ? ['--executable-path', state.browserExecutable] : []),
           ...(headed ? ['--headed'] : []),
           '--no-webmcp',
+          '--init-script',
+          initScript,
           '--json',
           '--proxy',
           proxyUrl,
@@ -542,6 +568,7 @@ export function createAgentBrowserComputer(options: {
     if (args[0] === 'open') {
       await drainInterruptedCommand(state, 'connect', () => daemonSocket(state, options.signal));
       state.recovered = false;
+      state.pageSize = undefined;
       if (viewport)
         await command(state, ['set', 'viewport', String(viewport.width), String(viewport.height)], {
           signal: options.signal,
@@ -1359,21 +1386,29 @@ export function createAgentBrowserComputer(options: {
     await serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       const socket = await daemonSocket(state, signal);
-      if (input.type === 'click') {
-        const [width, height] = z
+      if (input.type === 'mouse') {
+        const [width, height] = (state.pageSize ??= z
           .tuple([z.number().positive(), z.number().positive()])
-          .parse(await evaluate(state, '[innerWidth, innerHeight]', signal));
+          .parse(await evaluate(state, '[innerWidth, innerHeight]', signal)));
         await requestDaemon(
           socket,
           { action: 'mousemove', x: Math.round(input.x * width), y: Math.round(input.y * height) },
           signal,
         );
-        await requestDaemon(socket, { action: 'mousedown', button: 'left' }, signal);
-        await requestDaemon(socket, { action: 'mouseup', button: 'left' }, signal);
+        if (input.event !== 'move')
+          await requestDaemon(
+            socket,
+            { action: `mouse${input.event}`, button: input.button ?? 'left' },
+            signal,
+          );
       }
-      if (input.type === 'scroll')
-        await requestDaemon(socket, { action: 'wheel', deltaX: 0, deltaY: input.deltaY }, signal);
-      if (input.type === 'type') {
+      if (input.type === 'wheel')
+        await requestDaemon(
+          socket,
+          { action: 'wheel', deltaX: input.deltaX, deltaY: input.deltaY },
+          signal,
+        );
+      if (input.type === 'text') {
         await requestDaemon(
           socket,
           { action: 'keyboard', subaction: 'type', text: input.text },
@@ -1408,6 +1443,55 @@ export function createAgentBrowserComputer(options: {
       if (input.type === 'key')
         await requestDaemon(socket, { action: 'press', key: input.key }, signal);
     });
+  }
+
+  async function* view(id: string, signal: AbortSignal): AsyncGenerator<Buffer> {
+    const state = await recoverBrowser(id);
+    if (!state?.started) throw new Error('Open a page in this task browser first.');
+    if (state.recovered && state.saved.sensitive && !state.secrets.size)
+      throw new Error('Reopen the login page before continuing this browser session.');
+    const { port } = z
+      .object({ port: z.number().int().min(1).max(65_535) })
+      .parse(
+        await requestDaemon(await daemonSocket(state, signal), { action: 'stream_status' }, signal),
+      );
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/?pacing=ack&maxFps=30`);
+    let latest: z.infer<typeof streamFrame> | undefined;
+    let open = true;
+    let wake = () => {};
+    const stop = () => {
+      open = false;
+      wake();
+    };
+    socket.addEventListener('message', (event) => {
+      try {
+        const frame = streamFrame.safeParse(JSON.parse(String(event.data)));
+        if (!frame.success) return;
+        latest = frame.data;
+        wake();
+      } catch {
+        return;
+      }
+    });
+    socket.addEventListener('close', stop);
+    socket.addEventListener('error', stop);
+    signal.addEventListener('abort', stop, { once: true });
+    try {
+      while (open) {
+        const frame = latest;
+        latest = undefined;
+        if (!frame) {
+          await new Promise<void>((resolve) => (wake = resolve));
+          continue;
+        }
+        if (!state.injecting) yield Buffer.from(frame.data, 'base64');
+        if (socket.readyState === WebSocket.OPEN)
+          socket.send(JSON.stringify({ type: 'ack', seq: frame.seq }));
+      }
+    } finally {
+      signal.removeEventListener('abort', stop);
+      socket.close();
+    }
   }
 
   async function getScreenshot(id: string, signal?: AbortSignal): Promise<Buffer | null> {
@@ -1582,6 +1666,7 @@ export function createAgentBrowserComputer(options: {
     download: tracked(download),
     screenshot: tracked(getScreenshot),
     control: tracked(control),
+    view,
     screenStatus: (id) => screenStatuses.get(threadIdentity(id)) ?? { state: 'unavailable' },
     injectCredentials: tracked(injectCredentials),
     currentPage: tracked(currentPage),
