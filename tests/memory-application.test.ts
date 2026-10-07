@@ -28,6 +28,127 @@ import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
 type Step = { tool: string; args: Record<string, unknown>; rejected?: boolean };
 
+test('memory receipt drafts survive background updates and failed refreshes', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const { act, createElement } = await import('react');
+  const dom = new JSDOM('<div id="root"></div>', {
+    url: 'https://otto.fixture.test',
+    pretendToBeVisual: true,
+  });
+  const noteId = randomUUID();
+  let view: MemoryView = {
+    saving: true,
+    sensitive: false,
+    profile: { name: '', location: '', phone: '', preferences: '' },
+    archive: [],
+    notes: [
+      {
+        id: noteId,
+        path: 'routines/synthetic-review',
+        area: 'routines',
+        text: 'Reviews synthetic notes on Monday.',
+        status: 'stated',
+        inMind: true,
+        updated: '2026-10-07T09:00:00.000Z',
+        edited: null,
+        expires: null,
+        sources: [],
+      },
+    ],
+  };
+  let failRead = false;
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: async () =>
+      failRead
+        ? Response.json({ error: 'Synthetic memory read failed.' }, { status: 503 })
+        : Response.json(view),
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { MemoryReceipt, MemoryReceipts } =
+    await import('../src/web/components/memory-receipt.tsx');
+  const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  t.after(async () => {
+    await act(async () => root.unmount());
+    pageDataCache.clear();
+    dom.window.close();
+    for (const [key, descriptor] of originals)
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+  });
+  const button = (text: string) => {
+    const found = Array.from(dom.window.document.querySelectorAll('button')).find(
+      (item) => item.textContent === text,
+    );
+    assert.ok(found);
+    return found;
+  };
+  pageDataCache.clear();
+  await act(async () =>
+    root.render(
+      createElement(MemoryReceipts, {
+        revision: noteId,
+        children: createElement(MemoryReceipt, {
+          receipt: { notes: [{ path: view.notes[0].path, id: noteId }] },
+        }),
+      }),
+    ),
+  );
+  await act(async () => {
+    dom.window.document.querySelector('summary')!.click();
+    await delay(20);
+  });
+  await act(async () => button('Edit').click());
+  const textarea = dom.window.document.querySelector('textarea')!;
+  assert.equal(dom.window.document.activeElement, textarea);
+  const draft = 'Reviews synthetic notes on Wednesday, with a longer unsaved detail.';
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value')!.set!.call(
+      textarea,
+      draft,
+    );
+    textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  });
+  view = {
+    ...view,
+    notes: [{ ...view.notes[0], updated: '2026-10-07T09:01:00.000Z' }],
+  };
+  await act(async () => pageDataCache.refresh('/api/memory', true));
+  assert.equal(dom.window.document.querySelector('textarea'), textarea);
+  assert.equal(dom.window.document.activeElement, textarea);
+  assert.equal(textarea.value, draft);
+  const currentText = 'Reviews synthetic notes on Friday.';
+  view = {
+    ...view,
+    notes: [{ ...view.notes[0], text: currentText, updated: '2026-10-07T09:02:00.000Z' }],
+  };
+  await act(async () => pageDataCache.refresh('/api/memory', true));
+  assert.equal(textarea.value, draft);
+  failRead = true;
+  await act(async () => pageDataCache.refresh('/api/memory', true));
+  assert.equal(dom.window.document.querySelector('textarea'), textarea);
+  assert.equal(textarea.value, draft);
+  assert.equal(button('Save').disabled, true);
+  failRead = false;
+  await act(async () => pageDataCache.refresh('/api/memory', true));
+  await act(async () => button('Cancel').click());
+  await act(async () => button('Edit').click());
+  assert.equal(dom.window.document.querySelector('textarea')!.value, currentText);
+});
+
 test(
   'memory saves supported owner facts with editable receipts while preserving approval and opt-out boundaries',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },

@@ -40,6 +40,7 @@ function ReceiptNote({
   const [text, setText] = useState(note.text);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const editingText = useRef(note.text);
   const controls = useRef<HTMLDivElement>(null);
 
   function cancel() {
@@ -97,6 +98,11 @@ function ReceiptNote({
               if (event.key === 'Escape' && !busy) cancel();
             }}
           />
+          {note.text !== editingText.current && (
+            <Notice kind="info">
+              This note changed while you were editing. Saving will replace the current version.
+            </Notice>
+          )}
           <div className="memory-actions">
             <Button type="submit" size="sm" disabled={busy || disabled || !text.trim()}>
               {busy ? 'Saving…' : 'Save'}
@@ -129,7 +135,16 @@ function ReceiptNote({
             </>
           ) : (
             <div className="memory-actions" ref={controls}>
-              <Button variant="ghost" size="sm" disabled={disabled} onClick={() => setMode('edit')}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={disabled}
+                onClick={() => {
+                  editingText.current = note.text;
+                  setText(note.text);
+                  setMode('edit');
+                }}
+              >
                 Edit
               </Button>
               <Button
@@ -155,13 +170,12 @@ export function MemoryReceipt({ receipt }: { receipt: NonNullable<Message['memor
   const summary = useRef<HTMLElement>(null);
   if (!memory) return null;
   const { data, error, loading, refreshing, refresh, update } = memory;
-  const notes = error
-    ? []
-    : (data?.notes.filter(
-        (note): note is MemoryNote & { id: string } =>
-          typeof note.id === 'string' &&
-          receipt.notes.some((saved) => saved.path === note.path && saved.id === note.id),
-      ) ?? []);
+  const notes =
+    data?.notes.filter(
+      (note): note is MemoryNote & { id: string } =>
+        typeof note.id === 'string' &&
+        receipt.notes.some((saved) => saved.path === note.path && saved.id === note.id),
+    ) ?? [];
   const known = Boolean(data && !error && (!refreshing || notes.length));
   const label = !known
     ? 'Memory saved'
@@ -183,7 +197,9 @@ export function MemoryReceipt({ receipt }: { receipt: NonNullable<Message['memor
       <summary ref={summary}>
         <BookmarkCheck size={14} aria-hidden="true" />
         <span className="memory-receipt-label">{label}</span>
-        {notes.length === 1 && <span className="memory-receipt-preview">{notes[0].text}</span>}
+        {known && notes.length === 1 && (
+          <span className="memory-receipt-preview">{notes[0].text}</span>
+        )}
         <ChevronDown size={14} className="memory-receipt-chevron" aria-hidden="true" />
       </summary>
       {open && (
@@ -191,7 +207,7 @@ export function MemoryReceipt({ receipt }: { receipt: NonNullable<Message['memor
           {(loading || (refreshing && !notes.length)) && (
             <p className="memory-receipt-status">Loading memory…</p>
           )}
-          {error ? (
+          {error && (
             <>
               <Notice>Could not load the current memory.</Notice>
               <Button
@@ -203,27 +219,24 @@ export function MemoryReceipt({ receipt }: { receipt: NonNullable<Message['memor
                 Try again
               </Button>
             </>
-          ) : (
-            <>
-              {notes.map((note) => (
-                <ReceiptNote
-                  key={`${note.id}:${note.updated}`}
-                  note={note}
-                  disabled={refreshing}
-                  onChange={(next) => {
-                    update(() => next);
-                    summary.current?.focus();
-                  }}
-                />
-              ))}
-              {known && notes.length < receipt.notes.length && (
-                <p className="memory-receipt-status">
-                  {receipt.notes.length === 1
-                    ? 'This detail is no longer in active memory.'
-                    : 'Some details are no longer in active memory.'}
-                </p>
-              )}
-            </>
+          )}
+          {notes.map((note) => (
+            <ReceiptNote
+              key={`${note.id}:${note.path}`}
+              note={note}
+              disabled={refreshing || Boolean(error)}
+              onChange={(next) => {
+                update(() => next);
+                summary.current?.focus();
+              }}
+            />
+          ))}
+          {known && notes.length < receipt.notes.length && (
+            <p className="memory-receipt-status">
+              {receipt.notes.length === 1
+                ? 'This detail is no longer in active memory.'
+                : 'Some details are no longer in active memory.'}
+            </p>
           )}
         </div>
       )}
