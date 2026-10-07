@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import type { AgentSessionOptions } from '../src/ports/agent.ts';
-import type { MemoryNote, MemoryView } from '../src/shared/memory.ts';
+import type { MemoryNote, MemoryUpdate, MemoryView } from '../src/shared/memory.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { repair } from '../src/server/memory-lint.ts';
@@ -409,14 +409,16 @@ test(
         [foreign],
       );
       const planted = JSON.parse(await memoryFile());
-      planted.entries.push({
+      const cello = {
         area: 'about',
         slug: 'planted',
         text: 'Plays the cello.',
         origin: 'inferred',
         updated: new Date().toISOString(),
         sources: [foreign],
-      });
+      };
+      planted.entries.push(cello);
+      planted.archive.push({ ...cello, archived: cello.updated, reason: 'expired' });
       await writeFile(join(objects, 'memory', 'MEMORY.md'), JSON.stringify(planted));
       const guess = (await view()).notes.find((note) => note.path === 'about/planted')!;
       assert.deepEqual(
@@ -429,13 +431,29 @@ test(
         text: 'My bank password is hunter2.',
       });
       assert.equal(rejected.statusCode, 400);
-      assert.match(rejected.json().error, /can’t be saved/);
+      assert.doesNotMatch(await memoryFile(), /hunter2/);
+      assert.equal(
+        (
+          await page('POST', '/api/memory/archive/restore', {
+            path: 'about/planted',
+            archived: cello.updated,
+          })
+        ).statusCode,
+        400,
+      );
+      assert.equal(
+        (await page('PATCH', '/api/memory/notes/about/planted', { expires: null }))
+          .json()
+          .notes.find((note: MemoryNote) => note.path === 'about/planted').status,
+        'tentative',
+      );
       const added = await page('POST', '/api/memory/notes', {
         area: 'people',
         text: 'Rita Costa is my accountant.',
       });
       assert.equal(added.statusCode, 200, added.body);
-      const rita = (added.json() as MemoryView).notes.find((note) => note.area === 'people')!;
+      const update = added.json() as MemoryUpdate;
+      const rita = update.notes.find((note) => note.path === update.path)!;
       assert.deepEqual([rita.status, rita.sources, typeof rita.edited], ['stated', [], 'string']);
       assert.equal(
         (
@@ -452,29 +470,25 @@ test(
           .notes.find((note: MemoryNote) => note.path === 'about/planted').status,
         'stated',
       );
-      assert.equal(
-        (await page('PATCH', `/api/memory/notes/${rita.path}`, { expires: '2000-01-01' }))
-          .statusCode,
-        400,
-      );
       const edited = (
         await page('PATCH', `/api/memory/notes/${rita.path}`, {
           text: 'Rita Costa does my books.',
           expires: '2099-12-31',
         })
       ).json() as MemoryView;
+      const rewritten = edited.notes.find((note) => note.path === rita.path)!;
       assert.deepEqual(
-        [edited.notes.find((note) => note.path === rita.path)?.text, edited.archive[0].text],
-        ['Rita Costa does my books.', 'Rita Costa is my accountant.'],
+        [rewritten.text, rewritten.sources, edited.archive[0].text],
+        ['Rita Costa does my books.', [], 'Rita Costa is my accountant.'],
       );
       const restored = (
         await page('POST', '/api/memory/archive/restore', {
           path: rita.path,
           archived: edited.archive[0].archived,
         })
-      ).json() as MemoryView;
+      ).json() as MemoryUpdate;
       assert.equal(
-        restored.notes.find((note) => note.path === rita.path)?.text,
+        restored.notes.find((note) => note.path === restored.path)?.text,
         'Rita Costa is my accountant.',
       );
       assert.equal(restored.archive[0].text, 'Rita Costa does my books.');
@@ -504,6 +518,10 @@ test(
         [false, true],
       );
       assert.equal((await page('DELETE', `/api/memory/notes/${rita.path}`)).statusCode, 200);
+      assert.equal(
+        (await pool.query('SELECT 1 FROM memory_lookups WHERE path=$1', [rita.path])).rowCount,
+        0,
+      );
       assert.equal(
         (await view()).notes.some((note) => note.path === rita.path),
         false,
@@ -746,6 +764,7 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
     text,
     m,
     quote,
+    sensitive: false,
   });
   const additions = applyReflect(
     tree,
@@ -800,6 +819,13 @@ test('reflection ops need a verbatim quote from a cited message and cannot touch
     (word) => add('about', `fact-${word}`, `Distinct ${word} fact.`, [1], 'bullet points'),
   );
   assert.equal(applyReflect(treeOf(), many, messages, when), 6);
+  const sensitive = {
+    ...add('about', 'health', 'Has asthma.', [1], 'bullet points'),
+    sensitive: true,
+  };
+  assert.equal(applyReflect(treeOf(), [sensitive], messages, when), 0);
+  assert.equal(applyReflect({ ...treeOf(), sensitive: true }, [sensitive], messages, when), 1);
+  assert.equal(applyReflect(treeOf(), [{ ...sensitive, sensitive: undefined }], messages, when), 0);
 });
 
 test('consolidation keeps entry text and provenance and only archives with a newer replacement', () => {

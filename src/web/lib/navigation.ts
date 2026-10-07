@@ -10,7 +10,8 @@ export const navigationItems = [
 ] as const;
 
 export function navigate(path: string) {
-  window.history.pushState(null, '', path);
+  const { pathname, search, hash } = window.location;
+  if (path !== `${pathname}${search}${hash}`) window.history.pushState(null, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 

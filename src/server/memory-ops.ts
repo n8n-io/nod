@@ -30,6 +30,7 @@ const reflectOp = z.discriminatedUnion('op', [
     abstract: line(120).optional(),
     m: ordinals,
     quote: line(160),
+    sensitive: z.boolean(),
   }),
   z.object({
     op: z.literal('archive'),
@@ -79,7 +80,7 @@ export function applyReflect(
       if (!entry || entry.origin !== 'inferred') continue;
       archive(tree, entry, op.reason, now);
     } else {
-      if (unsafe(op.text, op.abstract)) continue;
+      if (unsafe(op.text, op.abstract) || (op.sensitive && !tree.sensitive)) continue;
       const match = areaEntries(tree, op.area).find((entry) => same(entry.text, op.text));
       if (match) {
         if (match.origin !== 'inferred') continue;

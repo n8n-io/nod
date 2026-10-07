@@ -8,6 +8,7 @@ import {
   type MemoryNote,
   type MemorySource,
   type MemoryStatus,
+  type MemoryUpdate,
   type MemoryView,
 } from '../../shared/memory';
 import { PageTitle } from '../components/page-title';
@@ -26,7 +27,7 @@ import {
 import { usePageData } from '../hooks/use-page-data';
 import { usePhone } from '../hooks/use-phone';
 import { api, errorMessage } from '../lib/api';
-import { formatCalendarDate, formatDayLabel, useDateFormat } from '../lib/date-format';
+import { dayKey, formatCalendarDate, formatDayLabel, useDateFormat } from '../lib/date-format';
 import { navigate } from '../lib/navigation';
 import { cn } from '../lib/utils';
 
@@ -59,9 +60,10 @@ type Selection = { note: string } | { archived: string } | null;
 const archivedKey = (item: MemoryArchived) => `${item.path}@${item.archived}`;
 
 function statusLabel(note: MemoryNote) {
-  if (note.edited) return note.sources.length ? 'Updated by you' : 'Added by you';
-  if (note.status === 'stated') return 'You said this';
-  return note.sources.length > 1 ? `Noticed ${note.sources.length} times` : 'Noticed once';
+  if (note.status === 'tentative') return 'Noticed once';
+  if (note.status === 'observed') return `Noticed ${note.sources.length} times`;
+  if (!note.edited) return 'You said this';
+  return note.sources.length ? 'Updated by you' : 'Written by you';
 }
 
 function MemoryMark({ status, inMind }: { status: MemoryStatus; inMind: boolean }) {
@@ -106,7 +108,9 @@ function Reach({
   ];
   const mind = view.notes.filter((note) => note.inMind).length;
   const lookup = view.notes.length - mind;
-  const profile = [view.profile.name, view.profile.location].filter(Boolean).join(' · ');
+  const profile = (['name', 'location', 'phone', 'preferences'] as const).filter(
+    (field) => view.profile[field],
+  );
   const scoped = (value: Exclude<Scope, null>, count: number, label: string) => (
     <button
       type="button"
@@ -139,9 +143,17 @@ function Reach({
           Always in mind
         </h2>
         <div className="memory-chips">
-          {profile && <span className="memory-item">{profile}</span>}
+          {profile.map((field) => (
+            <span
+              key={field}
+              className="memory-item"
+              title={field === 'preferences' ? view.profile.preferences : undefined}
+            >
+              {view.profile[field]}
+            </span>
+          ))}
           {scoped('mind', mind, 'note')}
-          {link('/', 'This chat')}
+          <span className="memory-item">This chat</span>
         </div>
       </div>
       <div>
@@ -152,8 +164,8 @@ function Reach({
         <div className="memory-chips">
           {lookup > 0 && scoped('lookup', lookup, 'note')}
           <span className="memory-item">Earlier chats</span>
-          <span className="memory-item">Files and routines</span>
-          {link('/tasks', 'Tasks')}
+          <span className="memory-item">Files</span>
+          <span className="memory-item">Tasks</span>
         </div>
       </div>
       <div>
@@ -166,7 +178,7 @@ function Reach({
             link(
               '/apps',
               <>
-                <ServiceLogo connection={app} size={14} />
+                <ServiceLogo connection={app} size={16} />
                 {app.name}
               </>,
               app.slug,
@@ -232,9 +244,10 @@ function NoteDetail({
   }
   function save(event: FormEvent) {
     event.preventDefault();
-    void run(() =>
-      mode === 'edit' ? onChange({ text: text.trim() }) : onChange({ expires: expires || null }),
-    );
+    const body = mode === 'edit' ? { text: text.trim() } : { expires: expires || null };
+    const unchanged = 'text' in body ? body.text === note.text : body.expires === note.expires;
+    if (unchanged) setMode('view');
+    else void run(() => onChange(body));
   }
   return (
     <article className="memory-detail">
@@ -280,6 +293,7 @@ function NoteDetail({
             className="input"
             type="date"
             value={expires}
+            min={dayKey(Date.now(), format)}
             aria-label="Keep until"
             autoFocus
             onChange={(event) => setExpires(event.target.value)}
@@ -297,14 +311,13 @@ function NoteDetail({
       <Sources sources={note.sources} />
       {history.map((item) => (
         <p key={archivedKey(item)} className="memory-meta">
-          {item.path === note.path ? 'Replaced' : 'Merged'} “{item.text}” ·{' '}
-          {formatDayLabel(item.archived, format)}
+          {reasons[item.reason]} “{item.text}” · {formatDayLabel(item.archived, format)}
         </p>
       ))}
       {note.lookups && (
         <p className="memory-meta">
-          Looked up {note.lookups.count === 1 ? 'once' : `${note.lookups.count} times`}, last{' '}
-          {formatDayLabel(note.lookups.last, format).toLocaleLowerCase()}
+          Looked up {note.lookups.count === 1 ? 'once' : `${note.lookups.count} times`} ·{' '}
+          {formatDayLabel(note.lookups.last, format)}
         </p>
       )}
       {error && <Notice>{error}</Notice>}
@@ -336,7 +349,7 @@ function NoteDetail({
               Edit
             </Button>
             <Button variant="outline" size="sm" onClick={() => setMode('expires')}>
-              {note.expires ? 'Change end date' : 'End date'}
+              End date
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setMode('forget')}>
               Forget
@@ -399,16 +412,15 @@ function ArchivedDetail({
 }
 
 function AddNote({
-  open,
   area,
-  onOpenChange,
+  onClose,
   onAdd,
 }: {
-  open: boolean;
   area: MemoryArea;
-  onOpenChange(open: boolean): void;
+  onClose(): void;
   onAdd(body: { area: MemoryArea; text: string; expires?: string }): Promise<void>;
 }) {
+  const format = useDateFormat();
   const [target, setTarget] = useState(area);
   const [text, setText] = useState('');
   const [expires, setExpires] = useState('');
@@ -420,23 +432,14 @@ function AddNote({
     setError('');
     try {
       await onAdd({ area: target, text: text.trim(), ...(expires ? { expires } : {}) });
-      setText('');
-      setExpires('');
-      onOpenChange(false);
+      onClose();
     } catch (cause) {
       setError(errorMessage(cause));
-    } finally {
       setBusy(false);
     }
   }
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (next) setTarget(area);
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="memory-dialog" aria-describedby={undefined} data-analytics-private>
         <DialogTitle>Add a note</DialogTitle>
         <form className="memory-form" onSubmit={submit}>
@@ -469,6 +472,7 @@ function AddNote({
                 className="input"
                 type="date"
                 value={expires}
+                min={dayKey(Date.now(), format)}
                 onChange={(event) => setExpires(event.target.value)}
               />
             </Field>
@@ -496,7 +500,7 @@ export function Memory() {
   const [settingError, setSettingError] = useState('');
 
   async function send(path: string, method: string, body?: object) {
-    const next = await api<MemoryView>(path, {
+    const next = await api<MemoryUpdate>(path, {
       method,
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
@@ -643,9 +647,7 @@ export function Memory() {
           archived: archived.archived,
         });
         setTab('all');
-        setChosen(
-          next.notes.some((n) => n.path === archived.path) ? { note: archived.path } : undefined,
-        );
+        setChosen(next.path ? { note: next.path } : undefined);
       }}
       onForget={async () => {
         await send('/api/memory/archive/forget', 'POST', {
@@ -766,19 +768,19 @@ export function Memory() {
           {settingError && <Notice>{settingError}</Notice>}
         </div>
       )}
-      <AddNote
-        open={adding}
-        area={active !== 'all' && active !== 'archive' ? active : 'about'}
-        onOpenChange={setAdding}
-        onAdd={async (body) => {
-          const next = await send('/api/memory/notes', 'POST', body);
-          const added = next.notes.find((n) => n.text === body.text);
-          setTab('all');
-          setScope(null);
-          setQuery('');
-          if (added) setChosen({ note: added.path });
-        }}
-      />
+      {adding && (
+        <AddNote
+          area={active !== 'all' && active !== 'archive' ? active : 'about'}
+          onClose={() => setAdding(false)}
+          onAdd={async (body) => {
+            const next = await send('/api/memory/notes', 'POST', body);
+            setTab('all');
+            setScope(null);
+            setQuery('');
+            setChosen(next.path ? { note: next.path } : undefined);
+          }}
+        />
+      )}
     </div>
   );
 }

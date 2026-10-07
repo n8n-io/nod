@@ -173,7 +173,7 @@ function capitalized(value: string, locale: string) {
   return value.charAt(0).toLocaleUpperCase(locale) + value.slice(1);
 }
 
-function dayKey(value: string | number | Date, format: DateFormat) {
+export function dayKey(value: string | number | Date, format: DateFormat) {
   return formatter(
     { ...format, locale: 'en-CA' },
     {

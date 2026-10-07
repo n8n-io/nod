@@ -23,8 +23,8 @@
   font-weight: 500;
 }
 .memory-ring {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   flex: none;
 }
 .memory-ring circle {
@@ -54,13 +54,21 @@
 .memory-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 28px;
+  gap: 8px;
+  min-height: var(--control-height-sm);
   color: var(--text-secondary);
   font-size: var(--text-control);
 }
+.memory-item {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  line-height: var(--control-height-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .memory-chip {
-  padding: 2px 10px;
+  padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: var(--control-radius);
   background: var(--surface);
@@ -229,9 +237,10 @@
   font-size: var(--text-control);
 }
 .memory-text {
-  font-size: 18px;
+  font-size: var(--text-body);
   font-weight: 500;
-  line-height: 1.45;
+  line-height: 1.6;
+  text-wrap: pretty;
   overflow-wrap: anywhere;
 }
 .memory-text.is-archived {
@@ -251,7 +260,8 @@
   border-left: 2px solid var(--border);
   color: var(--text-secondary);
   font-size: var(--text-control);
-  line-height: 1.55;
+  line-height: 1.6;
+  text-wrap: pretty;
   overflow-wrap: anywhere;
 }
 .memory-source figcaption {

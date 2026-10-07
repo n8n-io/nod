@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { createPreferencesStore } from './preferences.ts';
 import type { MemoryService } from './memory.ts';
-import type { MemoryView } from '../shared/memory.ts';
+import type { MemoryUpdate, MemoryView } from '../shared/memory.ts';
 import { personalSecret } from './memory-tree.ts';
 import { activeThreadSql } from './thread.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
@@ -251,10 +251,10 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   }
 
   function registerRoutes(app: FastifyInstance) {
-    const changed = async (change: Promise<unknown> | undefined) => {
-      await change;
+    const changed = async (change: Promise<unknown> | undefined): Promise<MemoryUpdate> => {
+      const result = await change;
       refresh();
-      return memoryView();
+      return { ...(await memoryView()), ...(typeof result === 'string' ? { path: result } : {}) };
     };
     const notePath = (params: unknown) => {
       const { area, slug } = params as { area: string; slug: string };

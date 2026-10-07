@@ -205,7 +205,14 @@ export async function collect(options: {
     observation: row.observation,
     turnId: row.turn_id as string | null,
   }));
-  const memory = await (await fetch(new URL('/api/memory', stack.baseUrl))).text();
+  const view = (await (await fetch(new URL('/api/memory', stack.baseUrl))).json()) as {
+    notes?: Array<{ path: string; text: string; status: string }>;
+    archive?: Array<{ path: string; text: string; reason: string }>;
+  };
+  const memory = JSON.stringify({
+    notes: (view.notes ?? []).map(({ path, text, status }) => ({ path, text, status })),
+    archive: (view.archive ?? []).map(({ path, text, reason }) => ({ path, text, reason })),
+  });
   const approvals = (
     await stack.pool.query('SELECT action,status,args FROM approvals ORDER BY expires_at')
   ).rows.map((row) => ({

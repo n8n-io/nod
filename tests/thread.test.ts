@@ -2967,7 +2967,7 @@ test(
         ((await memory.read({ path: 'preferences' })) as { overview?: string }).overview,
         undefined,
       );
-      await assert.rejects(memory.forget(saved.path), /no longer in memory/);
+      await assert.rejects(memory.forget(saved.path), { statusCode: 404 });
 
       const path = join(root, 'memory', 'MEMORY.md');
       const document = JSON.parse(await readFile(path, 'utf8'));
@@ -3170,6 +3170,7 @@ test(
         ops: [
           {
             op: 'add',
+            sensitive: false,
             area: 'preferences',
             slug: 'oat-milk',
             text: 'Drinks oat milk in coffee.',
@@ -3248,6 +3249,7 @@ test(
         ops: [
           {
             op: 'add',
+            sensitive: false,
             area: 'preferences',
             slug: 'meeting-notes',
             text: 'Wants meeting notes as bullet points.',
@@ -3256,6 +3258,7 @@ test(
           },
           {
             op: 'add',
+            sensitive: false,
             area: 'people',
             slug: 'ana',
             text: "Ana is the user's sister.",
@@ -3264,6 +3267,7 @@ test(
           },
           {
             op: 'add',
+            sensitive: false,
             area: 'lessons',
             slug: 'invented',
             text: 'Never email on Fridays.',
@@ -3272,6 +3276,7 @@ test(
           },
           {
             op: 'add',
+            sensitive: false,
             area: 'about',
             slug: 'leak',
             text: 'Remember the token sk-abcdefghijklmnop.',
@@ -3307,6 +3312,7 @@ test(
         ops: [
           {
             op: 'add',
+            sensitive: false,
             area: 'preferences',
             slug: 'bullets',
             text: 'Wants meeting notes as bullet points.',
@@ -3361,6 +3367,7 @@ test(
         ops: [
           {
             op: 'add',
+            sensitive: false,
             area: 'preferences',
             slug: 'oat-milk',
             text: 'Drinks oat milk in coffee.',

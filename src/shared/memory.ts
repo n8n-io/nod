@@ -49,3 +49,7 @@ export interface MemoryView {
   archive: MemoryArchived[];
   profile: MemoryProfile;
 }
+
+export interface MemoryUpdate extends MemoryView {
+  path?: string;
+}
