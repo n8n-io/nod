@@ -1,28 +1,16 @@
 import { PageTitle } from '../components/page-title';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { ChevronRight, CreditCard, Globe, Plus } from 'lucide-react';
 import type { VaultListEntry } from '../../shared/contracts';
 import { usePageData } from '../hooks/use-page-data';
+import { usePhone } from '../hooks/use-phone';
 import { VaultDetails } from '../components/vault-details';
 import { VaultEntryIcon, VaultSurface } from '../components/vault-surface';
 import { formatCardExpiry, VaultItemForm } from '../components/vault-item-form';
 import { originLabel } from '../lib/vault-name';
 import { cn } from '../lib/utils';
 import { Loading, Notice, SearchField } from '../components/ui';
-
-const phoneQuery = '(max-width: 720px)';
-
-function usePhone() {
-  return useSyncExternalStore(
-    (change) => {
-      const media = window.matchMedia?.(phoneQuery);
-      media?.addEventListener('change', change);
-      return () => media?.removeEventListener('change', change);
-    },
-    () => window.matchMedia?.(phoneQuery).matches ?? false,
-  );
-}
 
 function subtitle(entry: VaultListEntry) {
   return entry.kind === 'card'

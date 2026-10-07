@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { createPreferencesStore } from './preferences.ts';
 import type { MemoryService } from './memory.ts';
+import type { MemoryView } from '../shared/memory.ts';
 import { personalSecret } from './memory-tree.ts';
 import { activeThreadSql } from './thread.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
@@ -244,8 +245,34 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     throw new Error('This personal-data action is not available.');
   }
 
+  async function memoryView(): Promise<MemoryView> {
+    if (!memory) throw Object.assign(new Error('Memory is unavailable.'), { statusCode: 404 });
+    return { ...(await memory.view()), profile: await getProfile() };
+  }
+
   function registerRoutes(app: FastifyInstance) {
-    app.get('/api/memory', () => memory?.view() ?? { areas: [], archive: [] });
+    const changed = async (change: Promise<unknown> | undefined) => {
+      await change;
+      refresh();
+      return memoryView();
+    };
+    const notePath = (params: unknown) => {
+      const { area, slug } = params as { area: string; slug: string };
+      return `${area}/${slug}`;
+    };
+    app.get('/api/memory', memoryView);
+    app.patch('/api/memory', (request) => changed(memory?.settings(request.body)));
+    app.post('/api/memory/notes', (request) => changed(memory?.add(request.body)));
+    app.patch('/api/memory/notes/:area/:slug', (request) =>
+      changed(memory?.change(notePath(request.params), request.body)),
+    );
+    app.delete('/api/memory/notes/:area/:slug', (request) =>
+      changed(memory?.forget(notePath(request.params))),
+    );
+    app.post('/api/memory/archive/restore', (request) => changed(memory?.restore(request.body)));
+    app.post('/api/memory/archive/forget', (request) =>
+      changed(memory?.forgetArchived(request.body)),
+    );
     schedules.registerRoutes(app);
   }
 

@@ -351,6 +351,7 @@ function trustedAppURL(value) {
         '/channels',
         '/you',
         '/tasks',
+        '/memory',
         '/vault',
         '/browser',
         '/privacy',

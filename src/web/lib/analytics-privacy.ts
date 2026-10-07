@@ -7,6 +7,7 @@ const routes = new Set([
   '/vault',
   '/channels',
   '/tasks',
+  '/memory',
   '/browser',
   '/dev',
   '/credentials',

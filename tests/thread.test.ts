@@ -2758,11 +2758,13 @@ const memoryFixture = async (tables: string[] = [], curator?: MemoryCurator) => 
   url.searchParams.set('options', `-c search_path=${schema}`);
   const pool = new pg.Pool({ connectionString: url.href });
   await pool.query(
-    "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now())",
+    "CREATE TABLE messages (id uuid PRIMARY KEY, owner_id text NOT NULL, role text NOT NULL, text text NOT NULL, turn_id uuid, attachments jsonb NOT NULL DEFAULT '[]', created_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE turns (id uuid PRIMARY KEY, owner_id text NOT NULL, channel text)",
   );
   for (const table of tables) await pool.query(table);
   const ownerId = 'memory-fixture-owner';
   const store = createFilesystemObjectStore(root);
+  const memory = createMemoryService({ pool, ownerId, store, curator });
+  await memory.initialize();
   const post = async (
     text: string,
     options: { owner?: string; role?: string; at?: string; attachments?: string } = {},
@@ -2789,7 +2791,7 @@ const memoryFixture = async (tables: string[] = [], curator?: MemoryCurator) => 
     store,
     root,
     post,
-    memory: createMemoryService({ pool, ownerId, store, curator }),
+    memory,
     close: async () => {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -2918,13 +2920,15 @@ test(
         anaMessage,
       );
       assert.deepEqual(
-        (await memory.view()).areas
-          .find((entry) => entry.area === 'people')
-          ?.entries.map((entry) => entry.path),
+        (await memory.view()).notes
+          .filter((note) => note.area === 'people')
+          .map((note) => note.path)
+          .sort(),
         ['people/ana-is-the-sister', 'people/marc-is-the-manager'],
       );
 
       const existingThread = randomUUID();
+      await pool.query('DROP TABLE memory_untrusted_threads');
       await pool.query('CREATE TABLE threads (id uuid PRIMARY KEY, owner_id text NOT NULL)');
       await pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [existingThread, ownerId]);
       await memory.initialize();
@@ -2955,12 +2959,15 @@ test(
       await memory.forget(saved.path);
       const view = await memory.view();
       assert.equal(
-        view.areas.some((entry) => entry.entries.some((item) => item.path === saved.path)),
+        view.notes.some((note) => note.path === saved.path),
         false,
       );
       assert.deepEqual(view.archive, []);
-      assert.equal(view.areas.find((entry) => entry.area === 'preferences')?.overview, null);
-      await assert.rejects(memory.forget(saved.path), /not found/);
+      assert.equal(
+        ((await memory.read({ path: 'preferences' })) as { overview?: string }).overview,
+        undefined,
+      );
+      await assert.rejects(memory.forget(saved.path), /no longer in memory/);
 
       const path = join(root, 'memory', 'MEMORY.md');
       const document = JSON.parse(await readFile(path, 'utf8'));
@@ -2981,7 +2988,7 @@ test(
         preferences: ['prefers-email-updates: Prefers email updates.'],
       });
       assert.equal(
-        (await memory.view()).areas.find((entry) => entry.area === 'lessons')?.entries[0].status,
+        (await memory.view()).notes.find((note) => note.area === 'lessons')?.status,
         'tentative',
       );
       await memory.save({ area: 'about', text: 'Plays chess on Sundays.' }, first);

@@ -1,6 +1,6 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertCircle, Check, Link2, LoaderCircle, Plus } from 'lucide-react';
+import { AlertCircle, Check, LoaderCircle, Plus } from 'lucide-react';
 import type { Configuration, Connection } from '../../shared/contracts';
 import { SetupNotice } from '../components/setup-notice';
 import { api, ApiError, errorMessage } from '../lib/api';
@@ -13,6 +13,7 @@ import {
   removeConnection,
 } from '../lib/secondary-pages';
 import { usePageData } from '../hooks/use-page-data';
+import { ServiceLogo } from '../components/service-logo';
 import {
   Button,
   Dialog,
@@ -43,40 +44,6 @@ type Discovery = {
     clientIdRequired?: boolean;
   }>;
 };
-
-const logos = new Set([
-  'gmail',
-  'googlecalendar',
-  'googledrive',
-  'googlesheets',
-  'googledocs',
-  'slack',
-  'notion',
-  'linear',
-]);
-
-function ServiceLogo({ connection }: { connection: Connection }) {
-  const [failed, setFailed] = useState<string>();
-  const source = logos.has(connection.slug)
-    ? `/logos/${connection.slug}.svg`
-    : connection.connectionId
-      ? `/api/apps/${encodeURIComponent(connection.connectionId)}/icon`
-      : undefined;
-  return source && failed !== source ? (
-    <img
-      src={source}
-      alt=""
-      width={24}
-      height={24}
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(source)}
-    />
-  ) : (
-    <Link2 size={24} aria-hidden="true" />
-  );
-}
 
 function accountLabel(account: Connection) {
   const identity = connectionIdentity(account);

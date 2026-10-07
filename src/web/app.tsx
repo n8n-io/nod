@@ -7,6 +7,7 @@ import { Channels } from './pages/channels';
 import { Credentials } from './pages/credentials';
 import { Inspector } from './pages/inspector';
 import { Tasks } from './pages/tasks';
+import { Memory } from './pages/memory';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
 import { prefetchPageData } from './hooks/use-page-data';
@@ -15,7 +16,7 @@ import { ChatSkeleton, Splash } from './components/startup';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { FeedbackDialog } from './components/feedback';
-import { navigationItems } from './lib/navigation';
+import { navigate, navigationItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
@@ -36,10 +37,6 @@ import {
   subscribeDesktopSettings,
 } from './lib/desktop';
 
-function navigate(path: string) {
-  window.history.pushState(null, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
-}
 function useSavedDateFormat() {
   const { data } = usePageData<AccountPreferences>('/api/preferences');
   useEffect(() => {
@@ -163,7 +160,7 @@ function Workspace({
     return () => clearTimeout(timer);
   }, [loaded]);
   useEffect(() => {
-    prefetchPageData(['/api/vault', '/api/tasks', '/api/schedules', '/api/apps']);
+    prefetchPageData(['/api/vault', '/api/tasks', '/api/schedules', '/api/apps', '/api/memory']);
   }, []);
   useEffect(() => {
     if (path === '/dev') setInspector(true);
@@ -256,6 +253,7 @@ function Workspace({
             {currentPath === '/apps' && <Apps configuration={state?.configuration} />}
             {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
             {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+            {currentPath === '/memory' && <Memory />}
             {!navigationItems.some((item) => item.path === currentPath) && (
               <div className="empty-state">
                 <h1>This page isn’t here.</h1>

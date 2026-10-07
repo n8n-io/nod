@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { memoryAreas, type MemorySource, type MemoryView } from '../shared/memory.ts';
 
-export const areas = ['about', 'preferences', 'people', 'routines', 'lessons'] as const;
+export const areas = memoryAreas;
 export const maxBytes = 256 * 1024;
 export const maxEntries = 300;
 export const maxArchive = 40;
@@ -36,29 +37,35 @@ export const line = (max: number) =>
     .refine((value) => !/\p{Cc}/u.test(value));
 const timestamp = z.iso.datetime({ offset: true });
 
-const entrySchema = z.object({
+const entryFields = z.object({
   area,
   slug,
   text: line(600),
   abstract: line(120).optional(),
   origin: z.enum(['stated', 'inferred']),
   updated: timestamp,
-  sources: z.array(id).min(1).max(5),
+  edited: timestamp.optional(),
+  sources: z.array(id).max(5),
   expires: z.iso.date().optional(),
 });
-const archivedSchema = entrySchema.extend({
-  archived: timestamp,
-  reason: z.enum([
-    'superseded',
-    'merged',
-    'duplicate',
-    'expired',
-    'stale',
-    'obsolete',
-    'contradicted',
-  ]),
-  by: path.optional(),
-});
+const evidenced = (entry: z.infer<typeof entryFields>) =>
+  entry.sources.length > 0 || !!entry.edited;
+const entrySchema = entryFields.refine(evidenced);
+const archivedSchema = entryFields
+  .extend({
+    archived: timestamp,
+    reason: z.enum([
+      'superseded',
+      'merged',
+      'duplicate',
+      'expired',
+      'stale',
+      'obsolete',
+      'contradicted',
+    ]),
+    by: path.optional(),
+  })
+  .refine(evidenced);
 const overviewSchema = z.object({
   text: line(1200),
   digest: z.string().regex(/^[0-9a-f]{12}$/),
@@ -71,6 +78,7 @@ export type Archived = z.infer<typeof archivedSchema>;
 export type Reason = Archived['reason'];
 export interface Tree {
   enabled: boolean;
+  sensitive: boolean;
   reflected: string | null;
   retries: number;
   entries: Entry[];
@@ -81,6 +89,7 @@ export interface Tree {
 
 export const emptyTree = (): Tree => ({
   enabled: true,
+  sensitive: false,
   reflected: null,
   retries: 0,
   entries: [],
@@ -89,7 +98,11 @@ export const emptyTree = (): Tree => ({
   archive: [],
 });
 export const isEmpty = (tree: Tree) =>
-  tree.enabled && !tree.reflected && !tree.entries.length && !tree.archive.length;
+  tree.enabled &&
+  !tree.sensitive &&
+  !tree.reflected &&
+  !tree.entries.length &&
+  !tree.archive.length;
 
 export const pathOf = (entry: { area: Area; slug: string }) => `${entry.area}/${entry.slug}`;
 export const bySlug = (a: Entry, b: Entry) => a.slug.localeCompare(b.slug);
@@ -204,6 +217,7 @@ export function parse(bytes?: Uint8Array): Tree {
     return tree;
   }
   tree.enabled = doc.enabled !== false;
+  tree.sensitive = doc.sensitive === true;
   tree.reflected =
     typeof doc.reflected === 'string' && watermark.test(doc.reflected) ? doc.reflected : null;
   tree.retries = z.number().int().min(0).max(9).catch(0).parse(doc.retries);
@@ -232,6 +246,7 @@ export function render(tree: Tree) {
         {
           version: 2,
           enabled: tree.enabled,
+          sensitive: tree.sensitive,
           reflected: tree.reflected,
           retries: tree.retries,
           entries: tree.entries.toSorted(
@@ -295,7 +310,11 @@ export function indexLayout(tree: Tree, options: { tentative?: boolean; budget?:
       ...(all.length > visible.length ? [`+${all.length - visible.length} more`] : []),
     ];
   }
-  return { text: JSON.stringify(index), hidden: listed.length - shown.size };
+  return {
+    text: JSON.stringify(index),
+    hidden: listed.length - shown.size,
+    shown: new Set([...shown].map(pathOf)),
+  };
 }
 
 const matches = (tokens: string[], term: string) =>
@@ -355,28 +374,37 @@ export function open(tree: Tree, target: string) {
   };
 }
 
-export function view(tree: Tree) {
+export function view(
+  tree: Tree,
+  source: (id: string) => MemorySource,
+  lookups: Map<string, { count: number; last: string }>,
+): Omit<MemoryView, 'profile'> {
+  const index = indexLayout(tree);
   return {
-    areas: areas.map((target) => ({
-      area: target,
-      overview: tree.overviews[target]?.text ?? null,
-      entries: areaEntries(tree, target)
-        .toSorted(bySlug)
-        .map((entry) => ({
-          path: pathOf(entry),
-          text: entry.text,
-          abstract: abstractOf(entry),
-          status: statusOf(entry),
-          expires: entry.expires ?? null,
-          updated: entry.updated,
-        })),
-    })),
-    archive: tree.archive.map((entry) => ({
+    saving: tree.enabled,
+    sensitive: tree.sensitive,
+    notes: tree.entries
+      .toSorted((a, b) => b.updated.localeCompare(a.updated) || pathOf(a).localeCompare(pathOf(b)))
+      .map((entry) => ({
+        path: pathOf(entry),
+        area: entry.area,
+        text: entry.text,
+        status: statusOf(entry),
+        inMind: index.shown.has(pathOf(entry)),
+        updated: entry.updated,
+        edited: entry.edited ?? null,
+        expires: entry.expires ?? null,
+        sources: entry.sources.map(source),
+        lookups: lookups.get(pathOf(entry)) ?? null,
+      })),
+    archive: tree.archive.toReversed().map((entry) => ({
       path: pathOf(entry),
+      area: entry.area,
       text: entry.text,
       reason: entry.reason,
       by: entry.by ?? null,
       archived: entry.archived,
+      sources: entry.sources.map(source),
     })),
   };
 }
