@@ -2,7 +2,7 @@
 
 This manual evaluation uses the requested `agent-eval-loop` skill to review the catalog and demonstrate app connection through chat and Apps.
 
-**All four current case versions passed their required gates against the final product behavior.** Airtable discovery, MCP discovery and research-only alternative setup passed on `5bb49eeae186d965ec503de3d1427c142c1d4fb7`; reconnect passed its one corrected-fixture confirmation on `802dbd0b3c22b609697c192d6a28c9e9326cecbf`, whose product code is identical. The initial final-source batch remains recorded as 3/4 with its fixture-red intact; it is not rescored. Total measured spend across all 17 attempts was USD 1.0894581. These are real-agent runs with synthetic app providers, ending at pending consent, not completed live OAuth acceptance.
+**All four current case versions passed their required gates against the final product behavior.** Airtable discovery, MCP discovery and research-only alternative setup passed on `5bb49eeae186d965ec503de3d1427c142c1d4fb7`; reconnect passed its one corrected-fixture confirmation on `802dbd0b3c22b609697c192d6a28c9e9326cecbf`, whose product code is identical. The initial final-source batch remains recorded as 3/4 with its fixture-red intact; it is not rescored. Total measured spend across all 17 attempts was USD 1.0894581. These are real-agent runs with synthetic app providers. Connection cases end at pending consent; the research-only case performs no setup. None establishes completed live OAuth acceptance.
 
 ## Final-source results
 
