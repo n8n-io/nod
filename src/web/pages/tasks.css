@@ -1,3 +1,27 @@
+.task-views {
+  display: flex;
+  gap: 16px;
+  min-height: var(--secondary-tab-height);
+  margin-bottom: var(--secondary-section-gap);
+  border-bottom: 1px solid var(--border);
+}
+.task-views > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(var(--secondary-tab-height) - 1px);
+  padding: 8px 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  cursor: pointer;
+}
+.task-views > button[aria-selected='true'] {
+  color: var(--foreground);
+  border-bottom-color: var(--accent);
+}
 .task-views > button > span {
   color: var(--muted-foreground);
   font-size: var(--text-control);

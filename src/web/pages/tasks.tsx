@@ -166,8 +166,9 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
       .map((run) => ({ at: run.createdAt, run })),
   ].sort((a, b) => b.at.localeCompare(a.at));
   const counts = {
-    current: tasks.data && open.length,
-    scheduled: schedules.data && upcoming.length,
+    current: tasks.data ? open.length : null,
+    scheduled: schedules.data ? upcoming.length : null,
+    previous: null,
   };
   return (
     <div className="content-page secondary-page tasks-page">
@@ -191,14 +192,15 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
           const index = views.indexOf(view);
+          const step = event.key === 'ArrowLeft' ? views.length - 1 : 1;
           const next =
-            event.key === 'Home'
-              ? views[0]
-              : event.key === 'End'
-                ? views[views.length - 1]
-                : views[
-                    (index + (event.key === 'ArrowLeft' ? views.length - 1 : 1)) % views.length
-                  ];
+            views[
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? views.length - 1
+                  : (index + step) % views.length
+            ];
           setView(next);
           event.currentTarget.querySelector<HTMLButtonElement>(`[data-view="${next}"]`)?.focus();
         }}
@@ -215,7 +217,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
             onClick={() => setView(item)}
           >
             {viewLabels[item]}
-            {item !== 'previous' && counts[item] !== undefined && <span>{counts[item]}</span>}
+            {counts[item] !== null && <span>{counts[item]}</span>}
           </button>
         ))}
       </div>

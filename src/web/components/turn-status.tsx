@@ -9,7 +9,6 @@ export const statusLabels: Record<TurnStatus, string> = {
   failed: 'Could not finish',
   cancelled: 'Stopped',
 };
-export const activeStatuses: TurnStatus[] = ['queued', 'running', 'waiting'];
 
 export function StatusIcon({ status }: { status: TurnStatus }) {
   if (status === 'running') return <LoaderCircle size={16} className="spin" aria-hidden="true" />;
