@@ -31,7 +31,7 @@ This is a confirmed reasoning failure. All times below are Europe/Madrid on 6 Oc
 
 The tool access worked. The request was not newly answered after Otto's check. Otto used mention search as evidence of an open task. Search selects matching messages; it does not establish the current state of their threads.
 
-The [Connected apps guide](../src/runtime/skills/connected-apps/SKILL.md) previously required context reads in general terms. It did not explicitly require a check of the owner's replies before a suggestion. The new instruction requires current thread context, replies, reactions and later messages. If a thread tool is unavailable, it permits a bounded owner-message search with a check of the returned thread identity. Failed or partial reads must not become claims that a request is unanswered.
+The [Connected apps guide](../src/runtime/skills/connected-apps/SKILL.md) previously required context reads in general terms. It did not explicitly require a check of the owner's replies before a suggestion. The new instruction requires current thread context, replies, reactions and later messages. If a thread tool is unavailable, other read tools must verify current replies and reactions in the original thread. A search of only the owner's messages is incomplete because another person or a reaction can resolve the request. Failed or partial reads, or unverified reply or reaction state, must not become claims that a request is unanswered.
 
 The existing [Slack catch-up eval](../evals/src/scenarios/slack-catchup.ts) now includes an explicit request already approved by the owner inside its thread. The expected outcome still contains only the two open requests. The data is synthetic. The live model passed all three attempts on main and on the final branch. This checks that the model excludes the answered request in this case. It does not prove that the instruction improved this model or that every model will follow it.
 
@@ -98,4 +98,4 @@ To repeat the final cases:
 npm run eval:capability -- run --scenario slack-catchup,invoice-signin-blocker --repeat 3 --model openai/gpt-6.1-sol --judge anthropic/claude-sonnet-5-5
 ```
 
-No Linear status, priority, description or comment was changed. No deployment was performed.
+The initial review changed no Linear status, priority, description or comment. No deployment was performed.
