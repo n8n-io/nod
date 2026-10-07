@@ -1213,6 +1213,8 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   assert.equal(captured, 1);
   bytes = Buffer.alloc(2 * 1024 * 1024 + 1);
   assert.equal(await capture(event), null);
+  bytes = Buffer.from('synthetic-image');
+  assert.deepEqual(await capture(event), bytes);
   const pending = deferred();
   contents.capturePage = () => pending.promise;
   const racing = capture(event);

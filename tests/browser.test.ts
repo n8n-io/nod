@@ -3284,7 +3284,7 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
         let release;
         let started;
         const requested = new Promise(resolve => started = resolve);
-        window.ottoDesktop = { captureFeedbackScreenshot: () => { started(); return new Promise(resolve => release = resolve); } };
+        window.ottoDesktop = { captureFeedbackScreenshot: () => { native++; started(); return new Promise(resolve => release = resolve); } };
         document.body.innerHTML = safe;
         const pending = captureFeedbackScreenshot();
         await requested;
@@ -3293,6 +3293,7 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
         assert.equal(await pending, null);
         assert.equal(document.querySelector('[contenteditable]').textContent, 'Synthetic draft typed during capture');
         document.body.innerHTML = safe;
+        window.ottoDesktop = { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } };
         const frame = window.requestAnimationFrame;
         window.requestAnimationFrame = callback => frame(() => {
           document.body.insertAdjacentHTML('beforeend', '<div class="browser-handoff">Synthetic newly opened remote page</div>');

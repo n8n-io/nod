@@ -782,6 +782,16 @@ test('background calendar checks reject leaked context and repeated outside effe
   }
 });
 
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
+}
+
 async function promptCaptureFixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'eval-prompt-capture-'));
   const runtime = createAgentRuntime({
@@ -812,6 +822,7 @@ async function promptCaptureFixture(t: TestContext) {
     signal: t.signal,
     attachments: [],
     emit: async () => {},
+    delta: async () => {},
     reply: async () => {},
     publish: async () => {
       throw new Error('Not used');
@@ -829,8 +840,8 @@ test(
   async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const { runtime, context } = await promptCaptureFixture(t);
-    const entered = Promise.withResolvers<void>();
-    const capture = Promise.withResolvers<void>();
+    const entered = deferred();
+    const capture = deferred();
     let completed = false;
     let recorded = false;
     const running = runtime
@@ -868,8 +879,8 @@ test(
     for (const mode of ['timeout', 'cancel', 'dispose', 'reject'] as const) {
       const { runtime, context } = await promptCaptureFixture(t);
       const controller = new AbortController();
-      const entered = Promise.withResolvers<void>();
-      const capture = Promise.withResolvers<void>();
+      const entered = deferred();
+      const capture = deferred();
       const running = runtime.runTurn({
         ...context,
         signal: AbortSignal.any([t.signal, controller.signal]),
