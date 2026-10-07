@@ -314,13 +314,33 @@ test(
       assert.equal(remembered.entries[0].text, 'I live in Lisbon');
       assert.deepEqual(remembered.entries[0].sources, [source.id]);
       const notice = await pool.query(
-        "SELECT id,text,owner_id,thread_id FROM messages WHERE turn_id=$1 AND role='assistant'",
+        "SELECT id,text,owner_id,thread_id FROM messages WHERE turn_id=$1 AND role='assistant' AND memory IS NULL",
         [turns[1].id],
       );
       assert.equal(notice.rowCount, 1);
       assert.equal(notice.rows[0].owner_id, source.owner_id);
       assert.equal(notice.rows[0].thread_id, first.thread_id);
       assert.deepEqual(sent, ['Which city?', notice.rows[0].text]);
+      const saved = await pool.query(
+        "SELECT id,memory,owner_id,thread_id FROM messages WHERE turn_id=$1 AND role='assistant' AND memory IS NOT NULL",
+        [turns[1].id],
+      );
+      assert.equal(saved.rowCount, 1);
+      assert.equal(saved.rows[0].owner_id, source.owner_id);
+      assert.equal(saved.rows[0].thread_id, first.thread_id);
+      assert.deepEqual(saved.rows[0].memory, {
+        notes: [
+          {
+            path: `${remembered.entries[0].area}/${remembered.entries[0].slug}`,
+            id: remembered.entries[0].id,
+          },
+        ],
+      });
+      assert.equal(
+        (await pool.query('SELECT 1 FROM channel_outbox WHERE message_id=$1', [saved.rows[0].id]))
+          .rowCount,
+        0,
+      );
       const receipt = await pool.query(
         'SELECT o.state,i.owner_id,i.provider,i.sender_id FROM channel_outbox o JOIN channel_inbox i ON i.source_id=o.source_id WHERE o.message_id=$1',
         [notice.rows[0].id],

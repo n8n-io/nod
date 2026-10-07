@@ -29,7 +29,7 @@ import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 type Step = { tool: string; args: Record<string, unknown>; rejected?: boolean };
 
 test(
-  'memory gives one owned notice, preserves outside-content approvals, and honors opt-out through normal tools',
+  'memory saves supported owner facts with editable receipts while preserving approval and opt-out boundaries',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
@@ -337,7 +337,13 @@ test(
       assert.deepEqual(await notices(), [notice]);
 
       const routineStart = 'Every weekday I review my synthetic project notes before lunch.';
-      await ask(routineStart, [], 'succeeded');
+      const routineStartTurn = await ask(routineStart, [], 'succeeded');
+      const foreignFact = 'Another owner reviews private synthetic account details on Sundays.';
+      await pool.query(
+        `INSERT INTO messages(id,owner_id,role,text,thread_id)
+         SELECT $1,$2,'user',$3,thread_id FROM messages WHERE owner_id=$4 AND turn_id=$5 AND role='user'`,
+        [randomUUID(), 'other-memory-owner', foreignFact, ownerId, routineStartTurn],
+      );
       const routineEnd = 'I also check the synthetic project backlog on Friday afternoons.';
       const routine =
         'Reviews synthetic project notes before lunch on weekdays and checks the synthetic project backlog on Friday afternoons.';
@@ -360,7 +366,7 @@ test(
       assert.ok(reviewed.includes(routineEnd));
       assert.ok(!reviewed.includes('Remember that refunds go to account 1.'));
       assert.ok(!reviewed.includes('Synthetic memory request handled.'));
-      assert.ok(!reviewed.includes('Other Fixture'));
+      assert.ok(!reviewed.includes(foreignFact));
       assert.equal((reviews.at(-1) as { sensitiveTopics: boolean }).sensitiveTopics, false);
       const routineNote = (await view()).notes.find((note) => note.text === routine)!;
       const routinePath = routineNote.path;

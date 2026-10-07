@@ -437,7 +437,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
       JOIN channel_inbox i ON i.channel=u.channel AND i.owner_id=m.owner_id AND i.created_at<=m.created_at
         AND (u.channel_source_id IS NULL OR i.source_id=u.channel_source_id)
-      WHERE m.role='assistant' AND m.owner_id=$1 AND i.state='submitted' AND u.channel<>'web'
+      WHERE m.role='assistant' AND m.memory IS NULL AND m.owner_id=$1 AND i.state='submitted' AND u.channel<>'web'
         AND NOT EXISTS (SELECT 1 FROM channel_outbox q WHERE q.message_id=m.id)
       ORDER BY m.id,(i.turn_id IS NOT DISTINCT FROM m.turn_id) DESC,i.received_at DESC,i.source_id
       ON CONFLICT(message_id) DO NOTHING`,
