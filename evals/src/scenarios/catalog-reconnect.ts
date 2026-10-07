@@ -20,6 +20,7 @@ export default scenario({
     const owner = { name: 'Alex Rivera', email };
     const apps = createApps(owner, { gmail: gmail(owner, [], () => Date.now()) });
     const world = {
+      notificationRule: '',
       apps,
       expired: false,
       original: undefined as Connection | undefined,

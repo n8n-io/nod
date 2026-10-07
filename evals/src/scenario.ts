@@ -27,6 +27,7 @@ export type FailureClass =
   | 'format';
 
 export interface World {
+  notificationRule?: string;
   apps?: AppsWorld;
   sites?: Record<string, Site>;
   logins?: Array<{ label: string; origin: string; username: string; password: string }>;
