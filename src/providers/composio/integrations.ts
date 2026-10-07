@@ -1,8 +1,10 @@
 import { Composio, type ToolRouterSession } from '@composio/core';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { integrationServiceIds } from '../../shared/integrations.ts';
 import { createIntegrationFileDownloader, downloadArguments } from './downloads.ts';
 import { readVerificationEmails } from './verification-email.ts';
+import { safeRemoteFetch } from '../discovered/remote.ts';
 import {
   IntegrationInboxCursorExpired,
   type IntegrationProvider,
@@ -142,6 +144,7 @@ export function createComposioProvider(options: {
   authConfigs?: Partial<Record<IntegrationService, string>>;
   client?: Composio;
   fileDownload?: Parameters<typeof createIntegrationFileDownloader>[0];
+  fileUploadRequest?: typeof fetch;
 }): IntegrationProvider {
   let webhookUrl: string | undefined;
   if (options.webhookUrl !== undefined) {
@@ -421,6 +424,53 @@ export function createComposioProvider(options: {
         )
           throw new Error(providerFailure(action, result as Record<string, unknown>));
         return result;
+      },
+      async upload(action, file, signal) {
+        const operation = signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+          : AbortSignal.timeout(30_000);
+        try {
+          operation.throwIfAborted();
+          toolSlug.parse(action);
+          const toolkit = schemaToolkit.parse(action.split('_')[0]);
+          if (!file.bytes.byteLength || file.bytes.byteLength > 15 * 1024 * 1024)
+            throw new Error('The file size is unsupported.');
+          const result = await required()
+            .getClient()
+            .files.createPresignedURL(
+              {
+                filename: file.name,
+                mimetype: file.mimeType,
+                md5: createHash('md5').update(file.bytes).digest('hex'),
+                tool_slug: action,
+                toolkit_slug: toolkit,
+              },
+              { signal: operation, maxRetries: 0 },
+            );
+          operation.throwIfAborted();
+          const upload = z
+            .object({ key: z.string().min(1), new_presigned_url: z.url() })
+            .parse(result);
+          const request =
+            options.fileUploadRequest ??
+            ((url, init) => safeRemoteFetch(url, init, undefined, 15 * 1024 * 1024));
+          const response = await request(upload.new_presigned_url, {
+            method: 'PUT',
+            body: Buffer.from(file.bytes),
+            headers: { 'Content-Type': file.mimeType },
+            signal: operation,
+            redirect: 'error',
+          });
+          await response.body?.cancel();
+          operation.throwIfAborted();
+          if (!response.ok) throw new Error(`File storage returned HTTP ${response.status}.`);
+          return { name: file.name, mimetype: file.mimeType, s3key: upload.key };
+        } catch (error) {
+          if (signal?.aborted) throw signal.reason;
+          throw new Error(
+            `The app file could not be uploaded: ${errorText(error).replace(/https?:\/\/\S+/g, '[file URL]')}`,
+          );
+        }
       },
     };
   }

@@ -86,6 +86,8 @@ The internal heartbeat can also check one eligible API, HTTP or MCP account with
 
 **Integrations.** Composio handles Google and Slack accounts; Notion and Linear use direct MCP OAuth. Discovered connections let the agent propose a public HTTPS MCP, HTTP API or installed CLI path; grants live in Vault. App actions run on the selected owned account after the trust check. Pi still decides when to ask before a destructive action.
 
+App file inputs accept `{workspaceFile, mimeType, name?}`. The server reads each file through the guarded workspace reader and uploads its bytes through the selected provider. Files in one action must total at most 15 MB. The app receives a storage reference. A pending confirmation stores this reference, so later workspace changes cannot change the attachment. A failed upload or changed account stops the action.
+
 Gmail also checks for inbox changes every five minutes using a persisted history cursor. These internal reads establish a baseline without replaying old mail, queue owned events atomically with the cursor, and deduplicate webhook and polling delivery by message identity. Empty checks create no agent turn or visible schedule. Expired history stops polling and raises one reconnection notice through normal triage; reconnecting resumes future updates without claiming to recover the missing interval.
 
 **Inspector and usage.** A private developer view (Screen, Activity, Tools, Models, Costs, Prompts) backed by masked, bounded records kept seven days. Gated by `DEV_INSPECTOR` and, in hosted mode, `OTTO_DEVELOPER_IDS`. Unknown prices stay null. Chat answers omit elapsed time and cost; provider costs remain recorded in the ledger and visible in the Inspector Costs tab.

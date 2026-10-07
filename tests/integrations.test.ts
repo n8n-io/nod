@@ -912,7 +912,11 @@ async function appsFixture(
   listing: Partial<
     Pick<
       Parameters<typeof createIntegrations>[1],
-      'browserConnections' | 'browserAccounts' | 'validateActivityCheck' | 'wake'
+      | 'browserConnections'
+      | 'browserAccounts'
+      | 'validateActivityCheck'
+      | 'wake'
+      | 'readWorkspaceFile'
     >
   > = {},
 ) {
@@ -2658,6 +2662,140 @@ test(
       }),
       { statusCode: 404 },
     );
+  },
+);
+
+test(
+  'workspace attachments preserve file bytes and fence account changes before execution',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const turn = { threadId: randomUUID(), turnId: randomUUID() };
+    const files = new Map([
+      ['report.pdf', Buffer.from('%PDF-1.7\nSynthetic report\n')],
+      ['data.csv', Buffer.from('item,total\nFixture,42\n')],
+    ]);
+    let reads = 0;
+    const f = await appsFixture(
+      t,
+      {},
+      {
+        readWorkspaceFile: async (current, path, maximum) => {
+          assert.deepEqual(current, turn);
+          reads++;
+          const bytes = files.get(path);
+          if (!bytes) throw new Error('The workspace file is unavailable.');
+          if (bytes.length > maximum) throw new Error('The workspace file is too large.');
+          return bytes;
+        },
+      },
+    );
+    const first = await f.connect('gmail');
+    const second = await f.connect('gmail');
+    const stored = new Map<string, IntegrationFile>();
+    f.session.upload = async (_action, file) => {
+      const key = randomUUID();
+      stored.set(key, { ...file, bytes: Uint8Array.from(file.bytes) });
+      return { name: file.name, mimetype: file.mimeType, s3key: key };
+    };
+    const delivered: IntegrationFile[][] = [];
+    f.session.execute = async (_action, args, accountId) => {
+      assert.equal(accountId, second.accountId);
+      const attachments = args.attachment as Array<{ s3key: string }>;
+      delivered.push(
+        attachments.map(({ s3key }) => {
+          const file = stored.get(s3key);
+          assert.ok(file, 'The attachment must exist in file storage.');
+          return file;
+        }),
+      );
+      return { successful: true };
+    };
+    const args = {
+      connectionId: second.connectionId,
+      recipient_email: 'recipient@example.test',
+      attachment: [
+        { workspaceFile: 'report.pdf', mimeType: 'application/pdf' },
+        { workspaceFile: 'data.csv', mimeType: 'text/csv', name: 'totals.csv' },
+      ],
+    };
+    const prepared = await f.service.prepare('local-development', 'GMAIL_SEND_EMAIL', args, turn);
+    assert.equal(delivered.length, 0);
+    assert.equal(reads, 2);
+    files.set('report.pdf', Buffer.from('Changed after confirmation was requested.'));
+    await f.service.executeApproved('local-development', 'GMAIL_SEND_EMAIL', prepared, turn);
+    assert.equal(reads, 2);
+    assert.deepEqual(
+      delivered[0].map((file) => ({
+        name: file.name,
+        mimeType: file.mimeType,
+        bytes: Buffer.from(file.bytes).toString(),
+      })),
+      [
+        { name: 'report.pdf', mimeType: 'application/pdf', bytes: '%PDF-1.7\nSynthetic report\n' },
+        { name: 'totals.csv', mimeType: 'text/csv', bytes: 'item,total\nFixture,42\n' },
+      ],
+    );
+    const uploadCount = stored.size;
+    for (const [owner, input, current] of [
+      ['foreign-owner', args, turn],
+      ['local-development', { ...args, connectionId: randomUUID() }, turn],
+      ['local-development', args, undefined],
+      [
+        'local-development',
+        { ...args, attachment: [{ workspaceFile: '../private.txt', mimeType: 'text/plain' }] },
+        turn,
+      ],
+    ] as const)
+      await assert.rejects(f.service.execute(owner, 'GMAIL_SEND_EMAIL', input, current));
+    files.set('report.pdf', Buffer.alloc(15 * 1024 * 1024));
+    await assert.rejects(
+      f.service.execute('local-development', 'GMAIL_SEND_EMAIL', args, turn),
+      /too large/,
+    );
+    assert.equal(delivered.length, 1);
+    assert.equal(stored.size, uploadCount + 1);
+
+    let entered: () => void = () => {};
+    let finish: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    f.session.upload = async () => {
+      entered();
+      await gate;
+      return { name: 'report.pdf', mimetype: 'application/pdf', s3key: 'late-file' };
+    };
+    files.set('report.pdf', Buffer.from('Synthetic report'));
+    const pending = f.service.execute(
+      'local-development',
+      'GMAIL_SEND_EMAIL',
+      {
+        ...args,
+        connectionId: first.connectionId,
+      },
+      turn,
+    );
+    await started;
+    await f.app.inject({
+      method: 'POST',
+      url: `/api/apps/gmail/accounts/${first.connectionId}/disconnect`,
+    });
+    finish();
+    await assert.rejects(pending, /unavailable/);
+    const controller = new AbortController();
+    f.session.upload = async (_action, _file, signal) => {
+      assert.equal(signal, controller.signal);
+      controller.abort(new Error('Fixture upload stopped.'));
+      return { s3key: 'cancelled-file' };
+    };
+    await assert.rejects(
+      f.service.execute('local-development', 'GMAIL_SEND_EMAIL', args, turn, controller.signal),
+      /Fixture upload stopped/,
+    );
+    assert.equal(delivered.length, 1);
   },
 );
 
@@ -4667,6 +4805,110 @@ test(
     assert.equal((await discovered.list()).length, 1);
   },
 );
+
+test('Composio uploads file bytes before the app consumes its storage reference', async (t) => {
+  const storage = Fastify();
+  const files = new Map<string, { bytes: Buffer; mimeType: string }>();
+  const digests = new Map<string, string>();
+  let status = 200;
+  storage.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) =>
+    done(null, body),
+  );
+  storage.put<{ Params: { key: string } }>('/files/:key', async (request, reply) => {
+    const bytes = request.body as Buffer;
+    assert.equal(createHash('md5').update(bytes).digest('hex'), digests.get(request.params.key));
+    files.set(request.params.key, { bytes, mimeType: String(request.headers['content-type']) });
+    return reply.code(status).send();
+  });
+  const origin = await storage.listen({ host: '127.0.0.1', port: 0 });
+  t.after(() => storage.close());
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  let presignFailure = false;
+  const presign = t.mock.method(
+    client.getClient().files,
+    'createPresignedURL',
+    async (
+      input: {
+        md5: string;
+        filename: string;
+        mimetype: string;
+        tool_slug: string;
+        toolkit_slug: string;
+      },
+      options: { signal: AbortSignal; maxRetries: number },
+    ) => {
+      assert.equal(options.maxRetries, 0);
+      options.signal.throwIfAborted();
+      assert.equal(input.tool_slug, 'GMAIL_SEND_EMAIL');
+      assert.equal(input.toolkit_slug, 'gmail');
+      if (presignFailure) throw new Error('Fixture file service failed.');
+      const key = randomUUID();
+      digests.set(key, input.md5);
+      return { key, new_presigned_url: `${origin}/files/${key}` };
+    },
+  );
+  t.mock.method(client.sessions, 'create', async () => ({
+    sessionId: 'fixture-session',
+    execute: async (_action: string, args: { attachment: { s3key: string } }) => {
+      const file = files.get(args.attachment.s3key);
+      assert.ok(file, 'The app must receive an uploaded file.');
+      return { data: { bytes: file.bytes, mimeType: file.mimeType }, error: null };
+    },
+  }));
+  const session = await createComposioProvider({ client, fileUploadRequest: fetch }).createSession(
+    'fixture-owner',
+    {},
+  );
+  const bytes = Buffer.from([0, 1, 127, 128, 254, 255]);
+  const attachment = await session.upload!('GMAIL_SEND_EMAIL', {
+    name: 'fixture.bin',
+    mimeType: 'application/octet-stream',
+    bytes,
+  });
+  assert.equal(attachment.name, 'fixture.bin');
+  assert.equal(attachment.mimetype, 'application/octet-stream');
+  assert.deepEqual(await session.execute('GMAIL_SEND_EMAIL', { attachment }, 'fixture-account'), {
+    data: { bytes, mimeType: 'application/octet-stream' },
+    error: null,
+  });
+  status = 503;
+  await assert.rejects(
+    session.upload!('GMAIL_SEND_EMAIL', {
+      name: 'fixture.bin',
+      mimeType: 'application/octet-stream',
+      bytes,
+    }),
+    /HTTP 503/,
+  );
+  presignFailure = true;
+  const uploaded = files.size;
+  await assert.rejects(
+    session.upload!('GMAIL_SEND_EMAIL', {
+      name: 'fixture.bin',
+      mimeType: 'application/octet-stream',
+      bytes,
+    }),
+    /Fixture file service failed/,
+  );
+  assert.equal(files.size, uploaded);
+  const controller = new AbortController();
+  controller.abort(new Error('Fixture upload cancelled.'));
+  const requests = presign.mock.callCount();
+  await assert.rejects(
+    session.upload!(
+      'GMAIL_SEND_EMAIL',
+      { name: 'fixture.bin', mimeType: 'application/octet-stream', bytes },
+      controller.signal,
+    ),
+    /Fixture upload cancelled/,
+  );
+  assert.equal(presign.mock.callCount(), requests);
+});
 
 test('Composio failure envelopes reject with the provider error', async (t) => {
   const client = new Composio({

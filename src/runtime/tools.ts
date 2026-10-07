@@ -305,7 +305,7 @@ export const toolDefinitions = {
   ),
   apps: defineTool(
     'apps',
-    "Use the user's connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. Other actions run with args; download actions copy files into the workspace. Foreground downloads also deliver them; background downloads stay private until share_file.",
+    'Use the user\'s connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. For a file input, pass {workspaceFile: path, mimeType: "application/pdf", name?: filename} in args; arrays support multiple files. The server uploads workspace files before the action. Never put a workspace path or URL in s3key. Download actions copy files into the workspace. Foreground downloads also deliver them; background downloads stay private until share_file.',
     Type.Object({
       action: Type.String({ maxLength: 150 }),
       args: Type.Record(Type.String(), Type.Unknown()),

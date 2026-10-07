@@ -10,6 +10,7 @@ import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import { analyticsEnabled, analyticsEnvironment, createAnalytics } from './analytics.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
+import { hasWorkspaceFiles } from './integration-files.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { RelevanceClassifier } from '../ports/relevance.ts';
@@ -689,6 +690,9 @@ async function initializeApplication(
     admission,
     ownerId,
     provider: integrationProvider,
+    readWorkspaceFile:
+      workspace.readArtifact &&
+      ((turn, path, maxBytes) => workspace.readArtifact!(turn.threadId, path, maxBytes)),
     validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     ...(adapters.directIntegrations
@@ -889,6 +893,10 @@ async function initializeApplication(
       },
       integration: async (turn, action, args, options) => {
         const verdict = await trust.check(turn, action, args);
+        if (hasWorkspaceFiles(args))
+          args = await withTurnLock(turn.turnId, () =>
+            integrations.prepare(ownerId, action, args, turn, options.signal),
+          );
         if (verdict.confirm) {
           const prepared = await integrations.prepare(ownerId, action, args);
           const account = (await integrations.list(ownerId, { refresh: false })).find(

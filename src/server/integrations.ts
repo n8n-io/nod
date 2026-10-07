@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { basename } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -25,6 +26,12 @@ import type { SiteIcon } from '../ports/link-preview.ts';
 import type { TriageIntent } from './triage.ts';
 import { BrowserConnectionError } from './browser-connections.ts';
 import type { TurnRef } from './thread.ts';
+import {
+  hasWorkspaceFiles,
+  uploadWorkspaceFiles,
+  workspaceFileSchemas,
+} from './integration-files.ts';
+import { maxFileSize } from './artifacts.ts';
 import {
   normalizedEmail,
   verificationCode,
@@ -84,6 +91,7 @@ type IntegrationOptions = {
   additionalProviders?: IntegrationProvider[];
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
   validateActivityCheck?(turn: TurnRef, connectionId: string): Promise<void>;
+  readWorkspaceFile?(turn: TurnRef, path: string, maxBytes: number): Promise<Uint8Array>;
   baseUrl: string;
   callbackReturnTo?: 'window';
   refresh?(): void;
@@ -1138,6 +1146,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         }
         return {
           ...search,
+          tools: workspaceFileSchemas(search.tools),
           accounts,
           discovered: discovered?.accounts ?? [],
           ...(failed.length
@@ -1153,15 +1162,22 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return executeApproved(
       ownerId,
       action,
-      await prepare(ownerId, action, args),
+      await prepare(ownerId, action, args, turn, signal),
       turn,
       signal,
       checkConnectionId,
     );
   }
 
-  async function prepare(ownerId: string, action: string, args: Record<string, unknown>) {
+  async function prepare(
+    ownerId: string,
+    action: string,
+    args: Record<string, unknown>,
+    turn?: TurnRef,
+    signal?: AbortSignal,
+  ) {
     assertOwner(ownerId);
+    signal?.throwIfAborted();
     if (['CONNECTED_HTTP', 'CONNECTED_MCP_CALL', 'CONNECTED_CLI'].includes(action)) return args;
     const slug = actionToolkit(action);
     if (JSON.stringify(args).length > 32_768)
@@ -1171,6 +1187,35 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       slug,
       z.string().uuid().optional().parse(args.connectionId),
     );
+    if (hasWorkspaceFiles(args)) {
+      const read = options.readWorkspaceFile;
+      if (!turn || !read) throw new IntegrationError('Workspace file upload is unavailable.');
+      const session = await getSession(ownerId, providerForRow(row));
+      if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
+      let remaining = maxFileSize;
+      args = (await uploadWorkspaceFiles(args, async (input) => {
+        signal?.throwIfAborted();
+        const bytes = await read(turn, input.workspaceFile, remaining);
+        if (!bytes.byteLength || bytes.byteLength > remaining)
+          throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+        remaining -= bytes.byteLength;
+        signal?.throwIfAborted();
+        const result = await session.upload!(
+          action,
+          {
+            name: input.name ?? basename(input.workspaceFile),
+            mimeType: input.mimeType,
+            bytes,
+          },
+          signal,
+        );
+        signal?.throwIfAborted();
+        return result;
+      })) as Record<string, unknown>;
+      const current = await selectConnection(ownerId, slug, row.id);
+      if (current.account_id !== row.account_id)
+        throw new IntegrationError('The selected account changed.');
+    }
     return { ...args, connectionId: row.id };
   }
 

@@ -43,6 +43,11 @@ export interface IntegrationSession {
     accountId: string,
     signal?: AbortSignal,
   ): Promise<IntegrationFile>;
+  upload?(
+    action: string,
+    file: IntegrationFile,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>>;
 }
 export interface IntegrationEvent {
   id: string;

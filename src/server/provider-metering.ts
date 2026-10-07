@@ -153,6 +153,12 @@ export function meterIntegrations(
               (file) => ({ bytes: file.bytes.byteLength }),
             )
         : undefined,
+      upload: value.upload
+        ? (action, file, signal) =>
+            usage.track({ ...base, operation: 'upload_file', bytes: file.bytes.byteLength }, () =>
+              value.upload!(action, file, signal),
+            )
+        : undefined,
     };
   }
   return {

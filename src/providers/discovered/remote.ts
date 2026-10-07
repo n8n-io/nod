@@ -19,6 +19,7 @@ export async function safeRemoteFetch(
   input: string | URL | Request,
   init?: RequestInit,
   dependencies = { validate: publicUrl, request: httpsRequest },
+  maximumRequestBytes = 1024 * 1024,
 ) {
   const prepared = new Request(input, init);
   const signal = AbortSignal.any([prepared.signal, AbortSignal.timeout(30_000)]);
@@ -45,7 +46,7 @@ export async function safeRemoteFetch(
   if (url.protocol !== 'https:') throw new Error('The connection must use HTTPS.');
   const body = Buffer.from(await prepared.arrayBuffer());
   signal.throwIfAborted();
-  if (body.byteLength > 1024 * 1024) throw new Error('The request is too large.');
+  if (body.byteLength > maximumRequestBytes) throw new Error('The request is too large.');
   return new Promise<Response>((resolve, reject) => {
     const outbound = dependencies.request(
       url,
