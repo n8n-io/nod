@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { Artifact } from '../shared/contracts.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -39,7 +40,11 @@ interface ChannelOptions {
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   appOrigin?: string;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
-  memoryDigest?: (link: string | null) => Promise<string>;
+  memoryReply?: (
+    client: PoolClient,
+    threadId: string | null,
+    link: string | null,
+  ) => Promise<{ text: string; attachments: Artifact[] }>;
 }
 interface ChannelIdentity {
   provider: string;
@@ -171,7 +176,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       sentAt: Date | string;
       text: string;
     },
-    reply: string,
+    compose: (
+      threadId: string | null,
+    ) =>
+      | Promise<{ text: string; attachments?: Artifact[] }>
+      | { text: string; attachments?: Artifact[] },
   ) {
     if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
     const receipt = await client.query(
@@ -191,10 +200,17 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       ],
     );
     if (!receipt.rowCount) return;
+    const thread =
+      (
+        await client.query('SELECT id FROM threads WHERE owner_id=$1 AND archived_at IS NULL', [
+          ownerId,
+        ])
+      ).rows[0]?.id ?? null;
+    const reply = await compose(thread);
     const replyId = randomUUID();
     await client.query(
-      "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,'assistant',$3,(SELECT id FROM threads WHERE owner_id=$2 AND archived_at IS NULL))",
-      [replyId, ownerId, reply],
+      "INSERT INTO messages(id,owner_id,role,text,thread_id,attachments) VALUES($1,$2,'assistant',$3,$4,$5)",
+      [replyId, ownerId, reply.text, thread, JSON.stringify(reply.attachments ?? [])],
     );
     await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
       replyId,
@@ -272,10 +288,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         if (closed || replacing || !permitted(identity))
           throw new Error('Channel configuration changed.');
       };
-      if (memoryCommand.test(text.trim()) && options.memoryDigest) {
-        const digest = await options.memoryDigest(appOrigin ? `${appOrigin}/memory` : null);
+      const memoryReply = options.memoryReply;
+      if (memoryCommand.test(text.trim()) && memoryReply) {
         await inTransaction((client) =>
-          replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text }, digest),
+          replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text }, (thread) =>
+            memoryReply(client, thread, appOrigin ? `${appOrigin}/memory` : null),
+          ),
         );
         void drain();
         return;
@@ -300,7 +318,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             replyWithoutTurn(
               client,
               { ...identity, sourceId, threadId, sentAt, text: 'Verification code not applied.' },
-              'The code could not be matched to a sign-in. Open the corresponding sign-in conversation in Otto web chat to continue.',
+              () => ({
+                text: 'The code could not be matched to a sign-in. Open the corresponding sign-in conversation in Otto web chat to continue.',
+              }),
             ),
           );
           return;
@@ -351,7 +371,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         sentAt: request.sentAt,
         text: '/start',
       },
-      'You’re connected! You can now chat with me on Telegram.',
+      () => ({ text: 'You’re connected! You can now chat with me on Telegram.' }),
     );
     return () => {
       void drain();

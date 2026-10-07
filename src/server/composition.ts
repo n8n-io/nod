@@ -66,7 +66,7 @@ import { createApprovals } from './approvals.ts';
 import { appActionConfirmation } from './action-presentation.ts';
 import { createTrust } from './trust.ts';
 import { createArtifactService, localArtifacts } from './artifacts.ts';
-import { memoryDigest } from '../shared/memory-export.ts';
+import { memoryDigest, memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { createChannels } from './channels.ts';
 import { createChannelSettings } from './channel-settings.ts';
 import {
@@ -1100,7 +1100,20 @@ async function initializeApplication(
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
       transport: meterMessaging(messaging, providerUsage),
       acceptVerification: (text, input) => chatVerification.accept(text, input),
-      memoryDigest: async (link) => memoryDigest(await personal.memoryView(), link),
+      memoryReply: async (client, threadId, link) => {
+        const view = await personal.memoryView();
+        const now = new Date();
+        const file = threadId
+          ? await artifacts.storeArtifact(
+              Buffer.from(memoryMarkdown(view, now)),
+              memoryFileName(now),
+              'text/markdown',
+              threadId,
+              client,
+            )
+          : null;
+        return { text: memoryDigest(view, link), attachments: file ? [file] : [] };
+      },
       refresh,
       subscribe(listener) {
         const onEvent = (event: { type?: string }) => {

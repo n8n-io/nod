@@ -593,9 +593,11 @@ test(
       connectionString: process.env.TEST_DATABASE_URL,
       options: `-c search_path=${schema}`,
     });
-    await createFixtureTables(pool, 'fixture-owner');
+    const threadId = await createFixtureTables(pool, 'fixture-owner');
     const submitted: string[] = [];
-    const posted: string[] = [];
+    const posted: Array<{ text: string; files: string[] }> = [];
+    const fileId = randomUUID();
+    const resolved: string[][] = [];
     const app = Fastify();
     const channels = await createChannels(pool, {
       ownerId: 'fixture-owner',
@@ -607,6 +609,7 @@ test(
             missing: [],
             accountId: 'fixture-account',
             allowedSenderIds: ['fixture-owner'],
+            supportsAttachments: true,
           },
         ],
         receive: async (request) => ({
@@ -624,12 +627,26 @@ test(
           ],
         }),
         post: async (input) => {
-          posted.push(input.text);
+          posted.push({
+            text: input.text,
+            files: (input.attachments ?? []).map((file) => file.name),
+          });
           return { id: randomUUID() };
         },
         close: async () => {},
       },
-      memoryDigest: async () => 'Synthetic memory digest',
+      memoryReply: async (_client, thread) => ({
+        text: 'Synthetic memory digest',
+        attachments: [
+          { id: fileId, name: 'otto-memory.md', mimeType: 'text/markdown', size: 9, url: '' },
+        ].filter(() => thread === threadId),
+      }),
+      resolveAttachments: async (thread, ids) => {
+        resolved.push([thread, ...ids]);
+        return [
+          { name: 'otto-memory.md', mimeType: 'text/markdown', bytes: Buffer.from('# Memory\n') },
+        ];
+      },
       submit: async (_text, sourceId) => {
         submitted.push(sourceId);
         throw new Error('A memory command must not start a turn.');
@@ -654,7 +671,8 @@ test(
       );
       await channels.drain();
       assert.deepEqual(submitted, []);
-      assert.deepEqual(posted, ['Synthetic memory digest']);
+      assert.deepEqual(posted, [{ text: 'Synthetic memory digest', files: ['otto-memory.md'] }]);
+      assert.deepEqual(resolved, [[threadId, fileId]]);
       assert.deepEqual(
         (await pool.query('SELECT source_id,state FROM channel_inbox ORDER BY source_id')).rows,
         [{ source_id: 'channel:telegram:fixture-account:memory', state: 'discarded' }],
