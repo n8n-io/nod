@@ -446,10 +446,13 @@ export function Memory() {
     setChosen(undefined);
   }
 
+  const profileFields = (Object.keys(profileLabels) as Array<keyof typeof profileLabels>).filter(
+    (field) => view?.profile[field],
+  );
   const counts = {
     tentative: 0,
     observed: 0,
-    stated: 0,
+    stated: profileFields.length,
     archive: view?.archive.length ?? 0,
   } satisfies Record<Stage, number>;
   for (const note of view?.notes ?? []) counts[note.status]++;
@@ -462,9 +465,7 @@ export function Memory() {
     stage === 'archive' ? (view?.archive ?? []).filter((item) => matches(item.text)) : [];
   const profile =
     view && (!stage || stage === 'stated')
-      ? (Object.keys(profileLabels) as Array<keyof typeof profileLabels>).filter(
-          (field) => view.profile[field] && matches(view.profile[field]),
-        )
+      ? profileFields.filter((field) => matches(view.profile[field]))
       : [];
   const visible: NonNullable<Selection>[] =
     stage === 'archive'
