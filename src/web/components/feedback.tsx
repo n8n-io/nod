@@ -25,6 +25,7 @@ import type { FeedbackAttachment } from '../lib/feedback-attachment';
 import { loadFeedbackDraft, saveFeedbackDraft, type FeedbackDraft } from '../lib/feedback-draft';
 import { FeedbackAttachments } from './feedback-attachments';
 import { FeedbackDiagnostics } from './feedback-diagnostics';
+import { FeedbackEditor, type FeedbackEditorHandle } from './feedback-editor';
 import { Button, Dialog, DialogContent, DialogTitle } from './ui';
 
 const categories = [
@@ -138,7 +139,7 @@ function FeedbackDraftDialog({
   const started = useRef(false);
   const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
-  const detailsInput = useRef<HTMLTextAreaElement>(null);
+  const detailsInput = useRef<FeedbackEditorHandle>(null);
   const submission = useRef<FeedbackSubmission | null>(null);
   const reportRequest = useRef<{
     controller: AbortController;
@@ -148,7 +149,7 @@ function FeedbackDraftDialog({
   const copyRequest = useRef<AbortController | null>(null);
   const reportRef = useRef<FeedbackReport | null>(null);
   const frozen = !!busy || !!pendingId || !hydrated || discarding;
-  const valid = !!feedback.trim();
+  const valid = !!feedback.trim() && feedback.length <= feedbackLimits.text;
   const draft = useMemo<FeedbackDraft>(
     () => ({
       category: kind,
@@ -642,7 +643,7 @@ function FeedbackDraftDialog({
   }
 
   function paste(event: ClipboardEvent) {
-    if (frozen) return;
+    if (frozen || event.defaultPrevented) return;
     const files = clipboardFiles(event.clipboardData);
     if (!files.length) return;
     if (!event.clipboardData.getData('text/plain')) event.preventDefault();
@@ -753,25 +754,21 @@ function FeedbackDraftDialog({
                     ))}
                   </div>
                   <div className="feedback-composer">
-                    <label className="field">
-                      <span className="sr-only">Your feedback</span>
-                      <textarea
-                        ref={detailsInput}
-                        required
-                        disabled={frozen}
-                        maxLength={feedbackLimits.text}
-                        value={feedback}
-                        onChange={(event) => setFeedback(event.target.value)}
-                        placeholder={
-                          kind === 'bug'
-                            ? 'What were you trying to do? What happened instead?'
-                            : kind === 'feature'
-                              ? 'What would this help you do?'
-                              : 'Tell us what’s on your mind.'
-                        }
-                        rows={4}
-                      />
-                    </label>
+                    <FeedbackEditor
+                      ref={detailsInput}
+                      disabled={frozen}
+                      value={feedback}
+                      onChange={setFeedback}
+                      onSubmit={() => void send()}
+                      onUpload={addAttachments}
+                      placeholder={
+                        kind === 'bug'
+                          ? 'What were you trying to do? What happened instead?'
+                          : kind === 'feature'
+                            ? 'What would this help you do?'
+                            : 'Tell us what’s on your mind.'
+                      }
+                    />
                     <FeedbackAttachments
                       files={attachments}
                       disabled={frozen}

@@ -379,6 +379,18 @@ test('native setup actions hide only completed links and retain other account re
   }
 });
 
+test('underlined messages preserve nested formatting without admitting unsafe markup', () => {
+  const result = render(
+    '<u onclick="alert(1)" style="color:red">**bold** [safe](https://example.com)</u> ' +
+      '<u><a href="javascript:alert(1)">unsafe</a><script>alert(2)</script></u>',
+  );
+  const document = new JSDOM(result).window.document;
+  assert.equal(document.querySelector('u strong')?.textContent, 'bold');
+  assert.equal(document.querySelector('u a')?.getAttribute('href'), 'https://example.com/');
+  assert.equal(document.querySelectorAll('a').length, 1);
+  assert.doesNotMatch(result, /onclick|style=|javascript|script|alert/);
+});
+
 test('only intended app paths and credential-free HTTP URLs become links', () => {
   for (const value of [
     'javascript:alert(1)',

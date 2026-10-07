@@ -4,6 +4,7 @@ import { ArrowUp, Paperclip, X, FileText, LoaderCircle, CornerUpLeft, Square } f
 import type { Artifact, Message } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { createComposerExtensions } from '../lib/composer-editor';
+import { EditorFormatting } from './editor-formatting';
 import { Button, Notice } from './ui';
 import {
   ImageViewer,
@@ -355,8 +356,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
         )}
         <EditorContent editor={editor} />
+        <EditorFormatting editor={editor} active={!previewId} />
         <span className="sr-only" id="composer-keyboard-hint">
-          Enter to send. Shift plus Enter for a new line or list item.
+          Enter to send. Shift or Alt plus Enter for a new line or list item.
         </span>
         <div className="composer-tools">
           <div className="composer-left">
