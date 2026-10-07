@@ -48,7 +48,7 @@ export function createBridgeComputer(options: {
   >();
   const pending = new Set<Promise<unknown>>();
   const cancellations = new Set<() => void>();
-  const views = new Map<string, { write(input: unknown): void }>();
+  const views = new Map<string, Set<(input: unknown) => void>>();
   let disposing: Promise<void> | undefined;
   let recovering: Promise<void> | undefined;
   const reopenNotice =
@@ -252,9 +252,10 @@ export function createBridgeComputer(options: {
         });
       lines += JSON.stringify(browserFrame.parse(frame)) + '\n';
     };
-    const current = { write: (input: unknown) => write({ type: 'input', id: request.id, input }) };
+    const send = (input: unknown) => write({ type: 'input', id: request.id, input });
     const cancel = () => write({ type: 'cancel', id: request.id });
-    views.set(threadId, current);
+    const open = views.get(threadId) ?? new Set();
+    views.set(threadId, open.add(send));
     signal.addEventListener('abort', cancel, { once: true });
     cancellations.add(cancel);
     write({ type: 'request', request });
@@ -272,7 +273,8 @@ export function createBridgeComputer(options: {
         }
       }
     } finally {
-      if (views.get(threadId) === current) views.delete(threadId);
+      open.delete(send);
+      if (!open.size && views.get(threadId) === open) views.delete(threadId);
       signal.removeEventListener('abort', cancel);
       cancellations.delete(cancel);
       cancel();
@@ -319,9 +321,9 @@ export function createBridgeComputer(options: {
       ),
     screenshot: image,
     control: async (id, input) => {
-      const current = views.get(threadIdentity(id));
-      if (!current) throw new Error('The browser view is not open.');
-      current.write(input);
+      const send = [...(views.get(threadIdentity(id)) ?? [])].at(-1);
+      if (!send) throw new Error('The browser view is not open.');
+      send(input);
     },
     view,
     upload: async (id, input, signal) => {

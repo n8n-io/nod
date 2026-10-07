@@ -551,6 +551,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
       controller.abort();
       return reply.code(409).send({ error: "Otto's browser is not showing a page." });
     }
+    if (!(await handoffOpen(thread.id))) {
+      controller.abort();
+      return reply.code(423).send({ error: handoffClosed });
+    }
     const check = setInterval(
       () =>
         void handoffOpen(thread.id).then(

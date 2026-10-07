@@ -68,6 +68,7 @@ const streamFrame = z.object({
   type: z.literal('frame'),
   seq: z.number().int(),
   data: z.string().max(4 * 1024 * 1024),
+  metadata: z.object({ deviceWidth: z.number().positive(), deviceHeight: z.number().positive() }),
 });
 
 const withoutPasskeys = `(() => {
@@ -1484,6 +1485,7 @@ export function createAgentBrowserComputer(options: {
           await new Promise<void>((resolve) => (wake = resolve));
           continue;
         }
+        state.pageSize = [frame.metadata.deviceWidth, frame.metadata.deviceHeight];
         if (!state.injecting) yield Buffer.from(frame.data, 'base64');
         if (socket.readyState === WebSocket.OPEN)
           socket.send(JSON.stringify({ type: 'ack', seq: frame.seq }));

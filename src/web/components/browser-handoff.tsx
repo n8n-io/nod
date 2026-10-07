@@ -52,6 +52,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
         } catch (reason) {
           setError(errorMessage(reason));
           setLive(false);
+          pending.current.length = 0;
           setAttempt((value) => value + 1);
         }
       }
@@ -63,7 +64,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   }
 
   function queue(input: BrowserHandoffInput) {
-    if (!live || returning) return;
+    if (!live || returning || loading) return;
     const queued = pending.current;
     const last = queued.at(-1);
     if (
