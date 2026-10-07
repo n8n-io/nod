@@ -262,14 +262,14 @@ export function createMemoryService(options: {
         input.slug || same ? undefined : group.find((e) => similar(e.text, input.text, 0.6));
       if (near)
         throw new Error(
-          `A similar memory exists at ${pathOf(near)}. Save to its slug to add evidence, or use replace:true for a correction.`,
+          `A similar memory exists at ${pathOf(near)}. For an additional fact or exception, choose a distinct new slug. Use its existing slug with replace:true only for a correction that preserves the details still valid.`,
         );
       const name = input.slug ?? same?.slug ?? slugFor(tree, input.area, input.text);
       const existing = locate(tree, `${input.area}/${name}`);
       const replaced = !!existing && existing.text !== input.text;
       if (replaced && !input.replace)
         throw new Error(
-          'A change of memory text needs a replacement. For an additional fact or exception, omit the slug or choose a new one. Use replace:true only for a correction that preserves the details still valid.',
+          'A change of memory text needs a replacement. For an additional fact or exception, choose a distinct new slug. Use replace:true only for a correction that preserves the details still valid.',
         );
       if (!existing && tree.entries.length >= maxEntries)
         throw new Error('The memory is full. Forget entries first.');

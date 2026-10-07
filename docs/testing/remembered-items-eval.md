@@ -33,6 +33,12 @@ Run `37698722774` tested clean `d5468d0938d8782d579217dd57a8f3b032fe4811` with e
 
 The full attempts and failures are retained in the workflow artifact and `.local/lab535-model-eval-v3`. Independent review agreed with these classifications. Revision 4 repairs only source-page observability, retaining prompts, answer facts, checks, model settings and repeat counts. The product hypothesis is conflicting guidance that routes durable style preferences through profile editing, plus insufficient guidance for retaining a supported current statement when a synthesized replacement is rejected. The follow-up run must pass the same behavioral checks; earlier failures remain part of the record.
 
+### Corrected manual run
+
+With evaluator revision 4 and the preference-routing/recovery guidance at `7373f57a928029e61b7423dd6a69b29bd1041ad6`, run `37699796744` completed all six attempts with every required check passing. Both cases passed at least once and all three times. The real tool traces expose the external source text; active memory retains normal routines, exceptions and the Portuguese reply preference. There were no memory confirmations, outside writes, schedules or third-party facts saved, and the final requests received useful answers after reset. Recorded agent cost was $0.6381417 and judge cost $0.277696, with the same auxiliary-cost limitation as the red run. These are manual real-model results against synthetic websites and accounts, not live connector acceptance. The separate, broader language-heuristic audit is tracked in [LAB-547](https://linear.app/n8n/issue/LAB-547).
+
+Review identified one remaining guidance edge case: omitting a slug can still hit near-duplicate rejection. Additional facts and exceptions should use a distinct new slug. The final commit repeats the same frozen revision 4 scenarios after that correction; its exact result belongs in the PR validation record.
+
 ## Version 3 cases and checks
 
 The exact inputs, fixture setup, independent answer key, hashes, checks and run rule were frozen in `.local/lab535-ui/showcase-v3-frozen.json` before execution. The deterministic agent exercises real application tools and persistence; it does not measure a live model deciding whether to reply or composing an answer. One attempt per case uses a 60-second observer deadline per turn, a 10-second HTTP read deadline and no live model or account. Browser inspection retains the 15-minute allowance.

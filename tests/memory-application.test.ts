@@ -481,7 +481,7 @@ test(
       assert.ok(await savedEntry('Reviews synthetic projects on Mondays.'));
       assert.ok(await savedEntry('Prefers brief synthetic meeting notes.'));
       const usualRoutine =
-        'On weekdays I read my synthetic planning notes at 09:00 and walk after lunch.';
+        'On weekdays I read my synthetic planning notes at 09:00, review the project backlog, update the weekly checklist, and walk around the park after lunch.';
       const usualTurn = await ask(
         usualRoutine,
         [personal('memory_learn', { area: 'routines', slug: 'planning-day', quote: usualRoutine })],
@@ -490,9 +490,9 @@ test(
       );
       await assertSilent(usualTurn, '');
       const exception =
-        'On Wednesdays I walk before breakfast instead. I prefer concise responses with numbered lists.';
+        'On weekdays I read my synthetic planning notes at 09:00, review the project backlog and update the weekly checklist. On Wednesdays I walk around the park before breakfast instead. I prefer concise responses with numbered lists.';
       const combinedRoutine =
-        'Reads synthetic planning notes at 09:00 on weekdays and walks after lunch, except on Wednesdays when the walk is before breakfast.';
+        'Reads synthetic planning notes at 09:00, reviews the project backlog and updates the weekly checklist on weekdays. Walks around the park after lunch, except on Wednesdays when the walk is before breakfast.';
       const stylePreference = 'Prefers concise responses with numbered lists.';
       const profileBefore = (
         await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])
@@ -515,7 +515,12 @@ test(
             { area: 'routines', slug: 'planning-day', quote: exception },
             true,
           ),
-          personal('memory_learn', { area: 'routines', quote: exception }),
+          personal('memory_learn', { area: 'routines', quote: exception }, true),
+          personal('memory_learn', {
+            area: 'routines',
+            slug: 'planning-wednesday-exception',
+            quote: exception,
+          }),
           save('preferences', stylePreference),
         ],
         'succeeded',
