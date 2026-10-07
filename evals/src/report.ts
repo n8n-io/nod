@@ -277,7 +277,7 @@ export function markdown(runs: Loaded[]) {
   const lines = [
     `### ${pct(latest.regression.percent)} of tasks pass${moved ? ` (${moved.delta >= 0 ? '+' : ''}${moved.delta} points vs ${runs[0].summary.manifest.label})` : ''}`,
     '',
-    `Judge \`${latest.manifest.judge}\` · ${latest.manifest.repeat} attempts per scenario · $${spent.toFixed(2)} on models`,
+    `Judge \`${latest.manifest.judge}\` · ${latest.manifest.repeat} attempt${latest.manifest.repeat === 1 ? '' : 's'} per scenario · $${spent.toFixed(2)} on models`,
     '',
   ];
   if (moved) lines.push(moved.text, '');

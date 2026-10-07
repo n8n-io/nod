@@ -101,13 +101,19 @@ jobs:
           label() { printf '%s' "$1" | tr -c 'a-zA-Z0-9.' '-' | cut -c1-40; }
           args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5 --tier "$TIER" --repeat "$REPEAT" --concurrency 4 --budget "$BUDGET")
           if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi
-          candidate="$(label "$GITHUB_REF_NAME")-${GITHUB_SHA::7}"
-          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
-          npm run eval:capability -- run "${args[@]}" --label "$candidate"
           if [ -n "$BASELINE" ]; then
             case "$BASELINE" in -*) echo "::error::The baseline must be a branch or tag."; exit 1 ;; esac
             target="$(git rev-parse --verify --quiet "origin/$BASELINE^{commit}" || git rev-parse --verify "$BASELINE^{commit}")"
             base="$(git merge-base HEAD "$target")"
+            if [ "$base" = "$(git rev-parse HEAD)" ]; then
+              echo "::notice::This commit is already in $BASELINE, so there is nothing to compare."
+              BASELINE=""
+            fi
+          fi
+          candidate="$(label "$GITHUB_REF_NAME")-${GITHUB_SHA::7}"
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+          npm run eval:capability -- run "${args[@]}" --label "$candidate"
+          if [ -n "$BASELINE" ]; then
             baseline="$(label "$BASELINE")-${base::7}"
             echo "baseline=$baseline" >> "$GITHUB_OUTPUT"
             npm run eval:capability -- run "${args[@]}" --label "$baseline" --ref "$base"
