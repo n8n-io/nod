@@ -192,7 +192,7 @@
 }
 .model-picker-trigger {
   gap: 8px;
-  max-width: 70%;
+  max-width: 100%;
   font-weight: 500;
 }
 .model-picker-name {
@@ -200,15 +200,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-picker-source {
+.model-needs-reconnect {
   font-size: var(--text-control);
-  color: var(--muted-foreground);
+  color: var(--error);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.model-needs-reconnect {
-  color: var(--error);
 }
 .model-picker-dialog {
   width: min(540px, calc(100vw - 32px));

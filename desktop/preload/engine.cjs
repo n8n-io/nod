@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('ottoDesktop', {
   },
   getPreferences: () => ipcRenderer.invoke('otto:preferences:get'),
   getFeedbackContext: () => ipcRenderer.invoke('otto:feedback:context'),
+  captureFeedbackScreenshot: () => ipcRenderer.invoke('otto:feedback:capture'),
   onFeedbackRequested: (listener) => {
     if (typeof listener !== 'function') throw new TypeError('A feedback listener is required.');
     feedbackListeners.add(listener);

@@ -696,3 +696,103 @@ test('a judge fallback is counted and an invalid weekday is rejected', async () 
   assert.equal(llm.fallbackCalls?.(), 2);
   assert.throws(() => nextWeekOn(Date.UTC(2026, 9, 3), 9), /Weekday must be/);
 });
+
+test('background calendar checks reject leaked context and repeated outside effects', async () => {
+  const definition = (await import('../src/scenarios/background-calendar-isolation.ts')).default;
+  const world = definition.world({ now: () => Date.parse('2026-10-07T12:00:00Z') }) as ReturnType<
+    typeof definition.world
+  > & {
+    state: { held: boolean; backgroundTurnId: string; releasedAt: number };
+    target: number;
+    prompt: string;
+  };
+  assert.equal(new Date(world.target).toISOString(), '2026-10-08T06:00:00.000Z');
+  assert.equal(
+    new Date(world.apps!.calendar!.events[0].start).toISOString(),
+    '2026-10-09T09:00:00.000Z',
+  );
+  world.state.held = true;
+  world.state.backgroundTurnId = 'background';
+  world.state.releasedAt = 100;
+  Object.assign(world.apps!.calendar!.events[0], {
+    start: world.target,
+    end: world.target + 1_800_000,
+  });
+  const run = {
+    turns: [
+      {
+        id: 'foreground',
+        source: 'user',
+        background: false,
+        status: 'succeeded',
+        startedAt: 1,
+        finishedAt: 110,
+      },
+      {
+        id: 'background',
+        source: 'event',
+        background: true,
+        status: 'succeeded',
+        startedAt: 10,
+        finishedAt: 90,
+      },
+    ],
+    prompts: [{ turnId: 'background', instruction: 'Inspect the receipt.' }],
+    writes: [{ slug: 'GOOGLECALENDAR_PATCH_EVENT', kind: 'update', at: 105, args: {} }],
+    messages: [],
+  } as unknown as Run;
+  const checks = definition.expect(world).filter((item) => item.kind === 'check');
+  const verdict = async (id: string) =>
+    (await checks.find((item) => item.id === id)!.check(run)).pass;
+  assert.equal(await verdict('event-ran-while-foreground-was-pending'), true);
+  assert.equal(await verdict('calendar-moved-once-to-requested-time'), true);
+  run.prompts![0].instruction += world.prompt;
+  assert.equal(await verdict('pending-request-excluded-from-background-context'), false);
+  run.writes.push(run.writes[0]);
+  assert.equal(await verdict('calendar-moved-once-to-requested-time'), false);
+  run.messages.push({
+    turnId: 'background',
+    role: 'assistant',
+    text: 'Moved the planning block.',
+    at: 80,
+  });
+  assert.equal(await verdict('background-did-not-answer-the-chat-request'), false);
+  run.turns[1].startedAt = 120;
+  assert.equal(await verdict('event-ran-while-foreground-was-pending'), false);
+});
+
+test('fake calendar updates preserve identity and reject invalid times without mutation', async () => {
+  const { calendar } = await import('../src/world/apps.ts');
+  const owner = { name: 'Alex Rivera', email: 'alex@example.org' };
+  const world = createApps(owner, {
+    calendar: calendar(
+      owner,
+      [{ id: 'block', summary: 'Planning', start: 1000, end: 2000 }],
+      'UTC',
+    ),
+  });
+  const session = await world.provider.createSession('local-development', {});
+  const { accountId } = await session.authorize('googlecalendar', 'https://callback.example.org');
+  await session.execute(
+    'GOOGLECALENDAR_PATCH_EVENT',
+    {
+      event_id: 'block',
+      start_datetime: '2026-10-08T08:00:00Z',
+      end_datetime: '2026-10-08T08:30:00Z',
+    },
+    accountId,
+  );
+  assert.equal(world.calendar!.events.length, 1);
+  assert.equal(world.calendar!.events[0].id, 'block');
+  assert.equal(world.calendar!.events[0].summary, 'Planning');
+  const before = structuredClone(world.calendar!.events);
+  await assert.rejects(
+    session.execute(
+      'GOOGLECALENDAR_PATCH_EVENT',
+      { event_id: 'block', end_datetime: 'invalid' },
+      accountId,
+    ),
+  );
+  assert.deepEqual(world.calendar!.events, before);
+  assert.equal(world.writes.length, 1);
+});

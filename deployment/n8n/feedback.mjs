@@ -87,7 +87,7 @@ export function checkFeedback(input, hash) {
     (data.appModified !== null && typeof data.appModified !== 'boolean') ||
     !Array.isArray(data.attachments) ||
     data.attachments.length > 3 ||
-    (data.report != null && (!record(data.report) || data.category !== 'bug'))
+    (data.report != null && !record(data.report))
   )
     return rejected();
   const files = [...(data.report ? [data.report] : []), ...data.attachments];
@@ -106,7 +106,15 @@ export function checkFeedback(input, hash) {
       !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.data) ||
       !(report
         ? file.mimeType === 'application/json'
-        : ['image/png', 'image/jpeg', 'image/webp'].includes(file.mimeType))
+        : [
+            'image/png',
+            'image/jpeg',
+            'image/webp',
+            'application/pdf',
+            'text/plain',
+            'application/json',
+            'text/csv',
+          ].includes(file.mimeType))
     )
       return rejected();
     const bytes = Buffer.from(file.data, 'base64');
@@ -117,24 +125,31 @@ export function checkFeedback(input, hash) {
       hash(bytes) !== file.sha256
     )
       return rejected();
-    if (report) {
-      try {
-        JSON.parse(bytes.toString('utf8'));
-      } catch {
-        return rejected();
-      }
-    } else {
+    if (!report) {
       attachmentBytes += bytes.length;
       if (attachmentBytes > 4 * 1024 * 1024) return rejected();
-      const matches =
-        file.mimeType === 'image/png'
-          ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-          : file.mimeType === 'image/jpeg'
-            ? bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
-            : bytes.subarray(0, 4).toString() === 'RIFF' &&
-              bytes.subarray(8, 12).toString() === 'WEBP';
-      if (!matches) return rejected();
     }
+    let matches =
+      file.mimeType === 'image/png'
+        ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+        : file.mimeType === 'image/jpeg'
+          ? bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255
+          : file.mimeType === 'image/webp'
+            ? bytes.subarray(0, 4).toString() === 'RIFF' &&
+              bytes.subarray(8, 12).toString() === 'WEBP'
+            : file.mimeType === 'application/pdf' && bytes.subarray(0, 5).toString() === '%PDF-';
+    if (['text/plain', 'application/json', 'text/csv'].includes(file.mimeType)) {
+      const content = bytes.toString('utf8');
+      matches = Buffer.from(content, 'utf8').equals(bytes) && !content.includes('\0');
+      if (matches && file.mimeType === 'application/json') {
+        try {
+          JSON.parse(content.replace(/^\ufeff/, ''));
+        } catch {
+          matches = false;
+        }
+      }
+    }
+    if (!matches) return rejected();
   }
   const canonical = {
     schemaVersion: 1,

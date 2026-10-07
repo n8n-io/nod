@@ -583,12 +583,8 @@ export function ModelPicker({
           </>
         )}
       </Button>
-      {model && !setup && (
-        <span
-          className={`model-picker-source ${connection?.status === 'reconnect' ? 'model-needs-reconnect' : ''}`}
-        >
-          {connection?.status === 'reconnect' ? 'Reconnect in Models' : modelSource(connection!)}
-        </span>
+      {model && !setup && connection?.status === 'reconnect' && (
+        <span className="model-needs-reconnect">Reconnect in Models</span>
       )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="model-picker-dialog" aria-describedby="model-picker-description">

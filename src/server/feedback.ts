@@ -4,6 +4,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { FeedbackDelivery, FeedbackEnvelope, FeedbackFile } from '../ports/feedback.ts';
 import {
+  feedbackAttachmentMimeTypes,
   feedbackLimits,
   type FeedbackContext,
   type FeedbackReceipt,
@@ -34,7 +35,7 @@ const submission = z
               .min(1)
               .max(160)
               .regex(/^[^/\\\u0000-\u001f]+$/),
-            mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+            mimeType: z.enum(feedbackAttachmentMimeTypes),
             data: z.string().max(Math.ceil(feedbackLimits.attachmentBytes / 3) * 4),
           })
           .strict(),
@@ -47,23 +48,34 @@ const hash = (value: string | Uint8Array) => createHash('sha256').update(value).
 const fail = (message: string, statusCode: number) =>
   Object.assign(new Error(message), { statusCode });
 
-function imageFile(file: z.infer<typeof submission>['attachments'][number]): FeedbackFile {
+function attachmentFile(file: z.infer<typeof submission>['attachments'][number]): FeedbackFile {
   const bytes = Buffer.from(file.data, 'base64');
   if (
     bytes.length === 0 ||
     bytes.length > feedbackLimits.attachmentBytes ||
-    bytes.toString('base64') !== file.data ||
-    !(
-      (file.mimeType === 'image/png' &&
-        bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) ||
-      (file.mimeType === 'image/jpeg' &&
-        bytes.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'))) ||
-      (file.mimeType === 'image/webp' &&
-        bytes.subarray(0, 4).toString() === 'RIFF' &&
-        bytes.subarray(8, 12).toString() === 'WEBP')
-    )
+    bytes.toString('base64') !== file.data
   )
-    throw fail('Choose a PNG, JPEG or WebP screenshot up to 2 MB.', 400);
+    throw fail('Choose a supported attachment up to 2 MB.', 400);
+  let matches =
+    (file.mimeType === 'image/png' &&
+      bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) ||
+    (file.mimeType === 'image/jpeg' && bytes.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'))) ||
+    (file.mimeType === 'image/webp' &&
+      bytes.subarray(0, 4).toString() === 'RIFF' &&
+      bytes.subarray(8, 12).toString() === 'WEBP') ||
+    (file.mimeType === 'application/pdf' && bytes.subarray(0, 5).toString() === '%PDF-');
+  if (['text/plain', 'application/json', 'text/csv'].includes(file.mimeType)) {
+    const content = bytes.toString('utf8');
+    matches = Buffer.from(content, 'utf8').equals(bytes) && !content.includes('\0');
+    if (matches && file.mimeType === 'application/json') {
+      try {
+        JSON.parse(content.replace(/^\ufeff/, ''));
+      } catch {
+        matches = false;
+      }
+    }
+  }
+  if (!matches) throw fail('The attachment does not match its file type.', 400);
   return { ...file, sha256: hash(bytes) };
 }
 
@@ -161,14 +173,12 @@ export async function registerFeedback(
     const snapshot = input.reportId ? reports.get(input.reportId) : undefined;
     if (input.reportId && !snapshot)
       throw fail('Refresh the diagnostic report before sending.', 410);
-    if (snapshot && input.category !== 'bug')
-      throw fail('Only bug reports include diagnostics.', 400);
-    const attachments = input.attachments.map(imageFile);
+    const attachments = input.attachments.map(attachmentFile);
     if (
       attachments.reduce((sum, file) => sum + Buffer.from(file.data, 'base64').length, 0) >
       feedbackLimits.totalAttachmentBytes
     )
-      throw fail('Screenshots must total no more than 4 MB.', 413);
+      throw fail('Attachments must total no more than 4 MB.', 413);
     const report: FeedbackFile | undefined = snapshot
       ? {
           name: 'otto-diagnostic-report.json',

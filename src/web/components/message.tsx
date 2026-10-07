@@ -324,7 +324,7 @@ export function MessageBubble({
   return (
     <article
       ref={articleElement}
-      className={`message message-${message.role}${streaming ? ' streaming-message' : ''}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}`}
+      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}`}
       aria-label={streaming ? 'Otto is responding' : message.role === 'user' ? 'You' : 'Otto'}
       data-message-id={streaming ? undefined : message.id}
       onPointerUp={(event) => {
@@ -369,7 +369,6 @@ export function MessageBubble({
                 onHandoffDone={streaming ? undefined : onHandoffDone}
               />
             )}
-            {streaming && <span className="stream-cursor" />}
           </div>
           {!streaming && (
             <div className="message-tools">

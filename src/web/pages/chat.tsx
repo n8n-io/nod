@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, MessageSquarePlus, Trash2 } from 'lucide-react';
+import { ArrowDown, Trash2 } from 'lucide-react';
 import type {
   AppState,
   Artifact,
@@ -15,6 +15,7 @@ import { Composer, type ComposerHandle, type ComposerSendResult } from '../compo
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
+import { FeedbackLauncher } from '../components/feedback-intro';
 import {
   Button,
   Dialog,
@@ -60,6 +61,7 @@ function Welcome() {
   );
 }
 export function Chat({
+  ownerId,
   state,
   streams,
   refresh,
@@ -72,6 +74,7 @@ export function Chat({
   onRequestHandled,
   onFeedback,
 }: {
+  ownerId: string;
   state: AppState;
   streams: Record<string, string>;
   refresh(): Promise<void>;
@@ -683,17 +686,12 @@ export function Chat({
         </Button>
       )}
       {onFeedback && (
-        <Button
-          id="feedback-launcher"
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="chat-report-button"
-          onClick={onFeedback}
-        >
-          <MessageSquarePlus size={16} aria-hidden="true" />
-          Send feedback
-        </Button>
+        <FeedbackLauncher
+          key={ownerId}
+          ownerId={ownerId}
+          visible={visible}
+          onFeedback={onFeedback}
+        />
       )}
     </>
   );

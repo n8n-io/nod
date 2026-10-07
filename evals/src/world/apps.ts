@@ -933,6 +933,37 @@ export function calendar(owner: Person, seed: CalendarEvent[], timeZone: string)
         return view(event);
       },
     },
+    {
+      slug: 'GOOGLECALENDAR_PATCH_EVENT',
+      description:
+        'Update selected fields of an existing calendar event. Omitted fields remain unchanged.',
+      inputSchema: obj(
+        {
+          calendar_id: str('Calendar ID, primary for the main calendar.'),
+          event_id: str('Existing event ID.'),
+          start_datetime: str('New start (RFC3339).'),
+          end_datetime: str('New end (RFC3339).'),
+          summary: str('New title.'),
+        },
+        ['event_id'],
+      ),
+      write: 'update',
+      run(args) {
+        const event = events.find((item) => item.id === args.event_id);
+        if (!event) throw new Error('Requested event was not found.');
+        const start =
+          args.start_datetime === undefined ? event.start : Date.parse(args.start_datetime);
+        const end = args.end_datetime === undefined ? event.end : Date.parse(args.end_datetime);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+          throw new Error('The event needs a valid start and end time.');
+        Object.assign(event, {
+          start,
+          end,
+          ...(args.summary === undefined ? {} : { summary: String(args.summary) }),
+        });
+        return view(event);
+      },
+    },
   ];
   return { tools, events };
 }

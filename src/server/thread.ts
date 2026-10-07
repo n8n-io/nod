@@ -796,15 +796,27 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
           )
         : undefined,
       pool.query(
-        `WITH seen AS (SELECT max(started_at) AS at FROM turns
-         WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4)
+        `WITH RECURSIVE seen AS (SELECT max(started_at) AS at FROM turns
+         WHERE owner_id=$1 AND thread_id=$2 AND NOT background AND id<>$4),
+       boundary AS (SELECT created_at AS at FROM turns WHERE owner_id=$1 AND thread_id=$2 AND id=$4),
+       resuming AS (
+         SELECT id,source,source_id FROM turns
+         WHERE owner_id=$1 AND thread_id=$2 AND id=$4 AND background AND source='resume'
+         UNION
+         SELECT u.id,u.source,u.source_id FROM turns u JOIN resuming r ON r.source='resume'
+         AND r.source_id IN ('credentials:'||u.id::text,'credentials-retry:'||u.id::text,'connection:'||u.id::text)
+         WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.background)
        SELECT role,text,created_at AS "createdAt",reaction,attachments,unseen FROM (
        SELECT m.role,left(m.text,6000) AS text,m.created_at,m.id,m.reaction,m.attachments,
        COALESCE(u.background AND m.created_at > COALESCE(seen.at,'-infinity'),false) AS unseen
-       FROM messages m CROSS JOIN seen LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+       FROM messages m CROSS JOIN seen CROSS JOIN boundary
+       LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
        WHERE m.owner_id=$1 AND m.thread_id=$2 AND m.id IS DISTINCT FROM $3::uuid
+       AND (NOT $5::boolean OR (m.created_at<=boundary.at AND
+         (u.id IS NULL OR u.id IN (SELECT id FROM resuming)
+          OR (u.status IN ('succeeded','failed','cancelled') AND u.finished_at<=boundary.at))))
        ORDER BY m.created_at DESC,m.id DESC LIMIT 30) m ORDER BY created_at,id`,
-        [ownerId, threadId, sourceMessageId, turn.id],
+        [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background)],
       ),
       pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
       pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [

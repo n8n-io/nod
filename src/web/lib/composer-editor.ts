@@ -1,10 +1,11 @@
-import { Extension, InputRule } from '@tiptap/core';
+import { Extension, InputRule, type Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
 import Placeholder from '@tiptap/extension-placeholder';
 import { TableKit } from '@tiptap/extension-table';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
+import { Fragment, Slice } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 import { safeMessageLink } from './message-links';
 
@@ -15,6 +16,40 @@ export function clipboardFiles(clipboard: DataTransfer): File[] {
     .filter((item) => item.kind === 'file')
     .map((item) => item.getAsFile())
     .filter((file): file is File => file !== null);
+}
+
+function markdownPasteSlice(editor: Editor, value: string) {
+  const { schema } = editor;
+  const hardBreaks = (count: number) =>
+    Fragment.fromArray(Array.from({ length: count }, () => schema.nodes.hardBreak.create()));
+  if (!value.trim()) {
+    const content = value
+      .split('\n')
+      .flatMap((line, index) => [
+        ...(index ? [schema.nodes.hardBreak.create()] : []),
+        ...(line ? [schema.text(line)] : []),
+      ]);
+    return new Slice(Fragment.from(schema.nodes.paragraph.create(null, content)), 1, 1);
+  }
+  const leading = value.match(/^\n*/)?.[0].length ?? 0;
+  const trailing = value.match(/\n*$/)?.[0].length ?? 0;
+  let content = schema.nodeFromJSON(
+    editor.markdown!.parse(value.slice(leading, value.length - trailing)),
+  ).content;
+  const first = content.firstChild;
+  if (leading && first?.type.name === 'paragraph')
+    content = content.replaceChild(0, first.copy(hardBreaks(leading).append(first.content)));
+  const last = content.lastChild;
+  if (trailing && last?.type.name === 'paragraph')
+    content = content.replaceChild(
+      content.childCount - 1,
+      last.copy(last.content.append(hardBreaks(trailing))),
+    );
+  return new Slice(
+    content,
+    content.firstChild?.type.name === 'paragraph' ? 1 : 0,
+    content.lastChild?.type.name === 'paragraph' ? 1 : 0,
+  );
 }
 
 export function createComposerExtensions(callbacks: {
@@ -86,23 +121,24 @@ export function createComposerExtensions(callbacks: {
                 callbacks.submit();
                 return true;
               },
-              handlePaste(_view, event) {
+              handlePaste(view, event) {
                 const clipboard = event.clipboardData;
                 if (!clipboard) return false;
                 const files = clipboardFiles(clipboard);
                 const text = clipboard.getData('text/plain');
-                if (files.length) {
-                  event.preventDefault();
-                  callbacks.upload(files);
-                  if (text) editor.commands.insertContent(text, { contentType: 'markdown' });
-                  return true;
+                if (!files.length && (!text || clipboard.getData('text/html'))) return false;
+                event.preventDefault();
+                if (files.length) callbacks.upload(files);
+                if (text) {
+                  const value = text.replace(/\r\n?/g, '\n');
+                  const { tr, selection } = view.state;
+                  if (selection.$from.parent.type.spec.code) tr.insertText(value);
+                  else tr.replaceSelection(markdownPasteSlice(editor, value));
+                  view.dispatch(
+                    tr.scrollIntoView().setMeta('paste', true).setMeta('uiEvent', 'paste'),
+                  );
                 }
-                if (text && !clipboard.getData('text/html')) {
-                  event.preventDefault();
-                  editor.commands.insertContent(text, { contentType: 'markdown' });
-                  return true;
-                }
-                return false;
+                return true;
               },
             },
           }),

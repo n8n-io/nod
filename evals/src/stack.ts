@@ -77,6 +77,7 @@ export interface Stack {
   sessionRoot: string;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   resetConversation(): Promise<void>;
+  event(summary: string): Promise<string>;
   stop(): Promise<void>;
 }
 
@@ -350,6 +351,16 @@ export async function startStack(options: {
       async resetConversation() {
         const { previousThreadId } = await resetThread((await activeThread()).id);
         await computer.discard?.(previousThreadId).catch(() => {});
+      },
+      async event(summary) {
+        const eventId = `eval:${randomUUID()}`;
+        await application!.triage.triageEvent(summary, eventId, 'inspect_message');
+        const result = await pool.query('SELECT turn_id FROM notifications WHERE event_id=$1', [
+          eventId,
+        ]);
+        const turnId = result.rows[0]?.turn_id as string | undefined;
+        if (!turnId) throw new Error('The incoming event did not queue a background turn.');
+        return turnId;
       },
       stop,
     };

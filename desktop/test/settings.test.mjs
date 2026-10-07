@@ -494,6 +494,7 @@ async function runningDesktop(
         this.webContents = Object.assign(new EventEmitter(), {
           setWindowOpenHandler() {},
           isLoadingMainFrame: () => Boolean(this.loading),
+          getURL: () => this.webContents.mainFrame.url,
           send: (channel, value) => {
             this.sent.push([channel, value]);
           },
@@ -506,6 +507,9 @@ async function runningDesktop(
       }
       isFocused() {
         return this.focused && !this.destroyed;
+      }
+      isVisible() {
+        return this.visible && !this.destroyed;
       }
       loadURL(url) {
         this.url = url;
@@ -1111,6 +1115,77 @@ test('native feedback waits for the engine and renderer load, then delivers once
   assert.throws(() => context({ sender: window.webContents, senderFrame: frame }), /unavailable/);
 });
 
+test('feedback screenshots stay in the trusted visible app and exclude private views and navigation races', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Capture must not make an engine request.'));
+  f.showEngine();
+  const window = f.windows.at(-1);
+  const contents = window.webContents;
+  const frame = contents.mainFrame;
+  const event = { sender: contents, senderFrame: frame };
+  const capture = f.handlers.get('otto:feedback:capture');
+  let safe = true;
+  let captured = 0;
+  let bytes = Buffer.from('synthetic-image');
+  const image = {
+    isEmpty: () => false,
+    getSize: () => ({ width: 3200, height: 1800 }),
+    resize: (size) => {
+      assert.equal(size.width, 1600);
+      assert.equal(size.height, 900);
+      return { toJPEG: () => bytes };
+    },
+  };
+  contents.executeJavaScript = async () => safe;
+  contents.capturePage = async (rectangle, options) => {
+    assert.equal(rectangle, undefined);
+    assert.equal(options.stayHidden, true);
+    captured++;
+    return image;
+  };
+  for (const rejected of [
+    { sender: { mainFrame: frame }, senderFrame: frame },
+    { sender: contents, senderFrame: { url: frame.url } },
+  ])
+    assert.throws(() => capture(rejected), /unavailable/);
+  for (const path of [
+    '/credentials/synthetic',
+    '/vault',
+    '/browser',
+    '/browser-connect/synthetic',
+    '/onboarding',
+  ]) {
+    frame.url = `http://127.0.0.1:4310${path}`;
+    assert.equal(await capture(event), null);
+  }
+  frame.url = 'http://127.0.0.1:4310/';
+  window.visible = false;
+  assert.equal(await capture(event), null);
+  window.visible = true;
+  safe = false;
+  assert.equal(await capture(event), null);
+  assert.equal(captured, 0);
+  safe = true;
+  assert.deepEqual(await capture(event), bytes);
+  assert.equal(captured, 1);
+  bytes = Buffer.alloc(2 * 1024 * 1024 + 1);
+  assert.equal(await capture(event), null);
+  const pending = deferred();
+  contents.capturePage = () => pending.promise;
+  const racing = capture(event);
+  await new Promise(setImmediate);
+  safe = false;
+  pending.resolve(image);
+  assert.equal(await racing, null);
+  safe = true;
+  const navigated = deferred();
+  contents.capturePage = () => navigated.promise;
+  const navigating = capture(event);
+  await new Promise(setImmediate);
+  frame.url = 'http://127.0.0.1:4310/credentials/synthetic';
+  navigated.resolve(image);
+  assert.equal(await navigating, null);
+});
+
 test('feedback metadata uses installed version and build source with a bounded hostname fallback', async () => {
   const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
   const body = source.slice(
@@ -1209,6 +1284,7 @@ test('engine preload limits secret access to Composio and withholds privileged I
     assert.equal(bridge[field], undefined);
   bridge.getPreferences();
   bridge.getFeedbackContext();
+  bridge.captureFeedbackScreenshot();
   bridge.setTheme('dark');
   bridge.openSettings('models');
   bridge.getSettings();
@@ -1224,6 +1300,7 @@ test('engine preload limits secret access to Composio and withholds privileged I
   assert.deepEqual(calls, [
     ['otto:preferences:get'],
     ['otto:feedback:context'],
+    ['otto:feedback:capture'],
     ['otto:preferences:theme', 'dark'],
     ['otto:settings:open', 'models'],
     ['otto:settings:get'],

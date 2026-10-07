@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -354,7 +354,9 @@ test(
             'synthetic research',
           );
           await context.publish(file.workspaceFile, 'finished.txt');
-          return { status: 'succeeded' };
+          await context.reply('The synthetic research summary is ready.');
+          await context.waitForUser!('Connect the synthetic source to finish the research.');
+          return { status: 'waiting_user' };
         }
         if (context.activityCheck) {
           await activityRun?.(context);
@@ -965,6 +967,82 @@ test(
             [true, true],
           );
           assert.equal(history.find((item) => item.text === 'done: steer-long')?.unseen, false);
+        },
+      );
+
+      await t.test(
+        'background turns see completed history from their trigger time without adopting active chat requests',
+        async () => {
+          const earlier = await thread.submitUserMessage('Earlier completed calendar fixture');
+          await waitFor(settled(earlier.turnId));
+          const waiting = await thread.submitUserMessage('ask-question');
+          await waitFor(settled(waiting.turnId));
+          const pending = 'Move the synthetic planning meeting tomorrow';
+          block(pending);
+          const active = await thread.submitUserMessage(pending);
+          await waitFor(() => Boolean(ran(active.turnId)));
+          await ran(active.turnId)!.reply('Checking the synthetic meeting time.');
+          const queued = await thread.submitUserMessage('A separate queued calendar fixture');
+          try {
+            const event = await thread.enqueueTurn('Inspect a synthetic calendar event', {
+              source: 'event',
+              sourceId: `calendar-event:${randomUUID()}`,
+            });
+            await waitFor(settled(event));
+            assert.equal(await turnStatus(active.turnId), 'running');
+            assert.equal(await turnStatus(queued.turnId), 'queued');
+            const recent = ran(event)!.history.map((message) => message.text);
+            assert.ok(recent.includes('Earlier completed calendar fixture'));
+            assert.ok(recent.includes('done: Earlier completed calendar fixture'));
+            for (const text of [
+              pending,
+              'Checking the synthetic meeting time.',
+              'A separate queued calendar fixture',
+              'ask-question',
+              'Which account should I use?',
+            ])
+              assert.ok(!recent.includes(text), text);
+            release(pending);
+            await waitFor(settled(queued.turnId));
+            const later = await thread.submitUserMessage('A newer completed calendar fixture');
+            await waitFor(settled(later.turnId));
+            const client = await db.pool.connect();
+            let delayed: string;
+            try {
+              await client.query('BEGIN');
+              delayed = await thread.enqueueTurn('Inspect a delayed synthetic calendar event', {
+                source: 'event',
+                sourceId: `delayed-calendar-event:${randomUUID()}`,
+                client,
+              });
+              await client.query(
+                'UPDATE turns SET created_at=(SELECT created_at FROM turns WHERE id=$2) WHERE id=$1',
+                [delayed, event],
+              );
+              await client.query('COMMIT');
+            } catch (error) {
+              await client.query('ROLLBACK');
+              throw error;
+            } finally {
+              client.release();
+            }
+            await waitFor(settled(delayed));
+            const history = ran(delayed)!.history.map((message) => message.text);
+            assert.ok(history.includes('Earlier completed calendar fixture'));
+            for (const text of [
+              pending,
+              `done: ${pending}`,
+              'Checking the synthetic meeting time.',
+              'A separate queued calendar fixture',
+              'done: A separate queued calendar fixture',
+              'A newer completed calendar fixture',
+              'done: A newer completed calendar fixture',
+            ])
+              assert.ok(!history.includes(text), text);
+          } finally {
+            release(pending);
+            await waitFor(settled(queued.turnId));
+          }
         },
       );
 
@@ -2648,9 +2726,11 @@ test(
         },
       );
       await t.test(
-        'background research stages private artifacts and resumed preparation stays quiet',
+        'background research resumes its own waiting history and artifacts while other work stays separate',
         async () => {
           const previousRead = dependencies.readArtifact;
+          const pending = 'Unrelated foreground research fixture';
+          let active: SubmitMessageResponse | undefined;
           try {
             dependencies.readArtifact = async (threadId, path) =>
               readFile(join(root, 'workspaces', threadId, path));
@@ -2659,34 +2739,73 @@ test(
               background: true,
             });
             await waitFor(settled(research));
-            assert.equal(await turnStatus(research), 'succeeded');
+            assert.equal(await turnStatus(research), 'waiting');
             assert.equal(ran(research)?.takeMessages, undefined);
             const messages = (
               await db.pool.query('SELECT text,attachments FROM messages WHERE turn_id=$1', [
                 research,
               ])
             ).rows;
-            assert.equal(messages.length, 1);
-            assert.equal(messages[0].attachments[0].name, 'finished.txt');
-            assert.equal(messages[0].text, '');
+            assert.equal(messages.length, 3);
+            const artifact = messages.find((message) => message.attachments.length);
+            assert.equal(artifact.attachments[0].name, 'finished.txt');
+            assert.equal(artifact.text, '');
+            const unrelated = await thread.enqueueTurn('ask-question', { source: 'event' });
+            await waitFor(settled(unrelated));
+            block(pending);
+            active = await thread.submitUserMessage(pending);
+            await waitFor(() => Boolean(ran(active!.turnId)));
+            await ran(active.turnId)!.reply('Unrelated foreground progress.');
             quietBackgroundWork = true;
-            await thread.resumeAfterCredentials(research);
-            const resumed = (
-              await db.pool.query('SELECT id,background FROM turns WHERE source_id=$1', [
-                `credentials:${research}`,
+            const checkResume = async (sourceId: string) => {
+              const resumed = (
+                await db.pool.query('SELECT id,background FROM turns WHERE source_id=$1', [
+                  sourceId,
+                ])
+              ).rows[0];
+              assert.equal(resumed.background, true);
+              await waitFor(settled(resumed.id));
+              const history = ran(resumed.id)!.history;
+              assert.ok(
+                history.some(
+                  (message) => message.text === 'The synthetic research summary is ready.',
+                ),
+              );
+              assert.ok(
+                history.some(
+                  (message) =>
+                    message.text === 'Connect the synthetic source to finish the research.',
+                ),
+              );
+              assert.ok(
+                history.some((message) => message.attachments?.[0]?.name === 'finished.txt'),
+              );
+              for (const text of [
+                pending,
+                'Unrelated foreground progress.',
+                'Which account should I use?',
               ])
-            ).rows[0];
-            assert.equal(resumed.background, true);
-            await waitFor(settled(resumed.id));
-            assert.equal(
-              (await db.pool.query('SELECT id FROM messages WHERE turn_id=$1', [resumed.id]))
-                .rowCount,
-              0,
-            );
-            assert.equal(deltas.filter((event) => event.turnId === resumed.id).length, 0);
+                assert.ok(!history.some((message) => message.text === text), text);
+              assert.equal(
+                (await db.pool.query('SELECT id FROM messages WHERE turn_id=$1', [resumed.id]))
+                  .rowCount,
+                0,
+              );
+              assert.equal(deltas.filter((event) => event.turnId === resumed.id).length, 0);
+              assert.equal(await turnStatus(active!.turnId), 'running');
+              return resumed.id as string;
+            };
+            await thread.resumeAfterCredentials(research);
+            const resumed = await checkResume(`credentials:${research}`);
+            await thread.retryCredentials(resumed);
+            await checkResume(`credentials-retry:${resumed}`);
+            assert.equal(await thread.resumeAfterConnection(research, 'Synthetic source'), true);
+            await checkResume(`connection:${research}`);
           } finally {
             quietBackgroundWork = false;
             dependencies.readArtifact = previousRead;
+            release(pending);
+            if (active) await waitFor(settled(active.turnId));
           }
         },
       );
@@ -3828,85 +3947,116 @@ test(
   'feedback partial delivery repairs only the retained original and cannot lose its issue receipt',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
-    const f = await feedbackFixture(t);
-    const { app, ownerId } = await f.open();
-    const other = await f.open();
-    const snapshot = (await app.inject({ method: 'POST', url: '/api/feedback/report' })).json();
-    const input = f.submission({
-      reportId: snapshot.id,
-      attachments: [
-        {
-          name: 'synthetic.png',
-          mimeType: 'image/png',
-          data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64'),
-        },
-      ],
-    });
-    f.state.submitStatus = 'partial';
-    const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
-    const initial = first.json<FeedbackReceipt>();
-    assert.equal(initial.status, 'partial');
-    assert.equal(initial.canRetryAttachments, true);
-    const original = f.state.envelopes[0];
-    f.state.content = 'The conversation changed after the first submission.';
-    const foreign = await other.app.inject({
-      method: 'POST',
-      url: `/api/feedback/${input.submissionId}/retry`,
-      payload: {},
-    });
-    assert.equal(foreign.statusCode, 409);
-    for (const status of ['unknown', 'rejected'] as const) {
-      f.state.statusOverride = status;
-      const checked = (
-        await app.inject({ url: `/api/feedback/${input.submissionId}` })
-      ).json<FeedbackReceipt>();
-      assert.equal(checked.status, 'partial');
-      assert.equal(checked.issueUrl, initial.issueUrl);
-      assert.equal(checked.canRetryAttachments, true);
-      f.state.submitStatus = status;
-      const retried = (
-        await app.inject({
-          method: 'POST',
-          url: `/api/feedback/${input.submissionId}/retry`,
-          payload: {},
-        })
-      ).json<FeedbackReceipt>();
-      assert.equal(retried.status, 'partial');
-      assert.equal(retried.issueUrl, initial.issueUrl);
-      assert.equal(retried.canRetryAttachments, true);
+    for (const category of ['bug', 'feature', 'other'] as const) {
+      const f = await feedbackFixture(t);
+      const { app, ownerId } = await f.open();
+      const other = await f.open();
+      const snapshot = (await app.inject({ method: 'POST', url: '/api/feedback/report' })).json();
+      const input = f.submission({
+        category,
+        reportId: snapshot.id,
+        attachments: [
+          {
+            name: 'synthetic.png',
+            mimeType: 'image/png',
+            data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64'),
+          },
+          {
+            name: 'synthetic.pdf',
+            mimeType: 'application/pdf',
+            data: Buffer.from('%PDF-1.7\n%%EOF').toString('base64'),
+          },
+          {
+            name: 'synthetic.json',
+            mimeType: 'application/json',
+            data: Buffer.from('{"synthetic":true}').toString('base64'),
+          },
+        ],
+      });
+      f.state.submitStatus = 'partial';
+      const first = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+      const initial = first.json<FeedbackReceipt>();
+      assert.equal(initial.status, 'partial');
+      assert.equal(initial.canRetryAttachments, true);
+      const original = f.state.envelopes[0];
+      assert.equal(original.report!.data, Buffer.from(snapshot.content).toString('base64'));
+      assert.equal(
+        original.report!.sha256,
+        createHash('sha256').update(snapshot.content).digest('hex'),
+      );
+      f.state.content = JSON.stringify({
+        messages: ['The conversation changed after the first submission.'],
+      });
+      const refreshed = (await app.inject({ method: 'POST', url: '/api/feedback/report' })).json();
+      assert.notEqual(refreshed.id, snapshot.id);
+      const replaced = await app.inject({
+        method: 'POST',
+        url: '/api/feedback',
+        payload: { ...input, reportId: refreshed.id },
+      });
+      assert.equal(replaced.statusCode, 409);
+      const repeated = await app.inject({ method: 'POST', url: '/api/feedback', payload: input });
+      assert.equal(repeated.json().status, 'partial');
+      assert.equal(f.state.envelopes.length, 1);
+      const foreign = await other.app.inject({
+        method: 'POST',
+        url: `/api/feedback/${input.submissionId}/retry`,
+        payload: {},
+      });
+      assert.equal(foreign.statusCode, 409);
+      for (const status of ['unknown', 'rejected'] as const) {
+        f.state.statusOverride = status;
+        const checked = (
+          await app.inject({ url: `/api/feedback/${input.submissionId}` })
+        ).json<FeedbackReceipt>();
+        assert.equal(checked.status, 'partial');
+        assert.equal(checked.issueUrl, initial.issueUrl);
+        assert.equal(checked.canRetryAttachments, true);
+        f.state.submitStatus = status;
+        const retried = (
+          await app.inject({
+            method: 'POST',
+            url: `/api/feedback/${input.submissionId}/retry`,
+            payload: {},
+          })
+        ).json<FeedbackReceipt>();
+        assert.equal(retried.status, 'partial');
+        assert.equal(retried.issueUrl, initial.issueUrl);
+        assert.equal(retried.canRetryAttachments, true);
+      }
+      f.state.statusOverride = undefined;
+      f.state.submitStatus = 'submitted';
+      const repaired = await Promise.all(
+        [0, 1].map(() =>
+          app.inject({
+            method: 'POST',
+            url: `/api/feedback/${input.submissionId}/retry`,
+            payload: {},
+          }),
+        ),
+      );
+      assert.ok(repaired.some((response) => response.json().status === 'submitted'));
+      assert.equal(f.state.envelopes.length, 4);
+      for (const envelope of f.state.envelopes.slice(1)) {
+        const { action, ...payload } = envelope;
+        assert.equal(action, 'repair');
+        assert.deepEqual(payload, original);
+      }
+      assert.equal(f.state.builds, 2);
+      const after = await app.inject({
+        method: 'POST',
+        url: `/api/feedback/${input.submissionId}/retry`,
+        payload: {},
+      });
+      assert.equal(after.statusCode, 409);
+      assert.equal(f.state.envelopes.length, 4);
+      const stored = await f.pool.query(
+        'SELECT status,issue_url FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
+        [ownerId, input.submissionId],
+      );
+      assert.equal(stored.rows[0].status, 'submitted');
+      assert.equal(stored.rows[0].issue_url, initial.issueUrl);
     }
-    f.state.statusOverride = undefined;
-    f.state.submitStatus = 'submitted';
-    const repaired = await Promise.all(
-      [0, 1].map(() =>
-        app.inject({
-          method: 'POST',
-          url: `/api/feedback/${input.submissionId}/retry`,
-          payload: {},
-        }),
-      ),
-    );
-    assert.ok(repaired.some((response) => response.json().status === 'submitted'));
-    assert.equal(f.state.envelopes.length, 4);
-    for (const envelope of f.state.envelopes.slice(1)) {
-      const { action, ...payload } = envelope;
-      assert.equal(action, 'repair');
-      assert.deepEqual(payload, original);
-    }
-    assert.equal(f.state.builds, 1);
-    const after = await app.inject({
-      method: 'POST',
-      url: `/api/feedback/${input.submissionId}/retry`,
-      payload: {},
-    });
-    assert.equal(after.statusCode, 409);
-    assert.equal(f.state.envelopes.length, 4);
-    const stored = await f.pool.query(
-      'SELECT status,issue_url FROM feedback_submissions WHERE owner_id=$1 AND id=$2',
-      [ownerId, input.submissionId],
-    );
-    assert.equal(stored.rows[0].status, 'submitted');
-    assert.equal(stored.rows[0].issue_url, initial.issueUrl);
   },
 );
 
@@ -3944,7 +4094,7 @@ test(
 );
 
 test(
-  'feedback retains version metadata without a report and rejects invalid screenshots before delivery',
+  'feedback retains metadata and validates image and document attachments before delivery',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const f = await feedbackFixture(t);
@@ -3966,12 +4116,33 @@ test(
       assert.equal(delivered.appModified, input.appModified);
       assert.equal(delivered.computerName, input.computerName);
     }
-    const diagnosticsOnFeature = await app.inject({
+    const other = await f.open();
+    const foreignReport = await other.app.inject({
       method: 'POST',
       url: '/api/feedback',
       payload: f.submission({ category: 'feature', reportId: snapshot.id }),
     });
-    assert.equal(diagnosticsOnFeature.statusCode, 400);
+    assert.equal(foreignReport.statusCode, 410);
+    for (const [name, mimeType, content] of [
+      ['example.pdf', 'application/pdf', '%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF'],
+      ['example.txt', 'text/plain', 'Synthetic café report\nwith another line.'],
+      ['example.log', 'text/plain', 'Synthetic event\tcompleted\r\n'],
+      ['example.md', 'text/plain', '# Synthetic report\n\nDetails.'],
+      ['example.json', 'application/json', '\ufeff{"synthetic":true}'],
+      ['example.csv', 'text/csv', 'name,status\r\nsynthetic,complete\r\n'],
+    ] as const) {
+      const file = { name, mimeType, data: Buffer.from(content).toString('base64') };
+      const result = await app.inject({
+        method: 'POST',
+        url: '/api/feedback',
+        payload: f.submission({ attachments: [file] }),
+      });
+      assert.equal(result.statusCode, 200, name);
+      const delivered = f.state.envelopes.at(-1)!.attachments[0];
+      assert.equal(delivered.mimeType, mimeType);
+      assert.equal(delivered.data, file.data);
+      assert.equal(delivered.sha256, createHash('sha256').update(content).digest('hex'));
+    }
     for (const file of [
       {
         name: 'wrong.png',
@@ -3984,6 +4155,27 @@ test(
         data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64'),
       },
       { name: 'bad.webp', mimeType: 'image/webp', data: 'not base64!' },
+      {
+        name: 'bad.pdf',
+        mimeType: 'application/pdf',
+        data: Buffer.from('not PDF').toString('base64'),
+      },
+      {
+        name: 'bad.txt',
+        mimeType: 'text/plain',
+        data: Buffer.from([0xc3, 0x28]).toString('base64'),
+      },
+      {
+        name: 'bad.log',
+        mimeType: 'text/plain',
+        data: Buffer.from('contains\0binary').toString('base64'),
+      },
+      {
+        name: 'bad.json',
+        mimeType: 'application/json',
+        data: Buffer.from('not JSON').toString('base64'),
+      },
+      { name: 'bad.csv', mimeType: 'text/csv', data: Buffer.from([0xff]).toString('base64') },
     ]) {
       const response = await app.inject({
         method: 'POST',
@@ -3992,10 +4184,33 @@ test(
       });
       assert.equal(response.statusCode, 400);
     }
-    assert.equal(f.state.envelopes.length, 3);
+    const textFile = (bytes: number) => ({
+      name: 'synthetic.txt',
+      mimeType: 'text/plain' as const,
+      data: Buffer.from('x'.repeat(bytes)).toString('base64'),
+    });
+    for (const attachments of [
+      [textFile(feedbackLimits.attachmentBytes + 1)],
+      Array.from({ length: 4 }, () => textFile(1)),
+      Array.from({ length: 3 }, () => textFile(1_500_000)),
+    ]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/feedback',
+        payload: f.submission({ attachments }),
+      });
+      assert.ok(response.statusCode >= 400);
+    }
+    const oversized = await app.inject({
+      method: 'POST',
+      url: '/api/feedback',
+      payload: f.submission({ feedback: 'x'.repeat(feedbackLimits.requestBytes) }),
+    });
+    assert.equal(oversized.statusCode, 413);
+    assert.equal(f.state.envelopes.length, 9);
     assert.equal(
       (await f.pool.query('SELECT count(*)::int AS count FROM feedback_submissions')).rows[0].count,
-      3,
+      9,
     );
   },
 );
