@@ -3375,6 +3375,7 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   t.mock.method(transport, 'create', async (config: Record<string, unknown>) => {
     const id = `recovery-session-${++nextSession}`;
     configurations.set(id, config);
+    await control.pause('create', id);
     return snapshot(id);
   });
   t.mock.method(transport, 'retrieve', async (id: string) => snapshot(id));
@@ -3399,9 +3400,15 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     removed.push(id);
     return { session_id: id, deleted: true };
   });
-  t.mock.method(transport, 'execute', async (_id: string, input: Record<string, unknown>) => {
+  t.mock.method(transport, 'execute', async (id: string, input: Record<string, unknown>) => {
     const action = String(input.tool_slug);
     const account = String(input.account);
+    const bindings = configurations.get(id)?.connected_accounts as Record<
+      string,
+      string | string[]
+    >;
+    const gmail = bindings?.gmail;
+    assert.ok(typeof gmail === 'string' ? gmail === account : gmail?.includes(account));
     executed.push({ action, account });
     const response = {
       data: action === 'GMAIL_GET_PROFILE' ? { emailAddress: emails.get(account) } : { labels: [] },
@@ -3893,6 +3900,55 @@ test(
     assert.deepEqual(f.unsubscribed, ['updated-trigger']);
     assert.deepEqual(f.subscribed, []);
     assert.equal(f.removed.filter((id) => id === 'old-account').length, 1);
+  },
+);
+
+test(
+  'managed reconnect discards in-flight session creation without overwriting its replacement session',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await managedReconnectFixture(t);
+    await f.pool.query('DELETE FROM integration_sessions');
+    await f.pool.query('UPDATE app_connections SET account_active=true WHERE id=$1', [
+      f.connectionId,
+    ]);
+    const entered = deferred();
+    const release = deferred();
+    let staleSession = '';
+    f.control.pause = async (phase, id) => {
+      const bindings = f.configurations.get(id)?.connected_accounts as Record<string, string[]>;
+      if (phase !== 'create' || !bindings?.gmail?.includes('old-account')) return;
+      staleSession = id;
+      entered.resolve();
+      await release.promise;
+    };
+    const execute = () =>
+      f.integrations.execute(f.ownerId, 'GMAIL_LIST_LABELS', {
+        connectionId: f.connectionId,
+        user_id: 'me',
+      });
+    const oldExecution = assert.rejects(execute());
+    await entered.promise;
+    assert.equal((await f.reconnect()).statusCode, 200);
+    const link = f.links[0];
+    f.accounts.get(link.accountId)!.status = 'ACTIVE';
+    assert.equal(await f.complete(link), 'connected');
+    await execute();
+    const replacementSession = (await f.pool.query('SELECT session_id FROM integration_sessions'))
+      .rows[0].session_id;
+    assert.notEqual(replacementSession, staleSession);
+    release.resolve();
+    await oldExecution;
+    assert.equal(
+      (await f.pool.query('SELECT session_id FROM integration_sessions')).rows[0].session_id,
+      replacementSession,
+    );
+    assert.equal(f.removed.includes(staleSession), true);
+    assert.equal(f.removed.includes(replacementSession), false);
+    const sessionCount = f.configurations.size;
+    await execute();
+    assert.equal(f.configurations.size, sessionCount);
+    assert.deepEqual(f.executed.at(-1), { action: 'GMAIL_LIST_LABELS', account: link.accountId });
   },
 );
 

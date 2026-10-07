@@ -300,6 +300,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       ADD COLUMN IF NOT EXISTS intent text NOT NULL DEFAULT 'classify' CHECK(intent IN ('classify','inspect_message'));
   `);
   const sessions = new Map<string, Promise<IntegrationSession>>();
+  let sessionState: Promise<unknown> = Promise.resolve();
   let draining = false;
   let closed = false;
   let refreshing: Promise<void> | undefined;
@@ -344,6 +345,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return accounts;
   }
 
+  function withSessionState<T>(operation: () => Promise<T>) {
+    const pending = sessionState.then(operation, operation);
+    sessionState = pending;
+    return pending;
+  }
+
   async function getSession(
     ownerId: string,
     selected: IntegrationProvider = provider,
@@ -353,27 +360,51 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       return selected.createSession(ownerId, await connectedAccounts(ownerId, selected));
     const cached = sessions.get(ownerId);
     if (cached) return cached;
-    const pending = (async () => {
+    const pending: Promise<IntegrationSession> = (async () => {
       const sdk = requiredProvider();
-      const saved = await pool.query<{ session_id: string; configuration_version: number }>(
-        'SELECT session_id,configuration_version FROM integration_sessions WHERE owner_id = $1 AND provider_id=$2',
-        [ownerId, providerId],
+      const saved = await withSessionState(() =>
+        pool.query<{ session_id: string; configuration_version: number }>(
+          'SELECT session_id,configuration_version FROM integration_sessions WHERE owner_id = $1 AND provider_id=$2',
+          [ownerId, providerId],
+        ),
       );
-      if (saved.rows[0]?.configuration_version === 3)
-        return sdk.restoreSession(saved.rows[0].session_id);
-      const session = await sdk.createSession(ownerId, await connectedAccounts(ownerId, sdk));
-      await pool.query(
-        'INSERT INTO integration_sessions (owner_id,session_id,provider_id,configuration_version) VALUES ($1,$2,$3,3) ON CONFLICT(owner_id) DO UPDATE SET session_id=EXCLUDED.session_id,provider_id=EXCLUDED.provider_id,configuration_version=3',
-        [ownerId, session.id, providerId],
-      );
-      if (saved.rows[0] && saved.rows[0].session_id !== session.id) {
-        try {
-          await sdk.deleteSession(saved.rows[0].session_id);
-        } catch {}
+      const current = () => sessions.get(ownerId) === pending;
+      let session: IntegrationSession | undefined;
+      try {
+        if (saved.rows[0]?.configuration_version === 3) {
+          session = await sdk.restoreSession(saved.rows[0].session_id);
+        } else {
+          session = await sdk.createSession(ownerId, await connectedAccounts(ownerId, sdk));
+          const created = session;
+          await withSessionState(async () => {
+            if (!current())
+              throw new IntegrationError('The connected accounts changed. Try again.', 409);
+            await pool.query(
+              'INSERT INTO integration_sessions (owner_id,session_id,provider_id,configuration_version) VALUES ($1,$2,$3,3) ON CONFLICT(owner_id) DO UPDATE SET session_id=EXCLUDED.session_id,provider_id=EXCLUDED.provider_id,configuration_version=3',
+              [ownerId, created.id, providerId],
+            );
+          });
+          if (saved.rows[0] && saved.rows[0].session_id !== session.id)
+            await sdk.deleteSession(saved.rows[0].session_id).catch(() => {});
+        }
+        if (!current())
+          throw new IntegrationError('The connected accounts changed. Try again.', 409);
+        return session;
+      } catch (error) {
+        if (session) {
+          const stale = session;
+          await withSessionState(() =>
+            pool.query(
+              'DELETE FROM integration_sessions WHERE owner_id=$1 AND provider_id=$2 AND session_id=$3',
+              [ownerId, providerId, stale.id],
+            ),
+          ).catch(() => {});
+          await sdk.deleteSession(stale.id).catch(() => {});
+        }
+        throw error;
       }
-      return session;
     })().catch((error) => {
-      sessions.delete(ownerId);
+      if (sessions.get(ownerId) === pending) sessions.delete(ownerId);
       throw error;
     });
     sessions.set(ownerId, pending);
@@ -382,9 +413,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
 
   async function resetSession(ownerId: string) {
     sessions.delete(ownerId);
-    const { rows } = await pool.query<{ session_id: string }>(
-      'DELETE FROM integration_sessions WHERE owner_id = $1 AND provider_id=$2 RETURNING session_id',
-      [ownerId, providerId],
+    const { rows } = await withSessionState(() =>
+      pool.query<{ session_id: string }>(
+        'DELETE FROM integration_sessions WHERE owner_id = $1 AND provider_id=$2 RETURNING session_id',
+        [ownerId, providerId],
+      ),
     );
     if (rows[0] && provider.configured) {
       try {
