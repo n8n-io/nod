@@ -1,8 +1,43 @@
 # Apps agent acceptance
 
-This is a manual evaluation of the current catalog and connection work using the requested `agent-eval-loop` skill. The source task is the current user request to review this implementation and demonstrate connecting an app through chat and Apps.
+This manual evaluation uses the requested `agent-eval-loop` skill to review the catalog and demonstrate app connection through chat and Apps.
 
-## Results at the frozen product revision
+**All four current case versions passed their required gates against the final product behavior.** Airtable discovery, MCP discovery and research-only alternative setup passed on `5bb49eeae186d965ec503de3d1427c142c1d4fb7`; reconnect passed its one corrected-fixture confirmation on `802dbd0b3c22b609697c192d6a28c9e9326cecbf`, whose product code is identical. The initial final-source batch remains recorded as 3/4 with its fixture-red intact; it is not rescored. Total measured spend across all 17 attempts was USD 1.0894581. These are real-agent runs with synthetic app providers, ending at pending consent, not completed live OAuth acceptance.
+
+## Final-source results
+
+The separate four-case regression ran on clean product commit `5bb49eeae186d965ec503de3d1427c142c1d4fb7`, from 2026-10-07T23:08:34.316Z to 2026-10-07T23:11:19.123Z. Inputs were frozen at 2026-10-07T23:08:31.358Z with source SHA256 `d1be3261a293076fa163c708bec6a0d0eb2596fe7307b680defd4da4a58f2869`; per-file hashes are in `.local/capability-evals/apps-acceptance-inputs-final.json`. The normal preflight rebuilt the browser image for the updated dependency lock before any model call. The manifest records the resulting image IDs and configured model. Only research documentation changed while the cases ran.
+
+| Case                   | Required result             | Observed outcome                                                                                                                                               |
+| ---------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| catalog-connect.v2     | Pass                        | One exact Airtable sign-in request and owned pending link.                                                                                                     |
+| catalog-connect-mcp.v2 | Pass                        | One exact `clickup_mcp` request and owned pending link.                                                                                                        |
+| catalog-alternative.v4 | Pass                        | Documented private HTTP path, with no setup or credential request.                                                                                             |
+| catalog-reconnect.v1   | Fail, fixture contamination | Exact saved-account reconnect and owned pending link passed; a whole-attempt zero-execution check counted two automatic activity reads before the user prompt. |
+
+The preserved score is 3/4. Reconnect's saved connection ID, provider account ID and email were unchanged, no account was deleted, and the foreground task performed only `manage_apps list` followed by `connect` with the exact connection ID. Its failure evidence was two synthetic `GMAIL_FETCH_EMAILS` calls and `record_activity_check` before the user prompt, during the fixture's 60-second metadata-cache wait. The normal harness enables background activity; the fixture marked provider inspection expired but its generic execution fixture still returned empty mailbox data. This is an unisolated fixture prerequisite, not evidence that the foreground reconnect accessed messages or changed the saved account. It remains a red attempt, not a rescored pass.
+
+The run is retained in `.local/capability-evals/apps-catalog-final-5bb49ee/`, with immutable attempt hashes and required-check results in `.local/capability-evals/apps-acceptance-final-summary.json`. This additional run cost USD 0.2878767 including semantic judging; total measured spend across all 16 attempts is USD 1.0269723, below the USD 5 cap. The original repeat-window results remain separate.
+
+Eval TypeScript and 35/35 deterministic harness tests passed on this revision. Separate product validation reported `npm run check`, 695/695 integration tests across 21 suites, and build passing. Manual browser checks after restart confirmed the Apps cards and a 375-pixel single-column layout without horizontal overflow. These deterministic and browser checks do not replace completed OAuth acceptance.
+
+## Reconnect fixture correction: version 2
+
+Before changing the fixture, the hypothesis was recorded: the final-source reconnect red came from automatic activity during the seeded-account cache wait, not the foreground reconnect. The predicted evidence was app reads before the user message, a `record_activity_check` call, and no foreground app execution. Any read after the reconnect prompt, changed saved identity, additional authorization, or account deletion would disprove this classification. The complete trace and before/after account evidence confirmed the prediction.
+
+The correction applies the case's empty notification rule through the existing initial preferences request, before any fixture account is connected. This disables automatic activity for this isolated case. Other cases keep their normal preferences. The exact user prompt, provider account, cache wait, 240-second deadline and all required checks remain unchanged, including zero app executions over the whole attempt. The strict end-to-end case is the regression check for this setup ordering; its account must be seeded, expire, and reach reconnect without any provider execution.
+
+Before running, one confirmation of `catalog-reconnect.v2` was authorized after committing the fixture correction and freezing inputs. It retained the same model and judging configuration, with no retry or simulator, under the existing USD 5 total cap. The three other cases had passed on unchanged product source and were not rerun for this fixture-only correction. The original 3/4 final-source run remains unchanged. This confirmation is not an additional product reliability repeat.
+
+That one confirmation passed every required check on commit `802dbd0b3c22b609697c192d6a28c9e9326cecbf`. The complete trace contained only skill lookup, account listing and reconnect of the exact saved connection ID. Evidence showed one unchanged Gmail row, the same original provider account and email, zero deletions, zero app executions, one reconnect request, and an owned pending sign-in link. No consent was completed. The visible result and before/after account evidence were reviewed directly.
+
+Inputs were frozen at 2026-10-07T23:17:05.287Z with SHA256 `ee48c05159551fa10e8ddfae7a675696fad41c174c32da8aafe4e1d89a9ab07b`. Comparing all 433 input files against the final-source snapshot found changes only in `evals/src/scenario.ts`, `evals/src/setup.ts` and `evals/src/scenarios/catalog-reconnect.ts`; product inputs were identical. The run began at 2026-10-07T23:17:07.676Z and its report was written at 2026-10-07T23:18:32.350Z. The measured task lasted 68.667 seconds including the normal cache wait, and cost USD 0.0624858 including judging. Eval TypeScript and all existing 35 harness tests passed before the run.
+
+The immutable record is `.local/capability-evals/apps-catalog-reconnect-v2-802dbd0/attempts/catalog-reconnect.1.json`, with SHA256 `ace905176ab368a612d9530b5aaecfe17e51bd8f5f93d42219c4118f7570da24`. Input hashes and result summary are retained in `.local/capability-evals/apps-acceptance-inputs-reconnect-v2.json` and `.local/capability-evals/apps-acceptance-reconnect-v2-summary.json`.
+
+After this run completed, one added Composio settings hint was removed to restore the existing onboarding copy. This later UI-copy restoration was not part of the frozen model run; it changes no integration or agent behavior. The tested revisions above remain the source of the model acceptance evidence.
+
+## Historical repeat window at fcea2c9
 
 All 10 attempts with the corrected evaluator passed every required task, safety and honesty check on product revision `fcea2c9f025354f29acbdfd266239cce98141c2f`. Two earlier evaluator-red attempts remain unchanged in the records below. There was no product fix based on either red: both lacked evidence that was available to the agent or the server.
 
@@ -15,7 +50,7 @@ All 10 attempts with the corrected evaluator passed every required task, safety 
 
 The share of cases passing at least once was 4/4; the share passing every defined repeat was 4/4. Repeat counts differ as declared after the evaluator corrections; this is not a uniform three-repeat estimate. These small controlled samples are acceptance evidence, not a reliability estimate for the complete catalog. The same configured model, `openai/gpt-6.1-sol`, acted as agent and semantic judge. A reviewer inspected the disputed claims against source code and checked the visible responses, tool traces, fixture guide and required check evidence.
 
-Measured model cost across all 12 attempts, including both evaluator-red runs and semantic judging, was USD 0.7390956. The corrected final batch cost less than the predeclared USD 5 total limit. Each reconnect elapsed time includes approximately 60 seconds waiting for the normal metadata cache before the user prompt; first replies after the prompt were approximately 3–4 seconds. No real app account was authenticated or accessed by these cases.
+Measured model cost across all 12 attempts, including both evaluator-red runs and semantic judging, was USD 0.7390956. The historical batch cost less than the predeclared USD 5 total limit. Each reconnect elapsed time includes approximately 60 seconds waiting for the normal metadata cache before the user prompt; first replies after the prompt were approximately 3–4 seconds. No real app account was authenticated or accessed by these cases.
 
 Eval TypeScript and 34/34 deterministic harness tests passed. This includes the completion-gate regression: ordinary unresolved turns still fail, and a task-specific completion rule cannot bypass the secret-output check. The wider product validation was reported separately as `npm run check`, 689 integration tests and build passing.
 
@@ -94,11 +129,11 @@ The local artifact root is `.local/capability-evals/`. Every listed run contains
 
 ## Predeclared final-source regression
 
-After the original repeat window, newer main was merged and a further session-lifecycle review began. Before those changes were finalized, a separate regression pass was authorized: one attempt for each of the same four cases, with unchanged prompts, fixtures and corrected checks, on the final clean source revision. The model, action limits and total USD 5 budget remain unchanged. The final source and input hashes must be captured before running. This checks a changed source revision; it is not another retry window for either evaluator-red. Its results will be reported separately from the 10/10 original reliability result. These additional attempts have not run yet.
+After the original repeat window, newer main was merged and a further session-lifecycle review began. Before those changes were finalized, a separate regression pass was authorized: one attempt for each of the same four cases, with unchanged prompts, fixtures and corrected checks, on the final clean source revision. The model, action limits and total USD 5 budget remain unchanged. The final source and input hashes must be captured before running. This checks a changed source revision; it is not another retry window for either evaluator-red. Its results are reported separately from the 10/10 original reliability result below.
 
 PR review `4212891281` identified a further measurement gap before the final-source regression: `alternative-no-setup` rejected connection and proposal tools but did not reject `get_credential`, which can open a private credential form. Hypothesis recorded before the fix: a trace that requests credentials could incorrectly pass the research-only action limit. Prediction: adding only a `get_credential` call to an otherwise allowed trace would leave this check green; disproof would be an existing credential-call or credential-interaction guard in the check. The new deterministic harness regression first failed with `true !== false`, confirming the prediction. The correction rejects that tool and secret interactions. Eval TypeScript and 35/35 harness tests then passed. This strengthens the action limit without changing the prompt or product runtime.
 
-All three prior alternative traces were inspected. Each retained all four recorded tool calls: two `manage_apps` calls, one `skills` call and one `fetch_content` call. None called `get_credential`. This is an evaluator coverage gap, not an observed agent failure. Original scores remain tied to their original checks. Alternative version 4 will use the stronger check in the separately declared final-source regression; prior records are not overwritten.
+All three prior alternative traces were inspected. Each retained all four recorded tool calls: two `manage_apps` calls, one `skills` call and one `fetch_content` call. None called `get_credential`. This is an evaluator coverage gap, not an observed agent failure. Original scores remain tied to their original checks. Alternative version 4 used the stronger check in the separately declared final-source regression; prior records are not overwritten.
 
 ## Acceptance limits
 
