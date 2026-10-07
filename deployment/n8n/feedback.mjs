@@ -171,7 +171,7 @@ export function checkFeedback(input, hash) {
   const marker = `Otto receipt: \`v1:${data.submissionId}:${data.payloadHash}:${fileKeys.join(',') || '-'}\``;
   const metadata = [
     `Category: ${data.category}`,
-    `Computer: ${data.computerName || 'Unavailable'}`,
+    ...(data.computerName?.trim() ? [`Computer: ${data.computerName.trim()}`] : []),
     `Source: ${data.source}`,
     `Development: ${data.development ? 'Yes' : 'No'}`,
     ...(data.appVersion ? [`App version: ${data.appVersion}`] : []),
