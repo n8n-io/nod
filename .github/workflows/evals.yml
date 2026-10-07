@@ -2,8 +2,6 @@ name: Evals
 run-name: "Evals · ${{ github.ref_name }}${{ inputs.baseline && format(' vs {0}', inputs.baseline) || '' }}"
 
 on:
-  pull_request:
-    paths: ['.github/workflows/evals.yml']
   workflow_dispatch:
     inputs:
       baseline:
@@ -66,7 +64,7 @@ jobs:
       - name: Check out the code under test
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
+          fetch-depth: ${{ inputs.baseline != '' && '0' || '1' }}
           persist-credentials: false
       - name: Set up Node.js 24.21.0
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -91,12 +89,12 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.EVALS_OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.EVALS_ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.EVALS_OPENROUTER_API_KEY }}
-          BASELINE: ${{ inputs.baseline || 'main' }}
-          TIER: ${{ inputs.tier || 'pr' }}
-          REPEAT: ${{ inputs.repeat || '1' }}
-          MODEL: ${{ inputs.model || 'openai/gpt-6.1-sol' }}
-          SCENARIO: ${{ inputs.scenario || 'memory-across-reset' }}
-          BUDGET: ${{ inputs.budget || '5' }}
+          BASELINE: ${{ inputs.baseline }}
+          TIER: ${{ inputs.tier }}
+          REPEAT: ${{ inputs.repeat }}
+          MODEL: ${{ inputs.model }}
+          SCENARIO: ${{ inputs.scenario }}
+          BUDGET: ${{ inputs.budget }}
         shell: bash
         run: |
           set -euo pipefail
