@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { IntegrationFile } from '../ports/integrations.ts';
 
 export const workspaceFileInput = z
   .object({
@@ -37,17 +38,31 @@ export function workspaceFileSchemas(value: unknown): unknown {
 
 export async function uploadWorkspaceFiles(
   value: unknown,
-  upload: (input: z.infer<typeof workspaceFileInput>) => Promise<Record<string, unknown>>,
+  read: (input: z.infer<typeof workspaceFileInput>) => Promise<IntegrationFile>,
+  upload: (file: IntegrationFile) => Promise<Record<string, unknown>>,
 ): Promise<unknown> {
-  if (!value || typeof value !== 'object') return value;
-  if ('workspaceFile' in value) return upload(workspaceFileInput.parse(value));
-  if (Array.isArray(value)) {
-    const result = [];
-    for (const item of value) result.push(await uploadWorkspaceFiles(item, upload));
-    return result;
+  const files = new Map<object, IntegrationFile>();
+  async function readFiles(value: unknown): Promise<void> {
+    if (!value || typeof value !== 'object') return;
+    if ('workspaceFile' in value) {
+      files.set(value, await read(workspaceFileInput.parse(value)));
+      return;
+    }
+    for (const item of Object.values(value)) await readFiles(item);
   }
-  const entries = [];
-  for (const [key, item] of Object.entries(value))
-    entries.push([key, await uploadWorkspaceFiles(item, upload)]);
-  return Object.fromEntries(entries);
+  async function uploadFiles(value: unknown): Promise<unknown> {
+    if (!value || typeof value !== 'object') return value;
+    const file = files.get(value);
+    if (file) return upload(file);
+    if (Array.isArray(value)) {
+      const result = [];
+      for (const item of value) result.push(await uploadFiles(item));
+      return result;
+    }
+    const entries = [];
+    for (const [key, item] of Object.entries(value)) entries.push([key, await uploadFiles(item)]);
+    return Object.fromEntries(entries);
+  }
+  await readFiles(value);
+  return uploadFiles(value);
 }

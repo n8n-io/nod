@@ -692,7 +692,8 @@ async function initializeApplication(
     provider: integrationProvider,
     readWorkspaceFile:
       workspace.readArtifact &&
-      ((turn, path, maxBytes) => workspace.readArtifact!(turn.threadId, path, maxBytes)),
+      ((turn, path, maxBytes) =>
+        workspace.readArtifact!(turn.threadId, path, maxBytes, 'attachment')),
     validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
     ...(adapters.directIntegrations

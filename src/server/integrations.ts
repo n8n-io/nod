@@ -1193,25 +1193,30 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       const session = await getSession(ownerId, providerForRow(row));
       if (!session.upload) throw new IntegrationError('This app provider cannot upload files.');
       let remaining = maxFileSize;
-      args = (await uploadWorkspaceFiles(args, async (input) => {
-        signal?.throwIfAborted();
-        const bytes = await read(turn, input.workspaceFile, remaining);
-        if (!bytes.byteLength || bytes.byteLength > remaining)
-          throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
-        remaining -= bytes.byteLength;
-        signal?.throwIfAborted();
-        const result = await session.upload!(
-          action,
-          {
+      args = (await uploadWorkspaceFiles(
+        args,
+        async (input) => {
+          signal?.throwIfAborted();
+          if (!remaining)
+            throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+          const bytes = await read(turn, input.workspaceFile, remaining);
+          if (!bytes.byteLength || bytes.byteLength > remaining)
+            throw new IntegrationError('The app files must total between 1 byte and 15 MB.');
+          remaining -= bytes.byteLength;
+          signal?.throwIfAborted();
+          return {
             name: input.name ?? basename(input.workspaceFile),
             mimeType: input.mimeType,
             bytes,
-          },
-          signal,
-        );
-        signal?.throwIfAborted();
-        return result;
-      })) as Record<string, unknown>;
+          };
+        },
+        async (file) => {
+          signal?.throwIfAborted();
+          const result = await session.upload!(action, file, signal);
+          signal?.throwIfAborted();
+          return result;
+        },
+      )) as Record<string, unknown>;
       const current = await selectConnection(ownerId, slug, row.id);
       if (current.account_id !== row.account_id)
         throw new IntegrationError('The selected account changed.');

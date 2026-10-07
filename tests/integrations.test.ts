@@ -2745,15 +2745,27 @@ test(
         { ...args, attachment: [{ workspaceFile: '../private.txt', mimeType: 'text/plain' }] },
         turn,
       ],
+      [
+        'local-development',
+        {
+          ...args,
+          attachment: [
+            args.attachment[0],
+            { workspaceFile: 'missing.pdf', mimeType: 'application/pdf' },
+          ],
+        },
+        turn,
+      ],
     ] as const)
       await assert.rejects(f.service.execute(owner, 'GMAIL_SEND_EMAIL', input, current));
+    assert.equal(stored.size, uploadCount);
     files.set('report.pdf', Buffer.alloc(15 * 1024 * 1024));
     await assert.rejects(
       f.service.execute('local-development', 'GMAIL_SEND_EMAIL', args, turn),
-      /too large/,
+      /too large|15 MB/,
     );
     assert.equal(delivered.length, 1);
-    assert.equal(stored.size, uploadCount + 1);
+    assert.equal(stored.size, uploadCount);
 
     let entered: () => void = () => {};
     let finish: () => void = () => {};
