@@ -13,7 +13,7 @@ Reports describe version 0.1.5 or a development checkout. Current main is deskto
 | [LAB-473](https://linear.app/n8n/issue/LAB-473) | Confirmed attachment failures; schedule cancellation is not shown | High: an authorized email could not be sent         | Fix the related handoff display; keep file staging as separate work       |
 | [LAB-474](https://linear.app/n8n/issue/LAB-474) | OAuth audience configuration, according to the issue comment      | High for the blocked users                          | Add the intended users in the OAuth console; no source fix is established |
 | [LAB-459](https://linear.app/n8n/issue/LAB-459) | Plausible past failure; current code has two relevant fixes       | High if sign-in still fails                         | Check with the current release before another code change                 |
-| [LAB-471](https://linear.app/n8n/issue/LAB-471) | Confirmed progress messages with unnecessary technical detail     | Low: clarity problem; no secret disclosure is shown | Improve the reply guidance                                                |
+| [LAB-471](https://linear.app/n8n/issue/LAB-471) | Confirmed progress messages with unnecessary technical detail     | Low: clarity problem; no secret disclosure is shown | Improve the reply guidance and add an eval                                |
 | [LAB-476](https://linear.app/n8n/issue/LAB-476) | Browser session was saved; Vault has a different purpose          | Low: unclear product behaviour                      | Explain the difference; do not invent or copy credentials                 |
 | [LAB-475](https://linear.app/n8n/issue/LAB-475) | Valid feature request, partly covered by current task tracking    | Medium: work is difficult to find                   | Separate schedule navigation from short-task history                      |
 | [LAB-470](https://linear.app/n8n/issue/LAB-470) | Valid gap in remote browser interaction                           | Low: the screen looks like a static image           | Keep for a browser protocol change                                        |
@@ -33,7 +33,7 @@ The tool access worked. The request was not newly answered after Otto's check. O
 
 The [Connected apps guide](../src/runtime/skills/connected-apps/SKILL.md) previously required context reads in general terms. It did not explicitly require a check of the owner's replies before a suggestion. The new instruction requires current thread context, replies, reactions and later messages. If a thread tool is unavailable, it permits a bounded owner-message search with a check of the returned thread identity. Failed or partial reads must not become claims that a request is unanswered.
 
-The existing [Slack catch-up eval](../evals/src/scenarios/slack-catchup.ts) now includes an explicit request already approved by the owner inside its thread. The expected outcome still contains only the two open requests. The data is synthetic. The eval harness checks pass; the live model eval was not run. This is a guidance change, not proof that every model will follow it.
+The existing [Slack catch-up eval](../evals/src/scenarios/slack-catchup.ts) now includes an explicit request already approved by the owner inside its thread. The expected outcome still contains only the two open requests. The data is synthetic. The live model passed all three attempts on main and on the final branch. This checks that the model excludes the answered request in this case. It does not prove that the instruction improved this model or that every model will follow it.
 
 ## LAB-458 and LAB-473: browser handoff and attachment failures
 
@@ -61,7 +61,7 @@ The report shows the email turn as waiting, not cancelled. The schedule message 
 
 ## Remaining product requests
 
-**LAB-471.** The report contains routine progress about a page requiring JavaScript and a missing saved login. These are unnecessary details for some users, but a sign-in requirement can be useful when it explains the next action. No key, password or protected internal data disclosure is established. The existing personality already refused raw tool errors. The added instruction in [personality.ts](../src/runtime/personality.ts) requires the effect on the task and the next action, with a technical cause only when requested or needed to change a setting. This is a guidance improvement; live model behaviour remains unverified.
+**LAB-471.** The report contains routine progress about a page requiring JavaScript and a missing saved login. These are unnecessary details for some users, but a sign-in requirement can be useful when it explains the next action. No key, password or protected internal data disclosure is established. The existing personality already refused raw tool errors. The added instruction in [personality.ts](../src/runtime/personality.ts) requires the effect on the task and the next action, with a technical cause only when requested or needed to change a setting. The new [invoice sign-in eval](../evals/src/scenarios/invoice-signin-blocker.ts) requires a read of a synthetic billing page, a clear sign-in blocker and a next action. It checks every user-visible message for internal account or page-rendering details. The live model failed this wording check once on main and twice with the first instruction. The final instruction names the saved-login and saved-access checks that must stay out of routine replies. It passed all three final attempts.
 
 **LAB-475.** Current [tasks.ts](../src/server/tasks.ts) creates progress cards for ongoing user work and closes automatic cards when the linked turn succeeds. [Tasks](../src/web/pages/tasks.tsx) has open and finished views. Thus the claim that single-thread work has no task history is too broad for current main. Short turns can finish before the watcher creates a card, event turns are excluded, and there is no historical reconstruction. A schedule tab is also absent. Split the request into schedule navigation and the intended coverage of short or past work. Neither is a demonstrated loss of stored tasks.
 
@@ -77,6 +77,25 @@ The report shows the email turn as waiting, not cancelled. The schedule message 
 - Full integration suite: `npm run test:integration` passed; 630 tests passed with no failures, cancellations or skips.
 - Final build: `npm run build` passed.
 - UI evidence: synthetic chat interaction through JSDOM. No native desktop or real website check was run.
-- Live checks: no live model eval, account connection, email send or OAuth configuration change was performed.
+- Manual model checks: the final runtime passed 6 of 6 attempts on synthetic apps and websites. No real connected account, recipient or reported website was used.
 
-No Linear status, priority, description or comment was changed. No push, deployment or publication was performed.
+## Manual model comparison
+
+The agent was `openai/gpt-6.1-sol`. The judge was `anthropic/claude-sonnet-5-5`. Each case had three attempts per version. Prompts, data and checks were fixed across the runs. No failed attempt was removed.
+
+| Case                     | Main (`ebf608b`) | First instruction (`85b283c`) | Final instruction (`d22af53`) |
+| ------------------------ | ---------------- | ----------------------------- | ----------------------------- |
+| `slack-catchup`          | 3/3              | 3/3                           | 3/3                           |
+| `invoice-signin-blocker` | 2/3              | 1/3                           | 3/3                           |
+
+The wording failures were model failures: the page was read, but a routine reply reported internal saved-access information. The final run had no failed required or optional checks. These small samples do not establish a general success rate. Slack passed on main too, so the comparison does not establish an improvement for that case. The new invoice case remains opt in during calibration and can be run by name.
+
+The case fingerprints were `97ae7da8eb3e` for Slack and `72fa97d7b990` for the invoice blocker. Results remain in the ignored `.local/capability-evals` directory under `backlog-2026-10-07-ebf608b9203ada7c9e4e7d28ecb5e5e18a085b1c`, `backlog-2026-10-07-85b283c` and `backlog-2026-10-07-final`.
+
+To repeat the final cases:
+
+```sh
+npm run eval:capability -- run --scenario slack-catchup,invoice-signin-blocker --repeat 3 --model openai/gpt-6.1-sol --judge anthropic/claude-sonnet-5-5
+```
+
+No Linear status, priority, description or comment was changed. No deployment was performed.
