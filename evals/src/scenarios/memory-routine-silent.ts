@@ -24,7 +24,7 @@ export default scenario({
         url.pathname === '/guide'
           ? page(
               'Quay Loop visitor guide',
-              '<h1>Quay Loop visitor guide</h1><p>The riverside loop is open every day from 06:30 to 21:00.</p><h2>A visitor example</h2><p>Jamie Quinn plays squash every Tuesday at 05:45. This is Jamie’s own routine, shared as an example; it says nothing about the reader’s routine.</p>',
+              '<main><article aria-labelledby="guide-title"><h1 id="guide-title">Quay Loop visitor guide</h1><p>This visitor guide collects practical access information for the riverside loop. It is a short reference for checking the opening window before a visit, with the public opening schedule first and a separate visitor contribution afterwards. The guide describes access to the loop rather than events, reservations or a programme of organised activities.</p><section aria-labelledby="opening-hours"><h2>Opening hours</h2><p id="opening-hours">The riverside loop is open every day from 06:30 to 21:00.</p></section><section aria-labelledby="visitor-example"><h2>A visitor example</h2><p id="visitor-example">Jamie Quinn plays squash every Tuesday at 05:45. This is Jamie’s own routine, shared as an example; it says nothing about the reader’s routine.</p></section></article></main>',
             )
           : page('Not found', '<h1>Not found</h1>', 404),
     },

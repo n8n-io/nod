@@ -480,6 +480,64 @@ test(
       assert.ok(!JSON.stringify(reviews.at(-1)).includes(summary));
       assert.ok(await savedEntry('Reviews synthetic projects on Mondays.'));
       assert.ok(await savedEntry('Prefers brief synthetic meeting notes.'));
+      const usualRoutine =
+        'On weekdays I read my synthetic planning notes at 09:00 and walk after lunch.';
+      const usualTurn = await ask(
+        usualRoutine,
+        [personal('memory_learn', { area: 'routines', slug: 'planning-day', quote: usualRoutine })],
+        'succeeded',
+        '',
+      );
+      await assertSilent(usualTurn, '');
+      const exception =
+        'On Wednesdays I walk before breakfast instead. I prefer concise responses with numbered lists.';
+      const combinedRoutine =
+        'Reads synthetic planning notes at 09:00 on weekdays and walks after lunch, except on Wednesdays when the walk is before breakfast.';
+      const stylePreference = 'Prefers concise responses with numbered lists.';
+      const profileBefore = (
+        await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])
+      ).rows[0].data;
+      reviewAnswers.push({ supported: false }, { supported: true });
+      const exceptionTurn = await ask(
+        exception,
+        [
+          {
+            ...personal('memory_save', {
+              area: 'routines',
+              slug: 'planning-day',
+              text: combinedRoutine,
+              replace: true,
+            }),
+            skipped: true,
+          },
+          personal(
+            'memory_learn',
+            { area: 'routines', slug: 'planning-day', quote: exception },
+            true,
+          ),
+          personal('memory_learn', { area: 'routines', quote: exception }),
+          save('preferences', stylePreference),
+        ],
+        'succeeded',
+        '',
+      );
+      assert.ok(await savedEntry(usualRoutine));
+      assert.equal(await savedEntry(combinedRoutine), undefined);
+      const exceptionSource = (
+        await pool.query("SELECT id FROM messages WHERE turn_id=$1 AND role='user'", [
+          exceptionTurn,
+        ])
+      ).rows[0].id;
+      for (const text of [exception, stylePreference])
+        assert.deepEqual((await savedEntry(text))?.sources, [exceptionSource]);
+      assert.ok(
+        !JSON.parse(await memoryFile()).archive.some((entry: Entry) => entry.text === usualRoutine),
+      );
+      assert.deepEqual(
+        (await pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId])).rows[0].data,
+        profileBefore,
+      );
+      await assertSilent(exceptionTurn, '');
       for (const failure of ['rejected', 'malformed', 'unavailable', 'unconfigured']) {
         memoryReview = failure === 'rejected' ? { supported: false } : { supported: 'true' };
         reviewFailure = failure === 'unavailable';

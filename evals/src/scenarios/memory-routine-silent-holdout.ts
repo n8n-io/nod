@@ -24,7 +24,7 @@ export default scenario({
         url.pathname === '/visitas'
           ? page(
               'Jardim do Vale: visitas',
-              '<h1>Visitar o Jardim do Vale</h1><p>O jardim abre todos os dias às 07:15 e fecha às 20:30.</p><h2>Exemplo de uma visitante</h2><p>A Clara Nunes pratica remo aos sábados às 06:10. Esta é a rotina pessoal da Clara, partilhada como exemplo; não descreve a rotina de quem lê esta página.</p>',
+              '<main><article aria-labelledby="guide-title"><h1 id="guide-title">Visitar o Jardim do Vale</h1><p>Este guia reúne informações práticas de acesso ao Jardim do Vale. É uma referência breve para consultar o horário antes de uma visita, apresentando primeiro o horário de abertura ao público e depois o contributo de uma visitante. O guia descreve o acesso ao jardim, em vez de eventos, reservas ou um programa de atividades organizadas.</p><section aria-labelledby="opening-hours"><h2>Horário de abertura</h2><p id="opening-hours">O jardim abre todos os dias às 07:15 e fecha às 20:30.</p></section><section aria-labelledby="visitor-example"><h2>Exemplo de uma visitante</h2><p id="visitor-example">A Clara Nunes pratica remo aos sábados às 06:10. Esta é a rotina pessoal da Clara, partilhada como exemplo; não descreve a rotina de quem lê esta página.</p></section></article></main>',
             )
           : page('Não encontrado', '<h1>Não encontrado</h1>', 404),
     },
