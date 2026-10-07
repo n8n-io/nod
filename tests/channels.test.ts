@@ -582,6 +582,93 @@ test(
   },
 );
 
+test(
+  'a memory command gets a digest from the outbox without a turn and only for the paired sender',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const schema = `test_channel_memory_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    await createFixtureTables(pool, 'fixture-owner');
+    const submitted: string[] = [];
+    const posted: string[] = [];
+    const app = Fastify();
+    const channels = await createChannels(pool, {
+      ownerId: 'fixture-owner',
+      transport: {
+        channels: [
+          {
+            id: 'telegram',
+            status: 'configured',
+            missing: [],
+            accountId: 'fixture-account',
+            allowedSenderIds: ['fixture-owner'],
+          },
+        ],
+        receive: async (request) => ({
+          status: 200,
+          body: 'accepted',
+          messages: [
+            {
+              channelId: 'telegram',
+              accountId: 'fixture-account',
+              senderId: 'fixture-owner',
+              threadId: 'fixture-thread',
+              sentAt: new Date(),
+              ...JSON.parse(Buffer.from(request.body).toString('utf8')),
+            },
+          ],
+        }),
+        post: async (input) => {
+          posted.push(input.text);
+          return { id: randomUUID() };
+        },
+        close: async () => {},
+      },
+      memoryDigest: async () => 'Synthetic memory digest',
+      submit: async (_text, sourceId) => {
+        submitted.push(sourceId);
+        throw new Error('A memory command must not start a turn.');
+      },
+      subscribe: () => () => {},
+      intervalMs: 600000,
+    });
+    channels.registerRoutes(app);
+    const send = (payload: object) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/webhooks/telegram',
+        headers: { 'content-type': 'application/json' },
+        payload,
+      });
+    try {
+      assert.equal((await send({ messageId: 'memory', text: '/memory' })).statusCode, 200);
+      assert.equal((await send({ messageId: 'memory', text: '/memory' })).statusCode, 200);
+      assert.equal(
+        (await send({ messageId: 'stranger', text: '/context', senderId: 'stranger' })).statusCode,
+        200,
+      );
+      await channels.drain();
+      assert.deepEqual(submitted, []);
+      assert.deepEqual(posted, ['Synthetic memory digest']);
+      assert.deepEqual(
+        (await pool.query('SELECT source_id,state FROM channel_inbox ORDER BY source_id')).rows,
+        [{ source_id: 'channel:telegram:fixture-account:memory', state: 'discarded' }],
+      );
+    } finally {
+      await app.close();
+      await channels.close?.();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
 test('channels stay disabled without explicit enablement and require a single owner and WhatsApp eligibility review', () => {
   assert.deepEqual(
     channelConfiguration({}).map((channel) => channel.status),

@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { createPreferencesStore } from './preferences.ts';
 import type { MemoryService } from './memory.ts';
 import type { MemoryUpdate, MemoryView } from '../shared/memory.ts';
+import { memoryFileName, memoryMarkdown } from '../shared/memory-export.ts';
 import { personalSecret } from './memory-tree.ts';
 import { activeThreadSql } from './thread.ts';
 import { createSchedules, type ScheduleDependencies } from './schedules.ts';
@@ -261,6 +262,15 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       return `${area}/${slug}`;
     };
     app.get('/api/memory', memoryView);
+    app.get('/api/memory/export', async (_request, reply) => {
+      const now = new Date();
+      return reply
+        .header('Content-Type', 'text/markdown; charset=utf-8')
+        .header('Cache-Control', 'private, no-store')
+        .header('X-Content-Type-Options', 'nosniff')
+        .header('Content-Disposition', `attachment; filename="${memoryFileName(now)}"`)
+        .send(memoryMarkdown(await memoryView(), now));
+    });
     app.patch('/api/memory', (request) => changed(memory?.settings(request.body)));
     app.post('/api/memory/notes', (request) => changed(memory?.add(request.body)));
     app.patch('/api/memory/notes/:area/:slug', (request) =>
@@ -282,6 +292,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     listSchedules: schedules.list,
     manage,
     validateReview,
+    memoryView,
     registerRoutes,
   };
 }

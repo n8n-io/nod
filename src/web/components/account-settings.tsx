@@ -1,6 +1,7 @@
 import { ModelSettings } from './models';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
+  Brain,
   Clock3,
   KeyRound,
   Globe,
@@ -39,6 +40,7 @@ import {
   useBrowserRegion,
 } from '../lib/date-format';
 import { savePreferences } from '../lib/preferences';
+import { exportMemory } from '../lib/memory-export';
 import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { ComposioSettings, DesktopOptions, useDesktopSettings } from './desktop-settings';
@@ -332,6 +334,42 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
   );
 }
 
+function MemoryRow({ onView }: { onView(): void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <>
+      <div className="account-preference-row account-clock-row">
+        <span data-analytics-public>
+          <Brain size={16} aria-hidden="true" />
+          Memory
+        </span>
+        <div className="account-clock-options">
+          <Button type="button" size="sm" variant="outline" onClick={onView}>
+            View
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              setError('');
+              exportMemory()
+                .catch((cause) => setError(errorMessage(cause)))
+                .finally(() => setBusy(false));
+            }}
+          >
+            Export
+          </Button>
+        </div>
+      </div>
+      {error && <Notice>{error}</Notice>}
+    </>
+  );
+}
+
 export function AccountSettings({
   account,
   open,
@@ -339,6 +377,7 @@ export function AccountSettings({
   openRequest,
   onOpenChange,
   onName,
+  onViewMemory,
   returnFocus,
 }: {
   account: AccountControls;
@@ -347,6 +386,7 @@ export function AccountSettings({
   openRequest: number;
   onOpenChange(open: boolean): void;
   onName(name: string): Promise<void>;
+  onViewMemory(): void;
   returnFocus(): HTMLElement | null;
 }) {
   const desktop = desktopSettingsAvailable();
@@ -622,7 +662,12 @@ export function AccountSettings({
                   )}
                 </>
               )}
-              {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}
+              {tab === 'Preferences' && (
+                <>
+                  <PreferencesForm onDirtyChange={setPreferencesDirty} />
+                  <MemoryRow onView={onViewMemory} />
+                </>
+              )}
               {tab === 'Models' && (
                 <>
                   <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />

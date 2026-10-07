@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowRight, ChevronLeft, Plus } from 'lucide-react';
+import { ArrowRight, ChevronLeft, Download, Plus } from 'lucide-react';
 import {
   memoryAreas,
   type MemoryArchived,
@@ -25,6 +25,7 @@ import {
 import { usePageData } from '../hooks/use-page-data';
 import { usePhone } from '../hooks/use-phone';
 import { api, errorMessage } from '../lib/api';
+import { exportMemory } from '../lib/memory-export';
 import { dayKey, formatCalendarDate, formatDayLabel, useDateFormat } from '../lib/date-format';
 import { cn } from '../lib/utils';
 
@@ -428,6 +429,7 @@ export function Memory() {
   const [chosen, setChosen] = useState<Selection | undefined>(undefined);
   const [adding, setAdding] = useState(false);
   const [settingError, setSettingError] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   async function send(path: string, method: string, body?: object) {
     const next = await api<MemoryUpdate>(path, {
@@ -609,10 +611,27 @@ export function Memory() {
       {!pageMode && (
         <header className="page-heading secondary-heading">
           <PageTitle path="/memory" />
-          <Button size="sm" onClick={() => setAdding(true)}>
-            <Plus size={16} aria-hidden="true" />
-            Add note
-          </Button>
+          <div className="secondary-heading-actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={exporting}
+              onClick={() => {
+                setExporting(true);
+                setSettingError('');
+                exportMemory()
+                  .catch((cause) => setSettingError(errorMessage(cause)))
+                  .finally(() => setExporting(false));
+              }}
+            >
+              <Download size={16} aria-hidden="true" />
+              Export
+            </Button>
+            <Button size="sm" onClick={() => setAdding(true)}>
+              <Plus size={16} aria-hidden="true" />
+              Add note
+            </Button>
+          </div>
         </header>
       )}
       {loadError && !view && <Notice>Could not load your memory.</Notice>}

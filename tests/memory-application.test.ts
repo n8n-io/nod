@@ -511,6 +511,11 @@ test(
         [JSON.parse(await memoryFile()).enabled, JSON.parse(await memoryFile()).sensitive],
         [false, true],
       );
+      const exported = await page('GET', '/api/memory/export');
+      assert.equal(exported.statusCode, 200);
+      assert.match(String(exported.headers['content-disposition']), /^attachment; filename=/);
+      assert.match(exported.body, /Rita Costa is my accountant\./);
+      assert.doesNotMatch(exported.body, /Another owner wrote this/);
       assert.equal((await page('DELETE', `/api/memory/notes/${rita.path}`)).statusCode, 200);
       assert.equal(
         (await view()).notes.some((note) => note.path === rita.path),

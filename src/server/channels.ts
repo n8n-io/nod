@@ -12,6 +12,8 @@ import type {
   MessagingTransport,
 } from '../ports/messaging.ts';
 
+const memoryCommand = /^\/(?:memory|context)(?:@[A-Za-z0-9_]+)?$/i;
+
 interface ChannelOptions {
   admission?: WorkAdmission;
   ownerId: string;
@@ -37,6 +39,7 @@ interface ChannelOptions {
   resolveAttachments?: (threadId: string, ids: string[]) => Promise<MessagingAttachment[]>;
   appOrigin?: string;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
+  memoryDigest?: (link: string | null) => Promise<string>;
 }
 interface ChannelIdentity {
   provider: string;
@@ -160,6 +163,60 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
   let drainRequested = false;
   let lastError: string | null = null;
 
+  async function replyWithoutTurn(
+    client: PoolClient,
+    inbox: ChannelIdentity & {
+      sourceId: string;
+      threadId: string;
+      sentAt: Date | string;
+      text: string;
+    },
+    reply: string,
+  ) {
+    if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
+    const receipt = await client.query(
+      `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,owner_id,channel)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'discarded',$9,$10) ON CONFLICT(source_id) DO NOTHING`,
+      [
+        inbox.sourceId,
+        inbox.provider,
+        inbox.account_id,
+        inbox.sender_id,
+        inbox.threadId,
+        inbox.text,
+        inbox.sentAt,
+        inboundMessageId(ownerId, inbox.sourceId),
+        ownerId,
+        conversationChannel(inbox),
+      ],
+    );
+    if (!receipt.rowCount) return;
+    const replyId = randomUUID();
+    await client.query(
+      "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,'assistant',$3,(SELECT id FROM threads WHERE owner_id=$2 AND archived_at IS NULL))",
+      [replyId, ownerId, reply],
+    );
+    await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
+      replyId,
+      inbox.sourceId,
+    ]);
+    if (closed || replacing || !permitted(inbox)) throw new Error('Channel configuration changed.');
+  }
+
+  async function inTransaction(operation: (client: PoolClient) => Promise<void>) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await operation(client);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   function permitted(row: ChannelIdentity) {
     return channels.some(
       (channel) =>
@@ -215,6 +272,14 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         if (closed || replacing || !permitted(identity))
           throw new Error('Channel configuration changed.');
       };
+      if (memoryCommand.test(text.trim()) && options.memoryDigest) {
+        const digest = await options.memoryDigest(appOrigin ? `${appOrigin}/memory` : null);
+        await inTransaction((client) =>
+          replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text }, digest),
+        );
+        void drain();
+        return;
+      }
       if (classifyVerificationReply(text).kind !== 'ordinary' && options.acceptVerification) {
         try {
           verification = await options.acceptVerification(text, {
@@ -231,67 +296,17 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           const conflict =
             cause instanceof Error && 'statusCode' in cause && cause.statusCode === 409;
           if (!conflict) throw cause;
-          const client = await pool.connect();
-          try {
-            await client.query('BEGIN');
-            if (closed || replacing || !permitted(identity))
-              throw new Error('Channel configuration changed.');
-            const receipt = await client.query(
-              `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,owner_id,channel)
-             VALUES($1,$2,$3,$4,$5,'Verification code not applied.',$6,$7,'discarded',$8,$9)
-             ON CONFLICT(source_id) DO NOTHING`,
-              [
-                sourceId,
-                channelId,
-                accountId,
-                senderId,
-                threadId,
-                sentAt,
-                acceptedMessageId,
-                ownerId,
-                conversationChannel(identity),
-              ],
-            );
-            if (receipt.rowCount) {
-              const replyId = randomUUID();
-              await client.query(
-                "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,'assistant',$3,(SELECT id FROM threads WHERE owner_id=$2 AND archived_at IS NULL))",
-                [
-                  replyId,
-                  ownerId,
-                  'The code could not be matched to a sign-in. Open the corresponding sign-in conversation in Otto web chat to continue.',
-                ],
-              );
-              await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
-                replyId,
-                sourceId,
-              ]);
-            }
-            if (closed || replacing || !permitted(identity))
-              throw new Error('Channel configuration changed.');
-            await client.query('COMMIT');
-          } catch (error) {
-            await client.query('ROLLBACK');
-            throw error;
-          } finally {
-            client.release();
-          }
+          await inTransaction((client) =>
+            replyWithoutTurn(
+              client,
+              { ...identity, sourceId, threadId, sentAt, text: 'Verification code not applied.' },
+              'The code could not be matched to a sign-in. Open the corresponding sign-in conversation in Otto web chat to continue.',
+            ),
+          );
           return;
         }
       }
-      if (!ordinaryPersisted) {
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          await persist(client);
-          await client.query('COMMIT');
-        } catch (error) {
-          await client.query('ROLLBACK');
-          throw error;
-        } finally {
-          client.release();
-        }
-      }
+      if (!ordinaryPersisted) await inTransaction(persist);
     } catch (cause) {
       logFailure('channel_accept_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {
@@ -327,34 +342,17 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
       account_id: request.accountId,
       sender_id: request.senderId,
     };
-    const sourceId = `channel:telegram:${request.accountId}:${request.messageId}`;
-    if (closed || replacing || !permitted(identity))
-      throw new Error('Channel configuration changed.');
-    const receipt = await client.query(
-      `INSERT INTO channel_inbox(source_id,provider,account_id,sender_id,thread_id,text,received_at,message_id,state,owner_id,channel)
-       VALUES($1,'telegram',$2,$3,$4,'/start',$5,$6,'discarded',$7,$8) ON CONFLICT(source_id) DO NOTHING`,
-      [
-        sourceId,
-        request.accountId,
-        request.senderId,
-        request.threadId,
-        request.sentAt,
-        inboundMessageId(ownerId, sourceId),
-        ownerId,
-        conversationChannel(identity),
-      ],
+    await replyWithoutTurn(
+      client,
+      {
+        ...identity,
+        sourceId: `channel:telegram:${request.accountId}:${request.messageId}`,
+        threadId: request.threadId,
+        sentAt: request.sentAt,
+        text: '/start',
+      },
+      'You’re connected! You can now chat with me on Telegram.',
     );
-    if (receipt.rowCount) {
-      const replyId = randomUUID();
-      await client.query(
-        "INSERT INTO messages(id,owner_id,role,text,thread_id) VALUES($1,$2,'assistant',$3,(SELECT id FROM threads WHERE owner_id=$2 AND archived_at IS NULL))",
-        [replyId, ownerId, 'You’re connected! You can now chat with me on Telegram.'],
-      );
-      await client.query('INSERT INTO channel_outbox(message_id,source_id) VALUES($1,$2)', [
-        replyId,
-        sourceId,
-      ]);
-    }
     return () => {
       void drain();
     };

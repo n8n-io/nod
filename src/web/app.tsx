@@ -444,6 +444,10 @@ function AuthenticatedApp({
         openRequest={settingsRequest}
         onOpenChange={setSettingsOpen}
         onName={(name) => onAccountUpdate({ name })}
+        onViewMemory={() => {
+          setSettingsOpen(false);
+          navigate('/memory');
+        }}
         returnFocus={() =>
           settingsTrigger.current?.isConnected
             ? settingsTrigger.current
