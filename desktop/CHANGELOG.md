@@ -1,5 +1,20 @@
 # Desktop changelog
 
+## 0.1.9 - 2026-10-07
+
+Source: `50d4639cdc3517c7de3f9a58384c9c1842ed84eb`
+Previous release: `desktop-v0.1.8`
+
+- Stream the handed-off browser live and stop passkey prompts from freezing sign-in (#156) (35515c7)
+- fix: Keep radii, spacing and type on the n8n brand scales (bb90786)
+- fix: Open the Memory tab with Cmd+Y while Settings is open (8b6e430)
+- fix: Address review findings on the UI polish (ebed61f)
+- feat: Polish Otto's UI with rounder controls and move Memory into Settings (646f283)
+- ci: Run capability evals on releases and on demand (#154) (e24684e)
+- Improve chat feedback and isolate background replies (#153) (86adca3)
+- ci: Run CI on Blacksmith runners (#151) (e4287a3)
+- Give the browser one holder so background work never blocks a handoff (#152) (3c3745f)
+
 ## 0.1.8 - 2026-10-07
 
 Otto now shows what it remembers about you, where it learned it, and lets you change it.
