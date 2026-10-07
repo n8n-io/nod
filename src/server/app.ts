@@ -553,6 +553,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
     }
     if (!(await handoffOpen(thread.id))) {
       controller.abort();
+      await frames.return?.();
       return reply.code(423).send({ error: handoffClosed });
     }
     const check = setInterval(
