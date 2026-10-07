@@ -9,7 +9,7 @@ import { slackMessage } from './writeup.ts';
 import { diagnoseAll } from './diagnose.ts';
 import { cleanup, doctor, printChecks } from './environment.ts';
 import { choice, has, number, text, whole, type Args } from './options.ts';
-import { compareTable, html, runsTable, terminal } from './report.ts';
+import { compareTable, html, markdown, runsTable, terminal } from './report.ts';
 import { rejudge } from './rejudge.ts';
 import { reviewRun } from './review.ts';
 import { fallbackLlm } from './judge.ts';
@@ -36,6 +36,7 @@ export const help = `Otto capability evals
 
   Look closer
     report <label> [--open]    show a saved run (and open its HTML report)
+    markdown <label> [<label>] a saved run, or a baseline and a candidate, as Markdown for a CI summary
     review <label>             judge attempts as a user would: would you trust Otto with this?
     diagnose <label>           explain why failed attempts failed (agent, scenario, mock or harness)
     rejudge <label> --label <new> [--judge <provider/model>]   re-grade saved attempts with another judge
@@ -294,6 +295,13 @@ export async function main(args: Args) {
       );
       if (has(args, 'open')) open(join(run.directory, 'report.html'));
       else console.log(`HTML report: ${join(run.directory, 'report.html')}`);
+      return;
+    }
+    case 'markdown': {
+      const labels = [first, ...others].filter(Boolean);
+      if (!labels.length || labels.length > 2)
+        throw new Error('Usage: markdown <label>  or  markdown <baseline> <candidate>');
+      console.log(markdown(await Promise.all(labels.map((label) => loadRun(root, label)))));
       return;
     }
     case 'review': {

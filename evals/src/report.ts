@@ -123,154 +123,201 @@ export function terminal(summary: RunSummary, attempts: AttemptResult[], reviews
   return lines.join('\n');
 }
 
-export function compareTable(runs: Array<{ summary: RunSummary; attempts?: AttemptResult[] }>) {
-  const names = runs.map((run) => run.summary.manifest.label);
-  const scenarios = [
-    ...new Set(runs.flatMap((run) => run.summary.scenarios.map((item) => item.scenario))),
-  ].sort();
+type Loaded = { summary: RunSummary; attempts?: AttemptResult[] };
+
+function metrics(runs: Loaded[]): Array<[string, string[]] | undefined> {
+  const each = (cell: (summary: RunSummary) => string) => runs.map((run) => cell(run.summary));
+  return [
+    ['agent', each((summary) => summary.manifest.model)],
+    [
+      'source',
+      each((summary) =>
+        summary.manifest.ref && !summary.manifest.commit.startsWith(summary.manifest.ref)
+          ? summary.manifest.ref
+          : summary.manifest.commit.slice(0, 7),
+      ),
+    ],
+    [
+      'pass rate',
+      each(
+        (summary) =>
+          `${pct(summary.regression.percent)} (${summary.regression.passed}/${summary.regression.total})`,
+      ),
+    ],
+    [
+      '95% interval',
+      each((summary) =>
+        summary.regression.interval
+          ? `${pct(summary.regression.interval.low)}–${pct(summary.regression.interval.high)}`
+          : 'n/a',
+      ),
+    ],
+    ['checks passed', each((summary) => pct(summary.regression.unitPass))],
+    ['pass@k', each((summary) => pct(summary.regression.passAtK))],
+    ['safety incidents', each((summary) => String(summary.trust.safetyIncidents))],
+    ['scope incidents', each((summary) => String(summary.trust.scopeIncidents))],
+    ...[...new Set(runs.flatMap((run) => run.summary.trust.lines.map((line) => line.id)))].map(
+      (id): [string, string[]] => [
+        trustLabels[id] ?? id,
+        each((summary) => pct(summary.trust.lines.find((line) => line.id === id)?.rate ?? null)),
+      ],
+    ),
+    ['pass^k', each((summary) => pct(summary.regression.passPowK))],
+    undefined,
+    ['task time p50', each((summary) => minutes(summary.efficiency.seconds.p50 ?? 0))],
+    ['task time p90', each((summary) => minutes(summary.efficiency.seconds.p90 ?? 0))],
+    [
+      'first reply p50',
+      each((summary) =>
+        summary.efficiency.firstReplySeconds.p50 === null
+          ? 'n/a'
+          : `${summary.efficiency.firstReplySeconds.p50.toFixed(1)} s`,
+      ),
+    ],
+    ['cost / attempt', each((summary) => money(summary.efficiency.costPerAttempt))],
+    ['cost / pass', each((summary) => money(summary.efficiency.costPerPass))],
+    [
+      'tokens / attempt',
+      each((summary) =>
+        summary.efficiency.tokensPerAttempt === null
+          ? 'n/a'
+          : Math.round(summary.efficiency.tokensPerAttempt).toLocaleString('en-US'),
+      ),
+    ],
+    [
+      'tool calls',
+      each((summary) =>
+        summary.efficiency.toolCallsPerAttempt === null
+          ? 'n/a'
+          : summary.efficiency.toolCallsPerAttempt.toFixed(1),
+      ),
+    ],
+    ['tool errors', each((summary) => pct(summary.efficiency.toolErrorRate))],
+  ];
+}
+
+const scenarioIds = (runs: Loaded[]) =>
+  [...new Set(runs.flatMap((run) => run.summary.scenarios.map((item) => item.scenario)))].sort();
+
+const changedScenario = (runs: Loaded[], id: string) =>
+  new Set(
+    runs.flatMap((run) =>
+      run.summary.scenarios.filter((item) => item.scenario === id).map((item) => item.fingerprint),
+    ),
+  ).size > 1;
+
+function difference(runs: Loaded[]) {
+  if (runs.length !== 2) return undefined;
+  const [a, b] = runs.map((run) => run.summary.regression);
+  if (!a.interval || !b.interval) return undefined;
+  const overlap = a.interval.low <= b.interval.high && b.interval.low <= a.interval.high;
+  const delta = Math.round(((b.percent ?? 0) - (a.percent ?? 0)) * 100);
+  return {
+    delta,
+    text: `Difference ${delta >= 0 ? '+' : ''}${delta} points. ${overlap ? 'The 95% intervals overlap, so this is within noise at this sample size.' : 'The 95% intervals do not overlap.'}`,
+  };
+}
+
+export function compareTable(runs: Loaded[]) {
+  const scenarios = scenarioIds(runs);
   const width = Math.max(...scenarios.map((id) => id.length), 8);
   const column = 18;
   const row = (label: string, cells: string[]) =>
-    `  ${label.padEnd(width + 4)}${cells.map((cell) => cell.padEnd(column)).join('')}`;
+    `  ${label.padEnd(width + 4)}${cells.map((cell) => cell.slice(0, column - 2).padEnd(column)).join('')}`;
   const lines = [
     '',
     row(
       '',
-      names.map((name) => name.slice(0, column - 2)),
+      runs.map((run) => run.summary.manifest.label),
     ),
+    ...metrics(runs).map((metric) => (metric ? row(...metric) : '')),
+    '',
   ];
-  lines.push(
-    row(
-      'agent',
-      runs.map((run) => run.summary.manifest.model.slice(0, column - 2)),
-    ),
-  );
-  lines.push(
-    row(
-      'source',
-      runs.map((run) =>
-        (run.summary.manifest.ref ?? run.summary.manifest.commit.slice(0, 7)).slice(0, column - 2),
-      ),
-    ),
-    row(
-      'pass rate',
-      runs.map(
-        (run) =>
-          `${pct(run.summary.regression.percent)} (${run.summary.regression.passed}/${run.summary.regression.total})`,
-      ),
-    ),
-    row(
-      '95% interval',
-      runs.map((run) =>
-        run.summary.regression.interval
-          ? `${pct(run.summary.regression.interval.low)}–${pct(run.summary.regression.interval.high)}`
-          : 'n/a',
-      ),
-    ),
-    row(
-      'checks passed',
-      runs.map((run) => pct(run.summary.regression.unitPass)),
-    ),
-    row(
-      'pass@k',
-      runs.map((run) => pct(run.summary.regression.passAtK)),
-    ),
-    row(
-      'safety incidents',
-      runs.map((run) => String(run.summary.trust.safetyIncidents)),
-    ),
-    row(
-      'scope incidents',
-      runs.map((run) => String(run.summary.trust.scopeIncidents)),
-    ),
-    ...[...new Set(runs.flatMap((run) => run.summary.trust.lines.map((line) => line.id)))].map(
-      (id) =>
-        row(
-          trustLabels[id] ?? id,
-          runs.map((run) =>
-            pct(run.summary.trust.lines.find((line) => line.id === id)?.rate ?? null),
-          ),
-        ),
-    ),
-    row(
-      'pass^k',
-      runs.map((run) => pct(run.summary.regression.passPowK)),
-    ),
-    '',
-    row(
-      'task time p50',
-      runs.map((run) => minutes(run.summary.efficiency.seconds.p50 ?? 0)),
-    ),
-    row(
-      'task time p90',
-      runs.map((run) => minutes(run.summary.efficiency.seconds.p90 ?? 0)),
-    ),
-    row(
-      'first reply p50',
-      runs.map((run) =>
-        run.summary.efficiency.firstReplySeconds.p50 === null
-          ? 'n/a'
-          : `${run.summary.efficiency.firstReplySeconds.p50.toFixed(1)} s`,
-      ),
-    ),
-    row(
-      'cost / attempt',
-      runs.map((run) => money(run.summary.efficiency.costPerAttempt)),
-    ),
-    row(
-      'cost / pass',
-      runs.map((run) => money(run.summary.efficiency.costPerPass)),
-    ),
-    row(
-      'tokens / attempt',
-      runs.map((run) =>
-        run.summary.efficiency.tokensPerAttempt === null
-          ? 'n/a'
-          : Math.round(run.summary.efficiency.tokensPerAttempt).toLocaleString('en-US'),
-      ),
-    ),
-    row(
-      'tool calls',
-      runs.map((run) =>
-        run.summary.efficiency.toolCallsPerAttempt === null
-          ? 'n/a'
-          : run.summary.efficiency.toolCallsPerAttempt.toFixed(1),
-      ),
-    ),
-    row(
-      'tool errors',
-      runs.map((run) => pct(run.summary.efficiency.toolErrorRate)),
-    ),
-    '',
-  );
-  for (const id of scenarios) {
-    const cells = runs.map((run) => run.summary.scenarios.find((item) => item.scenario === id));
-    const prints = new Set(cells.filter(Boolean).map((cell) => cell!.fingerprint));
+  for (const id of scenarios)
     lines.push(
       row(
         id,
-        cells.map((cell) => (cell ? `${cell.passed}/${cell.attempts}` : '-')),
-      ) + (prints.size > 1 ? '  (scenario changed between runs)' : ''),
+        runs.map((run) => {
+          const cell = run.summary.scenarios.find((item) => item.scenario === id);
+          return cell ? `${cell.passed}/${cell.attempts}` : '-';
+        }),
+      ) + (changedScenario(runs, id) ? '  (scenario changed between runs)' : ''),
     );
-  }
-  if (runs.length === 2) {
-    const [a, b] = runs.map((run) => run.summary.regression);
-    if (a.interval && b.interval) {
-      const overlap = a.interval.low <= b.interval.high && b.interval.low <= a.interval.high;
-      const delta = Math.round(((b.percent ?? 0) - (a.percent ?? 0)) * 100);
-      lines.push(
-        '',
-        `  Difference ${delta >= 0 ? '+' : ''}${delta} points. ${overlap ? 'The 95% intervals overlap, so this is within noise at this sample size.' : 'The 95% intervals do not overlap.'}`,
-      );
-    }
-  }
+  const moved = difference(runs);
+  if (moved) lines.push('', `  ${moved.text}`);
   if (runs.length === 2 && runs[0].attempts && runs[1].attempts)
     lines.push(...changes(runs[0], runs[1]));
   lines.push('');
   return lines.join('\n');
 }
 
-type Loaded = { summary: RunSummary; attempts?: AttemptResult[] };
+export function markdown(runs: Loaded[]) {
+  const latest = runs.at(-1)!.summary;
+  const moved = difference(runs);
+  const table = (rows: string[][]) =>
+    [rows[0], rows[0].map(() => '---'), ...rows.slice(1)]
+      .map((cells) => `| ${cells.join(' | ')} |`)
+      .join('\n');
+  const marks = (run: Loaded, id: string) =>
+    (run.attempts ?? [])
+      .filter((attempt) => attempt.scenario === id)
+      .sort((a, b) => a.attempt - b.attempt)
+      .map((attempt) => (attempt.status === 'pass' ? '✓' : attempt.status === 'fail' ? '✗' : '~'))
+      .join('');
+  const spent = runs.reduce(
+    (total, run) => total + (run.summary.costUsd ?? 0) + (run.summary.efficiency.judgeCostUsd ?? 0),
+    0,
+  );
+  const lines = [
+    `### ${pct(latest.regression.percent)} of tasks pass${moved ? ` (${moved.delta >= 0 ? '+' : ''}${moved.delta} points vs ${runs[0].summary.manifest.label})` : ''}`,
+    '',
+    `Judge \`${latest.manifest.judge}\` · ${latest.manifest.repeat} attempts per scenario · $${spent.toFixed(2)} on models`,
+    '',
+  ];
+  if (moved) lines.push(moved.text, '');
+  if (runs.some((run) => run.summary.contaminated))
+    lines.push(
+      '> [!WARNING]',
+      '> Many attempts hit provider or infrastructure errors. Treat this run as contaminated.',
+      '',
+    );
+  lines.push(
+    table([
+      ['', ...runs.map((run) => run.summary.manifest.label)],
+      ...metrics(runs).flatMap((metric) => (metric ? [[metric[0], ...metric[1]]] : [])),
+    ]),
+    '',
+    table([
+      ['Scenario', ...runs.map((run) => run.summary.manifest.label)],
+      ...scenarioIds(runs).map((id) => [
+        `\`${id}\`${latest.scenarios.find((item) => item.scenario === id)?.stance === 'gap' ? ' (known gap)' : ''}${changedScenario(runs, id) ? ' (scenario changed)' : ''}`,
+        ...runs.map((run) => {
+          const cell = run.summary.scenarios.find((item) => item.scenario === id);
+          return cell
+            ? `${marks(run, id)} ${cell.passed}/${cell.attempts}${cell.incomplete ? ` (+${cell.incomplete} incomplete)` : ''}`
+            : '-';
+        }),
+      ]),
+    ]),
+  );
+  if (runs.length === 2 && runs[0].attempts && runs[1].attempts)
+    lines.push(...changes(runs[0], runs[1]).map((line) => line.trim()));
+  const wrong = latest.wentWrong;
+  if (wrong.groups.length) {
+    lines.push('', `#### What went wrong in ${latest.manifest.label}`, '');
+    for (const group of wrong.groups.slice(0, 8))
+      lines.push(
+        `- \`${group.scenario}\` ${group.blame === 'agent' ? 'agent' : `eval? (${group.blame})`}, ${group.category} ×${group.count}: ${group.rootCause}`,
+      );
+    if (wrong.suspectEval.length)
+      lines.push(
+        '',
+        `${wrong.suspectEval.length === 1 ? '1 failure looks' : `${wrong.suspectEval.length} failures look`} like a flaw in the evaluation, not the agent.`,
+      );
+  }
+  lines.push('');
+  return lines.join('\n');
+}
 
 export function changes(a: Loaded, b: Loaded) {
   const rate = (run: Loaded, scenario: string, id: string) => {

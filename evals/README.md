@@ -33,6 +33,16 @@ All commands are used as `npm run eval:capability -- <command> [options]`; `help
 
 Results are saved under `.local/capability-evals/<label>/` (`report.html` with every transcript and check, `summary.json`, one JSON per attempt). A label never overwrites an earlier run.
 
+## Run it in CI
+
+The **Evals** workflow runs the suite on a Blacksmith runner with a disposable PostgreSQL and images built from the code under test.
+
+- Every published desktop release starts it on the release tag: the `pr` tier, 3 attempts per scenario.
+- To check a branch for regressions, open Actions → Evals → Run workflow, pick the branch and set **baseline** to `main`. It runs the branch, then the same scenarios on the commit where the branch left main, and puts both side by side.
+- Leave **baseline** empty to score a branch on its own, or pick a tier, model, scenarios and budget.
+
+The scores are on the run's summary page (`markdown <label>` or `markdown <baseline> <candidate>` prints the same locally). Every transcript is in the `capability-evals` artifact; unpack it into `.local/capability-evals/` to use `report`, `compare`, `review` or `rejudge`. The workflow reads the keys from the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets, plus `EVALS_OPENROUTER_API_KEY` for OpenRouter models. It fails only when a run produces no completed attempt, never for a low score.
+
 ## The suite
 
 Thirty-three scenarios, each a real task written the way a user would ask, most of them from the Otto capabilities project in Linear. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.

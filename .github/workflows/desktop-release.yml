@@ -355,3 +355,19 @@ jobs:
           OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
           OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'schedule' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft
+
+  evals:
+    name: Start the capability evals for the published release
+    needs: [plan, release]
+    if: github.event_name == 'schedule' || inputs.publish
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Run the Evals workflow on the release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: desktop-v${{ needs.plan.outputs.version }}
+        run: gh workflow run evals.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"

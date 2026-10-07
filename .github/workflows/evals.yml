@@ -1,0 +1,132 @@
+name: Evals
+run-name: "Evals · ${{ github.ref_name }}${{ inputs.baseline && format(' vs {0}', inputs.baseline) || '' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Compare with this branch or tag, run from where this branch left it (for example main)
+        type: string
+        default: ''
+      tier:
+        description: Scenarios to run
+        type: choice
+        options: [pr, full]
+        default: pr
+      repeat:
+        description: Attempts per scenario
+        type: string
+        default: '3'
+      model:
+        description: Agent model, for example anthropic/claude-opus-5-5 (empty for the default)
+        type: string
+        default: ''
+      scenario:
+        description: Only these scenarios, comma-separated (empty for the whole tier)
+        type: string
+        default: ''
+      budget:
+        description: Stop each run after about this many dollars
+        type: string
+        default: '50'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    name: Capability evals
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 330
+    env:
+      TEST_DATABASE_URL: postgresql://otto:otto-evals@127.0.0.1:5432/otto_evals
+    steps:
+      - name: Start a disposable PostgreSQL with room for parallel attempts
+        run: >-
+          docker run --detach --name evals-postgres
+          --env POSTGRES_USER=otto --env POSTGRES_PASSWORD=otto-evals --env POSTGRES_DB=otto_evals
+          --publish 127.0.0.1:5432:5432 postgres:17-alpine -c max_connections=300
+      - name: Check out the code under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Wait for PostgreSQL
+        run: timeout 60 sh -c 'until docker exec evals-postgres pg_isready -h 127.0.0.1 -U otto -d otto_evals; do sleep 1; done'
+      - name: Run the evals
+        id: run
+        env:
+          OPENAI_API_KEY: ${{ secrets.EVALS_OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.EVALS_ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.EVALS_OPENROUTER_API_KEY }}
+          BASELINE: ${{ inputs.baseline }}
+          TIER: ${{ inputs.tier }}
+          REPEAT: ${{ inputs.repeat }}
+          MODEL: ${{ inputs.model }}
+          SCENARIO: ${{ inputs.scenario }}
+          BUDGET: ${{ inputs.budget }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$OPENAI_API_KEY" ] || [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::Add the EVALS_OPENAI_API_KEY and EVALS_ANTHROPIC_API_KEY repository secrets."
+            exit 1
+          fi
+          label() { printf '%s' "$1" | tr -c 'a-zA-Z0-9.' '-' | cut -c1-40; }
+          args=(--tier "$TIER" --repeat "$REPEAT" --concurrency 4 --budget "$BUDGET")
+          if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
+          if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi
+          candidate="$(label "$GITHUB_REF_NAME")-${GITHUB_SHA::7}"
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+          npm run eval:capability -- run "${args[@]}" --label "$candidate"
+          if [ -n "$BASELINE" ]; then
+            case "$BASELINE" in -*) echo "::error::The baseline must be a branch or tag."; exit 1 ;; esac
+            target="$(git rev-parse --verify --quiet "origin/$BASELINE^{commit}" || git rev-parse --verify "$BASELINE^{commit}")"
+            base="$(git merge-base HEAD "$target")"
+            baseline="$(label "$BASELINE")-${base::7}"
+            echo "baseline=$baseline" >> "$GITHUB_OUTPUT"
+            npm run eval:capability -- run "${args[@]}" --label "$baseline" --ref "$base"
+          fi
+      - name: Save the reports
+        id: upload
+        if: always() && steps.run.outputs.candidate != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: capability-evals
+          path: |
+            .local/capability-evals/
+            !.local/capability-evals/*/logs/
+          include-hidden-files: true
+          retention-days: 30
+          if-no-files-found: error
+      - name: Show the scores
+        if: always() && steps.run.outputs.candidate != ''
+        env:
+          CANDIDATE: ${{ steps.run.outputs.candidate }}
+          BASELINE_LABEL: ${{ steps.run.outputs.baseline }}
+          REPORT_URL: ${{ steps.upload.outputs.artifact-url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          labels=()
+          if [ -n "$BASELINE_LABEL" ] && [ -f ".local/capability-evals/$BASELINE_LABEL/summary.json" ]; then
+            labels+=("$BASELINE_LABEL")
+          fi
+          labels+=("$CANDIDATE")
+          {
+            node --import tsx evals/src/cli.ts markdown "${labels[@]}"
+            if [ -n "$REPORT_URL" ]; then
+              echo "Transcripts, checks and diagnoses: [capability-evals]($REPORT_URL) (open report.html in each run)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
