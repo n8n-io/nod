@@ -366,8 +366,20 @@ jobs:
       contents: read
       actions: write
     steps:
-      - name: Run the Evals workflow on the release tag
+      - name: Check out the release history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.plan.outputs.source }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run the Evals workflow on the release tag when the evaluated code changed
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: desktop-v${{ needs.plan.outputs.version }}
-        run: gh workflow run evals.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+        run: |
+          previous="$(git describe --tags --abbrev=0 --match 'desktop-v*' --exclude "$TAG" HEAD 2>/dev/null || true)"
+          if [ -n "$previous" ] && git diff --quiet "$previous" HEAD -- src ':(exclude)src/web' evals Dockerfile.workspace Dockerfile.browser package-lock.json; then
+            echo "Nothing the evals exercise changed since $previous."
+            exit 0
+          fi
+          gh workflow run evals.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"

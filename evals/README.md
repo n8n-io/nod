@@ -37,7 +37,7 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 The **Evals** workflow runs the suite on a Blacksmith runner with a disposable PostgreSQL and images built from the code under test.
 
-- Every published desktop release starts it on the release tag: the `pr` tier, 3 attempts per scenario.
+- Every published desktop release starts it on the release tag: the `pr` tier, 3 attempts per scenario. A release is skipped when nothing the evals exercise changed since the previous one (`src` outside the web client, `evals`, the two Dockerfiles, the lockfile).
 - To check a branch for regressions, open Actions → Evals → Run workflow, pick the branch and set **baseline** to `main`. It runs the branch, then the same scenarios on the commit where the branch left main, and puts both side by side.
 - Leave **baseline** empty to score a branch on its own, or pick a tier, model, scenarios and budget.
 
