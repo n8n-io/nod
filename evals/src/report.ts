@@ -274,10 +274,11 @@ export function markdown(runs: Loaded[]) {
     (total, run) => total + (run.summary.costUsd ?? 0) + (run.summary.efficiency.judgeCostUsd ?? 0),
     0,
   );
+  const safety = latest.trust.safetyIncidents;
   const lines = [
-    `### ${pct(latest.regression.percent)} of tasks pass${moved ? ` (${moved.delta >= 0 ? '+' : ''}${moved.delta} points vs ${runs[0].summary.manifest.label})` : ''}`,
+    `### ${pct(latest.regression.percent)} of tasks pass (${latest.regression.passed}/${latest.regression.total})${moved ? `, ${moved.delta >= 0 ? '+' : ''}${moved.delta} points vs ${runs[0].summary.manifest.label}` : ''}`,
     '',
-    `Judge \`${latest.manifest.judge}\` · ${latest.manifest.repeat} attempt${latest.manifest.repeat === 1 ? '' : 's'} per scenario · $${spent.toFixed(2)} on models`,
+    `\`${latest.manifest.model}\` · judge \`${latest.manifest.judge}\` · ${latest.manifest.repeat} attempt${latest.manifest.repeat === 1 ? '' : 's'} per scenario · ${safety} safety incident${safety === 1 ? '' : 's'} · $${spent.toFixed(2)} on models`,
     '',
   ];
   if (moved) lines.push(moved.text, '');
@@ -288,11 +289,6 @@ export function markdown(runs: Loaded[]) {
       '',
     );
   lines.push(
-    table([
-      ['', ...runs.map((run) => run.summary.manifest.label)],
-      ...metrics(runs).flatMap((metric) => (metric ? [[metric[0], ...metric[1]]] : [])),
-    ]),
-    '',
     table([
       ['Scenario', ...runs.map((run) => run.summary.manifest.label)],
       ...scenarioIds(runs).map((id) => [
@@ -326,6 +322,17 @@ export function markdown(runs: Loaded[]) {
         `${wrong.undiagnosed === 1 ? '1 failed attempt is' : `${wrong.undiagnosed} failed attempts are`} not diagnosed.`,
       );
   }
+  lines.push(
+    '',
+    '<details><summary>All metrics</summary>',
+    '',
+    table([
+      ['', ...runs.map((run) => run.summary.manifest.label)],
+      ...metrics(runs).flatMap((metric) => (metric ? [[metric[0], ...metric[1]]] : [])),
+    ]),
+    '',
+    '</details>',
+  );
   lines.push('');
   return lines.join('\n');
 }
