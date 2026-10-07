@@ -26,7 +26,11 @@ Hypothesis: the repetitive acknowledgements come from the preview's unconditiona
 
 The v2 preview and its fixture confirm this test setup fault. Production already accepts a successful empty final event, omits empty assistant rows, removes the stream and sends no channel reply. The change clarifies that ordinary context can stay silent and repairs the preview; it adds no hard-coded reply filter. The existing application regression now verifies silent base and Portuguese context turns, followed by a substantive answer using `memory_read` on the same thread. This regression covers the existing runtime contract and is not claimed as a failing live-model baseline.
 
-Candidate execution and browser results are recorded after the frozen run.
+On clean source `deef92ec2db0b9bb01e227d119d15b7e5eea7b75`, all five cases passed across eight turns in 4.134 seconds. Four context-only turns produced zero assistant messages. Both substantive requests received answers from real tool results; stop and resume returned accurate requested-state confirmations. Both expected notes persisted, with zero approval rows or unsolicited memory messages. Saving finished enabled. Evidence: `.local/lab535-ui/showcase-v3-green-summary.json`, `showcase-v3-green-seed-results.json` and `showcase-v3-green-events.jsonl`. The prior fixture acknowledgement failure is preserved in `showcase-v3-baseline.json`.
+
+Browser inspection verified consecutive context messages with no empty bubbles, followed by the useful two-bullet routine summary. The 390-pixel chat retained the same content and usable composer; the desktop viewport was restored afterward. Settings → Memory showed both exact notes, saving enabled and sensitive topics disabled. Screenshots: `.local/lab535-ui/showcase/quiet-desktop.jpg`, `quiet-narrow.jpg` and `quiet-memory.jpg`. The corrected preview remains available locally.
+
+The focused application regression passed with no skips. `npm run check`, `npm run build` and all 635 isolated Linux integration tests passed; the full suite had zero skips and took 99.182 seconds. Evidence: `.local/lab535-quiet-check.log`, `lab535-quiet-build.log` and `lab535-quiet-integration.log`. An independent code review found no actionable issues. These results establish application and rendering contracts; live model response selection remains unevaluated.
 
 ## Historical version 2 evidence
 
