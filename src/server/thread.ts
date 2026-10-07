@@ -819,9 +819,10 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
         [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background)],
       ),
       pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
-      pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [
-        ownerId,
-      ]),
+      pool.query(
+        'SELECT time_zone,locale,hour_cycle,notification_rule FROM preferences WHERE owner_id=$1',
+        [ownerId],
+      ),
       dependencies.accountProfile?.().catch(() => undefined),
       dependencies.memoryContext?.().catch(() => ''),
       turn.background ? dependencies.connectedApps?.() : undefined,
@@ -851,6 +852,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       timeZone,
       locale: preference?.locale || formattingLocale(timeZone ? timeZoneRegion(timeZone) : null),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,
+      notificationRule: preference?.notification_rule ?? defaultPreferences.notificationRule,
       ...(account ? { account } : {}),
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),

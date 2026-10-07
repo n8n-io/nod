@@ -23,7 +23,7 @@ import type { ConnectedApp } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { createPreferencesStore } from '../src/server/preferences.ts';
+import { createPreferencesStore, defaultPreferences } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
 import type { SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
@@ -207,13 +207,18 @@ test(
       computer: fakeComputer(),
       workspace: fakeWorkspace(),
     });
+    const quietInstructions = new Map<string, Record<string, unknown>>();
     const quietRuntime = createAgentRuntime({
       agent: {
         open: async (input) => ({
           resumed: false,
           abort() {},
           dispose() {},
-          async prompt() {
+          async prompt(text) {
+            quietInstructions.set(
+              input.turnId,
+              JSON.parse(text.split('Request data (JSON):\n')[1]!),
+            );
             await input.tools
               .find((tool) => tool.name === 'apps')!
               .execute({
@@ -861,6 +866,79 @@ test(
           await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [otherOwner]);
         }
       });
+
+      await t.test(
+        'queued background turns receive the current owned notification rule at execution',
+        async () => {
+          const preferences = createPreferencesStore(db.pool, ownerId);
+          const otherOwner = `notification-owner-${randomUUID()}`;
+          const otherPreferences = createPreferencesStore(db.pool, otherOwner);
+          const original = await preferences.get();
+          const oldRule = 'Report each synthetic receipt as it arrives.';
+          const foreignRule = 'Another owner only wants synthetic travel alerts.';
+          const eventPrompt = `Inspect this synthetic receipt quietly. Previously saved rule: ${oldRule}`;
+          const schedulePrompt = 'Send the requested synthetic daily briefing now.';
+          try {
+            quietBackgroundWork = true;
+            await otherPreferences.update({ notificationRule: foreignRule });
+            for (const rule of [
+              'Keep routine synthetic updates for my daily briefing, except urgent matters.',
+              '',
+              '   ',
+              undefined,
+            ]) {
+              await preferences.update({ notificationRule: oldRule });
+              const ids: string[] = [];
+              await db.transaction(async (client) => {
+                for (const [source, prompt] of [
+                  ['event', eventPrompt],
+                  ['schedule', schedulePrompt],
+                ] as const)
+                  ids.push(await thread.enqueueTurn(prompt, { source, client }));
+                if (rule === undefined)
+                  await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [ownerId]);
+                else await preferences.update({ notificationRule: rule });
+              });
+              for (const [index, id] of ids.entries()) {
+                await waitFor(settled(id));
+                assert.equal(await turnStatus(id), 'succeeded');
+                const expected = rule ?? defaultPreferences.notificationRule;
+                assert.equal(Reflect.get(ran(id)!, 'notificationRule'), expected);
+                assert.equal(quietInstructions.get(id)?.notificationRule, expected);
+                assert.equal(
+                  quietInstructions.get(id)?.currentInstruction,
+                  index === 0 ? eventPrompt : schedulePrompt,
+                );
+                assert.ok(!JSON.stringify(quietInstructions.get(id)).includes(foreignRule));
+              }
+              assert.equal(
+                (
+                  await db.pool.query('SELECT id FROM messages WHERE turn_id=ANY($1::uuid[])', [
+                    ids,
+                  ])
+                ).rowCount,
+                0,
+              );
+            }
+            await preferences.update({ notificationRule: '' });
+            const direct = await thread.submitUserMessage('A direct synthetic receipt question');
+            await waitFor(settled(direct.turnId));
+            assert.equal(await turnStatus(direct.turnId), 'succeeded');
+            assert.ok(
+              (
+                await db.pool.query(
+                  "SELECT id FROM messages WHERE turn_id=$1 AND role='assistant'",
+                  [direct.turnId],
+                )
+              ).rowCount,
+            );
+          } finally {
+            quietBackgroundWork = false;
+            await preferences.update(original);
+            await db.pool.query('DELETE FROM preferences WHERE owner_id=$1', [otherOwner]);
+          }
+        },
+      );
 
       await t.test(
         'messages sent during a running turn join it in order until one needs its own turn',
@@ -1747,6 +1825,7 @@ test(
       await t.test(
         'completing onboarding starts one read-only welcome without a user message',
         async () => {
+          const readsBefore = integrationReads.length;
           block('Earlier synthetic request');
           const earlier = await thread.submitUserMessage('Earlier synthetic request');
           await waitFor(() => Boolean(ran(earlier.turnId)));
@@ -1795,7 +1874,7 @@ test(
           assert.deepEqual(readOnlyRefusals, [
             'This turn can only read. Use app reads, and browser open, snapshot or scroll.',
           ]);
-          assert.equal(integrationReads.length, 1);
+          assert.equal(integrationReads.length - readsBefore, 1);
           assert.deepEqual(
             runs.filter((context) => context.readOnly).map((context) => context.turnId),
             [turn.id],
