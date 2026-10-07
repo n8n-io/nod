@@ -99,7 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           label() { printf '%s' "$1" | tr -c 'a-zA-Z0-9.' '-' | cut -c1-40; }
-          args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5--tier "$TIER" --repeat "$REPEAT" --concurrency 4 --budget "$BUDGET")
+          args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5 --tier "$TIER" --repeat "$REPEAT" --concurrency 4 --budget "$BUDGET")
           if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi
           candidate="$(label "$GITHUB_REF_NAME")-${GITHUB_SHA::7}"
           echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
