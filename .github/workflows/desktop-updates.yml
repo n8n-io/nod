@@ -18,7 +18,7 @@ concurrency:
 jobs:
   native-updates:
     name: Signed update and profile preservation
-    runs-on: macos-15
+    runs-on: blacksmith-6vcpu-macos-15
     timeout-minutes: 25
     steps:
       - name: Check out source
