@@ -377,7 +377,6 @@ export function open(tree: Tree, target: string) {
 export function view(
   tree: Tree,
   source: (id: string) => MemorySource,
-  lookups: Map<string, { count: number; last: string }>,
 ): Omit<MemoryView, 'profile'> {
   const index = indexLayout(tree);
   return {
@@ -395,7 +394,6 @@ export function view(
         edited: entry.edited ?? null,
         expires: entry.expires ?? null,
         sources: entry.sources.map(source),
-        lookups: lookups.get(pathOf(entry)) ?? null,
       })),
     archive: tree.archive.toReversed().map((entry) => ({
       path: pathOf(entry),

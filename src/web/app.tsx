@@ -16,7 +16,7 @@ import { ChatSkeleton, Splash } from './components/startup';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { FeedbackDialog } from './components/feedback';
-import { navigate, navigationItems } from './lib/navigation';
+import { navigationItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
 import type { AccountPreferences, AccountUpdate, SessionResponse } from '../shared/account';
@@ -37,6 +37,10 @@ import {
   subscribeDesktopSettings,
 } from './lib/desktop';
 
+function navigate(path: string) {
+  window.history.pushState(null, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
 function useSavedDateFormat() {
   const { data } = usePageData<AccountPreferences>('/api/preferences');
   useEffect(() => {

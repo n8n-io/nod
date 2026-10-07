@@ -9,12 +9,6 @@ export const navigationItems = [
   { path: '/vault', label: 'Vault', key: 'k', icon: KeyRound },
 ] as const;
 
-export function navigate(path: string) {
-  const { pathname, search, hash } = window.location;
-  if (path !== `${pathname}${search}${hash}`) window.history.pushState(null, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
-}
-
 export function isEditingTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&

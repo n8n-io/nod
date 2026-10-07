@@ -22,7 +22,6 @@ export interface MemoryNote {
   edited: string | null;
   expires: string | null;
   sources: MemorySource[];
-  lookups: { count: number; last: string } | null;
 }
 
 export interface MemoryArchived {

@@ -861,12 +861,7 @@ async function initializeApplication(
             personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
           );
         }
-        const result = await personal.manage(action, args, { ...provenance, turnId: turn.turnId });
-        if (action === 'memory_find' || action === 'memory_read')
-          await withTurnLock(turn.turnId, (client) => memory.lookedUp(result, client)).catch(
-            () => {},
-          );
-        return result;
+        return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
       requestCredential: async (turn, input) => {
         if (!('kind' in input)) {

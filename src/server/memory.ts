@@ -65,14 +65,6 @@ const settingsInput = z
   .object({ saving: z.boolean().optional(), sensitive: z.boolean().optional() })
   .strict()
   .refine((input) => Object.keys(input).length > 0);
-const lookupPaths = z.union([
-  z.array(z.object({ path: z.string() })).transform((hits) => hits.map((hit) => hit.path)),
-  z
-    .object({ entries: z.array(z.object({ path: z.string() })) })
-    .transform((area) => area.entries.map((entry) => entry.path)),
-  z.object({ path: z.string() }).transform((entry) => [entry.path]),
-]);
-
 function fail(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode });
 }
@@ -92,8 +84,7 @@ export function createMemoryService(options: {
           INSERT INTO memory_untrusted_threads(owner_id,thread_id) SELECT owner_id,id FROM threads ON CONFLICT DO NOTHING;
         END IF;
       END IF;
-    END $$;
-    CREATE TABLE IF NOT EXISTS memory_lookups (owner_id text NOT NULL, path text NOT NULL, count integer NOT NULL, last_at timestamptz NOT NULL, PRIMARY KEY (owner_id, path))`);
+    END $$`);
   }
 
   async function markUntrusted(threadId: string) {
@@ -132,12 +123,6 @@ export function createMemoryService(options: {
         return result;
       try {
         await options.store.write(key, bytes, { expectedVersion: current.version });
-        const gone = [...previous.keys()].filter((target) => !locate(current.tree, target));
-        if (gone.length)
-          await options.pool.query(
-            'DELETE FROM memory_lookups WHERE owner_id=$1 AND path=ANY($2::text[])',
-            [options.ownerId, gone],
-          );
         const source = current.tree.entries
           .find((entry) => previous.get(pathOf(entry)) !== JSON.stringify(entry))
           ?.sources.at(-1);
@@ -309,16 +294,6 @@ export function createMemoryService(options: {
     );
   }
 
-  async function lookedUp(result: unknown, db: Pick<Pool, 'query'>) {
-    const paths = lookupPaths.safeParse(result);
-    if (!paths.success || !paths.data.length) return;
-    await db.query(
-      `INSERT INTO memory_lookups(owner_id,path,count,last_at) SELECT $1,p,1,now() FROM unnest($2::text[]) p
-       ON CONFLICT(owner_id,path) DO UPDATE SET count=memory_lookups.count+1,last_at=now()`,
-      [options.ownerId, [...new Set(paths.data)]],
-    );
-  }
-
   function owned<T>(change: (tree: Tree, now: string) => T) {
     return edit((tree) => change(tree, new Date().toISOString()), { allowDisabled: true });
   }
@@ -443,19 +418,14 @@ export function createMemoryService(options: {
   async function view() {
     const { tree } = await load();
     const ids = [...new Set([...tree.entries, ...tree.archive].flatMap((entry) => entry.sources))];
-    const [messages, lookups] = await Promise.all([
-      options.pool.query(
-        `SELECT m.id,left(m.text,600) AS text,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel
-         FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
-         WHERE m.owner_id=$1 AND m.role='user' AND m.id=ANY($2::uuid[])`,
-        [options.ownerId, ids],
-      ),
-      options.pool.query('SELECT path,count,last_at FROM memory_lookups WHERE owner_id=$1', [
-        options.ownerId,
-      ]),
-    ]);
+    const { rows } = await options.pool.query(
+      `SELECT m.id,left(m.text,600) AS text,m.created_at,split_part(COALESCE(u.channel,'web'),':',1) AS channel
+       FROM messages m LEFT JOIN turns u ON u.id=m.turn_id AND u.owner_id=m.owner_id
+       WHERE m.owner_id=$1 AND m.role='user' AND m.id=ANY($2::uuid[])`,
+      [options.ownerId, ids],
+    );
     const found = new Map(
-      messages.rows.map((row) => [
+      rows.map((row) => [
         row.id as string,
         { id: row.id, text: row.text, at: row.created_at.toISOString(), channel: row.channel },
       ]),
@@ -463,12 +433,6 @@ export function createMemoryService(options: {
     return memoryView(
       tree,
       (source) => found.get(source) ?? { id: source, text: null, at: null, channel: null },
-      new Map(
-        lookups.rows.map((row) => [
-          row.path,
-          { count: row.count, last: row.last_at.toISOString() },
-        ]),
-      ),
     );
   }
 
@@ -491,7 +455,6 @@ export function createMemoryService(options: {
     restore,
     forgetArchived,
     settings,
-    lookedUp,
     view,
     load: async () => (await load()).tree,
     find: async (raw: unknown) => {

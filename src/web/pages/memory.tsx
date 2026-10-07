@@ -1,6 +1,5 @@
-import { useId, useState, type FormEvent, type ReactNode } from 'react';
-import { ChevronLeft, Plus } from 'lucide-react';
-import type { Connection, VaultListEntry } from '../../shared/contracts';
+import { useState, type FormEvent } from 'react';
+import { ArrowRight, ChevronLeft, Plus } from 'lucide-react';
 import {
   memoryAreas,
   type MemoryArchived,
@@ -12,7 +11,6 @@ import {
   type MemoryView,
 } from '../../shared/memory';
 import { PageTitle } from '../components/page-title';
-import { ServiceLogo } from '../components/service-logo';
 import {
   Button,
   Dialog,
@@ -28,9 +26,29 @@ import { usePageData } from '../hooks/use-page-data';
 import { usePhone } from '../hooks/use-phone';
 import { api, errorMessage } from '../lib/api';
 import { dayKey, formatCalendarDate, formatDayLabel, useDateFormat } from '../lib/date-format';
-import { navigate } from '../lib/navigation';
 import { cn } from '../lib/utils';
 
+type Stage = MemoryStatus | 'archive';
+type Selection = { note: string } | { archived: string } | null;
+
+const stages: Array<{ id: Stage; label: string; hint: string }> = [
+  {
+    id: 'tentative',
+    label: 'Mentioned once',
+    hint: 'Heard once. A guess until you confirm it or say it again.',
+  },
+  { id: 'observed', label: 'Learned', hint: 'Heard in two or more messages. Otto uses it.' },
+  { id: 'stated', label: 'Confirmed', hint: 'You said it, wrote it or confirmed it.' },
+  {
+    id: 'archive',
+    label: 'Let go',
+    hint: 'Replaced, expired or not mentioned for 60 days. You can bring it back.',
+  },
+];
+const stageLabel = Object.fromEntries(stages.map((stage) => [stage.id, stage.label])) as Record<
+  Stage,
+  string
+>;
 const areaLabels: Record<MemoryArea, string> = {
   about: 'About you',
   preferences: 'Preferences',
@@ -38,6 +56,12 @@ const areaLabels: Record<MemoryArea, string> = {
   routines: 'Routines',
   lessons: 'Lessons',
 };
+const profileLabels = {
+  name: 'Name',
+  location: 'Location',
+  phone: 'Phone',
+  preferences: 'Preferences',
+} as const;
 const reasons: Record<MemoryArchived['reason'], string> = {
   superseded: 'Replaced',
   merged: 'Merged',
@@ -53,142 +77,51 @@ const channels: Record<string, string> = {
   whatsapp: 'WhatsApp',
 };
 
-type Tab = 'all' | MemoryArea | 'archive';
-type Scope = 'mind' | 'lookup' | null;
-type Selection = { note: string } | { archived: string } | null;
-
 const archivedKey = (item: MemoryArchived) => `${item.path}@${item.archived}`;
 
-function statusLabel(note: MemoryNote) {
-  if (note.status === 'tentative') return 'Noticed once';
-  if (note.status === 'observed') return `Noticed ${note.sources.length} times`;
-  if (!note.edited) return 'You said this';
-  return note.sources.length ? 'Updated by you' : 'Written by you';
-}
-
-function MemoryMark({ status, inMind }: { status: MemoryStatus; inMind: boolean }) {
+function MemoryMark({ stage }: { stage: Stage }) {
   return (
-    <svg className={cn('memory-mark', status)} viewBox="0 0 16 16" aria-hidden="true">
-      <circle className="memory-mark-ring" cx="6.6" cy="9.4" r="4.9" />
-      {status === 'observed' && (
-        <path className="memory-mark-half" d="M6.6 4.5a4.9 4.9 0 0 0 0 9.8z" />
-      )}
-      {inMind && <circle className="memory-mark-dot" cx="12.4" cy="3.6" r="3" />}
+    <svg className={cn('memory-mark', stage)} viewBox="0 0 16 16" aria-hidden="true">
+      <circle className="memory-mark-ring" cx="8" cy="8" r="5.5" />
+      {stage === 'observed' && <path className="memory-mark-fill" d="M8 2.5a5.5 5.5 0 0 0 0 11z" />}
+      {stage === 'archive' && <path className="memory-mark-cross" d="M4.1 11.9l7.8-7.8" />}
     </svg>
   );
 }
 
-function RingIcon({ ring }: { ring: 'mind' | 'lookup' | 'reach' }) {
-  return (
-    <svg className={cn('memory-ring', ring)} viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="10.5" />
-      <circle cx="12" cy="12" r="7" />
-      <circle cx="12" cy="12" r="3.5" />
-    </svg>
-  );
-}
-
-function Reach({
-  view,
-  scope,
-  onScope,
+function Stages({
+  counts,
+  selected,
+  onSelect,
 }: {
-  view: MemoryView;
-  scope: Scope;
-  onScope(scope: Scope): void;
+  counts: Record<Stage, number>;
+  selected: Stage | null;
+  onSelect(stage: Stage | null): void;
 }) {
-  const apps = usePageData<Connection[]>('/api/apps').data ?? [];
-  const vault = usePageData<VaultListEntry[]>('/api/vault').data;
-  const connected = [
-    ...new Map(
-      apps
-        .filter((app) => app.connectionId && app.status === 'connected')
-        .map((app) => [app.slug, app]),
-    ).values(),
-  ];
-  const mind = view.notes.filter((note) => note.inMind).length;
-  const lookup = view.notes.length - mind;
-  const profile = (['name', 'location', 'phone', 'preferences'] as const).filter(
-    (field) => view.profile[field],
-  );
-  const scoped = (value: Exclude<Scope, null>, count: number, label: string) => (
-    <button
-      type="button"
-      className="memory-chip"
-      aria-pressed={scope === value}
-      onClick={() => onScope(scope === value ? null : value)}
-    >
-      {count} {count === 1 ? label : `${label}s`}
-    </button>
-  );
-  const link = (path: string, children: ReactNode, key?: string) => (
-    <a
-      key={key}
-      className="memory-chip"
-      href={path}
-      onClick={(event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
-        event.preventDefault();
-        navigate(path);
-      }}
-    >
-      {children}
-    </a>
-  );
   return (
-    <section className="memory-reach" aria-label="What Otto can draw on">
-      <div>
-        <h2>
-          <RingIcon ring="mind" />
-          Always in mind
-        </h2>
-        <div className="memory-chips">
-          {profile.map((field) => (
-            <span
-              key={field}
-              className="memory-item"
-              title={field === 'preferences' ? view.profile.preferences : undefined}
-            >
-              {view.profile[field]}
+    <div className="memory-stages" role="group" aria-label="Filter by status">
+      {stages.map((stage, index) => (
+        <div
+          key={stage.id}
+          className={cn('memory-stage-slot', stage.id === 'archive' && 'is-apart')}
+        >
+          <button
+            type="button"
+            className="memory-stage"
+            aria-pressed={selected === stage.id}
+            onClick={() => onSelect(selected === stage.id ? null : stage.id)}
+          >
+            <span className="memory-stage-head">
+              <MemoryMark stage={stage.id} />
+              {stage.label}
+              <span className="memory-stage-count">{counts[stage.id]}</span>
             </span>
-          ))}
-          {scoped('mind', mind, 'note')}
-          <span className="memory-item">This chat</span>
+            <span className="memory-stage-hint">{stage.hint}</span>
+          </button>
+          {index < 2 && <ArrowRight className="memory-stage-arrow" size={16} aria-hidden="true" />}
         </div>
-      </div>
-      <div>
-        <h2>
-          <RingIcon ring="lookup" />
-          Looked up when needed
-        </h2>
-        <div className="memory-chips">
-          {lookup > 0 && scoped('lookup', lookup, 'note')}
-          <span className="memory-item">Earlier chats</span>
-          <span className="memory-item">Files</span>
-          <span className="memory-item">Tasks</span>
-        </div>
-      </div>
-      <div>
-        <h2>
-          <RingIcon ring="reach" />
-          Reachable through your accounts
-        </h2>
-        <div className="memory-chips">
-          {connected.map((app) =>
-            link(
-              '/apps',
-              <>
-                <ServiceLogo connection={app} size={16} />
-                {app.name}
-              </>,
-              app.slug,
-            ),
-          )}
-          {!connected.length && link('/apps', 'Connect apps')}
-          {!!vault?.length && link('/vault', `Vault · ${vault.length}`)}
-        </div>
-      </div>
-    </section>
+      ))}
+    </div>
   );
 }
 
@@ -209,6 +142,15 @@ function Sources({ sources }: { sources: MemorySource[] }) {
         )}
       </figure>
     ));
+}
+
+function Back({ onBack }: { onBack?: () => void }) {
+  return onBack ? (
+    <Button variant="ghost" size="sm" className="memory-back" onClick={onBack}>
+      <ChevronLeft size={16} aria-hidden="true" />
+      Memory
+    </Button>
+  ) : null;
 }
 
 function NoteDetail({
@@ -249,17 +191,18 @@ function NoteDetail({
     if (unchanged) setMode('view');
     else void run(() => onChange(body));
   }
+  const cancel = (
+    <Button type="button" variant="ghost" size="sm" onClick={() => setMode('view')}>
+      Cancel
+    </Button>
+  );
   return (
     <article className="memory-detail">
-      {onBack && (
-        <Button variant="ghost" size="sm" className="memory-back" onClick={onBack}>
-          <ChevronLeft size={16} aria-hidden="true" />
-          Memory
-        </Button>
-      )}
+      <Back onBack={onBack} />
       <p className="memory-status">
-        <MemoryMark status={note.status} inMind={note.inMind} />
-        {statusLabel(note)} · {note.inMind ? 'always in mind' : 'looked up when relevant'}
+        <MemoryMark stage={note.status} />
+        {stageLabel[note.status]}
+        {!note.inMind && note.status !== 'tentative' && ' · used when relevant'}
       </p>
       {mode === 'edit' ? (
         <form className="memory-form" onSubmit={save}>
@@ -276,18 +219,13 @@ function NoteDetail({
             <Button type="submit" size="sm" disabled={busy || !text.trim()}>
               Save
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setMode('view')}>
-              Cancel
-            </Button>
+            {cancel}
           </div>
         </form>
       ) : (
         <h2 className="memory-text">{note.text}</h2>
       )}
-      {note.expires && mode !== 'expires' && (
-        <p className="memory-meta">Until {formatCalendarDate(note.expires, format)}</p>
-      )}
-      {mode === 'expires' && (
+      {mode === 'expires' ? (
         <form className="memory-form" onSubmit={save}>
           <input
             className="input"
@@ -302,11 +240,19 @@ function NoteDetail({
             <Button type="submit" size="sm" disabled={busy}>
               Save
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setMode('view')}>
-              Cancel
-            </Button>
+            {cancel}
           </div>
         </form>
+      ) : (
+        note.expires && (
+          <p className="memory-meta">Until {formatCalendarDate(note.expires, format)}</p>
+        )
+      )}
+      {note.edited && (
+        <p className="memory-meta">
+          {note.sources.length ? 'Updated by you' : 'Written by you'} ·{' '}
+          {formatDayLabel(note.edited, format)}
+        </p>
       )}
       <Sources sources={note.sources} />
       {history.map((item) => (
@@ -314,12 +260,6 @@ function NoteDetail({
           {reasons[item.reason]} “{item.text}” · {formatDayLabel(item.archived, format)}
         </p>
       ))}
-      {note.lookups && (
-        <p className="memory-meta">
-          Looked up {note.lookups.count === 1 ? 'once' : `${note.lookups.count} times`} ·{' '}
-          {formatDayLabel(note.lookups.last, format)}
-        </p>
-      )}
       {error && <Notice>{error}</Notice>}
       {mode === 'forget' ? (
         <div className="memory-confirm">
@@ -328,9 +268,7 @@ function NoteDetail({
             <Button variant="destructive" size="sm" disabled={busy} onClick={() => run(onForget)}>
               Forget
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setMode('view')}>
-              Cancel
-            </Button>
+            {cancel}
           </div>
         </div>
       ) : (
@@ -387,13 +325,9 @@ function ArchivedDetail({
   }
   return (
     <article className="memory-detail">
-      {onBack && (
-        <Button variant="ghost" size="sm" className="memory-back" onClick={onBack}>
-          <ChevronLeft size={16} aria-hidden="true" />
-          Memory
-        </Button>
-      )}
+      <Back onBack={onBack} />
       <p className="memory-status">
+        <MemoryMark stage="archive" />
         {reasons[item.reason]} · {formatDayLabel(item.archived, format)}
       </p>
       <h2 className="memory-text is-archived">{item.text}</h2>
@@ -412,16 +346,14 @@ function ArchivedDetail({
 }
 
 function AddNote({
-  area,
   onClose,
   onAdd,
 }: {
-  area: MemoryArea;
   onClose(): void;
   onAdd(body: { area: MemoryArea; text: string; expires?: string }): Promise<void>;
 }) {
   const format = useDateFormat();
-  const [target, setTarget] = useState(area);
+  const [area, setArea] = useState<MemoryArea>('about');
   const [text, setText] = useState('');
   const [expires, setExpires] = useState('');
   const [busy, setBusy] = useState(false);
@@ -431,7 +363,7 @@ function AddNote({
     setBusy(true);
     setError('');
     try {
-      await onAdd({ area: target, text: text.trim(), ...(expires ? { expires } : {}) });
+      await onAdd({ area, text: text.trim(), ...(expires ? { expires } : {}) });
       onClose();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -457,8 +389,8 @@ function AddNote({
             <Field label="Kind">
               <select
                 className="input"
-                value={target}
-                onChange={(event) => setTarget(event.target.value as MemoryArea)}
+                value={area}
+                onChange={(event) => setArea(event.target.value as MemoryArea)}
               >
                 {memoryAreas.map((value) => (
                   <option key={value} value={value}>
@@ -491,9 +423,7 @@ export function Memory() {
   const { data: view, error: loadError, loading, update } = usePageData<MemoryView>('/api/memory');
   const format = useDateFormat();
   const phone = usePhone();
-  const tabsId = useId();
-  const [tab, setTab] = useState<Tab>('all');
-  const [scope, setScope] = useState<Scope>(null);
+  const [stage, setStage] = useState<Stage | null>(null);
   const [query, setQuery] = useState('');
   const [chosen, setChosen] = useState<Selection | undefined>(undefined);
   const [adding, setAdding] = useState(false);
@@ -511,33 +441,45 @@ export function Memory() {
     setSettingError('');
     await send('/api/memory', 'PATCH', body).catch((cause) => setSettingError(errorMessage(cause)));
   }
+  function filter(next: Stage | null) {
+    setStage(next);
+    setChosen(undefined);
+  }
 
-  const counts: Record<Tab, number> = {
-    all: view?.notes.length ?? 0,
+  const counts = {
+    tentative: 0,
+    observed: 0,
+    stated: 0,
     archive: view?.archive.length ?? 0,
-    ...(Object.fromEntries(
-      memoryAreas.map((area) => [area, view?.notes.filter((n) => n.area === area).length ?? 0]),
-    ) as Record<MemoryArea, number>),
-  };
-  const tabs: Tab[] = ['all', ...memoryAreas.filter((area) => counts[area]), 'archive'];
-  const active = tabs.includes(tab) ? tab : 'all';
+  } satisfies Record<Stage, number>;
+  for (const note of view?.notes ?? []) counts[note.status]++;
   const search = query.trim().toLocaleLowerCase();
   const matches = (text: string) => !search || text.toLocaleLowerCase().includes(search);
   const notes = (view?.notes ?? []).filter(
-    (note) =>
-      (active === 'all' || active === note.area) &&
-      (!scope || note.inMind === (scope === 'mind')) &&
-      matches(note.text),
+    (note) => (!stage || stage === note.status) && matches(note.text),
   );
-  const archive = (view?.archive ?? []).filter((item) => matches(item.text));
-  const visible: Selection[] =
-    active === 'archive'
+  const archive =
+    stage === 'archive' ? (view?.archive ?? []).filter((item) => matches(item.text)) : [];
+  const profile =
+    view && (!stage || stage === 'stated')
+      ? (Object.keys(profileLabels) as Array<keyof typeof profileLabels>).filter(
+          (field) => view.profile[field] && matches(view.profile[field]),
+        )
+      : [];
+  const visible: NonNullable<Selection>[] =
+    stage === 'archive'
       ? archive.map((item) => ({ archived: archivedKey(item) }))
       : memoryAreas.flatMap((area) =>
           notes.filter((note) => note.area === area).map((note) => ({ note: note.path })),
         );
+  const listed = (value: NonNullable<Selection>) =>
+    visible.some((item) =>
+      'note' in value
+        ? 'note' in item && item.note === value.note
+        : 'archived' in item && item.archived === value.archived,
+    );
   const selection =
-    chosen === undefined || (chosen && !exists(chosen)) ? (phone ? null : visible[0]) : chosen;
+    chosen === undefined || (chosen && !listed(chosen)) ? (phone ? null : visible[0]) : chosen;
   const note =
     selection && 'note' in selection
       ? view?.notes.find((n) => n.path === selection.note)
@@ -546,18 +488,7 @@ export function Memory() {
     selection && 'archived' in selection
       ? view?.archive.find((item) => archivedKey(item) === selection.archived)
       : undefined;
-  const detailOpen = Boolean(note || archived);
-  const pageMode = phone && detailOpen;
-
-  function exists(value: NonNullable<Selection>) {
-    return 'note' in value
-      ? notes.some((n) => n.path === value.note)
-      : active === 'archive' && archive.some((item) => archivedKey(item) === value.archived);
-  }
-  function choose(value: Tab) {
-    setTab(value);
-    setChosen(undefined);
-  }
+  const pageMode = phone && Boolean(note || archived);
   const back = phone ? () => setChosen(null) : undefined;
 
   const row = (item: MemoryNote) => (
@@ -568,20 +499,20 @@ export function Memory() {
       aria-current={!phone && note?.path === item.path ? 'true' : undefined}
       onClick={() => setChosen({ note: item.path })}
     >
-      <MemoryMark status={item.status} inMind={item.inMind} />
-      <span className={cn('memory-row-text', item.status === 'tentative' && 'is-tentative')}>
+      <MemoryMark stage={item.status} />
+      <span className={cn('memory-row-text', item.status === 'tentative' && 'is-muted')}>
         {item.text}
       </span>
       <span className="memory-row-meta">
-        {item.expires
-          ? `Until ${formatCalendarDate(item.expires, format)}`
-          : formatDayLabel(item.updated, format)}
+        {stage
+          ? item.expires && `Until ${formatCalendarDate(item.expires, format)}`
+          : stageLabel[item.status]}
       </span>
     </button>
   );
 
   const list =
-    active === 'archive' ? (
+    stage === 'archive' ? (
       archive.length ? (
         archive.map((item) => (
           <button
@@ -591,31 +522,44 @@ export function Memory() {
             aria-current={!phone && archived === item ? 'true' : undefined}
             onClick={() => setChosen({ archived: archivedKey(item) })}
           >
-            <span className="memory-row-gone" aria-hidden="true" />
-            <span className="memory-row-text is-archived">{item.text}</span>
+            <MemoryMark stage="archive" />
+            <span className="memory-row-text is-muted">{item.text}</span>
             <span className="memory-row-meta">{reasons[item.reason]}</span>
           </button>
         ))
       ) : (
-        <p className="memory-empty">Nothing here. Notes Otto lets go of stay here for a while.</p>
+        <p className="memory-empty">Nothing here.</p>
       )
-    ) : notes.length ? (
-      memoryAreas.map((area) => {
-        const group = notes.filter((n) => n.area === area);
-        if (!group.length) return null;
-        return active === 'all' ? (
-          <div key={area} className="memory-group">
-            <h3>{areaLabels[area]}</h3>
-            {group.map(row)}
+    ) : notes.length || profile.length ? (
+      <>
+        {profile.length > 0 && view && (
+          <div className="memory-group">
+            <h3>Profile</h3>
+            {profile.map((field) => (
+              <div key={field} className="memory-row is-static">
+                <MemoryMark stage="stated" />
+                <span className="memory-row-text" title={view.profile[field]}>
+                  {profileLabels[field]}: {view.profile[field]}
+                </span>
+                <span className="memory-row-meta">{stage ? '' : stageLabel.stated}</span>
+              </div>
+            ))}
           </div>
-        ) : (
-          group.map(row)
-        );
-      })
+        )}
+        {memoryAreas.map((area) => {
+          const group = notes.filter((n) => n.area === area);
+          return group.length ? (
+            <div key={area} className="memory-group">
+              <h3>{areaLabels[area]}</h3>
+              {group.map(row)}
+            </div>
+          ) : null;
+        })}
+      </>
     ) : (
       <p className="memory-empty">
-        {search || scope
-          ? 'No notes match.'
+        {search || stage
+          ? 'Nothing here.'
           : 'Nothing yet. Tell Otto something to remember, or add a note.'}
       </p>
     );
@@ -646,7 +590,7 @@ export function Memory() {
           path: archived.path,
           archived: archived.archived,
         });
-        setTab('all');
+        setStage(null);
         setChosen(next.path ? { note: next.path } : undefined);
       }}
       onForget={async () => {
@@ -663,10 +607,7 @@ export function Memory() {
     <div className={cn('content-page secondary-page memory-page', pageMode && 'is-detail')}>
       {!pageMode && (
         <header className="page-heading secondary-heading">
-          <div>
-            <PageTitle path="/memory" />
-            <p>What Otto knows about you, and where it learned it.</p>
-          </div>
+          <PageTitle path="/memory" />
           <Button size="sm" onClick={() => setAdding(true)}>
             <Plus size={16} aria-hidden="true" />
             Add note
@@ -682,15 +623,7 @@ export function Memory() {
         </div>
       ) : (
         <div data-analytics-private>
-          <Reach
-            view={view}
-            scope={scope}
-            onScope={(value) => {
-              setScope(value);
-              setChosen(undefined);
-              if (value && active === 'archive') setTab('all');
-            }}
-          />
+          <Stages counts={counts} selected={stage} onSelect={filter} />
           <div className="memory-bar">
             <SearchField
               className="memory-search"
@@ -700,52 +633,14 @@ export function Memory() {
               aria-label="Search memory"
               onChange={(event) => setQuery(event.target.value)}
             />
-            <div
-              className="task-views memory-tabs"
-              role="tablist"
-              aria-label="Memory"
-              onKeyDown={(event) => {
-                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-                event.preventDefault();
-                const index = tabs.indexOf(active);
-                const next =
-                  tabs[
-                    event.key === 'Home'
-                      ? 0
-                      : event.key === 'End'
-                        ? tabs.length - 1
-                        : (index + (event.key === 'ArrowLeft' ? tabs.length - 1 : 1)) % tabs.length
-                  ];
-                choose(next);
-                document.getElementById(`${tabsId}-${next}`)?.focus();
-              }}
-            >
-              {tabs.map((value) => (
-                <button
-                  key={value}
-                  id={`${tabsId}-${value}`}
-                  role="tab"
-                  type="button"
-                  tabIndex={active === value ? 0 : -1}
-                  aria-selected={active === value}
-                  aria-controls={`${tabsId}-panel`}
-                  onClick={() => choose(value)}
-                >
-                  {value === 'all' ? 'All' : value === 'archive' ? 'Let go' : areaLabels[value]}
-                  <span>{counts[value]}</span>
-                </button>
-              ))}
-            </div>
+            {stage && (
+              <Button variant="ghost" size="sm" onClick={() => filter(null)}>
+                Show all
+              </Button>
+            )}
           </div>
           <div className={cn('memory-layout', detail && !phone && 'has-detail')}>
-            <div
-              className="memory-list"
-              id={`${tabsId}-panel`}
-              role="tabpanel"
-              aria-labelledby={`${tabsId}-${active}`}
-            >
-              {list}
-            </div>
+            <div className="memory-list">{list}</div>
             {!phone && detail && <div className="memory-detail-column">{detail}</div>}
           </div>
           <footer className="memory-settings">
@@ -770,12 +665,10 @@ export function Memory() {
       )}
       {adding && (
         <AddNote
-          area={active !== 'all' && active !== 'archive' ? active : 'about'}
           onClose={() => setAdding(false)}
           onAdd={async (body) => {
             const next = await send('/api/memory/notes', 'POST', body);
-            setTab('all');
-            setScope(null);
+            setStage(null);
             setQuery('');
             setChosen(next.path ? { note: next.path } : undefined);
           }}

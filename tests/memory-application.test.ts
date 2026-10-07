@@ -503,12 +503,6 @@ test(
         false,
       );
 
-      await ask(
-        'Who does my books?',
-        [personal('memory_find', { query: 'Rita accountant' })],
-        'succeeded',
-      );
-      assert.equal((await view()).notes.find((note) => note.path === rita.path)?.lookups?.count, 1);
       const settings = (
         await page('PATCH', '/api/memory', { saving: false, sensitive: true })
       ).json();
@@ -518,10 +512,6 @@ test(
         [false, true],
       );
       assert.equal((await page('DELETE', `/api/memory/notes/${rita.path}`)).statusCode, 200);
-      assert.equal(
-        (await pool.query('SELECT 1 FROM memory_lookups WHERE path=$1', [rita.path])).rowCount,
-        0,
-      );
       assert.equal(
         (await view()).notes.some((note) => note.path === rita.path),
         false,
