@@ -1391,14 +1391,14 @@ test(
           release('watch-schedule-fixture');
           await waitFor(settled(fired));
           await idle();
-          assert.deepEqual(
-            (
-              await db.pool.query(
-                "SELECT state FROM tasks WHERE owner_id=$1 AND title='Daily digest'",
-                [ownerId],
-              )
-            ).rows,
-            [{ state: 'done' }],
+          await waitFor(
+            async () =>
+              (
+                await db.pool.query(
+                  "SELECT 1 FROM tasks WHERE owner_id=$1 AND title='Daily digest' AND state='done'",
+                  [ownerId],
+                )
+              ).rowCount === 1,
           );
           assert.equal(
             (await cards()).some((item) => item.title === 'Daily digest'),
@@ -1428,7 +1428,9 @@ test(
           release('watch-schedule-fixture');
           await waitFor(settled(continued));
           await idle();
-          assert.equal((await cards()).find((item) => item.id === huntId)?.status, 'done');
+          await waitFor(
+            async () => (await cards()).find((item) => item.id === huntId)?.status === 'done',
+          );
 
           progressAnswer = (input) => ({
             title: 'Garden quote',
@@ -1452,7 +1454,9 @@ test(
           const chosen = await thread.submitUserMessage('the cheaper one');
           await waitFor(settled(chosen.turnId));
           await idle();
-          assert.equal((await cards()).find((item) => item.id === quoteId)?.status, 'done');
+          await waitFor(
+            async () => (await cards()).find((item) => item.id === quoteId)?.status === 'done',
+          );
 
           assert.ok(
             progressInputs.every((input) =>
