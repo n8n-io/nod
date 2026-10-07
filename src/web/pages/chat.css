@@ -720,19 +720,6 @@
     opacity: 1;
   }
 }
-.chat-page .streaming-message .message-body {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  min-height: 38px;
-}
-.chat-page .stream-cursor {
-  flex: none;
-  height: 15px;
-  width: 3px;
-  margin-bottom: 4px;
-  border-radius: 4px;
-}
 @media (min-width: 1500px) {
   .chat-page .message .message-text {
     font-size: 16px;

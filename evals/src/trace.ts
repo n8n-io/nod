@@ -7,6 +7,7 @@ import type { World } from './scenario.ts';
 import type { Visit } from './world/sites.ts';
 
 export interface ToolCall {
+  turnId?: string;
   name: string;
   input: any;
   output: string;
@@ -35,7 +36,10 @@ export interface Run {
     source: string;
     error: string | null;
     background: boolean;
+    startedAt?: number;
+    finishedAt?: number;
   }>;
+  prompts?: Array<{ turnId: string; instruction: string }>;
   interactions: Interaction[];
   userMessages: Array<{ at: number; text: string }>;
   writes: Write[];
@@ -71,6 +75,21 @@ export function clip(value: string, limit: number) {
   return value.length <= limit
     ? value
     : `${value.slice(0, Math.floor(limit * 0.7))}\n…[${value.length - limit} characters omitted]…\n${value.slice(-Math.floor(limit * 0.25))}`;
+}
+
+export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prompts'] = []) {
+  const captured = new Set(prompts.map((prompt) => prompt.turnId));
+  const missing = turns.filter(
+    (turn) =>
+      turn.background &&
+      turn.status === 'succeeded' &&
+      turn.startedAt !== undefined &&
+      !captured.has(turn.id),
+  );
+  if (missing.length)
+    throw new Error(
+      `Inspector prompt capture is missing for completed background turns: ${missing.map((turn) => turn.id).join(', ')}`,
+    );
 }
 
 async function sessionEvents(sessionRoot: string) {
@@ -180,9 +199,42 @@ export async function collect(options: {
   }));
   const turns = (
     await stack.pool.query(
-      'SELECT id,status,source,error,background FROM turns ORDER BY created_at, id',
+      'SELECT id,status,source,error,background,started_at,finished_at FROM turns ORDER BY created_at, id',
     )
+  ).rows.map(({ started_at, finished_at, ...turn }) => ({
+    ...turn,
+    startedAt: started_at ? new Date(started_at).getTime() : undefined,
+    finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
+  }));
+  const prompts = (
+    await stack.pool.query('SELECT turn_id,payload FROM inspector_prompts ORDER BY created_at,id')
+  ).rows.map((row) => ({ turnId: row.turn_id, instruction: row.payload.instruction }));
+  requireBackgroundPrompts(turns, prompts);
+  const background = (
+    await stack.pool.query(`SELECT r.* FROM inspector_records r JOIN turns t ON t.id=r.turn_id
+      WHERE t.background ORDER BY r.started_at,r.id`)
   ).rows;
+  for (const record of background) {
+    if (record.kind === 'tool')
+      tools.push({
+        turnId: record.turn_id,
+        name: record.name,
+        input: record.input,
+        output: JSON.stringify(record.output ?? record.error ?? ''),
+        isError: record.status !== 'succeeded',
+        at: new Date(record.started_at).getTime(),
+        lead: '',
+      });
+    if (record.kind === 'model') {
+      modelCalls++;
+      tokens += record.usage?.totalTokens ?? 0;
+      if (typeof record.usage?.costUsd === 'number') {
+        cost += record.usage.costUsd;
+        costKnown = true;
+      }
+    }
+  }
+  tools.sort((a, b) => a.at - b.at);
   const schedules = (
     await stack.pool.query(
       'SELECT title,prompt,cron,time_zone,enabled,kind,run_at FROM schedules ORDER BY created_at',
@@ -242,6 +294,7 @@ export async function collect(options: {
     said: replies.join('\n\n'),
     tools,
     turns,
+    prompts,
     interactions: session.interactions,
     userMessages: session.userMessages,
     writes: world.apps?.writes ?? [],

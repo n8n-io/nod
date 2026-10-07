@@ -1,21 +1,18 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
-  ArrowLeft,
-  ArrowRight,
-  Bug,
-  Check,
-  ChevronDown,
-  Copy,
-  FileJson,
-  Lightbulb,
-  MessageCircle,
-  Paperclip,
-  Send,
-  X,
-} from 'lucide-react';
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type FormEvent,
+} from 'react';
+import { Bug, Check, Copy, Lightbulb, MessageCircle, Paperclip, Send, X } from 'lucide-react';
 import {
+  feedbackAttachmentAccept,
+  feedbackAttachmentMimeType,
   feedbackLimits,
-  type FeedbackAttachment,
+  type FeedbackAttachment as SubmittedAttachment,
   type FeedbackContext,
   type FeedbackReceipt,
   type FeedbackReport,
@@ -23,12 +20,17 @@ import {
 } from '../../shared/feedback';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { desktopFeedbackContext } from '../lib/desktop';
+import { clipboardFiles } from '../lib/composer-editor';
+import type { FeedbackAttachment } from '../lib/feedback-attachment';
+import { loadFeedbackDraft, saveFeedbackDraft, type FeedbackDraft } from '../lib/feedback-draft';
+import { FeedbackAttachments } from './feedback-attachments';
+import { FeedbackDiagnostics } from './feedback-diagnostics';
 import { Button, Dialog, DialogContent, DialogTitle } from './ui';
 
 const categories = [
-  { id: 'bug', title: 'Something isn’t working', short: 'Bug or issue', icon: Bug },
-  { id: 'feature', title: 'I have an idea', short: 'Feature request', icon: Lightbulb },
-  { id: 'other', title: 'Something else', short: 'Other feedback', icon: MessageCircle },
+  { id: 'bug', title: 'Bug or issue', icon: Bug },
+  { id: 'feature', title: 'Idea', icon: Lightbulb },
+  { id: 'other', title: 'Other', icon: MessageCircle },
 ] as const;
 
 function readPending(key: string) {
@@ -49,33 +51,61 @@ function writePending(key: string, id: string | null) {
   } catch {}
 }
 
-async function encodeAttachment(file: File): Promise<FeedbackAttachment> {
+async function encodeAttachment(file: File): Promise<SubmittedAttachment> {
   const data = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result).split(',')[1]);
     reader.onerror = () => reject(new Error(`Couldn’t read ${file.name}. Add it again.`));
     reader.readAsDataURL(file);
   });
-  return { name: file.name, mimeType: file.type as FeedbackAttachment['mimeType'], data };
+  return { name: file.name, mimeType: file.type as SubmittedAttachment['mimeType'], data };
 }
 
-export function FeedbackDialog({
-  ownerId,
-  open,
-  onOpenChange,
-  returnFocus,
-}: {
+type FeedbackDialogProps = {
   ownerId: string;
   open: boolean;
   onOpenChange(open: boolean): void;
   returnFocus(): HTMLElement | null;
-}) {
+  screenshot?: File | null;
+};
+
+function sameDraft(first: FeedbackDraft, second: FeedbackDraft | null) {
+  return (
+    !!second &&
+    first.category === second.category &&
+    first.feedback === second.feedback &&
+    first.includeReport === second.includeReport &&
+    first.attachments === second.attachments &&
+    first.pendingId === second.pendingId
+  );
+}
+
+function hasDraft(draft: FeedbackDraft) {
+  return (
+    !!draft.feedback ||
+    !!draft.attachments.length ||
+    draft.category !== 'bug' ||
+    !draft.includeReport ||
+    !!draft.pendingId
+  );
+}
+
+export function FeedbackDialog(props: FeedbackDialogProps) {
+  return <FeedbackDraftDialog key={props.ownerId} {...props} />;
+}
+
+function FeedbackDraftDialog({
+  ownerId,
+  open,
+  onOpenChange,
+  returnFocus,
+  screenshot,
+}: FeedbackDialogProps) {
   const storageKey = `otto.feedback.pending.${ownerId}`;
   const [pendingId, setPendingId] = useState(() => readPending(storageKey));
-  const [step, setStep] = useState(() => (pendingId ? 2 : 0));
   const [kind, setKind] = useState<FeedbackSubmission['category']>('bug');
   const [feedback, setFeedback] = useState('');
-  const [attachments, setAttachments] = useState<File[]>([]);
+  const [attachments, setAttachments] = useState<FeedbackAttachment[]>([]);
   const [includeReport, setIncludeReport] = useState(true);
   const [report, setReport] = useState<FeedbackReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -92,6 +122,21 @@ export function FeedbackDialog({
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
   const [toast, setToast] = useState(false);
   const [contextAttempt, setContextAttempt] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [draftError, setDraftError] = useState('');
+  const [restoreFailed, setRestoreFailed] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const active = useRef(true);
+  const allowSave = useRef(false);
+  const storageVersion = useRef(0);
+  const restoreVersion = useRef(0);
+  const persisted = useRef<FeedbackDraft | null>(null);
+  const dirty = useRef(false);
+  const started = useRef(false);
+  const dragDepth = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const detailsInput = useRef<HTMLTextAreaElement>(null);
   const submission = useRef<FeedbackSubmission | null>(null);
@@ -102,11 +147,115 @@ export function FeedbackDialog({
   const sendRequest = useRef<AbortController | null>(null);
   const copyRequest = useRef<AbortController | null>(null);
   const reportRef = useRef<FeedbackReport | null>(null);
-  const reviewHeading = useRef<HTMLHeadingElement>(null);
-  const hasReport = kind === 'bug' && includeReport;
-  const frozen = !!busy || !!pendingId;
-  const category = categories.find((item) => item.id === kind)!;
+  const frozen = !!busy || !!pendingId || !hydrated || discarding;
   const valid = !!feedback.trim();
+  const draft = useMemo<FeedbackDraft>(
+    () => ({
+      category: kind,
+      feedback,
+      includeReport,
+      attachments,
+      pendingId,
+    }),
+    [kind, feedback, includeReport, attachments, pendingId],
+  );
+  const currentDraft = useRef(draft);
+  currentDraft.current = draft;
+  dirty.current = hydrated && !sameDraft(draft, persisted.current);
+
+  async function restoreDraft() {
+    const version = ++restoreVersion.current;
+    setHydrated(false);
+    setDraftError('');
+    try {
+      const saved = await loadFeedbackDraft(ownerId);
+      if (!active.current || restoreVersion.current !== version) return;
+      const value = saved ?? {
+        category: 'bug' as const,
+        feedback: '',
+        includeReport: true,
+        attachments: [],
+        pendingId: null,
+      };
+      const pending = readPending(storageKey) ?? value.pendingId;
+      persisted.current = value;
+      setKind(value.category);
+      setFeedback(value.feedback);
+      setIncludeReport(value.includeReport);
+      setAttachments(value.attachments);
+      setPendingId(pending);
+      setReceipt(pending ? { submissionId: pending, status: 'unknown' } : null);
+      started.current = !!saved || !!pending;
+      allowSave.current = true;
+      setRestoreFailed(false);
+    } catch {
+      if (!active.current || restoreVersion.current !== version) return;
+      persisted.current = currentDraft.current;
+      started.current = true;
+      setRestoreFailed(true);
+      setDraftError('Couldn’t restore your saved draft. You can keep writing here.');
+    } finally {
+      if (active.current && restoreVersion.current === version) setHydrated(true);
+    }
+  }
+
+  async function persistDraft(value: FeedbackDraft) {
+    allowSave.current = true;
+    const version = ++storageVersion.current;
+    setSavingDraft(true);
+    setRestoreFailed(false);
+    try {
+      await saveFeedbackDraft(ownerId, hasDraft(value) ? value : null);
+      if (!active.current || storageVersion.current !== version) return;
+      persisted.current = value;
+      if (sameDraft(currentDraft.current, value)) {
+        dirty.current = false;
+        setDraftError('');
+      }
+    } catch {
+      if (active.current && storageVersion.current === version)
+        setDraftError(
+          'Your draft is kept here, but couldn’t be saved. Keep this window open or try again.',
+        );
+    } finally {
+      if (active.current && storageVersion.current === version) setSavingDraft(false);
+    }
+  }
+
+  useEffect(() => {
+    active.current = true;
+    void restoreDraft();
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirty.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => {
+      active.current = false;
+      restoreVersion.current++;
+      storageVersion.current++;
+      window.removeEventListener('beforeunload', beforeUnload);
+      if (dirty.current && allowSave.current)
+        void saveFeedbackDraft(
+          ownerId,
+          hasDraft(currentDraft.current) ? currentDraft.current : null,
+        ).catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      !hydrated ||
+      discarding ||
+      restoreFailed ||
+      receipt?.status === 'submitted' ||
+      sameDraft(draft, persisted.current)
+    )
+      return;
+    const timer = setTimeout(() => void persistDraft(draft), 250);
+    return () => clearTimeout(timer);
+  }, [draft, hydrated, discarding, restoreFailed, receipt?.status]);
 
   useEffect(() => {
     if (!open) return;
@@ -159,18 +308,21 @@ export function FeedbackDialog({
     if (!saved) return;
     setPendingId(saved);
     setReceipt({ submissionId: saved, status: 'unknown' });
-    setStep(2);
   }, [open, pendingId, storageKey]);
 
   useEffect(() => {
-    if (!open) return;
-    if (step === 1) detailsInput.current?.focus();
-    else if (step === 2) reviewHeading.current?.focus();
-  }, [open, step]);
+    if (!open || !hydrated || pendingId || started.current || !screenshot) return;
+    started.current = true;
+    addAttachments([screenshot]);
+  }, [open, hydrated, pendingId, screenshot]);
 
   useEffect(() => {
-    if (open && step === 2 && hasReport && !pendingId && !reportRef.current) void prepareReport();
-  }, [open, step, hasReport, pendingId]);
+    if (open && hydrated && !pendingId) detailsInput.current?.focus({ preventScroll: true });
+  }, [open, hydrated]);
+
+  useEffect(() => {
+    if (open && valid && includeReport && !pendingId && !reportRef.current) void prepareReport();
+  }, [open, valid, includeReport, pendingId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -226,28 +378,70 @@ export function FeedbackDialog({
     return promise;
   }
 
-  function complete() {
+  function resetDraft() {
+    allowSave.current = true;
+    const empty: FeedbackDraft = {
+      category: 'bug',
+      feedback: '',
+      includeReport: true,
+      attachments: [],
+      pendingId: null,
+    };
+    persisted.current = empty;
+    currentDraft.current = empty;
+    dirty.current = false;
     writePending(storageKey, null);
     setPendingId(null);
     submission.current = null;
     setReceipt(null);
     setBusy(null);
-    setStep(0);
+    started.current = false;
     setKind('bug');
     setFeedback('');
-    setAttachments([]);
+    setAttachments(empty.attachments);
     setIncludeReport(true);
     setReport(null);
     reportRef.current = null;
     setReportError('');
     setPreview(false);
     setError('');
-    setToast(true);
-    onOpenChange(false);
+    setDraftError('');
+    setRestoreFailed(false);
+    setConfirmDiscard(false);
+  }
+
+  async function clearDraft(accepted: boolean) {
+    if (discarding) return;
+    ++storageVersion.current;
+    setDiscarding(true);
+    setSavingDraft(false);
+    try {
+      await saveFeedbackDraft(ownerId, null);
+      if (!active.current) return;
+      resetDraft();
+      if (accepted) setToast(true);
+      onOpenChange(false);
+    } catch {
+      if (!active.current) return;
+      setDraftError(
+        accepted
+          ? 'Your feedback was sent, but the saved draft couldn’t be cleared. Try again to remove it from this device.'
+          : 'Couldn’t discard the saved draft. Your feedback is still here. Try again.',
+      );
+    } finally {
+      if (active.current) setDiscarding(false);
+    }
+  }
+
+  function complete() {
+    allowSave.current = false;
+    setReceipt((current) => current && { ...current, status: 'submitted' });
+    void clearDraft(true);
   }
 
   function applyReceipt(result: FeedbackReceipt) {
     if (result.status === 'submitted') {
+      setReceipt(result);
       complete();
       return;
     }
@@ -256,8 +450,12 @@ export function FeedbackDialog({
       writePending(storageKey, null);
       setPendingId(null);
       submission.current = null;
-      setError(result.message || 'Couldn’t send your feedback. Your draft is still here.');
-      if (!feedback.trim()) setStep(0);
+      setError(
+        result.message ||
+          (feedback || attachments.length
+            ? 'Couldn’t send your feedback. Your draft is still here.'
+            : 'This submission was not received. Add your feedback to try again.'),
+      );
     } else {
       writePending(storageKey, result.submissionId);
       setPendingId(result.submissionId);
@@ -272,7 +470,7 @@ export function FeedbackDialog({
       setReceipt({ submissionId: existing, status: 'unknown' });
       return;
     }
-    if (hasReport && (!report || Date.parse(report.expiresAt) <= Date.now())) {
+    if (includeReport && (!report || Date.parse(report.expiresAt) <= Date.now())) {
       setReportError('Refresh the diagnostic report before sending.');
       setReport(null);
       reportRef.current = null;
@@ -285,7 +483,7 @@ export function FeedbackDialog({
     setReceipt(null);
     let id: string | null = null;
     try {
-      const encoded = await Promise.all(attachments.map(encodeAttachment));
+      const encoded = await Promise.all(attachments.map(({ file }) => encodeAttachment(file)));
       if (controller.signal.aborted) return;
       const payload: FeedbackSubmission = {
         submissionId: crypto.randomUUID(),
@@ -298,13 +496,15 @@ export function FeedbackDialog({
         platform: context.platform,
         development: context.development,
         source: context.source,
-        reportId: hasReport ? report!.id : null,
+        reportId: includeReport ? report!.id : null,
         attachments: encoded,
       };
       submission.current = payload;
       id = payload.submissionId;
       writePending(storageKey, id);
       setPendingId(id);
+      await persistDraft({ ...currentDraft.current, pendingId: id });
+      if (controller.signal.aborted) return;
       const result = await api<FeedbackReceipt>('/api/feedback', {
         method: 'POST',
         body: JSON.stringify(payload),
@@ -408,37 +608,58 @@ export function FeedbackDialog({
     }
   }
 
-  function addAttachments(files: File[]) {
-    const next = [...attachments, ...files];
-    if (next.length > feedbackLimits.attachments) {
-      setError('You can attach up to 3 screenshots.');
-      return;
-    }
-    if (files.some((file) => !['image/png', 'image/jpeg', 'image/webp'].includes(file.type))) {
-      setError('Choose PNG, JPEG or WebP screenshots.');
-      return;
-    }
-    if (files.some((file) => file.size > feedbackLimits.attachmentBytes)) {
-      setError('Each screenshot must be 2 MB or smaller.');
-      return;
-    }
-    if (next.reduce((total, file) => total + file.size, 0) > feedbackLimits.totalAttachmentBytes) {
-      setError('Keep the screenshots under 4 MB in total.');
-      return;
-    }
-    setError('');
-    setAttachments(next);
+  function attachmentError(files: File[]) {
+    if (files.length > feedbackLimits.attachments) return 'You can attach up to 3 files.';
+    if (files.some((file) => !feedbackAttachmentMimeType(file)))
+      return 'Choose images, PDFs, text, logs, JSON or CSV files.';
+    if (files.some((file) => !file.size || file.size > feedbackLimits.attachmentBytes))
+      return 'Each file must be between 1 byte and 2 MB.';
+    if (files.reduce((total, file) => total + file.size, 0) > feedbackLimits.totalAttachmentBytes)
+      return 'Keep the attachments under 4 MB in total.';
+    return '';
   }
 
-  function next(event: FormEvent) {
-    event.preventDefault();
+  function addAttachments(files: File[]) {
+    if (frozen || !files.length) return;
+    const named = files.map((file, index) => {
+      const name = file.name
+        .replace(/[\\/\x00-\x1f\x7f]/g, '-')
+        .trim()
+        .slice(0, 160);
+      const type = feedbackAttachmentMimeType(file) ?? file.type;
+      return name
+        ? new File([file], name, { type, lastModified: file.lastModified })
+        : new File(
+            [file],
+            `attachment-${attachments.length + index + 1}.${type.split('/')[1] || 'txt'}`,
+            { type },
+          );
+    });
+    const next = [...attachments, ...named.map((file) => ({ id: crypto.randomUUID(), file }))];
+    const failure = attachmentError(next.map(({ file }) => file));
+    setError(failure);
+    if (!failure) setAttachments(next);
+  }
+
+  function paste(event: ClipboardEvent) {
     if (frozen) return;
-    setError('');
-    if (step === 2) void send();
-    else if (step === 1) {
-      if (!valid) return;
-      setStep(2);
-    } else setStep(1);
+    const files = clipboardFiles(event.clipboardData);
+    if (!files.length) return;
+    if (!event.clipboardData.getData('text/plain')) event.preventDefault();
+    addAttachments(files);
+  }
+
+  function drop(event: DragEvent) {
+    dragDepth.current = 0;
+    setDragging(false);
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault();
+    if (!frozen) addAttachments(Array.from(event.dataTransfer.files));
+  }
+
+  function sendForm(event: FormEvent) {
+    event.preventDefault();
+    if (!frozen) void send();
   }
 
   const copyButton = (
@@ -458,13 +679,22 @@ export function FeedbackDialog({
       <Dialog
         open={open}
         onOpenChange={(value) => {
-          if (!busy) onOpenChange(value);
+          if (busy || discarding) return;
+          if (!value && dirty.current && !restoreFailed && receipt?.status !== 'submitted')
+            void persistDraft(currentDraft.current);
+          onOpenChange(value);
         }}
       >
         <DialogContent
           className="feedback-dialog"
           aria-describedby={undefined}
-          data-busy={!!busy}
+          data-busy={!!busy || discarding}
+          onOpenAutoFocus={(event) => {
+            if (detailsInput.current) {
+              event.preventDefault();
+              detailsInput.current.focus();
+            }
+          }}
           onCloseAutoFocus={(event) => {
             const target = returnFocus();
             if (target?.isConnected) {
@@ -474,198 +704,190 @@ export function FeedbackDialog({
           }}
         >
           <header className="feedback-header">
-            <DialogTitle ref={reviewHeading} tabIndex={-1}>
-              {step === 2 ? 'Review feedback' : step === 1 ? 'Your feedback' : 'Send feedback'}
-            </DialogTitle>
+            <DialogTitle>Send feedback</DialogTitle>
           </header>
-          <div className="feedback-progress" aria-label="Progress">
-            {['Type', 'Feedback', 'Review'].map((label, index) => (
-              <div
-                key={label}
-                className={index === step ? 'current' : index < step ? 'done' : ''}
-                aria-current={index === step ? 'step' : undefined}
-              >
-                <span>{index < step ? <Check size={16} aria-hidden="true" /> : index + 1}</span>
-                {label}
-              </div>
-            ))}
-          </div>
-          <form className="feedback-form" onSubmit={next}>
-            <div className="feedback-body">
-              {step === 0 ? (
-                <div className="feedback-category-options" role="group" aria-label="Feedback type">
-                  {categories.map((item) => (
-                    <button
-                      type="button"
-                      key={item.id}
-                      className={`feedback-category-option ${kind === item.id ? 'selected' : ''}`}
-                      aria-pressed={kind === item.id}
-                      onClick={() => {
-                        setKind(item.id);
-                        setIncludeReport(item.id === 'bug');
+          <form className="feedback-form" onSubmit={sendForm}>
+            <div
+              className="feedback-body"
+              data-dragging={dragging || undefined}
+              onPaste={paste}
+              onDragEnter={(event) => {
+                if (frozen || !event.dataTransfer.types.includes('Files')) return;
+                event.preventDefault();
+                dragDepth.current++;
+                setDragging(true);
+              }}
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes('Files')) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = frozen ? 'none' : 'copy';
+              }}
+              onDragLeave={() => {
+                dragDepth.current = Math.max(0, dragDepth.current - 1);
+                if (!dragDepth.current) setDragging(false);
+              }}
+              onDrop={drop}
+            >
+              {(!pendingId || feedback) && (
+                <>
+                  <div
+                    className="feedback-category-options"
+                    role="group"
+                    aria-label="Feedback type"
+                  >
+                    {categories.map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className={`feedback-category-option ${kind === item.id ? 'selected' : ''}`}
+                        aria-pressed={kind === item.id}
+                        disabled={frozen}
+                        onClick={() => {
+                          setKind(item.id);
+                          setPreview(false);
+                        }}
+                      >
+                        <item.icon size={16} aria-hidden="true" />
+                        {item.title}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="feedback-composer">
+                    <label className="field">
+                      <span className="sr-only">Your feedback</span>
+                      <textarea
+                        ref={detailsInput}
+                        required
+                        disabled={frozen}
+                        maxLength={feedbackLimits.text}
+                        value={feedback}
+                        onChange={(event) => setFeedback(event.target.value)}
+                        placeholder={
+                          kind === 'bug'
+                            ? 'What were you trying to do? What happened instead?'
+                            : kind === 'feature'
+                              ? 'What would this help you do?'
+                              : 'Tell us what’s on your mind.'
+                        }
+                        rows={4}
+                      />
+                    </label>
+                    <FeedbackAttachments
+                      files={attachments}
+                      disabled={frozen}
+                      onRemove={(index) => {
+                        setAttachments(attachments.filter((_, value) => value !== index));
+                        setError('');
+                      }}
+                      onReplace={(index, file) => {
+                        const next = attachments.map((current, value) =>
+                          value === index ? file : current,
+                        );
+                        const failure = attachmentError(next.map(({ file }) => file));
+                        setError(failure);
+                        if (failure) return false;
+                        setAttachments(next);
+                        return true;
+                      }}
+                    />
+                    <div className="feedback-composer-toolbar">
+                      <input
+                        type="file"
+                        ref={fileInput}
+                        hidden
+                        multiple
+                        accept={feedbackAttachmentAccept}
+                        disabled={frozen}
+                        onChange={(event) => {
+                          addAttachments(Array.from(event.target.files ?? []));
+                          event.target.value = '';
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={frozen}
+                        onClick={() => fileInput.current?.click()}
+                      >
+                        <Paperclip size={16} aria-hidden="true" />
+                        Add files
+                      </Button>
+                      <span>Paste or drop files</span>
+                    </div>
+                  </div>
+                  {(!pendingId || submission.current) && (
+                    <FeedbackDiagnostics
+                      included={includeReport}
+                      report={report}
+                      preview={preview}
+                      loading={reportLoading}
+                      error={reportError}
+                      frozen={frozen}
+                      onToggleIncluded={() => {
+                        setIncludeReport(!includeReport);
                         setPreview(false);
                       }}
-                    >
-                      <item.icon size={24} aria-hidden="true" />
-                      <div>
-                        <strong>{item.title}</strong>
-                      </div>
-                      <span className="feedback-category-radio" aria-hidden="true">
-                        {kind === item.id && <span />}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : step === 1 ? (
-                <div className="feedback-details-form">
-                  <label className="field">
-                    <span className="sr-only">Your feedback</span>
-                    <textarea
-                      ref={detailsInput}
-                      required
-                      maxLength={feedbackLimits.text}
-                      value={feedback}
-                      onChange={(event) => setFeedback(event.target.value)}
-                      placeholder={
-                        kind === 'bug'
-                          ? 'What were you trying to do? What happened instead?'
-                          : kind === 'feature'
-                            ? 'What would this help you do? How do you handle it today?'
-                            : 'Tell us a little more.'
-                      }
-                      rows={6}
-                    />
-                  </label>
-                  <div className="feedback-attachment-controls">
-                    <input
-                      type="file"
-                      ref={fileInput}
-                      hidden
-                      multiple
-                      accept="image/png,image/jpeg,image/webp"
-                      onChange={(event) => {
-                        addAttachments(Array.from(event.target.files ?? []));
-                        event.target.value = '';
+                      onReview={async () => {
+                        if (report) setPreview(!preview);
+                        else if (!frozen && (await prepareReport())) setPreview(true);
                       }}
+                      onRefresh={() => void prepareReport()}
                     />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => fileInput.current?.click()}
-                    >
-                      <Paperclip size={16} aria-hidden="true" />
-                      Add screenshots
-                    </Button>
-                  </div>
-                  {attachments.length > 0 && (
-                    <div className="feedback-attachment-list">
-                      {attachments.map((file, index) => (
-                        <div key={`${file.name}-${index}`}>
-                          <Paperclip size={16} aria-hidden="true" />
-                          <span>{file.name}</span>
-                          <button
-                            type="button"
-                            aria-label={`Remove ${file.name}`}
-                            onClick={() =>
-                              setAttachments(attachments.filter((_, value) => value !== index))
-                            }
-                          >
-                            <X size={16} aria-hidden="true" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
                   )}
-                </div>
-              ) : (
-                <div className="feedback-review-content">
-                  {feedback && (
-                    <div className="feedback-review-summary">
-                      <span className="feedback-type-tag">
-                        <category.icon size={16} aria-hidden="true" />
-                        {category.short}
-                      </span>
-                      <p>{feedback}</p>
-                      {attachments.length > 0 && (
-                        <span className="muted">
-                          {attachments.length} screenshot{attachments.length !== 1 ? 's' : ''}{' '}
-                          attached
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {kind === 'bug' && (!pendingId || submission.current) && (
-                    <div
-                      className={`feedback-report-block ${hasReport ? '' : 'feedback-report-removed'}`}
-                    >
-                      <div className="feedback-report-heading">
-                        <FileJson size={24} aria-hidden="true" />
-                        <div>
-                          <strong>Diagnostic report</strong>
-                          <span>
-                            {!hasReport
-                              ? 'Not included'
-                              : reportLoading
-                                ? 'Preparing…'
-                                : report
-                                  ? 'Attached automatically'
-                                  : 'Couldn’t prepare the report'}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          className="feedback-text-action"
-                          disabled={frozen}
-                          onClick={() => {
-                            setIncludeReport(!includeReport);
-                            setPreview(false);
-                          }}
-                        >
-                          {hasReport ? 'Remove' : 'Include'}
-                        </button>
-                      </div>
-                      {hasReport && report && (
-                        <>
-                          <p className="feedback-report-disclosure">
-                            The Otto team can read the included conversation and diagnostic
-                            activity.
-                          </p>
-                          <button
-                            type="button"
-                            className="feedback-text-action feedback-preview-toggle"
-                            onClick={() => setPreview(!preview)}
-                            aria-expanded={preview}
-                          >
-                            {preview ? 'Hide report' : 'Review report'}
-                            <ChevronDown size={16} aria-hidden="true" />
-                          </button>
-                          {preview && (
-                            <div className="feedback-report-preview">
-                              <pre aria-label="Diagnostic report">{report.content}</pre>
-                            </div>
-                          )}
-                        </>
-                      )}
-                      {hasReport && reportError && (
-                        <div className="feedback-report-disclosure" role="alert">
-                          <p>{reportError}</p>
-                          <button
-                            type="button"
-                            className="feedback-text-action"
-                            disabled={frozen || reportLoading}
-                            onClick={() => void prepareReport()}
-                          >
-                            Refresh report
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                </>
               )}
             </div>
-            {step === 2 && (contextError || (context && !context.enabled)) && (
+            {!hydrated && (
+              <p className="feedback-draft-status" role="status">
+                Restoring your draft…
+              </p>
+            )}
+            {draftError && (
+              <div className="feedback-send-notice" role="alert">
+                <span>{draftError}</span>
+                <button
+                  type="button"
+                  className="feedback-text-action"
+                  disabled={!!busy || discarding || savingDraft}
+                  onClick={() => {
+                    if (receipt?.status === 'submitted') complete();
+                    else if (confirmDiscard) void clearDraft(false);
+                    else void persistDraft(currentDraft.current);
+                  }}
+                >
+                  {receipt?.status === 'submitted' || confirmDiscard
+                    ? 'Try again'
+                    : 'Save this draft'}
+                </button>
+              </div>
+            )}
+            {confirmDiscard && (
+              <div className="feedback-send-notice" role="alert">
+                <strong>Discard this feedback draft?</strong>
+                <span>This removes the text and attachments saved on this device.</span>
+                <div className="feedback-draft-actions">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={discarding}
+                    onClick={() => setConfirmDiscard(false)}
+                  >
+                    Keep draft
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={discarding}
+                    onClick={() => void clearDraft(false)}
+                  >
+                    {discarding ? 'Discarding…' : 'Discard draft'}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {(contextError || (context && !context.enabled)) && (
               <div className="feedback-send-notice" role={contextError ? 'alert' : 'status'}>
                 <span>{contextError || 'Sending isn’t enabled in this build.'}</span>
                 {contextError && (
@@ -739,52 +961,32 @@ export function FeedbackDialog({
               </p>
             )}
             <footer className="feedback-footer">
-              <div>
-                {step > 0 ? (
+              <div className="feedback-footer-actions">
+                {development && copyButton}
+                {hydrated && hasDraft(draft) && !pendingId && !confirmDiscard && (
                   <Button
                     type="button"
                     variant="ghost"
+                    size="sm"
                     disabled={frozen}
-                    onClick={() => {
-                      setStep(step - 1);
-                      setError('');
-                    }}
+                    onClick={() => setConfirmDiscard(true)}
                   >
-                    <ArrowLeft size={16} aria-hidden="true" />
-                    Back
+                    Discard draft
                   </Button>
-                ) : development ? (
-                  copyButton
-                ) : (
-                  <span />
                 )}
               </div>
-              <div>
-                {step === 2 && development && copyButton}
-                <Button
-                  type="submit"
-                  disabled={
-                    frozen ||
-                    (step === 1 && !valid) ||
-                    (step === 2 &&
-                      (!valid || !context?.enabled || (hasReport && (!report || reportLoading))))
-                  }
-                >
-                  {busy === 'sending' ? (
-                    'Sending…'
-                  ) : step === 2 ? (
-                    <>
-                      <Send size={16} aria-hidden="true" />
-                      Send feedback
-                    </>
-                  ) : (
-                    <>
-                      Continue
-                      <ArrowRight size={16} aria-hidden="true" />
-                    </>
-                  )}
-                </Button>
-              </div>
+              <Button
+                type="submit"
+                disabled={
+                  frozen ||
+                  !valid ||
+                  !context?.enabled ||
+                  (includeReport && (!report || reportLoading))
+                }
+              >
+                <Send size={16} aria-hidden="true" />
+                {busy === 'sending' ? 'Sending…' : 'Send feedback'}
+              </Button>
             </footer>
           </form>
         </DialogContent>

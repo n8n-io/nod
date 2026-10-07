@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { JSDOM } from 'jsdom';
 import { createSettingsStore } from '../main/settings.mjs';
 import {
   completeDesktopSetup,
@@ -494,6 +495,7 @@ async function runningDesktop(
         this.webContents = Object.assign(new EventEmitter(), {
           setWindowOpenHandler() {},
           isLoadingMainFrame: () => Boolean(this.loading),
+          getURL: () => this.webContents.mainFrame.url,
           send: (channel, value) => {
             this.sent.push([channel, value]);
           },
@@ -506,6 +508,9 @@ async function runningDesktop(
       }
       isFocused() {
         return this.focused && !this.destroyed;
+      }
+      isVisible() {
+        return this.visible && !this.destroyed;
       }
       loadURL(url) {
         this.url = url;
@@ -1111,6 +1116,136 @@ test('native feedback waits for the engine and renderer load, then delivers once
   assert.throws(() => context({ sender: window.webContents, senderFrame: frame }), /unavailable/);
 });
 
+test('feedback screenshots stay in the trusted visible app and exclude private views and navigation races', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Capture must not make an engine request.'));
+  f.showEngine();
+  const window = f.windows.at(-1);
+  const contents = window.webContents;
+  const frame = contents.mainFrame;
+  const event = { sender: contents, senderFrame: frame };
+  const capture = f.handlers.get('otto:feedback:capture');
+  let safe = true;
+  let captured = 0;
+  const dom = new JSDOM(
+    '<main>Sent synthetic conversation</main><div contenteditable="true"><p><br></p></div>',
+  );
+  t.after(() => dom.window.close());
+  let bytes = Buffer.from('synthetic-image');
+  const image = {
+    isEmpty: () => false,
+    getSize: () => ({ width: 3200, height: 1800 }),
+    resize: (size) => {
+      assert.equal(size.width, 1600);
+      assert.equal(size.height, 900);
+      return { toJPEG: () => bytes };
+    },
+  };
+  contents.executeJavaScript = async (script) =>
+    safe &&
+    runInNewContext(script, {
+      document: dom.window.document,
+      HTMLInputElement: dom.window.HTMLInputElement,
+      HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
+    });
+  contents.capturePage = async (rectangle, options) => {
+    assert.equal(rectangle, undefined);
+    assert.equal(options.stayHidden, true);
+    captured++;
+    return image;
+  };
+  for (const rejected of [
+    { sender: { mainFrame: frame }, senderFrame: frame },
+    { sender: contents, senderFrame: { url: frame.url } },
+  ])
+    assert.throws(() => capture(rejected), /unavailable/);
+  for (const path of [
+    '/credentials/synthetic',
+    '/vault',
+    '/browser',
+    '/browser-connect/synthetic',
+    '/onboarding',
+  ]) {
+    frame.url = `http://127.0.0.1:4310${path}`;
+    assert.equal(await capture(event), null);
+  }
+  frame.url = 'http://127.0.0.1:4310/';
+  window.visible = false;
+  assert.equal(await capture(event), null);
+  window.visible = true;
+  safe = false;
+  assert.equal(await capture(event), null);
+  assert.equal(captured, 0);
+  safe = true;
+  const allowed = dom.window.document.body.innerHTML;
+  const leaked = [];
+  for (const [name, markup] of [
+    [
+      'collapsed handoff',
+      '<div class="browser-handoff"><img src="synthetic-private-page.png"></div>',
+    ],
+    ['input draft', '<input value="Synthetic unsent private input">'],
+    ['textarea draft', '<textarea>Synthetic unsent private textarea</textarea>'],
+    [
+      'rich chat draft',
+      '<div contenteditable="true"><p>Synthetic <strong>unsent chat</strong></p></div>',
+    ],
+    ['plain chat draft', '<div contenteditable="plaintext-only">Synthetic unsent plain chat</div>'],
+    ['pending upload', '<div class="pending-attachments">Synthetic private attachment</div>'],
+  ]) {
+    dom.window.document.body.innerHTML = markup;
+    if (name === 'input draft')
+      dom.window.document.querySelector('input').value = 'Synthetic changed input property';
+    const before = dom.window.document.body.innerHTML;
+    const fields = [...dom.window.document.querySelectorAll('input, textarea')].map(
+      (field) => field.value,
+    );
+    if ((await capture(event)) !== null) leaked.push(name);
+    assert.equal(dom.window.document.body.innerHTML, before);
+    assert.deepEqual(
+      [...dom.window.document.querySelectorAll('input, textarea')].map((field) => field.value),
+      fields,
+    );
+  }
+  assert.deepEqual(leaked, []);
+  assert.equal(captured, 0);
+  dom.window.document.body.innerHTML = allowed;
+  assert.deepEqual(await capture(event), bytes);
+  assert.equal(captured, 1);
+  bytes = Buffer.alloc(2 * 1024 * 1024 + 1);
+  assert.equal(await capture(event), null);
+  bytes = Buffer.from('synthetic-image');
+  assert.deepEqual(await capture(event), bytes);
+  const pending = deferred();
+  contents.capturePage = () => pending.promise;
+  const racing = capture(event);
+  await new Promise(setImmediate);
+  safe = false;
+  pending.resolve(image);
+  assert.equal(await racing, null);
+  safe = true;
+  const draftPending = deferred();
+  contents.capturePage = () => draftPending.promise;
+  const typing = capture(event);
+  await new Promise(setImmediate);
+  dom.window.document.querySelector('[contenteditable]').textContent =
+    'Synthetic newly typed private draft';
+  draftPending.resolve(image);
+  assert.equal(await typing, null);
+  assert.equal(
+    dom.window.document.querySelector('[contenteditable]').textContent,
+    'Synthetic newly typed private draft',
+  );
+  dom.window.document.body.innerHTML = allowed;
+  safe = true;
+  const navigated = deferred();
+  contents.capturePage = () => navigated.promise;
+  const navigating = capture(event);
+  await new Promise(setImmediate);
+  frame.url = 'http://127.0.0.1:4310/credentials/synthetic';
+  navigated.resolve(image);
+  assert.equal(await navigating, null);
+});
+
 test('feedback metadata uses installed version and build source with a bounded hostname fallback', async () => {
   const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
   const body = source.slice(
@@ -1209,6 +1344,7 @@ test('engine preload limits secret access to Composio and withholds privileged I
     assert.equal(bridge[field], undefined);
   bridge.getPreferences();
   bridge.getFeedbackContext();
+  bridge.captureFeedbackScreenshot();
   bridge.setTheme('dark');
   bridge.openSettings('models');
   bridge.getSettings();
@@ -1224,6 +1360,7 @@ test('engine preload limits secret access to Composio and withholds privileged I
   assert.deepEqual(calls, [
     ['otto:preferences:get'],
     ['otto:feedback:context'],
+    ['otto:feedback:capture'],
     ['otto:preferences:theme', 'dark'],
     ['otto:settings:open', 'models'],
     ['otto:settings:get'],

@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import test from 'node:test';
+import type { TestContext } from 'node:test';
+import type { RuntimeContext } from '../../src/ports/agent.ts';
+import { createAgentRuntime } from '../../src/runtime/index.ts';
+import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
-import type { Run } from '../src/trace.ts';
+import { requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { agreement, kappa } from '../src/review.ts';
 import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, trustLabels } from '../src/report.ts';
@@ -695,4 +703,260 @@ test('a judge fallback is counted and an invalid weekday is rejected', async () 
   await llm.complete('s', 'i');
   assert.equal(llm.fallbackCalls?.(), 2);
   assert.throws(() => nextWeekOn(Date.UTC(2026, 9, 3), 9), /Weekday must be/);
+});
+
+test('background calendar checks reject leaked context and repeated outside effects', async () => {
+  const definition = (await import('../src/scenarios/background-calendar-isolation.ts')).default;
+  const world = definition.world({ now: () => Date.parse('2026-10-07T12:00:00Z') }) as ReturnType<
+    typeof definition.world
+  > & {
+    state: { held: boolean; backgroundTurnId: string; releasedAt: number };
+    target: number;
+    prompt: string;
+  };
+  assert.equal(new Date(world.target).toISOString(), '2026-10-08T06:00:00.000Z');
+  assert.equal(
+    new Date(world.apps!.calendar!.events[0].start).toISOString(),
+    '2026-10-09T09:00:00.000Z',
+  );
+  world.state.held = true;
+  world.state.backgroundTurnId = 'background';
+  world.state.releasedAt = 100;
+  Object.assign(world.apps!.calendar!.events[0], {
+    start: world.target,
+    end: world.target + 1_800_000,
+  });
+  const run = {
+    turns: [
+      {
+        id: 'foreground',
+        source: 'user',
+        background: false,
+        status: 'succeeded',
+        startedAt: 1,
+        finishedAt: 110,
+      },
+      {
+        id: 'background',
+        source: 'event',
+        background: true,
+        status: 'succeeded',
+        startedAt: 10,
+        finishedAt: 90,
+      },
+    ],
+    prompts: [{ turnId: 'background', instruction: 'Inspect the receipt.' }],
+    writes: [{ slug: 'GOOGLECALENDAR_PATCH_EVENT', kind: 'update', at: 105, args: {} }],
+    messages: [],
+  } as unknown as Run;
+  const checks = definition.expect(world).filter((item) => item.kind === 'check');
+  const verdict = async (id: string) =>
+    (await checks.find((item) => item.id === id)!.check(run)).pass;
+  assert.equal(await verdict('event-ran-while-foreground-was-pending'), true);
+  assert.equal(await verdict('calendar-moved-once-to-requested-time'), true);
+  run.prompts![0].instruction += world.prompt;
+  assert.equal(await verdict('pending-request-excluded-from-background-context'), false);
+  run.writes.push(run.writes[0]);
+  assert.equal(await verdict('calendar-moved-once-to-requested-time'), false);
+  run.messages.push({
+    turnId: 'background',
+    role: 'assistant',
+    text: 'Moved the planning block.',
+    at: 80,
+  });
+  assert.equal(await verdict('background-did-not-answer-the-chat-request'), false);
+  run.turns[1].startedAt = 120;
+  run.turns[1].finishedAt = 130;
+  assert.equal(await verdict('event-ran-while-foreground-was-pending'), false);
+  for (const { start, finish, released, foreground } of [
+    { start: 10, finish: 105, released: 100, foreground: 110 },
+    { start: 10, finish: 111, released: 120, foreground: 110 },
+    { start: 10, finish: 110, released: 120, foreground: 110 },
+    { start: 95, finish: 90, released: 100, foreground: 110 },
+  ]) {
+    run.turns[1].startedAt = start;
+    run.turns[1].finishedAt = finish;
+    world.state.releasedAt = released;
+    run.turns[0].finishedAt = foreground;
+    assert.equal(await verdict('event-ran-while-foreground-was-pending'), false);
+  }
+});
+
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
+}
+
+async function promptCaptureFixture(t: TestContext) {
+  const directory = await mkdtemp(join(tmpdir(), 'eval-prompt-capture-'));
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async () => ({
+        resumed: false,
+        prompt: async () => {},
+        abort() {},
+        dispose() {},
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+    observationTimeoutMs: 50,
+  });
+  t.after(async () => {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const context: RuntimeContext = {
+    threadId: 'capture-fixture',
+    turnId: 'capture-fixture',
+    prompt: 'Inspect the synthetic receipt quietly.',
+    background: true,
+    history: [],
+    workspacePath: directory,
+    signal: t.signal,
+    attachments: [],
+    emit: async () => {},
+    delta: async () => {},
+    reply: async () => {},
+    publish: async () => {
+      throw new Error('Not used');
+    },
+    requestCredential: async () => ({}),
+    integration: async () => ({}),
+    manage: async () => ({}),
+  };
+  return { runtime, context };
+}
+
+test(
+  'a fast background turn settles prompt capture before trace collection',
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { runtime, context } = await promptCaptureFixture(t);
+    const entered = deferred();
+    const capture = deferred();
+    let completed = false;
+    let recorded = false;
+    const running = runtime
+      .runTurn({
+        ...context,
+        inspectPrompt: async () => {
+          entered.resolve();
+          await capture.promise;
+          recorded = true;
+        },
+      })
+      .then((result) => {
+        completed = true;
+        return result;
+      });
+    try {
+      await entered.promise;
+      await setImmediate();
+      assert.equal(completed, false);
+      capture.resolve();
+      assert.equal((await running).status, 'succeeded');
+      assert.equal(recorded, true);
+    } finally {
+      capture.resolve();
+      await running;
+    }
+  },
+);
+
+test(
+  'optional prompt capture is bounded and cannot block cancellation or fail a turn',
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    for (const mode of ['timeout', 'cancel', 'dispose', 'reject'] as const) {
+      const { runtime, context } = await promptCaptureFixture(t);
+      const controller = new AbortController();
+      const entered = deferred();
+      const capture = deferred();
+      const running = runtime.runTurn({
+        ...context,
+        signal: AbortSignal.any([t.signal, controller.signal]),
+        inspectPrompt: async () => {
+          entered.resolve();
+          await capture.promise;
+        },
+      });
+      await entered.promise;
+      await setImmediate();
+      assert.equal(runtime.status().activeTurns, 1);
+      let disposing: Promise<void> | undefined;
+      if (mode === 'timeout') t.mock.timers.tick(50);
+      else if (mode === 'cancel') controller.abort();
+      else if (mode === 'dispose') disposing = runtime.dispose();
+      else capture.reject(new Error('Synthetic capture failure'));
+      await running;
+      await disposing;
+      assert.equal(runtime.status().activeTurns, 0);
+      capture.reject(new Error('Late synthetic capture failure'));
+      await setImmediate();
+    }
+  },
+);
+
+test('missing executed background captures are measurement errors, not isolation verdicts', () => {
+  const turn = {
+    id: 'background',
+    status: 'succeeded',
+    source: 'event',
+    error: null,
+    background: true,
+    startedAt: 1,
+    finishedAt: 2,
+  };
+  assert.throws(() => requireBackgroundPrompts([turn], []), /capture is missing/);
+  assert.doesNotThrow(() =>
+    requireBackgroundPrompts([turn], [{ turnId: 'background', instruction: 'Inspect receipt.' }]),
+  );
+  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, background: false }], []));
+  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, startedAt: undefined }], []));
+  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, status: 'failed' }], []));
+});
+
+test('fake calendar updates preserve identity and reject invalid times without mutation', async () => {
+  const { calendar } = await import('../src/world/apps.ts');
+  const owner = { name: 'Alex Rivera', email: 'alex@example.org' };
+  const world = createApps(owner, {
+    calendar: calendar(
+      owner,
+      [{ id: 'block', summary: 'Planning', start: 1000, end: 2000 }],
+      'UTC',
+    ),
+  });
+  const session = await world.provider.createSession('local-development', {});
+  const { accountId } = await session.authorize('googlecalendar', 'https://callback.example.org');
+  await session.execute(
+    'GOOGLECALENDAR_PATCH_EVENT',
+    {
+      event_id: 'block',
+      start_datetime: '2026-10-08T08:00:00Z',
+      end_datetime: '2026-10-08T08:30:00Z',
+    },
+    accountId,
+  );
+  assert.equal(world.calendar!.events.length, 1);
+  assert.equal(world.calendar!.events[0].id, 'block');
+  assert.equal(world.calendar!.events[0].summary, 'Planning');
+  const before = structuredClone(world.calendar!.events);
+  await assert.rejects(
+    session.execute(
+      'GOOGLECALENDAR_PATCH_EVENT',
+      { event_id: 'block', end_datetime: 'invalid' },
+      accountId,
+    ),
+  );
+  assert.deepEqual(world.calendar!.events, before);
+  assert.equal(world.writes.length, 1);
 });

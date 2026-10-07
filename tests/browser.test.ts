@@ -2612,6 +2612,7 @@ test('chat request submits once under StrictMode and keeps the pending message v
       StrictMode,
       null,
       createElement(Chat, {
+        ownerId: 'synthetic-feedback-owner',
         state,
         streams: {},
         refresh: async () => {},
@@ -2659,6 +2660,7 @@ test('chat request waits for model readiness before consuming and submitting onc
   const request = { id: randomUUID(), text: 'Create a synthetic task.' };
   const chat = (llmReady: boolean) =>
     createElement(Chat, {
+      ownerId: 'synthetic-feedback-owner',
       state: { ...state, configuration: { ...state.configuration, llmReady } },
       streams: {},
       refresh: async () => {},
@@ -2707,6 +2709,7 @@ test('chat request queues a later page request behind an unacknowledged message'
   ];
   const chat = (requestedMessage: (typeof requests)[number]) =>
     createElement(Chat, {
+      ownerId: 'synthetic-feedback-owner',
       state,
       streams: {},
       refresh: async () => {},
@@ -2767,6 +2770,7 @@ test('chat request restores failed queued requests in submission order without d
   const submissions: Array<{ text: string }> = [];
   const chat = (requestedMessage?: (typeof requests)[number]) =>
     createElement(Chat, {
+      ownerId: 'synthetic-feedback-owner',
       state,
       streams: {},
       refresh: async () => {},
@@ -2820,6 +2824,7 @@ test('chat request isolates a stale reply and attachments and restores failure b
   }> = [];
   const chat = (requestedMessage?: typeof request) =>
     createElement(Chat, {
+      ownerId: 'synthetic-feedback-owner',
       state,
       streams: {},
       refresh: async () => {},
@@ -2883,6 +2888,7 @@ test('chat keeps a waiting browser handoff after a background message and closes
   ];
   const chat = () =>
     createElement(Chat, {
+      ownerId: 'synthetic-feedback-owner',
       state: { ...state },
       streams: {},
       refresh: async () => {},
@@ -2987,6 +2993,7 @@ for (const failure of ['rejected', 'disconnected'] as const)
         return result;
       },
       createElement(Chat, {
+        ownerId: 'synthetic-feedback-owner',
         state,
         streams: {},
         refresh: async () => {},
@@ -3072,6 +3079,7 @@ test('chat keeps every message across refreshes after earlier messages were load
   });
   const chat = (window: Message[]) =>
     createElement(Chat, {
+      ownerId: 'synthetic-feedback-owner',
       state: state(window),
       streams: {},
       refresh: async () => {},
@@ -3224,6 +3232,84 @@ test('browser handoff cancels queued controls when the preceding view cannot be 
   }
 });
 
+test('automatic feedback captures exclude remote handoffs and unsent editable content without changing the page', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 15_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<main>Sent synthetic conversation</main>', { url: 'http://localhost', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        ...Object.fromEntries(['Node', 'Element', 'HTMLElement', 'HTMLImageElement', 'HTMLCanvasElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'CSSRule', 'XMLSerializer'].map(name => [name, dom.window[name]])),
+      });
+      let images = 0;
+      let native = 0;
+      globalThis.Image = class {
+        set src(value) { if (value) { images++; queueMicrotask(() => this.onload?.()); } }
+      };
+      dom.window.HTMLCanvasElement.prototype.getContext = () => ({ fillRect() {}, drawImage() {} });
+      dom.window.HTMLCanvasElement.prototype.toBlob = function (callback) { callback(new Blob(['synthetic-safe-raster'], { type: 'image/jpeg' })); };
+      const { captureFeedbackScreenshot } = await import('./src/web/lib/feedback-capture.ts');
+      const safe = '<main>Sent synthetic conversation</main><div contenteditable="true"><p><br></p></div><input><textarea></textarea><input type="checkbox" checked><input type="hidden" value="synthetic-hidden-metadata">';
+      const privateViews = [
+        ['collapsed handoff', '<div class="browser-handoff"><img src="synthetic-private-page.png"></div>'],
+        ['input draft', '<input value="Synthetic unsent private input">'],
+        ['textarea draft', '<textarea>Synthetic unsent private textarea</textarea>'],
+        ['rich chat draft', '<div contenteditable="true"><p>Synthetic <strong>unsent chat</strong></p></div>'],
+        ['plain chat draft', '<div contenteditable="plaintext-only">Synthetic unsent plain chat</div>'],
+        ['pending upload', '<div class="pending-attachments">Synthetic private attachment</div>'],
+      ];
+      const leaked = [];
+      try {
+        for (const mode of ['web', 'native']) {
+          window.ottoDesktop = mode === 'native' ? { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } } : undefined;
+          for (const [name, markup] of privateViews) {
+            document.body.innerHTML = markup;
+            if (name === 'input draft') document.querySelector('input').value = 'Synthetic changed input property';
+            const before = document.body.innerHTML;
+            const fields = [...document.querySelectorAll('input, textarea')].map(field => field.value);
+            const captures = images + native;
+            if ((await captureFeedbackScreenshot()) !== null || images + native !== captures) leaked.push(mode + ': ' + name);
+            assert.equal(document.body.innerHTML, before);
+            assert.deepEqual([...document.querySelectorAll('input, textarea')].map(field => field.value), fields);
+          }
+          document.body.innerHTML = safe;
+          const before = document.body.innerHTML;
+          const file = await captureFeedbackScreenshot();
+          assert.ok(file?.size, mode + ' empty composer');
+          assert.equal(document.body.innerHTML, before);
+        }
+        assert.deepEqual(leaked, []);
+        let release;
+        let started;
+        const requested = new Promise(resolve => started = resolve);
+        window.ottoDesktop = { captureFeedbackScreenshot: () => { native++; started(); return new Promise(resolve => release = resolve); } };
+        document.body.innerHTML = safe;
+        const pending = captureFeedbackScreenshot();
+        await requested;
+        document.querySelector('[contenteditable]').textContent = 'Synthetic draft typed during capture';
+        release(new Uint8Array([1, 2, 3]));
+        assert.equal(await pending, null);
+        assert.equal(document.querySelector('[contenteditable]').textContent, 'Synthetic draft typed during capture');
+        document.body.innerHTML = safe;
+        window.ottoDesktop = { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } };
+        const frame = window.requestAnimationFrame;
+        window.requestAnimationFrame = callback => frame(() => {
+          document.body.insertAdjacentHTML('beforeend', '<div class="browser-handoff">Synthetic newly opened remote page</div>');
+          callback(0);
+        });
+        const captures = native;
+        assert.equal(await captureFeedbackScreenshot(), null);
+        assert.equal(native, captures);
+      } finally {
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test('native Settings and feedback preserve the active credential form', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
@@ -3262,7 +3348,9 @@ test('native Settings and feedback preserve the active credential form', async (
       const preferences = { theme: 'system', resolvedTheme: 'light', launchAtLogin: false, notifications: false };
       let openSettings;
       let openFeedback;
+      let screenshotCaptures = 0;
       dom.window.ottoDesktop = {
+        captureFeedbackScreenshot: async () => { screenshotCaptures++; throw new Error('Private capture must not run'); },
         getSettings: async () => ({ ...preferences, hasComposioKey: false, keys: { composioApiKey: { suffix: null } }, restartRequired: false }),
         getPreferences: async () => preferences,
         onPreferences: () => () => {},
@@ -3301,6 +3389,7 @@ test('native Settings and feedback preserve the active credential form', async (
         assert.ok(openFeedback);
         await act(async () => openFeedback());
         assert.ok(document.querySelector('[role="dialog"].feedback-dialog'));
+        assert.equal(screenshotCaptures, 0);
         assert.equal(window.location.pathname, '/credentials/synthetic-form');
         assert.equal(document.querySelector('input[name="password"]'), password);
         assert.equal(password.value, 'synthetic-unsaved-password');
@@ -3448,11 +3537,85 @@ test('model sign-in cancellation reaches the server on dismissal, unmount and a 
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
+test('feedback draft storage isolates owners, preserves editable files and clears queued writes', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 15_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { indexedDB, IDBObjectStore } from 'fake-indexeddb';
+      globalThis.indexedDB = indexedDB;
+      const { loadFeedbackDraft, saveFeedbackDraft } = await import('./src/web/lib/feedback-draft.ts');
+      const original = new File(['synthetic-original-private-pixels'], 'capture.png', { type: 'image/png', lastModified: 1000 });
+      const rendered = new File(['synthetic-rendered-covered-pixels'], 'capture.png', { type: 'image/png', lastModified: 2000 });
+      const marks = [{ tool: 'redact', from: { x: 10, y: 20 }, to: { x: 70, y: 90 } }];
+      const first = {
+        category: 'feature', feedback: 'Synthetic idea draft', includeReport: false, pendingId: null,
+        attachments: [{ id: 'capture', file: rendered, image: { original, marks } }],
+      };
+      const second = {
+        category: 'other', feedback: 'Different synthetic owner', includeReport: true, pendingId: crypto.randomUUID(),
+        attachments: [{ id: 'log', file: new File(['synthetic log'], 'details.log', { type: 'text/plain' }) }],
+      };
+      const edited = { ...first, feedback: 'Updated synthetic idea' };
+      await Promise.all([
+        saveFeedbackDraft('owner-one', first),
+        saveFeedbackDraft('owner-two', second),
+        saveFeedbackDraft('owner-one', edited),
+      ]);
+      const restored = await loadFeedbackDraft('owner-one');
+      assert.equal(restored.feedback, edited.feedback);
+      assert.equal(restored.category, 'feature');
+      assert.equal(restored.includeReport, false);
+      assert.equal(restored.attachments[0].file.name, 'capture.png');
+      assert.equal(restored.attachments[0].file.lastModified, 2000);
+      assert.equal(await restored.attachments[0].file.text(), 'synthetic-rendered-covered-pixels');
+      assert.equal(await restored.attachments[0].image.original.text(), 'synthetic-original-private-pixels');
+      assert.deepEqual(restored.attachments[0].image.marks, marks);
+      assert.equal((await loadFeedbackDraft('owner-two')).pendingId, second.pendingId);
+      assert.equal(await loadFeedbackDraft('owner-three'), null);
+      await assert.rejects(loadFeedbackDraft(''), /owner/);
+      const pendingSave = saveFeedbackDraft('owner-one', first);
+      const clear = saveFeedbackDraft('owner-one', null);
+      await Promise.all([pendingSave, clear]);
+      assert.equal(await loadFeedbackDraft('owner-one'), null);
+      assert.equal((await loadFeedbackDraft('owner-two')).feedback, second.feedback);
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function () { throw new DOMException('Synthetic quota failure', 'QuotaExceededError'); };
+      try {
+        await assert.rejects(saveFeedbackDraft('owner-two', first));
+        assert.equal((await loadFeedbackDraft('owner-two')).feedback, second.feedback);
+      } finally {
+        IDBObjectStore.prototype.put = put;
+      }
+      await saveFeedbackDraft('owner-two', edited);
+      assert.equal((await loadFeedbackDraft('owner-two')).feedback, edited.feedback);
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('otto-feedback', 1);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('drafts', 'readwrite');
+        const store = tx.objectStore('drafts');
+        const request = store.get('owner-two');
+        request.onsuccess = () => store.put({ ...request.result, ownerId: 'owner-two' }, 'owner-one');
+        tx.oncomplete = resolve;
+        tx.onerror = reject;
+      });
+      db.close();
+      await assert.rejects(loadFeedbackDraft('owner-one'), /restored/);
+      assert.equal((await loadFeedbackDraft('owner-two')).feedback, edited.feedback);
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test('feedback copies the submitted snapshot and cancels pending copies when closed', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: `
       import assert from 'node:assert/strict';
+      import 'fake-indexeddb/auto';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<div id="root"></div>', {
         url: 'http://localhost',
@@ -3463,12 +3626,14 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         document: dom.window.document,
         getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
         IS_REACT_ACT_ENVIRONMENT: true,
-        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'File', 'FileReader', 'MutationObserver'].map(name => [name, dom.window[name]])),
       });
+      URL.createObjectURL = () => 'blob:synthetic-image';
+      URL.revokeObjectURL = () => {};
       const copies = [];
       Object.defineProperty(globalThis, 'navigator', {
         configurable: true,
-        value: { userAgent: dom.window.navigator.userAgent, platform: 'MacIntel', clipboard: { writeText: async text => copies.push(text) } },
+        value: { userAgent: dom.window.navigator.userAgent, platform: 'MacIntel', language: 'en-GB', languages: ['en-GB'], clipboard: { writeText: async text => copies.push(text) } },
       });
       const requests = [];
       const reports = [];
@@ -3487,8 +3652,9 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         if (path === '/api/feedback') {
           const body = JSON.parse(options.body);
           submissions.push(body);
-          return Response.json({ submissionId: body.submissionId, status: 'submitted' });
+          return Response.json({ submissionId: body.submissionId, status: submissions.length === 1 ? 'unknown' : 'submitted' });
         }
+        if (path.startsWith('/api/feedback/')) return Response.json({ submissionId: path.split('/').at(-1), status: 'submitted' });
         throw new Error('Unexpected fixture request: ' + path);
       };
       const { act, createElement, useState } = await import('react');
@@ -3506,9 +3672,13 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         const button = [...document.querySelectorAll('button')].find(candidate => candidate.textContent === label);
         assert.ok(button, label);
         await act(async () => button.click());
+        for (let attempt = 0; attempt < 100 && document.querySelector('.feedback-dialog[data-busy="true"]'); attempt++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
       };
-      const continueForm = async () => {
+      const submitForm = async () => {
         await act(async () => document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+        for (let attempt = 0; attempt < 100 && document.querySelector('.feedback-dialog[data-busy="true"]'); attempt++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
       };
       const writeFeedback = async value => {
         await act(async () => {
@@ -3519,26 +3689,59 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
       };
       try {
         await act(async () => root.render(createElement(Fixture)));
+        for (let attempt = 0; attempt < 100 && document.querySelector('textarea').disabled; attempt++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
         await click('Copy trace');
         assert.equal(reports.length, 1);
         assert.equal(submissions.length, 0);
-        await continueForm();
         await writeFeedback('Synthetic feedback');
-        await continueForm();
+        const bytes = Uint8Array.from([137,80,78,71,13,10,26,10]);
+        const file = new File([bytes], 'synthetic-paste.png', { type: 'image/png' });
+        const paste = new Event('paste', { bubbles: true, cancelable: true });
+        Object.defineProperty(paste, 'clipboardData', { value: {
+          files: [file], items: [], getData: type => type === 'text/plain' ? 'Synthetic pasted text' : '',
+        } });
+        await act(async () => document.querySelector('textarea').dispatchEvent(paste));
+        assert.equal(paste.defaultPrevented, false);
+        const dropped = new File(['Synthetic log entry'], 'synthetic-drop.log');
+        const details = new File(['{"status":"synthetic"}'], 'details.json', { type: 'application/json' });
+        const drop = new Event('drop', { bubbles: true, cancelable: true });
+        Object.defineProperty(drop, 'dataTransfer', { value: { files: [dropped, details], types: ['Files'] } });
+        await act(async () => document.querySelector('textarea').dispatchEvent(drop));
+        assert.equal(drop.defaultPrevented, true);
         assert.equal(reports.length, 1);
         await act(async () => reports[0].resolve(Response.json(snapshot)));
         assert.deepEqual(copies, [snapshot.content]);
-        await click('Review report');
-        assert.equal(document.querySelector('[aria-label="Diagnostic report"]').textContent, copies[0]);
-        await continueForm();
+        await click('Review');
+        assert.equal(document.querySelector('pre[aria-label="Diagnostic report"]').textContent, copies[0]);
+        await submitForm();
+        for (let attempt = 0; submissions.length < 1 && attempt < 50; attempt++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
         assert.equal(submissions.length, 1);
         assert.equal(submissions[0].reportId, snapshot.id);
         assert.equal(submissions[0].feedback, 'Synthetic feedback');
+        assert.deepEqual(submissions[0].attachments, [
+          { name: 'synthetic-paste.png', mimeType: 'image/png', data: 'iVBORw0KGgo=' },
+          { name: 'synthetic-drop.log', mimeType: 'text/plain', data: Buffer.from('Synthetic log entry').toString('base64') },
+          { name: 'details.json', mimeType: 'application/json', data: Buffer.from('{"status":"synthetic"}').toString('base64') },
+        ]);
         assert.equal(submissions[0].source, 'local-web');
         assert.equal(submissions[0].appVersion, null);
         assert.equal(submissions[0].appRelease, 'synthetic-runtime-commit');
         assert.equal(submissions[0].appModified, true);
         assert.equal(submissions[0].platform, 'MacIntel');
+        assert.equal(document.querySelector('textarea').disabled, true);
+        const actualNow = Date.now;
+        Date.now = () => actualNow() + 3_600_000;
+        try {
+          await click('Hide');
+          await click('Review');
+          assert.equal(reports.length, 1);
+          assert.equal(document.querySelector('pre[aria-label="Diagnostic report"]').textContent, snapshot.content);
+        } finally {
+          Date.now = actualNow;
+        }
+        await click('Check submission status');
         assert.equal(document.querySelector('[role="dialog"]'), null);
         window.ottoDesktop = { getFeedbackContext: async () => ({
           computerName: 'Synthetic Device Name', appVersion: '1.2.3', appRelease: null, appModified: null,
@@ -3558,12 +3761,10 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         assert.deepEqual(copies, [snapshot.content, 'Fresh synthetic trace']);
         assert.equal(submissions.length, 1);
         assert.equal(requests.includes('/api/conversation/bug-report'), false);
-        await continueForm();
         await writeFeedback('Synthetic desktop feedback');
-        await continueForm();
         assert.equal(reports.length, 3);
         assert.equal(document.body.textContent.includes('Synthetic Device Name'), false);
-        await continueForm();
+        await submitForm();
         assert.equal(submissions.length, 2);
         assert.equal(submissions[1].computerName, 'Synthetic Device Name');
         assert.equal(submissions[1].source, 'desktop');
@@ -3571,6 +3772,29 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         assert.equal(submissions[1].appRelease, 'synthetic-runtime-commit');
         assert.equal(submissions[1].appModified, true);
         assert.equal(submissions[1].platform, 'darwin-arm64');
+        for (const [category, label] of [['feature', 'Idea'], ['other', 'Other']]) {
+          await act(async () => document.querySelector('[data-open]').click());
+          await click(label);
+          const reportIndex = reports.length;
+          await writeFeedback('Synthetic context for ' + category);
+          assert.equal(reports.length, reportIndex + 1);
+          const categorySnapshot = { ...snapshot, id: crypto.randomUUID() };
+          await act(async () => reports[reportIndex].resolve(Response.json(categorySnapshot)));
+          await submitForm();
+          assert.equal(submissions.at(-1).category, category);
+          assert.equal(submissions.at(-1).reportId, categorySnapshot.id);
+          assert.equal(document.querySelector('[role="dialog"]'), null);
+        }
+        await act(async () => document.querySelector('[data-open]').click());
+        await act(async () => document.querySelector('input[type="checkbox"]').click());
+        await click('Idea');
+        await click('Other');
+        const reportCount = reports.length;
+        await writeFeedback('Synthetic feedback with diagnostics excluded');
+        await submitForm();
+        assert.equal(reports.length, reportCount);
+        assert.equal(submissions.at(-1).category, 'other');
+        assert.equal(submissions.at(-1).reportId, null);
       } finally {
         await act(async () => root.unmount());
         dom.window.close();

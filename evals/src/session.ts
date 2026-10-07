@@ -25,6 +25,8 @@ export interface Session {
   ): Promise<void>;
   upload(name: string, bytes: Buffer, mimeType?: string): Promise<string>;
   fireSchedules(): Promise<number>;
+  event(summary: string): Promise<string>;
+  waitForTurn(turnId: string): Promise<void>;
   settle(): Promise<void>;
   reset(): Promise<void>;
   assistantCount(): Promise<number>;
@@ -295,6 +297,17 @@ export function createSession(options: {
       return expected;
     },
     settle,
+    event: stack.event,
+    async waitForTurn(turnId) {
+      while (Date.now() < deadline) {
+        const result = await pool.query('SELECT status FROM turns WHERE id=$1', [turnId]);
+        const status = result.rows[0]?.status;
+        if (!status) throw new Error('The observed turn does not exist.');
+        if (status !== 'queued' && status !== 'running') return;
+        await sleep(250);
+      }
+      throw new Error('The scenario exceeded its time limit.');
+    },
     async reset() {
       taskFrom = userMessages.length;
       await stack.resetConversation();

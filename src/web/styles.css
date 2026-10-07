@@ -1205,13 +1205,6 @@ input[type='range']:disabled {
     opacity: 1;
   }
 }
-.stream-cursor {
-  display: inline-block;
-  height: 12px;
-  width: 3px;
-  background: var(--accent);
-  animation: pulse 1s infinite;
-}
 .chat-bottom {
   position: relative;
   padding-top: 16px;

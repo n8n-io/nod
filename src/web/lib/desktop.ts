@@ -39,6 +39,7 @@ type DesktopWindow = Window & {
     openExternal(url: string): Promise<void>;
     getPreferences(): Promise<DesktopPreferences>;
     getFeedbackContext?(): Promise<DesktopFeedbackContext>;
+    captureFeedbackScreenshot?(): Promise<Uint8Array | null>;
     onFeedbackRequested?(listener: () => void): () => void;
     setTheme(theme: DesktopPreferences['theme']): Promise<DesktopPreferences>;
     onPreferences(listener: (preferences: DesktopPreferences) => void): () => void;
@@ -149,6 +150,10 @@ export async function openConnection(url: string) {
 
 export function desktopFeedbackContext() {
   return (window as DesktopWindow).ottoDesktop?.getFeedbackContext?.();
+}
+
+export function desktopFeedbackScreenshot() {
+  return (window as DesktopWindow).ottoDesktop?.captureFeedbackScreenshot?.();
 }
 
 export function onFeedbackRequested(listener: () => void) {

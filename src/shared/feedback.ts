@@ -7,6 +7,62 @@ export const feedbackLimits = {
   requestBytes: 7 * 1024 * 1024,
 };
 
+export const feedbackAttachmentMimeTypes = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/pdf',
+  'text/plain',
+  'application/json',
+  'text/csv',
+] as const;
+
+export type FeedbackAttachmentMimeType = (typeof feedbackAttachmentMimeTypes)[number];
+
+const attachmentExtensions: Record<string, FeedbackAttachmentMimeType> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  log: 'text/plain',
+  md: 'text/plain',
+  json: 'application/json',
+  csv: 'text/csv',
+};
+
+export const feedbackAttachmentAccept = [
+  ...feedbackAttachmentMimeTypes,
+  ...Object.keys(attachmentExtensions).map((extension) => `.${extension}`),
+].join(',');
+
+export function feedbackAttachmentMimeType(file: {
+  name: string;
+  type: string;
+}): FeedbackAttachmentMimeType | null {
+  const type = file.type.split(';')[0].trim().toLowerCase();
+  const suffix = /\.([^.]+)$/.exec(file.name)?.[1].toLowerCase() ?? '';
+  const extension = Object.hasOwn(attachmentExtensions, suffix)
+    ? attachmentExtensions[suffix]
+    : undefined;
+  if (
+    extension &&
+    [
+      '',
+      'application/octet-stream',
+      'text/plain',
+      'text/markdown',
+      'text/json',
+      'application/vnd.ms-excel',
+    ].includes(type)
+  )
+    return extension;
+  return (feedbackAttachmentMimeTypes as readonly string[]).includes(type)
+    ? (type as FeedbackAttachmentMimeType)
+    : null;
+}
+
 export interface FeedbackContext {
   enabled: boolean;
   appVersion: string | null;
@@ -26,7 +82,7 @@ export interface FeedbackReport {
 
 export interface FeedbackAttachment {
   name: string;
-  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  mimeType: FeedbackAttachmentMimeType;
   data: string;
 }
 

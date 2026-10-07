@@ -100,6 +100,8 @@ test('anonymous webhook validation rejects altered payloads before reaching Line
   const require = createRequire(import.meta.url);
   const validate = (body) => run({ first: () => ({ json: { body } }) }, require)[0].json;
   assert.equal(validate(body).submissionId, submissionId);
+  for (const category of ['feature', 'other'])
+    assert.equal(validate(envelope({ category })).submissionId, submissionId);
   assert.equal(validate({ ...body, feedback: 'Changed' }).httpStatus, 400);
   assert.equal(validate({}).httpStatus, 400);
 });
@@ -119,10 +121,12 @@ test('feedback bytes and metadata are bound to the canonical hash', () => {
     { report: file('{}') },
   ])
     assert.equal(checkFeedback({ ...value, ...changes }, hashFeedback).receipt.status, 'rejected');
-  for (const category of ['feature', 'other']) {
-    const feedback = checkFeedback(envelope({ category, report: undefined }), hashFeedback);
-    assert.equal(feedback.files.length, 0);
-    assert.match(feedback.description, /App version: 0\.1\.2/);
+  for (const category of ['bug', 'feature', 'other']) {
+    for (const report of [undefined, file('{"synthetic":true}')]) {
+      const feedback = checkFeedback(envelope({ category, report }), hashFeedback);
+      assert.equal(feedback.files.length, report ? 1 : 0);
+      assert.match(feedback.description, /App version: 0\.1\.2/);
+    }
   }
   for (const source of ['desktop', 'local-web', 'hosted-web']) {
     const feedback = checkFeedback(
@@ -131,10 +135,6 @@ test('feedback bytes and metadata are bound to the canonical hash', () => {
     );
     assert.equal(feedback.submissionId, submissionId);
   }
-  assert.equal(
-    checkFeedback(envelope({ category: 'feature' }), hashFeedback).receipt.status,
-    'rejected',
-  );
   assert.equal(
     checkFeedback(envelope({ submissionId: [submissionId] }), hashFeedback).receipt.status,
     'rejected',
@@ -150,6 +150,18 @@ test('feedback rejects malformed and oversized content before Linear', () => {
     { report: { ...file('{}'), sha256: '0'.repeat(64) } },
     { attachments: [file('not PNG', 'image/png', 'image.png')] },
     { attachments: [file('value', 'image/svg+xml', 'image.svg')] },
+    { attachments: [file('not PDF', 'application/pdf', 'example.pdf')] },
+    { attachments: [file(Buffer.from([0xc3, 0x28]), 'text/plain', 'invalid.txt')] },
+    { attachments: [file('contains\0binary', 'text/plain', 'invalid.log')] },
+    { attachments: [file('not JSON', 'application/json', 'invalid.json')] },
+    { attachments: [file(Buffer.from([0xff]), 'text/csv', 'invalid.csv')] },
+    { attachments: [file('x'.repeat(2 * 1024 * 1024 + 1), 'text/plain', 'oversized.txt')] },
+    { attachments: Array.from({ length: 4 }, () => file('text', 'text/plain', 'extra.txt')) },
+    {
+      attachments: Array.from({ length: 3 }, () =>
+        file('x'.repeat(1_500_000), 'text/plain', 'large.txt'),
+      ),
+    },
     { report: file('{}', 'application/json', '../report.json') },
     { projectId: 'arbitrary' },
     { report: 0 },
@@ -164,6 +176,39 @@ test('feedback rejects malformed and oversized content before Linear', () => {
   ];
   for (const changes of cases)
     assert.equal(checkFeedback(envelope(changes), hashFeedback).receipt.status, 'rejected');
+});
+
+test('document attachments preserve their MIME, bytes and hashes through webhook validation and private upload', () => {
+  const jsCode = feedbackWorkflowNodes().find((node) => node.name === 'Validate feedback')
+    .parameters.jsCode;
+  const run = new Function('$input', 'require', jsCode);
+  const require = createRequire(import.meta.url);
+  const files = [
+    file('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF', 'application/pdf', 'example.pdf'),
+    file('Synthetic café report\nwith a second line.', 'text/plain', 'example.txt'),
+    file('Synthetic event\tcompleted\r\n', 'text/plain', 'example.log'),
+    file('# Synthetic report\n\nDetails.', 'text/plain', 'example.md'),
+    file('\ufeff{"synthetic":true}', 'application/json', 'example.json'),
+    file('name,status\r\nsynthetic,complete\r\n', 'text/csv', 'example.csv'),
+  ];
+  for (const original of files) {
+    const body = envelope({ report: undefined, attachments: [original] });
+    const validated = run({ first: () => ({ json: { body } }) }, require)[0].json;
+    assert.equal(validated.submissionId, submissionId, original.name);
+    assert.equal(validated.files.length, 1);
+    const prepared = prepareFeedbackUpload(upload, validated.files[0], validated, hashFeedback);
+    assert.equal(prepared.binary.file.mimeType, original.mimeType);
+    assert.equal(prepared.binary.file.data, original.data);
+    assert.equal(prepared.json.headers['content-type'], original.mimeType);
+    assert.equal(prepared.json.attachment.metadata.sha256, original.sha256);
+    assert.equal(
+      checkFeedback(
+        { ...body, attachments: [{ ...original, data: file('changed').data }] },
+        hashFeedback,
+      ).receipt.status,
+      'rejected',
+    );
+  }
 });
 
 test('AI issue formatting preserves the original feedback and trusted receipt metadata', () => {
@@ -221,7 +266,12 @@ test('AI issue formatting preserves the original feedback and trusted receipt me
 });
 
 test('the AI formatting request includes only user-written feedback and its category', () => {
-  const request = checkFeedback(envelope(), hashFeedback);
+  const request = checkFeedback(
+    envelope({
+      attachments: [file('Synthetic private attachment content', 'text/plain', 'private.txt')],
+    }),
+    hashFeedback,
+  );
   const node = feedbackWorkflowNodes().find((node) => node.name === 'Draft Linear issue');
   const expression = node.parameters.responses.values[0].content;
   const evaluate = new Function('$', `return (${expression.slice(3, -2)});`);
@@ -435,6 +485,23 @@ test('explicit repair selects only missing files on the original issue', () => {
       .receipt.status,
     'partial',
   );
+  for (const category of ['feature', 'other']) {
+    const original = envelope({ category });
+    const submitted = checkFeedback(original, hashFeedback);
+    const retry = checkFeedback({ ...original, action: 'repair' }, hashFeedback);
+    const needsRepair = feedbackReceipt(response(submitted), retry, 'initial', feedbackWorkflow);
+    assert.equal(needsRepair.create, false);
+    assert.equal(retry.payloadHash, submitted.payloadHash);
+    assert.equal(needsRepair.files[0].data, original.report.data);
+    assert.equal(needsRepair.files[0].sha256, original.report.sha256);
+    assert.equal(
+      checkFeedback(
+        { ...original, report: file('{"changed":true}'), action: 'repair' },
+        hashFeedback,
+      ).receipt.status,
+      'rejected',
+    );
+  }
 });
 
 test('private upload preserves bytes and returned headers without forwarding API credentials', () => {

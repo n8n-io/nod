@@ -557,6 +557,43 @@ async function feedbackContext() {
   };
 }
 
+async function captureFeedbackScreenshot(event) {
+  const window = [...engineWindows].find((window) => event.sender === window.webContents);
+  const url = event.senderFrame.url;
+  if (
+    !window?.isVisible() ||
+    /^\/(?:vault|credentials|browser|browser-connect|onboarding)(?:\/|$)/.test(
+      new URL(url).pathname,
+    )
+  )
+    return null;
+  const contents = event.sender;
+  const safe = async () =>
+    isEngine(event) &&
+    contents.getURL() === url &&
+    (await contents.executeJavaScript(`!document.querySelector(
+      '[data-analytics-private], .browser-handoff, .pending-attachments, input[type="password"], input[autocomplete="one-time-code"], input[autocomplete="current-password"], input[autocomplete="new-password"], dialog[open], [role="dialog"]:not(.feedback-intro), [role="alertdialog"], iframe, webview'
+    ) && !Array.from(document.querySelectorAll('input, textarea, [contenteditable]')).some((element) => {
+      if (element instanceof HTMLInputElement)
+        return !['hidden', 'button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color'].includes(element.type) && !!element.value;
+      if (element instanceof HTMLTextAreaElement) return !!element.value;
+      return element.getAttribute('contenteditable')?.toLowerCase() !== 'false' &&
+        (!!element.textContent?.trim() || !!element.querySelector('img, canvas, video, audio, svg, iframe, object, embed'));
+    })`));
+  if (!(await safe())) return null;
+  let image = await contents.capturePage(undefined, { stayHidden: true });
+  if (image.isEmpty() || !(await safe())) return null;
+  const { width, height } = image.getSize();
+  const scale = Math.min(1, 1600 / Math.max(width, height));
+  if (scale < 1)
+    image = image.resize({
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale)),
+    });
+  const bytes = image.toJPEG(85);
+  return bytes.length && bytes.length <= 2 * 1024 * 1024 ? bytes : null;
+}
+
 function availablePort() {
   return new Promise((accept, reject) => {
     const socket = createServer();
@@ -1172,6 +1209,10 @@ else {
       ipcMain.handle('otto:feedback:context', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return feedbackContext();
+      });
+      ipcMain.handle('otto:feedback:capture', (event) => {
+        if (!isEngine(event)) throw new Error('This action is unavailable.');
+        return captureFeedbackScreenshot(event).catch(() => null);
       });
       ipcMain.handle('otto:preferences:get', (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');

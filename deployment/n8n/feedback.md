@@ -10,7 +10,7 @@ The installed [Linear node](https://github.com/n8n-io/n8n/blob/master/packages/n
 
 The OpenAI step receives only the feedback category and the user's written description. It requests a concise English title and a Markdown description using `gpt-5.4-mini` with a JSON schema, no tools and response storage disabled. Code validates the result before using it. The instructions preserve uncertainty and forbid invented reproduction steps, causes, fixes or verification claims.
 
-Code appends the original feedback unchanged, reporting context and the receipt marker. Diagnostics, screenshots, computer names and build metadata do not enter the formatting prompt. Invalid, incomplete or failed model responses fall back to the first nonempty feedback line as the title and the complete original message as the description. Existing submissions, status checks and attachment repairs bypass the model.
+Code appends the original feedback unchanged, reporting context and the receipt marker. Diagnostics, attachments, computer names and build metadata do not enter the formatting prompt. Invalid, incomplete or failed model responses fall back to the first nonempty feedback line as the title and the complete original message as the description. Existing submissions, status checks and attachment repairs bypass the model.
 
 ## Intake contract
 
@@ -20,7 +20,7 @@ Reporting context includes source (`desktop`, `local-web` or `hosted-web`), deve
 
 Diagnostic reports include recent user and assistant conversation messages. Tool activity uses Inspector records when capture is enabled and records exist. Installed apps and other sessions without Inspector capture use a bounded projection of recent saved tool calls and results. That tool projection excludes prompts, reasoning, binary blocks and private credential, flow and memory payloads, while preserving tool outcome and original timing. Both trace sources retain the same redaction and size limits. If the saved session cannot be read, report generation stops because credentials needed to redact mirrored values may be unavailable; the user can retry or remove the report before submitting feedback.
 
-Feedback text is limited to 12,000 characters. A diagnostic report is accepted only for the bug category and is limited to 512 KiB. Screenshots are PNG, JPEG or WebP, at most three files, 2 MiB per file and 4 MiB together. The entire JSON request is at most 7 MiB.
+Feedback text is limited to 12,000 characters. Diagnostics are selected by default for every category and can be removed before submission. A diagnostic report is limited to 512 KiB. Attachments support PNG, JPEG, WebP, PDF, UTF-8 plain text (TXT, LOG and Markdown), JSON and CSV: at most three files, 2 MiB per file and 4 MiB together. The entire JSON request is at most 7 MiB.
 
 `payloadHash` is SHA-256 over JSON with this exact property order, excluding `payloadHash` and `action`:
 
@@ -42,7 +42,7 @@ Feedback text is limited to 12,000 characters. A diagnostic report is accepted o
 }
 ```
 
-Each file carries its name, MIME type, canonical base64 bytes and SHA-256. The workflow verifies hashes, byte limits, report JSON and screenshot signatures before accessing Linear or the model. These checks detect corruption and bind retries; they do not authenticate the reporter. Computer names and client-supplied context remain unverified.
+Each file carries its name, MIME type, canonical base64 bytes and SHA-256. The server and workflow verify byte limits, image and PDF signatures, lossless UTF-8 text without NUL bytes, and valid JSON. The workflow also verifies every file hash and the complete envelope hash before accessing Linear or the model. These checks detect corruption and bind retries; they do not authenticate the reporter. Computer names and client-supplied context remain unverified.
 
 The same endpoint accepts `{ action: 'status', submissionId, payloadHash }` for a read-only check, or the original envelope with `action: 'repair'` to attach missing files to the original issue. Repair never creates an issue. A confirmed rejection uses HTTP 400 with a matching submission receipt; arbitrary HTTP errors remain uncertain in the app.
 

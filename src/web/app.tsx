@@ -16,6 +16,7 @@ import { ChatSkeleton, Splash } from './components/startup';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
 import { FeedbackDialog } from './components/feedback';
+import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { navigationItems } from './lib/navigation';
 import { BrowserWindow } from './pages/browser';
 import { readUiPreference, writeUiPreference } from './lib/ui-preferences';
@@ -223,6 +224,7 @@ function Workspace({
             >
               {visibleState ? (
                 <Chat
+                  ownerId={session.user!.id}
                   state={visibleState}
                   streams={streams}
                   refresh={refresh}
@@ -299,12 +301,28 @@ function AuthenticatedApp({
   onFeedbackHandled(): void;
 }) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackScreenshot, setFeedbackScreenshot] = useState<File | null>(null);
+  const feedbackCapture = useRef<Promise<File | null> | null>(null);
   const feedbackTrigger = useRef<HTMLElement | null>(null);
-  const openFeedback = () => {
+  const openFeedback = async () => {
+    if (feedbackOpen || feedbackCapture.current) return;
     feedbackTrigger.current =
       document.activeElement !== document.body ? (document.activeElement as HTMLElement) : null;
+    const capture = captureFeedbackScreenshot().catch(() => null);
+    feedbackCapture.current = capture;
+    const screenshot = await capture;
+    if (feedbackCapture.current !== capture) return;
+    feedbackCapture.current = null;
+    setFeedbackScreenshot(screenshot);
     setFeedbackOpen(true);
   };
+  useEffect(() => {
+    setFeedbackOpen(false);
+    setFeedbackScreenshot(null);
+    return () => {
+      feedbackCapture.current = null;
+    };
+  }, [session.user!.id]);
   useEffect(() => {
     if (!feedbackRequest) return;
     openFeedback();
@@ -428,7 +446,9 @@ function AuthenticatedApp({
       )}
       {settingsError && !workspace && <Notice>{settingsError}</Notice>}
       <FeedbackDialog
+        key={session.user!.id}
         ownerId={session.user!.id}
+        screenshot={feedbackScreenshot}
         open={feedbackOpen}
         onOpenChange={setFeedbackOpen}
         returnFocus={() =>
