@@ -23,7 +23,7 @@ export function setRequestAccount(id: string | null) {
 async function request<T>(
   path: string,
   options: RequestInit,
-  consume: (response: Response) => Promise<T>,
+  consume: (response: Response, signal?: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const headers = new Headers(options.headers);
   if (options.body && !(options.body instanceof FormData))
@@ -37,16 +37,17 @@ async function request<T>(
     headers.set('X-Otto-Account', expectedAccount);
     privateRequests.add(controller!);
   }
+  const signal = controller
+    ? options.signal
+      ? AbortSignal.any([controller.signal, options.signal])
+      : controller.signal
+    : (options.signal ?? undefined);
   try {
     const response = await fetch(path, {
       ...options,
       headers,
       credentials: 'same-origin',
-      signal: controller
-        ? options.signal
-          ? AbortSignal.any([controller.signal, options.signal])
-          : controller.signal
-        : options.signal,
+      signal,
     });
     if (
       controller?.signal.aborted ||
@@ -61,7 +62,7 @@ async function request<T>(
       !options.signal?.aborted
     )
       window.dispatchEvent(new Event('otto:unauthorized'));
-    const result = await consume(response);
+    const result = await consume(response, signal);
     if (
       controller?.signal.aborted ||
       options.signal?.aborted ||
@@ -100,6 +101,17 @@ export function apiResponse(path: string, options: RequestInit = {}): Promise<Re
         headers: response.headers,
       }),
   );
+}
+
+export function apiStream(
+  path: string,
+  options: RequestInit,
+  consume: (body: ReadableStream<Uint8Array>, signal?: AbortSignal) => Promise<void>,
+) {
+  return request(path, options, async (response, signal) => {
+    if (!response.ok || !response.body) throw new Error('The browser view could not connect.');
+    await consume(response.body, signal);
+  });
 }
 
 export function post<T>(path: string, body: unknown = {}) {

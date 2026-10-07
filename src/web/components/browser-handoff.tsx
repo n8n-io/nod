@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, Maximize2, Minimize2, RotateCw } from 'lucide-react';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
-import { errorMessage, post } from '../lib/api';
+import { apiStream, errorMessage, post } from '../lib/api';
+import { browserFrames } from '../lib/browser-frames';
 import { BrandMark } from './brand';
 import { Button, Loading } from './ui';
 
@@ -30,6 +31,11 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   const pending = useRef<BrowserHandoffInput[]>([]);
   const sending = useRef<Promise<void> | null>(null);
   const view = useRef(crypto.randomUUID());
+  const imageLoad = useRef<{
+    url: string;
+    resolve: () => void;
+    reject: (reason: unknown) => void;
+  } | null>(null);
   const pressed = useRef<{ x: number; y: number; button: (typeof buttons)[number] } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [live, setLive] = useState(false);
@@ -41,6 +47,8 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   const [closed, setClosed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [naturalWidth, setNaturalWidth] = useState(0);
+  const [frame, setFrame] = useState('');
+  const unavailable = failures >= 3;
 
   function flush(): Promise<void> {
     sending.current ??= (async () => {
@@ -183,6 +191,70 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   }
 
   useEffect(() => {
+    if (closed || unavailable) return;
+    const controller = new AbortController();
+    let activeSignal: AbortSignal | undefined = controller.signal;
+    let current = '';
+    const release = () => {
+      if (imageLoad.current?.url === current) imageLoad.current = null;
+      if (current) URL.revokeObjectURL(current);
+      current = '';
+    };
+    setLive(false);
+    setShown(false);
+    setFrame('');
+    void apiStream(
+      `/api/browser-handoff/stream?view=${view.current}-${attempt}`,
+      { signal: controller.signal },
+      (body, signal) => {
+        activeSignal = signal;
+        return browserFrames(
+          body,
+          (bytes) =>
+            new Promise<void>((resolve, reject) => {
+              signal?.throwIfAborted();
+              const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
+              release();
+              current = url;
+              const finish = (error?: unknown) => {
+                window.clearTimeout(timeout);
+                signal?.removeEventListener('abort', abort);
+                if (imageLoad.current?.url === url) imageLoad.current = null;
+                if (error) reject(error);
+                else resolve();
+              };
+              const abort = () => finish(signal?.reason);
+              const timeout = window.setTimeout(
+                () => finish(new Error('The browser frame did not load.')),
+                10_000,
+              );
+              imageLoad.current = { url, resolve: () => finish(), reject: finish };
+              signal?.addEventListener('abort', abort, { once: true });
+              setFrame(url);
+            }),
+        );
+      },
+    )
+      .catch((reason) => {
+        if (controller.signal.aborted) return;
+        setLive(false);
+        if (
+          activeSignal?.aborted ||
+          (reason instanceof DOMException && reason.name === 'AbortError')
+        ) {
+          setClosed(true);
+          return;
+        }
+        setFailures((value) => value + 1);
+      })
+      .finally(release);
+    return () => {
+      controller.abort();
+      release();
+    };
+  }, [attempt, closed, expanded, unavailable]);
+
+  useEffect(() => {
     if (closed || live || failures >= 3) return;
     const timer = window.setTimeout(() => setFailures((value) => value + 1), 15_000);
     return () => window.clearTimeout(timer);
@@ -222,7 +294,6 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
 
   if (closed) return null;
   const busy = returning || loading !== null;
-  const unavailable = failures >= 3;
   const status =
     error ||
     (live
@@ -276,19 +347,21 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
         {!unavailable && (
           <img
             key={attempt}
-            src={`/api/browser-handoff/stream?view=${view.current}-${attempt}`}
+            src={frame || undefined}
             alt="Otto's browser"
             draggable={false}
             hidden={!shown}
             onLoad={(event) => {
+              if (imageLoad.current?.url !== event.currentTarget.src) return;
               setLive(true);
               setShown(true);
               setFailures(0);
               setNaturalWidth(event.currentTarget.naturalWidth);
+              imageLoad.current.resolve();
             }}
-            onError={() => {
-              setLive(false);
-              setFailures((value) => value + 1);
+            onError={(event) => {
+              if (imageLoad.current?.url !== event.currentTarget.src) return;
+              imageLoad.current?.reject(new Error('The browser frame could not load.'));
             }}
             onMouseMove={(event) => mouse(event, 'move')}
             onMouseDown={(event) => mouse(event, 'down')}

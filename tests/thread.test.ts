@@ -5044,3 +5044,47 @@ test('feedback context identifies the running source checkout and keeps hosted r
   assert.equal(production.appModified, null);
   assert.equal(production.development, false);
 });
+
+test('feedback context reads macOS computer names and falls back without reading hosted machines', async (t) => {
+  const os = (await import('node:os')).default;
+  const childProcess = (await import('node:child_process')).default;
+  const { feedbackContext } = await import('../src/server/feedback-context.ts');
+  const platform = t.mock.method(os, 'platform', () => 'darwin');
+  const hostname = t.mock.method(os, 'hostname', () => 'synthetic-hostname');
+  let output = '  Synthetic Mac\n';
+  let error: Error | undefined;
+  const execute = t.mock.fn(async (file: string, args: string[]) => {
+    assert.equal(file, '/usr/sbin/scutil');
+    assert.deepEqual(args, ['--get', 'ComputerName']);
+    if (error) throw error;
+    return { stdout: output, stderr: '' };
+  });
+  const original = childProcess.execFile;
+  childProcess.execFile = Object.assign(original.bind(childProcess), {
+    [promisify.custom]: execute,
+  });
+  t.after(() => {
+    childProcess.execFile = original;
+  });
+  const environment = { NODE_ENV: 'production' };
+  const preferred = await feedbackContext({ runtimeMode: 'local', environment });
+  assert.equal(preferred.computerName, 'Synthetic Mac');
+  assert.equal(hostname.mock.callCount(), 0);
+  output = ' \n';
+  const empty = await feedbackContext({ runtimeMode: 'local', environment });
+  assert.equal(empty.computerName, 'synthetic-hostname');
+  assert.equal(hostname.mock.callCount(), 1);
+  error = new Error('Synthetic scutil failure');
+  const failed = await feedbackContext({ runtimeMode: 'local', environment });
+  assert.equal(failed.computerName, 'synthetic-hostname');
+  assert.equal(hostname.mock.callCount(), 2);
+  assert.equal(execute.mock.callCount(), 3);
+  const platformReads = platform.mock.callCount();
+  for (const runtimeMode of ['tenant', 'gateway'] as const) {
+    const hosted = await feedbackContext({ runtimeMode, environment });
+    assert.equal(hosted.computerName, null);
+    assert.equal(platform.mock.callCount(), platformReads);
+    assert.equal(hostname.mock.callCount(), 2);
+    assert.equal(execute.mock.callCount(), 3);
+  }
+});

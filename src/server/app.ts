@@ -563,21 +563,28 @@ export async function createApp(dependencies: AppDependencies = {}) {
         ),
       1000,
     );
-    const opening = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, 10_000);
-    let abortOpening = () => {};
+    async function firstFrame() {
+      const opening = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 10_000);
+      let abortOpening = () => {};
+      try {
+        return await Promise.race([
+          new Promise<IteratorResult<Buffer>>((resolve) => {
+            abortOpening = () => resolve({ done: true, value: undefined });
+            controller.signal.addEventListener('abort', abortOpening, { once: true });
+            if (controller.signal.aborted) abortOpening();
+          }),
+          frames.next().catch(() => ({ done: true as const, value: undefined })),
+        ]);
+      } finally {
+        clearTimeout(opening);
+        controller.signal.removeEventListener('abort', abortOpening);
+      }
+    }
     try {
-      let next = await Promise.race([
-        frames.next().catch(() => ({ done: true as const, value: undefined })),
-        new Promise<IteratorResult<Buffer>>((resolve) => {
-          abortOpening = () => resolve({ done: true, value: undefined });
-          controller.signal.addEventListener('abort', abortOpening, { once: true });
-        }),
-      ]);
-      clearTimeout(opening);
-      controller.signal.removeEventListener('abort', abortOpening);
+      let next = await firstFrame();
       if (closed) return reply.code(423).send({ error: handoffClosed });
       if (next.done)
         return reply.code(409).send({
@@ -586,33 +593,35 @@ export async function createApp(dependencies: AppDependencies = {}) {
             : "Otto's browser is not showing a page.",
         });
       if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+      if (controller.signal.aborted) return;
       reply.hijack();
       streams.add(reply.raw);
       reply.raw.on('close', () => streams.delete(reply.raw));
       reply.raw.writeHead(200, {
-        'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+        'Content-Type': 'application/octet-stream',
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
         'X-Accel-Buffering': 'no',
       });
-      const part = '--frame\r\nContent-Type: image/jpeg\r\n\r\n';
-      reply.raw.write(part);
-      while (!next.done) {
-        reply.raw.write(next.value);
-        if (!reply.raw.write(`\r\n${part}`))
+      while (!next.done && !controller.signal.aborted) {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(next.value.length);
+        reply.raw.write(length);
+        if (!reply.raw.write(next.value))
           await new Promise((resolve) => {
             reply.raw.once('drain', resolve);
             reply.raw.once('close', resolve);
           });
         next = await frames.next();
-        if (next.done && !controller.signal.aborted) next = await (frames = open()).next();
+        if (next.done && !controller.signal.aborted) {
+          frames = open();
+          next = await firstFrame();
+        }
       }
     } catch (error) {
       if (!reply.raw.headersSent) throw error;
     } finally {
-      clearTimeout(opening);
       clearInterval(check);
-      controller.signal.removeEventListener('abort', abortOpening);
       controller.abort();
       void frames.return?.().catch(() => {});
       if (reply.raw.headersSent) reply.raw.end();
