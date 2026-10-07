@@ -496,7 +496,10 @@ export async function createApp(dependencies: AppDependencies = {}) {
   }
   async function handoffOpen(threadId: string) {
     const latest = await pool.query(
-      'SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND NOT background ORDER BY created_at DESC,id DESC LIMIT 1',
+      `SELECT u.status,u.waiting_reason FROM turns u
+       JOIN threads th ON th.id=u.thread_id AND th.owner_id=u.owner_id
+       WHERE u.owner_id=$1 AND u.thread_id=$2 AND NOT u.background AND th.archived_at IS NULL
+       ORDER BY u.created_at DESC,u.id DESC LIMIT 1`,
       [ownerId, threadId],
     );
     return (
@@ -546,50 +549,83 @@ export async function createApp(dependencies: AppDependencies = {}) {
     reply.raw.on('close', () => controller.abort());
     const open = () => view(thread.id, controller.signal)[Symbol.asyncIterator]();
     let frames = open();
-    let next = await frames.next().catch(() => ({ done: true as const, value: undefined }));
-    if (next.done) {
-      controller.abort();
-      return reply.code(409).send({ error: "Otto's browser is not showing a page." });
-    }
-    if (!(await handoffOpen(thread.id))) {
-      controller.abort();
-      await frames.return?.();
-      return reply.code(423).send({ error: handoffClosed });
-    }
+    let closed = false;
+    let timedOut = false;
     const check = setInterval(
       () =>
         void handoffOpen(thread.id).then(
-          (open) => open || controller.abort(),
+          (open) => {
+            if (open) return;
+            closed = true;
+            controller.abort();
+          },
           () => controller.abort(),
         ),
       1000,
     );
-    reply.hijack();
-    streams.add(reply.raw);
-    reply.raw.on('close', () => streams.delete(reply.raw));
-    reply.raw.writeHead(200, {
-      'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-      'X-Accel-Buffering': 'no',
-    });
-    const part = '--frame\r\nContent-Type: image/jpeg\r\n\r\n';
-    reply.raw.write(part);
+    async function firstFrame() {
+      const opening = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 10_000);
+      let abortOpening = () => {};
+      try {
+        return await Promise.race([
+          new Promise<IteratorResult<Buffer>>((resolve) => {
+            abortOpening = () => resolve({ done: true, value: undefined });
+            controller.signal.addEventListener('abort', abortOpening, { once: true });
+            if (controller.signal.aborted) abortOpening();
+          }),
+          frames.next().catch(() => ({ done: true as const, value: undefined })),
+        ]);
+      } finally {
+        clearTimeout(opening);
+        controller.signal.removeEventListener('abort', abortOpening);
+      }
+    }
     try {
-      while (!next.done) {
-        reply.raw.write(next.value);
-        if (!reply.raw.write(`\r\n${part}`))
+      let next = await firstFrame();
+      if (closed) return reply.code(423).send({ error: handoffClosed });
+      if (next.done)
+        return reply.code(409).send({
+          error: timedOut
+            ? 'The browser view did not start. Try opening it again.'
+            : "Otto's browser is not showing a page.",
+        });
+      if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+      if (controller.signal.aborted) return;
+      reply.hijack();
+      streams.add(reply.raw);
+      reply.raw.on('close', () => streams.delete(reply.raw));
+      reply.raw.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Accel-Buffering': 'no',
+      });
+      while (!next.done && !controller.signal.aborted) {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(next.value.length);
+        reply.raw.write(length);
+        if (!reply.raw.write(next.value))
           await new Promise((resolve) => {
             reply.raw.once('drain', resolve);
             reply.raw.once('close', resolve);
           });
         next = await frames.next();
-        if (next.done && !controller.signal.aborted) next = await (frames = open()).next();
+        if (next.done && !controller.signal.aborted) {
+          frames = open();
+          next = await firstFrame();
+        }
       }
-    } catch {}
-    clearInterval(check);
-    controller.abort();
-    reply.raw.end();
+    } catch (error) {
+      if (!reply.raw.headersSent) throw error;
+    } finally {
+      clearInterval(check);
+      controller.abort();
+      void frames.return?.().catch(() => {});
+      if (reply.raw.headersSent) reply.raw.end();
+    }
   });
   app.post('/api/browser-handoff', async (request, reply) => {
     const body = z.object({ inputs: browserHandoffInputs }).strict().safeParse(request.body);

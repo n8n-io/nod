@@ -173,7 +173,7 @@ test(
       };
     };
     const createRouted = (
-      provenance?: { turnId: string; sourceMessageId: string | null },
+      provenance?: { turnId: string; sourceMessageId: string | null; sourceTurnId?: string },
       timing: Record<string, unknown> = {},
     ) =>
       personal.manage(
@@ -525,6 +525,65 @@ test(
           await channels!.drain();
           assert.equal((await routedRuns(schedule.id)).length, 2);
           assert.equal(sent.length, before);
+        },
+      );
+      await t.test(
+        'resumed schedules retain their owned source route and instruction',
+        async () => {
+          const continuation = await thread.enqueueTurn('Synthetic continuation.', {
+            source: 'resume',
+          });
+          const provenance = { ...origin, turnId: continuation, sourceTurnId: origin.turnId };
+          const schedule = await createRouted(provenance);
+          const stored = (
+            await db.pool.query(
+              'SELECT delivery_channel,channel_source_id,authority_instruction,authority_source_message_id FROM schedules WHERE id=$1',
+              [schedule.id],
+            )
+          ).rows[0];
+          assert.deepEqual(stored, {
+            delivery_channel: origin.channel,
+            channel_source_id: origin.sourceId,
+            authority_instruction: 'Remind me in a minute.',
+            authority_source_message_id: origin.sourceMessageId,
+          });
+          const unrelated = await receive('An unrelated source instruction.');
+          await assert.rejects(
+            createRouted({ ...provenance, sourceMessageId: unrelated.sourceMessageId }),
+            /unavailable/,
+          );
+          for (const sourceOwner of [ownerId, 'foreign-source']) {
+            const sourceThread = randomUUID();
+            const sourceTurn = randomUUID();
+            const sourceMessage = randomUUID();
+            await db.pool.query('INSERT INTO threads(id,owner_id,archived_at) VALUES($1,$2,$3)', [
+              sourceThread,
+              sourceOwner,
+              sourceOwner === ownerId ? new Date() : null,
+            ]);
+            await db.pool.query(
+              "INSERT INTO turns(id,owner_id,thread_id,source,prompt) VALUES($1,$2,$3,'user','Unrelated source.')",
+              [sourceTurn, sourceOwner, sourceThread],
+            );
+            await db.pool.query(
+              "INSERT INTO messages(id,owner_id,thread_id,turn_id,role,text) VALUES($1,$2,$3,$4,'user','Unrelated source.')",
+              [sourceMessage, sourceOwner, sourceThread, sourceTurn],
+            );
+            const unownedSource = {
+              turnId: continuation,
+              sourceTurnId: sourceTurn,
+              sourceMessageId: sourceMessage,
+            };
+            await assert.rejects(createRouted(unownedSource), /unavailable/);
+            await assert.rejects(
+              personal.manage(
+                'schedule_update',
+                { id: schedule.id, prompt: 'Substituted instruction.' },
+                unownedSource,
+              ),
+              /unavailable/,
+            );
+          }
         },
       );
       await t.test(

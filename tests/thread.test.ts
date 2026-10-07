@@ -4686,6 +4686,7 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
     const encoded = await buildFeedbackReport({ ...options, captureEnabled: () => captureEnabled });
     const report = JSON.parse(encoded);
     assert.equal(report.coverage.toolTraceSource, 'saved-session');
+    assert.equal(report.coverage.truncated, false);
     assert.equal(report.trace.length, 7);
     const browser = report.trace.find((item: { id: string }) => item.id === 'recent');
     assert.deepEqual(browser.input, { action: 'snapshot' });
@@ -4730,6 +4731,24 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
   assert.equal(captured.trace.length, 1);
   assert.equal(captured.trace[0].id, 'captured');
   assert.equal(JSON.parse(await buildFeedbackReport(options)).trace.length, 7);
+  entries = Array.from({ length: 60 }, (_, index) =>
+    activity(`compact-${index}`, 'browser', {}, 'synthetic', now - (61 - index) * 1000),
+  ).flat();
+  const complete = JSON.parse(await buildFeedbackReport(options));
+  assert.equal(complete.coverage.truncated, false);
+  assert.equal(complete.trace.length, 60);
+  entries.push(...activity('compact-60', 'browser', {}, 'synthetic', now));
+  const sampled = JSON.parse(await buildFeedbackReport(options));
+  assert.equal(sampled.coverage.truncated, true);
+  assert.deepEqual(
+    sampled.trace.map((row: { id: string }) => row.id),
+    Array.from({ length: 60 }, (_, index) => `compact-${index + 1}`),
+  );
+  assert.equal(
+    JSON.parse(await buildFeedbackReport({ ...options, captureEnabled: () => true })).coverage
+      .truncated,
+    false,
+  );
   const large = 'x'.repeat(3500);
   entries = Array.from({ length: 70 }, (_, index) =>
     activity(
@@ -4758,7 +4777,7 @@ test(
     await f.pool.query(`
       CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,status text DEFAULT 'idle',archived_at timestamptz);
       CREATE TABLE messages(id uuid,owner_id text,thread_id uuid,turn_id uuid,role text,text text,created_at timestamptz DEFAULT now());
-      CREATE TABLE turns(id uuid,owner_id text,thread_id uuid,source text,status text,error text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE turns(id uuid,owner_id text,thread_id uuid,source text,status text,error text,background boolean DEFAULT false,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
       CREATE TABLE inspector_records(id uuid,owner_id text,thread_id uuid,turn_id uuid,kind text,name text,status text,input jsonb,output jsonb,error text,duration_ms integer,recorded_at timestamptz DEFAULT now(),started_at timestamptz DEFAULT now(),finished_at timestamptz);
       CREATE TABLE profiles(owner_id text,data jsonb);
       CREATE TABLE goals(owner_id text,title text);
@@ -4890,10 +4909,59 @@ test(
     assert.ok(truncated.messages.length <= 30);
     assert.ok(truncated.trace.length <= 60);
     assert.ok(truncated.messages.length + truncated.trace.length > 0);
+    for (const [field, limit, sql] of [
+      [
+        'messages',
+        30,
+        "INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant','Synthetic diagnostic',$4)",
+      ],
+      [
+        'turns',
+        20,
+        "INSERT INTO turns(id,owner_id,thread_id,source,status,background,waiting_reason,created_at) VALUES($1,$2,$3,'schedule','waiting',true,'user',$4)",
+      ],
+      [
+        'trace',
+        60,
+        "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,started_at) VALUES($1,$2,$3,'tool','browser',$4)",
+      ],
+    ] as const) {
+      await t.test(`${field} reports omitted older records at the row limit`, async () => {
+        await f.pool.query('TRUNCATE messages,turns,inspector_records');
+        const ids: string[] = [];
+        const start = Date.now() - 120_000;
+        for (let index = 0; index <= limit; index++) {
+          if (index === limit) {
+            const complete = JSON.parse(await buildFeedbackReport(options));
+            assert.equal(complete.coverage.truncated, false);
+            assert.deepEqual(
+              complete[field].map((row: { id: string }) => row.id),
+              ids,
+            );
+          }
+          const id = randomUUID();
+          ids.push(id);
+          await f.pool.query(sql, [id, ownerId, threadId, new Date(start + index * 1000)]);
+        }
+        const sampled = JSON.parse(await buildFeedbackReport(options));
+        assert.equal(sampled.coverage.truncated, true);
+        assert.deepEqual(
+          sampled[field].map((row: { id: string }) => row.id),
+          ids.slice(1),
+        );
+        if (field === 'turns') {
+          assert.equal(sampled.turns.at(-1).background, true);
+          assert.equal(sampled.turns.at(-1).waiting_reason, 'user');
+        }
+      });
+    }
   },
 );
 
 test('feedback context identifies the running source checkout and keeps hosted release metadata', async (t) => {
+  const os = (await import('node:os')).default;
+  t.mock.method(os, 'platform', () => 'linux');
+  const hostname = t.mock.method(os, 'hostname', () => 'synthetic-local-machine');
   const { feedbackContext } = await import('../src/server/feedback-context.ts');
   const cwd = await mkdtemp(join(tmpdir(), 'feedback-source-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
@@ -4934,6 +5002,7 @@ test('feedback context identifies the running source checkout and keeps hosted r
     assert.equal(clean.appModified, false);
     assert.equal(clean.appVersion, null);
     assert.equal(clean.source, 'local-web');
+    assert.equal(clean.computerName, 'synthetic-local-machine');
     await writeFile(join(cwd, 'source.txt'), 'Synthetic modified source');
     const modified = await feedbackContext({ runtimeMode: 'local', environment, cwd });
     assert.equal(modified.appRelease, head);
@@ -4944,7 +5013,9 @@ test('feedback context identifies the running source checkout and keeps hosted r
     assert.equal(unavailable.appModified, null);
     assert.equal(unavailable.appVersion, null);
     assert.equal(unavailable.source, 'local-web');
+    assert.equal(unavailable.computerName, 'synthetic-local-machine');
   }
+  const localNameReads = hostname.mock.callCount();
   for (const runtimeMode of ['tenant', 'gateway'] as const) {
     const hosted = await feedbackContext({
       runtimeMode,
@@ -4960,6 +5031,8 @@ test('feedback context identifies the running source checkout and keeps hosted r
     assert.equal(hosted.appModified, null);
     assert.equal(hosted.source, 'hosted-web');
     assert.equal(hosted.development, false);
+    assert.equal(hosted.computerName, null);
+    assert.equal(hostname.mock.callCount(), localNameReads);
   }
   const production = await feedbackContext({
     runtimeMode: 'local',
@@ -4967,6 +5040,51 @@ test('feedback context identifies the running source checkout and keeps hosted r
     cwd,
   });
   assert.equal(production.appRelease, 'previous-release');
+  assert.equal(production.computerName, 'synthetic-local-machine');
   assert.equal(production.appModified, null);
   assert.equal(production.development, false);
+});
+
+test('feedback context reads macOS computer names and falls back without reading hosted machines', async (t) => {
+  const os = (await import('node:os')).default;
+  const childProcess = (await import('node:child_process')).default;
+  const { feedbackContext } = await import('../src/server/feedback-context.ts');
+  const platform = t.mock.method(os, 'platform', () => 'darwin');
+  const hostname = t.mock.method(os, 'hostname', () => 'synthetic-hostname');
+  let output = '  Synthetic Mac\n';
+  let error: Error | undefined;
+  const execute = t.mock.fn(async (file: string, args: string[]) => {
+    assert.equal(file, '/usr/sbin/scutil');
+    assert.deepEqual(args, ['--get', 'ComputerName']);
+    if (error) throw error;
+    return { stdout: output, stderr: '' };
+  });
+  const original = childProcess.execFile;
+  childProcess.execFile = Object.assign(original.bind(childProcess), {
+    [promisify.custom]: execute,
+  });
+  t.after(() => {
+    childProcess.execFile = original;
+  });
+  const environment = { NODE_ENV: 'production' };
+  const preferred = await feedbackContext({ runtimeMode: 'local', environment });
+  assert.equal(preferred.computerName, 'Synthetic Mac');
+  assert.equal(hostname.mock.callCount(), 0);
+  output = ' \n';
+  const empty = await feedbackContext({ runtimeMode: 'local', environment });
+  assert.equal(empty.computerName, 'synthetic-hostname');
+  assert.equal(hostname.mock.callCount(), 1);
+  error = new Error('Synthetic scutil failure');
+  const failed = await feedbackContext({ runtimeMode: 'local', environment });
+  assert.equal(failed.computerName, 'synthetic-hostname');
+  assert.equal(hostname.mock.callCount(), 2);
+  assert.equal(execute.mock.callCount(), 3);
+  const platformReads = platform.mock.callCount();
+  for (const runtimeMode of ['tenant', 'gateway'] as const) {
+    const hosted = await feedbackContext({ runtimeMode, environment });
+    assert.equal(hosted.computerName, null);
+    assert.equal(platform.mock.callCount(), platformReads);
+    assert.equal(hostname.mock.callCount(), 2);
+    assert.equal(execute.mock.callCount(), 3);
+  }
 });

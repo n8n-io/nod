@@ -63,6 +63,7 @@ import { createBrowserFixture } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
+import { browserFrames } from '../src/web/lib/browser-frames.ts';
 import { SetupNotice } from '../src/web/components/setup-notice.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
 import { Composer } from '../src/web/components/composer.tsx';
@@ -83,7 +84,7 @@ function deferred<T = void>() {
 test(
   'core browser metadata and frames work without Inspector and retain ownership and private-capture locks',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 15_000 },
-  async () => {
+  async (t) => {
     const schema = `test_browser_api_${randomUUID().replaceAll('-', '')}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
@@ -101,6 +102,7 @@ test(
     let inspectorEnabled = false;
     let browserHeld = false;
     let pageShown = true;
+    let onView: ((signal: AbortSignal) => AsyncGenerator<Buffer>) | undefined;
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
@@ -132,6 +134,10 @@ test(
         },
         view: async function* (_id, signal) {
           if (!pageShown) return;
+          if (onView) {
+            yield* onView(signal);
+            return;
+          }
           yield Buffer.from('synthetic-live-frame');
           await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
         },
@@ -251,7 +257,7 @@ test(
 
       fail = false;
       const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
-      const frames: string[] = [];
+      const frames: Buffer[] = [];
       const post = (url: string, payload: object) =>
         app.inject({ method: 'POST', url, payload, headers: { host: `localhost:${port}` } });
       const handoff = async (input: unknown = click) => {
@@ -264,11 +270,11 @@ test(
         });
         if (stream.statusCode === 200)
           frames.push(
-            await new Promise<string>((resolve) => {
-              let body = '';
+            await new Promise<Buffer>((resolve) => {
+              let body = Buffer.alloc(0);
               stream.stream().on('data', (chunk) => {
-                body += String(chunk);
-                if (body.includes('synthetic-live-frame\r\n--frame')) resolve(body);
+                body = Buffer.concat([body, chunk]);
+                if (body.length >= 4 && body.length >= body.readUInt32BE(0) + 4) resolve(body);
               });
             }),
           );
@@ -287,10 +293,8 @@ test(
       assert.deepEqual(await handoff(), [423, 423, 423]);
       await db.pool.query("UPDATE turns SET waiting_reason='question' WHERE id=$1", [nextTurnId]);
       assert.deepEqual(await handoff(), [200, 200, 200]);
-      assert.equal(
-        frames[0],
-        '--frame\r\nContent-Type: image/jpeg\r\n\r\nsynthetic-live-frame\r\n--frame\r\nContent-Type: image/jpeg\r\n\r\n',
-      );
+      assert.equal(frames[0].readUInt32BE(0), Buffer.byteLength('synthetic-live-frame'));
+      assert.equal(frames[0].subarray(4).toString(), 'synthetic-live-frame');
       assert.deepEqual(controls, [
         [next.id, click],
         [next.id, { action: 'back' }],
@@ -309,6 +313,109 @@ test(
       browserHeld = false;
       assert.deepEqual(await handoff(), [200, 200, 200]);
       assert.equal(controls.length, 7);
+      for (const reason of ['timeout', 'revoked', 'archived', 'cancelled']) {
+        const started = deferred<AbortSignal>();
+        const aborted = deferred();
+        const closed = deferred();
+        onView = async function* (signal) {
+          try {
+            started.resolve(signal);
+            await new Promise<void>((resolve) =>
+              signal.addEventListener(
+                'abort',
+                () => {
+                  aborted.resolve();
+                  resolve();
+                },
+                { once: true },
+              ),
+            );
+          } finally {
+            closed.resolve();
+          }
+        };
+        const controller = new AbortController();
+        const deadline = new AbortController();
+        if (reason === 'timeout') t.mock.timers.enable({ apis: ['setTimeout'] });
+        const pending = app.inject({
+          url: '/api/browser-handoff/stream',
+          headers: { host: `localhost:${port}` },
+          signal: controller.signal,
+        });
+        try {
+          const viewing = await started.promise;
+          if (reason === 'revoked') browserHeld = true;
+          if (reason === 'archived')
+            await db.pool.query('UPDATE threads SET archived_at=now() WHERE id=$1', [next.id]);
+          if (reason === 'cancelled') controller.abort();
+          else if (reason === 'timeout') t.mock.timers.tick(10_000);
+          const response = await Promise.race([
+            Promise.all([pending.catch(() => null), aborted.promise, closed.promise]).then(
+              ([response]) => response,
+            ),
+            delay(5_000, undefined, { signal: deadline.signal }).then(() =>
+              assert.fail(`Opening should abort and close after ${reason}.`),
+            ),
+          ]);
+          if (reason !== 'cancelled')
+            assert.equal(response?.statusCode, reason === 'timeout' ? 409 : 423);
+          assert.equal(viewing.aborted, true);
+        } finally {
+          deadline.abort();
+          controller.abort();
+          await pending.catch(() => {});
+          browserHeld = false;
+          if (reason === 'archived')
+            await db.pool.query('UPDATE threads SET archived_at=NULL WHERE id=$1', [next.id]);
+          onView = undefined;
+          if (reason === 'timeout') t.mock.timers.reset();
+        }
+      }
+      const replacementStarted = deferred<AbortSignal>();
+      const replacementClosed = deferred();
+      let views = 0;
+      onView = async function* (signal) {
+        views++;
+        if (views === 1) {
+          yield Buffer.from('synthetic-live-frame');
+          return;
+        }
+        try {
+          replacementStarted.resolve(signal);
+          await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+        } finally {
+          replacementClosed.resolve();
+        }
+      };
+      const controller = new AbortController();
+      const deadline = new AbortController();
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const pending = app.inject({
+        url: '/api/browser-handoff/stream',
+        headers: { host: `localhost:${port}` },
+        signal: controller.signal,
+      });
+      try {
+        const replacement = await replacementStarted.promise;
+        t.mock.timers.tick(10_000);
+        const [response] = await Promise.race([
+          Promise.all([pending, replacementClosed.promise]),
+          delay(5_000, undefined, { signal: deadline.signal }).then(() =>
+            assert.fail('A silent replacement view should abort and close the live stream.'),
+          ),
+        ]);
+        assert.equal(response.statusCode, 200);
+        assert.ok(response.body.includes('synthetic-live-frame'));
+        assert.equal(replacement.aborted, true);
+        assert.equal(views, 2);
+        assert.equal(controls.length, 7);
+      } finally {
+        deadline.abort();
+        controller.abort();
+        await pending.catch(() => {});
+        onView = undefined;
+        t.mock.timers.reset();
+      }
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Done','queued')",
         [randomUUID(), ownerId, next.id],
@@ -323,6 +430,75 @@ test(
     }
   },
 );
+
+test('browser frame streaming preserves fragmented and coalesced frames and rejects incomplete or oversized streams', async () => {
+  const images = [Buffer.from('synthetic-first-frame'), Buffer.from('synthetic-second-frame')];
+  const encoded = Buffer.concat(
+    images.flatMap((image) => {
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(image.length);
+      return [length, image];
+    }),
+  );
+  for (const chunks of [
+    [encoded],
+    [encoded.subarray(0, 2), encoded.subarray(2, 7), encoded.subarray(7)],
+    [...encoded].map((byte) => Uint8Array.of(byte)),
+  ]) {
+    const received: Buffer[] = [];
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    await assert.rejects(
+      browserFrames(body, (bytes) => {
+        received.push(Buffer.from(bytes));
+      }),
+      /view ended/,
+    );
+    assert.deepEqual(received, images);
+    assert.equal(body.locked, false);
+  }
+  for (const incomplete of [encoded.subarray(0, 2), encoded.subarray(0, 8)]) {
+    const received: Uint8Array[] = [];
+    await assert.rejects(
+      browserFrames(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(incomplete);
+            controller.close();
+          },
+        }),
+        (bytes) => {
+          received.push(bytes);
+        },
+      ),
+      /view ended/,
+    );
+    assert.deepEqual(received, []);
+  }
+  for (const size of [0, 4 * 1024 * 1024 + 1]) {
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(size);
+        controller.enqueue(length);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await assert.rejects(
+      browserFrames(body, () => assert.fail()),
+      /Invalid browser frame/,
+    );
+    assert.equal(cancelled, true);
+    assert.equal(body.locked, false);
+  }
+});
 
 // Checkpoint quiescence
 
@@ -2580,11 +2756,31 @@ test('short secret masking does not scan replacement markers again', () => {
 async function handoffView(
   request: (path: string, options?: RequestInit) => Promise<Response>,
   content?: React.ReactNode,
+  beforeStreamResponse?: Promise<void>,
 ) {
   const dom = new JSDOM('<div id="root"></div>', {
     url: 'http://localhost',
     pretendToBeVisual: true,
   });
+  const streams: Array<{
+    path: string;
+    signal: AbortSignal | null | undefined;
+    controller: ReadableStreamDefaultController<Uint8Array>;
+    closed: boolean;
+    cancelled: boolean;
+  }> = [];
+  const activeUrls = new Set<string>();
+  const revokedUrls: string[] = [];
+  const streamResponses: Response[] = [];
+  dom.window.URL.createObjectURL = () => {
+    const url = `blob:http://localhost/${randomUUID()}`;
+    activeUrls.add(url);
+    return url;
+  };
+  dom.window.URL.revokeObjectURL = (url) => {
+    activeUrls.delete(url);
+    revokedUrls.push(url);
+  };
   const replacements = {
     window: dom.window,
     document: dom.window.document,
@@ -2597,8 +2793,40 @@ async function handoffView(
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     IS_REACT_ACT_ENVIRONMENT: true,
-    fetch: (input: string | URL | Request, options?: RequestInit) =>
-      request(String(input), options),
+    URL: dom.window.URL,
+    fetch: (input: string | URL | Request, options?: RequestInit) => {
+      const path = String(input);
+      if (!path.startsWith('/api/browser-handoff/stream')) return request(path, options);
+      const stream = {
+        path,
+        signal: options?.signal,
+        controller: undefined as unknown as ReadableStreamDefaultController<Uint8Array>,
+        closed: false,
+        cancelled: false,
+      };
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          stream.controller = controller;
+        },
+        cancel() {
+          stream.closed = true;
+          stream.cancelled = true;
+        },
+      });
+      streams.push(stream);
+      const abort = () => {
+        if (stream.closed) return;
+        stream.closed = true;
+        stream.controller.error(new DOMException('Synthetic stream aborted.', 'AbortError'));
+      };
+      if (stream.signal?.aborted) abort();
+      else stream.signal?.addEventListener('abort', abort, { once: true });
+      return Promise.resolve(beforeStreamResponse).then(
+        () =>
+          streamResponses.shift() ??
+          new Response(body, { headers: { 'Content-Type': 'application/octet-stream' } }),
+      );
+    },
   };
   const previous = new Map(
     Object.keys(replacements).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
@@ -2634,20 +2862,47 @@ async function handoffView(
     element,
     completions: () => completions,
     pointer,
+    streams,
+    streamResponses,
+    activeUrls,
+    revokedUrls,
     async render(next: React.ReactNode) {
       await act(async () => root.render(next));
     },
-    async showFrame() {
-      const image = element<HTMLImageElement>('.browser-handoff img');
+    async frame(bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9])) {
+      const stream = streams.at(-1)!;
+      assert.ok(stream && !stream.closed);
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(bytes.length);
+      await act(async () => {
+        stream.controller.enqueue(length.subarray(0, 2));
+        stream.controller.enqueue(length.subarray(2));
+        stream.controller.enqueue(bytes);
+      });
+    },
+    async endStream(failure = false) {
+      const stream = streams.at(-1)!;
+      assert.ok(stream && !stream.closed);
+      await act(async () => {
+        stream.closed = true;
+        if (failure) stream.controller.error(new Error('Synthetic stream interrupted.'));
+        else stream.controller.close();
+      });
+    },
+    async loadFrame(image = element<HTMLImageElement>('.browser-handoff img')) {
       image.getBoundingClientRect = () =>
         ({ left: 10, top: 20, width: 200, height: 100 }) as DOMRect;
       Object.defineProperties(image, {
-        naturalWidth: { value: 400 },
-        naturalHeight: { value: 200 },
+        naturalWidth: { value: 400, configurable: true },
+        naturalHeight: { value: 200, configurable: true },
       });
       await act(async () => {
         image.dispatchEvent(new dom.window.Event('load'));
       });
+    },
+    async showFrame() {
+      await this.frame();
+      await this.loadFrame();
     },
     async clickImage() {
       await this.showFrame();
@@ -3203,7 +3458,7 @@ test('the live handoff waits for a frame, merges moves and typing behind a pendi
   };
   try {
     assert.match(
-      view.element('.browser-handoff img').getAttribute('src')!,
+      view.streams.at(-1)!.path,
       /^\/api\/browser-handoff\/stream\?view=[0-9a-f-]{36}-0$/,
     );
     await view.pointer('mousemove');
@@ -3231,6 +3486,286 @@ test('the live handoff waits for a frame, merges moves and typing behind a pendi
     await view.close();
   }
 });
+
+test('a handoff with no first frame stops reconnecting and can be reopened without submitting input', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const posted: unknown[] = [];
+  const view = await handoffView(async (_path, options) => {
+    posted.push(JSON.parse(String(options?.body)));
+    return Response.json({ ok: true });
+  });
+  const source = () => view.streams.findLast((stream) => !stream.signal?.aborted)?.path;
+  try {
+    const first = source();
+    await act(async () => t.mock.timers.tick(15_000));
+    await act(async () => t.mock.timers.tick(1000));
+    assert.notEqual(source(), first);
+    const second = source();
+    await act(async () => t.mock.timers.tick(15_000));
+    await act(async () => t.mock.timers.tick(1000));
+    assert.notEqual(source(), second);
+    await act(async () => t.mock.timers.tick(15_000));
+    assert.equal(source(), undefined);
+    await act(async () => t.mock.timers.tick(60_000));
+    assert.equal(source(), undefined);
+    assert.equal(view.completions(), 0);
+    assert.deepEqual(posted, []);
+    const retry = [...view.dom.window.document.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Try again',
+    );
+    assert.ok(retry);
+    const activate = new view.dom.window.KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => retry.dispatchEvent(activate));
+    assert.equal(activate.defaultPrevented, false);
+    await view.button('Try again');
+    assert.ok(source());
+    await view.clickImage();
+    assert.equal(posted.length, 2);
+    await act(async () => t.mock.timers.tick(60_000));
+    assert.ok(source());
+    for (const label of ['Enlarge browser', 'Shrink browser']) {
+      const previousImage = view.element('.browser-handoff img');
+      await act(async () => {
+        view.element<HTMLButtonElement>(`button[aria-label="${label}"]`).click();
+      });
+      assert.notEqual(view.element('.browser-handoff img'), previousImage);
+      assert.equal(view.element('.browser-handoff-screen').getAttribute('aria-disabled'), 'true');
+      const resized = source();
+      await act(async () => t.mock.timers.tick(15_000));
+      await act(async () => t.mock.timers.tick(1000));
+      assert.notEqual(source(), resized);
+      await view.showFrame();
+    }
+    await view.button('Done');
+    assert.equal(view.completions(), 1);
+  } finally {
+    t.mock.timers.reset();
+    await view.close();
+  }
+});
+
+for (const failure of [false, true])
+  test(`a live browser handoff disables input and retries after stream ${failure ? 'failure' : 'EOF'}`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const posted: unknown[] = [];
+    const view = await handoffView(async (_path, options) => {
+      posted.push(JSON.parse(String(options?.body)));
+      return Response.json({ ok: true });
+    });
+    const disabled = () => view.element('.browser-handoff-screen').getAttribute('aria-disabled');
+    try {
+      await view.showFrame();
+      assert.equal(disabled(), 'false');
+      const original = view.element<HTMLImageElement>('.browser-handoff img');
+      await view.endStream(failure);
+      assert.equal(disabled(), 'true');
+      await view.loadFrame(original);
+      assert.equal(disabled(), 'true');
+      await view.pointer('mousedown');
+      await act(async () => {
+        view
+          .element('.browser-handoff-screen')
+          .dispatchEvent(new view.dom.window.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+      });
+      assert.deepEqual(posted, []);
+      await act(async () => t.mock.timers.tick(1000));
+      assert.equal(view.streams.length, 2);
+      assert.equal(view.streams[0].signal?.aborted, true);
+      await view.loadFrame(original);
+      assert.equal(disabled(), 'true');
+      await view.endStream(failure);
+      await act(async () => t.mock.timers.tick(1000));
+      assert.equal(view.streams.length, 3);
+      await view.endStream(failure);
+      await act(async () => t.mock.timers.tick(60_000));
+      assert.equal(view.streams.length, 3);
+      assert.equal(view.dom.window.document.querySelector('.browser-handoff img'), null);
+      assert.deepEqual(posted, []);
+      assert.equal(view.activeUrls.size, 0);
+      await view.button('Try again');
+      assert.equal(view.streams.length, 4);
+      await view.showFrame();
+      assert.equal(disabled(), 'false');
+      await view.button('Done');
+      assert.equal(view.completions(), 1);
+      assert.equal(view.streams[3].signal?.aborted, true);
+      assert.equal(view.activeUrls.size, 0);
+    } finally {
+      t.mock.timers.reset();
+      await view.close();
+    }
+  });
+
+for (const status of [423, 409])
+  test(`browser handoff access response ${status} ${status === 423 ? 'closes the view' : 'allows recovery'}`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const posted: unknown[] = [];
+    const view = await handoffView(async (_path, options) => {
+      posted.push(JSON.parse(String(options?.body)));
+      return Response.json({ ok: true });
+    });
+    try {
+      await view.showFrame();
+      view.streamResponses.push(Response.json({ error: 'Synthetic view response.' }, { status }));
+      await view.endStream();
+      await act(async () => t.mock.timers.tick(1000));
+      assert.equal(view.streams.length, 2);
+      assert.equal(view.activeUrls.size, 0);
+      assert.deepEqual(posted, []);
+      if (status === 423) {
+        assert.equal(Boolean(view.dom.window.document.querySelector('.browser-handoff')), false);
+        assert.equal(
+          view.streams.every((stream) => stream.signal?.aborted),
+          true,
+        );
+        await act(async () => t.mock.timers.tick(60_000));
+        assert.equal(view.streams.length, 2);
+        assert.equal(view.completions(), 0);
+      } else {
+        assert.equal(view.element('.browser-handoff-screen').getAttribute('aria-disabled'), 'true');
+        await act(async () => t.mock.timers.tick(1000));
+        assert.equal(view.streams.length, 3);
+        await view.showFrame();
+        assert.equal(
+          view.element('.browser-handoff-screen').getAttribute('aria-disabled'),
+          'false',
+        );
+        await view.button('Done');
+        assert.equal(view.completions(), 1);
+        assert.equal(
+          view.streams.every((stream) => stream.signal?.aborted),
+          true,
+        );
+      }
+      assert.deepEqual(posted, []);
+      assert.equal(view.activeUrls.size, 0);
+    } finally {
+      t.mock.timers.reset();
+      await view.close();
+    }
+  });
+
+test('a browser frame decoded after EOF cannot restore input and old views release their frames', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const posted: unknown[] = [];
+  const view = await handoffView(async (_path, options) => {
+    posted.push(JSON.parse(String(options?.body)));
+    return Response.json({ ok: true });
+  });
+  const disabled = () => view.element('.browser-handoff-screen').getAttribute('aria-disabled');
+  try {
+    await view.frame();
+    const undecoded = view.element<HTMLImageElement>('.browser-handoff img');
+    assert.equal(disabled(), 'true');
+    await view.endStream();
+    await view.loadFrame(undecoded);
+    assert.equal(disabled(), 'true');
+    await act(async () => t.mock.timers.tick(1000));
+    assert.equal(view.streams.length, 2);
+    await view.frame();
+    await view.loadFrame(undecoded);
+    await act(async () => undecoded.dispatchEvent(new view.dom.window.Event('error')));
+    assert.equal(disabled(), 'true');
+    await view.loadFrame();
+    assert.equal(disabled(), 'false');
+    for (let index = 0; index < 12; index++) {
+      await view.frame();
+      assert.ok(view.activeUrls.size <= 2);
+    }
+    await view.loadFrame();
+    assert.equal(view.activeUrls.size, 1);
+    const previous = view.element<HTMLImageElement>('.browser-handoff img');
+    await act(async () => {
+      view.element<HTMLButtonElement>('button[aria-label="Enlarge browser"]').click();
+    });
+    assert.equal(view.streams[1].signal?.aborted, true);
+    assert.equal(view.streams.length, 3);
+    await view.loadFrame(previous);
+    assert.equal(disabled(), 'true');
+    await view.frame();
+    await act(async () => previous.dispatchEvent(new view.dom.window.Event('error')));
+    await view.loadFrame();
+    assert.equal(disabled(), 'false');
+    await view.unmount();
+    assert.equal(view.streams[2].signal?.aborted, true);
+    assert.equal(view.activeUrls.size, 0);
+    assert.deepEqual(posted, []);
+  } finally {
+    t.mock.timers.reset();
+    await view.close();
+  }
+});
+
+test('a handoff with an undecoded replacement frame bounds waiting after stream EOF', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const posted: unknown[] = [];
+  const view = await handoffView(async (_path, options) => {
+    posted.push(JSON.parse(String(options?.body)));
+    return Response.json({ ok: true });
+  });
+  try {
+    await view.showFrame();
+    await view.frame();
+    await view.endStream();
+    assert.equal(view.element('.browser-handoff-screen').getAttribute('aria-disabled'), 'false');
+    await act(async () => t.mock.timers.tick(15_000));
+    assert.equal(view.element('.browser-handoff-screen').getAttribute('aria-disabled'), 'true');
+    await act(async () => {
+      view
+        .element('.browser-handoff-screen')
+        .dispatchEvent(new view.dom.window.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    });
+    assert.deepEqual(posted, []);
+    await view.loadFrame();
+    assert.equal(view.element('.browser-handoff-screen').getAttribute('aria-disabled'), 'true');
+    assert.equal(view.activeUrls.size, 0);
+  } finally {
+    t.mock.timers.reset();
+    await view.close();
+  }
+});
+
+for (const phase of ['headers', 'frame'])
+  test(`changing account closes a browser handoff waiting for ${phase} without reconnecting`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { setRequestAccount } = await import('../src/web/lib/api.ts');
+    setRequestAccount('synthetic-original-owner');
+    const response = deferred();
+    const posted: unknown[] = [];
+    const view = await handoffView(
+      async (_path, options) => {
+        posted.push(JSON.parse(String(options?.body)));
+        return Response.json({ ok: true });
+      },
+      undefined,
+      phase === 'headers' ? response.promise : undefined,
+    );
+    try {
+      if (phase === 'frame') {
+        await view.frame();
+        assert.equal(view.activeUrls.size, 1);
+      }
+      await act(async () => setRequestAccount('synthetic-replacement-owner'));
+      await act(async () => response.resolve());
+      assert.equal(view.streams[0].signal?.aborted, true);
+      assert.equal(view.dom.window.document.querySelector('.browser-handoff'), null);
+      assert.equal(view.activeUrls.size, 0);
+      await act(async () => t.mock.timers.tick(60_000));
+      assert.equal(view.streams.length, 1);
+      assert.deepEqual(posted, []);
+    } finally {
+      await act(async () => {
+        response.resolve();
+        setRequestAccount(null);
+      });
+      t.mock.timers.reset();
+      await view.close();
+    }
+  });
 
 test('chat keeps every message across refreshes after earlier messages were loaded', async () => {
   const threadId = randomUUID();

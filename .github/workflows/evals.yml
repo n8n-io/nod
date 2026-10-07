@@ -144,8 +144,11 @@ jobs:
             labels+=("$BASELINE_LABEL")
           fi
           labels+=("$CANDIDATE")
+          report="$(node --import tsx evals/src/cli.ts markdown "${labels[@]}")"
+          echo "::notice title=Capability evals::$(sed -n '1s/^### //p' <<< "$report")"
+          printf '%s\n' "$report"
           {
-            node --import tsx evals/src/cli.ts markdown "${labels[@]}"
+            printf '%s\n\n' "$report"
             if [ -n "$REPORT_URL" ]; then
               echo "Transcripts, checks and diagnoses: [capability-evals]($REPORT_URL) (open report.html in each run)"
             fi

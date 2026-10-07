@@ -1,18 +1,31 @@
-import { execFile } from 'node:child_process';
+import childProcess from 'node:child_process';
+import os from 'node:os';
 import { promisify } from 'node:util';
 import type { FeedbackContext } from '../shared/feedback.ts';
-
-const execute = promisify(execFile);
 
 export async function feedbackContext(options: {
   runtimeMode: 'local' | 'gateway' | 'tenant';
   environment: NodeJS.ProcessEnv;
   cwd?: string;
 }): Promise<Omit<FeedbackContext, 'enabled'>> {
+  const execute = promisify(childProcess.execFile);
   const { runtimeMode, environment } = options;
   const development = runtimeMode === 'local' && environment.NODE_ENV !== 'production';
   let appRelease = environment.OTTO_IMAGE_RELEASE || environment.OTTO_RELEASE || null;
   let appModified: boolean | null = null;
+  let computerName = '';
+  if (runtimeMode === 'local') {
+    try {
+      if (os.platform() === 'darwin') {
+        const { stdout } = await execute('/usr/sbin/scutil', ['--get', 'ComputerName'], {
+          timeout: 2_000,
+          maxBuffer: 8_192,
+        }).catch(() => ({ stdout: '' }));
+        computerName = stdout.trim();
+      }
+      computerName ||= os.hostname().trim();
+    } catch {}
+  }
   if (development) {
     try {
       const { stdout } = await execute(
@@ -34,7 +47,7 @@ export async function feedbackContext(options: {
     development,
     source: runtimeMode === 'local' ? 'local-web' : 'hosted-web',
     appModified,
-    computerName: null,
+    computerName: computerName.slice(0, 200) || null,
     platform: null,
   };
 }

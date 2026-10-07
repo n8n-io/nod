@@ -28,7 +28,9 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    environment: mac-release
+    environment:
+      name: mac-release
+      deployment: false
     env:
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
     permissions:
@@ -90,7 +92,9 @@ jobs:
     if: needs.plan.outputs.release_needed == 'true' && needs.plan.outputs.runtime_reused != 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 40
-    environment: mac-release
+    environment:
+      name: mac-release
+      deployment: false
     env:
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
       OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -150,7 +154,9 @@ jobs:
     if: needs.plan.outputs.release_needed == 'true' && needs.plan.outputs.runtime_reused != 'true'
     runs-on: macos-15
     timeout-minutes: 40
-    environment: mac-release
+    environment:
+      name: mac-release
+      deployment: false
     permissions:
       contents: write
     outputs:
@@ -231,7 +237,9 @@ jobs:
     if: always() && needs.plan.result == 'success' && needs.plan.outputs.release_needed == 'true' && (needs.runtime.result == 'success' || (needs.runtime.result == 'skipped' && needs.plan.outputs.runtime_reused == 'true'))
     runs-on: macos-15
     timeout-minutes: 30
-    environment: mac-release
+    environment:
+      name: mac-release
+      deployment: false
     env:
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
       OTTO_DESKTOP_VERSION: ${{ needs.plan.outputs.version }}

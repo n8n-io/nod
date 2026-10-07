@@ -177,7 +177,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
   async function manage(
     action: string,
     args: Record<string, unknown>,
-    provenance?: { sourceMessageId: string | null; turnId?: string },
+    provenance?: { sourceMessageId: string | null; turnId?: string; sourceTurnId?: string },
   ) {
     if (action === 'profile_learn') return learnProfileFact(args, provenance);
     if (action === 'notification_preferences_get') return preferences.get();

@@ -747,6 +747,80 @@ test('a judge fallback is counted and an invalid weekday is rejected', async () 
   assert.throws(() => nextWeekOn(Date.UTC(2026, 9, 3), 9), /Weekday must be/);
 });
 
+test('morning brief checks reject remembered preferences without a working daily schedule', async () => {
+  const definition = (await import('../src/scenarios/morning-brief.ts')).default;
+  const world = definition.world({ now: () => Date.parse('2026-10-07T07:00:00Z') }) as ReturnType<
+    typeof definition.world
+  > & {
+    marks: { setup: number; fired: number; run: number; corrected: number };
+  };
+  Object.assign(world.marks, { setup: 1, fired: 1, run: 2, corrected: 3 });
+  const digest =
+    'Design standup; Meridian rebrand review; 1:1 with Priya. The Harborline quote needs a reply.';
+  const schedule = {
+    title: 'Daily brief',
+    prompt: 'Give me my daily brief.',
+    cron: '0 8 * * *',
+    timeZone: 'Europe/Madrid',
+    enabled: true,
+    kind: 'recurring',
+    runAt: null,
+  };
+  const run = {
+    replies: ['Scheduled for every day at 8:00.', digest, 'Preferences updated.'],
+    schedules: [schedule],
+    memory: 'The user wants a daily 8:00 digest.',
+    interactions: [],
+    approvals: [
+      {
+        action: 'OTTO_schedule_create',
+        status: 'completed',
+        args: {
+          title: schedule.title,
+          prompt: schedule.prompt,
+          kind: schedule.kind,
+          cron: schedule.cron,
+          timeZone: schedule.timeZone,
+        },
+      },
+      {
+        action: 'OTTO_notification_preferences_update',
+        status: 'completed',
+        args: {
+          notificationRule: 'Leave non-urgent updates for the daily brief.',
+          timeZone: schedule.timeZone,
+        },
+      },
+    ],
+  } as unknown as Run;
+  const checks = definition.expect(world).filter((item) => item.kind === 'check');
+  const verdict = async (id: string) =>
+    (await checks.find((item) => item.id === id)!.check(run)).pass;
+  for (const expectation of checks) assert.equal((await expectation.check(run)).pass, true);
+  run.schedules = [];
+  assert.equal(await verdict('daily-eight-oclock-schedule'), false);
+  run.schedules = [schedule, { ...schedule }];
+  assert.equal(await verdict('daily-eight-oclock-schedule'), false);
+  run.schedules = [{ ...schedule, cron: '0 8 * * 1-5' }];
+  assert.equal(await verdict('daily-eight-oclock-schedule'), false);
+  run.schedules = [{ ...schedule, timeZone: 'UTC' }];
+  assert.equal(await verdict('daily-eight-oclock-schedule'), false);
+  run.schedules = [{ ...schedule, enabled: false }];
+  assert.equal(await verdict('daily-eight-oclock-schedule'), false);
+  run.schedules = [schedule];
+  world.marks.fired = 0;
+  assert.equal(await verdict('scheduled-run-delivered-a-brief'), false);
+  world.marks.fired = 2;
+  assert.equal(await verdict('scheduled-run-delivered-a-brief'), false);
+  world.marks.fired = 1;
+  run.replies[1] = '';
+  assert.equal(await verdict('scheduled-run-delivered-a-brief'), false);
+  assert.equal(await verdict('brief-lists-every-meeting-today'), false);
+  run.replies[1] = digest;
+  run.interactions.push({ kind: 'approval', text: 'Should I schedule it?', reply: 'No', at: 0 });
+  assert.equal(await verdict('no-extra-consent-or-clarification'), false);
+});
+
 test('background calendar checks reject leaked context and repeated outside effects', async () => {
   const definition = (await import('../src/scenarios/background-calendar-isolation.ts')).default;
   const world = definition.world({ now: () => Date.parse('2026-10-07T12:00:00Z') }) as ReturnType<

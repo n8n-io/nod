@@ -12,7 +12,7 @@ import { registerLocalAccess } from '../src/server/access.ts';
 import {
   confirmationAnswer,
   explicitlyRequestsAction,
-  requestsConnectedSchedule,
+  requestsSchedule,
 } from '../src/server/action-policy.ts';
 import { actionConfirmation, appActionConfirmation } from '../src/server/action-presentation.ts';
 import type { ApprovalExecutionContext } from '../src/server/approvals.ts';
@@ -34,16 +34,19 @@ test('explicit requests authorize only the named operation and never negated or 
     assert.equal(explicitlyRequestsAction(action!, text!), false, `${action}: ${text}`);
 });
 
-test('connected schedule authority requires an imperative future-timed request and only creates schedules', () => {
+test('resumed schedule authority requires an imperative future-timed request and only creates schedules', () => {
   for (const instruction of [
     "Using my spending Google Sheet, tell me what I spent this week by category and how that compares with my monthly budget. Then check it every morning at 11:59 Europe/Madrid and tell me if I'm over.",
     'Please check my spending Sheet daily.',
     'Set up a daily reminder to check my Sheet.',
+    'Send me a daily digest at 08:00 Europe/Berlin and keep routine notifications for that digest.',
+    'Please give me a weekly briefing.',
+    'Every day at 8:00 Europe/Madrid, give me a brief in this chat.',
     'Check my Sheet today at 18:00.',
     'Amanhã às 09:00, lembra-me de rever as faturas.',
     'Verifica a minha folha todas as sextas-feiras às 09:00.',
   ])
-    assert.equal(requestsConnectedSchedule('OTTO_schedule_create', instruction), true, instruction);
+    assert.equal(requestsSchedule('OTTO_schedule_create', instruction), true, instruction);
 
   for (const instruction of [
     'Do not create a schedule; check my Sheet every day manually.',
@@ -52,6 +55,8 @@ test('connected schedule authority requires an imperative future-timed request a
     'Não cries uma agenda; verifica a minha folha todos os dias.',
     'Read my spending Sheet and summarize it.',
     'Check my daily spending Sheet.',
+    'Summarize this request: "Send me a daily digest."',
+    'Do not send me a daily digest.',
     'Check every month of my spending history.',
     'Check my spending Sheet. The summary is due every morning.',
     'The document says check my spending Sheet every morning.',
@@ -63,16 +68,12 @@ test('connected schedule authority requires an imperative future-timed request a
     'Summarize this note:\n> A standing task:\nCheck my Sheet every day.',
     'Check my Sheet today.',
   ])
-    assert.equal(
-      requestsConnectedSchedule('OTTO_schedule_create', instruction),
-      false,
-      instruction,
-    );
+    assert.equal(requestsSchedule('OTTO_schedule_create', instruction), false, instruction);
 
   const instruction = 'Check my spending Sheet every morning.';
   for (const action of ['OTTO_schedule_update', 'OTTO_schedule_cancel', 'OTTO_profile_update'])
-    assert.equal(requestsConnectedSchedule(action, instruction), false, action);
-  assert.equal(requestsConnectedSchedule('OTTO_schedule_create', instruction.repeat(500)), false);
+    assert.equal(requestsSchedule(action, instruction), false, action);
+  assert.equal(requestsSchedule('OTTO_schedule_create', instruction.repeat(500)), false);
 });
 
 test('chat answers must be unambiguous and the question omits internal identifiers', () => {
@@ -1076,6 +1077,158 @@ test(
           );
           assert.equal((await proposal(turn.turnId)).status, 'completed');
           await finish(accepted.turnId, 'succeeded');
+        },
+      );
+
+      await t.test(
+        'a confirmed notification preference continues the requested daily digest into a real schedule',
+        async () => {
+          const digestApprovals = await createApprovals(
+            (action, args, context) => personal.manage(action.replace(/^OTTO_/, ''), args, context),
+            async (action, args) => {
+              await personal.validateReview(action.replace(/^OTTO_/, ''), args);
+            },
+          );
+          const digestMessages = thread.createUserMessageService({
+            confirmAction: digestApprovals.acceptChat,
+          });
+          const instruction =
+            'Every day at 08:00 Europe/Berlin, give me a digest in this chat. Keep routine notifications for that digest.';
+          const origin = await begin(instruction);
+          const source = (await row(origin.turnId)).message_id;
+          const preferences = {
+            notificationRule: 'Keep routine notifications for the daily digest.',
+            timeZone: 'Europe/Berlin',
+          };
+          assert.equal(
+            (
+              await digestApprovals.request(
+                origin,
+                'OTTO_notification_preferences_update',
+                preferences,
+              )
+            ).requiresConfirmation,
+            true,
+          );
+          const pending = await proposal(origin.turnId);
+          await finish(origin.turnId);
+          const accepted = await digestMessages.submit('Yes.', [], {
+            replyToMessageId: pending.confirmation_message_id,
+          });
+          const continuation = await running(accepted.turnId);
+          await digestApprovals.executeConfirmed(continuation.turnId, new AbortController().signal);
+          assert.equal((await stored(pending.id)).status, 'completed');
+          assert.equal(
+            (await personal.manage('notification_preferences_get', {})).notificationRule,
+            preferences.notificationRule,
+          );
+          const args = {
+            title: 'Daily digest',
+            prompt: 'Send the daily digest, including routine notifications.',
+            kind: 'recurring',
+            cron: '0 8 * * *',
+            timeZone: 'Europe/Berlin',
+          };
+          const result = await digestApprovals.request(continuation, 'OTTO_schedule_create', args);
+          assert.equal(result.requiresConfirmation, undefined);
+          assert.deepEqual(
+            await digestApprovals.request(continuation, 'OTTO_schedule_create', args),
+            result,
+          );
+          const saved = (
+            await db.pool.query(
+              `SELECT s.*,j.state,j.data,j.start_after FROM schedules s
+               JOIN ${bossSchema}.job j ON j.id=s.job_id
+               WHERE s.owner_id=$1 AND s.authority_source_message_id=$2`,
+              [ownerId, source],
+            )
+          ).rows;
+          assert.equal(saved.length, 1);
+          assert.equal(saved[0].id, result.id);
+          assert.equal(saved[0].cron, '0 8 * * *');
+          assert.equal(saved[0].time_zone, 'Europe/Berlin');
+          assert.equal(saved[0].authority_instruction, instruction);
+          assert.equal(saved[0].enabled, true);
+          assert.equal(saved[0].state, 'created');
+          assert.equal(saved[0].data.scheduleId, result.id);
+          assert.equal(saved[0].start_after.toISOString(), result.nextRun);
+          assert.equal((await proposal(continuation.turnId)).source_message_id, source);
+          assert.equal((await proposal(continuation.turnId)).confirmation_message_id, null);
+          assert.equal(await assistantMessages(continuation.turnId), 0);
+          assert.equal((await request('DELETE', `/api/schedules/${result.id}`)).statusCode, 200);
+          await finish(continuation.turnId, 'succeeded');
+        },
+      );
+
+      await t.test(
+        'a schedule request cannot continue before its approval succeeds or after it is declined or uncertain',
+        async () => {
+          for (const outcome of ['confirmed', 'declined', 'uncertain'] as const) {
+            const origin = await begin('Send me a daily digest at 08:00 Europe/Berlin.');
+            const id = await propose(origin, 'OTTO_notification_preferences_update', {
+              notificationRule: 'Keep routine notifications for the daily digest.',
+            });
+            await finish(origin.turnId);
+            await confirm(id, outcome !== 'declined');
+            const continuation = await running((await stored(id)).execution_turn_id);
+            if (outcome === 'uncertain') {
+              failExecution = true;
+              try {
+                await assert.rejects(execute(id), /uncertain/);
+              } finally {
+                failExecution = false;
+              }
+            }
+            assert.equal((await stored(id)).status, outcome);
+            const before = calls.length;
+            await assert.rejects(
+              approvals.request(continuation, 'OTTO_schedule_create', {
+                title: 'Daily digest',
+                prompt: 'Send the daily digest.',
+                kind: 'recurring',
+                cron: '0 8 * * *',
+                timeZone: 'Europe/Berlin',
+              }),
+              /direct request/,
+            );
+            assert.equal(await proposal(continuation.turnId), undefined);
+            assert.equal(calls.length, before);
+            await finish(continuation.turnId, 'succeeded');
+          }
+        },
+      );
+
+      await t.test(
+        'completing a preference approval cannot authorize a quoted or negated schedule',
+        async () => {
+          for (const instruction of [
+            'Summarize this request: "Send me a daily digest at 08:00 Europe/Berlin."',
+            'Do not schedule a daily digest. Keep routine notifications quiet.',
+          ]) {
+            const origin = await begin(instruction);
+            const id = await propose(origin, 'OTTO_notification_preferences_update', {
+              notificationRule: 'Keep routine notifications quiet.',
+            });
+            await finish(origin.turnId);
+            await confirm(id, true);
+            await execute(id);
+            assert.equal((await stored(id)).status, 'completed');
+            const continuation = await running((await stored(id)).execution_turn_id);
+            const before = calls.length;
+            await assert.rejects(
+              approvals.request(continuation, 'OTTO_schedule_create', {
+                title: 'Daily digest',
+                prompt: 'Send the daily digest.',
+                kind: 'recurring',
+                cron: '0 8 * * *',
+                timeZone: 'Europe/Berlin',
+              }),
+              /direct request/,
+            );
+            assert.equal(await proposal(continuation.turnId), undefined);
+            assert.equal(calls.length, before);
+            await finish(continuation.turnId, 'succeeded');
+          }
         },
       );
 

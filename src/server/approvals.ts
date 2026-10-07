@@ -8,7 +8,7 @@ import {
   confirmationAnswer,
   explicitlyRequestsAction,
   isReversiblePlanAction,
-  requestsConnectedSchedule,
+  requestsSchedule,
 } from './action-policy.ts';
 import { actionConfirmation } from './action-presentation.ts';
 
@@ -16,6 +16,7 @@ export interface ApprovalExecutionContext {
   threadId: string;
   turnId: string;
   sourceMessageId: string | null;
+  sourceTurnId?: string;
 }
 
 export interface ChatConfirmationInput {
@@ -157,10 +158,22 @@ export async function createApprovals(
 
   async function run(approval: Record<string, any>) {
     try {
+      let sourceTurnId: string | undefined;
+      if (isReversiblePlanAction(approval.action) && approval.source_message_id) {
+        const source = (
+          await pool.query<{ turn_id: string }>(
+            "SELECT turn_id FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND role='user'",
+            [approval.source_message_id, ownerId, approval.thread_id],
+          )
+        ).rows[0];
+        if (!source?.turn_id) throw new Error('The schedule instruction is unavailable.');
+        sourceTurnId = source.turn_id;
+      }
       const result = await execute(approval.action, approval.args, {
         threadId: approval.thread_id,
         turnId: approval.execution_turn_id,
         sourceMessageId: approval.source_message_id,
+        ...(sourceTurnId ? { sourceTurnId } : {}),
       });
       const snapshot = JSON.parse(JSON.stringify(result ?? null));
       await pool.query(
@@ -242,7 +255,9 @@ export async function createApprovals(
       const currentSource = authorInstruction === current.prompt;
       const kind = await resumeKind(client, current);
       const resumedSource =
-        requestsConnectedSchedule(action, authorInstruction) && kind === 'connection';
+        requestsSchedule(action, authorInstruction) &&
+        (kind === 'connection' ||
+          (kind === 'approval' && (await confirmedBy(client, current))?.status === 'completed'));
       if (
         !options.question &&
         !background &&
