@@ -2334,6 +2334,8 @@ test(
               ).rowCount,
               0,
             );
+            const queuedRule = 'Keep synthetic calendar digests for 20:00 only.';
+            await preferences.update({ notificationRule: queuedRule });
             block('Hold for app inventory change');
             const held = await thread.submitUserMessage('Hold for app inventory change');
             await waitFor(() => Boolean(ran(held.turnId)));
@@ -2347,7 +2349,7 @@ test(
             release('Hold for app inventory change');
             assert.equal(classified, 1);
             const dispatched = await db.pool.query(
-              `SELECT n.decision,n.turn_id,u.background,u.source,u.thread_id FROM notifications n
+              `SELECT n.decision,n.turn_id,u.background,u.source,u.thread_id,u.prompt FROM notifications n
              LEFT JOIN turns u ON u.id=n.turn_id WHERE n.event_id=ANY($1::text[]) AND n.owner_id=$2`,
               [ids, ownerId],
             );
@@ -2361,6 +2363,7 @@ test(
               assert.equal(await turnStatus(row.turn_id), 'succeeded');
               assert.deepEqual(ran(row.turn_id)?.connectedApps, []);
             }
+            assert.ok(dispatched.rows.every((row) => !row.prompt.includes(queuedRule)));
             const turnIds = dispatched.rows.map((row) => row.turn_id);
             await triage.triageEvent('Synthetic inbox duplicate', ids[0], 'inspect_message');
             assert.equal(runs.filter((run) => turnIds.includes(run.turnId)).length, 4);
