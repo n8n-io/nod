@@ -59,7 +59,7 @@ export function createComposioFiles(
   return async (result: unknown, signal: AbortSignal, open = true): Promise<unknown> => {
     let files = 0;
     const visit = async (value: unknown): Promise<unknown> => {
-      if (typeof value === 'string' && value.length <= 65_536 && value.includes('s3url'))
+      if (typeof value === 'string' && value.includes('"s3url"'))
         try {
           return await visit(JSON.parse(value));
         } catch {
