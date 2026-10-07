@@ -66,7 +66,7 @@ The implementation addresses [LAB-482](https://linear.app/n8n/issue/LAB-482), [L
 - FE01 and FE03 passed mounted component and raster checks, including a portrait holdout, original-byte restoration, original-resolution export, saved-mark editing, Undo/Redo, dirty close, comment keyboard submission and unload protection. The holdout exposed Escape during drawing; the gesture now cancels consistently. An asynchronous focus assertion required a harness timing repair, retained separately from production fixes.
 - FE02 passed owner isolation, hydration race, reload, storage failure, accepted-clear failure, explicit discard, immutable retry and rendered-only payload checks. Storage failures preserve the in-memory work. Failure to clear an accepted draft offers a local retry without resending the feedback.
 - FE07 passed the retained 37-case paste regression and UI review of the approved controls. Tiles are fixed at 148 × 104 pixels and show the entire image. Dictation remains excluded.
-- Current root integration: 634/634; Cloudflare: 424/424; desktop: 118 passed, one skipped; n8n workflow: 13/13. TypeScript, architecture and image checks passed. Final formatting/build and delivery CI are recorded with the pull request.
+- Before review fixes, root integration: 635/635 on `9275c4393d6f0aa4a1037d6803809d34c5ec4971`; Cloudflare: 424/424; desktop: 118 passed, one skipped; n8n workflow: 13/13. TypeScript, architecture and image checks passed. Final formatting/build and delivery CI are recorded with the pull request.
 
 ### Native development-shell acceptance
 
@@ -90,3 +90,23 @@ The active [Otto Feedback workflow](https://internal.users.n8n.cloud/workflow/8D
 ### Remaining delivery gates
 
 FE06 is recorded in [the LAB-529 evaluation](../../evals/lab529.md). FE08 requires the exact pull-request revision's CI, merge record and published app release; these are not inferred from local tests or the already-published intake.
+
+### Auditable run index
+
+[The sanitized evidence index](chat-feedback-evidence.json) records case versions, timestamps, exact source fingerprints, input hashes, environment, result manifests and file digests. Each result applies to its recorded source; later review fixes require their own checks. Raw traces stay in the named `.local` paths in the evaluation checkout and are intentionally excluded from Git. Their hashes allow the retained records to be matched without publishing diagnostics or profiles.
+
+| Acceptance        | Result manifest in the evaluation checkout                                                             | Revision or source identity                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| FE01 / FE03       | `.local/debug/annotation-eval/green-mounted.json`, `holdout-pr-review.json`, `unload-green.json`       | Per-run component SHA-256 in the index; the unload run predates review fixes                                    |
+| FE02              | `.local/debug/draft-eval/green-form.json`                                                              | Dirty implementation on `ed66ff0`, with four exact file hashes                                                  |
+| FE04              | `.local/feedback-eval-2026-10-07/native-manual-acceptance.json`                                        | Native shell source and synthetic input hashes in the index                                                     |
+| FE05              | `.local/feedback-eval-2026-10-07/linear-LAB-545-verification.json`, `linear-LAB-546-verification.json` | Submission IDs, receiving timestamps and all seven SHA-256 comparisons                                          |
+| FE06              | `.local/capability-evals/lab529-merged-9275c43-acceptance-v2.json`                                     | `9275c4393d6f0aa4a1037d6803809d34c5ec4971`; v2 base and holdout, three attempts each, 54 required checks passed |
+| Review privacy    | `.local/debug/capture-privacy-eval/green.json`                                                         | Parent `9275c43` plus four changed-file hashes; red logs and hypothesis retained alongside it                   |
+| Review annotation | `.local/debug/annotation-review/green.json`                                                            | Five changed-file hashes; frozen cases, red results and hypotheses retained alongside it                        |
+
+The reviewed parent revision passed [CI, integration and E2B acceptance](https://github.com/n8n-io/otto/actions/runs/37667165096) and [desktop update acceptance](https://github.com/n8n-io/otto/actions/runs/37667165268). These links identify historical runs, not the eventual merge candidate. [PR #153](https://github.com/n8n-io/otto/pull/153) carries the final revision's checks and review resolution.
+
+Reproduce the committed contracts with `npm run check`, `npm run test:integration`, `npm run build`, `npm --prefix desktop test`, `node --test deployment/n8n/feedback.test.mjs`, `npm --prefix evals run check` and `npm --prefix evals test`. Run integration and build sequentially because they share build outputs. Use disposable schemas for integration and the [LAB-529 frozen protocol](../../evals/lab529.md) for model evaluations. Manual UI checks and authenticated Linear downloads remain separate from these commands.
+
+The review fixes then passed 636 integration tests, 118 desktop tests (one skipped), 13 workflow contracts, 32 eval-harness tests, root check and build. At 320 × 760, the feedback categories and annotation tools fit without horizontal overflow; the smallest toolbar uses readable 3+2 rows. The onboarding actions are keyboard reachable without taking initial focus. An actual renderer check refused capture with unsent chat text and captured again after it was cleared. Fingerprints and raw-log digests are in the review records of the evidence index. The unchanged six-attempt model rerun and final CI are recorded on the PR before merge.

@@ -307,7 +307,7 @@
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--surface-overlay);
-  box-shadow: 0 4px 18px rgb(0 0 0 / 15%);
+  box-shadow: 0 4px 18px var(--shadow-overlay);
 }
 .feedback-comment-editor > label {
   color: var(--foreground);
@@ -429,10 +429,13 @@
     width: 100%;
   }
   .feedback-image-tools .button {
+    min-width: 0;
     flex-direction: column;
     gap: 4px;
-    padding-inline: 6px;
-    font-size: 11px;
+    padding-inline: 2px;
+    font-size: 10px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .feedback-image-help {
     display: none;
@@ -451,5 +454,20 @@
   .feedback-image-zoom {
     flex: 1 0 100%;
     justify-content: center;
+  }
+}
+@media (max-width: 360px) {
+  .feedback-image-tools {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .feedback-image-tools .button {
+    grid-column: span 2;
+    padding-inline: 6px;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+  .feedback-image-tools .button:nth-last-child(-n + 2) {
+    grid-column: span 3;
   }
 }

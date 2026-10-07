@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import test from 'node:test';
+import type { TestContext } from 'node:test';
+import type { RuntimeContext } from '../../src/ports/agent.ts';
+import { createAgentRuntime } from '../../src/runtime/index.ts';
+import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
-import type { Run } from '../src/trace.ts';
+import { requireBackgroundPrompts, type Run } from '../src/trace.ts';
 import { agreement, kappa } from '../src/review.ts';
 import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, trustLabels } from '../src/report.ts';
@@ -758,7 +766,152 @@ test('background calendar checks reject leaked context and repeated outside effe
   });
   assert.equal(await verdict('background-did-not-answer-the-chat-request'), false);
   run.turns[1].startedAt = 120;
+  run.turns[1].finishedAt = 130;
   assert.equal(await verdict('event-ran-while-foreground-was-pending'), false);
+  for (const { start, finish, released, foreground } of [
+    { start: 10, finish: 105, released: 100, foreground: 110 },
+    { start: 10, finish: 111, released: 120, foreground: 110 },
+    { start: 10, finish: 110, released: 120, foreground: 110 },
+    { start: 95, finish: 90, released: 100, foreground: 110 },
+  ]) {
+    run.turns[1].startedAt = start;
+    run.turns[1].finishedAt = finish;
+    world.state.releasedAt = released;
+    run.turns[0].finishedAt = foreground;
+    assert.equal(await verdict('event-ran-while-foreground-was-pending'), false);
+  }
+});
+
+async function promptCaptureFixture(t: TestContext) {
+  const directory = await mkdtemp(join(tmpdir(), 'eval-prompt-capture-'));
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async () => ({
+        resumed: false,
+        prompt: async () => {},
+        abort() {},
+        dispose() {},
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer(),
+    workspace: fakeWorkspace(),
+    observationTimeoutMs: 50,
+  });
+  t.after(async () => {
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const context: RuntimeContext = {
+    threadId: 'capture-fixture',
+    turnId: 'capture-fixture',
+    prompt: 'Inspect the synthetic receipt quietly.',
+    background: true,
+    history: [],
+    workspacePath: directory,
+    signal: t.signal,
+    attachments: [],
+    emit: async () => {},
+    reply: async () => {},
+    publish: async () => {
+      throw new Error('Not used');
+    },
+    requestCredential: async () => ({}),
+    integration: async () => ({}),
+    manage: async () => ({}),
+  };
+  return { runtime, context };
+}
+
+test(
+  'a fast background turn settles prompt capture before trace collection',
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { runtime, context } = await promptCaptureFixture(t);
+    const entered = Promise.withResolvers<void>();
+    const capture = Promise.withResolvers<void>();
+    let completed = false;
+    let recorded = false;
+    const running = runtime
+      .runTurn({
+        ...context,
+        inspectPrompt: async () => {
+          entered.resolve();
+          await capture.promise;
+          recorded = true;
+        },
+      })
+      .then((result) => {
+        completed = true;
+        return result;
+      });
+    try {
+      await entered.promise;
+      await setImmediate();
+      assert.equal(completed, false);
+      capture.resolve();
+      assert.equal((await running).status, 'succeeded');
+      assert.equal(recorded, true);
+    } finally {
+      capture.resolve();
+      await running;
+    }
+  },
+);
+
+test(
+  'optional prompt capture is bounded and cannot block cancellation or fail a turn',
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    for (const mode of ['timeout', 'cancel', 'dispose', 'reject'] as const) {
+      const { runtime, context } = await promptCaptureFixture(t);
+      const controller = new AbortController();
+      const entered = Promise.withResolvers<void>();
+      const capture = Promise.withResolvers<void>();
+      const running = runtime.runTurn({
+        ...context,
+        signal: AbortSignal.any([t.signal, controller.signal]),
+        inspectPrompt: async () => {
+          entered.resolve();
+          await capture.promise;
+        },
+      });
+      await entered.promise;
+      await setImmediate();
+      assert.equal(runtime.status().activeTurns, 1);
+      let disposing: Promise<void> | undefined;
+      if (mode === 'timeout') t.mock.timers.tick(50);
+      else if (mode === 'cancel') controller.abort();
+      else if (mode === 'dispose') disposing = runtime.dispose();
+      else capture.reject(new Error('Synthetic capture failure'));
+      await running;
+      await disposing;
+      assert.equal(runtime.status().activeTurns, 0);
+      capture.reject(new Error('Late synthetic capture failure'));
+      await setImmediate();
+    }
+  },
+);
+
+test('missing executed background captures are measurement errors, not isolation verdicts', () => {
+  const turn = {
+    id: 'background',
+    status: 'succeeded',
+    source: 'event',
+    error: null,
+    background: true,
+    startedAt: 1,
+    finishedAt: 2,
+  };
+  assert.throws(() => requireBackgroundPrompts([turn], []), /capture is missing/);
+  assert.doesNotThrow(() =>
+    requireBackgroundPrompts([turn], [{ turnId: 'background', instruction: 'Inspect receipt.' }]),
+  );
+  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, background: false }], []));
+  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, startedAt: undefined }], []));
+  assert.doesNotThrow(() => requireBackgroundPrompts([{ ...turn, status: 'failed' }], []));
 });
 
 test('fake calendar updates preserve identity and reject invalid times without mutation', async () => {

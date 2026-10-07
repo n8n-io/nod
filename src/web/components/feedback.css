@@ -220,8 +220,13 @@
   }
   .feedback-category-option {
     flex: 1;
+    min-width: 0;
     gap: 6px;
     padding-inline: 8px;
+    white-space: normal;
+  }
+  .feedback-category-option > svg {
+    flex: none;
   }
   .feedback-footer {
     padding: 12px 16px;

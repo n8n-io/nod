@@ -77,6 +77,21 @@ export function clip(value: string, limit: number) {
     : `${value.slice(0, Math.floor(limit * 0.7))}\n…[${value.length - limit} characters omitted]…\n${value.slice(-Math.floor(limit * 0.25))}`;
 }
 
+export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prompts'] = []) {
+  const captured = new Set(prompts.map((prompt) => prompt.turnId));
+  const missing = turns.filter(
+    (turn) =>
+      turn.background &&
+      turn.status === 'succeeded' &&
+      turn.startedAt !== undefined &&
+      !captured.has(turn.id),
+  );
+  if (missing.length)
+    throw new Error(
+      `Inspector prompt capture is missing for completed background turns: ${missing.map((turn) => turn.id).join(', ')}`,
+    );
+}
+
 async function sessionEvents(sessionRoot: string) {
   const entries: any[] = [];
   for (const thread of await readdir(sessionRoot).catch(() => [] as string[])) {
@@ -194,6 +209,7 @@ export async function collect(options: {
   const prompts = (
     await stack.pool.query('SELECT turn_id,payload FROM inspector_prompts ORDER BY created_at,id')
   ).rows.map((row) => ({ turnId: row.turn_id, instruction: row.payload.instruction }));
+  requireBackgroundPrompts(turns, prompts);
   const background = (
     await stack.pool.query(`SELECT r.* FROM inspector_records r JOIN turns t ON t.id=r.turn_id
       WHERE t.background ORDER BY r.started_at,r.id`)

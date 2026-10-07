@@ -3232,6 +3232,83 @@ test('browser handoff cancels queued controls when the preceding view cannot be 
   }
 });
 
+test('automatic feedback captures exclude remote handoffs and unsent editable content without changing the page', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 15_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<main>Sent synthetic conversation</main>', { url: 'http://localhost', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        ...Object.fromEntries(['Node', 'Element', 'HTMLElement', 'HTMLImageElement', 'HTMLCanvasElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'CSSRule', 'XMLSerializer'].map(name => [name, dom.window[name]])),
+      });
+      let images = 0;
+      let native = 0;
+      globalThis.Image = class {
+        set src(value) { if (value) { images++; queueMicrotask(() => this.onload?.()); } }
+      };
+      dom.window.HTMLCanvasElement.prototype.getContext = () => ({ fillRect() {}, drawImage() {} });
+      dom.window.HTMLCanvasElement.prototype.toBlob = function (callback) { callback(new Blob(['synthetic-safe-raster'], { type: 'image/jpeg' })); };
+      const { captureFeedbackScreenshot } = await import('./src/web/lib/feedback-capture.ts');
+      const safe = '<main>Sent synthetic conversation</main><div contenteditable="true"><p><br></p></div><input><textarea></textarea><input type="checkbox" checked><input type="hidden" value="synthetic-hidden-metadata">';
+      const privateViews = [
+        ['collapsed handoff', '<div class="browser-handoff"><img src="synthetic-private-page.png"></div>'],
+        ['input draft', '<input value="Synthetic unsent private input">'],
+        ['textarea draft', '<textarea>Synthetic unsent private textarea</textarea>'],
+        ['rich chat draft', '<div contenteditable="true"><p>Synthetic <strong>unsent chat</strong></p></div>'],
+        ['plain chat draft', '<div contenteditable="plaintext-only">Synthetic unsent plain chat</div>'],
+        ['pending upload', '<div class="pending-attachments">Synthetic private attachment</div>'],
+      ];
+      const leaked = [];
+      try {
+        for (const mode of ['web', 'native']) {
+          window.ottoDesktop = mode === 'native' ? { captureFeedbackScreenshot: async () => { native++; return new Uint8Array([1, 2, 3]); } } : undefined;
+          for (const [name, markup] of privateViews) {
+            document.body.innerHTML = markup;
+            if (name === 'input draft') document.querySelector('input').value = 'Synthetic changed input property';
+            const before = document.body.innerHTML;
+            const fields = [...document.querySelectorAll('input, textarea')].map(field => field.value);
+            const captures = images + native;
+            if ((await captureFeedbackScreenshot()) !== null || images + native !== captures) leaked.push(mode + ': ' + name);
+            assert.equal(document.body.innerHTML, before);
+            assert.deepEqual([...document.querySelectorAll('input, textarea')].map(field => field.value), fields);
+          }
+          document.body.innerHTML = safe;
+          const before = document.body.innerHTML;
+          const file = await captureFeedbackScreenshot();
+          assert.ok(file?.size, mode + ' empty composer');
+          assert.equal(document.body.innerHTML, before);
+        }
+        assert.deepEqual(leaked, []);
+        let release;
+        let started;
+        const requested = new Promise(resolve => started = resolve);
+        window.ottoDesktop = { captureFeedbackScreenshot: () => { started(); return new Promise(resolve => release = resolve); } };
+        document.body.innerHTML = safe;
+        const pending = captureFeedbackScreenshot();
+        await requested;
+        document.querySelector('[contenteditable]').textContent = 'Synthetic draft typed during capture';
+        release(new Uint8Array([1, 2, 3]));
+        assert.equal(await pending, null);
+        assert.equal(document.querySelector('[contenteditable]').textContent, 'Synthetic draft typed during capture');
+        document.body.innerHTML = safe;
+        const frame = window.requestAnimationFrame;
+        window.requestAnimationFrame = callback => frame(() => {
+          document.body.insertAdjacentHTML('beforeend', '<div class="browser-handoff">Synthetic newly opened remote page</div>');
+          callback(0);
+        });
+        const captures = native;
+        assert.equal(await captureFeedbackScreenshot(), null);
+        assert.equal(native, captures);
+      } finally {
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test('native Settings and feedback preserve the active credential form', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

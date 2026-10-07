@@ -893,7 +893,7 @@ function AttachmentEditor({
   const context = canvas.current?.getContext('2d');
   const draftLayout =
     draft && context && canvas.current
-      ? commentLayout(context, draft.mark, canvas.current)
+      ? commentLayout(context, { ...draft.mark, text: draft.mark.text.trim() }, canvas.current)
       : undefined;
   const selected =
     movePreview?.mark ?? (selectedMark === undefined ? undefined : marks.current[selectedMark]);
@@ -1262,7 +1262,25 @@ function AttachmentEditor({
                     }
                   }
                   onKeyDown={(event) => {
-                    if (panMode || spaceHeld) return;
+                    const directions: Record<string, Point> = {
+                      ArrowLeft: { x: -1, y: 0 },
+                      ArrowRight: { x: 1, y: 0 },
+                      ArrowUp: { x: 0, y: -1 },
+                      ArrowDown: { x: 0, y: 1 },
+                    };
+                    const direction = directions[event.key];
+                    if (panMode || spaceHeld) {
+                      const area = stage.current;
+                      if (direction && area && !locked && !draft && !pan.current) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const distance = event.shiftKey ? 160 : 40;
+                        area.scrollLeft += direction.x * distance;
+                        area.scrollTop += direction.y * distance;
+                        setScroll({ x: area.scrollLeft, y: area.scrollTop });
+                      }
+                      return;
+                    }
                     if (event.key === 'Escape' && moving.current) {
                       event.preventDefault();
                       event.stopPropagation();
@@ -1289,13 +1307,6 @@ function AttachmentEditor({
                         );
                         return;
                       }
-                      const directions: Record<string, Point> = {
-                        ArrowLeft: { x: -1, y: 0 },
-                        ArrowRight: { x: 1, y: 0 },
-                        ArrowUp: { x: 0, y: -1 },
-                        ArrowDown: { x: 0, y: 1 },
-                      };
-                      const direction = directions[event.key];
                       if (direction && selectedMark !== undefined) {
                         event.preventDefault();
                         event.stopPropagation();
@@ -1376,7 +1387,7 @@ function AttachmentEditor({
                   onPointerMove={move}
                   onPointerUp={(event) => finish(event)}
                   onPointerCancel={(event) => finish(event, true)}
-                  onLostPointerCapture={(event) => finish(event)}
+                  onLostPointerCapture={(event) => finish(event, true)}
                 />
                 {tool === 'comment' &&
                   fitted &&

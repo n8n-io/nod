@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { JSDOM } from 'jsdom';
 import { createSettingsStore } from '../main/settings.mjs';
 import {
   completeDesktopSetup,
@@ -1125,6 +1126,10 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   const capture = f.handlers.get('otto:feedback:capture');
   let safe = true;
   let captured = 0;
+  const dom = new JSDOM(
+    '<main>Sent synthetic conversation</main><div contenteditable="true"><p><br></p></div>',
+  );
+  t.after(() => dom.window.close());
   let bytes = Buffer.from('synthetic-image');
   const image = {
     isEmpty: () => false,
@@ -1135,7 +1140,13 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
       return { toJPEG: () => bytes };
     },
   };
-  contents.executeJavaScript = async () => safe;
+  contents.executeJavaScript = async (script) =>
+    safe &&
+    runInNewContext(script, {
+      document: dom.window.document,
+      HTMLInputElement: dom.window.HTMLInputElement,
+      HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
+    });
   contents.capturePage = async (rectangle, options) => {
     assert.equal(rectangle, undefined);
     assert.equal(options.stayHidden, true);
@@ -1165,6 +1176,39 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   assert.equal(await capture(event), null);
   assert.equal(captured, 0);
   safe = true;
+  const allowed = dom.window.document.body.innerHTML;
+  const leaked = [];
+  for (const [name, markup] of [
+    [
+      'collapsed handoff',
+      '<div class="browser-handoff"><img src="synthetic-private-page.png"></div>',
+    ],
+    ['input draft', '<input value="Synthetic unsent private input">'],
+    ['textarea draft', '<textarea>Synthetic unsent private textarea</textarea>'],
+    [
+      'rich chat draft',
+      '<div contenteditable="true"><p>Synthetic <strong>unsent chat</strong></p></div>',
+    ],
+    ['plain chat draft', '<div contenteditable="plaintext-only">Synthetic unsent plain chat</div>'],
+    ['pending upload', '<div class="pending-attachments">Synthetic private attachment</div>'],
+  ]) {
+    dom.window.document.body.innerHTML = markup;
+    if (name === 'input draft')
+      dom.window.document.querySelector('input').value = 'Synthetic changed input property';
+    const before = dom.window.document.body.innerHTML;
+    const fields = [...dom.window.document.querySelectorAll('input, textarea')].map(
+      (field) => field.value,
+    );
+    if ((await capture(event)) !== null) leaked.push(name);
+    assert.equal(dom.window.document.body.innerHTML, before);
+    assert.deepEqual(
+      [...dom.window.document.querySelectorAll('input, textarea')].map((field) => field.value),
+      fields,
+    );
+  }
+  assert.deepEqual(leaked, []);
+  assert.equal(captured, 0);
+  dom.window.document.body.innerHTML = allowed;
   assert.deepEqual(await capture(event), bytes);
   assert.equal(captured, 1);
   bytes = Buffer.alloc(2 * 1024 * 1024 + 1);
@@ -1176,6 +1220,20 @@ test('feedback screenshots stay in the trusted visible app and exclude private v
   safe = false;
   pending.resolve(image);
   assert.equal(await racing, null);
+  safe = true;
+  const draftPending = deferred();
+  contents.capturePage = () => draftPending.promise;
+  const typing = capture(event);
+  await new Promise(setImmediate);
+  dom.window.document.querySelector('[contenteditable]').textContent =
+    'Synthetic newly typed private draft';
+  draftPending.resolve(image);
+  assert.equal(await typing, null);
+  assert.equal(
+    dom.window.document.querySelector('[contenteditable]').textContent,
+    'Synthetic newly typed private draft',
+  );
+  dom.window.document.body.innerHTML = allowed;
   safe = true;
   const navigated = deferred();
   contents.capturePage = () => navigated.promise;

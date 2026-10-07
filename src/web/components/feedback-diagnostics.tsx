@@ -82,8 +82,8 @@ export function FeedbackDiagnostics({
             className="feedback-diagnostics-review"
             disabled={!report && (loading || frozen)}
             onClick={onReview}
-            aria-expanded={preview}
-            aria-controls={previewId}
+            aria-expanded={!!(preview && report)}
+            aria-controls={preview && report ? previewId : undefined}
           >
             {loading ? 'Preparing…' : preview ? 'Hide' : 'Review'}
             <ChevronDown size={14} aria-hidden="true" />

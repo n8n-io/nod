@@ -2,7 +2,7 @@ import { feedbackLimits } from '../../shared/feedback';
 import { desktopFeedbackScreenshot } from './desktop';
 
 const privateContent =
-  '[data-analytics-private], input[type="password"], input[autocomplete="one-time-code"], input[autocomplete="current-password"], input[autocomplete="new-password"], dialog[open], [role="dialog"]:not(.feedback-intro), [role="alertdialog"], iframe, webview';
+  '[data-analytics-private], .browser-handoff, .pending-attachments, input[type="password"], input[autocomplete="one-time-code"], input[autocomplete="current-password"], input[autocomplete="new-password"], dialog[open], [role="dialog"]:not(.feedback-intro), [role="alertdialog"], iframe, webview';
 
 let capturedFonts = '';
 
@@ -53,7 +53,22 @@ function canCapture() {
   return (
     !/^\/(?:vault|credentials|browser|browser-connect|onboarding)(?:\/|$)/.test(
       window.location.pathname,
-    ) && !document.querySelector(privateContent)
+    ) &&
+    !document.querySelector(privateContent) &&
+    !Array.from(document.querySelectorAll('input, textarea, [contenteditable]')).some((element) => {
+      if (element instanceof HTMLInputElement)
+        return (
+          !['hidden', 'button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color'].includes(
+            element.type,
+          ) && !!element.value
+        );
+      if (element instanceof HTMLTextAreaElement) return !!element.value;
+      return (
+        element.getAttribute('contenteditable')?.toLowerCase() !== 'false' &&
+        (!!element.textContent?.trim() ||
+          !!element.querySelector('img, canvas, video, audio, svg, iframe, object, embed'))
+      );
+    })
   );
 }
 
@@ -109,10 +124,13 @@ function cloneViewport() {
       return clone;
     }
     if (source instanceof HTMLInputElement) {
-      clone.setAttribute('value', source.value);
       if (source.checked) clone.setAttribute('checked', '');
     }
-    if (source instanceof HTMLTextAreaElement) clone.textContent = source.value;
+    if (
+      source instanceof HTMLTextAreaElement ||
+      source.matches('[contenteditable]:not([contenteditable="false" i])')
+    )
+      clone.textContent = '';
     else {
       for (const child of Array.from(source.childNodes)) {
         const copied = copy(child);
@@ -136,7 +154,7 @@ async function captureWebViewport(signal: AbortSignal) {
   const height = window.innerHeight;
   if (!width || !height) return null;
   const fonts = await captureFonts(signal);
-  if (signal.aborted) return null;
+  if (signal.aborted || !canCapture()) return null;
   const clone = cloneViewport();
   if (fonts) {
     const style = document.createElement('style');

@@ -311,9 +311,9 @@ function FeedbackDraftDialog({
   }, [open, pendingId, storageKey]);
 
   useEffect(() => {
-    if (!open || !hydrated || pendingId || started.current) return;
+    if (!open || !hydrated || pendingId || started.current || !screenshot) return;
     started.current = true;
-    if (screenshot) addAttachments([screenshot]);
+    addAttachments([screenshot]);
   }, [open, hydrated, pendingId, screenshot]);
 
   useEffect(() => {

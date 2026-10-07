@@ -487,13 +487,13 @@ test('explicit repair selects only missing files on the original issue', () => {
   );
   for (const category of ['feature', 'other']) {
     const original = envelope({ category });
-    const request = checkFeedback(original, hashFeedback);
+    const submitted = checkFeedback(original, hashFeedback);
     const retry = checkFeedback({ ...original, action: 'repair' }, hashFeedback);
-    const repair = feedbackReceipt(response(request), retry, 'initial', feedbackWorkflow);
-    assert.equal(repair.create, false);
-    assert.equal(retry.payloadHash, request.payloadHash);
-    assert.equal(repair.files[0].data, original.report.data);
-    assert.equal(repair.files[0].sha256, original.report.sha256);
+    const needsRepair = feedbackReceipt(response(submitted), retry, 'initial', feedbackWorkflow);
+    assert.equal(needsRepair.create, false);
+    assert.equal(retry.payloadHash, submitted.payloadHash);
+    assert.equal(needsRepair.files[0].data, original.report.data);
+    assert.equal(needsRepair.files[0].sha256, original.report.sha256);
     assert.equal(
       checkFeedback(
         { ...original, report: file('{"changed":true}'), action: 'repair' },

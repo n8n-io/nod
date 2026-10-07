@@ -77,7 +77,7 @@ function mark(value: unknown): value is FeedbackMark {
     positive(value.width) &&
     Array.isArray(value.points) &&
     value.points.length > 0 &&
-    value.points.every(point)
+    Array.from(value.points).every(point)
   );
 }
 
@@ -100,7 +100,7 @@ export function parseFeedbackAttachment(value: unknown): FeedbackAttachment | nu
     !feedbackAttachmentMimeType(image.original)?.startsWith('image/') ||
     !feedbackAttachmentMimeType(value.file)?.startsWith('image/') ||
     !Array.isArray(image.marks) ||
-    !image.marks.every(mark)
+    !Array.from(image.marks).every(mark)
   )
     return null;
   return {

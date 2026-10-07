@@ -572,8 +572,14 @@ async function captureFeedbackScreenshot(event) {
     isEngine(event) &&
     contents.getURL() === url &&
     (await contents.executeJavaScript(`!document.querySelector(
-      '[data-analytics-private], input[type="password"], input[autocomplete="one-time-code"], input[autocomplete="current-password"], input[autocomplete="new-password"], dialog[open], [role="dialog"]:not(.feedback-intro), [role="alertdialog"], iframe, webview'
-    )`));
+      '[data-analytics-private], .browser-handoff, .pending-attachments, input[type="password"], input[autocomplete="one-time-code"], input[autocomplete="current-password"], input[autocomplete="new-password"], dialog[open], [role="dialog"]:not(.feedback-intro), [role="alertdialog"], iframe, webview'
+    ) && !Array.from(document.querySelectorAll('input, textarea, [contenteditable]')).some((element) => {
+      if (element instanceof HTMLInputElement)
+        return !['hidden', 'button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color'].includes(element.type) && !!element.value;
+      if (element instanceof HTMLTextAreaElement) return !!element.value;
+      return element.getAttribute('contenteditable')?.toLowerCase() !== 'false' &&
+        (!!element.textContent?.trim() || !!element.querySelector('img, canvas, video, audio, svg, iframe, object, embed'));
+    })`));
   if (!(await safe())) return null;
   let image = await contents.capturePage(undefined, { stayHidden: true });
   if (image.isEmpty() || !(await safe())) return null;

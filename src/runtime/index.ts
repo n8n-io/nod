@@ -251,6 +251,11 @@ export function createAgentRuntime(dependencies: {
       signal,
       timeoutMs: dependencies.observationTimeoutMs,
     });
+    const promptCaptures = createObservationQueue({
+      observe: context.inspectPrompt,
+      signal,
+      timeoutMs: dependencies.observationTimeoutMs,
+    });
     const observe = observations.record;
     const abortSession = () => {
       void Promise.resolve()
@@ -599,19 +604,15 @@ export function createAgentRuntime(dependencies: {
         resumed: boolean,
       ) => {
         const currentInstruction = `${currentUserTime(context.timeZone)}\n${instruction}`;
-        void Promise.resolve()
-          .then(() =>
-            context.inspectPrompt?.({
-              id: randomUUID(),
-              system: inspectedSystem,
-              instruction: currentInstruction,
-              resumed,
-              imageCount,
-              reason,
-              createdAt: new Date().toISOString(),
-            }),
-          )
-          .catch(() => {});
+        void promptCaptures.record({
+          id: randomUUID(),
+          system: inspectedSystem,
+          instruction: currentInstruction,
+          resumed,
+          imageCount,
+          reason,
+          createdAt: new Date().toISOString(),
+        });
         return currentInstruction;
       };
       const { takeMessages } = context;
@@ -750,7 +751,7 @@ export function createAgentRuntime(dependencies: {
       } finally {
         clearTimeout(deadline);
         await Promise.allSettled([...activeToolCalls]);
-        await observations.flush();
+        await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
         claims.release(threadId, owner, waitingForUser);
         finished();
