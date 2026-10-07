@@ -74,6 +74,7 @@ export interface AppDependencies {
   runtime?: {
     status(): { browser: string; workspace: string; activeTurns?: number };
     inspectTools?(): AgentToolMetadata[];
+    holdBrowserForUser?(threadId: string): boolean;
   };
   inspector?: Pick<InspectorStore, 'read'>;
   configuration?: () => Configuration;
@@ -491,15 +492,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
       'SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND NOT background ORDER BY created_at DESC,id DESC LIMIT 1',
       [ownerId, threadId],
     );
-    if (latest.rows[0]?.status !== 'waiting' || latest.rows[0].waiting_reason !== 'question')
-      return false;
-    const running = await pool.query(
-      "SELECT 1 FROM turns WHERE owner_id=$1 AND thread_id=$2 AND status='running' LIMIT 1",
-      [ownerId, threadId],
+    return (
+      latest.rows[0]?.status === 'waiting' &&
+      latest.rows[0].waiting_reason === 'question' &&
+      (dependencies.runtime?.holdBrowserForUser?.(threadId) ?? true)
     );
-    return !running.rowCount;
   }
-  const handoffClosed = 'The browser opens here only while Otto is waiting for you.';
+  const handoffClosed = 'The browser opens here when Otto hands it to you.';
   async function readBrowserScreen(reply: FastifyReply, handoff = false) {
     const thread = await activeThread(pool);
     const blocked = async () =>

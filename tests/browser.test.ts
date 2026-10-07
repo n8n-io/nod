@@ -24,6 +24,7 @@ import { act, createElement, StrictMode, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import type {
   Agent,
+  AgentTool,
   AgentToolResult,
   RuntimeContext,
   RuntimeObservation,
@@ -98,11 +99,16 @@ test(
     let locked = false;
     let fail = false;
     let inspectorEnabled = false;
+    let browserHeld = false;
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
     const app = await createApp({
       configuration: () => configuration({ inspectorEnabled }),
+      runtime: {
+        status: () => ({ browser: 'Ready', workspace: 'Ready' }),
+        holdBrowserForUser: () => !browserHeld,
+      },
       computer: {
         status: () => 'Ready',
         currentSession: () =>
@@ -256,21 +262,22 @@ test(
       assert.deepEqual(await handoff(), [200, 200]);
       assert.deepEqual(controls, [[next.id, click]]);
       assert.deepEqual(await handoff({ type: 'click', x: 2, y: 0 }), [200, 400]);
-      const check = randomUUID();
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Check','running',true)",
-        [check, ownerId, next.id],
+        [randomUUID(), ownerId, next.id],
       );
-      assert.deepEqual(await handoff(), [423, 423]);
-      await db.pool.query("UPDATE turns SET status='succeeded' WHERE id=$1", [check]);
       assert.deepEqual(await handoff(), [200, 200]);
-      assert.equal(controls.length, 2);
+      browserHeld = true;
+      assert.deepEqual(await handoff(), [423, 423]);
+      browserHeld = false;
+      assert.deepEqual(await handoff(), [200, 200]);
+      assert.equal(controls.length, 3);
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status) VALUES($1,$2,$3,'user','Done','queued')",
         [randomUUID(), ownerId, next.id],
       );
       assert.deepEqual(await handoff(), [423, 423]);
-      assert.equal(controls.length, 2);
+      assert.equal(controls.length, 3);
     } finally {
       await app.close();
       await db.pool.end();
@@ -937,6 +944,106 @@ async function runtimeFixture(
     },
   };
 }
+
+test('the browser has one holder, and the conversation keeps it for the user until it is done', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-claim-'));
+  const threadId = randomUUID();
+  const opened: string[] = [];
+  const replies: string[] = [];
+  const scripts = new Map<string, (tools: Map<string, AgentTool>) => Promise<unknown>>();
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async ({ turnId, tools }) => ({
+        resumed: false,
+        prompt: async () => {
+          await scripts.get(turnId)!(new Map(tools.map((tool) => [tool.name, tool])));
+        },
+        abort() {},
+        dispose() {},
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer({
+      act: async (_id, action) => {
+        if (action.action === 'open' && action.url) opened.push(action.url);
+        return { text: 'Fixture page', url: 'https://example.com' };
+      },
+    }),
+    workspace: fakeWorkspace(),
+  });
+  const turn = (
+    background: boolean,
+    script: (tools: Map<string, AgentTool>) => Promise<unknown>,
+  ) => {
+    const turnId = randomUUID();
+    scripts.set(turnId, script);
+    return runtime.runTurn({
+      threadId,
+      turnId,
+      background,
+      prompt: 'Use the browser.',
+      history: [],
+      attachments: [],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      emit: async () => {},
+      reply: async (text) => {
+        replies.push(text);
+      },
+      delta() {},
+      publish: async () => {
+        throw new Error('unused');
+      },
+      requestCredential: async () => ({}),
+      integration: async () => ({}),
+      manage: async () => ({}),
+    });
+  };
+  const open = (tools: Map<string, AgentTool>, url: string) =>
+    tools.get('browser')!.execute({ action: 'open', url });
+  const handoff = deferred();
+  const backgroundDone = deferred();
+  try {
+    const asking = turn(false, async (tools) => {
+      await open(tools, 'https://example.com/conversation');
+      await handoff.promise;
+      await tools.get('ask_user')!.execute({ question: 'Sign in in [Open browser](/browser).' });
+    });
+    await delay(10);
+    const background = turn(true, async (tools) => {
+      await open(tools, 'https://example.com/background');
+      await backgroundDone.promise;
+    });
+    handoff.resolve();
+    assert.equal((await asking).status, 'waiting_user');
+    await delay(10);
+    assert.deepEqual(opened, ['https://example.com/conversation']);
+    assert.equal(runtime.holdBrowserForUser(threadId), true);
+    await turn(false, (tools) => open(tools, 'https://example.com/after-done'));
+    await delay(10);
+    assert.deepEqual(opened, [
+      'https://example.com/conversation',
+      'https://example.com/after-done',
+      'https://example.com/background',
+    ]);
+    assert.equal(runtime.holdBrowserForUser(threadId), false);
+    const nextHandoff = turn(false, (tools) =>
+      tools.get('ask_user')!.execute({ question: 'Continue in [Open browser](/browser).' }),
+    );
+    await delay(10);
+    assert.deepEqual(replies, ['Sign in in [Open browser](/browser).']);
+    backgroundDone.resolve();
+    await background;
+    assert.equal((await nextHandoff).status, 'waiting_user');
+    assert.equal(replies.at(-1), 'Continue in [Open browser](/browser).');
+    assert.equal(runtime.holdBrowserForUser(threadId), true);
+  } finally {
+    handoff.resolve();
+    backgroundDone.resolve();
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('a cancelled browser action cannot feed its cached screenshot back to the model', async () => {
   const browser = await transportFixture();

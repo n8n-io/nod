@@ -18,6 +18,7 @@ import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { actionEffect } from '../shared/action-effect.ts';
+import { conversation, createBrowserClaims } from './browser-claims.ts';
 import { createBrowserFlows } from './browser-flows.ts';
 import { requestsPrivateInput } from './communication.ts';
 import { createObservationQueue } from './observations.ts';
@@ -38,6 +39,9 @@ const parallelTools = new Set([
 ]);
 const mixedTools = new Set(['apps', 'manage_personal_context']);
 const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'get_credential']);
+const handsOverBrowser = (name: string, params: unknown) =>
+  name === 'ask_user' &&
+  /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
 const trustedResultTools = new Set([
   'skills',
   'send_message',
@@ -191,7 +195,7 @@ export function createAgentRuntime(dependencies: {
 }) {
   const { agent, computer } = dependencies;
   const activeTurns = new Map<string, { abort(): void; done: Promise<void> }>();
-  const browserQueues = new Map<string, Promise<void>>();
+  const claims = createBrowserClaims(holdMs);
   let disposed = false;
   let disposal: Promise<void> | undefined;
   const completedDisposals = new Set<string>();
@@ -217,19 +221,12 @@ export function createAgentRuntime(dependencies: {
     const done = new Promise<void>((resolve) => {
       finished = resolve;
     });
+    const owner = context.background ? context.turnId : conversation;
     let browserReady: Promise<void> | undefined;
-    const takeBrowser = () =>
-      (browserReady ??= new Promise<void>((resolve, reject) => {
-        const previous = browserQueues.get(threadId) ?? Promise.resolve();
-        browserQueues.set(
-          threadId,
-          previous.then(() => done),
-        );
-        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-        void previous.then(resolve);
-      }));
+    const takeBrowser = () => (browserReady ??= claims.take(threadId, owner, signal));
     let session: AgentSession | undefined;
     let status: RuntimeResult['status'] = 'succeeded';
+    let waitingForUser = false;
     let waitingFor: RuntimeResult['waitingFor'];
     let question: string | undefined;
     let stopped = false;
@@ -583,7 +580,7 @@ export function createAgentRuntime(dependencies: {
         parameters,
         parallel: parallelTools.has(name),
         execute: async (params) => {
-          if (browserTools.has(name)) await takeBrowser();
+          if (browserTools.has(name) || handsOverBrowser(name, params)) await takeBrowser();
           return inTurn(name, params, () =>
             guard(name, params, async () => {
               if (!Value.Check(parameters, params))
@@ -740,6 +737,7 @@ export function createAgentRuntime(dependencies: {
       if (stopped && status === 'succeeded') throw new Error('The turn was stopped.');
       if (context.activityCheck && !checkRecorded)
         throw new Error('The activity check did not record a result.');
+      waitingForUser = status !== 'succeeded';
       return { status, ...(waitingFor ? { waitingFor } : {}), ...(question ? { question } : {}) };
     } finally {
       stopped = true;
@@ -754,6 +752,7 @@ export function createAgentRuntime(dependencies: {
         await Promise.allSettled([...activeToolCalls]);
         await observations.flush();
         activeTurns.delete(context.turnId);
+        claims.release(threadId, owner, waitingForUser);
         finished();
       }
     }
@@ -761,6 +760,7 @@ export function createAgentRuntime(dependencies: {
 
   return {
     runTurn,
+    holdBrowserForUser: (threadId: string) => claims.holdForUser(threadId),
     inspectTools: () => [
       ...(agent.nativeTools ?? []).map((tool) => structuredClone(tool)),
       ...inspectToolCatalog(),
