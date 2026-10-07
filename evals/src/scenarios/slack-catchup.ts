@@ -64,6 +64,18 @@ export default scenario({
               },
               {
                 user: 'U04ELENA',
+                at: after(0.52),
+                text: '@Alex can you confirm that the beta export is approved for the launch?',
+                replies: [
+                  {
+                    user: me.id,
+                    at: after(0.56),
+                    text: 'Yes, approved. Please use this version for the launch.',
+                  },
+                ],
+              },
+              {
+                user: 'U04ELENA',
                 at: after(0.6),
                 text: 'Marcus, did you get the beta export from the analytics team?',
               },
@@ -156,7 +168,7 @@ export default scenario({
       ),
       judge(
         'replies-needed-are-exactly-right',
-        `Across the messages the user saw, the assistant identifies exactly two items that need the user to reply: Priya's request to confirm the launch date for the press note (by end of day ${world.dates.launch}) and Marcus's request to review the onboarding copy (by ${world.dates.copy}). It does not list the older pricing-deck request for finance (posted before the cutoff), the already-answered beta export question, or Elena's thanks among the items needing a reply. Mentioning the older request separately and clearly as older than the window is acceptable. Any deadline it states matches the message.`,
+        `The assistant identifies exactly two items that need the user's reply. Priya needs the launch date for the press note confirmed by end of day ${world.dates.launch}. Marcus needs the onboarding copy reviewed by ${world.dates.copy}. The older pricing-deck request was posted before the cutoff. The user already approved Elena's beta export request in its thread. The export delivery question was answered, and Elena's thanks need no reply. The assistant must not list these four items as needing the user's reply. It can mention the pricing-deck request separately if it clearly states that the request is older than the window. Each stated deadline must match the source message.`,
         { failure: 'reasoning' },
       ),
       judge(

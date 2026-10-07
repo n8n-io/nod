@@ -198,6 +198,16 @@ export function Chat({
       };
     }),
   ]);
+  const foregroundTurn = state.turns
+    .filter((turn) => turn.showTyping !== false)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  const handoffMessage = foregroundTurn
+    ? foregroundTurn.status === 'waiting'
+      ? visibleMessages.findLast(
+          (message) => message.role === 'assistant' && message.turnId === foregroundTurn.id,
+        )
+      : undefined
+    : visibleMessages.at(-1);
   const unseen = away
     ? persistedMessages.filter(
         (message) => message.role === 'assistant' && Date.parse(message.createdAt) > away.since,
@@ -786,7 +796,7 @@ export function Chat({
                   grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
                   onHandoffDone={
                     message.id === returningHandoff ||
-                    (index === visibleMessages.length - 1 &&
+                    (message.id === handoffMessage?.id &&
                       message.role === 'assistant' &&
                       !working &&
                       !sending)

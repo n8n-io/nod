@@ -2761,6 +2761,80 @@ test('chat request isolates a stale reply and attachments and restores failure b
   }
 });
 
+test('chat keeps a waiting browser handoff after a background message and closes it for a new user turn', async () => {
+  const state = requestedChatState();
+  const turnId = state.messages[0].turnId!;
+  state.messages[0].text = 'Complete this step in [Open browser](/browser).';
+  state.turns = [
+    {
+      id: turnId,
+      source: 'user',
+      status: 'waiting',
+      showTyping: true,
+      createdAt: '2026-10-01T12:00:00.000Z',
+    },
+  ];
+  const chat = () =>
+    createElement(Chat, {
+      state: { ...state },
+      streams: {},
+      refresh: async () => {},
+      resetConversation: async () => state.threadId,
+    });
+  const controls: unknown[] = [];
+  const view = await handoffView(async (path, options) => {
+    if (path === '/api/apps') return Response.json([]);
+    if (path === '/api/browser-handoff/screen') return handoffScreen();
+    assert.equal(path, '/api/browser-handoff');
+    controls.push(JSON.parse(String(options?.body)));
+    return Response.json({ ok: true });
+  }, chat());
+  try {
+    const original = view.element('.browser-handoff');
+    const backgroundId = randomUUID();
+    state.messages = [
+      ...state.messages,
+      {
+        id: randomUUID(),
+        role: 'assistant',
+        turnId: backgroundId,
+        text: 'A separate schedule needs your approval.',
+        attachments: [],
+        createdAt: '2026-10-01T12:01:00.000Z',
+      },
+    ];
+    state.turns = [
+      {
+        id: backgroundId,
+        source: 'schedule',
+        status: 'waiting',
+        showTyping: false,
+        createdAt: '2026-10-01T12:01:00.000Z',
+      },
+      ...state.turns,
+    ];
+    await view.render(chat());
+    assert.equal(view.element('.browser-handoff'), original);
+    await view.clickImage();
+    await act(async () => delay(350));
+    assert.deepEqual(controls, [{ type: 'click', x: 0.5, y: 0.5 }]);
+    state.turns = [
+      {
+        id: randomUUID(),
+        source: 'user',
+        status: 'succeeded',
+        showTyping: true,
+        createdAt: '2026-10-01T12:02:00.000Z',
+      },
+      ...state.turns,
+    ];
+    await view.render(chat());
+    assert.equal(view.dom.window.document.querySelector('.browser-handoff'), null);
+  } finally {
+    await view.close();
+  }
+});
+
 for (const failure of ['rejected', 'disconnected'] as const)
   test(`chat preserves a ${failure} browser continuation until an acknowledged retry`, async () => {
     const first = deferred<Response>();
