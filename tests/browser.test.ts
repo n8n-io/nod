@@ -3920,6 +3920,8 @@ test('native Settings and feedback preserve the active credential form', async (
         window: dom.window,
         document: dom.window.document,
         getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
         IS_REACT_ACT_ENVIRONMENT: true,
         ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
       });
@@ -4221,9 +4223,13 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         window: dom.window,
         document: dom.window.document,
         getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
         IS_REACT_ACT_ENVIRONMENT: true,
-        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'File', 'FileReader', 'MutationObserver'].map(name => [name, dom.window[name]])),
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'File', 'FileReader', 'MutationObserver', 'DOMParser'].map(name => [name, dom.window[name]])),
       });
+      dom.window.Range.prototype.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 });
+      dom.window.Range.prototype.getClientRects = () => [];
       URL.createObjectURL = () => 'blob:synthetic-image';
       URL.revokeObjectURL = () => {};
       const copies = [];
@@ -4256,6 +4262,10 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
       const { act, createElement, useState } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { FeedbackDialog } = await import('./src/web/components/feedback.tsx');
+      const { saveFeedbackDraft } = await import('./src/web/lib/feedback-draft.ts');
+      await saveFeedbackDraft('synthetic-owner', {
+        category: 'bug', feedback: '1. ', includeReport: false, attachments: [], pendingId: null,
+      });
       function Fixture() {
         const [open, setOpen] = useState(true);
         return createElement('div', null,
@@ -4278,44 +4288,79 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
       };
       const writeFeedback = async value => {
         await act(async () => {
-          const input = document.querySelector('textarea');
-          Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value').set.call(input, value);
-          input.dispatchEvent(new Event('input', { bubbles: true }));
+          const editor = document.querySelector('.feedback-editor').editor;
+          editor.commands.setContent(value, { contentType: 'markdown' });
+          editor.commands.setTextSelection(editor.state.doc.content.size - 1);
         });
       };
       try {
         await act(async () => root.render(createElement(Fixture)));
-        for (let attempt = 0; attempt < 100 && document.querySelector('textarea').disabled; attempt++)
+        for (let attempt = 0; attempt < 100 && document.querySelector('.feedback-editor')?.getAttribute('contenteditable') !== 'true'; attempt++)
           await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
+        const restoredEditor = document.querySelector('.feedback-editor').editor;
+        assert.equal(restoredEditor.isEmpty, true);
+        assert.equal(restoredEditor.state.doc.firstChild.type.name, 'orderedList');
+        assert.equal(document.querySelector('.feedback-form button[type="submit"]').disabled, true);
+        await submitForm();
+        assert.equal(submissions.length, 0);
+        await writeFeedback('- Synthetic item');
+        await act(async () => restoredEditor.commands.deleteRange({ from: 3, to: 17 }));
+        assert.equal(restoredEditor.isEmpty, true);
+        assert.equal(restoredEditor.state.doc.firstChild.type.name, 'bulletList');
+        assert.equal(document.querySelector('.feedback-form button[type="submit"]').disabled, true);
+        await act(async () => restoredEditor.view.dom.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true })));
+        assert.equal(submissions.length, 0);
+        await act(async () => document.querySelector('.feedback-diagnostics input[type="checkbox"]').click());
         await click('Copy trace');
         assert.equal(reports.length, 1);
         assert.equal(submissions.length, 0);
-        await writeFeedback('Synthetic feedback');
+        await writeFeedback('Synthetic **feedback**');
+        const editor = document.querySelector('.feedback-editor').editor;
+        for (const modifier of ['altKey', 'shiftKey']) {
+          await act(async () => editor.view.dom.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', [modifier]: true, bubbles: true, cancelable: true })));
+          assert.equal(editor.state.doc.childCount, 1);
+          assert.equal(editor.state.doc.firstChild.lastChild.type.name, 'hardBreak');
+          assert.equal(submissions.length, 0);
+          await writeFeedback('Synthetic **feedback**');
+        }
+        await act(async () => editor.view.dom.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+        assert.equal(editor.state.doc.childCount, 2);
+        assert.equal(submissions.length, 0);
+        await writeFeedback('Synthetic **feedback**');
+        await act(async () => editor.commands.insertContent('x'.repeat(12_001)));
+        assert.equal(editor.getMarkdown(), 'Synthetic **feedback**');
+        assert.ok(document.querySelector('.feedback-length-error'));
         const bytes = Uint8Array.from([137,80,78,71,13,10,26,10]);
         const file = new File([bytes], 'synthetic-paste.png', { type: 'image/png' });
         const paste = new Event('paste', { bubbles: true, cancelable: true });
         Object.defineProperty(paste, 'clipboardData', { value: {
           files: [file], items: [], getData: type => type === 'text/plain' ? 'Synthetic pasted text' : '',
         } });
-        await act(async () => document.querySelector('textarea').dispatchEvent(paste));
-        assert.equal(paste.defaultPrevented, false);
+        await act(async () => document.querySelector('.feedback-editor').dispatchEvent(paste));
+        assert.equal(paste.defaultPrevented, true);
+        assert.equal(editor.getMarkdown(), 'Synthetic **feedback**Synthetic pasted text');
+        assert.equal(document.querySelector('.feedback-length-error'), null);
         const dropped = new File(['Synthetic log entry'], 'synthetic-drop.log');
         const details = new File(['{"status":"synthetic"}'], 'details.json', { type: 'application/json' });
         const drop = new Event('drop', { bubbles: true, cancelable: true });
         Object.defineProperty(drop, 'dataTransfer', { value: { files: [dropped, details], types: ['Files'] } });
-        await act(async () => document.querySelector('textarea').dispatchEvent(drop));
+        await act(async () => document.querySelector('.feedback-editor').dispatchEvent(drop));
         assert.equal(drop.defaultPrevented, true);
         assert.equal(reports.length, 1);
         await act(async () => reports[0].resolve(Response.json(snapshot)));
         assert.deepEqual(copies, [snapshot.content]);
         await click('Review');
         assert.equal(document.querySelector('pre[aria-label="Diagnostic report"]').textContent, copies[0]);
+        await act(async () => document.querySelector('[aria-label="Close"]').click());
+        await act(async () => document.querySelector('[data-open]').click());
+        assert.equal(document.querySelector('.feedback-editor').editor.getMarkdown(), 'Synthetic **feedback**Synthetic pasted text');
+        assert.equal(document.querySelectorAll('.feedback-thumbnail-item').length, 3);
         await submitForm();
         for (let attempt = 0; submissions.length < 1 && attempt < 50; attempt++)
           await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
         assert.equal(submissions.length, 1);
         assert.equal(submissions[0].reportId, snapshot.id);
-        assert.equal(submissions[0].feedback, 'Synthetic feedback');
+        assert.equal(submissions[0].feedback, 'Synthetic **feedback**Synthetic pasted text');
         assert.deepEqual(submissions[0].attachments, [
           { name: 'synthetic-paste.png', mimeType: 'image/png', data: 'iVBORw0KGgo=' },
           { name: 'synthetic-drop.log', mimeType: 'text/plain', data: Buffer.from('Synthetic log entry').toString('base64') },
@@ -4326,7 +4371,7 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         assert.equal(submissions[0].appRelease, 'synthetic-runtime-commit');
         assert.equal(submissions[0].appModified, true);
         assert.equal(submissions[0].platform, 'MacIntel');
-        assert.equal(document.querySelector('textarea').disabled, true);
+        assert.equal(document.querySelector('.feedback-editor').getAttribute('contenteditable'), 'false');
         const actualNow = Date.now;
         Date.now = () => actualNow() + 3_600_000;
         try {
@@ -4387,7 +4432,11 @@ test('feedback copies the submitted snapshot and cancels pending copies when clo
         await click('Other');
         const reportCount = reports.length;
         await writeFeedback('Synthetic feedback with diagnostics excluded');
-        await submitForm();
+        const beforeKeyboardSend = submissions.length;
+        await act(async () => document.querySelector('.feedback-editor').dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true })));
+        for (let attempt = 0; document.querySelector('.feedback-dialog[data-busy="true"]') && attempt < 100; attempt++)
+          await act(async () => new Promise(resolve => setTimeout(resolve, 5)));
+        assert.equal(submissions.length, beforeKeyboardSend + 1);
         assert.equal(reports.length, reportCount);
         assert.equal(submissions.at(-1).category, 'other');
         assert.equal(submissions.at(-1).reportId, null);

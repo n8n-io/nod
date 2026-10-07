@@ -4,7 +4,7 @@ import { Copy, Check, CornerUpLeft, SmilePlus, ScanSearch, MoreHorizontal, X } f
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
-import rehypeSanitize from 'rehype-sanitize';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Message } from '../../shared/contracts';
 import { reactionEmoji } from '../../shared/emoji';
 import { Button, Checkbox, Loading, Notice } from './ui';
@@ -25,6 +25,10 @@ import { MessageAttachments } from './attachment-card';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
+const messageSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'u'],
+};
 
 export const MessageText = memo(function MessageText({
   text,
@@ -48,7 +52,7 @@ export const MessageText = memo(function MessageText({
       <div className="message-text" ref={content}>
         <Markdown
           remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw, rehypeLocalLinks, rehypeSanitize]}
+          rehypePlugins={[rehypeRaw, rehypeLocalLinks, [rehypeSanitize, messageSchema]]}
           components={{
             table: ({ node, ...props }) => <table {...props} tabIndex={0} />,
             a: ({ href, children, node }) => {

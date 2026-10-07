@@ -1212,6 +1212,7 @@ test(
         const holds = browserHolds.length;
         const question = await thread.submitUserMessage('ask-question', [], { channel: 'web' });
         await waitFor(settled(question.turnId));
+        await waitFor(() => browserHolds.length > holds);
         const held = browserHolds.slice(holds);
         assert.equal(held.length, 1);
         assert.equal(held[0]!.threadId, question.threadId);

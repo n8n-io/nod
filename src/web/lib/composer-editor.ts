@@ -8,6 +8,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import { Fragment, Slice } from '@tiptap/pm/model';
 import { Plugin } from '@tiptap/pm/state';
 import { safeMessageLink } from './message-links';
+import { ComposerUnderline } from './composer-underline';
 
 export function clipboardFiles(clipboard: DataTransfer): File[] {
   const files = Array.from(clipboard.files ?? []);
@@ -55,38 +56,50 @@ function markdownPasteSlice(editor: Editor, value: string) {
 export function createComposerExtensions(callbacks: {
   submit(): void;
   upload(files: File[]): void;
+  mode?: 'chat' | 'feedback';
+  placeholder?: string | (() => string);
 }) {
   return [
     StarterKit.configure({
+      underline: false,
       link: {
         openOnClick: false,
         isAllowedUri: (url) => Boolean(safeMessageLink(url, window.location.origin)),
       },
     }),
+    ComposerUnderline,
     Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
     TableKit.configure({ table: { resizable: false } }),
     TaskList,
     TaskItem.configure({ nested: true }),
-    Placeholder.configure({ placeholder: 'Message Otto…' }),
+    Placeholder.configure({ placeholder: callbacks.placeholder ?? 'Message Otto…' }),
     Extension.create({
       name: 'chatInput',
       priority: 1000,
       addInputRules() {
         return [
           new InputRule({
-            find: /(?<=\n)[\t ]*([-+*])\s$/,
-            handler: ({ state, range, chain }) => {
+            find: /(?<=\n)[\t ]*(?:[-+*]|(\d+)\.)\s$/,
+            handler: ({ state, range, match, chain }) => {
               const $start = state.doc.resolve(range.from);
               if (
                 $start.parent.type.name !== 'paragraph' ||
                 $start.nodeBefore?.type.name !== 'hardBreak'
               )
                 return null;
+              const marks = state.storedMarks || state.selection.$from.marks();
               return chain()
                 .deleteRange({ from: range.from - 1, to: range.to })
                 .setTextSelection(range.from - 1)
                 .splitBlock()
-                .wrapInList('bulletList')
+                .wrapInList(
+                  match[1] ? 'orderedList' : 'bulletList',
+                  match[1] ? { start: Number(match[1]) } : undefined,
+                )
+                .command(({ tr }) => {
+                  tr.ensureMarks(marks);
+                  return true;
+                })
                 .run()
                 ? undefined
                 : null;
@@ -107,16 +120,22 @@ export function createComposerExtensions(callbacks: {
                   event.keyCode === 229
                 )
                   return false;
-                if (event.shiftKey) {
-                  if (event.metaKey || event.ctrlKey || event.altKey) return false;
+                if (event.shiftKey || event.altKey) {
+                  if (event.metaKey || event.ctrlKey) return false;
                   const { $from, empty } = view.state.selection;
                   const item = $from.depth > 0 ? $from.node(-1).type.name : undefined;
-                  if (item !== 'listItem' && item !== 'taskItem') return false;
-                  return (
-                    editor.commands.splitListItem(item) ||
-                    (empty && $from.parent.content.size === 0 && editor.commands.liftListItem(item))
-                  );
+                  if (item === 'listItem' || item === 'taskItem')
+                    return (
+                      editor.commands.splitListItem(item) ||
+                      (empty &&
+                        $from.parent.content.size === 0 &&
+                        editor.commands.liftListItem(item))
+                    );
+                  if ($from.parent.type.name === 'heading')
+                    return editor.chain().splitBlock().setParagraph().run();
+                  return editor.commands.setHardBreak();
                 }
+                if (callbacks.mode === 'feedback' && !event.metaKey && !event.ctrlKey) return false;
                 event.preventDefault();
                 callbacks.submit();
                 return true;
