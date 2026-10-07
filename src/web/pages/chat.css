@@ -349,7 +349,7 @@
   justify-content: space-between;
   gap: 16px;
   min-height: 60px;
-  padding: 12px 32px;
+  padding: 12px 32px 12px max(32px, var(--sidebar-toggle-space, 0px));
 }
 .chat-title {
   margin-right: auto;
@@ -509,6 +509,9 @@
   .chat-page > .chat-bottom.conversation-column {
     padding-left: 16px;
     padding-right: 16px;
+  }
+  .chat-report-action {
+    padding-left: max(16px, var(--sidebar-toggle-space, 0px));
   }
   @media (hover: hover) {
     .chat-page .message:hover .message-more-action {

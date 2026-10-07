@@ -14,6 +14,7 @@ import { Button, Loading, Notice } from './components/ui';
 import { ChatSkeleton, Splash } from './components/startup';
 import { Sidebar } from './components/sidebar';
 import { DesktopToolbar } from './components/desktop-toolbar';
+import { SidebarToggleContext } from './components/sidebar-toggle';
 import { FeedbackDialog } from './components/feedback';
 import { captureFeedbackScreenshot } from './lib/feedback-capture';
 import { sidebarItems } from './lib/navigation';
@@ -205,7 +206,6 @@ function Workspace({
         path={currentPath}
         unreadCount={unread.count}
         unreadPending={unread.pending}
-        collapsed={collapsed}
         onToggle={() => setCollapsed((value) => !value)}
         inspectorEnabled={inspectorEnabled}
         inspectorOpen={inspectorOpen}
@@ -213,71 +213,79 @@ function Workspace({
         onNavigate={navigate}
         account={account}
       />
-      <div className="workspace-frame">
-        <div className="workspace-body">
-          <main id="workspace" className="main-workspace" tabIndex={-1}>
-            {settingsError && <Notice>{settingsError}</Notice>}
-            <div
-              className={`chat-route ${handoff ? 'chat-entering' : ''}`}
-              hidden={currentPath !== '/'}
-            >
-              {visibleState ? (
-                <Chat
-                  ownerId={session.user!.id}
-                  state={visibleState}
-                  streams={streams}
-                  refresh={refresh}
-                  resetConversation={resetConversation}
-                  initialFocusMessageId={pendingMessageFocus}
-                  toolbarActions={currentPath === '/' ? toolbarActions : null}
-                  visible={currentPath === '/'}
-                  onReadLatest={unread.markRead}
-                  onFeedback={onFeedback}
-                  requestedMessage={chatRequests[0]}
-                  onRequestHandled={(id) =>
-                    setChatRequests((current) => current.filter((request) => request.id !== id))
-                  }
-                />
-              ) : error ? (
-                <div className="initial-loading">
-                  <Notice>{error}</Notice>
-                  <Button variant="outline" onClick={() => void refresh()}>
-                    Try again
+      <SidebarToggleContext.Provider
+        value={
+          desktopSettingsAvailable()
+            ? null
+            : { collapsed, toggle: () => setCollapsed((value) => !value) }
+        }
+      >
+        <div className="workspace-frame">
+          <div className="workspace-body">
+            <main id="workspace" className="main-workspace" tabIndex={-1}>
+              {settingsError && <Notice>{settingsError}</Notice>}
+              <div
+                className={`chat-route ${handoff ? 'chat-entering' : ''}`}
+                hidden={currentPath !== '/'}
+              >
+                {visibleState ? (
+                  <Chat
+                    ownerId={session.user!.id}
+                    state={visibleState}
+                    streams={streams}
+                    refresh={refresh}
+                    resetConversation={resetConversation}
+                    initialFocusMessageId={pendingMessageFocus}
+                    toolbarActions={currentPath === '/' ? toolbarActions : null}
+                    visible={currentPath === '/'}
+                    onReadLatest={unread.markRead}
+                    onFeedback={onFeedback}
+                    requestedMessage={chatRequests[0]}
+                    onRequestHandled={(id) =>
+                      setChatRequests((current) => current.filter((request) => request.id !== id))
+                    }
+                  />
+                ) : error ? (
+                  <div className="initial-loading">
+                    <Notice>{error}</Notice>
+                    <Button variant="outline" onClick={() => void refresh()}>
+                      Try again
+                    </Button>
+                  </div>
+                ) : (
+                  <ChatSkeleton />
+                )}
+                {handoff && (
+                  <div className="startup-leaving" aria-hidden="true">
+                    <ChatSkeleton />
+                  </div>
+                )}
+              </div>
+              {currentPath === '/vault' && <Vault />}
+              {currentPath === '/apps' && <Apps configuration={state?.configuration} />}
+              {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
+              {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
+              {!sidebarItems.some((item) => item.path === currentPath) && (
+                <div className="empty-state">
+                  <h1>This page isn’t here.</h1>
+                  <Button variant="outline" onClick={() => navigate('/')}>
+                    <ArrowLeft size={16} />
+                    Back to chat
                   </Button>
                 </div>
-              ) : (
-                <ChatSkeleton />
               )}
-              {handoff && (
-                <div className="startup-leaving" aria-hidden="true">
-                  <ChatSkeleton />
+              {state && (error || !connected) && (
+                <div className="connection-notice">
+                  <Notice kind={error ? 'error' : 'info'}>{error || 'Reconnecting…'}</Notice>
                 </div>
               )}
-            </div>
-            {currentPath === '/vault' && <Vault />}
-            {currentPath === '/apps' && <Apps configuration={state?.configuration} />}
-            {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
-            {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
-            {!sidebarItems.some((item) => item.path === currentPath) && (
-              <div className="empty-state">
-                <h1>This page isn’t here.</h1>
-                <Button variant="outline" onClick={() => navigate('/')}>
-                  <ArrowLeft size={16} />
-                  Back to chat
-                </Button>
-              </div>
+            </main>
+            {inspectorOpen && (
+              <Inspector focus={inspectionFocus} onClose={() => setInspector(false)} />
             )}
-            {state && (error || !connected) && (
-              <div className="connection-notice">
-                <Notice kind={error ? 'error' : 'info'}>{error || 'Reconnecting…'}</Notice>
-              </div>
-            )}
-          </main>
-          {inspectorOpen && (
-            <Inspector focus={inspectionFocus} onClose={() => setInspector(false)} />
-          )}
+          </div>
         </div>
-      </div>
+      </SidebarToggleContext.Provider>
     </div>
   );
 }

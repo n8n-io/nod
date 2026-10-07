@@ -38,6 +38,7 @@ import {
   visibleConversationTurns,
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
+import { SidebarToggle } from '../components/sidebar-toggle';
 
 function verificationFailure(
   status: SubmitMessageResponse['verificationStatus'],
@@ -704,6 +705,7 @@ export function Chat({
         </>
       ) : (
         <header className="chat-report-action">
+          <SidebarToggle />
           <h1 className="chat-title">Chat</h1>
           {chatActions}
         </header>
