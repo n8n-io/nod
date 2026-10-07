@@ -164,7 +164,14 @@ function Workspace({
     return () => clearTimeout(timer);
   }, [loaded]);
   useEffect(() => {
-    prefetchPageData(['/api/vault', '/api/tasks', '/api/schedules', '/api/apps', '/api/memory']);
+    prefetchPageData([
+      '/api/vault',
+      '/api/tasks',
+      '/api/schedules',
+      '/api/apps',
+      '/api/apps/catalog',
+      '/api/memory',
+    ]);
   }, []);
   useEffect(() => {
     if (path === '/dev') setInspector(true);
@@ -255,7 +262,9 @@ function Workspace({
               )}
             </div>
             {currentPath === '/vault' && <Vault />}
-            {currentPath === '/apps' && <Apps configuration={state?.configuration} />}
+            {currentPath === '/apps' && (
+              <Apps configuration={state?.configuration} onAsk={askInChat} />
+            )}
             {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
             {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
             {!sidebarItems.some((item) => item.path === currentPath) && (

@@ -1,13 +1,36 @@
 import type { ChannelProvider, ChannelSetupSummary, Connection } from '../../shared/contracts';
 
 export function connectionGroups(connections: Connection[]) {
-  const groups = new Map<string, { service: Connection; accounts: Connection[] }>();
+  const groups = new Map<string, Connection[]>();
   for (const connection of connections) {
-    const group = groups.get(connection.slug) ?? { service: connection, accounts: [] };
-    if (connection.connectionId) group.accounts.push(connection);
-    groups.set(connection.slug, group);
+    const key = connection.slug.replace(/_mcp$/, '');
+    const group = groups.get(key) ?? [];
+    group.push(connection);
+    groups.set(key, group);
   }
-  return [...groups.values()];
+  return [...groups].map(([key, variants]) => {
+    const base = variants.find((connection) => connection.slug === key);
+    const configured = variants.filter((connection) => connection.status !== 'not_configured');
+    const primary =
+      configured.find((connection) => connection.slug === key) ??
+      configured[0] ??
+      base ??
+      variants[0];
+    return {
+      key,
+      service: {
+        ...primary,
+        name: (base?.name ?? primary.name).replace(/\s+MCP$/i, ''),
+        description: base?.description || primary.description,
+        logoUrl:
+          base?.logoUrl ??
+          primary.logoUrl ??
+          variants.find((connection) => connection.logoUrl)?.logoUrl,
+        categories: [...new Set(variants.flatMap((connection) => connection.categories ?? []))],
+      },
+      accounts: variants.filter((connection) => connection.connectionId),
+    };
+  });
 }
 
 export function connectionIssue(connection: Connection) {
@@ -19,10 +42,10 @@ export function connectionIssue(connection: Connection) {
 }
 
 export function connectionIdentity(connection: Connection) {
-  const name = connection.accountName?.trim();
+  const name = connection.accountName?.trim().replace(/^(?:\[REDACTED\]|REDACTED)$/i, '');
   const email = connection.accountEmail?.trim();
   return {
-    primary: name || email || 'Account details unavailable',
+    primary: name || email || `${connection.name.replace(/\s+MCP$/i, '')} account`,
     secondary:
       name && email && name.toLocaleLowerCase() !== email.toLocaleLowerCase() ? email : null,
   };

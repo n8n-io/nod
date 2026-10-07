@@ -170,9 +170,15 @@ export function meterIntegrations(
       ),
     deleteSession: (id) =>
       usage.track({ ...base, operation: 'delete_session' }, () => provider.deleteSession(id)),
-    inspectAccount: (id, owner) =>
+    reconnectAccount: provider.reconnectAccount
+      ? (owner, service, account, callbackUrl) =>
+          usage.track({ ...base, operation: 'reconnect_account' }, () =>
+            provider.reconnectAccount!(owner, service, account, callbackUrl),
+          )
+      : undefined,
+    inspectAccount: (id, owner, options) =>
       usage.track({ ...base, operation: 'inspect_account' }, () =>
-        provider.inspectAccount(id, owner),
+        provider.inspectAccount(id, owner, options),
       ),
     pollInbox: provider.pollInbox
       ? (id, cursor, signal) =>

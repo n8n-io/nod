@@ -229,7 +229,10 @@ export function ComposioSettings({
             if (key.trim()) void change(key.trim());
           }}
         >
-          <Field label="Composio API key">
+          <Field
+            label="Composio API key"
+            hint="Use a key from your own Composio project, or one provided by your Otto administrator."
+          >
             <Input
               type="password"
               value={key}

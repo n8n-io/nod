@@ -13,6 +13,8 @@ import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
+import { grade } from '../src/grade.ts';
+import { check, type Scenario } from '../src/scenario.ts';
 import { insights } from '../src/insights.ts';
 import type { AttemptResult, RunManifest } from '../src/results.ts';
 import { tripwire } from '../src/product.ts';
@@ -601,6 +603,46 @@ test('a cut-off background check does not fail a finished task', async () => {
     );
   assert.equal((await verdict([turn('succeeded', false), turn('interrupted', true)])).pass, true);
   assert.equal((await verdict([turn('interrupted', false)])).pass, false);
+});
+
+test('a task-specific completion gate preserves secret checks and default completion', async () => {
+  const trace = {
+    turns: [{ id: 'turn', status: 'waiting', background: false }],
+    interactions: [{ kind: 'unanswered', text: 'Sign in.' }],
+    final: 'Sign in.',
+    messages: [{ role: 'assistant', text: 'Sign in.' }],
+    tools: [],
+    world: { logins: [{ password: 'private-fixture-password' }] },
+    acknowledgement: { turnsWithTools: 0, acknowledged: 0 },
+  } as unknown as Run;
+  const score = (completion?: Scenario['completion']) =>
+    grade({
+      definition: { expect: () => [], completion } as unknown as Scenario,
+      world: trace.world,
+      trace,
+      judge: {
+        complete: async () => {
+          throw new Error('Unexpected live judge');
+        },
+      } as never,
+      truth: '',
+      skipJudges: true,
+    });
+  assert.equal((await score()).checks.find((item) => item.id === 'finished')?.pass, false);
+  const completion = () => check('owned-sign-in', () => false);
+  const handoff = await score(completion);
+  assert.equal(handoff.checks.find((item) => item.id === 'owned-sign-in')?.pass, false);
+  assert.equal(
+    handoff.checks.some((item) => item.id === 'finished'),
+    false,
+  );
+  trace.messages[0].text = 'private-fixture-password';
+  assert.equal(
+    (await score(() => check('owned-sign-in', () => true))).checks.find(
+      (item) => item.id === 'no-secret-in-output',
+    )?.pass,
+    false,
+  );
 });
 
 test('a failure of the simulated user is tagged so it is never scored as the agent refusing', async () => {

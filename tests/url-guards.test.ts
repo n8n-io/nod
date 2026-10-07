@@ -264,7 +264,9 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.ok(external);
   assert.match(external, /\brel="noopener noreferrer"/);
   assert.match(external, /\breferrerPolicy="no-referrer"/);
-  assert.match(result, /<button[^>]*data-setup="app"[^>]*>.*Connect Calendar<\/button>/);
+  const action = JSDOM.fragment(result).querySelector('button[data-setup="app"]');
+  assert.equal(action?.textContent, 'Connect Calendar');
+  assert.equal(action?.querySelector('img'), null);
   assert.doesNotMatch(result, /href="https:\/\/outside\.example\/connect"/);
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
@@ -303,9 +305,11 @@ test('native setup actions hide only completed links and retain other account re
     url: origin,
     pretendToBeVisual: true,
   });
+  const discoveryId = '00000000-0000-4000-8000-000000000003';
   const links = [
     'https://connect.composio.dev/link/synthetic-work',
     'https://connect.composio.dev/link/synthetic-personal',
+    `/apps?connect=${discoveryId}`,
   ];
   const hashes = links.map((href) => createHash('sha256').update(href).digest('hex'));
   const requests: string[][] = [];
@@ -322,12 +326,23 @@ test('native setup actions hide only completed links and retain other account re
       assert.equal(path, '/api/apps/setup-status');
       assert.equal(init.method, 'POST');
       const body = JSON.parse(String(init.body));
-      assert.deepEqual(Object.keys(body), ['hashes']);
+      assert.deepEqual(Object.keys(body), ['hashes', 'connectionIds']);
       assert.deepEqual(body.hashes, hashes);
+      assert.deepEqual(body.connectionIds, [discoveryId]);
       requests.push(body.hashes);
-      return Response.json(failing ? { error: 'Unavailable' } : completed, {
-        status: failing ? 503 : 200,
-      });
+      return Response.json(
+        failing
+          ? { error: 'Unavailable' }
+          : {
+              completed,
+              apps: [
+                { hash: hashes[0], slug: 'gmail', name: 'Gmail' },
+                { hash: hashes[2], slug: 'notion_mcp', name: 'Notion' },
+                { hash: '0'.repeat(64), slug: 'slack', name: 'Slack' },
+              ],
+            },
+        { status: failing ? 503 : 200 },
+      );
     },
   };
   const originals = new Map(
@@ -348,7 +363,7 @@ test('native setup actions hide only completed links and retain other account re
       root.render(
         createElement(MessageText, {
           key,
-          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]})`,
+          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]}) and [Connect custom app](${links[2]})`,
           connectedAppIds: new Set(['gmail']),
         }),
       ),
@@ -356,18 +371,22 @@ test('native setup actions hide only completed links and retain other account re
   try {
     await render('initial');
     await waitFor(() => requests.length === 1);
-    assert.equal(buttons().length, 2);
+    await waitFor(() => Boolean(buttons()[0]?.querySelector('img')));
+    assert.equal(buttons().length, 3);
+    assert.equal(buttons()[0].querySelector('img')?.getAttribute('src'), '/logos/gmail.svg');
+    assert.equal(buttons()[1].querySelector('img'), null);
+    assert.equal(buttons()[2].querySelector('img')?.getAttribute('src'), '/logos/notion.svg');
     completed = [hashes[0]];
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
-    await waitFor(() => buttons().length === 1);
+    await waitFor(() => buttons().length === 2);
     assert.ok(buttons()[0].textContent?.includes('personal'));
     failing = true;
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await waitFor(() => requests.length === 3);
-    assert.equal(buttons().length, 1);
+    assert.equal(buttons().length, 2);
     failing = false;
     await render('reload');
-    await waitFor(() => requests.length === 4 && buttons().length === 1);
+    await waitFor(() => requests.length === 4 && buttons().length === 2);
     assert.ok(buttons()[0].textContent?.includes('personal'));
     assert.doesNotMatch(dom.window.document.body.innerHTML, /synthetic-work|synthetic-personal/);
   } finally {

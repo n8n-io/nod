@@ -75,7 +75,7 @@ const readOnlyTools: Record<string, true | string[]> = {
   get_search_content: true,
   browser: ['open', 'snapshot', 'scroll', 'screenshot', 'wait'],
   browser_flow: ['list', 'get'],
-  manage_apps: ['list'],
+  manage_apps: ['list', 'discover'],
   manage_personal_context: [
     'profile_get',
     'notification_preferences_get',
@@ -417,9 +417,11 @@ export function createAgentRuntime(dependencies: {
           const personalAction = String((params as { action?: unknown })?.action);
           const memoryAction =
             name === 'manage_personal_context' && personalAction.startsWith('memory_');
+          const catalogResult = name === 'manage_apps' && personalAction === 'discover';
           const untrustedResult =
-            !trustedResultTools.has(name) &&
-            !(name === 'manage_personal_context' && personalAction !== 'history_search');
+            catalogResult ||
+            (!trustedResultTools.has(name) &&
+              !(name === 'manage_personal_context' && personalAction !== 'history_search'));
           const observedInput = memoryAction
             ? { action: (params as { action?: unknown }).action, args: '[private memory omitted]' }
             : name === 'browser' &&
@@ -503,7 +505,8 @@ export function createAgentRuntime(dependencies: {
               const findings = injectionFindings(resultText(result));
               if (findings.length)
                 await waitFor(Promise.resolve(context.flagInjection?.(findings)));
-              if (delimitedTools.has(name)) result = delimit(name, result, findings);
+              if (delimitedTools.has(name) || catalogResult)
+                result = delimit(name, result, findings);
             }
             await end({
               status: 'succeeded',

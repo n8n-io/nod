@@ -84,6 +84,7 @@ export interface Scenario<W extends World = World> {
   user: UserScript;
   world(clock: { now(): number }): W;
   play(session: Session, world: W): Promise<void>;
+  completion?(world: W): Expectation;
   expect(world: W): Expectation[];
   evidence?(run: Run, world: W): string;
 }
