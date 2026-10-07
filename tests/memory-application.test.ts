@@ -26,7 +26,13 @@ import {
 } from '../src/server/memory-tree.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
-type Step = { tool: string; args: Record<string, unknown>; rejected?: boolean; skipped?: boolean };
+type Step = {
+  tool: string;
+  args: Record<string, unknown>;
+  rejected?: boolean;
+  skipped?: boolean;
+  inspect?(result: unknown): void;
+};
 
 test(
   'memory silently saves supported owner facts and skips unsupported notes without confirmations',
@@ -52,7 +58,8 @@ test(
     const { createApplication } = await import('../src/server/composition.ts');
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, port, ownerId } = await import('../src/server/config.ts');
-    const plans = new Map<string, Step[]>();
+    const plans = new Map<string, { steps: Step[]; finalText?: string }>();
+    const finalTexts = new Set(['Synthetic memory request handled.']);
     const reviews: object[] = [];
     const reviewAnswers: unknown[] = [];
     let memoryReview: unknown = { supported: false };
@@ -77,7 +84,7 @@ test(
               async prompt(text) {
                 const input = text.split('Request data (JSON):\n')[1]?.split('\n')[0];
                 const plan = input ? plans.get(JSON.parse(input).currentInstruction) : undefined;
-                for (const step of plan ?? []) {
+                for (const step of plan?.steps ?? []) {
                   if (step.rejected) await assert.rejects(run(options, step));
                   else {
                     const result = await run(options, step);
@@ -91,9 +98,13 @@ test(
                           reason: 'unsupported_memory',
                         },
                       );
+                    step.inspect?.(result);
                   }
                 }
-                options.onEvent({ type: 'final', text: 'Synthetic memory request handled.' });
+                options.onEvent({
+                  type: 'final',
+                  text: plan?.finalText ?? 'Synthetic memory request handled.',
+                });
               },
             };
           },
@@ -157,8 +168,9 @@ test(
         assert.notEqual(turn.status, 'failed', turn.error);
         return turn.status === status;
       }, `Turn ${status}`);
-    const ask = async (text: string, steps: Step[], status: string) => {
-      plans.set(text, steps);
+    const ask = async (text: string, steps: Step[], status: string, finalText?: string) => {
+      plans.set(text, { steps, finalText });
+      if (finalText) finalTexts.add(finalText);
       const id = await send({ text });
       await settle(id, status);
       return id;
@@ -180,8 +192,8 @@ test(
       (
         await pool.query(
           `SELECT m.id,m.owner_id,m.thread_id,m.turn_id FROM messages m
-         WHERE m.role='assistant' AND m.text<>$1`,
-          ['Synthetic memory request handled.'],
+         WHERE m.role='assistant' AND m.text<>ALL($1::text[])`,
+          [[...finalTexts]],
         )
       ).rows;
     const personal = (action: string, args: Record<string, unknown>, rejected = false): Step => ({
@@ -196,12 +208,15 @@ test(
     ) => application.app.inject({ method, url, headers, payload });
     const view = async () => (await page('GET', '/api/memory')).json() as MemoryView;
     try {
-      const assertSilent = async (turnId: string) => {
+      const assertSilent = async (
+        turnId: string,
+        finalText = 'Synthetic memory request handled.',
+      ) => {
         const messages = await pool.query(
           "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant'",
           [turnId],
         );
-        assert.deepEqual(messages.rows, [{ text: 'Synthetic memory request handled.' }]);
+        assert.deepEqual(messages.rows, finalText ? [{ text: finalText }] : []);
         assert.equal(
           (await pool.query('SELECT 1 FROM approvals WHERE turn_id=$1', [turnId])).rowCount,
           0,
@@ -304,7 +319,8 @@ test(
       assert.deepEqual(await notices(), []);
 
       const routineStart = 'Every weekday I review my synthetic project notes before lunch.';
-      const routineStartTurn = await ask(routineStart, [], 'succeeded');
+      const routineStartTurn = await ask(routineStart, [], 'succeeded', '');
+      await assertSilent(routineStartTurn, '');
       const foreignFact = 'Another owner reviews private synthetic account details on Sundays.';
       await pool.query(
         `INSERT INTO messages(id,owner_id,role,text,thread_id)
@@ -322,6 +338,7 @@ test(
           save('routines', routine),
         ],
         'succeeded',
+        '',
       );
       assert.ok(await savedEntry(routine));
       assert.equal(
@@ -335,15 +352,45 @@ test(
       assert.ok(!reviewed.includes('Synthetic memory request handled.'));
       assert.ok(!reviewed.includes(foreignFact));
       assert.equal((reviews.at(-1) as { sensitiveTopics: boolean }).sensitiveTopics, false);
-      await assertSilent(routineTurn);
+      await assertSilent(routineTurn, '');
 
       const holdout = 'Para o meu resumo sintético semanal, prefiro tópicos breves.';
       const holdoutNote = 'Prefers brief bullet points for the weekly synthetic summary.';
-      const holdoutTurn = await ask(holdout, [save('preferences', holdoutNote)], 'succeeded');
+      const holdoutTurn = await ask(holdout, [save('preferences', holdoutNote)], 'succeeded', '');
       assert.ok(await savedEntry(holdoutNote));
       assert.equal(
         (await pool.query('SELECT 1 FROM approvals WHERE turn_id=$1', [holdoutTurn])).rowCount,
         0,
+      );
+      await assertSilent(holdoutTurn, '');
+      const routinePath = (await view()).notes.find((note) => note.text === routine)!.path;
+      const summary = `Your routine: ${routine}`;
+      const summaryTurn = await ask(
+        'Summarize my synthetic project review routine.',
+        [
+          {
+            ...personal('memory_read', { path: routinePath }),
+            inspect(result) {
+              const note = JSON.parse(
+                (result as { content: Array<{ text: string }> }).content[0].text,
+              );
+              assert.equal(note.path, routinePath);
+              assert.equal(note.text, routine);
+            },
+          },
+        ],
+        'succeeded',
+        summary,
+      );
+      await assertSilent(summaryTurn, summary);
+      assert.ok(await savedEntry(routine));
+      assert.equal(
+        (
+          await pool.query('SELECT DISTINCT thread_id FROM turns WHERE id=ANY($1::uuid[])', [
+            [routineStartTurn, routineTurn, holdoutTurn, summaryTurn],
+          ])
+        ).rowCount,
+        1,
       );
       const grouped = await ask(
         'My synthetic review days are Mondays, and I prefer brief synthetic meeting notes.',
@@ -366,8 +413,8 @@ test(
         ],
         'succeeded',
       );
-      await assertSilent(holdoutTurn);
       await assertSilent(grouped);
+      assert.ok(!JSON.stringify(reviews.at(-1)).includes(summary));
       assert.ok(await savedEntry('Reviews synthetic projects on Mondays.'));
       assert.ok(await savedEntry('Prefers brief synthetic meeting notes.'));
       for (const failure of ['rejected', 'malformed', 'unavailable', 'unconfigured']) {

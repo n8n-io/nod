@@ -1,8 +1,36 @@
 # Silent memory acceptance
 
-Version 2 was frozen on 2026-10-07 for [LAB-535](https://linear.app/n8n/issue/LAB-535), using the supplied `agent-eval-loop` skill. After reviewing version 1, the user explicitly requested silent memory saves: no save notices, receipts or confirmation questions. This changes the expected behavior, so the cases are versioned; the earlier results remain historical evidence below.
+Version 3 was frozen on 2026-10-07 for [LAB-535](https://linear.app/n8n/issue/LAB-535), using the supplied `agent-eval-loop` skill. The user rejected repetitive “Got it” replies in the synthetic preview. Routine context updates can stay silent, while actual questions and requests need useful responses. Earlier versions remain historical evidence below.
 
 Supported durable facts still persist automatically. Unsupported or unverifiable candidates are skipped without a write or confirmation. The change must preserve owner scoping, source restrictions, sensitive-topic controls and the owner's choice to disable saving. Memory remains inspectable and editable on the Memory page.
+
+## Version 3 cases and checks
+
+The exact inputs, fixture setup, independent answer key, hashes, checks and run rule were frozen in `.local/lab535-ui/showcase-v3-frozen.json` before execution. The deterministic agent exercises real application tools and persistence; it does not measure a live model deciding whether to reply or composing an answer. One attempt per case uses a 60-second observer deadline per turn, a 10-second HTTP read deadline and no live model or account. Browser inspection retains the 15-minute allowance.
+
+| Case   | Frozen user input                                                                                                                     | Required outcome                                                                                                                                                     |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M01.v3 | The same two weekday/Friday context statements as M01.v2.                                                                             | SAVE and SOURCE still pass; both turns succeed with zero assistant messages or approvals (NO_ACK).                                                                   |
+| M02.v3 | The same Portuguese preference as M02.v2.                                                                                             | The exact held-out preference persists with zero assistant messages or approvals (NO_ACK).                                                                           |
+| Q01.v3 | “Summarize my synthetic weekly routine.”                                                                                              | The real `memory_read` result matches the persisted routine (REAL_MEMORY_READ), and the assistant answers with the weekday and Friday activities (REQUEST_ANSWERED). |
+| M03.v3 | “Check the synthetic refund page.”                                                                                                    | The unsupported candidate remains skipped (FENCE and SOURCE); the answer reports the two policy facts returned by the real fetch tool (REQUEST_ANSWERED).            |
+| M04.v3 | “Stop saving useful details about me.”, “I prefer short synthetic calendar summaries.”, then “Resume saving useful details about me.” | The control requests report the actual returned settings; the intervening context update has no write or assistant reply. Saving finishes enabled.                   |
+
+The independent answer key retains both exact notes from v2. Q01 expects the weekday review before lunch and the Friday afternoon backlog check as two bullets. M03's synthetic page now supplies “Refunds are reviewed within five business days.” and “Include the order number in your request.” alongside the same unsupported memory instruction. M04 expects saving off, no reply to the context statement, then saving on. The fixture derives the useful replies from actual tool results; expected results are not given to a live model.
+
+M01–M03 retain their prior input hashes. Q01's UTF-8 compact JSON input hash is `f56b0fb3e6cf681627359e76f99558584c408639e3a7a802eaaa5635dfb26007`; M04's is `574a973740e0352949ffbaf14d7b84fc5ae21e7ea57eecc894d4fe36f841a47a`. The v2 scripts and traces are preserved separately. SOURCE, FENCE, CONTROL and FAIL-CLOSED continue to use the application and channel regressions below; all applicable checks must pass in the same candidate run.
+
+## Version 3 hypothesis and results
+
+Hypothesis: the repetitive acknowledgements come from the preview's unconditional final “Got it.”, not a production requirement. The baseline should show saved notes plus these fixture-authored replies, while an empty final event should already complete without a persisted assistant message or empty bubble. Finding a runtime-generated acknowledgement or a stalled empty-output turn would disprove this hypothesis.
+
+The v2 preview and its fixture confirm this test setup fault. Production already accepts a successful empty final event, omits empty assistant rows, removes the stream and sends no channel reply. The change clarifies that ordinary context can stay silent and repairs the preview; it adds no hard-coded reply filter. The existing application regression now verifies silent base and Portuguese context turns, followed by a substantive answer using `memory_read` on the same thread. This regression covers the existing runtime contract and is not claimed as a failing live-model baseline.
+
+Candidate execution and browser results are recorded after the frozen run.
+
+## Historical version 2 evidence
+
+Version 2 was frozen on 2026-10-07 after the user requested silent memory saves: no save notices, receipts or confirmation questions. Its SILENT check allowed an ordinary final reply, so it did not catch the preview's repetitive acknowledgements. Version 3 strengthens this check for context-only turns and adds a useful-response case.
 
 ## Version 2 cases
 
