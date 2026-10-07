@@ -97,6 +97,12 @@ interface ScheduleJob {
   scheduledFor: string;
 }
 
+interface ScheduleProvenance {
+  turnId?: string;
+  sourceTurnId?: string;
+  sourceMessageId: string | null;
+}
+
 interface RunRow {
   id: string;
   scheduleId: string;
@@ -526,6 +532,18 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return input;
   }
 
+  async function sourceProvenance(client: PoolClient, provenance?: ScheduleProvenance) {
+    if (!provenance?.sourceTurnId) return provenance;
+    const source = await client.query(
+      `SELECT 1 FROM turns u JOIN turns s ON s.thread_id=u.thread_id AND s.owner_id=u.owner_id
+       JOIN threads th ON th.id=u.thread_id AND th.archived_at IS NULL
+       WHERE u.id=$1 AND u.owner_id=$2 AND s.id=$3 FOR SHARE OF u,s`,
+      [z.uuid().parse(provenance.turnId), ownerId, z.uuid().parse(provenance.sourceTurnId)],
+    );
+    if (!source.rowCount) throw invalid('The schedule instruction is unavailable.');
+    return { turnId: provenance.sourceTurnId, sourceMessageId: provenance.sourceMessageId };
+  }
+
   async function deliveryRoute(
     client: PoolClient,
     provenance?: { turnId?: string; sourceMessageId: string | null },
@@ -588,14 +606,12 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return { instruction: row.text, sourceMessageId: provenance.sourceMessageId };
   }
 
-  async function create(
-    raw: unknown,
-    provenance?: { turnId?: string; sourceMessageId: string | null },
-  ) {
+  async function create(raw: unknown, provenance?: ScheduleProvenance) {
     const input = validateCreate(raw);
     const row = await transaction(async (client) => {
-      const route = await deliveryRoute(client, provenance);
-      const authorized = await authority(client, input.prompt, provenance);
+      const source = await sourceProvenance(client, provenance);
+      const route = await deliveryRoute(client, source);
+      const authorized = await authority(client, input.prompt, source);
       const saved = (
         await client.query<ScheduleRow>(
           `INSERT INTO schedules(id,owner_id,title,prompt,kind,cron,run_at,time_zone,delivery_channel,channel_source_id,authority_instruction,authority_source_message_id,baseline_observation)
@@ -629,11 +645,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return value(row);
   }
 
-  async function update(
-    id: string,
-    raw: unknown,
-    provenance?: { turnId?: string; sourceMessageId: string | null },
-  ) {
+  async function update(id: string, raw: unknown, provenance?: ScheduleProvenance) {
     z.uuid().parse(id);
     const input = updateSchema.parse(raw);
     if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
@@ -652,7 +664,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
               instruction: previous.authorityInstruction,
               sourceMessageId: previous.authoritySourceMessageId,
             }
-          : await authority(client, input.prompt, provenance);
+          : await authority(client, input.prompt, await sourceProvenance(client, provenance));
       await cancelPending(client, previous);
       const saved = (
         await client.query<ScheduleRow>(

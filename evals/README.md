@@ -85,6 +85,8 @@ Thirty-three scenarios, each a real task written the way a user would ask, most 
 
 The `slack-catchup` case also covers [LAB-469](https://linear.app/n8n/issue/LAB-469): a request that the owner has already answered in its thread must not need another reply.
 
+The `morning-brief` case also covers [LAB-536](https://linear.app/n8n/issue/LAB-536): an explicit daily digest request must create one enabled schedule and deliver a brief without asking for consent again. A later notification preference correction must preserve that schedule. Remembering the request without scheduling it fails.
+
 ## Reading a report
 
 ```text
