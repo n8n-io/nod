@@ -1377,6 +1377,59 @@ test(
           await waitFor(settled(updating.turnId));
           await idle();
 
+          progressAnswer = () => ({ title: 'Daily digest', now: 'Reading the inbox', task: null });
+          block('watch-schedule-fixture');
+          const fired = await thread.enqueueTurn('watch-schedule-fixture', {
+            source: 'schedule',
+            sourceId: `schedule:${randomUUID()}`,
+          });
+          await waitFor(async () =>
+            (await cards()).some(
+              (item) => item.title === 'Daily digest' && item.status === 'working',
+            ),
+          );
+          release('watch-schedule-fixture');
+          await waitFor(settled(fired));
+          await idle();
+          assert.deepEqual(
+            (
+              await db.pool.query(
+                "SELECT state FROM tasks WHERE owner_id=$1 AND title='Daily digest'",
+                [ownerId],
+              )
+            ).rows,
+            [{ state: 'done' }],
+          );
+          assert.equal(
+            (await cards()).some((item) => item.title === 'Daily digest'),
+            false,
+          );
+
+          progressAnswer = (input) => ({
+            title: 'Flat hunt',
+            now: 'Reading listings',
+            task: input.cards.find((offered) => offered.title === 'Flat hunt')?.id ?? null,
+          });
+          block('watch-ask-fixture');
+          const hunt = await thread.submitUserMessage('watch-ask-fixture');
+          await waitFor(async () =>
+            (await cards()).some((item) => item.title === 'Flat hunt' && item.status === 'working'),
+          );
+          release('watch-ask-fixture');
+          await waitFor(settled(hunt.turnId));
+          await idle();
+          const huntId = (await cards()).find((item) => item.title === 'Flat hunt')!.id;
+          block('watch-schedule-fixture');
+          const continued = await thread.enqueueTurn('watch-schedule-fixture', {
+            source: 'schedule',
+            sourceId: `schedule:${randomUUID()}`,
+          });
+          await waitFor(async () => (await turnTask(continued)) === huntId);
+          release('watch-schedule-fixture');
+          await waitFor(settled(continued));
+          await idle();
+          assert.equal((await cards()).find((item) => item.id === huntId)?.status, 'done');
+
           assert.ok(
             progressInputs.every((input) =>
               input.cards.every((offered) => offered.id !== foreign.id),

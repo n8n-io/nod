@@ -1,9 +1,5 @@
 import type { ChannelProvider, ChannelSetupSummary, Connection } from '../../shared/contracts';
 
-export function focusChatMessage(messageId: string) {
-  window.dispatchEvent(new CustomEvent('otto:focus-message', { detail: { messageId } }));
-}
-
 export function connectionGroups(connections: Connection[]) {
   const groups = new Map<string, { service: Connection; accounts: Connection[] }>();
   for (const connection of connections) {

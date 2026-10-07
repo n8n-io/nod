@@ -8,17 +8,19 @@ import {
   LoaderCircle,
   MessageCircle,
 } from 'lucide-react';
-import type { Task, TaskStatus } from '../../shared/contracts';
+import type { Schedule, ScheduleRun, Task, TaskStatus } from '../../shared/contracts';
 import { PageTitle } from '../components/page-title';
+import { NewPlan, PlanToast } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
+import { ScheduleRow, ScheduleRunRow, useScheduleHistory } from './schedule';
 
 const labels: Record<TaskStatus, string> = {
   working: 'Working',
   needs_you: 'Needs you',
   waiting: 'Waiting',
-  scheduled: 'Scheduled',
+  scheduled: 'Checking back',
   stalled: 'Stalled',
   done: 'Done',
   cancelled: 'Stopped',
@@ -33,6 +35,8 @@ const icons = {
   cancelled: CircleSlash,
 };
 const order: TaskStatus[] = ['needs_you', 'working', 'stalled', 'waiting', 'scheduled'];
+const views = ['current', 'scheduled', 'previous'] as const;
+const viewLabels = { current: 'Current', scheduled: 'Scheduled', previous: 'Previous' };
 const closed = (task: Task) => task.status === 'done' || task.status === 'cancelled';
 
 function headline(task: Task) {
@@ -96,25 +100,88 @@ export function TaskCard({ task }: { task: Task }) {
   );
 }
 
-export function Tasks() {
-  const { data: tasks, error, loading, refreshing, refresh } = usePageData<Task[]>('/api/tasks');
-  const [view, setView] = useState<'open' | 'closed'>('open');
+function LoadError({
+  what,
+  refreshing,
+  retry,
+}: {
+  what: string;
+  refreshing: boolean;
+  retry(): Promise<unknown>;
+}) {
+  return (
+    <Notice>
+      Could not load {what}.{' '}
+      <Button variant="ghost" size="sm" disabled={refreshing} onClick={() => void retry()}>
+        {refreshing ? 'Retrying…' : 'Try again'}
+      </Button>
+    </Notice>
+  );
+}
+
+function Pending({ label }: { label: string }) {
+  return (
+    <div role="status">
+      <Loading label={label} />
+    </div>
+  );
+}
+
+function Empty({ title, children }: { title: string; children: string }) {
+  return (
+    <div className="secondary-empty">
+      <h2>{title}</h2>
+      <p>{children}</p>
+    </div>
+  );
+}
+
+export function Tasks({ onAsk }: { onAsk(text: string): void }) {
+  const tasks = usePageData<Task[]>('/api/tasks');
+  const schedules = usePageData<Schedule[]>('/api/schedules');
+  const history = useScheduleHistory();
+  const [view, setView] = useState<(typeof views)[number]>('current');
   const tabsId = useId();
-  const open = (tasks ?? [])
+  const open = (tasks.data ?? [])
     .filter((task) => !closed(task))
     .sort(
       (a, b) =>
         order.indexOf(a.status) - order.indexOf(b.status) || b.updatedAt.localeCompare(a.updatedAt),
     );
-  const finished = (tasks ?? []).filter(closed);
-  const shown = view === 'open' ? open : finished;
+  const upcoming = (schedules.data ?? [])
+    .filter((schedule) => schedule.enabled && schedule.nextRun)
+    .sort((a, b) => a.nextRun!.localeCompare(b.nextRun!) || a.id.localeCompare(b.id));
+  const inactive = (schedules.data ?? []).filter(
+    (schedule) =>
+      !upcoming.includes(schedule) &&
+      (schedule.kind !== 'once' || schedule.lastRun?.scheduledFor !== schedule.runAt),
+  );
+  const oldestRun = history.cursor ? history.runs.at(-1)?.createdAt : undefined;
+  const previous: Array<{ at: string; task: Task } | { at: string; run: ScheduleRun }> = [
+    ...(tasks.data ?? [])
+      .filter((task) => closed(task) && (!oldestRun || task.closedAt! >= oldestRun))
+      .map((task) => ({ at: task.closedAt!, task })),
+    ...history.runs
+      .filter((run) => run.status !== 'queued' && run.status !== 'running')
+      .map((run) => ({ at: run.createdAt, run })),
+  ].sort((a, b) => b.at.localeCompare(a.at));
+  const counts = {
+    current: tasks.data && open.length,
+    scheduled: schedules.data && upcoming.length,
+  };
   return (
     <div className="content-page secondary-page tasks-page">
+      <PlanToast />
       <header className="page-heading secondary-heading">
         <div>
           <PageTitle path="/tasks" />
-          <p>What Otto is working on, and how it’s going.</p>
+          <p>What Otto is working on, what’s scheduled and what’s done.</p>
         </div>
+        {view === 'scheduled' && (
+          <div className="secondary-heading-actions">
+            <NewPlan onAsk={onAsk} />
+          </div>
+        )}
       </header>
       <div
         className="task-views"
@@ -123,19 +190,20 @@ export function Tasks() {
         onKeyDown={(event) => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
+          const index = views.indexOf(view);
           const next =
             event.key === 'Home'
-              ? 'open'
+              ? views[0]
               : event.key === 'End'
-                ? 'closed'
-                : view === 'open'
-                  ? 'closed'
-                  : 'open';
+                ? views[views.length - 1]
+                : views[
+                    (index + (event.key === 'ArrowLeft' ? views.length - 1 : 1)) % views.length
+                  ];
           setView(next);
           event.currentTarget.querySelector<HTMLButtonElement>(`[data-view="${next}"]`)?.focus();
         }}
       >
-        {(['open', 'closed'] as const).map((item) => (
+        {views.map((item) => (
           <button
             key={item}
             id={`${tabsId}-tab-${item}`}
@@ -146,56 +214,105 @@ export function Tasks() {
             aria-controls={`${tabsId}-panel`}
             onClick={() => setView(item)}
           >
-            {item === 'open' ? 'In progress' : 'Finished'}
-            {tasks && <span>{item === 'open' ? open.length : finished.length}</span>}
+            {viewLabels[item]}
+            {item !== 'previous' && counts[item] !== undefined && <span>{counts[item]}</span>}
           </button>
         ))}
       </div>
-      {error && (
-        <Notice>
-          Could not load tasks.{' '}
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Retry loading tasks"
-            disabled={refreshing}
-            onClick={() => void refresh()}
-          >
-            Try again
-          </Button>
-        </Notice>
-      )}
       <div
         role="tabpanel"
         id={`${tabsId}-panel`}
         aria-labelledby={`${tabsId}-tab-${view}`}
         tabIndex={0}
       >
-        {!tasks ? (
-          loading ? (
-            <div role="status">
-              <Loading label="Loading tasks…" />
+        {view !== 'scheduled' && tasks.error && (
+          <LoadError what="tasks" refreshing={tasks.refreshing} retry={tasks.refresh} />
+        )}
+        {view === 'scheduled' && schedules.error && (
+          <LoadError what="schedules" refreshing={schedules.refreshing} retry={schedules.refresh} />
+        )}
+        {view === 'previous' && history.error && (
+          <LoadError
+            what="scheduled runs"
+            refreshing={history.refreshing}
+            retry={history.refresh}
+          />
+        )}
+        {view === 'current' ? (
+          !tasks.data ? (
+            tasks.loading && <Pending label="Loading tasks…" />
+          ) : open.length ? (
+            <div className="saved-plan-list">
+              {open.map((task) => (
+                <TaskCard key={task.id} task={task} />
+              ))}
             </div>
-          ) : null
-        ) : shown.length ? (
-          <div className="saved-plan-list">
-            {shown.map((task) => (
-              <TaskCard key={task.id} task={task} />
-            ))}
-          </div>
-        ) : view === 'open' ? (
-          <div className="secondary-empty">
-            <h2>Nothing in progress</h2>
-            <p>
+          ) : (
+            <Empty title="Nothing in progress">
               When you hand Otto something that takes time, like getting quotes or chasing a refund,
               it shows up here with how it’s going.
-            </p>
-          </div>
+            </Empty>
+          )
+        ) : view === 'scheduled' ? (
+          !schedules.data ? (
+            schedules.loading && <Pending label="Loading schedules…" />
+          ) : (
+            <>
+              {upcoming.length ? (
+                <div className="saved-plan-list">
+                  {upcoming.map((schedule) => (
+                    <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
+                  ))}
+                </div>
+              ) : (
+                <Empty title="Nothing scheduled">
+                  Schedule a one-time task or something that repeats.
+                </Empty>
+              )}
+              {inactive.length > 0 && (
+                <details className="schedule-inactive" open={!upcoming.length}>
+                  <summary>
+                    Not scheduled <span>{inactive.length}</span>
+                  </summary>
+                  <div className="saved-plan-list">
+                    {inactive.map((schedule) => (
+                      <ScheduleRow key={schedule.id} schedule={schedule} onAsk={onAsk} />
+                    ))}
+                  </div>
+                </details>
+              )}
+            </>
+          )
+        ) : !tasks.data || !history.data ? (
+          (tasks.loading || history.loading) && <Pending label="Loading previous tasks…" />
+        ) : previous.length ? (
+          <>
+            <div className="saved-plan-list">
+              {previous.map((item) =>
+                'task' in item ? (
+                  <TaskCard key={`task:${item.task.id}`} task={item.task} />
+                ) : (
+                  <ScheduleRunRow key={`run:${item.run.id}`} run={item.run} />
+                ),
+              )}
+            </div>
+            {history.earlierError && <Notice>{history.earlierError}</Notice>}
+            {history.cursor && (
+              <Button
+                variant="ghost"
+                className="schedule-history-more"
+                size="sm"
+                disabled={history.loadingEarlier}
+                onClick={() => void history.loadEarlier()}
+              >
+                {history.loadingEarlier ? 'Loading…' : 'Load earlier'}
+              </Button>
+            )}
+          </>
         ) : (
-          <div className="secondary-empty">
-            <h2>No finished tasks yet</h2>
-            <p>Tasks Otto finishes or stops will appear here.</p>
-          </div>
+          <Empty title="Nothing finished yet">
+            Tasks Otto finishes or stops, and past scheduled runs, appear here.
+          </Empty>
         )}
       </div>
     </div>

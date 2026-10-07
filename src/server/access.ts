@@ -13,7 +13,6 @@ export function registerLocalAccess(
   const pages = new Set([
     '/',
     '/tasks',
-    '/schedule',
     '/apps',
     '/onboarding',
     '/connected.html',

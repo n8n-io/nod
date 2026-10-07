@@ -1424,7 +1424,6 @@ describe('local access', () => {
     app.get('/apps', async () => 'Application shell');
     app.get('/onboarding', async () => 'Application shell');
     app.get('/tasks', async () => 'Application shell');
-    app.get('/schedule', async () => 'Application shell');
     app.get('/browser', async () => 'Application shell');
     app.get('/connected.html', async () => 'Window return page');
     app.get('/vault/:id', async () => 'Application shell');
@@ -1462,7 +1461,6 @@ describe('local access', () => {
         '/onboarding?connection=connected',
         '/apps?connection=connected',
         '/tasks',
-        '/schedule',
         '/browser',
         '/vault/test-link',
         '/onboarding',

@@ -8,7 +8,8 @@
   outline: 2px solid var(--ring);
   outline-offset: 4px;
 }
-.task-card .saved-plan-title {
+.task-card .saved-plan-title,
+.schedule-run .saved-plan-title {
   align-items: center;
 }
 .task-status {
@@ -23,11 +24,13 @@
   font-size: var(--text-control);
   font-weight: 500;
 }
-.task-status[data-status='needs_you'] {
+.task-status[data-status='needs_you'],
+.schedule-run .task-status[data-status='waiting'] {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.task-status[data-status='working'] {
+.task-status[data-status='working'],
+.task-status[data-status='running'] {
   background: var(--info-soft);
   color: var(--info);
 }
@@ -35,9 +38,14 @@
   background: var(--warning-soft);
   color: var(--warning);
 }
-.task-status[data-status='done'] {
+.task-status[data-status='done'],
+.task-status[data-status='succeeded'] {
   background: var(--success-soft);
   color: var(--success);
+}
+.task-status[data-status='failed'] {
+  background: var(--error-soft);
+  color: var(--error);
 }
 .task-now {
   display: -webkit-box;
