@@ -100,6 +100,7 @@ test(
     let fail = false;
     let inspectorEnabled = false;
     let browserHeld = false;
+    let pageShown = true;
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
@@ -130,6 +131,7 @@ test(
           return { text: 'Synthetic page', url: 'https://example.test/' };
         },
         view: async function* (_id, signal) {
+          if (!pageShown) return;
           yield Buffer.from('synthetic-live-frame');
           await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
         },
@@ -262,9 +264,13 @@ test(
         });
         if (stream.statusCode === 200)
           frames.push(
-            await new Promise<string>((resolve) =>
-              stream.stream().once('data', (chunk) => resolve(String(chunk))),
-            ),
+            await new Promise<string>((resolve) => {
+              let body = '';
+              stream.stream().on('data', (chunk) => {
+                body += String(chunk);
+                if (body.includes('synthetic-live-frame\r\n--frame')) resolve(body);
+              });
+            }),
           );
         controller.abort();
         return [
@@ -281,12 +287,18 @@ test(
       assert.deepEqual(await handoff(), [423, 423, 423]);
       await db.pool.query("UPDATE turns SET waiting_reason='question' WHERE id=$1", [nextTurnId]);
       assert.deepEqual(await handoff(), [200, 200, 200]);
-      assert.match(frames[0], /^--frame\r\nContent-Type: image\/jpeg\r\n/);
+      assert.equal(
+        frames[0],
+        '--frame\r\nContent-Type: image/jpeg\r\n\r\nsynthetic-live-frame\r\n--frame\r\nContent-Type: image/jpeg\r\n\r\n',
+      );
       assert.deepEqual(controls, [
         [next.id, click],
         [next.id, { action: 'back' }],
       ]);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
+      pageShown = false;
+      assert.equal((await request('/api/browser-handoff/stream')).statusCode, 409);
+      pageShown = true;
       await db.pool.query(
         "INSERT INTO turns(id,owner_id,thread_id,source,prompt,status,background) VALUES($1,$2,$3,'event','Check','running',true)",
         [randomUUID(), ownerId, next.id],
@@ -1065,6 +1077,62 @@ test('the browser has one holder, and the conversation keeps it for the user unt
   } finally {
     handoff.resolve();
     backgroundDone.resolve();
+    await runtime.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a browser handoff needs an open page, so Pi reopens it instead of handing over nothing', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-page-'));
+  const replies: string[] = [];
+  let failure = '';
+  const runtime = createAgentRuntime({
+    agent: {
+      open: async ({ tools }) => ({
+        resumed: false,
+        prompt: async () => {
+          const ask = tools.find((tool) => tool.name === 'ask_user')!;
+          await ask.execute({ question: 'Sign in in [Open browser](/browser).' }).catch((error) => {
+            failure = String(error);
+          });
+        },
+        abort() {},
+        dispose() {},
+      }),
+      dispose() {},
+    },
+    computer: fakeComputer({
+      currentPage: async () => {
+        throw new Error('Open the login page in this task browser first.');
+      },
+    }),
+    workspace: fakeWorkspace(),
+  });
+  try {
+    const result = await runtime.runTurn({
+      threadId: randomUUID(),
+      turnId: randomUUID(),
+      prompt: 'Hand me the browser.',
+      history: [],
+      attachments: [],
+      workspacePath: directory,
+      signal: new AbortController().signal,
+      emit: async () => {},
+      reply: async (text) => {
+        replies.push(text);
+      },
+      delta() {},
+      publish: async () => {
+        throw new Error('unused');
+      },
+      requestCredential: async () => ({}),
+      integration: async () => ({}),
+      manage: async () => ({}),
+    });
+    assert.equal(result.status, 'succeeded');
+    assert.match(failure, /Open the page in your browser before handing it to the user/);
+    assert.deepEqual(replies, []);
+  } finally {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });
   }
@@ -3134,9 +3202,9 @@ test('the live handoff waits for a frame, merges moves and typing behind a pendi
     });
   };
   try {
-    assert.equal(
-      view.element('.browser-handoff img').getAttribute('src'),
-      '/api/browser-handoff/stream?view=0',
+    assert.match(
+      view.element('.browser-handoff img').getAttribute('src')!,
+      /^\/api\/browser-handoff\/stream\?view=[0-9a-f-]{36}-0$/,
     );
     await view.pointer('mousemove');
     assert.deepEqual(posted, []);

@@ -590,6 +590,10 @@ export function createAgentRuntime(dependencies: {
             guard(name, params, async () => {
               if (!Value.Check(parameters, params))
                 throw new Error('The tool arguments do not match its schema.');
+              if (handsOverBrowser(name, params))
+                await computer.currentPage(threadId).catch(() => {
+                  throw new Error('Open the page in your browser before handing it to the user.');
+                });
               return execute(params);
             }),
           );

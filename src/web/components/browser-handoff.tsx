@@ -29,10 +29,12 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   const dialog = useRef<HTMLDivElement>(null);
   const pending = useRef<BrowserHandoffInput[]>([]);
   const sending = useRef<Promise<void> | null>(null);
+  const view = useRef(crypto.randomUUID());
   const pressed = useRef<{ x: number; y: number; button: (typeof buttons)[number] } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [live, setLive] = useState(false);
   const [shown, setShown] = useState(false);
+  const [failures, setFailures] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState<'back' | 'reload' | null>(null);
   const [returning, setReturning] = useState(false);
@@ -202,8 +204,13 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
 
   if (closed) return null;
   const busy = returning || loading !== null;
+  const closedBrowser =
+    failures >= 3 ? "Otto's browser is closed. Ask Otto to open the page again." : '';
   const status =
-    error || (live ? 'Click and type here, then hand it back.' : shown ? 'Reconnecting…' : '');
+    error ||
+    (live
+      ? 'Click and type here, then hand it back.'
+      : closedBrowser || (shown ? 'Reconnecting…' : ''));
   const sizeToggle = (
     <Button
       variant="ghost"
@@ -247,17 +254,19 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
       >
         <img
           key={attempt}
-          src={`/api/browser-handoff/stream?view=${attempt}`}
+          src={`/api/browser-handoff/stream?view=${view.current}-${attempt}`}
           alt="Otto's browser"
           draggable={false}
           hidden={!shown}
           onLoad={(event) => {
             setLive(true);
             setShown(true);
+            setFailures(0);
             setNaturalWidth(event.currentTarget.naturalWidth);
           }}
           onError={() => {
             setLive(false);
+            setFailures((value) => value + 1);
             window.setTimeout(() => setAttempt((value) => value + 1), 1000);
           }}
           onMouseMove={(event) => mouse(event, 'move')}
@@ -266,7 +275,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
           onMouseLeave={release}
           onContextMenu={(event) => event.preventDefault()}
         />
-        {!shown && <Loading label="Opening Otto's browser…" />}
+        {!shown && <Loading label={closedBrowser || "Opening Otto's browser…"} />}
       </div>
       <div className="browser-handoff-bar">
         <div className="browser-handoff-actions">

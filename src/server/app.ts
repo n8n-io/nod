@@ -543,6 +543,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const thread = await activeThread(pool);
     if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
     const controller = new AbortController();
+    reply.raw.on('close', () => controller.abort());
+    const open = () => view(thread.id, controller.signal)[Symbol.asyncIterator]();
+    let frames = open();
+    let next = await frames.next().catch(() => ({ done: true as const, value: undefined }));
+    if (next.done) {
+      controller.abort();
+      return reply.code(409).send({ error: "Otto's browser is not showing a page." });
+    }
     const check = setInterval(
       () =>
         void handoffOpen(thread.id).then(
@@ -553,35 +561,29 @@ export async function createApp(dependencies: AppDependencies = {}) {
     );
     reply.hijack();
     streams.add(reply.raw);
-    reply.raw.on('close', () => {
-      streams.delete(reply.raw);
-      clearInterval(check);
-      controller.abort();
-    });
+    reply.raw.on('close', () => streams.delete(reply.raw));
     reply.raw.writeHead(200, {
       'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'X-Accel-Buffering': 'no',
     });
+    const part = '--frame\r\nContent-Type: image/jpeg\r\n\r\n';
+    reply.raw.write(part);
     try {
-      for (let frames = 1; frames && !controller.signal.aborted;) {
-        frames = 0;
-        for await (const image of view(thread.id, controller.signal)) {
-          frames++;
-          reply.raw.write(
-            `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${image.length}\r\n\r\n`,
-          );
-          reply.raw.write(image);
-          if (!reply.raw.write('\r\n'))
-            await new Promise((resolve) => {
-              reply.raw.once('drain', resolve);
-              reply.raw.once('close', resolve);
-            });
-        }
+      while (!next.done) {
+        reply.raw.write(next.value);
+        if (!reply.raw.write(`\r\n${part}`))
+          await new Promise((resolve) => {
+            reply.raw.once('drain', resolve);
+            reply.raw.once('close', resolve);
+          });
+        next = await frames.next();
+        if (next.done && !controller.signal.aborted) next = await (frames = open()).next();
       }
     } catch {}
     clearInterval(check);
+    controller.abort();
     reply.raw.end();
   });
   app.post('/api/browser-handoff', async (request, reply) => {
