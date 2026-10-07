@@ -115,6 +115,9 @@ function FormattingMenu({ editor, active }: { editor: Editor; active: boolean })
     editor.view.dispatch(editor.state.tr.setMeta(pluginKey, 'show'));
     editor.view.dispatch(editor.state.tr.setMeta(pluginKey, 'updatePosition'));
   }
+  function menuVisible() {
+    return toolbar.current?.isConnected && toolbar.current.style.visibility === 'visible';
+  }
   function closePanel() {
     setPanel(null);
     editor.commands.focus(undefined, { scrollIntoView: false });
@@ -180,7 +183,7 @@ function FormattingMenu({ editor, active }: { editor: Editor; active: boolean })
       toolbar.current?.querySelector('button')?.focus();
       return true;
     }
-    if (event.key === 'Escape' && toolbar.current?.isConnected) {
+    if (event.key === 'Escape' && menuVisible()) {
       event.preventDefault();
       event.stopPropagation();
       dismiss();
@@ -207,24 +210,24 @@ function FormattingMenu({ editor, active }: { editor: Editor; active: boolean })
       dismissed.current = false;
     };
     const reposition = (event: Event) => {
-      if (event.target !== editor.view.dom && toolbar.current?.isConnected)
+      if (event.target !== editor.view.dom && menuVisible())
         editor.view.dispatch(editor.state.tr.setMeta(pluginKey, 'updatePosition'));
     };
     const outside = (event: Event) => {
       if (
-        toolbar.current?.isConnected &&
+        menuVisible() &&
         event.target instanceof Node &&
         !editor.view.dom.contains(event.target) &&
-        !toolbar.current.contains(event.target)
+        !toolbar.current?.contains(event.target)
       )
         editor.view.dispatch(editor.state.tr.setMeta(pluginKey, 'hide'));
     };
     const escape = (event: KeyboardEvent) => {
       if (
         event.key === 'Escape' &&
-        toolbar.current?.isConnected &&
+        menuVisible() &&
         event.target instanceof Node &&
-        (editor.view.dom.contains(event.target) || toolbar.current.contains(event.target))
+        (editor.view.dom.contains(event.target) || toolbar.current?.contains(event.target))
       ) {
         event.preventDefault();
         event.stopPropagation();
