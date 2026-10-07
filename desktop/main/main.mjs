@@ -38,13 +38,7 @@ import {
 import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from './lifecycle.mjs';
-import {
-  createDesktopUpdater,
-  createUpdateSource,
-  guardUpdateRenderers,
-  restartDesktopUpdate,
-  startDesktopUpdateChecks,
-} from './updates.mjs';
+import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const engineRoot = app.isPackaged
@@ -731,85 +725,82 @@ async function checkForUpdates(manual = true) {
   return checkingUpdates;
 }
 
-async function restartForUpdate(candidate) {
-  return restartDesktopUpdate({
-    candidate,
-    guard: async () => {
-      if (
-        quitting ||
-        !engine ||
-        status.phase !== 'ready' ||
-        lifecycle.engineStarting ||
-        (setupWindow && !setupWindow.isDestroyed())
-      )
-        throw new Error('Finish setup and close Settings before restarting Otto.');
-      quitting = true;
-      try {
-        const release = await guardUpdateRenderers({
-          windows: [...engineWindows].filter((window) => !window.isDestroyed()),
-          ipc: ipcMain,
-          trusted: isEngine,
-        });
-        const resume = () => {
-          release();
-          quitting = false;
-        };
-        resume.validate = release.validate;
-        return resume;
-      } catch (error) {
-        quitting = false;
-        throw error;
-      }
-    },
-    request: engineRequest,
-    flush: () => chatReadCursors.flush(),
-    retryResume: async () => {
-      const { response } = await dialog.showMessageBox({
-        type: 'warning',
-        message: 'Otto could not resume its work.',
-        detail: 'Your work is paused. Try again, or quit and reopen Otto.',
-        buttons: ['Try again', 'Quit Otto'],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      });
-      if (response === 0) return true;
-      await chatReadCursors.flush().catch(() => {});
-      await finishQuit(() => app.exit());
-      return false;
-    },
-    shutdown: async () => {
-      updateReadinessNotice();
-      stopNotifications?.();
-      for (const notification of displayedNotifications) notification.close();
-      await finishQuit(
-        () =>
-          new Promise((resolve, reject) => {
-            const cleanup = () => {
-              autoUpdater.removeListener('error', failed);
-              app.removeListener('before-quit', accepted);
-            };
-            const failed = (error) => {
-              cleanup();
-              installingUpdate = false;
-              reject(error);
-            };
-            const accepted = () => {
-              cleanup();
-              resolve();
-            };
-            autoUpdater.once('error', failed);
-            app.once('before-quit', accepted);
-            installingUpdate = true;
-            try {
-              autoUpdater.quitAndInstall();
-            } catch (error) {
-              failed(error);
-            }
-          }),
-      );
-    },
+async function restartForUpdate() {
+  if (quitting || !(await confirmRestart())) return;
+  await quit(installUpdate);
+}
+
+async function confirmRestart() {
+  if (!engine) return true;
+  let running;
+  try {
+    const response = await engineRequest('/api/desktop/status');
+    if (response.ok) running = (await response.json()).running;
+  } catch {}
+  if (Array.isArray(running) && !running.length) return true;
+  const work = Array.isArray(running)
+    ? [
+        ...new Set(
+          running.map((turn) =>
+            turn?.visible
+              ? 'a reply in your chat'
+              : turn?.source === 'schedule'
+                ? 'a scheduled task'
+                : 'a background check',
+          ),
+        ),
+      ]
+    : [];
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    message: work.length ? 'Otto is still working.' : 'Otto could not check its current work.',
+    detail: work.length
+      ? `Restarting now stops ${new Intl.ListFormat('en').format(work)}. You can ask Otto to continue afterwards.`
+      : 'Restarting now may stop a task in progress.',
+    buttons: ['Restart now', 'Later'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
   });
+  return response === 0 && !quitting;
+}
+
+function installUpdate() {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      autoUpdater.removeListener('error', failed);
+      app.removeListener('before-quit', accepted);
+    };
+    const failed = (error) => {
+      cleanup();
+      installingUpdate = false;
+      reject(error);
+    };
+    const accepted = () => {
+      cleanup();
+      resolve();
+    };
+    autoUpdater.once('error', failed);
+    app.once('before-quit', accepted);
+    installingUpdate = true;
+    try {
+      autoUpdater.quitAndInstall();
+    } catch (error) {
+      failed(error);
+    }
+  });
+}
+
+async function quit(complete) {
+  quitting = true;
+  stopUpdateChecks?.();
+  const stoppingUpdates = updates?.dispose();
+  updateReadinessNotice();
+  stopNotifications?.();
+  for (const notification of displayedNotifications) notification.close();
+  await stoppingUpdates;
+  await chatReadCursors.flush().catch(() => {});
+  await finishQuit(complete);
 }
 
 async function finishQuit(complete) {
@@ -844,43 +835,14 @@ async function validateStart() {
     throw new Error('Choose your preferences to finish setting up Otto.');
 }
 
-async function startEngine({ runtime, signal, validateStop }) {
+async function startEngine({ runtime, signal }) {
   if (engine && !restartRequired && enginePreferencesReady) return finishEnginePreparation();
   if (engine) {
-    const current = await engineRequest('/api/desktop/status');
-    if (!current.ok) throw new Error('Otto could not check its current work. Try again.');
-    if ((await current.json()).activeWork)
+    if (!(await confirmRestart()))
       throw Object.assign(
-        new Error('Finish or stop the current task before applying new settings.'),
+        new Error('Apply your new settings when Otto finishes its current work.'),
         { code: 'OTTO_RESTART_DEFERRED' },
       );
-    const transition = {
-      nonce: randomUUID(),
-      targetRelease: '0000000000000000000000000000000000000000',
-      deadline: Date.now() + 30_000,
-    };
-    try {
-      const response = await engineRequest('/api/runtime/drain', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(transition),
-        signal: AbortSignal.timeout(35_000),
-      });
-      if (!response.ok || !(await response.json()).drained)
-        throw new Error('Otto is still finishing work. Try again shortly.');
-      validateStop?.();
-    } catch {
-      const resumed = await engineRequest('/api/runtime/resume', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(transition),
-      }).catch(() => undefined);
-      if (!resumed?.ok || (await resumed.json().catch(() => undefined))?.ok !== true)
-        throw new Error('Otto could not resume its work. Quit and reopen Otto to recover.');
-      throw Object.assign(new Error('Otto is still finishing work. Try again shortly.'), {
-        code: 'OTTO_RESTART_DEFERRED',
-      });
-    }
     await stopEngine();
   }
   if (quitting) throw new Error('Otto is closing.');
@@ -989,7 +951,7 @@ async function startEngine({ runtime, signal, validateStop }) {
   return finishEnginePreparation();
 }
 
-async function prepare(options = {}, validateStop) {
+async function prepare(options = {}) {
   if (preparing) return preparing;
   update({
     phase: 'preparing',
@@ -998,7 +960,7 @@ async function prepare(options = {}, validateStop) {
     needsRuntimeArchive: false,
   });
   preparing = lifecycle
-    .start({ retry: options?.retry === true, validateStop })
+    .start({ retry: options?.retry === true })
     .catch((error) => {
       void writeDiagnostic(error.message).catch(() => {});
       const deferred =
@@ -1097,17 +1059,9 @@ else {
     if (installingUpdate) return;
     event.preventDefault();
     if (quitting) return;
-    quitting = true;
-    stopUpdateChecks?.();
-    const stoppingUpdates = updates?.dispose();
-    updateReadinessNotice();
-    stopNotifications?.();
-    for (const notification of displayedNotifications) notification.close();
-    void (async () => {
-      await stoppingUpdates;
-      await chatReadCursors.flush().catch(() => {});
-      await finishQuit(() => app.exit());
-    })().catch((error) => void writeDiagnostic(error.message).catch(() => {}));
+    void quit(() => app.exit()).catch(
+      (error) => void writeDiagnostic(error.message).catch(() => {}),
+    );
   });
   void app
     .whenReady()
@@ -1268,29 +1222,15 @@ else {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         if (quitting || lifecycle.busy) throw new Error('Wait for Otto to finish starting.');
         if (!restartRequired) return;
-        const windows = [...engineWindows].filter((window) => !window.isDestroyed());
-        const release = await guardUpdateRenderers({ windows, ipc: ipcMain, trusted: isEngine });
-        try {
-          update({ phase: 'preparing', message: 'Applying your app connection key.' });
-          showSettings();
-          const result = await prepare({}, () => {
-            release.validate();
-            if (
-              [...engineWindows].some(
-                (window) => !window.isDestroyed() && !windows.includes(window),
-              )
-            )
-              throw new Error('Close the new window before restarting Otto.');
-          });
-          if (result.error) {
-            if (result.phase === 'ready') {
-              setupWindow?.destroy();
-              showEngine();
-            }
-            throw new Error(result.error);
+        update({ phase: 'preparing', message: 'Applying your app connection key.' });
+        showSettings();
+        const result = await prepare();
+        if (result.error) {
+          if (result.phase === 'ready') {
+            setupWindow?.destroy();
+            showEngine();
           }
-        } finally {
-          release();
+          throw new Error(result.error);
         }
       });
       ipcMain.handle('otto:prepare', (event, options) => {

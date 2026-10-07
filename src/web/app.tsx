@@ -32,7 +32,6 @@ import { useBrowserTimeZone } from './hooks/use-browser-time-zone';
 import {
   desktopSettingsAvailable,
   onFeedbackRequested,
-  onPrepareDesktopUpdate,
   subscribeDesktopFocusMessage,
   subscribeDesktopSettings,
 } from './lib/desktop';
@@ -582,17 +581,6 @@ export function App() {
         if (/^\/privacy\/?$/.test(window.location.pathname)) navigate('/');
         setFeedbackRequest((value) => value + 1);
       }),
-    [],
-  );
-  useEffect(
-    () =>
-      onPrepareDesktopUpdate(
-        () =>
-          !/^\/(?:browser|vault\/[^/]+|credentials\/[^/]+)\/?$/.test(window.location.pathname) &&
-          !document.querySelector(
-            '[role="dialog"], [role="alertdialog"], dialog[open], [data-desktop-settings-pending="true"]',
-          ),
-      ),
     [],
   );
   return (

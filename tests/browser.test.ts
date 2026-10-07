@@ -3117,148 +3117,7 @@ test('browser handoff cancels queued controls when the preceding view cannot be 
   }
 });
 
-test('desktop restart guard preserves chat drafts, attachments, pending sends and secondary-page forms', async () => {
-  let state = requestedChatState();
-  const upload = deferred<Response>();
-  let uploadSignal: AbortSignal | null | undefined;
-  const sent = deferred<Response>();
-  const checks = new Set<() => boolean>();
-  let submission: { clientMessageId: string } | undefined;
-  const commits: boolean[] = [];
-  function RestartProbe({ visible }: { visible: boolean }) {
-    useLayoutEffect(() => {
-      commits.push(checks.size > 0 && [...checks].every((check) => check()));
-    }, [visible]);
-    return createElement(Chat, {
-      state,
-      streams: {},
-      visible,
-      refresh: async () => {},
-      resetConversation: async () => state.threadId,
-    });
-  }
-  function RestoredDraftProbe({ text }: { text: string }) {
-    useLayoutEffect(() => {
-      commits.push(checks.size > 0 && [...checks].every((check) => check()));
-    }, [text]);
-    return createElement(Composer, {
-      ready: true,
-      text,
-      setText: () => {},
-      replyTo: null,
-      clearReply: () => {},
-      onSend: async () => ({ sent: true as const }),
-    });
-  }
-  const chat = (visible = true) => createElement(RestartProbe, { visible });
-  const view = await handoffView(async (path, options) => {
-    if (path === '/api/apps') return Response.json([]);
-    if (path === '/api/uploads') {
-      uploadSignal = options?.signal;
-      return upload.promise;
-    }
-    assert.equal(path, '/api/messages');
-    submission = JSON.parse(String(options?.body));
-    return sent.promise;
-  }, createElement('div'));
-  Object.defineProperty(view.dom.window, 'ottoDesktop', {
-    value: {
-      onPrepareUpdate: (check: () => boolean) => {
-        checks.add(check);
-        return () => checks.delete(check);
-      },
-    },
-  });
-  const canRestart = () => checks.size > 0 && [...checks].every((check) => check());
-  try {
-    await view.render(chat());
-    assert.equal(canRestart(), true);
-    const editor = view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor;
-    await act(async () => editor.commands.setContent('Synthetic unsent draft'));
-    assert.equal(canRestart(), false);
-    await act(async () => editor.commands.clearContent());
-    assert.equal(canRestart(), true);
-    await view.render(chat(false));
-    assert.equal(canRestart(), false);
-    assert.equal(commits.at(-1), false);
-    await view.render(chat());
-    const dialog = view.dom.window.document.createElement('div');
-    dialog.setAttribute('role', 'dialog');
-    view.dom.window.document.body.append(dialog);
-    assert.equal(canRestart(), false);
-    dialog.remove();
-    assert.equal(canRestart(), true);
-    await act(async () => {
-      const input = view.element<HTMLInputElement>('[aria-label="Choose files"]');
-      Object.defineProperty(input, 'files', {
-        value: [new File(['draft'], 'synthetic.txt', { type: 'text/plain' })],
-      });
-      input.dispatchEvent(new view.dom.window.Event('change', { bubbles: true }));
-    });
-    assert.equal(canRestart(), false);
-    await act(async () => editor.commands.setContent('Keep this draft during model setup.'));
-    state = { ...state, configuration: { ...state.configuration, llmReady: false } };
-    await view.render(chat());
-    assert.equal(uploadSignal?.aborted, false);
-    await act(async () =>
-      upload.resolve(
-        Response.json({
-          id: randomUUID(),
-          name: 'synthetic.txt',
-          mimeType: 'text/plain',
-          size: 5,
-          url: '/api/artifacts/synthetic',
-        }),
-      ),
-    );
-    assert.equal(canRestart(), false);
-    state = { ...state, configuration: { ...state.configuration, llmReady: true } };
-    await view.render(chat());
-    assert.equal(editor.getMarkdown(), 'Keep this draft during model setup.');
-    assert.ok(view.element('[aria-label="Remove synthetic.txt"]'));
-    await act(async () => editor.commands.clearContent());
-    await act(async () =>
-      view.element<HTMLButtonElement>('[aria-label="Remove synthetic.txt"]').click(),
-    );
-    assert.equal(canRestart(), true);
-    await act(async () => {
-      editor.commands.setContent('Synthetic pending send');
-      view
-        .element('form')
-        .dispatchEvent(new view.dom.window.Event('submit', { bubbles: true, cancelable: true }));
-    });
-    assert.ok(submission);
-    assert.equal(editor.getMarkdown(), '');
-    assert.equal(canRestart(), false);
-    const sentThread = state.threadId;
-    state = requestedChatState();
-    await view.render(chat());
-    assert.equal(canRestart(), false);
-    await act(async () =>
-      sent.resolve(
-        Response.json({
-          messageId: submission!.clientMessageId,
-          threadId: sentThread,
-          turnId: randomUUID(),
-        }),
-      ),
-    );
-    assert.equal(canRestart(), true);
-    await view.render(createElement(RestoredDraftProbe, { text: '' }));
-    assert.equal(canRestart(), true);
-    await view.render(createElement(RestoredDraftProbe, { text: 'Synthetic restored draft' }));
-    assert.equal(canRestart(), false);
-    assert.equal(commits.at(-1), false);
-    await view.unmount();
-    assert.equal(checks.size, 0);
-  } finally {
-    upload.resolve(Response.json({ error: 'Fixture ended' }, { status: 503 }));
-    sent.resolve(Response.json({ error: 'Fixture ended' }, { status: 503 }));
-    await view.close();
-  }
-});
-
-test('native Settings and feedback preserve the active credential form and its restart fence', async () => {
+test('native Settings and feedback preserve the active credential form', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: `
@@ -3294,7 +3153,6 @@ test('native Settings and feedback preserve the active credential form and its r
         throw new Error('Unexpected fixture request: ' + path);
       };
       const preferences = { theme: 'system', resolvedTheme: 'light', launchAtLogin: false, notifications: false };
-      const checks = new Set();
       let openSettings;
       let openFeedback;
       dom.window.ottoDesktop = {
@@ -3309,7 +3167,6 @@ test('native Settings and feedback preserve the active credential form and its r
           openFeedback = listener;
           return () => { openFeedback = undefined; };
         },
-        onPrepareUpdate: check => { checks.add(check); return () => checks.delete(check); },
       };
       const { act, createElement } = await import('react');
       const { createRoot } = await import('react-dom/client');
@@ -3322,8 +3179,6 @@ test('native Settings and feedback preserve the active credential form and its r
         password.value = 'synthetic-unsaved-password';
         password.focus();
         assert.ok(openSettings);
-        assert.equal(checks.size, 1);
-        assert.equal([...checks][0](), false);
         await act(async () => openSettings('general'));
         assert.ok(document.querySelector('[role="dialog"]'));
         assert.equal(window.location.pathname, '/credentials/synthetic-form');
@@ -3335,7 +3190,6 @@ test('native Settings and feedback preserve the active credential form and its r
         assert.equal(document.querySelector('input[name="password"]'), password);
         assert.equal(password.value, 'synthetic-unsaved-password');
         assert.ok(document.activeElement === password);
-        assert.equal([...checks][0](), false);
         assert.deepEqual(requests, ['/api/session', '/api/credential-requests/synthetic-form']);
         assert.ok(openFeedback);
         await act(async () => openFeedback());
@@ -3343,7 +3197,6 @@ test('native Settings and feedback preserve the active credential form and its r
         assert.equal(window.location.pathname, '/credentials/synthetic-form');
         assert.equal(document.querySelector('input[name="password"]'), password);
         assert.equal(password.value, 'synthetic-unsaved-password');
-        assert.equal([...checks][0](), false);
         await act(async () => document.querySelector('[aria-label="Close"]').click());
         await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
         assert.equal(document.querySelector('[role="dialog"]'), null);

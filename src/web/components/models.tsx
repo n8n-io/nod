@@ -217,7 +217,7 @@ export function ModelSettings({
   const data = models.data;
   const busy = models.busy || signingIn || !!signIn;
   return (
-    <div className="model-settings" data-desktop-settings-pending={dirty || undefined}>
+    <div className="model-settings">
       <p className="model-intro" data-analytics-public>
         Connect as many services as you want. All their models appear in one list.
       </p>

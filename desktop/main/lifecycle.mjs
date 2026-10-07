@@ -97,11 +97,7 @@ export function createDesktopLifecycle({
         await validateStart();
         checkOpen(controller.signal);
         engineStarting = true;
-        return startEngine({
-          runtime: prepared,
-          signal: controller.signal,
-          validateStop: options?.validateStop,
-        });
+        return startEngine({ runtime: prepared, signal: controller.signal });
       })
       .finally(() => {
         engineStarting = false;

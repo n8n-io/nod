@@ -74,7 +74,7 @@ export function DesktopOptions({
   onChange(change: DesktopSettingsChange): Promise<unknown>;
 }) {
   return (
-    <div className="desktop-options" data-desktop-settings-pending={busy || undefined}>
+    <div className="desktop-options">
       {(
         [
           ['launchAtLogin', 'Open at login', Power],
@@ -206,7 +206,7 @@ export function ComposioSettings({
   const saved = state.settings;
   const busy = state.busy || working;
   return (
-    <section className="composio-settings" data-desktop-settings-pending={dirty || undefined}>
+    <section className="composio-settings">
       <div className="composio-settings-heading" data-analytics-public>
         <span className="composio-logo" aria-hidden="true" />
         <h4>App connections</h4>

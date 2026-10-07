@@ -19,12 +19,7 @@ import { usePageData } from '../hooks/use-page-data';
 import { api, errorMessage } from '../lib/api';
 import { analyticsForCurrentSession, captureAnalytics } from '../lib/analytics';
 import { connectionUrl } from '../lib/connection-url';
-import {
-  desktopLinksAvailable,
-  desktopSettingsAvailable,
-  onPrepareDesktopUpdate,
-  openConnection,
-} from '../lib/desktop';
+import { desktopLinksAvailable, desktopSettingsAvailable, openConnection } from '../lib/desktop';
 
 type Pending = 'opening' | 'waiting';
 
@@ -77,18 +72,6 @@ export function Onboarding({
   const actions = useRef(new Map<IntegrationService, AbortController>());
   const attempts = useRef(new Map<IntegrationService, string>());
   const active = useRef(false);
-  useEffect(
-    () =>
-      onPrepareDesktopUpdate(
-        () =>
-          !saving &&
-          !composioDirty &&
-          !modelDirty &&
-          Object.keys(pending).length === 0 &&
-          actions.current.size === 0,
-      ),
-    [saving, composioDirty, modelDirty, pending],
-  );
   useEffect(() => {
     active.current = true;
     const result = new URLSearchParams(window.location.search).get('connection');

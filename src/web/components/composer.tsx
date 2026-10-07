@@ -1,18 +1,9 @@
-import {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { ArrowUp, Paperclip, X, FileText, LoaderCircle, CornerUpLeft, Square } from 'lucide-react';
 import type { Artifact, Message } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { createComposerExtensions } from '../lib/composer-editor';
-import { onPrepareDesktopUpdate } from '../lib/desktop';
 import { Button, Notice } from './ui';
 import {
   ImageViewer,
@@ -51,11 +42,10 @@ interface ComposerProps {
   onSend(text: string, attachments: Artifact[]): Promise<ComposerSendResult>;
   onStop?(): void;
   stopping?: boolean;
-  canRestart?(): boolean;
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { ready, text, setText, replyTo, clearReply, onSend, onStop, stopping = false, canRestart },
+  { ready, text, setText, replyTo, clearReply, onSend, onStop, stopping = false },
   ref,
 ) {
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
@@ -111,23 +101,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       focus();
   }
   useImperativeHandle(ref, () => ({ focus }), [editor]);
-  useLayoutEffect(
-    () =>
-      onPrepareDesktopUpdate(
-        () =>
-          Boolean(editor && !editor.isDestroyed) &&
-          !text.trim() &&
-          !editor!.getMarkdown().trim() &&
-          !attachmentValues.current.length &&
-          !uploads.current.size &&
-          !pendingSends.current &&
-          !unsent.current.length &&
-          !replyTo &&
-          !document.querySelector('[role="dialog"], dialog[open]') &&
-          (canRestart?.() ?? true),
-      ),
-    [editor, text, replyTo, canRestart],
-  );
   useEffect(() => {
     mounted.current = true;
     return () => {

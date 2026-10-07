@@ -20,8 +20,6 @@ import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs'
 import {
   createDesktopUpdater,
   createUpdateSource,
-  guardUpdateRenderers,
-  restartDesktopUpdate,
   startDesktopUpdateChecks,
 } from '../main/updates.mjs';
 
@@ -404,7 +402,11 @@ test('native navigation keeps incomplete setup and startup out of normal Setting
   assert.equal(desktopSetupMode({ completed: true, replaying: false, running: true }), 'settings');
 });
 
-async function runningDesktop(t, request, { allowStart = false } = {}) {
+async function runningDesktop(
+  t,
+  request,
+  { allowStart = false, prompt = () => assert.fail('No restart prompt is needed.') } = {},
+) {
   const storage = await fixture(t);
   await storage.store.save({
     onboardingCompleted: true,
@@ -430,7 +432,7 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
     },
     process: { platform: 'darwin', argv: [], env: {} },
     ipcMain: ipc,
-    guardUpdateRenderers,
+    dialog: { showMessageBox: async (options) => prompt(options) },
     URL,
     dirname,
     join,
@@ -494,14 +496,6 @@ async function runningDesktop(t, request, { allowStart = false } = {}) {
           isLoadingMainFrame: () => Boolean(this.loading),
           send: (channel, value) => {
             this.sent.push([channel, value]);
-            if (channel === 'otto:update:prepare')
-              queueMicrotask(() =>
-                ipc.emit(
-                  'otto:update:prepared',
-                  { sender: this.webContents, senderFrame: this.webContents.mainFrame },
-                  { token: value, blocked: false },
-                ),
-              );
           },
         });
         windows.push(this);
@@ -658,177 +652,72 @@ test('an engine crash retires every stale chat window before recovery opens the 
   assert.equal(f.children.length, 2);
 });
 
-test('a deferred app connection restart keeps the healthy chat accessible and settings pending', async (t) => {
-  const calls = [];
-  const f = await runningDesktop(t, async (url) => {
-    calls.push(url);
-    return Response.json({ activeWork: true });
-  });
-  f.setRestartRequired(true);
-  const result = await f.prepare();
-  assert.equal(result.phase, 'ready');
-  assert.equal(result.restartRequired, true);
-  assert.match(result.error, /Finish or stop/);
-  assert.deepEqual(calls, ['http://127.0.0.1:4310/api/desktop/status']);
-  f.showEngine();
-  assert.equal(f.windows.at(-1).url, 'http://127.0.0.1:4310');
-});
-
-test('settings restart resumes the running engine when a renderer navigates or opens a window during drain', async (t) => {
-  for (const mutation of ['navigation', 'new-window']) {
-    let current;
-    let progress;
-    let f;
-    const requests = [];
-    f = await runningDesktop(
-      t,
-      async (url, options = {}) => {
-        const path = new URL(url).pathname;
-        if (path === '/api/health') return Response.json({ ok: true });
-        requests.push({ path, body: options.body });
-        if (path === '/api/desktop/status') return Response.json({ activeWork: false });
-        if (path === '/api/runtime/drain') {
-          progress = f.windows.find((window) => window.path && !window.isDestroyed());
-          assert.ok(progress?.visible);
-          assert.equal(current.isDestroyed(), false);
-          assert.equal(f.children[0].killed, undefined);
-          if (mutation === 'navigation') {
-            current.webContents.mainFrame.url = `${current.url}/tasks`;
-            current.webContents.emit('did-start-navigation');
-          } else {
-            const child = new current.constructor();
-            child.loadURL(current.url);
-            current.webContents.emit('did-create-window', child);
-          }
-          return Response.json({ drained: true });
-        }
-        assert.equal(path, '/api/runtime/resume');
-        return Response.json({ ok: true });
-      },
-      { allowStart: true },
-    );
-    f.crash();
-    await f.prepare();
-    f.showEngine();
-    current = f.windows.at(-1);
-    f.setRestartRequired(true);
-    await assert.rejects(
-      f.handlers.get('otto:settings:apply')({
-        sender: current.webContents,
-        senderFrame: current.webContents.mainFrame,
-      }),
-    );
-    assert.deepEqual(
-      requests.map(({ path }) => path),
-      ['/api/desktop/status', '/api/runtime/drain', '/api/runtime/resume'],
-    );
-    assert.equal(requests[2].body, requests[1].body);
-    assert.equal(f.children.length, 1);
-    assert.equal(f.children[0].killed, undefined);
-    assert.equal(current.isDestroyed(), false);
-    assert.equal(current.isFocused(), true);
-    assert.equal(progress.isDestroyed(), true);
-    assert.equal(f.status().phase, 'ready');
-    assert.equal(f.status().restartRequired, true);
-    assert.equal(current.webContents.listenerCount('did-start-navigation'), 0);
-    const guarded = current.sent.filter(([channel]) => channel.startsWith('otto:update:'));
-    assert.equal(guarded.length, 2);
-    assert.equal(guarded[0][0], 'otto:update:prepare');
-    assert.equal(guarded[1][0], 'otto:update:resume');
-    assert.equal(guarded[1][1], guarded[0][1]);
-  }
-});
-
-test('a canceled settings restart stays in recovery until runtime resume is confirmed', async (t) => {
-  const responses = [
-    { confirmed: true, send: () => Response.json({ ok: true }) },
-    { send: () => Response.json({ ok: true }, { status: 503 }) },
-    { send: () => Response.json({ ok: false }) },
-    { send: () => Response.json({ resumed: true }) },
-    { send: () => Response.json({ ok: 'true' }) },
-    { send: () => new Response('{') },
-    {
-      send: () => {
-        throw new Error('synthetic-private-transport-detail');
-      },
+test('a settings restart asks before stopping work and Later keeps the healthy chat and pending settings', async (t) => {
+  for (const status of [
+    () => Response.json({ running: [{ source: 'schedule', visible: false }] }),
+    () => Response.json({ error: 'unavailable' }, { status: 503 }),
+    () => {
+      throw new Error('Synthetic connection closed');
     },
-  ];
-  for (const drained of [false, true]) {
-    for (const response of responses) {
-      let f;
-      let current;
-      let progress;
-      const requests = [];
-      f = await runningDesktop(
-        t,
-        async (url, options = {}) => {
-          const path = new URL(url).pathname;
-          if (path === '/api/health') return Response.json({ ok: true });
-          requests.push({ path, body: options.body });
-          if (path === '/api/desktop/status') return Response.json({ activeWork: false });
-          if (path === '/api/runtime/drain') {
-            progress = f.windows.find((window) => window.path && !window.isDestroyed());
-            assert.ok(progress?.visible);
-            if (drained) current.webContents.emit('did-start-navigation');
-            return Response.json({ drained }, { status: drained ? 200 : 503 });
-          }
-          assert.equal(path, '/api/runtime/resume');
-          return response.send();
+  ]) {
+    const calls = [];
+    let prompts = 0;
+    const f = await runningDesktop(
+      t,
+      async (url) => {
+        calls.push(url);
+        return status();
+      },
+      {
+        prompt: async () => {
+          prompts++;
+          return { response: 1 };
         },
-        { allowStart: true },
-      );
-      f.crash();
-      await f.prepare();
-      f.showEngine();
-      current = f.windows.at(-1);
-      f.setRestartRequired(true);
-      await assert.rejects(
-        f.handlers.get('otto:settings:apply')({
-          sender: current.webContents,
-          senderFrame: current.webContents.mainFrame,
-        }),
-        (error) => !error.message.includes('synthetic-private-transport-detail'),
-      );
-      assert.equal(f.status().phase, response.confirmed ? 'ready' : 'error');
-      assert.equal(f.status().restartRequired, true);
-      assert.equal(progress.isDestroyed(), response.confirmed === true);
-      assert.equal(progress.visible, !response.confirmed);
-      assert.equal(f.children[0].killed, undefined);
-      assert.equal(f.children.length, 1);
-      assert.equal(current.isDestroyed(), false);
-      assert.equal(current.webContents.listenerCount('did-start-navigation'), 0);
-      assert.deepEqual(
-        requests.map(({ path }) => path),
-        ['/api/desktop/status', '/api/runtime/drain', '/api/runtime/resume'],
-      );
-      assert.equal(requests[2].body, requests[1].body);
-      await new Promise(setImmediate);
-      assert.equal(requests.length, 3);
-    }
+      },
+    );
+    f.setRestartRequired(true);
+    const result = await f.prepare();
+    assert.equal(result.phase, 'ready');
+    assert.equal(result.restartRequired, true);
+    assert.ok(result.error);
+    assert.equal(prompts, 1);
+    assert.deepEqual(calls, ['http://127.0.0.1:4310/api/desktop/status']);
+    f.showEngine();
+    assert.equal(f.windows.at(-1).url, 'http://127.0.0.1:4310');
   }
 });
 
 test('settings restart displays native progress, restores Chat on success, and keeps startup recovery visible after stopping', async (t) => {
-  for (const failAfterStop of [false, true]) {
+  for (const [failAfterStop, busy] of [
+    [false, false],
+    [true, false],
+    [false, true],
+  ]) {
     let f;
     let current;
     let progress;
+    let prompts = 0;
     f = await runningDesktop(
       t,
       async (url) => {
         const path = new URL(url).pathname;
         if (path === '/api/health') return Response.json({ ok: true });
-        if (path === '/api/desktop/status') return Response.json({ activeWork: false });
-        assert.equal(path, '/api/runtime/drain');
+        assert.equal(path, '/api/desktop/status');
         progress = f.windows.find((window) => window.path && !window.isDestroyed());
         assert.ok(progress?.visible);
         assert.equal(progress.query.firstSetup, 'false');
         assert.equal(current.isDestroyed(), false);
         assert.equal(f.children[0].killed, undefined);
         if (failAfterStop) f.storage.encryption.isEncryptionAvailable = () => false;
-        return Response.json({ drained: true });
+        return Response.json({ running: busy ? [{ source: 'user', visible: true }] : [] });
       },
-      { allowStart: true },
+      {
+        allowStart: true,
+        prompt: async () => {
+          prompts++;
+          return { response: 0 };
+        },
+      },
     );
     f.crash();
     await f.prepare();
@@ -850,6 +739,7 @@ test('settings restart displays native progress, restores Chat on success, and k
       f.storage.encryption.isEncryptionAvailable = () => true;
       await f.prepare({ retry: true });
     } else await applying;
+    assert.equal(prompts, busy ? 1 : 0);
     assert.equal(current.isDestroyed(), true);
     assert.equal(f.children[0].killed, true);
     assert.equal(f.children.length, 2);
@@ -876,14 +766,13 @@ test('a pending recording drain cannot close or detach a newly opened onboarding
     async (url) => {
       const path = new URL(url).pathname;
       if (path === '/api/health') return Response.json({ ok: true });
-      if (path === '/api/desktop/status') return Response.json({ activeWork: false });
-      assert.equal(path, '/api/runtime/drain');
+      assert.equal(path, '/api/desktop/status');
       progress = f.windows.find((window) => window.path && !window.isDestroyed());
       progress.webContents.executeJavaScript = () => {
         flushing.resolve();
         return flushed.promise;
       };
-      return Response.json({ drained: true });
+      return Response.json({ running: [] });
     },
     { allowStart: true },
   );
@@ -910,17 +799,19 @@ test('a pending recording drain cannot close or detach a newly opened onboarding
   assert.equal(replacement.isFocused(), true);
 });
 
-test('a failed restart health check or crashed engine retains the error state', async (t) => {
-  for (const crashed of [false, true]) {
-    const f = await runningDesktop(t, async () => {
-      if (crashed) f.crash();
-      return Response.json({ activeWork: true }, { status: crashed ? 200 : 503 });
-    });
-    f.setRestartRequired(true);
-    assert.equal((await f.prepare()).phase, 'error');
-    f.showEngine();
-    assert.equal(f.windows.at(-1).url, undefined);
-  }
+test('an engine that crashes during the restart check retains the error state', async (t) => {
+  const f = await runningDesktop(
+    t,
+    async () => {
+      f.crash();
+      return Response.json({ running: [{ source: 'user', visible: true }] });
+    },
+    { prompt: async () => ({ response: 1 }) },
+  );
+  f.setRestartRequired(true);
+  assert.equal((await f.prepare()).phase, 'error');
+  f.showEngine();
+  assert.equal(f.windows.at(-1).url, undefined);
 });
 
 test('saving general preferences reuses the running engine', async (t) => {
@@ -2022,18 +1913,14 @@ test('desktop no-update checks and failed native downloads never restart', async
   updater.dispose();
 });
 
-test('desktop restart fences drafts and active work, resumes failed drains, and closes the existing lifecycle before install', async () => {
-  const candidate = { source: 'a'.repeat(40) };
-  for (const scenario of [
-    'draft',
-    'busy',
-    'drain failed',
-    'flush failed',
-    'shutdown failed',
-    'ready',
-  ]) {
+test('update restart asks only when work would stop and installs after the normal quit closes Otto', async () => {
+  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
+  const body = source.slice(
+    source.indexOf('async function restartForUpdate('),
+    source.indexOf('async function validateStart('),
+  );
+  for (const scenario of ['idle', 'busy later', 'busy restart', 'unchecked later']) {
     const events = [];
-    const transitions = [];
     const lifecycle = createDesktopLifecycle({
       prepareRuntime: async () => ({ close: async () => events.push('runtime closed') }),
       validateStart: async () => {},
@@ -2042,134 +1929,62 @@ test('desktop restart fences drafts and active work, resumes failed drains, and 
       onRuntimeStatus: () => {},
     });
     await lifecycle.start();
-    const options = {
-      candidate,
-      guard: async () => {
-        events.push('guard');
-        if (scenario === 'draft') throw new Error('Draft');
-        return () => events.push('renderer resumed');
+    const app = Object.assign(new EventEmitter(), { exit: () => assert.fail('No forced quit') });
+    const autoUpdater = Object.assign(new EventEmitter(), {
+      quitAndInstall: () => {
+        events.push('install');
+        app.emit('before-quit');
       },
-      request: async (path, options) => {
+    });
+    const context = {
+      quitting: false,
+      installingUpdate: false,
+      engine: {},
+      lifecycle,
+      app,
+      autoUpdater,
+      updates: { dispose: async () => events.push('checks stopped') },
+      stopUpdateChecks: undefined,
+      stopNotifications: undefined,
+      displayedNotifications: new Set(),
+      updateReadinessNotice: () => {},
+      writeDiagnostic: async () => {},
+      chatReadCursors: { flush: async () => events.push('cursors flushed') },
+      engineRequest: async (path) => {
         events.push(path);
-        if (path.endsWith('/status')) return Response.json({ activeWork: scenario === 'busy' });
-        transitions.push(JSON.parse(options.body));
-        if (path.endsWith('/drain')) return Response.json({ drained: scenario !== 'drain failed' });
-        return Response.json({ ok: true });
+        if (scenario.startsWith('unchecked')) throw new Error('Synthetic connection closed');
+        return Response.json({
+          running: scenario === 'idle' ? [] : [{ source: 'schedule', visible: false }],
+        });
       },
-      flush: async () => {
-        events.push('cursors flushed');
-        if (scenario === 'flush failed') throw new Error('Disk unavailable');
-      },
-      shutdown: async () => {
-        await lifecycle.close();
-        if (scenario === 'shutdown failed') throw new Error('Native install unavailable');
-        events.push('native install');
+      dialog: {
+        showMessageBox: async () => {
+          events.push('asked');
+          return { response: scenario.endsWith('restart') ? 0 : 1 };
+        },
       },
     };
-    if (scenario === 'ready') {
-      await restartDesktopUpdate(options);
-      assert.deepEqual(events, [
-        'guard',
-        '/api/desktop/status',
-        '/api/runtime/drain',
+    runInNewContext(`${body}\nglobalThis.restart = restartForUpdate;`, context);
+    await context.restart();
+    const installed = !scenario.endsWith('later');
+    assert.equal(context.quitting, installed);
+    assert.equal(events.includes('asked'), scenario !== 'idle');
+    assert.equal(events.includes('engine stopped'), installed);
+    if (installed) {
+      assert.equal(context.installingUpdate, true);
+      assert.deepEqual(events.slice(events.indexOf('checks stopped')), [
+        'checks stopped',
         'cursors flushed',
         'engine stopped',
         'runtime closed',
-        'native install',
+        'install',
       ]);
-      assert.equal(transitions[0].targetRelease, candidate.source);
+      assert.throws(() => lifecycle.start(), /closing/);
     } else {
-      await assert.rejects(restartDesktopUpdate(options));
-      assert.equal(events.includes('native install'), false);
-      assert.equal(events.includes('engine stopped'), scenario === 'shutdown failed');
-      if (scenario === 'draft') assert.deepEqual(events, ['guard']);
-      if (scenario === 'busy')
-        assert.deepEqual(events, ['guard', '/api/desktop/status', 'renderer resumed']);
-      if (scenario === 'flush failed') {
-        assert.equal(events.at(-1), 'renderer resumed');
-        assert.deepEqual(transitions[0], transitions[1]);
-      }
-      if (scenario === 'shutdown failed') {
-        assert.equal(events.includes('renderer resumed'), false);
-        assert.equal(events.includes('/api/runtime/resume'), false);
-        assert.equal(transitions.length, 1);
-      }
-      if (scenario === 'drain failed') {
-        assert.deepEqual(events, [
-          'guard',
-          '/api/desktop/status',
-          '/api/runtime/drain',
-          '/api/runtime/resume',
-          'renderer resumed',
-        ]);
-        assert.deepEqual(transitions[0], transitions[1]);
-      }
+      assert.equal(events.includes('install'), false);
       await lifecycle.close();
     }
   }
-});
-
-test('trusted preload blocks unknown or dirty renderers and restores interaction after a canceled restart', async () => {
-  const ipc = new EventEmitter();
-  const renderer = new EventEmitter();
-  const document = { documentElement: { inert: false } };
-  let bridge;
-  let dirty = true;
-  let forged = false;
-  const frame = {};
-  const window = {
-    isDestroyed: () => false,
-    webContents: Object.assign(new EventEmitter(), {
-      mainFrame: frame,
-      send: (channel, token) => renderer.emit(channel, {}, token),
-    }),
-  };
-  runInNewContext(await readFile(new URL('../preload/engine.cjs', import.meta.url), 'utf8'), {
-    document,
-    require: () => ({
-      contextBridge: {
-        exposeInMainWorld: (_name, value) => {
-          bridge = value;
-        },
-      },
-      ipcRenderer: {
-        on: (channel, receive) => renderer.on(channel, receive),
-        send: (channel, value) =>
-          ipc.emit(
-            channel,
-            { sender: window.webContents, senderFrame: forged ? {} : frame },
-            value,
-          ),
-      },
-    }),
-  });
-  const guard = () =>
-    guardUpdateRenderers({
-      windows: [window],
-      ipc,
-      timeout: 20,
-      trusted: (event) => event.sender === window.webContents && event.senderFrame === frame,
-    });
-  await assert.rejects(guard(), /draft/);
-  const stop = bridge.onPrepareUpdate(() => !dirty);
-  await assert.rejects(guard(), /draft/);
-  assert.equal(document.documentElement.inert, false);
-  dirty = false;
-  forged = true;
-  await assert.rejects(guard(), /draft/);
-  assert.equal(document.documentElement.inert, false);
-  forged = false;
-  const release = await guard();
-  assert.equal(document.documentElement.inert, true);
-  window.webContents.emit('did-start-navigation');
-  assert.throws(release.validate, /window changed/);
-  renderer.emit('otto:update:resume', {}, randomUUID());
-  assert.equal(document.documentElement.inert, true);
-  release();
-  assert.equal(document.documentElement.inert, false);
-  stop();
-  await assert.rejects(guard(), /draft/);
-  assert.equal(ipc.listenerCount('otto:update:prepared'), 0);
 });
 
 test('native download attempts remain exclusive until their terminal event and reject a different release', async () => {
@@ -2220,7 +2035,7 @@ test('native download attempts remain exclusive until their terminal event and r
   wrong.dispose();
 });
 
-test('post-drain shutdown and native install failures retry the same closed lifecycle without restoring the engine', async () => {
+test('update shutdown and native install failures retry the same closed lifecycle without restoring the engine', async () => {
   const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
   const body = source.slice(
     source.indexOf('async function finishQuit('),
@@ -2271,38 +2086,6 @@ test('post-drain shutdown and native install failures retry the same closed life
   assert.throws(() => lifecycle.start(), /closing/);
 });
 
-test('late renderer acknowledgements cannot authorize another update restart', async () => {
-  const ipc = new EventEmitter();
-  let token;
-  const contents = Object.assign(new EventEmitter(), {
-    send: (channel, value) => {
-      if (channel === 'otto:update:prepare') token = value;
-    },
-  });
-  const window = { isDestroyed: () => false, webContents: contents };
-  const options = {
-    windows: [window],
-    ipc,
-    timeout: 20,
-    trusted: (event) => event.sender === contents,
-  };
-  await assert.rejects(guardUpdateRenderers(options), /draft/);
-  const expired = token;
-  const pending = guardUpdateRenderers(options);
-  let settled = false;
-  pending.then(() => {
-    settled = true;
-  });
-  ipc.emit('otto:update:prepared', { sender: contents }, { token: expired, blocked: false });
-  await Promise.resolve();
-  assert.equal(settled, false);
-  ipc.emit('otto:update:prepared', { sender: contents }, { token, blocked: false });
-  const release = await pending;
-  release();
-  assert.equal(ipc.listenerCount('otto:update:prepared'), 0);
-  assert.equal(contents.listenerCount('did-start-navigation'), 0);
-});
-
 test('choosing Later keeps restart available without repeated background prompts', async () => {
   const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
   const body = source.slice(
@@ -2343,161 +2126,4 @@ test('choosing Later keeps restart available without repeated background prompts
   await context.check();
   assert.equal(prompts, 2);
   assert.equal(restarts, 1);
-});
-
-test('main update restart preserves the renderer navigation fence through its quitting wrapper', async () => {
-  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
-  const body = source.slice(
-    source.indexOf('async function restartForUpdate('),
-    source.indexOf('async function finishQuit('),
-  );
-  const ipc = new EventEmitter();
-  const events = [];
-  const contents = Object.assign(new EventEmitter(), {
-    send: (channel, token) => {
-      if (channel === 'otto:update:prepare')
-        ipc.emit('otto:update:prepared', { sender: contents }, { token, blocked: false });
-      else events.push(channel);
-    },
-  });
-  const window = { isDestroyed: () => false, webContents: contents };
-  const context = {
-    restartDesktopUpdate,
-    guardUpdateRenderers,
-    quitting: false,
-    engine: {},
-    status: { phase: 'ready' },
-    lifecycle: { engineStarting: false },
-    setupWindow: undefined,
-    engineWindows: new Set([window]),
-    ipcMain: ipc,
-    isEngine: (event) => event.sender === contents,
-    engineRequest: async (path) => {
-      events.push(path);
-      if (path.endsWith('/status')) return Response.json({ activeWork: false });
-      if (path.endsWith('/drain')) {
-        contents.emit('did-start-navigation');
-        return Response.json({ drained: true });
-      }
-      return Response.json({ ok: true });
-    },
-    chatReadCursors: { flush: async () => events.push('flushed') },
-    updateReadinessNotice: () => assert.fail('Navigation must prevent shutdown'),
-  };
-  runInNewContext(`${body}\nglobalThis.restart = restartForUpdate;`, context);
-  await assert.rejects(context.restart({ source: 'a'.repeat(40) }), /window changed/);
-  assert.equal(context.quitting, false);
-  assert.deepEqual(events, [
-    '/api/desktop/status',
-    '/api/runtime/drain',
-    'flushed',
-    '/api/runtime/resume',
-    'otto:update:resume',
-  ]);
-  assert.equal(contents.listenerCount('did-start-navigation'), 0);
-});
-
-test('uncertain update resumes retain the renderer fence until explicit retry succeeds or Otto quits', async (t) => {
-  const source = await readFile(new URL('../main/main.mjs', import.meta.url), 'utf8');
-  const body = source.slice(
-    source.indexOf('async function restartForUpdate('),
-    source.indexOf('async function validateStart('),
-  );
-  const failures = {
-    unavailable: () => Response.json({ ok: true }, { status: 503 }),
-    rejected: () => Response.json({ ok: false }),
-    malformed: () => new Response('not json'),
-    disconnected: () => {
-      throw new Error('Synthetic connection closed');
-    },
-  };
-  for (const [name, failure] of Object.entries(failures)) {
-    for (const response of [0, 1]) {
-      await t.test(`${name}: ${response === 0 ? 'retry' : 'quit'}`, async () => {
-        const offered = deferred();
-        const choice = deferred();
-        const events = [];
-        const transitions = [];
-        const ipc = new EventEmitter();
-        let attempts = 0;
-        const contents = Object.assign(new EventEmitter(), {
-          send: (channel, token) => {
-            if (channel === 'otto:update:prepare')
-              ipc.emit('otto:update:prepared', { sender: contents }, { token, blocked: false });
-            else events.push(channel);
-          },
-        });
-        const context = {
-          restartDesktopUpdate,
-          guardUpdateRenderers,
-          quitting: false,
-          engine: {},
-          status: { phase: 'ready' },
-          lifecycle: {
-            engineStarting: false,
-            close: async () => events.push('lifecycle closed'),
-          },
-          setupWindow: undefined,
-          engineWindows: new Set([{ isDestroyed: () => false, webContents: contents }]),
-          ipcMain: ipc,
-          isEngine: (event) => event.sender === contents,
-          engineRequest: async (path, options) => {
-            events.push(path);
-            if (path.endsWith('/status')) return Response.json({ activeWork: false });
-            transitions.push(JSON.parse(options.body));
-            if (path.endsWith('/drain')) {
-              contents.emit('did-start-navigation');
-              return Response.json({ drained: true });
-            }
-            assert.equal(path, '/api/runtime/resume');
-            return ++attempts === 1 ? failure() : Response.json({ ok: true });
-          },
-          chatReadCursors: { flush: async () => events.push('flushed') },
-          updateReadinessNotice: () => assert.fail('Canceled update must not install'),
-          writeDiagnostic: async () => {},
-          dialog: {
-            showMessageBox: async () => {
-              events.push('recovery offered');
-              offered.resolve();
-              return choice.promise;
-            },
-          },
-          app: { exit: () => events.push('exit') },
-        };
-        runInNewContext(`${body}\nglobalThis.restart = restartForUpdate;`, context);
-        const result = context.restart({ source: 'a'.repeat(40) }).then(
-          () => ({ completed: true }),
-          (error) => ({ error }),
-        );
-        await Promise.race([
-          offered.promise,
-          result.then(() => assert.fail('Unconfirmed resume must offer recovery')),
-        ]);
-        assert.equal(context.quitting, true);
-        assert.equal(attempts, 1);
-        assert.equal(events.includes('otto:update:resume'), false);
-        assert.equal(events.includes('lifecycle closed'), false);
-        choice.resolve({ response });
-        const outcome = await result;
-        assert.ok(outcome.error);
-        assert.equal(attempts, response === 0 ? 2 : 1);
-        assert.ok(
-          transitions.every(
-            (transition) => JSON.stringify(transition) === JSON.stringify(transitions[0]),
-          ),
-        );
-        if (response === 0) {
-          assert.match(outcome.error.message, /window changed/);
-          assert.equal(context.quitting, false);
-          assert.equal(events.at(-1), 'otto:update:resume');
-          assert.equal(events.includes('lifecycle closed'), false);
-          assert.equal(contents.listenerCount('did-start-navigation'), 0);
-        } else {
-          assert.equal(context.quitting, true);
-          assert.equal(events.includes('otto:update:resume'), false);
-          assert.deepEqual(events.slice(-2), ['lifecycle closed', 'exit']);
-        }
-      });
-    }
-  }
 });

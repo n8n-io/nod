@@ -870,7 +870,6 @@ export function Chat({
         <div hidden={!state.configuration.llmReady && !working && !sending}>
           <ModelPicker />
           <Composer
-            canRestart={() => visible && !outstandingSends.current && !resetLock.current}
             key={threadId}
             ref={composer}
             ready={state.configuration.llmReady && !resetting && !welcoming}

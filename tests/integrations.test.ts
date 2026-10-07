@@ -6681,7 +6681,6 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     pretendToBeVisual: true,
   });
   const opened: string[] = [];
-  const restartChecks = new Set<() => boolean>();
   let launches = 0;
   let discoveryStatus: 'pending' | 'cancelled' | 'failed' | 'connected' | undefined;
   let discoveryReads = 0;
@@ -6713,10 +6712,6 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   }
   Object.assign(dom.window, {
     ottoDesktop: {
-      onPrepareUpdate: (check: () => boolean) => {
-        restartChecks.add(check);
-        return () => restartChecks.delete(check);
-      },
       getSettings: async () => ({
         theme: 'system',
         resolvedTheme: 'light',
@@ -6944,28 +6939,6 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
     assert.equal(discoveryReads, completedReads);
-    const canRestart = () => restartChecks.size > 0 && [...restartChecks].every((check) => check());
-    assert.equal(canRestart(), true);
-    await act(async () =>
-      dom.window.document
-        .querySelector<HTMLButtonElement>('[aria-label="OpenAI"] .button-ghost')!
-        .click(),
-    );
-    const modelKey = dom.window.document.querySelector<HTMLInputElement>('.model-key-form input')!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value')!.set!.call(
-        modelKey,
-        'synthetic-unsaved-key',
-      );
-      modelKey.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-    });
-    assert.equal(canRestart(), false);
-    await act(async () =>
-      dom.window.document
-        .querySelector<HTMLButtonElement>('.model-key-form .button-ghost')!
-        .click(),
-    );
-    assert.equal(canRestart(), true);
     await act(async () =>
       dom.window.document
         .querySelector<HTMLButtonElement>('.account-onboarding-actions .button')!

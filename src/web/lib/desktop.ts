@@ -31,7 +31,6 @@ export type DesktopFeedbackContext = {
 
 type DesktopWindow = Window & {
   ottoDesktop?: {
-    onPrepareUpdate?(check: () => boolean): () => void;
     getSettings(): Promise<DesktopSettings>;
     saveSettings(input: DesktopSettingsChange): Promise<DesktopSettings>;
     revealComposioKey(): Promise<string>;
@@ -50,10 +49,6 @@ type DesktopWindow = Window & {
     setChatReadCursor?(ownerId: string, threadId: string, cursor: ChatReadCursor): Promise<void>;
   };
 };
-
-export function onPrepareDesktopUpdate(check: () => boolean) {
-  return (window as DesktopWindow).ottoDesktop?.onPrepareUpdate?.(check) ?? (() => {});
-}
 
 export function desktopSettingsAvailable() {
   return typeof (window as DesktopWindow).ottoDesktop?.getSettings === 'function';

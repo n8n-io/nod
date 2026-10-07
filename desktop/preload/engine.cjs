@@ -5,32 +5,8 @@ const settingsListeners = new Set();
 const feedbackListeners = new Set();
 let pendingSettings;
 let pendingFeedback = false;
-const restartChecks = new Set();
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 let pendingFocus;
-let restartLock;
-ipcRenderer.on('otto:update:prepare', (_event, token) => {
-  if (typeof token !== 'string' || !uuid.test(token)) return;
-  let blocked = true;
-  try {
-    blocked =
-      Boolean(restartLock) ||
-      !restartChecks.size ||
-      [...restartChecks].some((check) => check() !== true);
-    if (!blocked) {
-      restartLock = { token, inert: document.documentElement.inert };
-      document.documentElement.inert = true;
-    }
-  } catch {
-    blocked = true;
-  }
-  ipcRenderer.send('otto:update:prepared', { token, blocked });
-});
-ipcRenderer.on('otto:update:resume', (_event, token) => {
-  if (restartLock?.token !== token) return;
-  document.documentElement.inert = restartLock.inert;
-  restartLock = undefined;
-});
 ipcRenderer.on('otto:focus-message', (_event, value) => {
   if (value !== null && (!value || !uuid.test(value.threadId) || !uuid.test(value.messageId)))
     return;
@@ -52,11 +28,6 @@ ipcRenderer.on('otto:feedback:open', () => {
 
 contextBridge.exposeInMainWorld('ottoDesktop', {
   getAnalyticsConfiguration: () => ipcRenderer.invoke('otto:analytics:configuration'),
-  onPrepareUpdate: (check) => {
-    if (typeof check !== 'function') throw new TypeError('A restart check is required.');
-    restartChecks.add(check);
-    return () => restartChecks.delete(check);
-  },
   openSettings: (section = 'general') => ipcRenderer.invoke('otto:settings:open', section),
   openExternal: (url) => ipcRenderer.invoke('otto:external', url),
   getSettings: () => ipcRenderer.invoke('otto:settings:get'),
