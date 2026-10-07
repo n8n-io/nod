@@ -48,7 +48,7 @@ export function requestsSchedule(action: string, instruction: string) {
     'i',
   );
   const work =
-    /^(?:schedule|create\s+(?:a\s+)?(?:recurring\s+|one-off\s+)?schedule|remind\s+me|set\s+(?:up\s+)?(?:a\s+)?reminder|check|monitor|review|notify|alert|tell|run|send|agenda|lembra-me|lembre-me|verifica|avisa(?:-me)?|revê|reve|monitoriza|executa|consulta)(?=\s|$)/i;
+    /^(?:schedule|create\s+(?:a\s+)?(?:recurring\s+|one-off\s+)?schedule|remind\s+me|set\s+(?:up\s+)?(?:a\s+)?reminder|check|monitor|review|notify|alert|tell|give\s+me|run|send|agenda|lembra-me|lembre-me|verifica|avisa(?:-me)?|revê|reve|monitoriza|executa|consulta)(?=\s|$)/i;
   return instructions.some((instruction) => {
     if (
       /^(?:schedule\s+(?:(?:a|the)\s+)?(?:daily|weekly|monthly)\s+\S|create\s+(?:a\s+)?(?:daily|weekly|monthly)\s+schedule\b|set\s+(?:up\s+)?(?:a\s+)?(?:daily|weekly|monthly)\s+reminder\b|(?:send|give)\s+me\s+(?:a\s+)?(?:daily|weekly|monthly)\s+(?:digest|brief|briefing|summary|report)\b)/i.test(

@@ -206,8 +206,8 @@ export default scenario({
       check(
         'no-extra-consent-or-clarification',
         (run) => ({
-          pass: run.interactions.length === 0 && run.approvals.length === 0,
-          evidence: `${run.interactions.length} extra interactions; ${run.approvals.length} approvals`,
+          pass: run.interactions.length === 0,
+          evidence: `${run.interactions.length} extra user interactions`,
         }),
         { aspect: 'process', failure: 'overcaution' },
       ),

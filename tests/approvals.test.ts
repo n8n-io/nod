@@ -41,6 +41,7 @@ test('resumed schedule authority requires an imperative future-timed request and
     'Set up a daily reminder to check my Sheet.',
     'Send me a daily digest at 08:00 Europe/Berlin and keep routine notifications for that digest.',
     'Please give me a weekly briefing.',
+    'Every day at 8:00 Europe/Madrid, give me a brief in this chat.',
     'Check my Sheet today at 18:00.',
     'Amanhã às 09:00, lembra-me de rever as faturas.',
     'Verifica a minha folha todas as sextas-feiras às 09:00.',
@@ -1092,7 +1093,7 @@ test(
             confirmAction: digestApprovals.acceptChat,
           });
           const instruction =
-            'Send me a daily digest at 08:00 Europe/Berlin and keep routine notifications for that digest.';
+            'Every day at 08:00 Europe/Berlin, give me a digest in this chat. Keep routine notifications for that digest.';
           const origin = await begin(instruction);
           const source = (await row(origin.turnId)).message_id;
           const preferences = {

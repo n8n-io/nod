@@ -729,7 +729,27 @@ test('morning brief checks reject remembered preferences without a working daily
     schedules: [schedule],
     memory: 'The user wants a daily 8:00 digest.',
     interactions: [],
-    approvals: [],
+    approvals: [
+      {
+        action: 'OTTO_schedule_create',
+        status: 'completed',
+        args: {
+          title: schedule.title,
+          prompt: schedule.prompt,
+          kind: schedule.kind,
+          cron: schedule.cron,
+          timeZone: schedule.timeZone,
+        },
+      },
+      {
+        action: 'OTTO_notification_preferences_update',
+        status: 'completed',
+        args: {
+          notificationRule: 'Leave non-urgent updates for the daily brief.',
+          timeZone: schedule.timeZone,
+        },
+      },
+    ],
   } as unknown as Run;
   const checks = definition.expect(world).filter((item) => item.kind === 'check');
   const verdict = async (id: string) =>
