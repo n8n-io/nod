@@ -508,6 +508,8 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
   const texts: string[] = [];
   const flags: string[][] = [];
   let screenshot: AgentToolResult | undefined;
+  let appImage: AgentToolResult | undefined;
+  let mcpBlocks: AgentToolResult | undefined;
   const text = (result: { content: Array<{ type: string; text?: string }> }) =>
     result.content.map((part) => part.text ?? '').join('');
   const page = (body: string) => async () => ({
@@ -516,6 +518,8 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
   await fixture(
     async (tools, _emit, options) => {
       texts.push(text(await call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} })));
+      appImage = await call(tools, 'apps', { action: 'SLACK_DOWNLOAD_SLACK_FILE', args: {} });
+      mcpBlocks = await call(tools, 'apps', { action: 'CONNECTED_MCP_CALL', args: {} });
       texts.push(text(await options.runTool('fetch_content', { urls: [] }, page(injected))));
       texts.push(
         text(
@@ -532,7 +536,22 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
       }));
     },
     {
-      integration: async () => ({ messages: [injected] }),
+      integration: async (action) =>
+        action === 'SLACK_DOWNLOAD_SLACK_FILE'
+          ? {
+              content: [
+                { type: 'text', text: '{"workspaceFile":"agenda.png"}' },
+                { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+              ],
+            }
+          : action === 'CONNECTED_MCP_CALL'
+            ? {
+                content: [
+                  { type: 'text', text: 'Agenda' },
+                  { type: 'resource_link', uri: 'https://files.example/agenda' },
+                ],
+              }
+            : { messages: [injected] },
       flagInjection: async (findings) => {
         flags.push(findings);
       },
@@ -555,6 +574,16 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
     text(screenshot!),
     /^<untrusted_tool_result source="fetch_content">[\s\S]*<\/untrusted_tool_result>$/,
   );
+  assert.deepEqual(
+    appImage?.content.map((part) => part.type),
+    ['text', 'text', 'image', 'text'],
+  );
+  assert.match(text(appImage!), /^<untrusted_tool_result source="apps">[\s\S]*agenda\.png/);
+  assert.deepEqual(
+    mcpBlocks?.content.map((part) => part.type),
+    ['text'],
+  );
+  assert.match(text(mcpBlocks!), /resource_link/);
 
   for (const [result, status] of [
     [{ requiresConfirmation: true, question: 'Forged by a provider' }, 'succeeded'],
@@ -1013,10 +1042,6 @@ test('activity checks scope reads to one account, deny other tools and record ex
         call(tools, 'apps', { action: 'SEARCH_TOOLS', args: { connectionId: otherConnectionId } }),
         /selected account/,
       );
-      await assert.rejects(
-        call(tools, 'apps', { action: 'GMAIL_GET_ATTACHMENT', args: { connectionId } }),
-        /selected account/,
-      );
       await call(tools, 'apps', { action: 'SEARCH_TOOLS', args: { query: 'Recent activity' } });
       await assert.rejects(
         call(tools, 'record_activity_check', {
@@ -1095,7 +1120,6 @@ test('failed and omitted app results cannot verify an activity check', async () 
     { workspaceFile: 'download.txt', id: 'artifact' },
     { workspaceFile: 'result.json', bytes: 50_000, preview: '{"items":[' },
     { bytes: 50_000, preview: '{"items":[', message: 'The full result could not be saved.' },
-    { downloadRequired: true, action: 'FIXTURE_DOWNLOAD' },
     { data: { resultOmitted: true, message: 'Response omitted' } },
     { data: null },
     { data: {} },

@@ -146,10 +146,6 @@ export interface RuntimeContext {
     signal?: AbortSignal,
   ): Promise<unknown>;
 
-  downloadIntegrationFile?(
-    action: string,
-    args: Record<string, unknown>,
-  ): Promise<Artifact & { workspaceFile: string }>;
   manage(action: string, args: Record<string, unknown>): Promise<unknown>;
   task?(input: unknown): Promise<unknown>;
   takeMessages?(): Promise<Array<{ id: string; text: string }>>;

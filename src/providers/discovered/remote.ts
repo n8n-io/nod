@@ -5,6 +5,18 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { publicUrl } from '../agent-browser/network.ts';
 import type { DiscoveredTransport } from '../../ports/discovered.ts';
+import { appFile, mcpFiles } from '../app-files.ts';
+
+const textType =
+  /^$|^text\/|[/+]json\b|[/+]xml\b|^application\/(x-www-form-urlencoded|javascript)\b/i;
+
+function decoded(name: string) {
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
 
 function failureText(content: unknown) {
   const blocks = Array.isArray(content) ? (content as Array<{ text?: string }>) : [];
@@ -148,12 +160,21 @@ export function createDiscoveredTransport(
         headers: {
           ...headers,
           'User-Agent': 'Otto/0.1.0',
-          Accept: 'application/json',
+          Accept: 'application/json, */*;q=0.1',
           ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
-      const content = await response.text();
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const type = response.headers.get('content-type') ?? '';
+      if (response.ok && bytes.byteLength && !textType.test(type)) {
+        const name =
+          /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(
+            response.headers.get('content-disposition') ?? '',
+          )?.[1] ?? new URL(endpoint).pathname;
+        return { status: response.status, file: appFile(decoded(name), type, bytes) };
+      }
+      const content = new TextDecoder().decode(bytes);
       if (!response.ok)
         throw new Error(
           `The remote API request failed (${response.status}): ${content.slice(0, 4000)}`,
@@ -184,7 +205,7 @@ export function createDiscoveredTransport(
           const result = await client.callTool({ name, arguments: input });
           if (result.isError)
             throw new Error(`The remote MCP tool failed: ${failureText(result.content)}`);
-          return result;
+          return mcpFiles(result);
         },
         signal,
         request,

@@ -8,15 +8,10 @@ import type { Connection, VaultLoginEntry } from '../shared/contracts.ts';
 import {
   IntegrationInboxCursorExpired,
   type ConnectedApp,
-  type IntegrationFile,
   type IntegrationProvider,
   type IntegrationSession,
 } from '../ports/integrations.ts';
-import {
-  integrationDownloadActions,
-  integrationServiceIds,
-  integrationServices,
-} from '../shared/integrations.ts';
+import { integrationServiceIds, integrationServices } from '../shared/integrations.ts';
 import {
   DiscoveredConnectionError,
   type createDiscoveredConnections,
@@ -919,13 +914,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       return options.discovered.execute(action, args, turn, signal);
     }
     const row = await selectedConnection(ownerId, action, args);
-    if ((integrationDownloadActions as readonly string[]).includes(action))
-      return {
-        downloadRequired: true,
-        action,
-        args,
-        message: 'Call apps with this download action and account to deliver the file here.',
-      };
     try {
       const { connectionId: _connectionId, ...providerArgs } = args;
       const result = await withAccountSession(
@@ -965,8 +953,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       signal?.throwIfAborted();
       if (
         action === 'CONNECTED_CLI' ||
-        (args.connectionId !== undefined && args.connectionId !== checkConnectionId) ||
-        (integrationDownloadActions as readonly string[]).includes(action)
+        (args.connectionId !== undefined && args.connectionId !== checkConnectionId)
       )
         throw new IntegrationError('This activity check can only read its selected account.');
       args = { ...args, connectionId: checkConnectionId };
@@ -1299,72 +1286,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         : undefined;
     } catch {
       return;
-    }
-  }
-
-  async function download(
-    ownerId: string,
-    action: string,
-    args: Record<string, unknown>,
-    signal?: AbortSignal,
-  ): Promise<IntegrationFile> {
-    assertOwner(ownerId);
-    signal?.throwIfAborted();
-    if (!(integrationDownloadActions as readonly string[]).includes(action))
-      throw new IntegrationError('This action cannot download a file.', 403);
-    const slug = actionToolkit(action);
-    if (JSON.stringify(args).length > 32_768)
-      throw new IntegrationError('The integration request is too large.');
-    const row = await selectConnection(ownerId, slug, z.uuid().optional().parse(args.connectionId));
-    const deadline = signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(35_000)])
-      : AbortSignal.timeout(35_000);
-    let abort = () => {};
-    const transfer = async (): Promise<IntegrationFile> => {
-      const session = await getSession(ownerId, providerForRow(row));
-      deadline.throwIfAborted();
-      if (!session.download)
-        throw new IntegrationError('File downloads are unavailable with this app provider.', 503);
-      const { connectionId: _connectionId, ...providerArgs } = args;
-      const selected = await selectConnection(ownerId, slug, row.id);
-      deadline.throwIfAborted();
-      if (selected.account_id !== row.account_id) throw new Error('The selected account changed.');
-      const file = await session.download(action, providerArgs, row.account_id!, deadline);
-      deadline.throwIfAborted();
-      const current = await selectConnection(ownerId, slug, row.id);
-      deadline.throwIfAborted();
-      if (current.account_id !== row.account_id) throw new Error('The selected account changed.');
-      if (
-        !(file.bytes instanceof Uint8Array) ||
-        !file.bytes.length ||
-        file.bytes.length > 15 * 1024 * 1024
-      )
-        throw new Error('The file size is unsupported.');
-      return {
-        bytes: file.bytes,
-        name: z.string().min(1).max(160).parse(file.name),
-        mimeType: z
-          .string()
-          .regex(/^[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*$/)
-          .max(200)
-          .parse(file.mimeType),
-      };
-    };
-    try {
-      deadline.throwIfAborted();
-      return await Promise.race([
-        transfer(),
-        new Promise<never>((_, reject) => {
-          abort = () => reject(new Error('The file transfer stopped.'));
-          deadline.addEventListener('abort', abort, { once: true });
-        }),
-      ]);
-    } catch (error) {
-      if (signal?.aborted) throw new DOMException('File download was cancelled.', 'AbortError');
-      if (error instanceof IntegrationError && error.statusCode === 503) throw error;
-      throw new IntegrationError(failure('The file could not be downloaded', error), 502);
-    } finally {
-      deadline.removeEventListener('abort', abort);
     }
   }
 
@@ -1779,7 +1700,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     executeApproved,
     prepare,
     emailCode,
-    download,
     list,
     connectedApps,
     manageConnections: async (

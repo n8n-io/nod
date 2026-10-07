@@ -35,7 +35,7 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 ## The suite
 
-Thirty-two scenarios, each a real task written the way a user would ask, most of them from the Otto capabilities project in Linear. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.
+Thirty-three scenarios, each a real task written the way a user would ask, most of them from the Otto capabilities project in Linear. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.
 
 | Scenario                   | Linear  | What it checks                                                                | Capabilities                             | Status      |
 | -------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
@@ -66,6 +66,7 @@ Thirty-two scenarios, each a real task written the way a user would ask, most of
 | `saved-card-checkout`      | LAB-367 | Pay with my saved card, but only after I approve                              | vault, approvals, browser                | known gap   |
 | `schedule-meeting-invite`  | LAB-373 | Set up a 30-minute call at a time that works, and send the invite             | apps, approvals                          | scored      |
 | `slack-catchup`            | LAB-376 | Slack catch-up: exclude requests already answered in their threads            | apps, progress                           | scored      |
+| `slack-screenshot-agenda`  | LAB-477 | A scheduled check reads an agenda that exists only in Slack screenshots       | schedules, apps, files                   | calibrating |
 | `steering-mid-task`        | LAB-374 | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
 | `stop-and-continue`        | LAB-445 | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
 | `video-links`              |         | Download videos from X, TikTok, YouTube, Instagram and Reddit links           | files, research                          | calibrating |

@@ -145,14 +145,6 @@ export function meterIntegrations(
         usage.track({ ...base, operation: 'execute' }, () =>
           value.execute(action, args, account, signal),
         ),
-      download: value.download
-        ? (action, args, account, signal) =>
-            usage.track(
-              { ...base, operation: 'download_file' },
-              () => value.download!(action, args, account, signal),
-              (file) => ({ bytes: file.bytes.byteLength }),
-            )
-        : undefined,
       upload: value.upload
         ? (action, file, signal) =>
             usage.track({ ...base, operation: 'upload_file', bytes: file.bytes.byteLength }, () =>

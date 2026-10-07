@@ -113,13 +113,17 @@ test('synthetic Gmail filters its inbox and sent mail by query, labels and date'
   };
   assert.equal(
     Buffer.from(
-      (await session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId)).bytes,
+      (
+        (await session.execute('GMAIL_GET_ATTACHMENT', attachment, accountId)) as {
+          data: { file: IntegrationFile };
+        }
+      ).data.file.bytes,
     ).toString(),
     'invoice,status,amount_eur\nNS-2048,Reviewed,360.00\n',
   );
   const second = await session.authorize('gmail', 'http://localhost:4320/apps');
   await app.inject({ method: 'POST', url: `/e2e/connect/${second.accountId}` });
-  await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', attachment, second.accountId));
+  await assert.rejects(session.execute('GMAIL_GET_ATTACHMENT', attachment, second.accountId));
   await session.execute('GMAIL_DELETE_MESSAGE', { message_id: attachment.message_id }, accountId);
   assert.deepEqual(await search('has:attachment'), []);
   await assert.rejects(
@@ -130,7 +134,7 @@ test('synthetic Gmail filters its inbox and sent mail by query, labels and date'
     ),
     /not found/,
   );
-  await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId));
+  await assert.rejects(session.execute('GMAIL_GET_ATTACHMENT', attachment, accountId));
 });
 
 test('synthetic Gmail keeps scenario records isolated across reads, deletes and downloads', async (t) => {
@@ -203,7 +207,7 @@ test('synthetic Gmail keeps scenario records isolated across reads, deletes and 
         accountId,
       ),
     );
-    await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId));
+    await assert.rejects(session.execute('GMAIL_GET_ATTACHMENT', attachment, accountId));
     await assert.rejects(
       session.execute('GMAIL_DELETE_MESSAGE', { message_id: 'scenario-sent' }, accountId),
     );
@@ -226,7 +230,7 @@ test('synthetic Gmail keeps scenario records isolated across reads, deletes and 
       );
     }
     await assert.rejects(
-      session.download!(
+      session.execute(
         'GMAIL_GET_ATTACHMENT',
         {
           message_id: 'fixture-sent-1-newest',
@@ -245,12 +249,16 @@ test('synthetic Gmail keeps scenario records isolated across reads, deletes and 
     assert.equal(found.message.from, 'scenario@example.test');
     assert.equal(found.message.attachments[0].filename, 'source.txt');
     assert.deepEqual(
-      (await session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId)).bytes,
+      (
+        (await session.execute('GMAIL_GET_ATTACHMENT', attachment, accountId)) as {
+          data: { file: IntegrationFile };
+        }
+      ).data.file.bytes,
       bytes,
     );
     const otherOwner = await fixture.provider.createSession('other-owner', {});
     await assert.rejects(otherOwner.execute('GMAIL_FETCH_EMAILS', {}, accountId));
-    await assert.rejects(otherOwner.download!('GMAIL_GET_ATTACHMENT', attachment, accountId));
+    await assert.rejects(otherOwner.execute('GMAIL_GET_ATTACHMENT', attachment, accountId));
     await session.execute('GMAIL_DELETE_MESSAGE', { message_id: 'scenario-sent' }, accountId);
     assert.deepEqual(await search({ query: 'in:sent' }), []);
     await assert.rejects(
@@ -260,7 +268,7 @@ test('synthetic Gmail keeps scenario records isolated across reads, deletes and 
         accountId,
       ),
     );
-    await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', attachment, accountId));
+    await assert.rejects(session.execute('GMAIL_GET_ATTACHMENT', attachment, accountId));
     assert.deepEqual(
       fixture.writes.map((write) => write.action),
       ['GMAIL_DELETE_MESSAGE'],
@@ -932,7 +940,6 @@ async function appsFixture(
   const accounts = new Map<string, IntegrationService>();
   const callbacks: string[] = [];
   const executed: Array<{ action: string; args: Record<string, unknown>; accountId?: string }> = [];
-  const downloads: Array<{ action: string; args: Record<string, unknown>; accountId: string }> = [];
   const subscriptions: string[] = [];
   const removed: string[] = [];
   const sessions: unknown[] = [];
@@ -950,14 +957,6 @@ async function appsFixture(
     execute: async (action, args, accountId) => {
       executed.push({ action, args, accountId });
       return { ok: true };
-    },
-    download: async (action, args, accountId) => {
-      downloads.push({ action, args, accountId });
-      return {
-        name: 'invoice.pdf',
-        mimeType: 'application/pdf',
-        bytes: Buffer.from('synthetic invoice'),
-      };
     },
   };
   const provider: IntegrationProvider = {
@@ -1045,7 +1044,6 @@ async function appsFixture(
     session,
     connect,
     executed,
-    downloads,
     subscriptions,
     removed,
     sessions,
@@ -2714,7 +2712,7 @@ test(
       connectionId: second.connectionId,
       recipient_email: 'recipient@example.test',
       attachment: [
-        { workspaceFile: 'report.pdf', mimeType: 'application/pdf' },
+        { workspaceFile: 'report.pdf', mimeType: 'application/pdf', name: 'report.pdf', size: 42 },
         { workspaceFile: 'data.csv', mimeType: 'text/csv', name: 'totals.csv' },
       ],
     };
@@ -2808,100 +2806,6 @@ test(
       /Fixture upload stopped/,
     );
     assert.equal(delivered.length, 1);
-  },
-);
-
-test(
-  'attachment retrieval downloads only from the selected current account',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await appsFixture(t);
-    const first = await f.connect('gmail');
-    const second = await f.connect('gmail');
-    const args = {
-      connectionId: second.connectionId,
-      message_id: 'last-sent-message',
-      attachment_id: 'selected-part',
-      file_name: 'invoice.pdf',
-    };
-    const result = await f.service.execute('local-development', 'GMAIL_GET_ATTACHMENT', args);
-    assert.ok(
-      result &&
-        typeof result === 'object' &&
-        'downloadRequired' in result &&
-        result.downloadRequired,
-    );
-    assert.equal('requiresApproval' in result, false);
-    assert.equal(f.executed.length, 0);
-    const file = await f.service.download('local-development', 'GMAIL_GET_ATTACHMENT', args);
-    assert.equal(file.bytes.byteLength, 17);
-    assert.deepEqual(f.downloads[0], {
-      action: 'GMAIL_GET_ATTACHMENT',
-      args: {
-        message_id: 'last-sent-message',
-        attachment_id: 'selected-part',
-        file_name: 'invoice.pdf',
-      },
-      accountId: second.accountId,
-    });
-    await assert.rejects(f.service.download('foreign-owner', 'GMAIL_GET_ATTACHMENT', args));
-    await assert.rejects(f.service.download('local-development', 'GMAIL_SEND_EMAIL', args), {
-      statusCode: 403,
-    });
-    await assert.rejects(
-      f.service.download('local-development', 'GMAIL_GET_ATTACHMENT', {
-        ...args,
-        connectionId: randomUUID(),
-      }),
-      { statusCode: 404 },
-    );
-    let finish: (file: IntegrationFile) => void = () => {};
-    let started: () => void = () => {};
-    const entered = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    f.session.download = async () => {
-      started();
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    };
-    const pending = f.service.download('local-development', 'GMAIL_GET_ATTACHMENT', {
-      ...args,
-      connectionId: first.connectionId,
-    });
-    await entered;
-    await f.app.inject({
-      method: 'POST',
-      url: `/api/apps/gmail/accounts/${first.connectionId}/disconnect`,
-    });
-    finish(file);
-    await assert.rejects(pending, {
-      message: 'The file could not be downloaded: This connected account is unavailable.',
-      statusCode: 502,
-    });
-    assert.ok((await f.service.list()).some((item) => item.connectionId === second.connectionId));
-    let enterCancelled: () => void = () => {};
-    const cancellationStarted = new Promise<void>((resolve) => {
-      enterCancelled = resolve;
-    });
-    f.session.download = async () => {
-      enterCancelled();
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    };
-    const controller = new AbortController();
-    const cancelled = f.service.download(
-      'local-development',
-      'GMAIL_GET_ATTACHMENT',
-      args,
-      controller.signal,
-    );
-    await cancellationStarted;
-    controller.abort();
-    await assert.rejects(cancelled, { name: 'AbortError' });
-    finish(file);
   },
 );
 
@@ -4624,7 +4528,7 @@ test(
 );
 
 test(
-  'discovered HTTP and MCP failures keep their status and message but never the token',
+  'discovered HTTP and MCP results keep files and failures but never the token',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const schema = `test_discovered_failures_${randomUUID().replaceAll('-', '')}`;
@@ -4644,12 +4548,24 @@ test(
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
+    const image = Buffer.from('synthetic agenda image');
     const transport = createDiscoveredTransport(async (input, init) => {
       if (String(input) === 'https://fixture.example/api/records')
         return Response.json(
           { error: { code: 'invalid_field', detail: `Rejected ${token}` } },
           { status: 422 },
         );
+      if (String(input) === 'https://fixture.example/api/files/agenda')
+        return new Response(image, {
+          headers: {
+            'content-type': 'image/png',
+            'content-disposition': 'attachment; filename="agenda.png"',
+          },
+        });
+      if (String(input) === 'https://fixture.example/api/files/echo')
+        return new Response(Buffer.from(`echo ${token}`), {
+          headers: { 'content-type': 'application/octet-stream' },
+        });
       if (init?.method === 'GET') return new Response(null, { status: 405 });
       const message = JSON.parse(String(init?.body));
       if (message.id === undefined) return new Response(null, { status: 202 });
@@ -4663,10 +4579,17 @@ test(
                 capabilities: { tools: {} },
                 serverInfo: { name: 'fixture', version: '1' },
               }
-            : {
-                isError: true,
-                content: [{ type: 'text', text: `Unknown record for ${token}` }],
-              },
+            : message.params.name === 'agenda'
+              ? {
+                  content: [
+                    { type: 'text', text: 'Agenda attached' },
+                    { type: 'image', data: image.toString('base64'), mimeType: 'image/png' },
+                  ],
+                }
+              : {
+                  isError: true,
+                  content: [{ type: 'text', text: `Unknown record for ${token}` }],
+                },
       });
     });
     const discovered = await createDiscoveredConnections(pool, {
@@ -4720,6 +4643,33 @@ test(
         assert.match(failure(error), /Unknown record for \[redacted\]/);
         assert.doesNotMatch(failure(error), new RegExp(token));
         return true;
+      },
+    );
+    const get = (path: string) =>
+      discovered.execute('CONNECTED_HTTP', { connectionId, pathId: httpPath, method: 'GET', path });
+    assert.deepEqual(await get('files/agenda'), {
+      status: 200,
+      file: { name: 'agenda.png', mimeType: 'image/png', bytes: new Uint8Array(image) },
+    });
+    assert.deepEqual(await get('files/echo'), {
+      status: 200,
+      file: {
+        name: 'echo',
+        mimeType: 'application/octet-stream',
+        error: 'The file was withheld because it contains the connection credential.',
+      },
+    });
+    assert.deepEqual(
+      await discovered.execute('CONNECTED_MCP_CALL', {
+        connectionId,
+        pathId: mcpPath,
+        tool: 'agenda',
+      }),
+      {
+        content: [
+          { type: 'text', text: 'Agenda attached' },
+          { name: 'image-2.png', mimeType: 'image/png', bytes: image },
+        ],
       },
     );
   },

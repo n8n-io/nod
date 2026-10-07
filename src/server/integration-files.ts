@@ -1,5 +1,8 @@
 import { z } from 'zod';
+import type { AgentImage } from '../ports/agent.ts';
 import type { IntegrationFile } from '../ports/integrations.ts';
+
+const viewableImages = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 export const workspaceFileInput = z
   .object({
@@ -15,6 +18,7 @@ export const workspaceFileInput = z
       .max(160)
       .regex(/^[^/\\\u0000-\u001f\u007f]+$/)
       .optional(),
+    size: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -65,4 +69,49 @@ export async function uploadWorkspaceFiles(
   }
   await readFiles(value);
   return uploadFiles(value);
+}
+
+export function isIntegrationFile(value: unknown): value is IntegrationFile {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    (value as IntegrationFile).bytes instanceof Uint8Array &&
+    typeof (value as IntegrationFile).name === 'string' &&
+    typeof (value as IntegrationFile).mimeType === 'string',
+  );
+}
+
+export async function saveIntegrationFiles(
+  value: unknown,
+  save?: (file: IntegrationFile) => Promise<string>,
+): Promise<{ value: unknown; images: AgentImage[] }> {
+  const images: AgentImage[] = [];
+  async function visit(item: unknown): Promise<unknown> {
+    if (isIntegrationFile(item)) {
+      const file = { name: item.name, mimeType: item.mimeType, size: item.bytes.byteLength };
+      if (!save) return { ...file, message: 'The file was not saved in this run.' };
+      const workspaceFile = await save(item);
+      if (
+        viewableImages.has(item.mimeType) &&
+        item.bytes.byteLength <= 5 * 1024 * 1024 &&
+        images.length < 4
+      )
+        images.push({
+          type: 'image',
+          data: Buffer.from(item.bytes).toString('base64'),
+          mimeType: item.mimeType,
+        });
+      return { workspaceFile, ...file };
+    }
+    if (Array.isArray(item)) {
+      const result = [];
+      for (const entry of item) result.push(await visit(entry));
+      return result;
+    }
+    if (!item || Object.getPrototypeOf(item) !== Object.prototype) return item;
+    const entries = [];
+    for (const [key, entry] of Object.entries(item)) entries.push([key, await visit(entry)]);
+    return Object.fromEntries(entries);
+  }
+  return { value: await visit(value), images };
 }

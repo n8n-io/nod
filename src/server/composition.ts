@@ -10,7 +10,7 @@ import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import { analyticsEnabled, analyticsEnvironment, createAnalytics } from './analytics.ts';
 import type { Computer, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationService } from '../ports/integrations.ts';
-import { hasWorkspaceFiles } from './integration-files.ts';
+import { hasWorkspaceFiles, saveIntegrationFiles } from './integration-files.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
 import type { RelevanceClassifier } from '../ports/relevance.ts';
@@ -745,12 +745,13 @@ async function initializeApplication(
         ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
         : action.startsWith('OTTO_')
           ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-          : providerUsage.withTurn(provenance.turnId, () =>
-              integrations.executeApproved(ownerId, action, args, {
+          : providerUsage.withTurn(provenance.turnId, async () => {
+              const result = await integrations.executeApproved(ownerId, action, args, {
                 threadId: provenance.threadId,
                 turnId: provenance.turnId,
-              }),
-            ),
+              });
+              return (await saveIntegrationFiles(result)).value;
+            }),
     async (action, args) => {
       if (action.startsWith('OTTO_'))
         await personal.validateReview(action.slice('OTTO_'.length), args);
@@ -796,8 +797,6 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact?.bind(workspace),
       executeConfirmation: approvals.executeConfirmed,
       reactToMessage: reactions.react,
-      downloadIntegrationFile: (_turn, action, args, signal) =>
-        integrations.download(ownerId, action, args, signal),
       runTurn: (context) => providerUsage.withTurn(context.turnId, () => runtime.runTurn(context)),
       observe: inspector.record,
       recordFailure: inspector.recordFailure,

@@ -11,6 +11,7 @@ import type {
 import type { Connection } from '../shared/contracts.ts';
 import type { createAppGrantVault } from './vault-app-grants.ts';
 import type { TurnRef } from './thread.ts';
+import { isIntegrationFile } from './integration-files.ts';
 
 const pathSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -98,6 +99,14 @@ function headers(
 
 function redact(value: unknown, token: string): unknown {
   if (typeof value === 'string') return value.replaceAll(token, '[redacted]');
+  if (isIntegrationFile(value))
+    return Buffer.from(value.bytes).includes(token)
+      ? {
+          name: redact(value.name, token),
+          mimeType: value.mimeType,
+          error: 'The file was withheld because it contains the connection credential.',
+        }
+      : { ...value, name: redact(value.name, token) };
   if (Array.isArray(value)) return value.map((item) => redact(item, token));
   if (value && typeof value === 'object')
     return Object.fromEntries(

@@ -6,7 +6,6 @@ import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
-import { integrationDownloadActions } from '../shared/integrations.ts';
 import { requestsPrivateInput, vaultInvitation } from './communication.ts';
 import { browserFlowParameters } from './browser-flows.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
@@ -305,7 +304,7 @@ export const toolDefinitions = {
   ),
   apps: defineTool(
     'apps',
-    'Use the user\'s connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. For Composio file inputs that accept workspaceFile, pass {workspaceFile: path, mimeType: "application/pdf", name?: filename} in args; use arrays when the schema permits them, up to 15 MB total. The server uploads these files before the action. Never put a workspace path or URL in s3key. For other connections, use their documented upload endpoint, MCP tool or CLI file arguments. Download actions copy files into the workspace. Foreground downloads also deliver them; background downloads stay private until share_file.',
+    'Use the user\'s connected accounts. Reuse known action schemas and account IDs. SEARCH_TOOLS {query} finds missing action schemas and IDs. For Composio file inputs that accept workspaceFile, pass {workspaceFile: path, mimeType: "application/pdf", name?: filename} in args; use arrays when the schema permits them, up to 15 MB total. The server uploads these files before the action. Never put a workspace path or URL in s3key. For other connections, use their documented upload endpoint, MCP tool or CLI file arguments. Files that an action returns are saved privately in the workspace as {workspaceFile, name, mimeType, size}, and you see returned images. Read them again with read; share one with share_file.',
     Type.Object({
       action: Type.String({ maxLength: 150 }),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -574,15 +573,11 @@ export function ottoTools(
       return result;
     }),
     bind(toolDefinitions.apps, async (p) => {
-      if (!(integrationDownloadActions as readonly string[]).includes(p.action)) {
-        const result = await context.integration(p.action, p.args, signal);
-        signal.throwIfAborted();
-        return result && typeof result === 'object' && appConfirmation in result
-          ? confirm({ requiresConfirmation: true, question: result[appConfirmation] })
-          : result;
-      }
-      if (!context.downloadIntegrationFile) throw new Error('App file delivery is unavailable.');
-      return context.downloadIntegrationFile(p.action, p.args);
+      const result = await context.integration(p.action, p.args, signal);
+      signal.throwIfAborted();
+      return result && typeof result === 'object' && appConfirmation in result
+        ? confirm({ requiresConfirmation: true, question: result[appConfirmation] })
+        : result;
     }),
     bind(toolDefinitions.manage_apps, async (p) => {
       if (!context.connections) throw new Error('Apps are unavailable.');

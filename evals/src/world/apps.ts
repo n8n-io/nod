@@ -236,8 +236,7 @@ export function gmail(owner: Person, seed: Mail[], now: () => number) {
     },
     {
       slug: 'GMAIL_GET_ATTACHMENT',
-      description:
-        'Download a Gmail attachment by message ID and attachment ID. Use the apps download action to save it into the workspace.',
+      description: 'Download a Gmail attachment by message ID and attachment ID.',
       inputSchema: obj(
         {
           message_id: str('The message ID.'),
@@ -247,7 +246,20 @@ export function gmail(owner: Person, seed: Mail[], now: () => number) {
         },
         ['message_id', 'attachment_id', 'file_name'],
       ),
-      run: () => ({ note: 'Use the download action for attachments.' }),
+      run(args) {
+        const mail = mails.find((item) => item.id === args.message_id);
+        const file = mail?.attachments.find((item) => item.attachmentId === args.attachment_id);
+        if (!file?.bytes) throw new Error('Requested entity was not found.');
+        return {
+          data: {
+            file: {
+              name: file.filename,
+              mimeType: file.mimeType,
+              bytes: new Uint8Array(file.bytes),
+            },
+          },
+        };
+      },
     },
     {
       slug: 'GMAIL_GET_PROFILE',
@@ -360,12 +372,6 @@ export function gmail(owner: Person, seed: Mail[], now: () => number) {
   return {
     tools,
     mails,
-    attachment(args: Args) {
-      const mail = mails.find((item) => item.id === args.message_id);
-      const file = mail?.attachments.find((item) => item.attachmentId === args.attachment_id);
-      if (!file?.bytes) throw new Error('Requested entity was not found.');
-      return { name: file.filename, mimeType: file.mimeType, bytes: new Uint8Array(file.bytes) };
-    },
     drafts: () => [...drafts.values()],
     sent: () => mails.filter((mail) => mail.labels.includes('SENT')),
   };
@@ -584,6 +590,7 @@ export interface SlackMessage {
   at: number;
   threadTs?: string;
   replies?: SlackMessage[];
+  files?: Array<{ id?: string; name: string; mimeType: string; bytes: Buffer }>;
 }
 
 export interface SlackConversation {
@@ -603,9 +610,16 @@ export function slack(
   const stamp = (at: number, seq: number) =>
     `${Math.floor(at / 1000)}.${String(seq).padStart(6, '0')}`;
   let sequence = 1;
+  const withFiles = (message: SlackMessage): SlackMessage => ({
+    ...message,
+    files: message.files?.map((file) => ({
+      ...file,
+      id: file.id ?? `F${id().slice(0, 10).toUpperCase()}`,
+    })),
+  });
   const conversations = seed.map((conversation) => {
     const messages = conversation.messages.map((message) => ({
-      ...message,
+      ...withFiles(message),
       ts: message.ts ?? stamp(message.at, sequence++),
     }));
     for (const message of messages)
@@ -625,10 +639,7 @@ export function slack(
     if (!conversation) throw new Error('channel_not_found');
     return conversation;
   };
-  const view = (
-    message: (typeof conversations)[number]['messages'][number],
-    withReplies = true,
-  ) => ({
+  const view = (message: SlackMessage, withReplies = true) => ({
     type: 'message',
     user: message.user,
     text: message.text,
@@ -641,6 +652,17 @@ export function slack(
         }
       : {}),
     ...(message.threadTs ? { thread_ts: message.threadTs } : {}),
+    ...(message.files?.length
+      ? {
+          files: message.files.map((file) => ({
+            id: file.id,
+            name: file.name,
+            mimetype: file.mimeType,
+            size: file.bytes.byteLength,
+            url_private_download: `https://files.slack.example/files-pri/${file.id}/download`,
+          })),
+        }
+      : {}),
   });
   const channelView = (conversation: (typeof conversations)[number]) =>
     conversation.kind === 'dm'
@@ -774,6 +796,27 @@ export function slack(
       }),
     },
     {
+      slug: 'SLACK_DOWNLOAD_SLACK_FILE',
+      description: 'Download a file shared in Slack by its file ID.',
+      inputSchema: obj({ file: str('Slack file ID.') }, ['file']),
+      run(args) {
+        const file = conversations
+          .flatMap((conversation) => conversation.messages)
+          .flatMap((message) => message.files ?? [])
+          .find((item) => item.id === args.file);
+        if (!file) throw new Error('file_not_found');
+        return {
+          data: {
+            file_content: {
+              name: file.name,
+              mimeType: file.mimeType,
+              bytes: new Uint8Array(file.bytes),
+            },
+          },
+        };
+      },
+    },
+    {
       slug: 'SLACK_SEND_MESSAGE',
       description: 'Post a message to a Slack channel or direct message.',
       inputSchema: obj(
@@ -804,7 +847,10 @@ export function slack(
       },
     },
   ];
-  return { tools, conversations };
+  const post = (channel: string, message: SlackMessage) => {
+    find(channel).messages.push({ ...withFiles(message), ts: stamp(message.at, sequence++) });
+  };
+  return { tools, conversations, post };
 }
 
 export interface CalendarEvent {
@@ -975,25 +1021,6 @@ export function createApps(
             tools,
             suggestions: [{ useCase: query, primaryToolSlugs: Object.keys(tools).slice(0, 4) }],
           };
-        },
-        async download(action, args, accountId) {
-          const account = accountId ? accounts.get(accountId) : undefined;
-          if (!account?.active || account.ownerId !== ownerId)
-            throw new Error('No active connected account was found for this request.');
-          const call = {
-            at: Date.now(),
-            slug: action,
-            args: structuredClone(args),
-          } as AppsWorld['calls'][number];
-          world.calls.push(call);
-          try {
-            if (action === 'GMAIL_GET_ATTACHMENT' && parts.gmail)
-              return parts.gmail.attachment(args);
-            throw new Error('This file action is unavailable.');
-          } catch (error) {
-            call.error = error instanceof Error ? error.message : String(error);
-            throw error;
-          }
         },
         async execute(action, args, accountId) {
           const account = accountId ? accounts.get(accountId) : undefined;

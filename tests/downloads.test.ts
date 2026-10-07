@@ -29,7 +29,7 @@ import {
   readDownload,
   waitForDownload,
 } from '../src/providers/agent-browser/downloads.ts';
-import { createIntegrationFileDownloader } from '../src/providers/composio/downloads.ts';
+import { createComposioFiles } from '../src/providers/composio/downloads.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import {
   createContainerBrowserComputer,
@@ -585,18 +585,16 @@ test(
   },
 );
 
-const descriptor = (url = 'https://files.example.com/attachment?signature=private-fixture') => ({
-  data: {
-    successful: true,
-    data: { file: { name: '../../invoice.pdf', mimetype: 'application/pdf', s3url: url } },
-  },
-  error: null,
+const fileObject = (url = 'https://files.example.com/attachment?signature=private-fixture') => ({
+  name: '../../invoice.pdf',
+  mimetype: 'application/pdf',
+  s3url: url,
 });
 const publicResolver = async () => [{ address: '93.184.216.34', family: 4 }];
 
-test('app downloads use only the completed provider file descriptor and return bounded private bytes', async () => {
+test('Composio file outputs become private bytes wherever they appear and never expose their links', async () => {
   const calls: string[] = [];
-  const download = createIntegrationFileDownloader({
+  const files = createComposioFiles({
     resolver: publicResolver,
     request: async ({ url, address, maxBytes, metadata, purpose }) => {
       calls.push(url.href);
@@ -604,57 +602,91 @@ test('app downloads use only the completed provider file descriptor and return b
       assert.equal(maxBytes, 15 * 1024 * 1024);
       assert.equal(metadata, false);
       assert.equal(purpose, 'download');
-      if (calls.length === 1)
+      if (url.pathname === '/attachment')
         return {
           status: 302,
           headers: { location: '/final?signature=private-fixture' },
           body: new Uint8Array(),
         };
-      return { status: 200, headers: {}, body: Buffer.from('synthetic-file') };
+      return { status: 200, headers: {}, body: Buffer.from(`synthetic ${url.pathname}`) };
     },
   });
-  const file = await download('GMAIL_GET_ATTACHMENT', descriptor(), AbortSignal.timeout(1000));
-  assert.deepEqual(file, {
-    name: 'invoice.pdf',
-    mimeType: 'application/pdf',
-    bytes: Buffer.from('synthetic-file'),
-  });
-  assert.equal(JSON.stringify(file).includes('signature'), false);
-  assert.equal(calls.length, 2);
-  const drive = createIntegrationFileDownloader({
-    resolver: publicResolver,
-    request: async () => ({ status: 200, headers: {}, body: Buffer.from('drive') }),
-  });
-  assert.equal(
-    (
-      await drive(
-        'GOOGLEDRIVE_DOWNLOAD_FILE',
-        {
-          data: {
+  const result = await files(
+    {
+      data: {
+        file: fileObject(),
+        file_content: {
+          name: 'Screenshot.png',
+          mimetype: 'image/png',
+          s3url: 'https://files.example.com/slack?signature=private-fixture',
+        },
+        file_info: { uri: '/etc/passwd', display_url: 'https://files.example.com/arbitrary' },
+        drive: [
+          {
             downloaded_file_content: {
-              name: 'report.csv',
-              mimetype: 'text/csv',
+              mimetype: 'text/plain\r\nX-Fixture: bad',
               s3url: 'https://files.example.com/report',
             },
           },
-        },
-        AbortSignal.timeout(1000),
-      )
-    ).name,
-    'report.csv',
-  );
-  for (const result of [
-    { data: { successful: false, data: descriptor().data.data } },
-    { data: { done: false, downloaded_file_content: descriptor().data.data.file } },
-    { data: { uri: '/etc/passwd', display_url: 'https://files.example.com/arbitrary' } },
-    {
-      data: { file: { ...descriptor().data.data.file, mimetype: 'text/plain\r\nX-Fixture: bad' } },
+        ],
+      },
+      error: null,
     },
-  ])
-    await assert.rejects(drive('GMAIL_GET_ATTACHMENT', result, AbortSignal.timeout(1000)));
+    AbortSignal.timeout(1000),
+  );
+  assert.deepEqual(result, {
+    data: {
+      file: {
+        name: 'invoice.pdf',
+        mimeType: 'application/pdf',
+        bytes: Buffer.from('synthetic /final'),
+      },
+      file_content: {
+        name: 'Screenshot.png',
+        mimeType: 'image/png',
+        bytes: Buffer.from('synthetic /slack'),
+      },
+      file_info: { uri: '/etc/passwd', display_url: 'https://files.example.com/arbitrary' },
+      drive: [
+        {
+          downloaded_file_content: {
+            name: 'report',
+            mimeType: 'application/octet-stream',
+            bytes: Buffer.from('synthetic /report'),
+          },
+        },
+      ],
+    },
+    error: null,
+  });
+  assert.equal(JSON.stringify(result).includes('signature'), false);
+  assert.equal(calls.length, 4);
+  const many = (await files(
+    {
+      items: Array.from({ length: 11 }, (_, index) => ({
+        name: `${index}.txt`,
+        mimetype: 'text/plain',
+        s3url: `https://files.example.com/${index}`,
+      })),
+    },
+    AbortSignal.timeout(1000),
+  )) as { items: unknown[] };
+  assert.deepEqual(many.items[10], {
+    name: '10.txt',
+    mimeType: 'text/plain',
+    error: 'Not downloaded: too many files in one result.',
+  });
+  assert.equal(calls.length, 14);
 });
 
-test('app downloads reject private redirects, rebinding, insecure URLs and oversized responses', async () => {
+test('Composio file links that are private, insecure, rebinding or oversized are not fetched', async () => {
+  const failed = async (files: ReturnType<typeof createComposioFiles>, url?: string) => {
+    const result = (await files({ file: fileObject(url) }, AbortSignal.timeout(1000))) as {
+      file: { error?: string };
+    };
+    assert.match(result.file.error ?? '', /^The file could not be downloaded/);
+    assert.equal(JSON.stringify(result).includes('signature'), false);
+  };
   for (const url of [
     'http://files.example.com/file',
     'https://127.0.0.1/file',
@@ -663,42 +695,43 @@ test('app downloads reject private redirects, rebinding, insecure URLs and overs
     'https://name:secret@files.example.com/file',
   ]) {
     let requests = 0;
-    const download = createIntegrationFileDownloader({
-      resolver: publicResolver,
-      request: async () => {
-        requests++;
-        throw new Error('Unexpected request');
-      },
-    });
-    await assert.rejects(
-      download('GMAIL_GET_ATTACHMENT', descriptor(url), AbortSignal.timeout(1000)),
+    await failed(
+      createComposioFiles({
+        resolver: publicResolver,
+        request: async () => {
+          requests++;
+          throw new Error('Unexpected request');
+        },
+      }),
+      url,
     );
     assert.equal(requests, 0);
   }
   let resolutions = 0;
   let requests = 0;
-  const rebound = createIntegrationFileDownloader({
-    resolver: async () => [
-      { address: ++resolutions === 1 ? '93.184.216.34' : '127.0.0.1', family: 4 },
-    ],
-    request: async ({ address }) => {
-      requests++;
-      assert.equal(address, '93.184.216.34');
-      return { status: 302, headers: { location: '/next' }, body: new Uint8Array() };
-    },
-  });
-  await assert.rejects(rebound('GMAIL_GET_ATTACHMENT', descriptor(), AbortSignal.timeout(1000)));
+  await failed(
+    createComposioFiles({
+      resolver: async () => [
+        { address: ++resolutions === 1 ? '93.184.216.34' : '127.0.0.1', family: 4 },
+      ],
+      request: async ({ address }) => {
+        requests++;
+        assert.equal(address, '93.184.216.34');
+        return { status: 302, headers: { location: '/next' }, body: new Uint8Array() };
+      },
+    }),
+  );
   assert.equal(requests, 1);
-  for (const size of [0, 15 * 1024 * 1024 + 1]) {
-    const download = createIntegrationFileDownloader({
-      resolver: publicResolver,
-      request: async () => ({ status: 200, headers: {}, body: new Uint8Array(size) }),
-    });
-    await assert.rejects(download('GMAIL_GET_ATTACHMENT', descriptor(), AbortSignal.timeout(1000)));
-  }
+  for (const size of [0, 15 * 1024 * 1024 + 1])
+    await failed(
+      createComposioFiles({
+        resolver: publicResolver,
+        request: async () => ({ status: 200, headers: {}, body: new Uint8Array(size) }),
+      }),
+    );
 });
 
-test('Composio downloads bind the account, reject unreviewed arguments and keep upstream URLs out of errors', async (t) => {
+test('Composio actions on the bound account return downloaded files without their links', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-never-live',
     allowTracking: false,
@@ -712,25 +745,25 @@ test('Composio downloads bind the account, reject unreviewed arguments and keep 
     config: { user_id: 'fixture-owner' },
     config_version: 1,
   }));
-  let executions = 0;
-  let fail = false;
-  t.mock.method(
-    transport,
-    'execute',
-    async (sessionId: string, input: unknown, options: { signal: AbortSignal }) => {
-      executions++;
-      assert.equal(sessionId, 'fixture-files');
-      assert.deepEqual(input, {
-        tool_slug: 'GMAIL_GET_ATTACHMENT',
-        arguments: { message_id: 'message-1', attachment_id: 'part-1', file_name: 'invoice.pdf' },
-        account: 'owned-account',
-      });
-      assert.equal(options.signal.aborted, false);
-      if (fail)
-        throw new Error('Upstream refused https://files.example/signed?X-Amz-Signature=fixture');
-      return descriptor();
-    },
-  );
+  t.mock.method(transport, 'execute', async (sessionId: string, input: unknown) => {
+    assert.equal(sessionId, 'fixture-files');
+    assert.deepEqual(input, {
+      tool_slug: 'SLACK_DOWNLOAD_SLACK_FILE',
+      arguments: { file: 'F0SYNTHETIC' },
+      account: 'owned-account',
+    });
+    return {
+      data: {
+        file_content: {
+          name: 'Screenshot.png',
+          mimetype: 'image/png',
+          s3url: 'https://files.example.com/slack?X-Amz-Signature=fixture',
+        },
+      },
+      error: null,
+      log_id: 'fixture-log',
+    };
+  });
   const provider = createComposioProvider({
     client,
     fileDownload: {
@@ -738,29 +771,14 @@ test('Composio downloads bind the account, reject unreviewed arguments and keep 
       request: async () => ({ status: 200, headers: {}, body: Buffer.from('fixture') }),
     },
   });
-  const session = await provider.createSession('fixture-owner', { gmail: 'owned-account' });
-  const args = { message_id: 'message-1', attachment_id: 'part-1', file_name: 'invoice.pdf' };
-  assert.equal(
-    (await session.download!('GMAIL_GET_ATTACHMENT', args, 'owned-account')).name,
-    'invoice.pdf',
+  const session = await provider.createSession('fixture-owner', { slack: 'owned-account' });
+  const result = await session.execute(
+    'SLACK_DOWNLOAD_SLACK_FILE',
+    { file: 'F0SYNTHETIC' },
+    'owned-account',
   );
-  for (const [action, input] of [
-    ['GMAIL_SEND_EMAIL', args],
-    ['GMAIL_GET_ATTACHMENT', { ...args, url: 'https://example.com/file' }],
-  ] as const)
-    await assert.rejects(session.download!(action, input, 'owned-account'), {
-      message: /^The app file could not be downloaded: /,
-    });
-  assert.equal(executions, 1);
-  fail = true;
-  await assert.rejects(session.download!('GMAIL_GET_ATTACHMENT', args, 'owned-account'), {
-    message: 'The app file could not be downloaded: Upstream refused [file URL]',
+  assert.deepEqual((result as { data: unknown }).data, {
+    file_content: { name: 'Screenshot.png', mimeType: 'image/png', bytes: Buffer.from('fixture') },
   });
-  const controller = new AbortController();
-  controller.abort();
-  await assert.rejects(
-    session.download!('GMAIL_GET_ATTACHMENT', args, 'owned-account', controller.signal),
-    { name: 'AbortError' },
-  );
-  assert.equal(executions, 2);
+  assert.equal(JSON.stringify(result).includes('X-Amz-Signature'), false);
 });

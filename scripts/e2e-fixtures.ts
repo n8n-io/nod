@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import type { AddressInfo, Socket } from 'node:net';
 import type { FastifyInstance, preValidationHookHandler } from 'fastify';
 import type {
+  IntegrationFile,
   IntegrationProvider,
   IntegrationEvent,
   IntegrationService,
@@ -918,6 +919,64 @@ export function createIntegrationFixture(
     webhooksConfigured: Boolean(options.eventToken),
     supportsSubscriptions: options.eventToken ? ['gmail'] : [],
     async createSession(ownerId) {
+      const download = async (
+        action: string,
+        args: Record<string, unknown>,
+        accountId: string,
+        signal?: AbortSignal,
+      ): Promise<IntegrationFile> => {
+        if (signal?.aborted) throw new DOMException('Synthetic download cancelled.', 'AbortError');
+        const account = accounts.get(accountId);
+        if (!account?.active || account.ownerId !== ownerId)
+          throw new Error('Connect the selected synthetic account first.');
+        if (action === 'GOOGLEDRIVE_DOWNLOAD_FILE') {
+          if (account.service !== 'googledrive' || args.fileId !== 'otto-e2e-spending-csv-2026-09')
+            throw new Error('The synthetic CSV file was not found in this account.');
+          audit('fixture_integration_download', { action, accountId });
+          return {
+            bytes: Buffer.from(spendingCsv),
+            name: 'September spending export.csv',
+            mimeType: 'text/csv',
+          };
+        }
+        if (account.service !== 'gmail')
+          throw new Error('Connect the selected synthetic Gmail account first.');
+        const message = mailboxMessages(account.number).find(
+          (value) => value.emailId === args.message_id,
+        );
+        const attachment = message?.attachments.find(
+          (value) => value.attachmentId === args.attachment_id,
+        );
+        if (
+          action !== 'GMAIL_GET_ATTACHMENT' ||
+          !message ||
+          !attachment ||
+          deletedMessages.has(`${accountId}:${message.id}`) ||
+          args.file_name !== attachment.filename ||
+          (args.user_id !== undefined && args.user_id !== 'me') ||
+          Object.keys(args).some(
+            (key) => !['message_id', 'attachment_id', 'file_name', 'user_id'].includes(key),
+          )
+        )
+          throw new Error(
+            'The synthetic attachment does not match the observed email and account.',
+          );
+        const supplied = options.data?.attachments.find(
+          (file) => file.messageId === message.id && file.attachmentId === attachment.attachmentId,
+        );
+        if (options.data && !supplied)
+          throw new Error('The synthetic attachment was not found in this scenario.');
+        const bytes = Buffer.from(supplied?.bytes ?? attachmentText);
+        audit('fixture_integration_download', {
+          action,
+          accountId,
+          messageId: message.id,
+          attachmentId: attachment.attachmentId,
+          size: bytes.byteLength,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        });
+        return { name: attachment.filename, mimeType: attachment.mimeType, bytes };
+      };
       const session: IntegrationSession = {
         id: randomUUID(),
         async authorize(service, callback) {
@@ -949,7 +1008,9 @@ export function createIntegrationFixture(
             ],
           };
         },
-        async execute(action, args, accountId) {
+        async execute(action, args, accountId, signal) {
+          if (action === 'GOOGLEDRIVE_DOWNLOAD_FILE' || action === 'GMAIL_GET_ATTACHMENT')
+            return { data: { file: await download(action, args, accountId!, signal) } };
           const account = accountId ? accounts.get(accountId) : undefined;
           if (!account?.active || account.ownerId !== ownerId)
             throw new Error('Connect the selected synthetic account first.');
@@ -1037,8 +1098,6 @@ export function createIntegrationFixture(
             if (!message) throw new Error('The synthetic email was not found in this account.');
             return { message, ...fixtureMetadata };
           }
-          if (action === 'GMAIL_GET_ATTACHMENT')
-            return { downloadRequired: true, action, args, ...fixtureMetadata };
           if (action === 'GMAIL_CREATE_EMAIL_DRAFT') {
             if (
               Object.keys(args).some(
@@ -1329,64 +1388,6 @@ export function createIntegrationFixture(
             return { id: item.id, ...fixtureMetadata, deliveredExternally: false };
           }
           throw new Error('This synthetic tool is not implemented.');
-        },
-        async download(action, args, accountId, signal) {
-          if (signal?.aborted)
-            throw new DOMException('Synthetic download cancelled.', 'AbortError');
-          const account = accounts.get(accountId);
-          if (!account?.active || account.ownerId !== ownerId)
-            throw new Error('Connect the selected synthetic account first.');
-          if (action === 'GOOGLEDRIVE_DOWNLOAD_FILE') {
-            if (
-              account.service !== 'googledrive' ||
-              args.fileId !== 'otto-e2e-spending-csv-2026-09'
-            )
-              throw new Error('The synthetic CSV file was not found in this account.');
-            audit('fixture_integration_download', { action, accountId });
-            return {
-              bytes: Buffer.from(spendingCsv),
-              name: 'September spending export.csv',
-              mimeType: 'text/csv',
-            };
-          }
-          if (account.service !== 'gmail')
-            throw new Error('Connect the selected synthetic Gmail account first.');
-          const message = mailboxMessages(account.number).find(
-            (value) => value.emailId === args.message_id,
-          );
-          const attachment = message?.attachments.find(
-            (value) => value.attachmentId === args.attachment_id,
-          );
-          if (
-            action !== 'GMAIL_GET_ATTACHMENT' ||
-            !message ||
-            !attachment ||
-            deletedMessages.has(`${accountId}:${message.id}`) ||
-            args.file_name !== attachment.filename ||
-            (args.user_id !== undefined && args.user_id !== 'me') ||
-            Object.keys(args).some(
-              (key) => !['message_id', 'attachment_id', 'file_name', 'user_id'].includes(key),
-            )
-          )
-            throw new Error(
-              'The synthetic attachment does not match the observed email and account.',
-            );
-          const supplied = options.data?.attachments.find(
-            (file) =>
-              file.messageId === message.id && file.attachmentId === attachment.attachmentId,
-          );
-          if (options.data && !supplied)
-            throw new Error('The synthetic attachment was not found in this scenario.');
-          const bytes = Buffer.from(supplied?.bytes ?? attachmentText);
-          audit('fixture_integration_download', {
-            action,
-            accountId,
-            messageId: message.id,
-            attachmentId: attachment.attachmentId,
-            size: bytes.byteLength,
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-          });
-          return { name: attachment.filename, mimeType: attachment.mimeType, bytes };
         },
       };
       sessions.set(session.id, session);

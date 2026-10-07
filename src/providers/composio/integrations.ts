@@ -2,7 +2,7 @@ import { Composio, type ToolRouterSession } from '@composio/core';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { integrationServiceIds } from '../../shared/integrations.ts';
-import { createIntegrationFileDownloader, downloadArguments } from './downloads.ts';
+import { createComposioFiles } from './downloads.ts';
 import { readVerificationEmails } from './verification-email.ts';
 import { safeRemoteFetch } from '../discovered/remote.ts';
 import {
@@ -143,7 +143,7 @@ export function createComposioProvider(options: {
   webhookUrl?: string;
   authConfigs?: Partial<Record<IntegrationService, string>>;
   client?: Composio;
-  fileDownload?: Parameters<typeof createIntegrationFileDownloader>[0];
+  fileDownload?: Parameters<typeof createComposioFiles>[0];
   fileUploadRequest?: typeof fetch;
 }): IntegrationProvider {
   let webhookUrl: string | undefined;
@@ -164,7 +164,7 @@ export function createComposioProvider(options: {
       throw new Error('The Composio webhook URL is invalid.');
     }
   }
-  const downloadFile = createIntegrationFileDownloader(options.fileDownload);
+  const files = createComposioFiles(options.fileDownload);
   const identities = new Map<string, AccountIdentity>();
   const pendingIdentities = new Map<string, Promise<AccountIdentity>>();
   const authConfigs = Object.fromEntries(
@@ -382,29 +382,6 @@ export function createComposioProvider(options: {
           throw new Error(`The app tool schemas could not be loaded: ${errorText(error)}`);
         }
       },
-      async download(action, args, accountId, signal) {
-        const operation = signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-          : AbortSignal.timeout(30_000);
-        try {
-          operation.throwIfAborted();
-          const input = downloadArguments(action, args);
-          const result = await required()
-            .getClient()
-            .toolRouter.session.execute(
-              value.sessionId,
-              { tool_slug: action, arguments: input, account: accountId },
-              { signal: operation },
-            );
-          operation.throwIfAborted();
-          return await downloadFile(action, result, operation);
-        } catch (error) {
-          if (signal?.aborted) throw new DOMException('File download was cancelled.', 'AbortError');
-          throw new Error(
-            `The app file could not be downloaded: ${errorText(error).replace(/https?:\/\/\S+/g, '[file URL]')}`,
-          );
-        }
-      },
       async execute(action, args, accountId, signal) {
         signal?.throwIfAborted();
         const result = await value.execute(
@@ -423,7 +400,7 @@ export function createComposioProvider(options: {
             result.data.successful === false)
         )
           throw new Error(providerFailure(action, result as Record<string, unknown>));
-        return result;
+        return files(result, signal ?? new AbortController().signal);
       },
       async upload(action, file, signal) {
         const operation = signal

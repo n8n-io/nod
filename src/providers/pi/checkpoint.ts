@@ -13,7 +13,7 @@ const partId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 export const rebaseAt = 8 * 1024 * 1024;
 export const keptImages = 4;
 export const removedImage =
-  'An earlier screenshot was removed from context. Take a new one if you need to see the page again.';
+  'An earlier image was removed from context. Take a new screenshot or read the file again if you need it.';
 const failure = () =>
   new Error(
     'The assistant session could not be saved. Stop and restore storage before continuing.',

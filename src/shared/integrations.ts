@@ -30,9 +30,3 @@ export const integrationServices: Record<
   notion: { name: 'Notion', description: 'Find and work with your pages and databases.' },
   linear: { name: 'Linear', description: 'Find projects and issues in your workspace.' },
 };
-
-export const integrationDownloadActions = [
-  'GMAIL_GET_ATTACHMENT',
-  'GOOGLEDRIVE_DOWNLOAD_FILE',
-  'GOOGLEDRIVE_DOWNLOAD_FILE_OPERATION',
-] as const;

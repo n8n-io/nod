@@ -7,6 +7,7 @@ import type { AppGrantVault } from '../../ports/app-grants.ts';
 import { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createDirectOAuth, ReconnectRequired, type Service } from './oauth.ts';
 import { withDirectMcp } from './mcp.ts';
+import { mcpFiles } from '../app-files.ts';
 
 const linearTools = {
   LINEAR_LIST_PROJECTS: 'list_projects',
@@ -15,6 +16,8 @@ const linearTools = {
   LINEAR_GET_ISSUE: 'get_issue',
   LINEAR_LIST_TEAMS: 'list_teams',
   LINEAR_GET_STATUS_UPDATES: 'get_status_updates',
+  LINEAR_GET_IMAGES: 'extract_images',
+  LINEAR_GET_ATTACHMENT: 'get_attachment',
 } as const;
 const notionTools = {
   NOTION_RETRIEVE_PAGE: 'notion-fetch',
@@ -123,7 +126,7 @@ export function createDirectProvider(options: {
           const result = await client.callTool({ name: selected.name, arguments: args });
           if (result.isError)
             throw new Error(toolFailure('The Notion request failed', result, account.accessToken));
-          return result;
+          return mcpFiles(result);
         },
         signal,
       );
@@ -138,7 +141,7 @@ export function createDirectProvider(options: {
           const result = await client.callTool({ name: toolName, arguments: args });
           if (result.isError)
             throw new Error(toolFailure('The Linear read failed', result, account.accessToken));
-          return result;
+          return mcpFiles(result);
         },
         signal,
       );
@@ -188,6 +191,14 @@ export function createDirectProvider(options: {
     LINEAR_GET_STATUS_UPDATES: {
       description: 'Read recent Linear project status updates.',
       parameters: { project: 'Project ID or name.' },
+    },
+    LINEAR_GET_IMAGES: {
+      description: 'Open images embedded in Linear issue or comment markdown.',
+      parameters: { markdown: 'Markdown that contains the images.' },
+    },
+    LINEAR_GET_ATTACHMENT: {
+      description: 'Open a Linear issue attachment by ID.',
+      parameters: { id: 'Attachment ID.' },
     },
   };
 

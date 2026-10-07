@@ -1,3 +1,4 @@
+import type { IntegrationFile } from './integrations.ts';
 export interface DiscoveredTool {
   name: string;
   description?: string;
@@ -12,7 +13,7 @@ export interface DiscoveredTransport {
     method: string,
     body?: unknown,
     signal?: AbortSignal,
-  ): Promise<{ status: number; body: unknown }>;
+  ): Promise<{ status: number; body: unknown } | { status: number; file: IntegrationFile }>;
   listTools(
     endpoint: string,
     headers: Record<string, string>,

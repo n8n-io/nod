@@ -291,6 +291,16 @@ test(
       },
       integration: async (_turn, action, _args, options) => {
         if (action === 'GMAIL_LIST_THREADS') return largeAppResult;
+        if (action === 'SLACK_DOWNLOAD_SLACK_FILE')
+          return {
+            data: {
+              file_content: {
+                name: 'agenda.png',
+                mimeType: 'image/png',
+                bytes: Buffer.from('synthetic screenshot'),
+              },
+            },
+          };
         integrationReads.push(action);
         return { successful: true, data: { threads: 2 } };
       },
@@ -320,7 +330,20 @@ test(
             mimeType: 'text/plain',
           });
           await context.publishScreenshot!(Buffer.from('synthetic image'), 'research.png');
-          await context.downloadIntegrationFile!('GMAIL_GET_ATTACHMENT', {});
+          const download = (await context.integration('SLACK_DOWNLOAD_SLACK_FILE', {})) as {
+            content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+          };
+          const saved = JSON.parse(download.content[0]!.text!).data.file_content;
+          assert.equal(saved.name, 'agenda.png');
+          assert.equal(
+            (await readFile(join(context.workspacePath, saved.workspaceFile))).toString(),
+            'synthetic screenshot',
+          );
+          assert.deepEqual(download.content[1], {
+            type: 'image',
+            data: Buffer.from('synthetic screenshot').toString('base64'),
+            mimeType: 'image/png',
+          });
           assert.equal(
             (await db.pool.query('SELECT id FROM messages WHERE turn_id=$1', [context.turnId]))
               .rowCount,
@@ -2371,6 +2394,16 @@ test(
                 dependencies.integration = async (_turn, _action, args, options) => {
                   assert.equal(options.checkConnectionId, connectionId);
                   if (args.abort) cancelled.abort(new Error('Synthetic read deadline'));
+                  if (args.file)
+                    return {
+                      data: {
+                        file: {
+                          name: 'agenda.png',
+                          mimeType: 'image/png',
+                          bytes: Buffer.from('synthetic image'),
+                        },
+                      },
+                    };
                   return args.page_size === 1 ? page : largeAppResult;
                 };
                 dependencies.writeArtifact = async () => {
@@ -2396,6 +2429,19 @@ test(
                       page_size: 1,
                     }),
                     page,
+                  );
+                  assert.deepEqual(
+                    await context.integration('NOTION_RETRIEVE_PAGE', { connectionId, file: true }),
+                    {
+                      data: {
+                        file: {
+                          name: 'agenda.png',
+                          mimeType: 'image/png',
+                          size: 15,
+                          message: 'The file was not saved in this run.',
+                        },
+                      },
+                    },
                   );
                   assert.equal(writes, 0);
                   assert.deepEqual(await readdir(context.workspacePath), files);
@@ -2605,15 +2651,9 @@ test(
         'background research stages private artifacts and resumed preparation stays quiet',
         async () => {
           const previousRead = dependencies.readArtifact;
-          const previousDownload = dependencies.downloadIntegrationFile;
           try {
             dependencies.readArtifact = async (threadId, path) =>
               readFile(join(root, 'workspaces', threadId, path));
-            dependencies.downloadIntegrationFile = async () => ({
-              name: 'source.txt',
-              mimeType: 'text/plain',
-              bytes: Buffer.from('synthetic source'),
-            });
             const research = await thread.enqueueTurn('background-research-fixture', {
               source: 'event',
               background: true,
@@ -2647,7 +2687,6 @@ test(
           } finally {
             quietBackgroundWork = false;
             dependencies.readArtifact = previousRead;
-            dependencies.downloadIntegrationFile = previousDownload;
           }
         },
       );

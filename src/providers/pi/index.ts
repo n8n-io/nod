@@ -328,6 +328,10 @@ export function createPiAgent(options: {
           ].flatMap((tool) => tool.promptGuidelines ?? []),
         ),
       ];
+      if (guidelines.some((rule) => rule.includes('codemode')))
+        guidelines.push(
+          'Codemode scripts can call only workspace and web tools; call apps, browser and other Otto tools directly.',
+        );
       const systemPrompt = guidelines.length
         ? `${input.systemPrompt}\n\nTool guidelines:\n${guidelines.map((rule) => `- ${rule}`).join('\n')}`
         : input.systemPrompt;

@@ -18,7 +18,6 @@ import { BrowserActionError } from '../ports/computer.ts';
 import { threadIdentity } from '../ports/thread-identity.ts';
 import { browserErrorMessage } from '../shared/browser-errors.ts';
 import { actionEffect } from '../shared/action-effect.ts';
-import { integrationDownloadActions } from '../shared/integrations.ts';
 import { createBrowserFlows } from './browser-flows.ts';
 import { requestsPrivateInput } from './communication.ts';
 import { createObservationQueue } from './observations.ts';
@@ -121,7 +120,6 @@ function inspectedAppResult(value: unknown): boolean {
       result.success === false ||
       result.isError === true ||
       result.resultOmitted === true ||
-      result.downloadRequired === true ||
       Boolean(result.error) ||
       'workspaceFile' in result ||
       ('bytes' in result && 'preview' in result) ||
@@ -167,8 +165,18 @@ function textResult(value: unknown): AgentToolResult {
 }
 
 function isToolResult(value: unknown): value is AgentToolResult {
-  return Boolean(
-    value && typeof value === 'object' && Array.isArray((value as AgentToolResult).content),
+  const content = value && typeof value === 'object' && (value as AgentToolResult).content;
+  return (
+    Array.isArray(content) &&
+    content.every((part: unknown) => {
+      const item = part as Record<string, unknown> | null;
+      return (
+        (item?.type === 'text' && typeof item.text === 'string') ||
+        (item?.type === 'image' &&
+          typeof item.data === 'string' &&
+          typeof item.mimeType === 'string')
+      );
+    })
   );
 }
 
@@ -446,8 +454,7 @@ export function createAgentRuntime(dependencies: {
                   !args.args ||
                   !matchingConnection(args.args, context.activityCheck.connectionId) ||
                   (args.action !== 'SEARCH_TOOLS' &&
-                    args.args.connectionId !== context.activityCheck.connectionId) ||
-                  (integrationDownloadActions as readonly string[]).includes(args.action ?? '')
+                    args.args.connectionId !== context.activityCheck.connectionId)
                 )
                   throw new ActivityCheckError(
                     'Activity checks can only read the selected account.',
