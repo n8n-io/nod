@@ -1145,8 +1145,11 @@ export function createComposioProvider(options: {
         ...(routing ? { authConfigId: routing.auth_config.id } : {}),
       };
     },
-    async deleteAccount(id) {
-      await required().connectedAccounts.delete(id);
+    async deleteAccount(id, ownerId) {
+      const sdk = required();
+      if (ownerId) await ownedAccount(sdk, id, ownerId, AbortSignal.timeout(10_000));
+      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+      await sdk.connectedAccounts.delete(id);
       for (const key of identities.keys()) if (JSON.parse(key)[1] === id) identities.delete(key);
     },
     parseCallback(query) {

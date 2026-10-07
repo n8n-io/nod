@@ -1,8 +1,15 @@
 import type { ChannelProvider, ChannelSetupSummary, Connection } from '../../shared/contracts';
 
-export function connectionGroups(connections: Connection[]) {
+export function connectionGroups(connections: Connection[], catalog: Connection[] = []) {
+  const knownServices = new Set(connections.map((connection) => connection.slug));
+  const catalogServices = new Map(catalog.map((service) => [service.slug, service]));
   const groups = new Map<string, Connection[]>();
-  for (const connection of connections) {
+  for (const connection of [
+    ...connections.map((connection) =>
+      connection.connectionId ? connection : (catalogServices.get(connection.slug) ?? connection),
+    ),
+    ...catalog.filter((service) => !knownServices.has(service.slug)),
+  ]) {
     const key = connection.slug.replace(/_mcp$/, '');
     const group = groups.get(key) ?? [];
     group.push(connection);
@@ -16,17 +23,28 @@ export function connectionGroups(connections: Connection[]) {
       configured[0] ??
       base ??
       variants[0];
+    const metadata =
+      catalogServices.get(key) ??
+      catalogServices.get(primary.slug) ??
+      variants.find((connection) => !connection.connectionId);
     return {
       key,
       service: {
         ...primary,
-        name: (base?.name ?? primary.name).replace(/\s+MCP$/i, ''),
-        description: base?.description || primary.description,
+        name: (metadata?.name ?? base?.name ?? primary.name).replace(/\s+MCP$/i, ''),
+        description: metadata?.description,
         logoUrl:
-          base?.logoUrl ??
+          metadata?.logoUrl ??
           primary.logoUrl ??
           variants.find((connection) => connection.logoUrl)?.logoUrl,
-        categories: [...new Set(variants.flatMap((connection) => connection.categories ?? []))],
+        categories: [
+          ...new Set(
+            variants.flatMap(
+              (connection) =>
+                catalogServices.get(connection.slug)?.categories ?? connection.categories ?? [],
+            ),
+          ),
+        ],
       },
       accounts: variants.filter((connection) => connection.connectionId),
     };
@@ -37,12 +55,14 @@ export function connectionIssue(connection: Connection) {
   if (connection.browserState === 'disconnecting') return 'Removal needs retry';
   if (connection.browserState === 'pending') return 'Finish sign-in';
   if (connection.browserState === 'needs_sign_in') return 'Sign-in required';
-  if (connection.status !== 'connected') return 'Sign-in required';
+  if (connection.status !== 'connected' || connection.reconnectRequired) return 'Sign-in required';
   return null;
 }
 
 export function connectionIdentity(connection: Connection) {
-  const name = connection.accountName?.trim().replace(/^(?:\[REDACTED\]|REDACTED)$/i, '');
+  const name = connection.accountName
+    ?.trim()
+    .replace(/^(?:\[?redacted\]?|<redacted>|\*{3,})$/i, '');
   const email = connection.accountEmail?.trim();
   return {
     primary: name || email || `${connection.name.replace(/\s+MCP$/i, '')} account`,

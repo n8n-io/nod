@@ -186,8 +186,10 @@ export function meterIntegrations(
             provider.pollInbox!(id, cursor, signal),
           )
       : undefined,
-    deleteAccount: (id) =>
-      usage.track({ ...base, operation: 'delete_account' }, () => provider.deleteAccount(id)),
+    deleteAccount: (id, ownerId) =>
+      usage.track({ ...base, operation: 'delete_account' }, () =>
+        provider.deleteAccount(id, ownerId),
+      ),
     subscribe: (owner, service, account) =>
       usage.track({ ...base, operation: 'subscribe' }, () =>
         provider.subscribe(owner, service, account),

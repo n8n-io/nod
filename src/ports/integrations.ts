@@ -127,7 +127,7 @@ export interface IntegrationProvider {
     accountEmail?: string;
     authConfigId?: string;
   }>;
-  deleteAccount(id: string): Promise<void>;
+  deleteAccount(id: string, ownerId?: string): Promise<void>;
   verificationEmails?(
     accountId: string,
     query: VerificationEmailQuery,

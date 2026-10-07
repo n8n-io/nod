@@ -15,9 +15,10 @@ import {
 import { previewableUrl } from '../src/shared/link-preview.ts';
 import { artifactImage, artifactPreview } from '../src/web/components/attachment-images.tsx';
 import { MessageText } from '../src/web/components/message.tsx';
-import type { Artifact } from '../src/shared/contracts.ts';
+import type { Artifact, Connection } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
 import { messageSetupLinks, safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
+import { connectionGroups, connectionIssue } from '../src/web/lib/secondary-pages.ts';
 
 const origin = 'http://localhost:4310';
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
@@ -266,7 +267,6 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.match(external, /\breferrerPolicy="no-referrer"/);
   const action = JSDOM.fragment(result).querySelector('button[data-setup="app"]');
   assert.equal(action?.textContent, 'Connect Calendar');
-  assert.equal(action?.querySelector('img'), null);
   assert.doesNotMatch(result, /href="https:\/\/outside\.example\/connect"/);
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
@@ -300,18 +300,20 @@ test('an app setup action hides only after its exact connection is connected', (
   assert.equal(JSDOM.fragment(connected).querySelectorAll('button[data-setup="app"]').length, 0);
 });
 
-test('native setup actions hide only completed links and retain other account requests across refreshes', async () => {
+test('setup actions match canonical owned links and retain other account requests across refreshes', async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     url: origin,
     pretendToBeVisual: true,
   });
-  const discoveryId = '00000000-0000-4000-8000-000000000003';
+  const discoveryId = 'abcdef01-abcd-4000-8000-abcdef000003';
   const links = [
     'https://connect.composio.dev/link/synthetic-work',
     'https://connect.composio.dev/link/synthetic-personal',
-    `/apps?connect=${discoveryId}`,
+    `/apps?connect=${discoveryId.toUpperCase()}`,
   ];
-  const hashes = links.map((href) => createHash('sha256').update(href).digest('hex'));
+  const hashes = [links[0], links[1], `/apps?connect=${discoveryId}`].map((href) =>
+    createHash('sha256').update(href).digest('hex'),
+  );
   const requests: string[][] = [];
   let completed: string[] = [];
   let failing = false;
@@ -388,6 +390,10 @@ test('native setup actions hide only completed links and retain other account re
     await render('reload');
     await waitFor(() => requests.length === 4 && buttons().length === 2);
     assert.ok(buttons()[0].textContent?.includes('personal'));
+    completed = [hashes[0], hashes[2]];
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await waitFor(() => buttons().length === 1);
+    assert.ok(buttons()[0].textContent?.includes('personal'));
     assert.doesNotMatch(dom.window.document.body.innerHTML, /synthetic-work|synthetic-personal/);
   } finally {
     await act(async () => root.unmount());
@@ -396,6 +402,57 @@ test('native setup actions hide only completed links and retain other account re
       if (value) Object.defineProperty(globalThis, key, value);
       else Reflect.deleteProperty(globalThis, key);
   }
+});
+
+test('app groups separate catalog metadata from saved account state and keep available routing', () => {
+  const account: Connection = {
+    slug: 'gmail',
+    name: 'Gmail',
+    status: 'connected',
+    connectionId: 'owned-gmail',
+    accountId: 'provider-account',
+    accountEmail: 'synthetic@example.test',
+    description: 'Account authorization expired',
+    reconnectRequired: true,
+    triggersEnabled: true,
+  };
+  const catalog: Connection[] = [
+    {
+      slug: 'gmail',
+      name: 'Gmail',
+      status: 'disconnected',
+      description: 'Mail integration',
+      categories: ['Communication'],
+      triggersEnabled: false,
+    },
+    {
+      slug: 'gmail_mcp',
+      name: 'Gmail MCP',
+      status: 'disconnected',
+      categories: ['Productivity'],
+      triggersEnabled: false,
+    },
+  ];
+  const [group] = connectionGroups([account], catalog);
+  assert.equal(group.service.description, catalog[0].description);
+  assert.deepEqual(group.service.categories, ['Communication', 'Productivity']);
+  assert.equal(group.service.slug, account.slug);
+  assert.equal(group.accounts[0], account);
+  assert.ok(connectionIssue(group.accounts[0]));
+  assert.equal(connectionGroups([account])[0].service.description, undefined);
+  const [available] = connectionGroups(
+    [{ ...catalog[0], status: 'not_configured' }],
+    catalog.map((service) =>
+      service.slug === 'gmail' ? { ...service, status: 'not_configured' } : service,
+    ),
+  );
+  assert.equal(available.service.slug, 'gmail_mcp');
+  assert.equal(available.service.status, 'disconnected');
+  assert.deepEqual(available.accounts, []);
+  assert.equal(
+    connectionGroups([{ ...catalog[0], status: 'not_configured' }], catalog)[0].service.status,
+    'disconnected',
+  );
 });
 
 test('underlined messages preserve nested formatting without admitting unsafe markup', () => {

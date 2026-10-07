@@ -370,11 +370,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       );
       const current = () => sessions.get(ownerId) === pending;
       let session: IntegrationSession | undefined;
+      let createdHere = false;
       try {
         if (saved.rows[0]?.configuration_version === 3) {
           session = await sdk.restoreSession(saved.rows[0].session_id);
         } else {
           session = await sdk.createSession(ownerId, await connectedAccounts(ownerId, sdk));
+          createdHere = true;
           const created = session;
           await withSessionState(async () => {
             if (!current())
@@ -391,7 +393,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           throw new IntegrationError('The connected accounts changed. Try again.', 409);
         return session;
       } catch (error) {
-        if (session) {
+        if (session && createdHere) {
           const stale = session;
           await withSessionState(() =>
             pool.query(
@@ -713,10 +715,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             ? {
                 reconnectRequired: row.inbox_reconnect_required,
                 canReconnect: Boolean(
-                  !row.revoked &&
-                  selected.configured &&
-                  selected.reconnectAccount &&
-                  normalizedEmail(row.account_email ?? ''),
+                  !row.revoked && selected.configured && selected.reconnectAccount,
                 ),
               }
             : {}),
@@ -905,13 +904,29 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     }
   }
 
+  async function discardReconnect(row: ConnectionRow, accountId = row.pending_account_id) {
+    if (!accountId || accountId === row.account_id) return;
+    try {
+      const retained = await pool.query(
+        `SELECT 1 FROM app_connections WHERE owner_id=$1 AND provider_id=$2
+         AND (account_id=$3 OR pending_account_id=$3) LIMIT 1`,
+        [configuredOwner, row.provider_id, accountId],
+      );
+      if (!retained.rowCount) await providerForRow(row).deleteAccount(accountId, configuredOwner);
+    } catch {}
+  }
+
   async function clearReconnect(id: string, hash: string) {
-    await pool.query(
-      `UPDATE app_connections SET pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
-       callback_hash=NULL,callback_expires=NULL,setup_link_hash=NULL
-       WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NOT NULL`,
+    const { rows } = await pool.query<ConnectionRow>(
+      `WITH pending AS (
+         SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NOT NULL FOR UPDATE
+       ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
+       callback_hash=NULL,callback_expires=NULL,setup_link_hash=NULL FROM pending
+       WHERE c.id=pending.id RETURNING pending.*`,
       [id, configuredOwner, hash],
     );
+    if (rows[0]) await discardReconnect(rows[0]);
+    return rows[0]?.pending_account_id;
   }
 
   async function reconnect(
@@ -942,10 +957,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const hash = createHash('sha256').update(nonce).digest('hex');
     const callbackUrl = new URL('/api/apps/callback', options.baseUrl);
     callbackUrl.searchParams.set('state', nonce);
-    const reserved = await pool.query(
-      `UPDATE app_connections SET pending_account_id=NULL,pending_account_email=$6,pending_auth_config_id=NULL,
+    const reserved = await pool.query<ConnectionRow>(
+      `WITH previous AS (
+         SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND NOT revoked FOR UPDATE
+       ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=$6,pending_auth_config_id=NULL,
        callback_hash=$5,callback_expires=now()+interval '10 minutes',callback_return_to=$7,setup_link_hash=NULL,turn_id=$8
-       WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND NOT revoked`,
+       FROM previous WHERE c.id=previous.id RETURNING previous.*`,
       [
         row.id,
         configuredOwner,
@@ -959,6 +976,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     );
     if (!reserved.rowCount)
       throw new IntegrationError('This connected account changed. Try again.', 409);
+    await discardReconnect(reserved.rows[0]);
+    let attemptedId: string | undefined;
     try {
       const attempt = await selected.reconnectAccount(
         configuredOwner,
@@ -966,6 +985,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         row.account_id!,
         callbackUrl.href,
       );
+      attemptedId = z.string().min(1).max(200).parse(attempt.accountId);
       const redirect = new URL(attempt.url);
       if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
         throw new IntegrationError(
@@ -981,7 +1001,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           row.provider_id,
           row.account_id,
           hash,
-          z.string().min(1).max(200).parse(attempt.accountId),
+          attemptedId,
           z.string().min(1).max(200).parse(attempt.authConfigId),
           createHash('sha256').update(redirect.href).digest('hex'),
         ],
@@ -993,7 +1013,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         );
       return { url: attempt.url, ...(returnTo === 'window' ? { attempt: nonce } : {}) };
     } catch (error) {
-      await clearReconnect(row.id, hash);
+      const cleared = await clearReconnect(row.id, hash);
+      if (attemptedId && cleared !== attemptedId) await discardReconnect(row, attemptedId);
       throw error;
     }
   }
@@ -1828,14 +1849,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           ),
           options.discovered?.setupServices(connectionIds) ?? [],
         ]);
-        const apps = [
-          ...pending.rows,
-          ...discovered.map(({ id, slug, name }) => ({
-            hash: createHash('sha256').update(`/apps?connect=${id}`).digest('hex'),
-            slug,
-            name,
-          })),
-        ]
+        const discoveredLinks = discovered.map(({ id, ...service }) => ({
+          ...service,
+          hash: createHash('sha256').update(`/apps?connect=${id}`).digest('hex'),
+        }));
+        const apps = [...pending.rows, ...discoveredLinks.filter((link) => !link.completed)]
           .filter(({ hash }) => hashes.includes(hash))
           .map((row) => {
             const info = serviceInfo(row.slug);
@@ -1847,7 +1865,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             };
           });
         return reply.header('Cache-Control', 'no-store').send({
-          completed: completed.rows.map((row) => row.link_hash),
+          completed: [
+            ...completed.rows.map((row) => row.link_hash),
+            ...discoveredLinks
+              .filter((link) => link.completed && hashes.includes(link.hash))
+              .map((link) => link.hash),
+          ],
           apps,
         } satisfies AppSetupStatus);
       });
@@ -1932,7 +1955,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 outcome = 'failed';
                 await clearReconnect(row.id, hash);
               }
-            }
+            } else await clearReconnect(row.id, hash);
           } else if (options.discovered) {
             const result = await options.discovered
               .completeOAuth(request.query)

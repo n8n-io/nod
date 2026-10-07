@@ -1444,6 +1444,17 @@ test(
     });
     const id = new URL(proposed.url, options.baseUrl).searchParams.get('connect');
     const path = `/api/apps/discovery/${id}`;
+    const setupHash = createHash('sha256').update(proposed.url).digest('hex');
+    const setupStatus = async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-status',
+        headers,
+        payload: { hashes: [setupHash], connectionIds: [id] },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      return response.json();
+    };
     const authorize = () =>
       app.inject({ method: 'POST', url: `${path}/authorize`, headers, payload: {} });
     const status = async () => {
@@ -1464,6 +1475,10 @@ test(
     };
     const first = await authorize();
     assert.equal(first.statusCode, 200, first.body);
+    assert.deepEqual(await setupStatus(), {
+      completed: [],
+      apps: [{ hash: setupHash, slug: 'fixture-desktop', name: 'Fixture app' }],
+    });
     const connectionStarted: AnalyticsEvent = {
       event: 'otto_settings_updated',
       properties: { section: 'connections', operation: 'connect_started' },
@@ -1519,6 +1534,7 @@ test(
     assert.equal(await callback(states[2], 'code=fixture-code'), 'expired');
     assert.equal(await callback(states[3], 'code=fixture-code'), 'connected');
     assert.equal((await status()).oauthStatus, 'connected');
+    assert.deepEqual(await setupStatus(), { completed: [setupHash], apps: [] });
     await createDiscoveredConnections(f.pool, options);
     assert.equal((await recovered.inject(path)).json().oauthStatus, 'connected');
     assert.equal((await status()).authorizationUrl, undefined);
@@ -1528,6 +1544,11 @@ test(
     assert.equal(finished, 3);
     assert.equal((await discovered.list()).length, 1);
     await assert.rejects(grantVault.read(id!));
+    await f.pool.query(
+      "UPDATE discovered_connection_proposals SET expires_at=now()-interval '1 second' WHERE id=$1",
+      [id],
+    );
+    assert.deepEqual(await setupStatus(), { completed: [setupHash], apps: [] });
   },
 );
 
@@ -3378,7 +3399,10 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
     await control.pause('create', id);
     return snapshot(id);
   });
-  t.mock.method(transport, 'retrieve', async (id: string) => snapshot(id));
+  t.mock.method(transport, 'retrieve', async (id: string) => {
+    await control.pause('restore', id);
+    return snapshot(id);
+  });
   t.mock.method(transport, 'link', async (id: string, input: Record<string, unknown>) => {
     assert.deepEqual(configurations.get(id)?.auth_configs, { gmail: authConfigId });
     assert.deepEqual(configurations.get(id)?.toolkits, { enable: ['gmail'] });
@@ -3679,6 +3703,39 @@ test(
 );
 
 test(
+  'managed reconnect recovers a missing cached email only from verified provider identity',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const available of [false, true])
+      await t.test(`identity available ${available}`, async (t) => {
+        const f = await managedReconnectFixture(t);
+        await f.pool.query('UPDATE app_connections SET account_email=NULL WHERE id=$1', [
+          f.connectionId,
+        ]);
+        f.accounts.get('old-account')!.status = available ? 'ACTIVE' : 'EXPIRED';
+        const saved = (await f.integrations.list(f.ownerId, { refresh: false })).find(
+          (row) => row.connectionId === f.connectionId,
+        )!;
+        assert.equal(saved.canReconnect, true);
+        assert.equal(saved.accountEmail, undefined);
+        const response = await f.reconnect();
+        assert.equal(response.statusCode, available ? 200 : 409, response.body);
+        assert.equal((await f.row()).account_id, 'old-account');
+        assert.equal(f.accounts.has('old-account'), true);
+        if (available) {
+          assert.equal((await f.row()).pending_account_email, 'work@example.test');
+          assert.equal(f.links.length, 1);
+          assert.equal(await f.complete(f.links[0], 'cancelled'), 'cancelled');
+          assert.equal(f.accounts.has(f.links[0].accountId), false);
+        } else {
+          assert.equal(f.links.length, 0);
+          assert.equal((await f.row()).callback_hash, null);
+        }
+      });
+  },
+);
+
+test(
   'managed reconnect consumes rejected consent without replacing the saved account or its watches',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -3756,6 +3813,10 @@ test(
         assert.equal(f.accounts.has('old-account'), true);
         assert.equal(f.removed.includes('old-account'), false);
         assert.equal(f.removed.includes('old-execution-session'), false);
+        const retained = ['owner', 'missing-owner', 'id', 'already-saved'].includes(kind);
+        assert.equal(f.accounts.has(link.accountId), retained);
+        assert.equal(f.removed.includes(link.accountId), !retained);
+        assert.equal(f.removed.includes('unrelated-account'), false);
         assert.deepEqual(f.unsubscribed, []);
         assert.deepEqual(f.subscribed, []);
         assert.deepEqual(f.resumed, []);
@@ -3819,6 +3880,8 @@ test(
         assert.equal(after.pending_account_id, newest.accountId);
         assert.equal(after.callback_hash, pending.callback_hash);
         assert.equal(await f.complete(f.links[0]), 'expired');
+        assert.equal(f.accounts.has(f.links[0].accountId), false);
+        assert.equal(f.accounts.has(newest.accountId), true);
         f.accounts.get(newest.accountId)!.status = 'ACTIVE';
         assert.equal(await f.complete(newest), 'connected');
         assert.equal((await f.row()).account_id, newest.accountId);
@@ -3861,6 +3924,7 @@ test(
         assert.equal(await f.complete(f.links[0]), 'expired');
         assert.deepEqual(f.subscribed, []);
         assert.equal(f.accounts.has('old-account'), false);
+        assert.equal(f.accounts.has(f.links[0].accountId), false);
         assert.equal((await f.pool.query('SELECT * FROM integration_sessions')).rowCount, 0);
       });
   },
@@ -3949,6 +4013,70 @@ test(
     await execute();
     assert.equal(f.configurations.size, sessionCount);
     assert.deepEqual(f.executed.at(-1), { action: 'GMAIL_LIST_LABELS', account: link.accountId });
+  },
+);
+
+test(
+  'a stale restore cannot delete the saved session reused after a failed reset',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await managedReconnectFixture(t);
+    await f.pool.query('UPDATE app_connections SET account_active=true WHERE id=$1', [
+      f.connectionId,
+    ]);
+    const other = await f.pool.query<{ id: string }>(
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active)
+       VALUES($1,'gmail','other-account','composio',true) RETURNING id`,
+      [f.ownerId],
+    );
+    const query = f.pool.query;
+    let failReset = true;
+    t.mock.method(f.pool, 'query', function (this: pg.Pool, ...args: unknown[]) {
+      if (
+        failReset &&
+        typeof args[0] === 'string' &&
+        args[0].startsWith('DELETE FROM integration_sessions') &&
+        args[0].includes('RETURNING')
+      ) {
+        failReset = false;
+        return Promise.reject(new Error('Synthetic session reset failure.'));
+      }
+      return Reflect.apply(query, this, args);
+    });
+    const entered = deferred();
+    const release = deferred();
+    let restores = 0;
+    f.control.pause = async (phase, id) => {
+      if (phase !== 'restore' || id !== 'old-execution-session') return;
+      restores++;
+      if (restores !== 1) return;
+      entered.resolve();
+      await release.promise;
+    };
+    const execute = () =>
+      f.integrations.execute(f.ownerId, 'GMAIL_LIST_LABELS', {
+        connectionId: f.connectionId,
+        user_id: 'me',
+      });
+    const stale = assert.rejects(execute());
+    await entered.promise;
+    const response = await f.app.inject({
+      method: 'POST',
+      url: `/api/apps/gmail/accounts/${other.rows[0].id}/disconnect`,
+    });
+    assert.equal(response.statusCode, 502);
+    assert.equal(failReset, false);
+    await execute();
+    assert.equal(restores, 2);
+    release.resolve();
+    await stale;
+    assert.equal(f.removed.includes('old-execution-session'), false);
+    assert.equal(
+      (await f.pool.query('SELECT session_id FROM integration_sessions')).rows[0].session_id,
+      'old-execution-session',
+    );
+    await execute();
+    assert.equal(restores, 2);
   },
 );
 

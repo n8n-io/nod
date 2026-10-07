@@ -184,7 +184,7 @@ Earlier synthetic onboarding checks exercised a version that has now been revert
 
 Before expired-account recovery was added, the automatic Google auth-config selection change passed `npm run check` and `npm run test:integration`: 640 tests across 21 suites, with no failures, cancellations or skips. The integration command also completed the build. Logs are under ignored `.local/release-review/`. Focused real-SDK fixtures covered all five Google apps, pagination, explicit overrides, project-default fallback, configuration-map preservation, sanitized failures and key changes during authorization, creation and restore. The disposable database was removed; these checks used no live accounts or models. This is prior validation, not acceptance of the latest reconnect changes. See [Apps agent acceptance](apps-acceptance.md) for the latest evaluation record. The onboarding page and model-button stylesheet remain byte-identical to main at `7a1b839603c65ade38550f460d9481494b2ebade`.
 
-The earlier post-merge run also passed 118 desktop tests with one privileged-Linux skip and 32 eval tests, recorded under `.local/merge-main/`. These are prior results, not validation of the new authorization behavior. No changes have been pushed, published or deployed by this work.
+The reconnect candidate at `fcea2c9` passed `npm run check` and `npm run test:integration`: 689 tests across 21 suites, with no failures, cancellations or skips. The integration command also built the application. The eval harness passed 34 tests. [PR #166](https://github.com/n8n-io/otto/pull/166) contains the implementation; no release or deployment has been published.
 
 ## Release gates
 

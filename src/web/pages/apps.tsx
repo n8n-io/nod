@@ -344,21 +344,7 @@ export function Apps({
   const discoveryTitle = useRef<HTMLHeadingElement>(null);
   const actionRequest = useRef<AbortController | null>(null);
   const discoveryRequest = useRef<AbortController | null>(null);
-  const knownServices = new Set(connections?.map((connection) => connection.slug));
-  const catalogServices = new Map(catalog?.map((service) => [service.slug, service]));
-  const groups = connectionGroups([
-    ...(connections ?? []).map((connection) => ({
-      ...connection,
-      name: catalogServices.get(connection.slug)?.name ?? connection.name,
-      description: connection.description || catalogServices.get(connection.slug)?.description,
-      logoUrl: catalogServices.get(connection.slug)?.logoUrl ?? connection.logoUrl,
-      categories: catalogServices.get(connection.slug)?.categories ?? connection.categories,
-      status: connection.connectionId
-        ? connection.status
-        : (catalogServices.get(connection.slug)?.status ?? connection.status),
-    })),
-    ...(catalog ?? []).filter((service) => !knownServices.has(service.slug)),
-  ]);
+  const groups = connectionGroups(connections ?? [], catalog ?? []);
   const managed = groups.find((group) => group.key === manageService);
   const manageError = managed?.key === connectErrorService ? error : '';
   const addAccountConnection =

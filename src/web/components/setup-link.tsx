@@ -22,18 +22,22 @@ function useAppLinks(hrefs: string[]) {
       try {
         const fingerprints = await Promise.all(
           links.map(async (href) => {
-            const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(href));
+            const connectionId = appLink.exec(href)?.[1].toLowerCase();
+            const digest = await crypto.subtle.digest(
+              'SHA-256',
+              new TextEncoder().encode(connectionId ? `/apps?connect=${connectionId}` : href),
+            );
             const hash = Array.from(new Uint8Array(digest), (byte) =>
               byte.toString(16).padStart(2, '0'),
             ).join('');
-            return { href, hash };
+            return { href, hash, connectionId };
           }),
         );
         const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
           body: JSON.stringify({
             hashes: fingerprints.map((link) => link.hash),
-            connectionIds: links.flatMap((href) => appLink.exec(href)?.[1] ?? []),
+            connectionIds: fingerprints.flatMap((link) => link.connectionId ?? []),
           }),
           signal: controller.signal,
           cache: 'no-store',
