@@ -927,7 +927,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           if (current.account_id !== row.account_id)
             throw new Error('The selected account changed.');
           signal?.throwIfAborted();
-          return session.execute(action, providerArgs, row.account_id!, signal);
+          return session.execute(action, providerArgs, row.account_id!, signal, {
+            files: !checkConnectionId,
+          });
         },
       );
       return result;

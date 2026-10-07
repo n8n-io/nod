@@ -29,6 +29,7 @@ import {
   readDownload,
   waitForDownload,
 } from '../src/providers/agent-browser/downloads.ts';
+import { mcpFiles } from '../src/providers/app-files.ts';
 import { createComposioFiles } from '../src/providers/composio/downloads.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
 import {
@@ -661,6 +662,28 @@ test('Composio file outputs become private bytes wherever they appear and never 
   });
   assert.equal(JSON.stringify(result).includes('signature'), false);
   assert.equal(calls.length, 4);
+  const nested = JSON.stringify({
+    file: { name: 'nested.png', mimetype: 'image/png', s3url: 'https://files.example.com/nested' },
+  });
+  assert.deepEqual(await files({ data: { response: nested } }, AbortSignal.timeout(1000)), {
+    data: {
+      response: {
+        file: {
+          name: 'nested.png',
+          mimeType: 'image/png',
+          bytes: Buffer.from('synthetic /nested'),
+        },
+      },
+    },
+  });
+  assert.deepEqual(await files({ file: fileObject() }, AbortSignal.timeout(1000), false), {
+    file: {
+      name: '../../invoice.pdf',
+      mimeType: 'application/pdf',
+      message: 'Files are not opened in activity checks.',
+    },
+  });
+  assert.equal(calls.length, 5);
   const many = (await files(
     {
       items: Array.from({ length: 11 }, (_, index) => ({
@@ -676,7 +699,16 @@ test('Composio file outputs become private bytes wherever they appear and never 
     mimeType: 'text/plain',
     error: 'Not downloaded: too many files in one result.',
   });
-  assert.equal(calls.length, 14);
+  assert.equal(calls.length, 15);
+});
+
+test('MCP file blocks over the file limit are refused before decoding', () => {
+  assert.deepEqual(
+    mcpFiles({
+      content: [{ type: 'image', data: 'A'.repeat(21 * 1024 * 1024), mimeType: 'image/png' }],
+    }),
+    { content: [{ type: 'image', mimeType: 'image/png', error: 'The file is too large.' }] },
+  );
 });
 
 test('Composio file links that are private, insecure, rebinding or oversized are not fetched', async () => {

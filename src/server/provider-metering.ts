@@ -141,9 +141,9 @@ export function meterIntegrations(
         usage.track({ ...base, operation: 'authorize' }, () => value.authorize(service, url)),
       search: (query, signal) =>
         usage.track({ ...base, operation: 'search' }, () => value.search(query, signal)),
-      execute: (action, args, account, signal) =>
+      execute: (action, args, account, signal, options) =>
         usage.track({ ...base, operation: 'execute' }, () =>
-          value.execute(action, args, account, signal),
+          value.execute(action, args, account, signal, options),
         ),
       upload: value.upload
         ? (action, file, signal) =>

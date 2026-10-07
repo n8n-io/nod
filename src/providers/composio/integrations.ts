@@ -382,7 +382,7 @@ export function createComposioProvider(options: {
           throw new Error(`The app tool schemas could not be loaded: ${errorText(error)}`);
         }
       },
-      async execute(action, args, accountId, signal) {
+      async execute(action, args, accountId, signal, options) {
         signal?.throwIfAborted();
         const result = await value.execute(
           action,
@@ -400,7 +400,7 @@ export function createComposioProvider(options: {
             result.data.successful === false)
         )
           throw new Error(providerFailure(action, result as Record<string, unknown>));
-        return files(result, signal ?? new AbortController().signal);
+        return files(result, signal ?? new AbortController().signal, options?.files !== false);
       },
       async upload(action, file, signal) {
         const operation = signal

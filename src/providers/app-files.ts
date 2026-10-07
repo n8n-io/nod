@@ -47,6 +47,12 @@ export function mcpFiles(result: unknown): unknown {
           : undefined;
       const data = item.type === 'image' || item.type === 'audio' ? item.data : resource?.blob;
       if (typeof data !== 'string') return block;
+      if (data.length > Math.ceil(appFileBytes / 3) * 4 + 4)
+        return {
+          type: item.type,
+          mimeType: (resource ?? item).mimeType,
+          error: 'The file is too large.',
+        };
       const source = resource ?? item;
       const uri = typeof source.uri === 'string' ? source.uri.split(/[?#]/)[0] : undefined;
       try {

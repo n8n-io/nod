@@ -1803,6 +1803,18 @@ test(
       ),
     );
     assert.equal(f.executed.length, 0);
+    t.mock.method(f.session, 'execute', async (...input: unknown[]) => ({ options: input[4] }));
+    assert.deepEqual(
+      await f.service.execute(
+        'local-development',
+        'GMAIL_GET_ATTACHMENT',
+        {},
+        turn,
+        undefined,
+        selected.connectionId,
+      ),
+      { options: { files: false } },
+    );
   },
 );
 
@@ -4562,6 +4574,15 @@ test(
             'content-disposition': 'attachment; filename="agenda.png"',
           },
         });
+      if (String(input) === 'https://fixture.example/api/files/report')
+        return new Response('month,total\nSeptember,42\n', {
+          headers: {
+            'content-type': 'text/csv',
+            'content-disposition': 'attachment; filename="report.csv"',
+          },
+        });
+      if (String(input) === 'https://fixture.example/api/files/log')
+        return new Response('x'.repeat(20_000), { headers: { 'content-type': 'text/plain' } });
       if (String(input) === 'https://fixture.example/api/files/echo')
         return new Response(Buffer.from(`echo ${token}`), {
           headers: { 'content-type': 'application/octet-stream' },
@@ -4651,6 +4672,18 @@ test(
       status: 200,
       file: { name: 'agenda.png', mimeType: 'image/png', bytes: new Uint8Array(image) },
     });
+    assert.deepEqual(await get('files/report'), {
+      status: 200,
+      file: {
+        name: 'report.csv',
+        mimeType: 'text/csv',
+        bytes: new Uint8Array(Buffer.from('month,total\nSeptember,42\n')),
+      },
+    });
+    assert.equal(
+      ((await get('files/log')) as { file: { bytes: Uint8Array } }).file.bytes.byteLength,
+      20_000,
+    );
     assert.deepEqual(await get('files/echo'), {
       status: 200,
       file: {

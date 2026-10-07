@@ -616,6 +616,7 @@ export function slack(
       ...file,
       id: file.id ?? `F${id().slice(0, 10).toUpperCase()}`,
     })),
+    replies: message.replies?.map(withFiles),
   });
   const conversations = seed.map((conversation) => {
     const messages = conversation.messages.map((message) => ({
@@ -757,10 +758,7 @@ export function slack(
           messages: [
             view(parent),
             ...(parent.replies ?? []).map((reply) => ({
-              type: 'message',
-              user: reply.user,
-              text: reply.text,
-              ts: reply.ts,
+              ...view(reply, false),
               thread_ts: parent.ts,
             })),
           ],
@@ -802,6 +800,7 @@ export function slack(
       run(args) {
         const file = conversations
           .flatMap((conversation) => conversation.messages)
+          .flatMap((message) => [message, ...(message.replies ?? [])])
           .flatMap((message) => message.files ?? [])
           .find((item) => item.id === args.file);
         if (!file) throw new Error('file_not_found');

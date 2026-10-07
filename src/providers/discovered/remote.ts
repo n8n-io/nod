@@ -167,27 +167,28 @@ export function createDiscoveredTransport(
       });
       const bytes = new Uint8Array(await response.arrayBuffer());
       const type = response.headers.get('content-type') ?? '';
-      if (response.ok && bytes.byteLength && !textType.test(type)) {
-        const name =
-          /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(
-            response.headers.get('content-disposition') ?? '',
-          )?.[1] ?? new URL(endpoint).pathname;
-        return { status: response.status, file: appFile(decoded(name), type, bytes) };
-      }
+      const disposition = response.headers.get('content-disposition') ?? '';
       const content = new TextDecoder().decode(bytes);
       if (!response.ok)
         throw new Error(
           `The remote API request failed (${response.status}): ${content.slice(0, 4000)}`,
         );
-      let parsed: unknown = null;
-      if (content) {
-        try {
-          parsed = JSON.parse(content);
-        } catch {
-          parsed = content.slice(0, 18_000);
-        }
+      let parsed: unknown;
+      try {
+        parsed = content ? JSON.parse(content) : null;
+      } catch {}
+      if (
+        bytes.byteLength &&
+        (!textType.test(type) ||
+          /^\s*attachment/i.test(disposition) ||
+          (parsed === undefined && content.length > 18_000))
+      ) {
+        const name =
+          /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(disposition)?.[1] ??
+          new URL(endpoint).pathname;
+        return { status: response.status, file: appFile(decoded(name), type, bytes) };
       }
-      return { status: response.status, body: parsed };
+      return { status: response.status, body: parsed === undefined ? content : parsed };
     },
     listTools: (endpoint, headers, signal) =>
       withRemoteMcp(

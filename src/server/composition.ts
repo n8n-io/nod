@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
@@ -750,7 +750,15 @@ async function initializeApplication(
                 threadId: provenance.threadId,
                 turnId: provenance.turnId,
               });
-              return (await saveIntegrationFiles(result)).value;
+              const write = workspace.writeArtifact?.bind(workspace);
+              const save =
+                write &&
+                (async (file: { name: string; bytes: Uint8Array }) => {
+                  const name = `${randomUUID()}-${basename(file.name)}`;
+                  await write(provenance.threadId, name, file.bytes);
+                  return name;
+                });
+              return (await saveIntegrationFiles(result, save)).value;
             }),
     async (action, args) => {
       if (action.startsWith('OTTO_'))

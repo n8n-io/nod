@@ -56,9 +56,15 @@ export function createComposioFiles(
     }
     throw new Error('Too many file redirects.');
   }
-  return async (result: unknown, signal: AbortSignal): Promise<unknown> => {
+  return async (result: unknown, signal: AbortSignal, open = true): Promise<unknown> => {
     let files = 0;
     const visit = async (value: unknown): Promise<unknown> => {
+      if (typeof value === 'string' && value.length <= 65_536 && value.includes('s3url'))
+        try {
+          return await visit(JSON.parse(value));
+        } catch {
+          return value;
+        }
       if (Array.isArray(value)) return Promise.all(value.map(visit));
       if (!value || Object.getPrototypeOf(value) !== Object.prototype) return value;
       const record = value as Record<string, unknown>;
@@ -70,6 +76,7 @@ export function createComposioFiles(
         );
       const name = record.name ?? new URL(record.s3url, 'https://invalid').pathname;
       const mimeType = record.mimetype ?? record.mimeType;
+      if (!open) return { name, mimeType, message: 'Files are not opened in activity checks.' };
       if (++files > maximumFiles)
         return { name, mimeType, error: 'Not downloaded: too many files in one result.' };
       try {
