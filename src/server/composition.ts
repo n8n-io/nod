@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -601,29 +601,11 @@ async function initializeApplication(
     redactError: createErrorRedactor(inspectorSecrets),
   });
   const speech = createSpeech(speechProvider);
-  const memoryNoticeHash = createHash('sha256').update(`memory-notice:${ownerId}`).digest('hex');
-  const memoryNoticeId = `${memoryNoticeHash.slice(0, 8)}-${memoryNoticeHash.slice(8, 12)}-8${memoryNoticeHash.slice(13, 16)}-8${memoryNoticeHash.slice(17, 20)}-${memoryNoticeHash.slice(20, 32)}`;
   const memory = createMemoryService({
     pool,
     ownerId,
     store: adapters.objectStore ?? createFilesystemObjectStore(join(dataRoot, 'objects')),
     curator,
-    onSaved: async (sourceMessageId) => {
-      const result = await pool.query(
-        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
-         SELECT $1,$2,'assistant',$3,m.thread_id,m.turn_id FROM messages m
-         JOIN threads t ON t.id=m.thread_id AND t.owner_id=m.owner_id AND t.archived_at IS NULL
-         WHERE m.id=$4 AND m.owner_id=$2 AND m.role='user'
-         ON CONFLICT(id) DO NOTHING RETURNING id`,
-        [
-          memoryNoticeId,
-          ownerId,
-          'I’ve saved this and will remember useful details you share. You can ask me to stop saving or forget your saved details anytime.',
-          sourceMessageId,
-        ],
-      );
-      if (result.rowCount) refresh();
-    },
   });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
   const personal = createPersonalService({
@@ -844,11 +826,10 @@ async function initializeApplication(
             `OTTO_${action}`,
             await personal.validateReview(action, args),
           );
-        if (action === 'memory_save' && (await memory.untrusted(turn.threadId))) {
+        if (action === 'memory_save') {
           const input = memory.validate(args);
-          return approvals.request(turn, 'OTTO_memory_save', input, {
-            confirm: await memory.cites(provenance.sourceMessageId),
-          });
+          if (!(await memory.supported(input, { ...provenance, turnId: turn.turnId })))
+            return { status: 'skipped', reason: 'unsupported_memory' };
         }
         if (
           [

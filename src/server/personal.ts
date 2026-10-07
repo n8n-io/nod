@@ -40,7 +40,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     return { name: '', location: '', phone: '', preferences: '', ...result.rows[0]?.data };
   }
 
-  async function setProfile(raw: unknown, sourceMessageId?: string | null) {
+  async function setProfile(raw: unknown) {
     if (memory && !(await memory.enabled())) throw new Error('Memory is turned off.');
     const data = profileSchema.parse(raw);
     await pool.query(
@@ -48,7 +48,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       [ownerId, data],
     );
     refresh();
-    if (sourceMessageId) await memory?.saved(sourceMessageId);
     return data;
   }
 
@@ -139,7 +138,6 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       client.release();
     }
     refresh();
-    await memory?.saved(sourceMessageId);
     return { ok: true };
   }
 
@@ -187,8 +185,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       return result;
     }
     if (action === 'profile_get') return getProfile();
-    if (action === 'profile_update')
-      return setProfile({ ...(await getProfile()), ...args }, provenance?.sourceMessageId);
+    if (action === 'profile_update') return setProfile({ ...(await getProfile()), ...args });
     if (action === 'schedule_list') return schedules.list();
     if (action === 'schedule_record_observation')
       return schedules.recordObservation(provenance?.turnId ?? '', args);
