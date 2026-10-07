@@ -18,9 +18,9 @@ on:
         type: string
         default: '3'
       model:
-        description: Agent model, for example anthropic/claude-opus-5-5 (empty for the default)
+        description: Agent model, run at high reasoning effort
         type: string
-        default: ''
+        default: openai/gpt-6.1-sol
       scenario:
         description: Only these scenarios, comma-separated (empty for the whole tier)
         type: string
@@ -47,13 +47,12 @@ jobs:
       OTTO_EVAL_WORKSPACE_IMAGE: otto-eval-workspace
       OTTO_EVAL_BROWSER_IMAGE: otto-eval-browser
     steps:
-      - name: Require the model keys
+      - name: Require the model key
         env:
           OPENAI_API_KEY: ${{ secrets.EVALS_OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.EVALS_ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "$OPENAI_API_KEY" ] || [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::Add the EVALS_OPENAI_API_KEY and EVALS_ANTHROPIC_API_KEY repository secrets."
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::Add the EVALS_OPENAI_API_KEY repository secret."
             exit 1
           fi
       - name: Start a disposable PostgreSQL with room for parallel attempts
@@ -99,8 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           label() { printf '%s' "$1" | tr -c 'a-zA-Z0-9.' '-' | cut -c1-40; }
-          args=(--tier "$TIER" --repeat "$REPEAT" --concurrency 4 --budget "$BUDGET")
-          if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
+          args=(--model "$MODEL" --judge openai/gpt-6.1-sol --tier "$TIER" --repeat "$REPEAT" --concurrency 4 --budget "$BUDGET")
           if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi
           candidate="$(label "$GITHUB_REF_NAME")-${GITHUB_SHA::7}"
           echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
