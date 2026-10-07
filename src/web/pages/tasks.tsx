@@ -285,8 +285,8 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
               )}
             </>
           )
-        ) : !tasks.data || !history.data ? (
-          (tasks.loading || history.loading) && <Pending label="Loading previous tasks…" />
+        ) : (tasks.loading && !tasks.error) || (history.loading && !history.error) ? (
+          <Pending label="Loading previous tasks…" />
         ) : previous.length ? (
           <>
             <div className="saved-plan-list">
@@ -312,9 +312,11 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
             )}
           </>
         ) : (
-          <Empty title="Nothing finished yet">
-            Tasks Otto finishes or stops, and past scheduled runs, appear here.
-          </Empty>
+          (tasks.data || history.data) && (
+            <Empty title="Nothing finished yet">
+              Tasks Otto finishes or stops, and past scheduled runs, appear here.
+            </Empty>
+          )
         )}
       </div>
     </div>

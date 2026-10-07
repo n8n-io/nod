@@ -1430,6 +1430,30 @@ test(
           await idle();
           assert.equal((await cards()).find((item) => item.id === huntId)?.status, 'done');
 
+          progressAnswer = (input) => ({
+            title: 'Garden quote',
+            now: 'Asking for a quote',
+            task: input.cards.find((offered) => offered.title === 'Garden quote')?.id ?? null,
+          });
+          block('watch-ask-fixture');
+          const asking = await thread.enqueueTurn('watch-ask-fixture', {
+            source: 'schedule',
+            sourceId: `schedule:${randomUUID()}`,
+          });
+          await waitFor(async () =>
+            (await cards()).some(
+              (item) => item.title === 'Garden quote' && item.status === 'working',
+            ),
+          );
+          release('watch-ask-fixture');
+          await waitFor(settled(asking));
+          await idle();
+          const quoteId = (await cards()).find((item) => item.title === 'Garden quote')!.id;
+          const chosen = await thread.submitUserMessage('the cheaper one');
+          await waitFor(settled(chosen.turnId));
+          await idle();
+          assert.equal((await cards()).find((item) => item.id === quoteId)?.status, 'done');
+
           assert.ok(
             progressInputs.every((input) =>
               input.cards.every((offered) => offered.id !== foreign.id),

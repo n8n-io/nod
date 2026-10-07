@@ -131,9 +131,8 @@ export function createTasks(options: {
              ORDER BY m.created_at DESC,m.id DESC LIMIT 1) END AS question
          FROM tasks t LEFT JOIN turns u ON u.id=t.turn_id AND u.owner_id=t.owner_id
          WHERE t.owner_id=$1 AND ($2::uuid IS NULL OR t.id=$2) AND ($3 OR t.state='open')
-           AND (t.state='open' OR NOT t.auto OR (SELECT x.source FROM turns x
-             WHERE x.task_id=t.id AND x.owner_id=t.owner_id
-             ORDER BY x.created_at,x.id LIMIT 1) IS DISTINCT FROM 'schedule')
+           AND (t.state='open' OR NOT t.auto OR EXISTS(SELECT 1 FROM turns x
+             WHERE x.task_id=t.id AND x.owner_id=t.owner_id AND x.source='user'))
          ORDER BY t.state='open' DESC,COALESCE(t.closed_at,t.updated_at) DESC,t.id LIMIT 100`,
         [ownerId, filter.id ?? null, filter.closed ?? false],
       )
