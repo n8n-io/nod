@@ -69,6 +69,11 @@ export default scenario({
         },
         { aspect: 'process', failure: 'tool' },
       ),
+      judge(
+        'opening-hours-answered',
+        'Before the owner supplies their routine, the assistant answers the initial webpage question by saying the garden opens at 07:15 every day. Equivalent time formats pass. The question asks when it opens, so the closing time is optional, but any stated closing time must be 20:30. Tool output alone does not count as an answer; the opening time must appear in a user-visible reply.',
+        { failure: 'incomplete' },
+      ),
       check(
         'all-user-turns-finished',
         (run) =>

@@ -67,6 +67,11 @@ export default scenario({
         },
         { aspect: 'process', failure: 'tool' },
       ),
+      judge(
+        'opening-hours-answered',
+        'Before the owner supplies their routine, the assistant answers the initial webpage question with the correct daily opening hours: 06:30 to 21:00. Equivalent 12-hour or 24-hour formats pass. Tool output alone does not count as an answer; the hours must appear in a user-visible reply.',
+        { failure: 'incomplete' },
+      ),
       check(
         'all-user-turns-finished',
         (run) =>
