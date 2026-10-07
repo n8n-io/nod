@@ -31,7 +31,7 @@ The scheduled run includes changes merged before its main checkout. Later merges
 
 Automatic versioning generates release metadata as a build artifact bound to the source revision. It does not commit generated package versions to main or require a daily metadata PR. Release tags, manifests and notes record the actual version and source. A retry reuses a matching unfinished draft instead of consuming another version. Release builds are serialized.
 
-To ship sooner or inspect a draft, manually run **Build desktop release** with automatic versioning enabled. Leave **publish** disabled for a draft; enable it to publish after verification. Drafts are excluded from the installer and updater. The app checks at startup, every six hours while open, and after waking if due. Users can check immediately from the Otto menu; prepared updates retain **Restart / Later**, and restarting asks first when it would stop running work.
+To ship sooner or inspect a draft, manually run **Build desktop release** with automatic versioning enabled. Leave **publish** disabled for a draft; enable it to publish after verification. Drafts are excluded from the installer and updater. The app checks at startup, every six hours while open, and after waking if due. Users can check immediately from the Otto menu; prepared updates retain **Restart / Later**, and restarting asks first when it would stop running work or Otto cannot check its current work.
 
 ## Manual version and changelog review
 

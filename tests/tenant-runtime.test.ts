@@ -21,7 +21,11 @@ import {
 import Fastify from 'fastify';
 import { createRuntimeLease } from '../src/server/runtime-lease.ts';
 import { request as httpRequest } from 'node:http';
-import { createTenantDrain, registerTenantDrain } from '../src/server/tenant-drain.ts';
+import {
+  createTenantDrain,
+  registerTenantDrain,
+  registerWorkAdmission,
+} from '../src/server/tenant-drain.ts';
 import { createWorkAdmission, createWorkConsumers } from '../src/server/work-admission.ts';
 import pg from 'pg';
 import { PgBoss } from 'pg-boss';
@@ -686,9 +690,13 @@ describe('tenant drain', () => {
     const admission = createWorkAdmission();
     const consumers = createWorkConsumers();
     const drain = createTenantDrain({ admission, consumers, computer });
-    if (desktop) registerLocalAccess(app, 4310, { token: identity.secret });
-    else registerRuntimeAccess(app, identity);
-    registerTenantDrain(app, { admission, drain, generation: identity.generation });
+    if (desktop) {
+      registerLocalAccess(app, 4310, { token: identity.secret });
+      registerWorkAdmission(app, admission);
+    } else {
+      registerRuntimeAccess(app, identity);
+      registerTenantDrain(app, { admission, drain, generation: identity.generation });
+    }
     app.setErrorHandler((error, _request, reply) => {
       const status = (error as { statusCode?: number }).statusCode ?? 503;
       reply.code(status).send({ error: 'The request could not be completed.' });
@@ -724,23 +732,12 @@ describe('tenant drain', () => {
     return { app, identity, admission, consumers, drain, headers, request };
   }
 
-  test('desktop restart drains admitted work and workers before acknowledging and requires its launch token', async () => {
+  test('desktop shutdown waits for admitted requests, refuses new ones and has no drain routes', async () => {
     const f = fixture(undefined, true);
     const started = gate();
     const finish = gate();
-    const stopping = gate();
-    const workerFinished = gate();
     let effects = 0;
-    let received = false;
-    await f.consumers.register({
-      async start() {
-        return 'synthetic-worker';
-      },
-      async stop() {
-        stopping.resolve();
-        await workerFinished.promise;
-      },
-    });
+    let closed = false;
     f.app.post('/api/work', async () => {
       effects++;
       started.resolve();
@@ -754,42 +751,21 @@ describe('tenant drain', () => {
     };
     try {
       for (const url of ['/api/runtime/drain', '/api/runtime/resume'])
-        assert.equal(
-          (
-            await f.app.inject({
-              method: 'POST',
-              url,
-              payload: input,
-              headers: { host: '127.0.0.1:4310' },
-            })
-          ).statusCode,
-          401,
-        );
-      assert.equal(f.admission.paused, false);
+        assert.equal((await f.request(url, input)).statusCode, 404);
       const working = f.request('/api/work');
       await bounded(started.promise);
-      const preparing = f.request('/api/runtime/drain', input);
-      void preparing.then(() => {
-        received = true;
+      f.admission.close();
+      const closing = f.admission.drain(Date.now() + 5000).then(() => {
+        closed = true;
       });
-      await bounded(stopping.promise);
-      assert.equal(f.admission.paused, true);
-      assert.equal(received, false);
-      assert.equal((await f.request('/api/work')).statusCode, 503);
+      assert.equal((await bounded(f.request('/api/work'))).statusCode, 503);
+      assert.equal(closed, false);
       finish.resolve();
       assert.equal((await bounded(working)).statusCode, 200);
-      assert.equal(received, false);
-      workerFinished.resolve();
-      const receipt = await bounded(preparing);
-      assert.equal(receipt.statusCode, 200, receipt.body);
-      assert.equal(receipt.json().drained, true);
+      await bounded(closing);
       assert.equal(effects, 1);
-      assert.equal((await f.request('/api/runtime/resume', input)).statusCode, 200);
-      assert.equal((await f.request('/api/work')).statusCode, 200);
-      assert.equal(effects, 2);
     } finally {
       finish.resolve();
-      workerFinished.resolve();
       await f.app.close();
     }
   });

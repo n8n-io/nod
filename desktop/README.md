@@ -26,7 +26,7 @@ Alternatively, quit Otto and install the latest published release from Terminal:
 
 The installer uses stock macOS tools, verifies the release and signing identity, and installs to `/Applications/Otto.app`. Run it as your normal user with permission to install apps in `/Applications`, without `sudo`. It keeps existing keys, conversations and workspace. Open that app after installation; the same self-signed first-launch instructions apply.
 
-Otto checks for updates after startup, every six hours while open, and after waking when a check is due. **Check for Updates…** checks immediately. Updates download automatically; choose **Later** to keep working or **Restart** to install. **Restart to update to VERSION…** remains in the menu after Later, without repeated background prompts. Restarting quits Otto like **Quit Otto** and reopens the new version. If a reply, scheduled task or background check is running, Otto asks first; restarting stops it, and you can ask Otto to continue afterwards. Queued messages, schedules and connected-app checks resume after the restart. Unsent text in the message box is not kept.
+Otto checks for updates after startup, every six hours while open, and after waking when a check is due. **Check for Updates…** checks immediately. Updates download automatically; choose **Later** to keep working or **Restart** to install. **Restart to update to VERSION…** remains in the menu after Later, without repeated background prompts. Restarting quits Otto like **Quit Otto** and reopens the new version. If a reply, scheduled task or background check is running, or Otto cannot check, it asks first; restarting stops it, and you can ask Otto to continue afterwards. Queued messages, schedules and connected-app checks resume after the restart. Unsent text in the message box is not kept.
 
 **General** contains appearance, launch-at-login and notifications. **Preferences** contains region, clock, timezone and quiet hours. AI connections and model selection use the same server APIs, encrypted credential store and components as the web product; the desktop wrapper does not maintain a second AI provider selection.
 
@@ -74,7 +74,7 @@ The app and DMG contain no provider keys. A local, one-time development import c
 
 GitHub Actions starts a new patch release daily at **07:00 Europe/Lisbon**, including days without source changes. Publication follows successful building, signing and verification. The [release guide](RELEASING.md) covers scheduling delays, manual release preparation, the required GitHub environment, runtime reuse, and acceptance gates. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The historical development measurements below used ad-hoc signing.
 
-The updater verifies the matching runtime before staging the signed application and defers restart while work or input is unfinished. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); its GitHub credential stays on the server.
+The updater verifies the matching runtime before staging the signed application, and asks before a restart would stop running work. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); its GitHub credential stays on the server.
 
 ## Building the experiment
 

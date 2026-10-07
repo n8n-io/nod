@@ -42,7 +42,7 @@ import type {
   Turn,
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
-import { registerTenantDrain } from './tenant-drain.ts';
+import { registerTenantDrain, registerWorkAdmission } from './tenant-drain.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type { TenantDrain } from '../ports/deployment.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
@@ -111,6 +111,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
       drain: dependencies.deploymentDrain,
       generation: runtimeGeneration,
     });
+  else if (desktopAccess && dependencies.admission)
+    registerWorkAdmission(app, dependencies.admission);
   const uploads = createMultipartReader({
     maxFileSize,
     verifiedBody: runtimeAccess?.takeBody,

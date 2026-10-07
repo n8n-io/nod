@@ -119,14 +119,7 @@ export function createTenantDrain(options: {
   };
 }
 
-export function registerTenantDrain(
-  app: FastifyInstance,
-  options: {
-    admission: WorkAdmission;
-    drain: TenantDrain;
-    generation: string;
-  },
-) {
+export function registerWorkAdmission(app: FastifyInstance, admission: WorkAdmission) {
   type Admitted = {
     release(): void;
     started: boolean;
@@ -148,8 +141,8 @@ export function registerTenantDrain(
   app.addHook('onRequest', async (request, reply) => {
     const path = request.url.split('?')[0];
     if (controls.has(path)) return;
-    if (path === '/api/events' && !options.admission.paused && !options.admission.closed) return;
-    const releaseAdmission = options.admission.enter();
+    if (path === '/api/events' && !admission.paused && !admission.closed) return;
+    const releaseAdmission = admission.enter();
     if (!releaseAdmission)
       return reply.code(503).send({ error: 'The account runtime is preparing an update.' });
     const disconnected = () => {
@@ -190,6 +183,17 @@ export function registerTenantDrain(
       }
     };
   });
+}
+
+export function registerTenantDrain(
+  app: FastifyInstance,
+  options: {
+    admission: WorkAdmission;
+    drain: TenantDrain;
+    generation: string;
+  },
+) {
+  registerWorkAdmission(app, options.admission);
   app.post('/api/runtime/drain', async (request) => {
     const input = deploymentInputSchema.parse(request.body);
     await options.drain.prepare(input);
