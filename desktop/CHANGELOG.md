@@ -2,18 +2,35 @@
 
 ## 0.1.9 - 2026-10-07
 
+When Otto hands you its browser, you now see it live, and the app has a softer, rounder look.
+
+### Browser handoff
+
+- The handoff panel shows Otto's browser live, so spinners, redirects and popups appear as they happen (35515c7)
+- New **Back** and **Reload** buttons, and popups open in the same panel
+- Sign-ins that offer a passkey show their other methods instead of freezing
+- Background tasks no longer keep the handoff on "Opening Otto's browser…" or change the page while you use it (3c3745f)
+
+### Look and feel
+
+- Rounder buttons, chips and tabs, a lighter sidebar and a rounder chat box (646f283)
+- Memory is now a tab in Settings; ⌘Y and `/memory` open it from anywhere (8b6e430)
+- Task cards show a one-line summary, with **See details** for the full prompt and timing
+- Apps and Channels share one card layout
+- Outline buttons and chips stay visible in the dark theme
+
+### Feedback
+
+- Paste images and documents into **Send feedback**, and mark up screenshots with pen, highlights, cover and comments (86adca3)
+- Unsent feedback is kept if you close or reload
+- Pasting into chat keeps line breaks
+
+### Fixes
+
+- Scheduled and event tasks no longer pick up a request from the conversation in progress (86adca3)
+
 Source: `50d4639cdc3517c7de3f9a58384c9c1842ed84eb`
 Previous release: `desktop-v0.1.8`
-
-- Stream the handed-off browser live and stop passkey prompts from freezing sign-in (#156) (35515c7)
-- fix: Keep radii, spacing and type on the n8n brand scales (bb90786)
-- fix: Open the Memory tab with Cmd+Y while Settings is open (8b6e430)
-- fix: Address review findings on the UI polish (ebed61f)
-- feat: Polish Otto's UI with rounder controls and move Memory into Settings (646f283)
-- ci: Run capability evals on releases and on demand (#154) (e24684e)
-- Improve chat feedback and isolate background replies (#153) (86adca3)
-- ci: Run CI on Blacksmith runners (#151) (e4287a3)
-- Give the browser one holder so background work never blocks a handoff (#152) (3c3745f)
 
 ## 0.1.8 - 2026-10-07
 
