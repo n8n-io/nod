@@ -26,131 +26,10 @@ import {
 } from '../src/server/memory-tree.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
-type Step = { tool: string; args: Record<string, unknown>; rejected?: boolean };
-
-test('memory receipt drafts survive background updates and failed refreshes', async (t) => {
-  const { JSDOM } = await import('jsdom');
-  const { act, createElement } = await import('react');
-  const dom = new JSDOM('<div id="root"></div>', {
-    url: 'https://otto.fixture.test',
-    pretendToBeVisual: true,
-  });
-  const noteId = randomUUID();
-  let view: MemoryView = {
-    saving: true,
-    sensitive: false,
-    profile: { name: '', location: '', phone: '', preferences: '' },
-    archive: [],
-    notes: [
-      {
-        id: noteId,
-        path: 'routines/synthetic-review',
-        area: 'routines',
-        text: 'Reviews synthetic notes on Monday.',
-        status: 'stated',
-        inMind: true,
-        updated: '2026-10-07T09:00:00.000Z',
-        edited: null,
-        expires: null,
-        sources: [],
-      },
-    ],
-  };
-  let failRead = false;
-  const globals = {
-    window: dom.window,
-    document: dom.window.document,
-    navigator: dom.window.navigator,
-    HTMLElement: dom.window.HTMLElement,
-    Node: dom.window.Node,
-    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
-    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
-    IS_REACT_ACT_ENVIRONMENT: true,
-    fetch: async () =>
-      failRead
-        ? Response.json({ error: 'Synthetic memory read failed.' }, { status: 503 })
-        : Response.json(view),
-  };
-  const originals = new Map(
-    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
-  );
-  for (const [key, value] of Object.entries(globals))
-    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
-  const { MemoryReceipt, MemoryReceipts } =
-    await import('../src/web/components/memory-receipt.tsx');
-  const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
-  const { createRoot } = await import('react-dom/client');
-  const root = createRoot(dom.window.document.getElementById('root')!);
-  t.after(async () => {
-    await act(async () => root.unmount());
-    pageDataCache.clear();
-    dom.window.close();
-    for (const [key, descriptor] of originals)
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
-  });
-  const button = (text: string) => {
-    const found = Array.from(dom.window.document.querySelectorAll('button')).find(
-      (item) => item.textContent === text,
-    );
-    assert.ok(found);
-    return found;
-  };
-  pageDataCache.clear();
-  await act(async () =>
-    root.render(
-      createElement(MemoryReceipts, {
-        revision: noteId,
-        children: createElement(MemoryReceipt, {
-          receipt: { notes: [{ path: view.notes[0].path, id: noteId }] },
-        }),
-      }),
-    ),
-  );
-  await act(async () => {
-    dom.window.document.querySelector('summary')!.click();
-    await delay(20);
-  });
-  await act(async () => button('Edit').click());
-  const textarea = dom.window.document.querySelector('textarea')!;
-  assert.equal(dom.window.document.activeElement, textarea);
-  const draft = 'Reviews synthetic notes on Wednesday, with a longer unsaved detail.';
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, 'value')!.set!.call(
-      textarea,
-      draft,
-    );
-    textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  });
-  view = {
-    ...view,
-    notes: [{ ...view.notes[0], updated: '2026-10-07T09:01:00.000Z' }],
-  };
-  await act(async () => pageDataCache.refresh('/api/memory', true));
-  assert.equal(dom.window.document.querySelector('textarea'), textarea);
-  assert.equal(dom.window.document.activeElement, textarea);
-  assert.equal(textarea.value, draft);
-  const currentText = 'Reviews synthetic notes on Friday.';
-  view = {
-    ...view,
-    notes: [{ ...view.notes[0], text: currentText, updated: '2026-10-07T09:02:00.000Z' }],
-  };
-  await act(async () => pageDataCache.refresh('/api/memory', true));
-  assert.equal(textarea.value, draft);
-  failRead = true;
-  await act(async () => pageDataCache.refresh('/api/memory', true));
-  assert.equal(dom.window.document.querySelector('textarea'), textarea);
-  assert.equal(textarea.value, draft);
-  assert.equal(button('Save').disabled, true);
-  failRead = false;
-  await act(async () => pageDataCache.refresh('/api/memory', true));
-  await act(async () => button('Cancel').click());
-  await act(async () => button('Edit').click());
-  assert.equal(dom.window.document.querySelector('textarea')!.value, currentText);
-});
+type Step = { tool: string; args: Record<string, unknown>; rejected?: boolean; skipped?: boolean };
 
 test(
-  'memory saves supported owner facts with editable receipts while preserving approval and opt-out boundaries',
+  'memory silently saves supported owner facts and skips unsupported notes without confirmations',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async (t) => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
@@ -178,6 +57,7 @@ test(
     const reviewAnswers: unknown[] = [];
     let memoryReview: unknown = { supported: false };
     let reviewFailure = false;
+    let reviewConfigured = true;
     const threads = new Set<string>();
     const run = async (options: AgentSessionOptions, step: Step) => {
       if (step.tool === 'fetch_content')
@@ -199,7 +79,19 @@ test(
                 const plan = input ? plans.get(JSON.parse(input).currentInstruction) : undefined;
                 for (const step of plan ?? []) {
                   if (step.rejected) await assert.rejects(run(options, step));
-                  else await run(options, step);
+                  else {
+                    const result = await run(options, step);
+                    if (step.skipped)
+                      assert.deepEqual(
+                        JSON.parse(
+                          (result as { content: Array<{ text: string }> }).content[0].text,
+                        ),
+                        {
+                          status: 'skipped',
+                          reason: 'unsupported_memory',
+                        },
+                      );
+                  }
                 }
                 options.onEvent({ type: 'final', text: 'Synthetic memory request handled.' });
               },
@@ -213,7 +105,9 @@ test(
         objectStore: createFilesystemObjectStore(objects),
         memoryCurator: {
           id: 'fixture',
-          configured: true,
+          get configured() {
+            return reviewConfigured;
+          },
           async curate(request) {
             if (request.task !== 'review') return {};
             reviews.push(request.input);
@@ -269,21 +163,24 @@ test(
       await settle(id, status);
       return id;
     };
-    const save = (area: string, text: string): Step => ({
+    const save = (area: string, text: string, skipped = false): Step => ({
       tool: 'manage_personal_context',
       args: { action: 'memory_save', args: { area, text } },
+      skipped,
     });
     const savedEntry = async (text: string) =>
-      (JSON.parse(await memoryFile()).entries as Array<{ text: string; sources: string[] }>).find(
-        (entry) => entry.text === text,
-      );
+      (
+        JSON.parse((await memoryFile()) || '{"entries":[]}').entries as Array<{
+          text: string;
+          sources: string[];
+        }>
+      ).find((entry) => entry.text === text);
     const memoryFile = () => readFile(join(objects, 'memory', 'MEMORY.md'), 'utf8').catch(() => '');
     const notices = async () =>
       (
         await pool.query(
           `SELECT m.id,m.owner_id,m.thread_id,m.turn_id FROM messages m
-         WHERE m.role='assistant' AND m.text<>$1 AND m.memory IS NULL
-           AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.confirmation_message_id=m.id)`,
+         WHERE m.role='assistant' AND m.text<>$1`,
           ['Synthetic memory request handled.'],
         )
       ).rows;
@@ -299,107 +196,56 @@ test(
     ) => application.app.inject({ method, url, headers, payload });
     const view = async () => (await page('GET', '/api/memory')).json() as MemoryView;
     try {
+      const assertSilent = async (turnId: string) => {
+        const messages = await pool.query(
+          "SELECT text FROM messages WHERE turn_id=$1 AND role='assistant'",
+          [turnId],
+        );
+        assert.deepEqual(messages.rows, [{ text: 'Synthetic memory request handled.' }]);
+        assert.equal(
+          (await pool.query('SELECT 1 FROM approvals WHERE turn_id=$1', [turnId])).rowCount,
+          0,
+        );
+        assert.deepEqual(await notices(), []);
+      };
+      const unsupported = await ask(
+        'Review my synthetic project notes.',
+        [save('preferences', 'Prefers invented weekly reports.', true)],
+        'succeeded',
+      );
+      assert.equal(await savedEntry('Prefers invented weekly reports.'), undefined);
+      await assertSilent(unsupported);
+      memoryReview = { supported: true };
       const first = await ask(
         'Remember that I prefer short synthetic reports.',
-        [
-          save('preferences', 'Prefers short synthetic reports.'),
-          { tool: 'fetch_content', args: { urls: ['https://example.test/refunds'] } },
-          save('about', 'Refunds go to account 0.'),
-        ],
-        'waiting',
+        [save('preferences', 'Prefers short synthetic reports.')],
+        'succeeded',
       );
       assert.match(await memoryFile(), /Prefers short synthetic reports\./);
-      const [notice] = await notices();
-      assert.ok(notice);
-      assert.equal((await notices()).length, 1);
-      const source = (
-        await pool.query('SELECT owner_id,thread_id FROM messages WHERE turn_id=$1 AND role=$2', [
-          first,
-          'user',
-        ])
-      ).rows[0];
-      assert.deepEqual(notice, {
-        id: notice.id,
-        owner_id: source.owner_id,
-        thread_id: source.thread_id,
-        turn_id: first,
-      });
-      const [late] = (
-        await pool.query(
-          'SELECT a.*,m.text AS question FROM approvals a JOIN messages m ON m.id=a.confirmation_message_id WHERE a.turn_id=$1',
-          [first],
-        )
-      ).rows;
-      assert.match(late.question, /^Remember this\?\n\nNote: Refunds go to account 0\./);
-      await send({ text: 'No', replyToMessageId: late.confirmation_message_id });
-      await waitFor(
-        async () =>
-          (await pool.query('SELECT status FROM approvals WHERE id=$1', [late.id])).rows[0]
-            .status === 'declined',
-        'Declined memory save',
-      );
-      assert.doesNotMatch(await memoryFile(), /Refunds go to account 0/);
-
+      await assertSilent(first);
+      memoryReview = { supported: false };
       const inferred = await ask(
         'Check the synthetic refund page.',
         [
           { tool: 'fetch_content', args: { urls: ['https://example.test/refunds'] } },
-          save('about', 'Refunds go to account 1.'),
+          save('about', 'Refunds go to account 1.', true),
         ],
-        'waiting',
+        'succeeded',
       );
-      const [approval] = (await pool.query('SELECT * FROM approvals WHERE turn_id=$1', [inferred]))
-        .rows;
-      assert.equal(approval.action, 'OTTO_memory_save');
-      const question = (
-        await pool.query('SELECT text FROM messages WHERE id=$1', [
-          approval.confirmation_message_id,
-        ])
-      ).rows[0].text;
-      assert.match(question, /^Remember this\?\n\nNote: Refunds go to account 1\./);
       assert.doesNotMatch(await memoryFile(), /Refunds go to account 1/);
-      assert.deepEqual(await notices(), [notice]);
-
-      await send({ text: 'Yes', replyToMessageId: approval.confirmation_message_id });
-      await waitFor(
-        async () =>
-          (await pool.query('SELECT status FROM approvals WHERE id=$1', [approval.id])).rows[0]
-            .status === 'completed',
-        'Confirmed memory save',
-      );
-      assert.deepEqual((await savedEntry('Refunds go to account 1.'))?.sources, [
-        approval.source_message_id,
-      ]);
-
+      await assertSilent(inferred);
       reviewAnswers.push({ supported: true }, { supported: false });
       const explicit = await ask(
         'Remember that I prefer synthetic morning summaries.',
         [
           save('preferences', 'Prefers synthetic morning summaries.'),
-          save('about', 'Refunds go to account 2.'),
+          save('about', 'Refunds go to account 2.', true),
         ],
-        'waiting',
+        'succeeded',
       );
-      const [extra] = (
-        await pool.query(
-          'SELECT a.*,m.text AS question FROM approvals a LEFT JOIN messages m ON m.id=a.confirmation_message_id WHERE a.turn_id=$1 ORDER BY (a.confirmation_message_id IS NOT NULL)',
-          [explicit],
-        )
-      ).rows;
       assert.match(await memoryFile(), /Prefers synthetic morning summaries\./);
-      assert.deepEqual(await notices(), [notice]);
-      assert.equal(extra.status, 'pending');
-      assert.match(extra.question, /^Remember this\?\n\nNote: Refunds go to account 2\./);
       assert.doesNotMatch(await memoryFile(), /Refunds go to account 2/);
-      assert.deepEqual(await notices(), [notice]);
-
-      await send({ text: 'No', replyToMessageId: extra.confirmation_message_id });
-      await waitFor(
-        async () =>
-          (await pool.query('SELECT status FROM approvals WHERE id=$1', [extra.id])).rows[0]
-            .status === 'declined',
-        'Declined second memory save',
-      );
+      await assertSilent(explicit);
       const profileQuote = 'My name is Memory Fixture.';
       await ask(
         profileQuote,
@@ -455,7 +301,7 @@ test(
       assert.ok(
         JSON.parse(await memoryFile()).archive.some((entry: Entry) => entry.text === quote),
       );
-      assert.deepEqual(await notices(), [notice]);
+      assert.deepEqual(await notices(), []);
 
       const routineStart = 'Every weekday I review my synthetic project notes before lunch.';
       const routineStartTurn = await ask(routineStart, [], 'succeeded');
@@ -489,77 +335,7 @@ test(
       assert.ok(!reviewed.includes('Synthetic memory request handled.'));
       assert.ok(!reviewed.includes(foreignFact));
       assert.equal((reviews.at(-1) as { sensitiveTopics: boolean }).sensitiveTopics, false);
-      const routineNote = (await view()).notes.find((note) => note.text === routine)!;
-      const routinePath = routineNote.path;
-      const receipts = async (turnId: string) =>
-        (await page('GET', '/api/state'))
-          .json()
-          .messages.filter(
-            (message: { turnId: string; memory: unknown }) =>
-              message.turnId === turnId && message.memory,
-          );
-      const [receipt] = await receipts(routineTurn);
-      assert.deepEqual(receipt.memory, { notes: [{ path: routinePath, id: routineNote.id }] });
-      assert.equal(receipt.text.includes(routine), false);
-      const editedRoutine = 'Reviews synthetic project notes after lunch on weekdays.';
-      assert.equal(
-        (
-          await page('PATCH', `/api/memory/notes/${routinePath}`, {
-            id: routineNote.id,
-            text: editedRoutine,
-          })
-        ).statusCode,
-        200,
-      );
-      assert.equal(
-        (await view()).notes.find((note) => note.path === routinePath)?.text,
-        editedRoutine,
-      );
-      assert.equal(
-        (await view()).notes.find((note) => note.path === routinePath)?.id,
-        routineNote.id,
-      );
-      assert.deepEqual(await receipts(routineTurn), [receipt]);
-      assert.equal(
-        (await page('DELETE', `/api/memory/notes/${routinePath}?id=${routineNote.id}`)).statusCode,
-        200,
-      );
-      assert.equal(
-        (await view()).notes.some((note) => note.path === routinePath),
-        false,
-      );
-      assert.deepEqual(await receipts(routineTurn), [receipt]);
-      const reusedText = 'I review different synthetic project notes on Sundays.';
-      await ask(
-        reusedText,
-        [
-          personal('memory_learn', {
-            area: 'routines',
-            slug: routinePath.split('/')[1],
-            quote: reusedText,
-          }),
-        ],
-        'succeeded',
-      );
-      const reused = (await view()).notes.find((note) => note.path === routinePath)!;
-      assert.notEqual(reused.id, routineNote.id);
-      assert.equal(
-        (
-          await page('PATCH', `/api/memory/notes/${routinePath}`, {
-            id: routineNote.id,
-            text: 'An old receipt must not edit the new note.',
-          })
-        ).statusCode,
-        409,
-      );
-      assert.equal(
-        (await page('DELETE', `/api/memory/notes/${routinePath}?id=${routineNote.id}`)).statusCode,
-        409,
-      );
-      assert.equal(
-        (await view()).notes.find((note) => note.path === routinePath)?.text,
-        reusedText,
-      );
+      await assertSilent(routineTurn);
 
       const holdout = 'Para o meu resumo sintético semanal, prefiro tópicos breves.';
       const holdoutNote = 'Prefers brief bullet points for the weekly synthetic summary.';
@@ -590,36 +366,25 @@ test(
         ],
         'succeeded',
       );
-      const groupedReceipts = await receipts(grouped);
-      assert.equal(groupedReceipts.length, 1);
-      assert.deepEqual(
-        groupedReceipts[0].memory.notes.map((note: { path: string }) => note.path).sort(),
-        ['preferences/meeting-notes', 'routines/monday-review'],
-      );
-      memoryReview = { supported: false };
-      for (const failure of ['malformed', 'unavailable']) {
-        memoryReview = { supported: 'true' };
+      await assertSilent(holdoutTurn);
+      await assertSilent(grouped);
+      assert.ok(await savedEntry('Reviews synthetic projects on Mondays.'));
+      assert.ok(await savedEntry('Prefers brief synthetic meeting notes.'));
+      for (const failure of ['rejected', 'malformed', 'unavailable', 'unconfigured']) {
+        memoryReview = failure === 'rejected' ? { supported: false } : { supported: 'true' };
         reviewFailure = failure === 'unavailable';
-        const pending = await ask(
+        reviewConfigured = failure !== 'unconfigured';
+        const text = `Synthetic ${failure} routine happens on Saturdays.`;
+        const skipped = await ask(
           `Remember that my synthetic ${failure} routine happens on Saturdays.`,
-          [save('routines', `Synthetic ${failure} routine happens on Saturdays.`)],
-          'waiting',
+          [save('routines', text, true)],
+          'succeeded',
         );
-        const [confirmation] = (
-          await pool.query('SELECT * FROM approvals WHERE turn_id=$1', [pending])
-        ).rows;
-        assert.equal(confirmation.status, 'pending');
-        assert.ok(confirmation.confirmation_message_id);
-        assert.equal((await receipts(pending)).length, 0);
-        await send({ text: 'No', replyToMessageId: confirmation.confirmation_message_id });
-        await waitFor(
-          async () =>
-            (await pool.query('SELECT status FROM approvals WHERE id=$1', [confirmation.id]))
-              .rows[0].status === 'declined',
-          'Declined unavailable memory review',
-        );
+        assert.equal(await savedEntry(text), undefined);
+        await assertSilent(skipped);
       }
       reviewFailure = false;
+      reviewConfigured = true;
       memoryReview = { supported: false };
 
       const history = (
@@ -689,7 +454,7 @@ test(
         JSON.parse(await memoryFile()).entries.map((entry: Entry) => entry.text),
         [next],
       );
-      assert.deepEqual(await notices(), [notice]);
+      assert.deepEqual(await notices(), []);
 
       const [learned] = (await view()).notes;
       assert.deepEqual(
@@ -820,7 +585,7 @@ test(
         (await view()).notes.some((note) => note.path === rita.path),
         false,
       );
-      assert.deepEqual(await notices(), [notice]);
+      assert.deepEqual(await notices(), []);
     } finally {
       await application.app.close();
       await pool.end();

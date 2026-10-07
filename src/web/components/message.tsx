@@ -22,7 +22,6 @@ import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
-import { MemoryReceipt } from './memory-receipt';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
@@ -146,7 +145,6 @@ export function MessageBubble({
   const menuTrigger = useRef<HTMLElement | null>(null);
   const pickerTrigger = useRef<HTMLElement | null>(null);
   const pickerElement = useRef<HTMLDivElement>(null);
-  const isMemory = Boolean(message.memory?.notes.length);
   const canInspect = message.role === 'assistant' && inspectorEnabled && Boolean(message.turnId);
   const agentReaction =
     message.role === 'user'
@@ -326,13 +324,12 @@ export function MessageBubble({
   return (
     <article
       ref={articleElement}
-      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}${isMemory ? ' message-memory' : ''}`}
+      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}`}
       aria-label={streaming ? 'Otto is responding' : message.role === 'user' ? 'You' : 'Otto'}
       data-message-id={streaming ? undefined : message.id}
       onPointerUp={(event) => {
         if (!['touch', 'pen'].includes(event.pointerType)) return;
-        if ((event.target as HTMLElement).closest('a,button,audio,video,input,textarea,summary'))
-          return;
+        if ((event.target as HTMLElement).closest('a,button,audio,video,input')) return;
         setSelected(true);
         event.currentTarget.focus();
       }}
@@ -341,7 +338,7 @@ export function MessageBubble({
       }}
       onContextMenu={(event) => {
         if (streaming) return;
-        if ((event.target as HTMLElement).closest('a,audio,video,input,textarea,summary')) return;
+        if ((event.target as HTMLElement).closest('a,audio,video')) return;
         event.preventDefault();
         openMenu(event.clientX, event.clientY, event.currentTarget);
       }}
@@ -364,16 +361,14 @@ export function MessageBubble({
             {message.attachments.length > 0 && (
               <MessageAttachments attachments={message.attachments} />
             )}
-            {message.memory?.notes.length ? (
-              <MemoryReceipt receipt={message.memory} />
-            ) : message.text ? (
+            {message.text && (
               <MessageText
                 text={message.text}
                 previews={!streaming}
                 connectedAppIds={connectedAppIds}
                 onHandoffDone={streaming ? undefined : onHandoffDone}
               />
-            ) : null}
+            )}
           </div>
           {!streaming && (
             <div className="message-tools">
@@ -385,7 +380,7 @@ export function MessageBubble({
                 {formatTime(message.createdAt, dateFormat)}
               </time>
               <div className="message-actions" aria-label="Message actions">
-                {onReply && !isMemory && (
+                {onReply && (
                   <Button
                     size="icon"
                     variant="ghost"
@@ -396,17 +391,15 @@ export function MessageBubble({
                     <CornerUpLeft size={16} />
                   </Button>
                 )}
-                {!isMemory && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label={copied ? 'Message copied' : 'Copy message'}
-                    title="Copy"
-                    onClick={() => void copy()}
-                  >
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                  </Button>
-                )}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={copied ? 'Message copied' : 'Copy message'}
+                  title="Copy"
+                  onClick={() => void copy()}
+                >
+                  {copied ? <Check size={16} /> : <Copy size={16} />}
+                </Button>
                 {message.role === 'assistant' && (
                   <Button
                     size="icon"
@@ -513,18 +506,16 @@ export function MessageBubble({
                 More emoji
               </button>
             )}
-            {onReply && !isMemory && (
+            {onReply && (
               <button role="menuitem" onClick={reply}>
                 <CornerUpLeft size={16} />
                 Reply
               </button>
             )}
-            {!isMemory && (
-              <button role="menuitem" onClick={() => void copy()}>
-                <Copy size={16} />
-                Copy
-              </button>
-            )}
+            <button role="menuitem" onClick={() => void copy()}>
+              <Copy size={16} />
+              Copy
+            </button>
             {canInspect && (
               <button role="menuitem" onClick={inspect}>
                 <ScanSearch size={16} />

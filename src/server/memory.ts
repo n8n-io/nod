@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
@@ -57,7 +56,6 @@ const readInput = z.object({ path: z.union([area, path]) }).strict();
 const noteInput = z.object({ area, text: line(600), expires: z.iso.date().optional() }).strict();
 const changeInput = z
   .object({
-    id: id.optional(),
     text: line(600).optional(),
     expires: z.iso.date().nullable().optional(),
     confirm: z.literal(true).optional(),
@@ -78,7 +76,6 @@ export function createMemoryService(options: {
   ownerId: string;
   store: PrivateObjectStore;
   curator?: MemoryCurator;
-  onSaved?: (sourceMessageId: string, note?: { path: string; id: string }) => Promise<void>;
 }) {
   async function initialize() {
     await options.pool.query(`DO $$ BEGIN
@@ -111,28 +108,16 @@ export function createMemoryService(options: {
     return { tree: parse(object?.bytes), bytes: object?.bytes, version: object?.version ?? null };
   }
 
-  async function edit<T>(
-    change: (tree: Tree) => T,
-    { allowDisabled = false, announce = false } = {},
-  ): Promise<T> {
+  async function edit<T>(change: (tree: Tree) => T, { allowDisabled = false } = {}): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       const current = await load();
       if (!current.tree.enabled && !allowDisabled) throw new Error('Memory is turned off.');
-      const previous = new Map(
-        current.tree.entries.map((entry) => [pathOf(entry), JSON.stringify(entry)]),
-      );
       const result = change(current.tree);
       const bytes = render(current.tree);
       if (current.bytes ? Buffer.from(current.bytes).equals(bytes) : isEmpty(current.tree))
         return result;
       try {
         await options.store.write(key, bytes, { expectedVersion: current.version });
-        if (announce)
-          for (const entry of current.tree.entries) {
-            const source = entry.sources.at(-1);
-            if (source && entry.id && previous.get(pathOf(entry)) !== JSON.stringify(entry))
-              await options.onSaved?.(source, { path: pathOf(entry), id: entry.id });
-          }
         return result;
       } catch (error) {
         if (!(error instanceof ObjectStoreConflict) || attempt === 2) throw error;
@@ -267,56 +252,50 @@ export function createMemoryService(options: {
     );
     if (!source.rowCount)
       throw new Error('The current owned user message is required as evidence.');
-    return edit(
-      (tree) => {
-        const now = new Date().toISOString();
-        const group = areaEntries(tree, input.area);
-        const same = input.slug
-          ? undefined
-          : group.find((entry) => fold(entry.text) === fold(input.text));
-        const near =
-          input.slug || same ? undefined : group.find((e) => similar(e.text, input.text, 0.6));
-        if (near)
-          throw new Error(
-            `A similar memory exists at ${pathOf(near)}. Save to its slug to add evidence, or use replace:true for a correction.`,
-          );
-        const name = input.slug ?? same?.slug ?? slugFor(tree, input.area, input.text);
-        const existing = locate(tree, `${input.area}/${name}`);
-        const replaced = !!existing && existing.text !== input.text;
-        if (replaced && !input.replace)
-          throw new Error('A change of memory text needs a replacement.');
-        if (!existing && tree.entries.length >= maxEntries)
-          throw new Error('The memory is full. Forget entries first.');
-        if (existing && replaced) archive(tree, existing, 'superseded', now);
-        const abstract = input.abstract ?? (replaced ? undefined : existing?.abstract);
-        const expires = input.expires ?? (replaced ? undefined : existing?.expires);
-        const entry: Entry = {
-          id: existing?.id ?? randomUUID(),
-          area: input.area,
-          slug: name,
-          text: input.text,
-          ...(abstract ? { abstract } : {}),
-          origin: 'stated',
-          updated: now,
-          sources: replaced
-            ? [sourceMessageId]
-            : [...new Set([...(existing?.sources ?? []), sourceMessageId])].slice(-5),
-          ...(expires ? { expires } : {}),
-        };
-        tree.entries = [...tree.entries.filter((item) => item !== existing), entry];
-        return { path: pathOf(entry), text: entry.text, status: 'stated' };
-      },
-      { announce: true },
-    );
+    return edit((tree) => {
+      const now = new Date().toISOString();
+      const group = areaEntries(tree, input.area);
+      const same = input.slug
+        ? undefined
+        : group.find((entry) => fold(entry.text) === fold(input.text));
+      const near =
+        input.slug || same ? undefined : group.find((e) => similar(e.text, input.text, 0.6));
+      if (near)
+        throw new Error(
+          `A similar memory exists at ${pathOf(near)}. Save to its slug to add evidence, or use replace:true for a correction.`,
+        );
+      const name = input.slug ?? same?.slug ?? slugFor(tree, input.area, input.text);
+      const existing = locate(tree, `${input.area}/${name}`);
+      const replaced = !!existing && existing.text !== input.text;
+      if (replaced && !input.replace)
+        throw new Error('A change of memory text needs a replacement.');
+      if (!existing && tree.entries.length >= maxEntries)
+        throw new Error('The memory is full. Forget entries first.');
+      if (existing && replaced) archive(tree, existing, 'superseded', now);
+      const abstract = input.abstract ?? (replaced ? undefined : existing?.abstract);
+      const expires = input.expires ?? (replaced ? undefined : existing?.expires);
+      const entry: Entry = {
+        area: input.area,
+        slug: name,
+        text: input.text,
+        ...(abstract ? { abstract } : {}),
+        origin: 'stated',
+        updated: now,
+        sources: replaced
+          ? [sourceMessageId]
+          : [...new Set([...(existing?.sources ?? []), sourceMessageId])].slice(-5),
+        ...(expires ? { expires } : {}),
+      };
+      tree.entries = [...tree.entries.filter((item) => item !== existing), entry];
+      return { path: pathOf(entry), text: entry.text, status: 'stated' };
+    });
   }
 
-  async function forget(raw: unknown, expectedId?: string) {
+  async function forget(raw: unknown) {
     const target = path.parse(raw);
     return edit(
       (tree) => {
         const entry = locate(tree, target);
-        if (expectedId && entry?.id !== id.parse(expectedId))
-          fail('This saved note has changed. Refresh memory before trying again.', 409);
         const archived = tree.archive.length;
         tree.archive = tree.archive.filter((item) => pathOf(item) !== target && item.by !== target);
         if (!entry && tree.archive.length === archived)
@@ -349,7 +328,6 @@ export function createMemoryService(options: {
       duplicate(tree, input.area, input.text);
       if (tree.entries.length >= maxEntries) fail('Memory is full. Forget a note first.');
       const entry: Entry = {
-        id: randomUUID(),
         area: input.area,
         slug: slugFor(tree, input.area, input.text),
         text: input.text,
@@ -370,8 +348,6 @@ export function createMemoryService(options: {
     safe(input.text);
     await owned((tree, now) => {
       const entry = locate(tree, at) ?? fail('This note is no longer in memory.', 404);
-      if (input.id && entry.id !== input.id)
-        fail('This saved note has changed. Refresh memory before trying again.', 409);
       const text = input.text ?? entry.text;
       const expires = input.expires === undefined ? entry.expires : (input.expires ?? undefined);
       const rewritten = text !== entry.text;
@@ -383,7 +359,6 @@ export function createMemoryService(options: {
       tree.entries = [
         ...tree.entries.filter((item) => item !== entry),
         {
-          ...(entry.id ? { id: entry.id } : {}),
           area: entry.area,
           slug: entry.slug,
           text,
@@ -414,7 +389,6 @@ export function createMemoryService(options: {
       tree.archive = tree.archive.filter((entry) => entry !== item);
       if (current && replaces) archive(tree, current, 'superseded', now);
       const entry: Entry = {
-        id: item.id ?? randomUUID(),
         area: item.area,
         slug: current && !replaces ? freeSlug(tree, item.area, item.slug) : item.slug,
         text: item.text,
@@ -483,7 +457,6 @@ export function createMemoryService(options: {
     context,
     supported,
     enabled: async () => (await load()).tree.enabled,
-    saved: async (sourceMessageId: string) => options.onSaved?.(sourceMessageId),
     learn,
     control,
     save,
