@@ -4959,6 +4959,9 @@ test(
 );
 
 test('feedback context identifies the running source checkout and keeps hosted release metadata', async (t) => {
+  const os = (await import('node:os')).default;
+  t.mock.method(os, 'platform', () => 'linux');
+  const hostname = t.mock.method(os, 'hostname', () => 'synthetic-local-machine');
   const { feedbackContext } = await import('../src/server/feedback-context.ts');
   const cwd = await mkdtemp(join(tmpdir(), 'feedback-source-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
@@ -4999,6 +5002,7 @@ test('feedback context identifies the running source checkout and keeps hosted r
     assert.equal(clean.appModified, false);
     assert.equal(clean.appVersion, null);
     assert.equal(clean.source, 'local-web');
+    assert.equal(clean.computerName, 'synthetic-local-machine');
     await writeFile(join(cwd, 'source.txt'), 'Synthetic modified source');
     const modified = await feedbackContext({ runtimeMode: 'local', environment, cwd });
     assert.equal(modified.appRelease, head);
@@ -5009,7 +5013,9 @@ test('feedback context identifies the running source checkout and keeps hosted r
     assert.equal(unavailable.appModified, null);
     assert.equal(unavailable.appVersion, null);
     assert.equal(unavailable.source, 'local-web');
+    assert.equal(unavailable.computerName, 'synthetic-local-machine');
   }
+  const localNameReads = hostname.mock.callCount();
   for (const runtimeMode of ['tenant', 'gateway'] as const) {
     const hosted = await feedbackContext({
       runtimeMode,
@@ -5025,6 +5031,8 @@ test('feedback context identifies the running source checkout and keeps hosted r
     assert.equal(hosted.appModified, null);
     assert.equal(hosted.source, 'hosted-web');
     assert.equal(hosted.development, false);
+    assert.equal(hosted.computerName, null);
+    assert.equal(hostname.mock.callCount(), localNameReads);
   }
   const production = await feedbackContext({
     runtimeMode: 'local',
@@ -5032,6 +5040,7 @@ test('feedback context identifies the running source checkout and keeps hosted r
     cwd,
   });
   assert.equal(production.appRelease, 'previous-release');
+  assert.equal(production.computerName, 'synthetic-local-machine');
   assert.equal(production.appModified, null);
   assert.equal(production.development, false);
 });
