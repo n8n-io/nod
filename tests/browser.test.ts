@@ -2771,6 +2771,7 @@ async function handoffView(
   }> = [];
   const activeUrls = new Set<string>();
   const revokedUrls: string[] = [];
+  const streamResponses: Response[] = [];
   dom.window.URL.createObjectURL = () => {
     const url = `blob:http://localhost/${randomUUID()}`;
     activeUrls.add(url);
@@ -2821,7 +2822,9 @@ async function handoffView(
       if (stream.signal?.aborted) abort();
       else stream.signal?.addEventListener('abort', abort, { once: true });
       return Promise.resolve(beforeStreamResponse).then(
-        () => new Response(body, { headers: { 'Content-Type': 'application/octet-stream' } }),
+        () =>
+          streamResponses.shift() ??
+          new Response(body, { headers: { 'Content-Type': 'application/octet-stream' } }),
       );
     },
   };
@@ -2860,6 +2863,7 @@ async function handoffView(
     completions: () => completions,
     pointer,
     streams,
+    streamResponses,
     activeUrls,
     revokedUrls,
     async render(next: React.ReactNode) {
@@ -3589,6 +3593,55 @@ for (const failure of [false, true])
       await view.button('Done');
       assert.equal(view.completions(), 1);
       assert.equal(view.streams[3].signal?.aborted, true);
+      assert.equal(view.activeUrls.size, 0);
+    } finally {
+      t.mock.timers.reset();
+      await view.close();
+    }
+  });
+
+for (const status of [423, 409])
+  test(`browser handoff access response ${status} ${status === 423 ? 'closes the view' : 'allows recovery'}`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const posted: unknown[] = [];
+    const view = await handoffView(async (_path, options) => {
+      posted.push(JSON.parse(String(options?.body)));
+      return Response.json({ ok: true });
+    });
+    try {
+      await view.showFrame();
+      view.streamResponses.push(Response.json({ error: 'Synthetic view response.' }, { status }));
+      await view.endStream();
+      await act(async () => t.mock.timers.tick(1000));
+      assert.equal(view.streams.length, 2);
+      assert.equal(view.activeUrls.size, 0);
+      assert.deepEqual(posted, []);
+      if (status === 423) {
+        assert.equal(Boolean(view.dom.window.document.querySelector('.browser-handoff')), false);
+        assert.equal(
+          view.streams.every((stream) => stream.signal?.aborted),
+          true,
+        );
+        await act(async () => t.mock.timers.tick(60_000));
+        assert.equal(view.streams.length, 2);
+        assert.equal(view.completions(), 0);
+      } else {
+        assert.equal(view.element('.browser-handoff-screen').getAttribute('aria-disabled'), 'true');
+        await act(async () => t.mock.timers.tick(1000));
+        assert.equal(view.streams.length, 3);
+        await view.showFrame();
+        assert.equal(
+          view.element('.browser-handoff-screen').getAttribute('aria-disabled'),
+          'false',
+        );
+        await view.button('Done');
+        assert.equal(view.completions(), 1);
+        assert.equal(
+          view.streams.every((stream) => stream.signal?.aborted),
+          true,
+        );
+      }
+      assert.deepEqual(posted, []);
       assert.equal(view.activeUrls.size, 0);
     } finally {
       t.mock.timers.reset();

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, Maximize2, Minimize2, RotateCw } from 'lucide-react';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
-import { apiStream, errorMessage, post } from '../lib/api';
+import { ApiError, apiStream, errorMessage, post } from '../lib/api';
 import { browserFrames } from '../lib/browser-frames';
 import { BrandMark } from './brand';
 import { Button, Loading } from './ui';
@@ -240,7 +240,8 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
         setLive(false);
         if (
           activeSignal?.aborted ||
-          (reason instanceof DOMException && reason.name === 'AbortError')
+          (reason instanceof DOMException && reason.name === 'AbortError') ||
+          (reason instanceof ApiError && reason.status === 423)
         ) {
           setClosed(true);
           return;

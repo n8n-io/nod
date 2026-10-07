@@ -75,17 +75,19 @@ async function request<T>(
   }
 }
 
+async function requireOk(response: Response, signal?: AbortSignal) {
+  if (response.ok) return;
+  const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
+  signal?.throwIfAborted();
+  throw new ApiError(
+    typeof body?.error === 'string' ? body.error : 'The request could not be completed. Try again.',
+    response.status,
+  );
+}
+
 export function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  return request(path, options, async (response) => {
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
-      throw new ApiError(
-        typeof body?.error === 'string'
-          ? body.error
-          : 'The request could not be completed. Try again.',
-        response.status,
-      );
-    }
+  return request(path, options, async (response, signal) => {
+    await requireOk(response, signal);
     return response.json() as Promise<T>;
   });
 }
@@ -109,7 +111,8 @@ export function apiStream(
   consume: (body: ReadableStream<Uint8Array>, signal?: AbortSignal) => Promise<void>,
 ) {
   return request(path, options, async (response, signal) => {
-    if (!response.ok || !response.body) throw new Error('The browser view could not connect.');
+    await requireOk(response, signal);
+    if (!response.body) throw new Error('The browser view could not connect.');
     await consume(response.body, signal);
   });
 }
