@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   archive,
@@ -89,6 +90,7 @@ export function applyReflect(
       } else {
         if (tree.entries.length >= maxEntries) continue;
         tree.entries.push({
+          id: randomUUID(),
           area: op.area,
           slug: freeSlug(tree, op.area, op.slug),
           text: op.text,

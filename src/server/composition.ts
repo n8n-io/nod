@@ -608,7 +608,7 @@ async function initializeApplication(
     ownerId,
     store: adapters.objectStore ?? createFilesystemObjectStore(join(dataRoot, 'objects')),
     curator,
-    onSaved: async (sourceMessageId) => {
+    onSaved: async (sourceMessageId, note) => {
       const result = await pool.query(
         `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
          SELECT $1,$2,'assistant',$3,m.thread_id,m.turn_id FROM messages m
@@ -622,7 +622,26 @@ async function initializeApplication(
           sourceMessageId,
         ],
       );
-      if (result.rowCount) refresh();
+      let remembered = 0;
+      if (note) {
+        const hash = createHash('sha256')
+          .update(`memory-receipt:${ownerId}:${sourceMessageId}`)
+          .digest('hex');
+        const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-8${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+        const receipt = await pool.query(
+          `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,memory)
+           SELECT $1,$2,'assistant',$3,m.thread_id,m.turn_id,$5::jsonb FROM messages m
+           JOIN threads t ON t.id=m.thread_id AND t.owner_id=m.owner_id AND t.archived_at IS NULL
+           WHERE m.id=$4 AND m.owner_id=$2 AND m.role='user'
+           ON CONFLICT(id) DO UPDATE SET memory=jsonb_build_object('notes',
+             (SELECT jsonb_agg(DISTINCT value) FROM jsonb_array_elements((messages.memory->'notes') || (EXCLUDED.memory->'notes'))))
+           WHERE messages.owner_id=EXCLUDED.owner_id AND NOT messages.memory @> EXCLUDED.memory
+           RETURNING id`,
+          [id, ownerId, 'Remembered useful details.', sourceMessageId, { notes: [note] }],
+        );
+        remembered = receipt.rowCount ?? 0;
+      }
+      if (result.rowCount || remembered) refresh();
     },
   });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
@@ -846,9 +865,8 @@ async function initializeApplication(
           );
         if (action === 'memory_save' && (await memory.untrusted(turn.threadId))) {
           const input = memory.validate(args);
-          return approvals.request(turn, 'OTTO_memory_save', input, {
-            confirm: await memory.cites(provenance.sourceMessageId),
-          });
+          if (!(await memory.supported(input, { ...provenance, turnId: turn.turnId })))
+            return approvals.request(turn, 'OTTO_memory_save', input, { confirm: true });
         }
         if (
           [

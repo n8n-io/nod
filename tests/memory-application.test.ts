@@ -53,6 +53,10 @@ test(
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, port, ownerId } = await import('../src/server/config.ts');
     const plans = new Map<string, Step[]>();
+    const reviews: object[] = [];
+    const reviewAnswers: unknown[] = [];
+    let memoryReview: unknown = { supported: false };
+    let reviewFailure = false;
     const threads = new Set<string>();
     const run = async (options: AgentSessionOptions, step: Step) => {
       if (step.tool === 'fetch_content')
@@ -86,6 +90,16 @@ test(
         workspace: fakeWorkspace(),
         integrations: createIntegrationFixture('http://localhost:4320').provider,
         objectStore: createFilesystemObjectStore(objects),
+        memoryCurator: {
+          id: 'fixture',
+          configured: true,
+          async curate(request) {
+            if (request.task !== 'review') return {};
+            reviews.push(request.input);
+            if (reviewFailure) throw new Error('Synthetic review unavailable.');
+            return reviewAnswers.length ? reviewAnswers.shift() : memoryReview;
+          },
+        },
         speech: {
           id: 'fixture',
           configured: false,
@@ -147,7 +161,7 @@ test(
       (
         await pool.query(
           `SELECT m.id,m.owner_id,m.thread_id,m.turn_id FROM messages m
-         WHERE m.role='assistant' AND m.text<>$1
+         WHERE m.role='assistant' AND m.text<>$1 AND m.memory IS NULL
            AND NOT EXISTS (SELECT 1 FROM approvals a WHERE a.confirmation_message_id=m.id)`,
           ['Synthetic memory request handled.'],
         )
@@ -157,6 +171,12 @@ test(
       args: { action, args },
       rejected,
     });
+    const page = async (
+      method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+      url: string,
+      payload?: object,
+    ) => application.app.inject({ method, url, headers, payload });
+    const view = async () => (await page('GET', '/api/memory')).json() as MemoryView;
     try {
       const first = await ask(
         'Remember that I prefer short synthetic reports.',
@@ -230,6 +250,7 @@ test(
         approval.source_message_id,
       ]);
 
+      reviewAnswers.push({ supported: true }, { supported: false });
       const explicit = await ask(
         'Remember that I prefer synthetic morning summaries.',
         [
@@ -238,14 +259,12 @@ test(
         ],
         'waiting',
       );
-      const [direct, extra] = (
+      const [extra] = (
         await pool.query(
           'SELECT a.*,m.text AS question FROM approvals a LEFT JOIN messages m ON m.id=a.confirmation_message_id WHERE a.turn_id=$1 ORDER BY (a.confirmation_message_id IS NOT NULL)',
           [explicit],
         )
       ).rows;
-      assert.equal(direct.status, 'completed');
-      assert.equal(direct.confirmation_message_id, null);
       assert.match(await memoryFile(), /Prefers synthetic morning summaries\./);
       assert.deepEqual(await notices(), [notice]);
       assert.equal(extra.status, 'pending');
@@ -317,6 +336,165 @@ test(
       );
       assert.deepEqual(await notices(), [notice]);
 
+      const routineStart = 'Every weekday I review my synthetic project notes before lunch.';
+      await ask(routineStart, [], 'succeeded');
+      const routineEnd = 'I also check the synthetic project backlog on Friday afternoons.';
+      const routine =
+        'Reviews synthetic project notes before lunch on weekdays and checks the synthetic project backlog on Friday afternoons.';
+      memoryReview = { supported: true };
+      const routineTurn = await ask(
+        routineEnd,
+        [
+          { tool: 'fetch_content', args: { urls: ['https://example.test/refunds'] } },
+          save('routines', routine),
+        ],
+        'succeeded',
+      );
+      assert.ok(await savedEntry(routine));
+      assert.equal(
+        (await pool.query('SELECT 1 FROM approvals WHERE turn_id=$1', [routineTurn])).rowCount,
+        0,
+      );
+      const reviewed = JSON.stringify(reviews.at(-1));
+      assert.ok(reviewed.includes(routineStart));
+      assert.ok(reviewed.includes(routineEnd));
+      assert.ok(!reviewed.includes('Remember that refunds go to account 1.'));
+      assert.ok(!reviewed.includes('Synthetic memory request handled.'));
+      assert.ok(!reviewed.includes('Other Fixture'));
+      assert.equal((reviews.at(-1) as { sensitiveTopics: boolean }).sensitiveTopics, false);
+      const routineNote = (await view()).notes.find((note) => note.text === routine)!;
+      const routinePath = routineNote.path;
+      const receipts = async (turnId: string) =>
+        (await page('GET', '/api/state'))
+          .json()
+          .messages.filter(
+            (message: { turnId: string; memory: unknown }) =>
+              message.turnId === turnId && message.memory,
+          );
+      const [receipt] = await receipts(routineTurn);
+      assert.deepEqual(receipt.memory, { notes: [{ path: routinePath, id: routineNote.id }] });
+      assert.equal(receipt.text.includes(routine), false);
+      const editedRoutine = 'Reviews synthetic project notes after lunch on weekdays.';
+      assert.equal(
+        (
+          await page('PATCH', `/api/memory/notes/${routinePath}`, {
+            id: routineNote.id,
+            text: editedRoutine,
+          })
+        ).statusCode,
+        200,
+      );
+      assert.equal(
+        (await view()).notes.find((note) => note.path === routinePath)?.text,
+        editedRoutine,
+      );
+      assert.equal(
+        (await view()).notes.find((note) => note.path === routinePath)?.id,
+        routineNote.id,
+      );
+      assert.deepEqual(await receipts(routineTurn), [receipt]);
+      assert.equal(
+        (await page('DELETE', `/api/memory/notes/${routinePath}?id=${routineNote.id}`)).statusCode,
+        200,
+      );
+      assert.equal(
+        (await view()).notes.some((note) => note.path === routinePath),
+        false,
+      );
+      assert.deepEqual(await receipts(routineTurn), [receipt]);
+      const reusedText = 'I review different synthetic project notes on Sundays.';
+      await ask(
+        reusedText,
+        [
+          personal('memory_learn', {
+            area: 'routines',
+            slug: routinePath.split('/')[1],
+            quote: reusedText,
+          }),
+        ],
+        'succeeded',
+      );
+      const reused = (await view()).notes.find((note) => note.path === routinePath)!;
+      assert.notEqual(reused.id, routineNote.id);
+      assert.equal(
+        (
+          await page('PATCH', `/api/memory/notes/${routinePath}`, {
+            id: routineNote.id,
+            text: 'An old receipt must not edit the new note.',
+          })
+        ).statusCode,
+        409,
+      );
+      assert.equal(
+        (await page('DELETE', `/api/memory/notes/${routinePath}?id=${routineNote.id}`)).statusCode,
+        409,
+      );
+      assert.equal(
+        (await view()).notes.find((note) => note.path === routinePath)?.text,
+        reusedText,
+      );
+
+      const holdout = 'Para o meu resumo sintético semanal, prefiro tópicos breves.';
+      const holdoutNote = 'Prefers brief bullet points for the weekly synthetic summary.';
+      const holdoutTurn = await ask(holdout, [save('preferences', holdoutNote)], 'succeeded');
+      assert.ok(await savedEntry(holdoutNote));
+      assert.equal(
+        (await pool.query('SELECT 1 FROM approvals WHERE turn_id=$1', [holdoutTurn])).rowCount,
+        0,
+      );
+      const grouped = await ask(
+        'My synthetic review days are Mondays, and I prefer brief synthetic meeting notes.',
+        [
+          personal('memory_save', {
+            area: 'routines',
+            slug: 'monday-review',
+            text: 'Reviews synthetic projects on Mondays.',
+          }),
+          personal('memory_save', {
+            area: 'preferences',
+            slug: 'meeting-notes',
+            text: 'Prefers brief synthetic meeting notes.',
+          }),
+          personal('memory_save', {
+            area: 'routines',
+            slug: 'monday-review',
+            text: 'Reviews synthetic projects on Mondays.',
+          }),
+        ],
+        'succeeded',
+      );
+      const groupedReceipts = await receipts(grouped);
+      assert.equal(groupedReceipts.length, 1);
+      assert.deepEqual(
+        groupedReceipts[0].memory.notes.map((note: { path: string }) => note.path).sort(),
+        ['preferences/meeting-notes', 'routines/monday-review'],
+      );
+      memoryReview = { supported: false };
+      for (const failure of ['malformed', 'unavailable']) {
+        memoryReview = { supported: 'true' };
+        reviewFailure = failure === 'unavailable';
+        const pending = await ask(
+          `Remember that my synthetic ${failure} routine happens on Saturdays.`,
+          [save('routines', `Synthetic ${failure} routine happens on Saturdays.`)],
+          'waiting',
+        );
+        const [confirmation] = (
+          await pool.query('SELECT * FROM approvals WHERE turn_id=$1', [pending])
+        ).rows;
+        assert.equal(confirmation.status, 'pending');
+        assert.ok(confirmation.confirmation_message_id);
+        assert.equal((await receipts(pending)).length, 0);
+        await send({ text: 'No', replyToMessageId: confirmation.confirmation_message_id });
+        await waitFor(
+          async () =>
+            (await pool.query('SELECT status FROM approvals WHERE id=$1', [confirmation.id]))
+              .rows[0].status === 'declined',
+          'Declined unavailable memory review',
+        );
+      }
+      reviewFailure = false;
+      memoryReview = { supported: false };
+
       const history = (
         await pool.query('SELECT id FROM messages WHERE owner_id=$1 ORDER BY id', [ownerId])
       ).rows;
@@ -386,12 +564,6 @@ test(
       );
       assert.deepEqual(await notices(), [notice]);
 
-      const page = async (
-        method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
-        url: string,
-        payload?: object,
-      ) => application.app.inject({ method, url, headers, payload });
-      const view = async () => (await page('GET', '/api/memory')).json() as MemoryView;
       const [learned] = (await view()).notes;
       assert.deepEqual(
         [

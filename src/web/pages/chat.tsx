@@ -13,6 +13,7 @@ import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
+import { MemoryReceipts } from '../components/memory-receipt';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-intro';
@@ -767,70 +768,80 @@ export function Chat({
             !working &&
             !sending &&
             (state.configuration.llmReady ? <Welcome /> : <ModelSetup />)}
-          <div
-            className="messages"
-            role="log"
-            aria-label="Conversation"
-            aria-live="polite"
-            aria-relevant="additions"
+          <MemoryReceipts
+            revision={visibleMessages
+              .filter((message) => message.memory?.notes.length)
+              .map(
+                (message) =>
+                  `${message.id}:${message.memory!.notes.map((note) => note.id).join(',')}`,
+              )
+              .join(';')}
           >
-            {visibleMessages.map((message, index) => (
-              <Fragment key={message.streamId ?? message.id}>
-                {(!index ||
-                  !isSameDay(
-                    visibleMessages[index - 1].createdAt,
-                    message.createdAt,
-                    dateFormat,
-                  )) && (
-                  <div className="day-divider">
-                    <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
+            <div
+              className="messages"
+              role="log"
+              aria-label="Conversation"
+              aria-live="polite"
+              aria-relevant="additions"
+            >
+              {visibleMessages.map((message, index) => (
+                <Fragment key={message.streamId ?? message.id}>
+                  {(!index ||
+                    !isSameDay(
+                      visibleMessages[index - 1].createdAt,
+                      message.createdAt,
+                      dateFormat,
+                    )) && (
+                    <div className="day-divider">
+                      <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
+                    </div>
+                  )}
+                  <MessageBubble
+                    message={message}
+                    connectedAppIds={connectedAppIds}
+                    streaming={streamIds.has(message.streamId ?? '')}
+                    inspectorEnabled={state.configuration.inspectorEnabled}
+                    grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
+                    onHandoffDone={
+                      message.id === returningHandoff ||
+                      (message.id === handoffMessage?.id &&
+                        message.role === 'assistant' &&
+                        !working &&
+                        !sending)
+                        ? () => finishHandoff(message.id)
+                        : undefined
+                    }
+                    onReply={
+                      message.turnId || persistedIds.has(message.id)
+                        ? () => {
+                            setReplyTo(message);
+                            composer.current?.focus();
+                          }
+                        : undefined
+                    }
+                  />
+                </Fragment>
+              ))}
+              {(sending || resetting || working || welcoming) && streamEntries.length === 0 && (
+                <div
+                  className="thinking"
+                  role="status"
+                  aria-label={
+                    resetting ? 'Starting setup' : sending ? 'Sending message' : 'Otto is typing'
+                  }
+                >
+                  <div className="assistant-mark">
+                    <BrandMark small />
                   </div>
-                )}
-                <MessageBubble
-                  message={message}
-                  connectedAppIds={connectedAppIds}
-                  streaming={streamIds.has(message.streamId ?? '')}
-                  inspectorEnabled={state.configuration.inspectorEnabled}
-                  grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
-                  onHandoffDone={
-                    message.id === returningHandoff ||
-                    (message.id === handoffMessage?.id &&
-                      message.role === 'assistant' &&
-                      !working &&
-                      !sending)
-                      ? () => finishHandoff(message.id)
-                      : undefined
-                  }
-                  onReply={
-                    message.turnId || persistedIds.has(message.id)
-                      ? () => {
-                          setReplyTo(message);
-                          composer.current?.focus();
-                        }
-                      : undefined
-                  }
-                />
-              </Fragment>
-            ))}
-            {(sending || resetting || working || welcoming) && streamEntries.length === 0 && (
-              <div
-                className="thinking"
-                role="status"
-                aria-label={
-                  resetting ? 'Starting setup' : sending ? 'Sending message' : 'Otto is typing'
-                }
-              >
-                <div className="assistant-mark">
-                  <BrandMark small />
+                  <span className="thinking-dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
                 </div>
-                <span className="thinking-dots" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          </MemoryReceipts>
           <div ref={bottom} />
         </div>
       </div>

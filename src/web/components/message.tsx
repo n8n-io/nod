@@ -22,6 +22,7 @@ import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
+import { MemoryReceipt } from './memory-receipt';
 import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
@@ -324,12 +325,13 @@ export function MessageBubble({
   return (
     <article
       ref={articleElement}
-      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}`}
+      className={`message message-${message.role}${grouped ? ' message-grouped' : ''}${selected ? ' message-selected' : ''}${message.memory?.notes.length ? ' message-memory' : ''}`}
       aria-label={streaming ? 'Otto is responding' : message.role === 'user' ? 'You' : 'Otto'}
       data-message-id={streaming ? undefined : message.id}
       onPointerUp={(event) => {
         if (!['touch', 'pen'].includes(event.pointerType)) return;
-        if ((event.target as HTMLElement).closest('a,button,audio,video,input')) return;
+        if ((event.target as HTMLElement).closest('a,button,audio,video,input,textarea,summary'))
+          return;
         setSelected(true);
         event.currentTarget.focus();
       }}
@@ -338,7 +340,7 @@ export function MessageBubble({
       }}
       onContextMenu={(event) => {
         if (streaming) return;
-        if ((event.target as HTMLElement).closest('a,audio,video')) return;
+        if ((event.target as HTMLElement).closest('a,audio,video,input,textarea,summary')) return;
         event.preventDefault();
         openMenu(event.clientX, event.clientY, event.currentTarget);
       }}
@@ -361,14 +363,16 @@ export function MessageBubble({
             {message.attachments.length > 0 && (
               <MessageAttachments attachments={message.attachments} />
             )}
-            {message.text && (
+            {message.memory?.notes.length ? (
+              <MemoryReceipt receipt={message.memory} />
+            ) : message.text ? (
               <MessageText
                 text={message.text}
                 previews={!streaming}
                 connectedAppIds={connectedAppIds}
                 onHandoffDone={streaming ? undefined : onHandoffDone}
               />
-            )}
+            ) : null}
           </div>
           {!streaming && (
             <div className="message-tools">

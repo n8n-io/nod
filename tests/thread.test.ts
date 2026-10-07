@@ -2988,12 +2988,10 @@ test(
         /similar memory exists at preferences\/prefers-short-progress-reports/,
       );
       await memory.save({ area: 'preferences', text: detailed }, secret);
-      assert.equal(
-        (await memory.load()).entries.find((entry) => entry.slug === slug)?.sources.length,
-        2,
+      assert.deepEqual(
+        (await memory.load()).entries.find((entry) => entry.slug === slug)?.sources,
+        [correction.sourceMessageId, secret.sourceMessageId],
       );
-      assert.equal(await memory.cites(secret.sourceMessageId), true);
-      assert.equal(await memory.cites(randomUUID()), false);
       const approved = await memory.save(
         { area: 'about', text: 'Lives in Lisbon.' },
         { sourceMessageId: first.sourceMessageId, approved: true },

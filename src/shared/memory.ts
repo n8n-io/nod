@@ -13,6 +13,7 @@ export interface MemorySource {
 }
 
 export interface MemoryNote {
+  id?: string;
   path: string;
   area: MemoryArea;
   text: string;

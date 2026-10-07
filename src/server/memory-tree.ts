@@ -38,6 +38,7 @@ export const line = (max: number) =>
 const timestamp = z.iso.datetime({ offset: true });
 
 const entryFields = z.object({
+  id: id.optional(),
   area,
   slug,
   text: line(600),
@@ -385,6 +386,7 @@ export function view(
     notes: tree.entries
       .toSorted((a, b) => b.updated.localeCompare(a.updated) || pathOf(a).localeCompare(pathOf(b)))
       .map((entry) => ({
+        ...(entry.id ? { id: entry.id } : {}),
         path: pathOf(entry),
         area: entry.area,
         text: entry.text,

@@ -277,7 +277,12 @@ export function createPersonalService(dependencies: PersonalDependencies) {
       changed(memory?.change(notePath(request.params), request.body)),
     );
     app.delete('/api/memory/notes/:area/:slug', (request) =>
-      changed(memory?.forget(notePath(request.params))),
+      changed(
+        memory?.forget(
+          notePath(request.params),
+          z.object({ id: z.uuid().optional() }).strict().parse(request.query).id,
+        ),
+      ),
     );
     app.post('/api/memory/archive/restore', (request) => changed(memory?.restore(request.body)));
     app.post('/api/memory/archive/forget', (request) =>
