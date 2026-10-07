@@ -121,7 +121,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   }
 
   function key(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (event.altKey) return;
+    if (event.target !== event.currentTarget || event.altKey) return;
     const letter = event.key.toLowerCase();
     if (event.ctrlKey || event.metaKey) {
       if (letter === 'v' || !/^[a-z0-9]$/.test(letter)) return;
@@ -176,6 +176,24 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
     }
   }
 
+  function resize(value: boolean) {
+    setLive(false);
+    setShown(false);
+    setExpanded(value);
+  }
+
+  useEffect(() => {
+    if (closed || live || failures >= 3) return;
+    const timer = window.setTimeout(() => setFailures((value) => value + 1), 15_000);
+    return () => window.clearTimeout(timer);
+  }, [attempt, closed, live, failures]);
+
+  useEffect(() => {
+    if (closed || !failures || failures >= 3) return;
+    const timer = window.setTimeout(() => setAttempt((value) => value + 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [closed, failures]);
+
   useEffect(() => {
     const element = screen.current;
     if (!element || closed) return;
@@ -196,8 +214,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
     if (!expanded || closed) return;
     screen.current?.focus();
     const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !screen.current?.contains(event.target as Node))
-        setExpanded(false);
+      if (event.key === 'Escape' && !screen.current?.contains(event.target as Node)) resize(false);
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
@@ -205,18 +222,21 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
 
   if (closed) return null;
   const busy = returning || loading !== null;
-  const closedBrowser =
-    failures >= 3 ? "Otto's browser is closed. Ask Otto to open the page again." : '';
+  const unavailable = failures >= 3;
   const status =
     error ||
     (live
       ? 'Click and type here, then hand it back.'
-      : closedBrowser || (shown ? 'Reconnecting…' : ''));
+      : unavailable
+        ? 'The browser view could not connect.'
+        : shown
+          ? 'Reconnecting…'
+          : '');
   const sizeToggle = (
     <Button
       variant="ghost"
       size="icon"
-      onClick={() => setExpanded(!expanded)}
+      onClick={() => resize(!expanded)}
       aria-label={expanded ? 'Shrink browser' : 'Enlarge browser'}
       title={expanded ? 'Shrink browser' : 'Enlarge browser'}
     >
@@ -253,30 +273,45 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
         onKeyDown={key}
         onPaste={paste}
       >
-        <img
-          key={attempt}
-          src={`/api/browser-handoff/stream?view=${view.current}-${attempt}`}
-          alt="Otto's browser"
-          draggable={false}
-          hidden={!shown}
-          onLoad={(event) => {
-            setLive(true);
-            setShown(true);
-            setFailures(0);
-            setNaturalWidth(event.currentTarget.naturalWidth);
-          }}
-          onError={() => {
-            setLive(false);
-            setFailures((value) => value + 1);
-            window.setTimeout(() => setAttempt((value) => value + 1), 1000);
-          }}
-          onMouseMove={(event) => mouse(event, 'move')}
-          onMouseDown={(event) => mouse(event, 'down')}
-          onMouseUp={(event) => mouse(event, 'up')}
-          onMouseLeave={release}
-          onContextMenu={(event) => event.preventDefault()}
-        />
-        {!shown && <Loading label={closedBrowser || "Opening Otto's browser…"} />}
+        {!unavailable && (
+          <img
+            key={attempt}
+            src={`/api/browser-handoff/stream?view=${view.current}-${attempt}`}
+            alt="Otto's browser"
+            draggable={false}
+            hidden={!shown}
+            onLoad={(event) => {
+              setLive(true);
+              setShown(true);
+              setFailures(0);
+              setNaturalWidth(event.currentTarget.naturalWidth);
+            }}
+            onError={() => {
+              setLive(false);
+              setFailures((value) => value + 1);
+            }}
+            onMouseMove={(event) => mouse(event, 'move')}
+            onMouseDown={(event) => mouse(event, 'down')}
+            onMouseUp={(event) => mouse(event, 'up')}
+            onMouseLeave={release}
+            onContextMenu={(event) => event.preventDefault()}
+          />
+        )}
+        {unavailable ? (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setFailures(0);
+              setShown(false);
+              setError('');
+              setAttempt((value) => value + 1);
+            }}
+          >
+            Try again
+          </Button>
+        ) : !shown ? (
+          <Loading label="Opening Otto's browser…" />
+        ) : null}
       </div>
       <div className="browser-handoff-bar">
         <div className="browser-handoff-actions">
@@ -320,7 +355,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
       </div>
       {createPortal(
         <>
-          <div className="browser-handoff-overlay" onClick={() => setExpanded(false)} />
+          <div className="browser-handoff-overlay" onClick={() => resize(false)} />
           {panel}
         </>,
         document.body,

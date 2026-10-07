@@ -22,20 +22,20 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     options.pool.query(
       `SELECT id,role,text,turn_id,created_at FROM messages
        WHERE owner_id=$1 AND thread_id=$2 AND created_at >= now()-interval '24 hours'
-       ORDER BY created_at DESC,id DESC LIMIT 30`,
+       ORDER BY created_at DESC,id DESC LIMIT 31`,
       values,
     ),
     options.pool.query(
-      `SELECT id,source,status,error,created_at,started_at,finished_at FROM turns
+      `SELECT id,source,status,error,background,waiting_reason,created_at,started_at,finished_at FROM turns
        WHERE owner_id=$1 AND thread_id=$2 AND created_at >= now()-interval '24 hours'
-       ORDER BY created_at DESC,id DESC LIMIT 20`,
+       ORDER BY created_at DESC,id DESC LIMIT 21`,
       values,
     ),
     options.pool.query(
       `SELECT id,turn_id,kind,name,status,input,output,error,duration_ms,started_at,finished_at
        FROM inspector_records WHERE owner_id=$1 AND thread_id=$2
        AND recorded_at >= now()-interval '24 hours'
-       ORDER BY started_at DESC,id DESC LIMIT 60`,
+       ORDER BY started_at DESC,id DESC LIMIT 61`,
       values,
     ),
   ]);
@@ -46,7 +46,9 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
   );
   const toolCaptureEnabled = options.captureEnabled();
   const useSessionTrace = !toolCaptureEnabled || !trace.rows.length;
-  const toolTrace = useSessionTrace ? savedToolTrace(entries, Date.now()) : trace.rows;
+  const toolTrace = useSessionTrace
+    ? savedToolTrace(entries, Date.now())
+    : { rows: trace.rows.slice(0, 60), truncated: trace.rows.length > 60 };
   const report = {
     format: 'otto-feedback-report-v1',
     generatedAt: new Date().toISOString(),
@@ -60,11 +62,11 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
       maximumMessages: 30,
       maximumTurns: 20,
       maximumToolRecords: 60,
-      truncated: false,
+      truncated: messages.rows.length > 30 || turns.rows.length > 20 || toolTrace.truncated,
     },
-    messages: messages.rows.map(redact).reverse(),
-    turns: turns.rows.map(redact).reverse(),
-    trace: toolTrace
+    messages: messages.rows.slice(0, 30).map(redact).reverse(),
+    turns: turns.rows.slice(0, 20).map(redact).reverse(),
+    trace: toolTrace.rows
       .map((row) =>
         redact(
           row.name === 'get_credential'
@@ -92,8 +94,9 @@ function record(value: unknown): RecordValue | undefined {
     : undefined;
 }
 
-function savedToolTrace(entries: unknown[], now: number): RecordValue[] {
+function savedToolTrace(entries: unknown[], now: number) {
   const calls = new Map<string, RecordValue>();
+  let truncated = false;
   const privateTools = new Set(['get_credential', 'browser_flow', 'manage_personal_context']);
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = record(entries[index]);
@@ -118,7 +121,10 @@ function savedToolTrace(entries: unknown[], now: number): RecordValue[] {
       if (typeof tool?.id !== 'string' || !tool.id || typeof tool.name !== 'string') continue;
       let call = calls.get(tool.id);
       if (!call) {
-        if (calls.size >= 60) continue;
+        if (calls.size >= 60) {
+          truncated = true;
+          continue;
+        }
         call = { id: tool.id, kind: 'tool', name: tool.name, status: 'unknown' };
         calls.set(tool.id, call);
       }
@@ -148,7 +154,7 @@ function savedToolTrace(entries: unknown[], now: number): RecordValue[] {
       }
     }
   }
-  return [...calls.values()];
+  return { rows: [...calls.values()], truncated };
 }
 
 function savedCredentialValues(entries: unknown[]): string[] {

@@ -4686,6 +4686,7 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
     const encoded = await buildFeedbackReport({ ...options, captureEnabled: () => captureEnabled });
     const report = JSON.parse(encoded);
     assert.equal(report.coverage.toolTraceSource, 'saved-session');
+    assert.equal(report.coverage.truncated, false);
     assert.equal(report.trace.length, 7);
     const browser = report.trace.find((item: { id: string }) => item.id === 'recent');
     assert.deepEqual(browser.input, { action: 'snapshot' });
@@ -4730,6 +4731,24 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
   assert.equal(captured.trace.length, 1);
   assert.equal(captured.trace[0].id, 'captured');
   assert.equal(JSON.parse(await buildFeedbackReport(options)).trace.length, 7);
+  entries = Array.from({ length: 60 }, (_, index) =>
+    activity(`compact-${index}`, 'browser', {}, 'synthetic', now - (61 - index) * 1000),
+  ).flat();
+  const complete = JSON.parse(await buildFeedbackReport(options));
+  assert.equal(complete.coverage.truncated, false);
+  assert.equal(complete.trace.length, 60);
+  entries.push(...activity('compact-60', 'browser', {}, 'synthetic', now));
+  const sampled = JSON.parse(await buildFeedbackReport(options));
+  assert.equal(sampled.coverage.truncated, true);
+  assert.deepEqual(
+    sampled.trace.map((row: { id: string }) => row.id),
+    Array.from({ length: 60 }, (_, index) => `compact-${index + 1}`),
+  );
+  assert.equal(
+    JSON.parse(await buildFeedbackReport({ ...options, captureEnabled: () => true })).coverage
+      .truncated,
+    false,
+  );
   const large = 'x'.repeat(3500);
   entries = Array.from({ length: 70 }, (_, index) =>
     activity(
@@ -4758,7 +4777,7 @@ test(
     await f.pool.query(`
       CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,status text DEFAULT 'idle',archived_at timestamptz);
       CREATE TABLE messages(id uuid,owner_id text,thread_id uuid,turn_id uuid,role text,text text,created_at timestamptz DEFAULT now());
-      CREATE TABLE turns(id uuid,owner_id text,thread_id uuid,source text,status text,error text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
+      CREATE TABLE turns(id uuid,owner_id text,thread_id uuid,source text,status text,error text,background boolean DEFAULT false,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
       CREATE TABLE inspector_records(id uuid,owner_id text,thread_id uuid,turn_id uuid,kind text,name text,status text,input jsonb,output jsonb,error text,duration_ms integer,recorded_at timestamptz DEFAULT now(),started_at timestamptz DEFAULT now(),finished_at timestamptz);
       CREATE TABLE profiles(owner_id text,data jsonb);
       CREATE TABLE goals(owner_id text,title text);
@@ -4890,6 +4909,52 @@ test(
     assert.ok(truncated.messages.length <= 30);
     assert.ok(truncated.trace.length <= 60);
     assert.ok(truncated.messages.length + truncated.trace.length > 0);
+    for (const [field, limit, sql] of [
+      [
+        'messages',
+        30,
+        "INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant','Synthetic diagnostic',$4)",
+      ],
+      [
+        'turns',
+        20,
+        "INSERT INTO turns(id,owner_id,thread_id,source,status,background,waiting_reason,created_at) VALUES($1,$2,$3,'schedule','waiting',true,'user',$4)",
+      ],
+      [
+        'trace',
+        60,
+        "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,started_at) VALUES($1,$2,$3,'tool','browser',$4)",
+      ],
+    ] as const) {
+      await t.test(`${field} reports omitted older records at the row limit`, async () => {
+        await f.pool.query('TRUNCATE messages,turns,inspector_records');
+        const ids: string[] = [];
+        const start = Date.now() - 120_000;
+        for (let index = 0; index <= limit; index++) {
+          if (index === limit) {
+            const complete = JSON.parse(await buildFeedbackReport(options));
+            assert.equal(complete.coverage.truncated, false);
+            assert.deepEqual(
+              complete[field].map((row: { id: string }) => row.id),
+              ids,
+            );
+          }
+          const id = randomUUID();
+          ids.push(id);
+          await f.pool.query(sql, [id, ownerId, threadId, new Date(start + index * 1000)]);
+        }
+        const sampled = JSON.parse(await buildFeedbackReport(options));
+        assert.equal(sampled.coverage.truncated, true);
+        assert.deepEqual(
+          sampled[field].map((row: { id: string }) => row.id),
+          ids.slice(1),
+        );
+        if (field === 'turns') {
+          assert.equal(sampled.turns.at(-1).background, true);
+          assert.equal(sampled.turns.at(-1).waiting_reason, 'user');
+        }
+      });
+    }
   },
 );
 
