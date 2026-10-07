@@ -222,15 +222,18 @@ export function compareTable(runs: Loaded[]) {
   const scenarios = scenarioIds(runs);
   const width = Math.max(...scenarios.map((id) => id.length), 8);
   const column = 18;
-  const row = (label: string, cells: string[]) =>
-    `  ${label.padEnd(width + 4)}${cells.map((cell) => cell.slice(0, column - 2).padEnd(column)).join('')}`;
+  const row = (label: string, cells: string[], clip = false) =>
+    `  ${label.padEnd(width + 4)}${cells.map((cell) => (clip ? cell.slice(0, column - 2) : cell).padEnd(column)).join('')}`;
   const lines = [
     '',
     row(
       '',
       runs.map((run) => run.summary.manifest.label),
+      true,
     ),
-    ...metrics(runs).map((metric) => (metric ? row(...metric) : '')),
+    ...metrics(runs).map((metric) =>
+      metric ? row(...metric, metric[0] === 'agent' || metric[0] === 'source') : '',
+    ),
     '',
   ];
   for (const id of scenarios)
@@ -256,7 +259,10 @@ export function markdown(runs: Loaded[]) {
   const moved = difference(runs);
   const table = (rows: string[][]) =>
     [rows[0], rows[0].map(() => '---'), ...rows.slice(1)]
-      .map((cells) => `| ${cells.join(' | ')} |`)
+      .map(
+        (cells) =>
+          `| ${cells.map((cell) => cell.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>')).join(' | ')} |`,
+      )
       .join('\n');
   const marks = (run: Loaded, id: string) =>
     (run.attempts ?? [])
@@ -303,16 +309,21 @@ export function markdown(runs: Loaded[]) {
   if (runs.length === 2 && runs[0].attempts && runs[1].attempts)
     lines.push(...changes(runs[0], runs[1]).map((line) => line.trim()));
   const wrong = latest.wentWrong;
-  if (wrong.groups.length) {
+  if (wrong.groups.length || wrong.undiagnosed) {
     lines.push('', `#### What went wrong in ${latest.manifest.label}`, '');
     for (const group of wrong.groups.slice(0, 8))
       lines.push(
-        `- \`${group.scenario}\` ${group.blame === 'agent' ? 'agent' : `eval? (${group.blame})`}, ${group.category} ×${group.count}: ${group.rootCause}`,
+        `- \`${group.scenario}\` ${group.blame === 'agent' ? 'agent' : `eval? (${group.blame})`}, ${group.category} ×${group.count}: ${group.rootCause.replace(/\s+/g, ' ')}`,
       );
     if (wrong.suspectEval.length)
       lines.push(
         '',
         `${wrong.suspectEval.length === 1 ? '1 failure looks' : `${wrong.suspectEval.length} failures look`} like a flaw in the evaluation, not the agent.`,
+      );
+    if (wrong.undiagnosed)
+      lines.push(
+        '',
+        `${wrong.undiagnosed === 1 ? '1 failed attempt is' : `${wrong.undiagnosed} failed attempts are`} not diagnosed.`,
       );
   }
   lines.push('');

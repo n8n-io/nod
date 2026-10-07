@@ -378,7 +378,7 @@ jobs:
           TAG: desktop-v${{ needs.plan.outputs.version }}
         run: |
           previous="$(git describe --tags --abbrev=0 --match 'desktop-v*' --exclude "$TAG" HEAD 2>/dev/null || true)"
-          if [ -n "$previous" ] && git diff --quiet "$previous" HEAD -- src ':(exclude)src/web' evals Dockerfile.workspace Dockerfile.browser package-lock.json; then
+          if [ -n "$previous" ] && git diff --quiet "$previous" HEAD -- src ':(exclude)src/web' evals Dockerfile.workspace Dockerfile.browser package.json package-lock.json; then
             echo "Nothing the evals exercise changed since $previous."
             exit 0
           fi
