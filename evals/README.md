@@ -41,7 +41,7 @@ The **Evals** workflow runs the suite on a Blacksmith runner with a disposable P
 - To check a branch for regressions, open Actions → Evals → Run workflow, pick the branch and set **baseline** to `main`. It runs the branch, then the same scenarios on the commit where the branch left main, and puts both side by side.
 - Leave **baseline** empty to score a branch on its own, or pick a tier, model, scenarios and budget.
 
-The scores are on the run's summary page (`markdown <label>` or `markdown <baseline> <candidate>` prints the same locally). Every transcript is in the `capability-evals` artifact; unpack it into `.local/capability-evals/` to use `report`, `compare`, `review` or `rejudge`. The agent and the judge are `openai/gpt-6.1-sol` at high reasoning effort, with the key from the `EVALS_OPENAI_API_KEY` repository secret. Because the judge is the agent model, CI scores are not comparable with local runs judged by the default Sonnet judge. Add `EVALS_ANTHROPIC_API_KEY` or `EVALS_OPENROUTER_API_KEY` to try other agent models. It fails only when a run produces no completed attempt, never for a low score.
+The scores are on the run's summary page (`markdown <label>` or `markdown <baseline> <candidate>` prints the same locally). Every transcript is in the `capability-evals` artifact; unpack it into `.local/capability-evals/` to use `report`, `compare`, `review` or `rejudge`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`, with keys from the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets. Add `EVALS_OPENROUTER_API_KEY` to try OpenRouter models. It fails only when a run produces no completed attempt, never for a low score.
 
 ## The suite
 
