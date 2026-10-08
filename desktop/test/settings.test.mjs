@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -17,6 +27,7 @@ import {
 } from '../main/analytics.mjs';
 import { createAppPreferencesStore } from '../main/app-preferences.mjs';
 import { createChatReadCursorStore } from '../main/chat-read-cursors.mjs';
+import { saveArtifactDownload } from '../main/downloads.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from '../main/lifecycle.mjs';
 import {
   createDesktopUpdater,
@@ -33,6 +44,182 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
+
+function artifactDownload(overrides = {}) {
+  const url = 'http://127.0.0.1:4310/api/artifacts/1a76a5b0-899f-4d18-aaf2-c5f7b4924938';
+  return Object.assign(
+    new EventEmitter(),
+    {
+      hasUserGesture: () => true,
+      getInitiatorOrigin: () => 'http://127.0.0.1:4310',
+      getURL: () => url,
+      getURLChain: () => [url],
+      getFilename: () => 'report.csv',
+      setSavePath(path) {
+        this.savedPath = path;
+      },
+    },
+    overrides,
+  );
+}
+
+async function artifactDownloads(t) {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-artifact-downloads-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const errors = [];
+  return {
+    directory,
+    errors,
+    start(overrides = {}, options = {}) {
+      const item = artifactDownload(overrides);
+      const event = {
+        preventDefault() {
+          this.prevented = true;
+        },
+      };
+      const handled = saveArtifactDownload(event, item, {
+        origin: 'http://127.0.0.1:4310',
+        directory,
+        onError: (path) => errors.push(path),
+        ...options,
+      });
+      return { item, event, handled };
+    },
+  };
+}
+
+test('artifact downloads publish complete bytes without replacing colliding files, directories, or symlinks', async (t) => {
+  const f = await artifactDownloads(t);
+  await writeFile(join(f.directory, 'report.csv'), 'previous file');
+  await mkdir(join(f.directory, 'report (1).csv'));
+  await writeFile(join(f.directory, 'existing.csv'), 'symlink target');
+  await symlink(join(f.directory, 'existing.csv'), join(f.directory, 'report (2).csv'));
+  const downloads = [f.start(), f.start()];
+  for (const [index, { item, event, handled }] of downloads.entries()) {
+    assert.equal(handled, true);
+    assert.equal(event.prevented, undefined);
+    assert.equal(dirname(dirname(item.savedPath)), f.directory);
+    assert.equal((await stat(dirname(item.savedPath))).mode & 0o777, 0o700);
+    await writeFile(item.savedPath, `new file ${index}`);
+  }
+  assert.notEqual(downloads[0].item.savedPath, downloads[1].item.savedPath);
+  await assert.rejects(stat(join(f.directory, 'report (3).csv')), { code: 'ENOENT' });
+  await Promise.all(
+    downloads.map(
+      ({ item }) =>
+        new Promise((resolve) =>
+          setImmediate(() => {
+            item.emit('done', {}, 'completed');
+            resolve();
+          }),
+        ),
+    ),
+  );
+  assert.equal(await readFile(join(f.directory, 'report.csv'), 'utf8'), 'previous file');
+  assert.equal((await stat(join(f.directory, 'report (1).csv'))).isDirectory(), true);
+  assert.equal(await readFile(join(f.directory, 'existing.csv'), 'utf8'), 'symlink target');
+  assert.equal(await readFile(join(f.directory, 'report (3).csv'), 'utf8'), 'new file 0');
+  assert.equal(await readFile(join(f.directory, 'report (4).csv'), 'utf8'), 'new file 1');
+  for (const { item } of downloads)
+    await assert.rejects(stat(dirname(item.savedPath)), { code: 'ENOENT' });
+  assert.deepEqual(f.errors, []);
+});
+
+test('artifact downloads leave foreign, redirected, ambiguous, and non-user sources to Electron', async (t) => {
+  const f = await artifactDownloads(t);
+  const url = artifactDownload().getURL();
+  for (const overrides of [
+    { hasUserGesture: () => false },
+    { getInitiatorOrigin: () => '' },
+    { getInitiatorOrigin: () => 'null' },
+    { getInitiatorOrigin: () => 'https://example.test' },
+    ...[
+      url.replace('4310', '4311'),
+      url.replace('/api/artifacts/', '/api/files/'),
+      url.replace('1a76a5b0', 'invalid'),
+      `${url}?download=1`,
+      `${url}?`,
+      `${url}#download`,
+      `${url}#`,
+      url.replace('http://', 'http://user:password@'),
+    ].map((value) => ({ getURL: () => value, getURLChain: () => [value] })),
+    { getURLChain: () => ['https://example.test/download', url] },
+    { getURLChain: () => [url, url] },
+    { getURLChain: () => [] },
+    { getURLChain: () => ['https://example.test/download'] },
+  ]) {
+    const { handled, item, event } = f.start(overrides);
+    assert.equal(handled, false);
+    assert.equal(item.savedPath, undefined);
+    assert.equal(item.listenerCount('done'), 0);
+    assert.equal(event.prevented, undefined);
+  }
+  assert.equal(f.start({}, { origin: '' }).handled, false);
+  assert.deepEqual(await readdir(f.directory), []);
+  assert.deepEqual(f.errors, []);
+});
+
+test('artifact filenames cannot escape Downloads and ordinary names keep their extension', async (t) => {
+  const f = await artifactDownloads(t);
+  for (const [input, expected] of [
+    ['../outside.pdf', 'outside.pdf'],
+    ['..\\folder\\windows.txt', 'windows.txt'],
+    ['notes\r\n\0.txt', 'notes.txt'],
+    ['.', 'download'],
+    ['..', 'download (1)'],
+    ['', 'download (2)'],
+    ['Résumé 2026.pdf', 'Résumé 2026.pdf'],
+    ['archive.tar.gz', 'archive.tar.gz'],
+    ['archive.tar.gz', 'archive.tar (1).gz'],
+  ]) {
+    const { item } = f.start({ getFilename: () => input });
+    await writeFile(item.savedPath, 'synthetic artifact');
+    item.emit('done', {}, 'completed');
+    assert.equal(await readFile(join(f.directory, expected), 'utf8'), 'synthetic artifact');
+  }
+  assert.deepEqual(f.errors, []);
+});
+
+test('artifact downloads clean terminal failures without discarding resumable downloads', async (t) => {
+  const f = await artifactDownloads(t);
+  for (const state of ['cancelled', 'interrupted']) {
+    const { item } = f.start();
+    await writeFile(item.savedPath, 'partial artifact');
+    item.emit('updated', {}, 'interrupted');
+    assert.equal(await readFile(item.savedPath, 'utf8'), 'partial artifact');
+    item.emit('done', {}, state);
+    await assert.rejects(stat(dirname(item.savedPath)), { code: 'ENOENT' });
+  }
+  assert.deepEqual(await readdir(f.directory), []);
+  assert.deepEqual(f.errors, [undefined]);
+});
+
+test('artifact download failures surface without losing completed bytes or throwing from error reporting', async (t) => {
+  const f = await artifactDownloads(t);
+  const blocked = join(f.directory, 'unavailable');
+  await writeFile(blocked, 'existing file');
+  const start = f.start({}, { directory: blocked });
+  assert.equal(start.handled, true);
+  assert.equal(start.event.prevented, true);
+  assert.equal(start.item.savedPath, undefined);
+  assert.deepEqual(f.errors, [undefined]);
+  assert.equal(await readFile(blocked, 'utf8'), 'existing file');
+  const { item } = f.start({ getFilename: () => 'a'.repeat(300) });
+  await writeFile(item.savedPath, 'complete artifact');
+  item.emit('done', {}, 'completed');
+  assert.deepEqual(f.errors, [undefined, item.savedPath]);
+  assert.equal(await readFile(item.savedPath, 'utf8'), 'complete artifact');
+  for (const onError of [
+    () => {
+      throw new Error('Synthetic callback failure');
+    },
+    async () => {
+      throw new Error('Synthetic callback failure');
+    },
+  ])
+    assert.doesNotThrow(() => f.start({}, { directory: blocked, onError }));
+  await new Promise(setImmediate);
+});
 
 test('successful setup lets the recorder flush before closing and cannot block startup', async () => {
   const flushed = deferred();
@@ -406,7 +593,11 @@ test('native navigation keeps incomplete setup and startup out of normal Setting
 async function runningDesktop(
   t,
   request,
-  { allowStart = false, prompt = () => assert.fail('No restart prompt is needed.') } = {},
+  {
+    allowStart = false,
+    prompt = () => assert.fail('No restart prompt is needed.'),
+    reveal = () => assert.fail('No file should be revealed.'),
+  } = {},
 ) {
   const storage = await fixture(t);
   await storage.store.save({
@@ -434,6 +625,7 @@ async function runningDesktop(
     process: { platform: 'darwin', argv: [], env: {} },
     ipcMain: ipc,
     dialog: { showMessageBox: async (options) => prompt(options) },
+    shell: { showItemInFolder: reveal },
     URL,
     dirname,
     join,
@@ -459,6 +651,7 @@ async function runningDesktop(
     trackDesktopAnalytics,
     createAppPreferencesStore: () => ({ sync: async () => {} }),
     createChatReadCursorStore: () => ({}),
+    saveArtifactDownload,
     createReadinessNotice: () => ({ update() {} }),
     createDesktopLifecycle: (options) =>
       createDesktopLifecycle({
@@ -561,6 +754,7 @@ async function runningDesktop(
       showEngine,
       replayOnboarding,
       showFeedback,
+      saveEngineDownload,
       setReady: (ready) => { status.phase = ready ? 'ready' : 'starting'; },
       status: () => status,
       setRestartRequired: (value) => { restartRequired = value; },
@@ -570,6 +764,75 @@ async function runningDesktop(
   );
   return { ...context.running, windows, children, storage, handlers };
 }
+
+test('native artifact saving requires an owned main frame on the current trusted app', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('No separate download request is needed.'));
+  f.showEngine();
+  const window = f.windows.at(-1);
+  const sender = window.webContents;
+  const frame = sender.mainFrame;
+  const event = {
+    preventDefault: () => assert.fail('Excluded downloads keep their default behavior.'),
+  };
+  for (const [candidate, candidateFrame] of [
+    [undefined, undefined],
+    [{ mainFrame: frame }, frame],
+    [sender, { url: frame.url }],
+    [sender, null],
+  ]) {
+    const item = artifactDownload();
+    f.saveEngineDownload(event, item, candidate, candidateFrame);
+    assert.equal(item.savedPath, undefined);
+  }
+  for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/artifacts/example']) {
+    frame.url = url;
+    const item = artifactDownload();
+    f.saveEngineDownload(event, item, sender, frame);
+    assert.equal(item.savedPath, undefined);
+  }
+  frame.url = 'http://127.0.0.1:4310/';
+  const saved = artifactDownload();
+  f.saveEngineDownload(event, saved, sender, frame);
+  assert.equal(dirname(dirname(saved.savedPath)), dirname(f.storage.path));
+  await writeFile(saved.savedPath, 'owned artifact');
+  saved.emit('done', {}, 'completed');
+  assert.equal(
+    await readFile(join(dirname(f.storage.path), 'report.csv'), 'utf8'),
+    'owned artifact',
+  );
+  window.destroy();
+  const retired = artifactDownload();
+  f.saveEngineDownload(event, retired, sender, frame);
+  assert.equal(retired.savedPath, undefined);
+});
+
+test('native download publication failure offers the completed file for recovery', async (t) => {
+  const prompts = [];
+  const revealed = [];
+  const f = await runningDesktop(t, () => assert.fail('No separate download request is needed.'), {
+    prompt: (options) => {
+      prompts.push(options);
+      return { response: 0 };
+    },
+    reveal: (path) => revealed.push(path),
+  });
+  f.showEngine();
+  const sender = f.windows.at(-1).webContents;
+  const item = artifactDownload({ getFilename: () => 'a'.repeat(300) });
+  f.saveEngineDownload({}, item, sender, sender.mainFrame);
+  await writeFile(item.savedPath, 'recoverable artifact');
+  item.emit('done', {}, 'completed');
+  await new Promise(setImmediate);
+  assert.equal(prompts.length, 1);
+  assert.deepEqual(revealed, [item.savedPath]);
+  assert.equal(await readFile(revealed[0], 'utf8'), 'recoverable artifact');
+  const interrupted = artifactDownload();
+  f.saveEngineDownload({}, interrupted, sender, sender.mainFrame);
+  interrupted.emit('done', {}, 'interrupted');
+  await new Promise(setImmediate);
+  assert.equal(prompts.length, 2);
+  assert.deepEqual(revealed, [item.savedPath]);
+});
 
 test('native settings reject foreign windows, subframes, AI credentials, and web onboarding writes', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('Settings must not make an engine request.'));
