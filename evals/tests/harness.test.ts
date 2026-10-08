@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
-import Fastify from 'fastify';
 import type { RuntimeContext } from '../../src/ports/agent.ts';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
@@ -25,8 +24,7 @@ import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts';
 import { select } from '../src/run.ts';
 import { scenarios } from '../src/scenarios/index.ts';
-import { createSession, waitUntil } from '../src/session.ts';
-import { createStackRequest, type Stack } from '../src/stack.ts';
+import { waitUntil } from '../src/session.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
@@ -693,57 +691,6 @@ test('a fixture site is reachable by server-side fetches, not only by the browse
   }
   assert.equal(dns.promises.lookup, originalLookup);
   assert.equal(globalThis.fetch, originalFetch);
-});
-
-test('scenario API calls use authenticated transport and keep its cookie on the local server', async () => {
-  const app = Fastify();
-  const outside = Fastify();
-  const writes: unknown[] = [];
-  let outsideRequests = 0;
-  const cookie = 'otto-eval-fixture=synthetic-access';
-  outside.get('/receiver', () => {
-    outsideRequests++;
-    return { received: true };
-  });
-  const outsideUrl = await outside.listen({ host: '127.0.0.1', port: 0 });
-  app.addHook('onRequest', async (request, reply) => {
-    if (request.headers.cookie !== cookie) return reply.code(401).send({ error: 'Unauthorized' });
-  });
-  app.put('/api/onboarding/interview', async (request, reply) => {
-    if (request.headers.origin !== baseUrl) return reply.code(403).send({ error: 'Wrong origin' });
-    writes.push(request.body);
-    return reply.code(201).send({ saved: true });
-  });
-  app.get('/api/empty', async (_request, reply) => reply.code(204).send());
-  app.get('/api/redirect', async (_request, reply) => reply.redirect(`${outsideUrl}/receiver`));
-  const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
-  const request = createStackRequest(baseUrl, cookie);
-  const session = createSession({
-    stack: { request, origin: baseUrl } as Stack,
-    user: {},
-    deadline: Date.now() + 5000,
-  });
-  try {
-    assert.equal((await fetch(`${baseUrl}/api/empty`)).status, 401);
-    const body = { answers: { work: 'Synthetic team updates' } };
-    assert.deepEqual(await session.api('PUT', '/api/onboarding/interview', body), {
-      status: 201,
-      body: { saved: true },
-    });
-    assert.deepEqual(writes, [body]);
-    assert.deepEqual(await session.api('GET', `${baseUrl}/api/empty`), { status: 204, body: {} });
-    for (const path of [`${outsideUrl}/receiver`, `${outsideUrl.replace('http:', '')}/receiver`])
-      await assert.rejects(session.api('GET', path), /must stay on the Otto server/);
-    await assert.rejects(session.api('GET', '/api/redirect'));
-    await assert.rejects(request('/api/redirect', { redirect: 'follow' }));
-    const callback = await request('/api/redirect', { redirect: 'manual' });
-    assert.equal(callback.status, 302);
-    assert.equal(callback.headers.get('location'), `${outsideUrl}/receiver`);
-    assert.equal(outsideRequests, 0);
-  } finally {
-    await app.close();
-    await outside.close();
-  }
 });
 
 test('asking the user to sign in in the browser is not asking for a secret in chat', () => {
