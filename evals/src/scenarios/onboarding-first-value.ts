@@ -13,7 +13,9 @@ const answers = [
   'Land two new rebrand clients before the end of the year.',
   'Client email. I lose hours every week answering the same questions from clients.',
 ] as const;
-const aboutSofia = /sofia|meridian|proposal|revision/i;
+const aboutSofia = /sofia|meridian|revision/i;
+const replyToSofia = (task: SuggestedTask) =>
+  task.source === 'gmail' && aboutSofia.test(task.title);
 const aboutSignIn = /code|sign[- ]?in|log[- ]?in|verif|security|password/i;
 
 function mailbox(now: number): Mail[] {
@@ -101,9 +103,7 @@ export default scenario({
     }
     const tasks = state.suggestions?.tasks ?? [];
     state.picked =
-      tasks.find((task) => aboutSofia.test(task.title)) ??
-      tasks.find((task) => task.source === 'gmail') ??
-      tasks[0];
+      tasks.find(replyToSofia) ?? tasks.find((task) => task.source === 'gmail') ?? tasks[0];
     if (state.picked) await session.say(state.picked.title);
   },
   evidence(run, world) {
@@ -150,7 +150,7 @@ export default scenario({
       ),
       check(
         'first-tasks-include-the-reply-sofia-is-waiting-for',
-        () => titles().some((title) => aboutSofia.test(title)),
+        () => Boolean(state.suggestions?.tasks.some(replyToSofia)),
         { failure: 'reasoning' },
       ),
       check(
