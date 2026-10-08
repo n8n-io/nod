@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
+import type { AgentToolResult } from '../src/ports/agent.ts';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { accessCookie, accessKey } from '../src/server/access.ts';
@@ -37,6 +38,7 @@ test(
     const { dataRoot, ownerId, port } = await import('../src/server/config.ts');
     const { enqueueTurn } = await import('../src/server/thread.ts');
     const phases = new Map<string, number>();
+    const results = new Map<string, AgentToolResult>();
     const plans = new Map<
       string,
       { tool?: string; action: string; args: Record<string, unknown> }
@@ -74,9 +76,10 @@ test(
                       )
                     : undefined;
                 if (plan) {
-                  await options.tools
+                  const result = await options.tools
                     .find((tool) => tool.name === (plan.tool ?? 'manage_personal_context'))!
                     .execute({ action: plan.action, args: plan.args });
+                  results.set(options.turnId, result);
                   return;
                 }
                 options.onEvent({ type: 'final', text: 'Synthetic personal request handled.' });
@@ -109,8 +112,11 @@ test(
       origin: `http://localhost:${port}`,
       cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
     };
-    const request = (method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>) =>
-      application.app.inject({ method, url: path, headers, payload });
+    const request = (
+      method: 'GET' | 'POST' | 'PATCH',
+      path: string,
+      payload?: Record<string, unknown>,
+    ) => application.app.inject({ method, url: path, headers, payload });
     async function waitFor(id: string, status: string) {
       for (let attempt = 0; attempt < 300; attempt++) {
         const turn = (await pool.query('SELECT status,error FROM turns WHERE id=$1', [id])).rows[0];
@@ -329,6 +335,66 @@ test(
           await waitFor(cancellation.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(background))[0].status, 'expired');
           await assertCancelled(schedule, cancellation.json().messageId);
+        },
+      );
+
+      await t.test(
+        'already paused schedule cancellation returns its saved state without another approval',
+        async () => {
+          const created = await request('POST', '/api/schedules', {
+            title: 'Synthetic paused recurring reminder',
+            prompt: 'Review the synthetic weekly checklist.',
+            kind: 'recurring',
+            cron: '0 9 1 1 *',
+            timeZone: 'UTC',
+          });
+          assert.equal(created.statusCode, 200, created.body);
+          const scheduleId = created.json().id as string;
+          const jobId = (
+            await pool.query('SELECT job_id FROM schedules WHERE id=$1 AND owner_id=$2', [
+              scheduleId,
+              ownerId,
+            ])
+          ).rows[0].job_id;
+          const paused = await request('PATCH', `/api/schedules/${scheduleId}`, { enabled: false });
+          assert.equal(paused.statusCode, 200, paused.body);
+          const saved = (
+            await pool.query('SELECT * FROM schedules WHERE id=$1 AND owner_id=$2', [
+              scheduleId,
+              ownerId,
+            ])
+          ).rows[0];
+          assert.equal(saved.enabled, false);
+          assert.equal(saved.job_id, null);
+          assert.equal(saved.next_run_at, null);
+          const job = (await pool.query(`SELECT * FROM ${bossSchema}.job WHERE id=$1`, [jobId]))
+            .rows[0];
+          assert.equal(job.state, 'cancelled');
+          const trigger = 'Inspect a synthetic reminder that is already paused.';
+          plans.set(trigger, { action: 'schedule_cancel', args: { id: scheduleId } });
+          const background = await enqueueTurn(trigger, { source: 'event' });
+          await waitFor(background, 'succeeded');
+          assert.deepEqual(await approvalsFor(background), []);
+          assert.equal(
+            (await pool.query('SELECT id FROM messages WHERE turn_id=$1', [background])).rowCount,
+            0,
+          );
+          assert.deepEqual(
+            (
+              await pool.query('SELECT * FROM schedules WHERE id=$1 AND owner_id=$2', [
+                scheduleId,
+                ownerId,
+              ])
+            ).rows[0],
+            saved,
+          );
+          assert.deepEqual(
+            (await pool.query(`SELECT * FROM ${bossSchema}.job WHERE id=$1`, [jobId])).rows[0],
+            job,
+          );
+          const output = results.get(background)?.content[0];
+          assert.ok(output?.type === 'text');
+          assert.deepEqual(JSON.parse(output.text), paused.json());
         },
       );
 
