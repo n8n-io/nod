@@ -51,27 +51,22 @@ export function usageFileName(exported: Date) {
   return `otto-usage-${exported.toISOString().slice(0, 10)}.pdf`;
 }
 
-const winAnsi: Record<string, number> = {
-  '€': 0x80,
-  '‘': 0x91,
-  '’': 0x92,
-  '“': 0x93,
-  '”': 0x94,
-  '•': 0x95,
-  '–': 0x96,
-  '—': 0x97,
-  '…': 0x85,
-};
+const winAnsi = new Map(
+  [...'€ ‚ƒ„…†‡ˆ‰Š‹Œ Ž  ‘’“”•–—˜™š›œ žŸ']
+    .map((char, index) => [char, 0x80 + index] as const)
+    .filter(([char]) => char !== ' '),
+);
 
 function pdfText(value: string) {
-  const bytes = [...value.replace(/ ?[\p{Extended_Pictographic}\u200d\ufe0f]+/gu, '')].map(
-    (char) => {
-      const code = char.codePointAt(0)!;
-      const mapped = winAnsi[char] ?? (code >= 32 && code <= 255 ? code : 63);
-      const byte = String.fromCharCode(mapped);
-      return mapped === 40 || mapped === 41 || mapped === 92 ? `\\${byte}` : byte;
-    },
-  );
+  const bytes = [
+    ...value.replace(/ ?(?:(?![©®™])[\p{Extended_Pictographic}\u200d\ufe0f])+/gu, ''),
+  ].map((char) => {
+    const code = char.codePointAt(0)!;
+    const mapped =
+      winAnsi.get(char) ?? ((code >= 32 && code < 127) || (code >= 160 && code <= 255) ? code : 63);
+    const byte = String.fromCharCode(mapped);
+    return mapped === 40 || mapped === 41 || mapped === 92 ? `\\${byte}` : byte;
+  });
   return `(${bytes.join('')})`;
 }
 
