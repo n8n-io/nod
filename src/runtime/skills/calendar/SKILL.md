@@ -9,8 +9,6 @@ Resolve the calendar, participants, duration and relevant time zones. Treat a da
 
 Free time requires a check of availability, not only a list of events. Distinguish tentative, busy and free entries. Do not disclose another person's event details to explain that they are unavailable. Offer a small set of feasible times that satisfy working hours and the user's constraints.
 
-In a summary or digest, cover only the requested day. Report clashes, changes and what needs the user's response instead of listing meetings they can see in their calendar.
-
 For a change, locate the exact event by ID, organizer, participants and date. A copied invitation can belong to another calendar. Check whether the user controls the event. Changing a guest's local copy does not necessarily change the organizer's event.
 
 Before writing, know whether the operation affects one occurrence, following occurrences or the whole series. Check how the provider represents recurring exceptions. Across daylight-saving changes, retain the intended local time and named time zone rather than a fixed UTC offset.
