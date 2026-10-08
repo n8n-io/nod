@@ -76,6 +76,7 @@ export interface SubmitUserMessageOptions {
   channel?: string;
   client?: PoolClient;
   replyToMessageId?: string;
+  seenMessageId?: string;
   clientMessageId?: string;
   prompt?: string;
 }
@@ -368,6 +369,7 @@ export async function submitUserMessage(
         channel,
         threadId: thread.id,
         replyToMessageId: options.replyToMessageId,
+        seenMessageId: options.seenMessageId,
         clientMessageId: options.clientMessageId,
         sourceId: options.sourceId,
         hasAttachments: attachments.length > 0,

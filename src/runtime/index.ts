@@ -26,7 +26,8 @@ import { firstInstruction, steeredInstruction, systemContext, systemPrompt } fro
 import { currentUserTime } from './time-context.ts';
 import { inspectToolCatalog, ottoTools } from './tools.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
-import { delimit, injectionFindings, resultText } from './untrusted.ts';
+import { delimit, resultText } from './untrusted.ts';
+import { injectionFindings, untrustedBlock, untrustedContents } from '../shared/untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
@@ -443,6 +444,7 @@ export function createAgentRuntime(dependencies: {
           });
           let result: AgentToolResult;
           let reservedRecord = false;
+          let executed = false;
           try {
             assertActive();
             if (context.activityCheck) {
@@ -479,6 +481,7 @@ export function createAgentRuntime(dependencies: {
               untrustedMarked = true;
             }
             await waitFor(context.emit('tool_start', label));
+            executed = true;
             const executeCurrent = () => {
               assertActive(reservedRecord);
               return execute();
@@ -534,7 +537,11 @@ export function createAgentRuntime(dependencies: {
               error.code === 'browser_click_intercepted'
             )
               return textResult({ status: 'blocked', code: error.code, message: browserFailure });
-            throw new Error(failure);
+            if (!executed || !untrustedResult || nested || stopped || signal.aborted)
+              throw new Error(failure);
+            const findings = injectionFindings(failure);
+            if (findings.length) await waitFor(Promise.resolve(context.flagInjection?.(findings)));
+            throw new Error(delimitedTools.has(name) ? untrustedBlock(name, failure) : failure);
           }
           signal.throwIfAborted();
           return result;
@@ -677,10 +684,14 @@ export function createAgentRuntime(dependencies: {
       session = await waitFor(opening);
       signal.throwIfAborted();
       const resumed = session.resumed;
-      if (context.attachments.length) {
+      const embedded = untrustedContents(context.prompt);
+      if (context.attachments.length || embedded.length) {
         await waitFor(Promise.resolve(context.markUntrustedContext?.()));
         untrustedMarked = true;
       }
+      const embeddedFindings = injectionFindings(embedded.join('\n'));
+      if (embeddedFindings.length)
+        await waitFor(Promise.resolve(context.flagInjection?.(embeddedFindings)));
       const images: AgentImage[] = [];
       const omittedImages = new Set<string>();
       const root = resolve(context.workspacePath);

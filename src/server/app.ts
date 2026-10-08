@@ -273,6 +273,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         text: z.string().trim().max(100_000).default(''),
         attachmentIds: z.array(z.uuid()).max(20).default([]),
         replyToMessageId: z.uuid().optional(),
+        seenMessageId: z.uuid().optional(),
         clientMessageId: z.uuid().optional(),
         threadId: z.uuid().optional(),
         verificationRequestId: z.uuid().optional(),
@@ -312,6 +313,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       {
         channel: 'web',
         replyToMessageId: input.replyToMessageId,
+        seenMessageId: input.seenMessageId,
         threadId: input.threadId,
         clientMessageId,
       },

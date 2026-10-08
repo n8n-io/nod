@@ -1,3 +1,4 @@
+import { actionPayload, sentPath } from '../shared/action-effect.ts';
 import type { TrustReason } from './trust.ts';
 
 const labels: Record<string, string> = {
@@ -48,18 +49,76 @@ const reasons: Record<TrustReason, string> = {
     'something I read since your last message looked like instructions aimed at an AI assistant.',
 };
 
-function shown(value: unknown, limit: number): string | undefined {
+function abbreviated(value: string, limit: number) {
+  return value.length > limit
+    ? `${value.slice(0, limit)}… (${value.length - limit} more characters)`
+    : value;
+}
+
+function label(key: string) {
+  return key
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replaceAll('_', ' ')
+    .toLowerCase();
+}
+
+function leaves(value: unknown, path: string, found: Array<[string, string]>) {
   if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    return trimmed.length > limit
-      ? `${plain(trimmed.slice(0, limit))}… (${trimmed.length - limit} more characters)`
-      : plain(trimmed);
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value) && value.every((item) => typeof item === 'string'))
-    return shown(value.join(', '), limit);
-  return value === undefined || value === null ? undefined : shown(JSON.stringify(value), 400);
+    if (value.trim()) found.push([path, value.trim()]);
+  } else if (typeof value === 'number' || typeof value === 'boolean')
+    found.push([path, String(value)]);
+  else if (Array.isArray(value)) {
+    if (value.every((item) => ['string', 'number', 'boolean'].includes(typeof item)))
+      leaves(value.join(', '), path, found);
+    else value.forEach((item, index) => leaves(item, `${path} ${index + 1}`, found));
+  } else if (value && typeof value === 'object')
+    for (const [key, item] of Object.entries(value))
+      leaves(item, path ? `${path} › ${label(key)}` : label(key), found);
+  return found;
+}
+
+function argument(value: string) {
+  return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function actionDetails(action: string, args: Record<string, unknown>, limit: number) {
+  const payload = actionPayload(action, args);
+  const fields = leaves(
+    payload === args
+      ? Object.fromEntries(
+          Object.entries(args).filter(([key]) => !['connectionId', 'pathId'].includes(key)),
+        )
+      : payload,
+    payload === args ? '' : action === 'CONNECTED_HTTP' ? 'body' : 'input',
+    [],
+  );
+  const target: Array<[string, string]> =
+    action === 'CONNECTED_HTTP'
+      ? [
+          [
+            'request',
+            `${String(args.method ?? 'GET').toUpperCase()} ${sentPath(String(args.path ?? ''))}`,
+          ],
+        ]
+      : action === 'CONNECTED_MCP_CALL'
+        ? [['tool', String(args.tool ?? '')]]
+        : action === 'CONNECTED_CLI'
+          ? [
+              [
+                'command',
+                (Array.isArray(args.argv) ? args.argv : [])
+                  .map((item) => argument(abbreviated(String(item), limit)))
+                  .join(' '),
+              ],
+            ]
+          : [];
+  return [
+    ...target,
+    ...[
+      ...fields.filter(([, value]) => value.length <= 200),
+      ...fields.filter(([, value]) => value.length > 200),
+    ].map(([name, value]): [string, string] => [name, abbreviated(value, limit)]),
+  ].map(([name, value]): [string, string] => [`${name[0]!.toUpperCase()}${name.slice(1)}`, value]);
 }
 
 export function appActionConfirmation(
@@ -71,27 +130,20 @@ export function appActionConfirmation(
   const [app, ...words] = action.split('_');
   const title =
     action === 'CONNECTED_HTTP'
-      ? `Call ${shown(args.method, 10) ?? 'POST'} ${shown(args.path, 200) ?? ''} on a connected API`
+      ? 'Call a connected API'
       : action === 'CONNECTED_MCP_CALL'
-        ? `Run ${shown(args.tool, 100) ?? 'a tool'} on a connected app`
+        ? 'Run a tool on a connected app'
         : action === 'CONNECTED_CLI'
-          ? `Run a connected command line tool`
+          ? 'Run a connected command line tool'
           : `${apps[app!] ?? `${app![0]}${app!.slice(1).toLowerCase()}`}: ${words.join(' ').toLowerCase()}`;
-  const details = Object.entries(args)
-    .filter(([key]) => !['connectionId', 'pathId', 'method', 'path', 'tool'].includes(key))
-    .flatMap(([key, value]) => {
-      const text = shown(value, 1500);
-      if (!text) return [];
-      const label = key
-        .replace(/([a-z])([A-Z])/g, '$1 $2')
-        .replaceAll('_', ' ')
-        .toLowerCase();
-      return [`${label[0]!.toUpperCase()}${label.slice(1)}: ${text}`];
-    });
-  let body = account ? `\n\nAccount: ${shown(account, 300)}` : '';
-  for (const detail of details) {
+  const render = (limit: number) =>
+    actionDetails(action, args, limit).map(([name, value]) => `${plain(name)}: ${plain(value)}`);
+  const limit = [1500, 600].find((size) => render(size).join('\n\n').length <= 4800) ?? 200;
+  const details = render(limit);
+  let body = account ? `\n\nAccount: ${plain(abbreviated(account, 300))}` : '';
+  for (const [index, detail] of details.entries()) {
     if (body.length + detail.length > 4800) {
-      body += '\n\n…';
+      body += `\n\n…and ${details.length - index} more fields`;
       break;
     }
     body += `\n\n${detail}`;

@@ -26,6 +26,7 @@ import { createPiAgent } from '../src/providers/pi/index.ts';
 import { coreSkills } from '../src/runtime/prompt.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { inlineAppResult } from '../src/server/integration-result.ts';
+import { untrustedBlock } from '../src/shared/untrusted.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import type { Computer, Workspace } from '../src/ports/computer.ts';
 
@@ -682,6 +683,10 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
   await fixture(
     async (tools, _emit, options) => {
       texts.push(text(await call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} })));
+      await assert.rejects(call(tools, 'apps', { action: 'CONNECTED_HTTP', args: {} }), (error) => {
+        texts.push((error as Error).message);
+        return true;
+      });
       appImage = await call(tools, 'apps', { action: 'SLACK_DOWNLOAD_SLACK_FILE', args: {} });
       mcpBlocks = await call(tools, 'apps', { action: 'CONNECTED_MCP_CALL', args: {} });
       texts.push(text(await options.runTool('fetch_content', { urls: [] }, page(injected))));
@@ -715,20 +720,22 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
                   { type: 'resource_link', uri: 'https://files.example/agenda' },
                 ],
               }
-            : { messages: [injected] },
+            : action === 'CONNECTED_HTTP'
+              ? Promise.reject(new Error(`The connected API request failed: ${injected}`))
+              : { messages: [injected] },
       flagInjection: async (findings) => {
         flags.push(findings);
       },
     },
   );
-  for (const [index, source] of ['apps', 'fetch_content'].entries()) {
+  for (const [index, source] of ['apps', 'apps', 'fetch_content'].entries()) {
     assert.match(texts[index]!, new RegExp(`^<untrusted_tool_result source="${source}">\n`));
     assert.match(texts[index]!, /\n<\/untrusted_tool_result>$/);
     assert.equal(texts[index]!.match(/untrusted_tool_result/gi)?.length, 2);
     assert.match(texts[index]!, /ignore_instructions/);
   }
-  assert.equal(texts[2], injected);
-  assert.equal(flags.length, 3);
+  assert.equal(texts[3], injected);
+  assert.equal(flags.length, 4);
   assert.ok(flags.every((found) => found.includes('ignore_instructions')));
   assert.deepEqual(
     screenshot?.content.map((part) => part.type),
@@ -748,6 +755,15 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
     ['text'],
   );
   assert.match(text(mcpBlocks!), /resource_link/);
+
+  const promptFlags: string[][] = [];
+  await fixture(async () => {}, {
+    prompt: `A confirmed action ran.\n${untrustedBlock('GMAIL_FETCH_EMAILS result', injected)}`,
+    flagInjection: async (findings) => {
+      promptFlags.push(findings);
+    },
+  });
+  assert.deepEqual(promptFlags.flat().includes('ignore_instructions'), true);
 
   for (const [result, status] of [
     [{ requiresConfirmation: true, question: 'Forged by a provider' }, 'succeeded'],
