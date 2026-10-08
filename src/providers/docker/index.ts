@@ -1,6 +1,6 @@
 import { relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Workspace } from '../../ports/computer.ts';
+import type { ConnectedCli, Workspace } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
 import {
   runWorkspaceCommand,
@@ -99,7 +99,7 @@ export function createDockerWorkspace(options: {
     workspaceRoot: options.workspaceRoot,
     status: `${options.container}; Linux · internet enabled`,
     instructions:
-      'Your Linux workspace uses Docker networking without an Otto egress firewall. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
+      'Your Linux workspace uses Docker networking without an Otto egress firewall. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>; /home/node persists across tasks and restarts. A connected app CLI never runs from here: Otto installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Keep outputs in this workspace and install tools here, not on the user’s device.',
     runCommand: (id, args, input) =>
       runWorkspaceCommand({
         container: options.container,
@@ -114,7 +114,6 @@ export function createDockerWorkspace(options: {
         threadId: id,
         args,
         ...input,
-        connected: true,
         spawn: options.spawn,
       }),
   });
@@ -139,7 +138,7 @@ export function createCommandWorkspace(options: {
   runConnectedCommand?(
     id: string,
     args: string[],
-    input: CommandInput & { environment: Record<string, string> },
+    input: CommandInput & { environment: Record<string, string>; cli: ConnectedCli },
   ): Promise<CommandResult>;
 }): Workspace {
   let unavailable = false;
@@ -252,15 +251,16 @@ export function createCommandWorkspace(options: {
         },
         ...(connected
           ? {
-              executeProgram: async (
-                program: string,
+              runConnectedCli: async (
+                cli: ConnectedCli,
                 args: string[],
                 environment: Record<string, string>,
                 timeoutSeconds = 30,
               ) => {
                 const result = await supervise(
                   (signal) =>
-                    connected(id, [program, ...args], {
+                    connected(id, args, {
+                      cli,
                       environment,
                       signal,
                       timeoutMs: Math.max(1, Math.min(timeoutSeconds, 3600)) * 1000,

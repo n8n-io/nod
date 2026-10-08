@@ -321,7 +321,7 @@ export const toolDefinitions = {
   ),
   manage_apps: defineTool(
     'manage_apps',
-    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. connect {service} starts a native sign-in and pauses, or returns existing native accounts. Use connect {service, newAccount:true} when the user explicitly wants another account, such as personal Gmail alongside work Gmail; it starts a separate sign-in and keeps existing accounts. propose {service, proposal} saves a new MCP, HTTP or CLI path and gives the user a private setup link.',
+    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. connect {service} starts a native sign-in and pauses, or returns existing native accounts. Use connect {service, newAccount:true} when the user explicitly wants another account, such as personal Gmail alongside work Gmail; it starts a separate sign-in and keeps existing accounts. propose {service, proposal} saves a new MCP, HTTP or CLI path and gives the user a private setup link. A CLI path names the source Otto installs privately for it: {npm} package spec, {pypi} package spec (pipx) or {url, sha256?} HTTPS release binary or archive for this workspace architecture.',
     Type.Object({
       action: literals(['list', 'connect', 'propose']),
       service: Type.Optional(Type.String({ maxLength: 80 })),
@@ -357,6 +357,14 @@ export const toolDefinitions = {
                 command: Type.String({ minLength: 1, maxLength: 64 }),
                 auth: Type.Optional(Type.Literal('env')),
                 envName: Type.String({ minLength: 3, maxLength: 80 }),
+                source: Type.Union([
+                  Type.Object({ npm: Type.String({ minLength: 1, maxLength: 512 }) }),
+                  Type.Object({ pypi: Type.String({ minLength: 1, maxLength: 512 }) }),
+                  Type.Object({
+                    url: Type.String({ minLength: 1, maxLength: 2048 }),
+                    sha256: Type.Optional(Type.String({ minLength: 64, maxLength: 64 })),
+                  }),
+                ]),
               }),
             ]),
             { minItems: 1, maxItems: 4 },

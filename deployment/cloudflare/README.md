@@ -61,7 +61,7 @@ npm --prefix deployment/cloudflare run provision:storage -- production
 
 ## Workspace users
 
-Workspace commands run as `node` and connected CLI commands as `otto-connected` (uid 1002, private home, single secret in the environment), as in local Docker. A deployed container gives every process root's capabilities whatever its user, so both start through `setpriv --no-new-privs` with inheritable and ambient capabilities cleared; otherwise a workspace command could read a CLI token from `/proc`. `/home/node/state` and its `workspace` and `tools` directories are mode 755 so `otto-connected` can run installed CLIs and read shared workspace files but not write them.
+Workspace commands run as `node` and connected CLI commands as `otto-connected` (uid 1002, private home, single secret in the environment), as in local Docker. A deployed container gives every process root's capabilities whatever its user, so both start through `setpriv --no-new-privs` with inheritable and ambient capabilities cleared; otherwise a workspace command could read a CLI token from `/proc`. Connected CLIs run from sealed installs under `/home/otto-connected/cli`, outside checkpoints, so each is installed again from its declared source on first use after a restart. `/home/node/state` and its `workspace` directory are mode 755 so `otto-connected` can read shared workspace files but not write them.
 
 ## Computer checkpoints
 

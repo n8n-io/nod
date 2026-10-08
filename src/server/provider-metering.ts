@@ -1,5 +1,5 @@
 import type { Agent, ModelUsageObservation } from '../ports/agent.ts';
-import type { Computer, Workspace } from '../ports/computer.ts';
+import type { Computer, ConnectedCli, Workspace } from '../ports/computer.ts';
 import type { IntegrationProvider, IntegrationSession } from '../ports/integrations.ts';
 import type { MessagingTransport } from '../ports/messaging.ts';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
@@ -103,17 +103,17 @@ export function meterWorkspace(workspace: Workspace, usage: ProviderUsageStore):
             () => session.exec(command, options),
             (result) => ({ status: result.exitCode === 0 ? 'succeeded' : 'failed' }),
           ),
-        ...(session.executeProgram
+        ...(session.runConnectedCli
           ? {
-              executeProgram: (
-                program: string,
+              runConnectedCli: (
+                cli: ConnectedCli,
                 args: string[],
                 environment: Record<string, string>,
                 timeout?: number,
               ) =>
                 usage.track(
                   { ...base, operation: 'execute' },
-                  () => session.executeProgram!(program, args, environment, timeout),
+                  () => session.runConnectedCli!(cli, args, environment, timeout),
                   (result) => ({ status: result.exitCode === 0 ? 'succeeded' : 'failed' }),
                 ),
             }

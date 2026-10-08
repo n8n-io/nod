@@ -1,3 +1,4 @@
+import base64
 import ctypes
 import ipaddress
 import json
@@ -27,6 +28,7 @@ CHECKS = frozenset([
     "browser-cdp", "browser-private", "browser-process",
     "operation-timeout", "operation-output", "probe-timeout", "probe-cancelled", "cleanup",
     "probe-error", "connected-process", "workspace-connected-private",
+    "connected-cli", "connected-cli-planted",
 ] + [f"{role}-{check}" for role, _ in RESTRICTED_ROLES for check in [
     "network", "cdp", "private", "firewall", "x11", "privileges", "files-dns", "https",
 ]] + [f"envd-{role}" for role, _ in RESTRICTED_ROLES])
@@ -55,9 +57,12 @@ class Processes:
         self.children = []
         self.display_paths = []
 
-    def start(self, uid, args, extra=None, output=False):
-        child = subprocess.Popen(user_command(uid, args), cwd="/", env=environment(uid, extra), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE if output else subprocess.DEVNULL, stderr=subprocess.PIPE if output else subprocess.DEVNULL, start_new_session=True)
+    def start(self, uid, args, extra=None, output=False, data=None):
+        child = subprocess.Popen(user_command(uid, args), cwd="/", env=environment(uid, extra), stdin=subprocess.PIPE if data else subprocess.DEVNULL, stdout=subprocess.PIPE if output else subprocess.DEVNULL, stderr=subprocess.PIPE if output else subprocess.DEVNULL, start_new_session=True)
         self.children.append(child)
+        if data:
+            child.stdin.write(data)
+            child.stdin.flush()
         return child
 
     def running(self, child):
@@ -68,8 +73,8 @@ class Processes:
         except ChildProcessError:
             return False
 
-    def run(self, uid, args, timeout=5, extra=None):
-        child = self.start(uid, args, extra, True)
+    def run(self, uid, args, timeout=5, extra=None, data=None):
+        child = self.start(uid, args, extra, True, data)
         buffers = [bytearray(), bytearray()]
         end = time.monotonic() + timeout
         with selectors.DefaultSelector() as selector:
@@ -86,8 +91,9 @@ class Processes:
                         require(sum(map(len, buffers)) <= OUTPUT_LIMIT, "operation-output")
         require(time.monotonic() < end, "operation-timeout")
         code = child.wait(timeout=max(0.001, end - time.monotonic()))
-        child.stdout.close()
-        child.stderr.close()
+        for stream in [child.stdin, child.stdout, child.stderr]:
+            if stream:
+                stream.close()
         self.children.remove(child)
         return code, bytes(buffers[0]), bytes(buffers[1])
 
@@ -353,6 +359,31 @@ def check_connected_private(processes, directory):
     return len(denials)
 
 
+def check_connected_cli(processes, workspace_directory, connected_directory):
+    command = "otto-live-boundary"
+    planted = workspace_directory / "bin"
+    os.chmod(workspace_directory, 0o755)
+    processes.python(1000, f"import pathlib\np=pathlib.Path({str(planted)!r});p.mkdir();p.chmod(0o755)\nfor name in [{command!r},'python3','sh','env','npm']:\n f=p/name;f.write_text('#!/bin/sh\\necho otto-planted-binary\\n');f.chmod(0o755)", "connected-cli")
+    identity = str(uuid.uuid4())
+    prefix = connected_directory / "cli" / identity
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "bin" / command).write_text("#!/bin/sh\nenv\n")
+    (prefix / ".installed").write_text("")
+    for path in [prefix.parent, prefix, prefix / "bin", prefix / "bin" / command, prefix / ".installed"]:
+        os.chown(path, 1002, 1002)
+        os.chmod(path, 0o700)
+    request = {"args": ["status"], "environment": {"OTTO_BOUNDARY_TOKEN": "synthetic-live-boundary"}, "cli": {"id": identity, "command": command, "source": {"npm": command}}, "timeoutMs": 10000, "installTimeoutMs": 10000, "maxBytes": 8192}
+    code, output, errors = processes.run(1002, ["/bin/sh", "-c", f"cd {connected_directory} && exec /usr/bin/python3 -I -u /opt/otto/workspace-command.py"], 20, {"PATH": f"{planted}:/usr/local/bin:/usr/bin:/bin", "NPM_CONFIG_PREFIX": str(workspace_directory), "PYTHONPATH": str(planted)}, (json.dumps(request) + "\n").encode())
+    require(b"otto-planted-binary" not in output + errors, "connected-cli-planted")
+    frames = [json.loads(line) for line in output.splitlines()]
+    printed = b"".join(base64.b64decode(frame["data"]) for frame in frames if frame["type"] in ["stdout", "stderr"]).decode()
+    require(b"otto-planted-binary" not in printed.encode(), "connected-cli-planted")
+    values = dict(line.split("=", 1) for line in printed.splitlines() if "=" in line)
+    require(code == 0 and not errors and frames[-1] == {"type": "exit", "code": 0, "reason": None}, "connected-cli")
+    require(values.get("OTTO_BOUNDARY_TOKEN") == "synthetic-live-boundary" and values.get("PATH") == f"{prefix}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" and set(values) <= {"OTTO_BOUNDARY_TOKEN", "PATH", "HOME", "XDG_CONFIG_HOME", "LANG", "PWD", "OLDPWD", "SHLVL", "_"}, "connected-cli")
+    return True
+
+
 def probe(processes, directories):
     require(sys.argv == [PROBE_PATH, "--disposable"] and os.geteuid() == 0, "invocation")
     info = os.lstat(PROBE_PATH)
@@ -399,8 +430,9 @@ def probe(processes, directories):
     roles = check_restricted_roles(processes, targets, ports, browser, denials, {"workspace": workspace_directory, "connected": connected_directory})
     require(processes.running(listener), "browser-process")
     connected_private = check_connected_private(processes, connected_directory)
+    connected_cli = check_connected_cli(processes, workspace_directory, connected_directory)
     guard(processes, "final-readiness")
-    return {"passed": True, "version": 2, "readinessChecks": 2, "rootNetAdmin": True, "browserCdpAndX11": True, "loopbackIpv4": 1, "loopbackIpv6": 1, "ownInterfaceIpv4": counts[4], "ownInterfaceIpv6": counts[6], "roles": roles, "envdTcpControls": 2, "workspaceConnectedPrivateDenied": connected_private, "firewallUnchanged": True, "cleanupComplete": True}
+    return {"passed": True, "version": 2, "readinessChecks": 2, "rootNetAdmin": True, "browserCdpAndX11": True, "loopbackIpv4": 1, "loopbackIpv6": 1, "ownInterfaceIpv4": counts[4], "ownInterfaceIpv6": counts[6], "roles": roles, "envdTcpControls": 2, "workspaceConnectedPrivateDenied": connected_private, "connectedCliSealed": connected_cli, "firewallUnchanged": True, "cleanupComplete": True}
 
 
 def expired(_signum, _frame):
