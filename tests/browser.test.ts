@@ -4008,10 +4008,11 @@ test('native Settings and feedback preserve the active credential form', async (
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
-test('Telegram setup preserves multiline clipboard boundaries in its protected submitted field', async () => {
-  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
-    timeoutMs: 20_000,
-    input: `
+for (const surface of ['channels', 'onboarding'])
+  test(`Telegram setup preserves multiline clipboard boundaries in its protected submitted field on ${surface}`, async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 20_000,
+      input: `
       import assert from 'node:assert/strict';
       import { JSDOM } from 'jsdom';
       const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/channels', pretendToBeVisual: true });
@@ -4037,10 +4038,15 @@ test('Telegram setup preserves multiline clipboard boundaries in its protected s
       const { act, createElement } = await import('react');
       const { createRoot } = await import('react-dom/client');
       const { Channels } = await import('./src/web/pages/channels.tsx');
+      const { Telegram } = await import('./src/web/pages/onboarding/steps/telegram.tsx');
       const root = createRoot(document.querySelector('#root'));
       try {
-        await act(async () => root.render(createElement(Channels, { hosted: true })));
-        await act(async () => document.querySelector('.channel-option button').click());
+        await act(async () => root.render(${
+          surface === 'channels'
+            ? 'createElement(Channels, { hosted: true })'
+            : "createElement(Telegram, { arrived: 'back', onNext() {}, onBack() {} })"
+        }));
+        await act(async () => document.querySelector('${surface === 'channels' ? '.channel-option button' : '.ob-tg-action'}').click());
         const input = document.querySelector('input[type="password"]');
         assert.ok(input);
         assert.equal(input.autocomplete, 'off');
@@ -4087,9 +4093,9 @@ test('Telegram setup preserves multiline clipboard boundaries in its protected s
         dom.window.close();
       }
     `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
   });
-  assert.equal(result.exitCode, 0, result.stderr);
-});
 
 test('a selected model arriving after settings load keeps the picker closed', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {

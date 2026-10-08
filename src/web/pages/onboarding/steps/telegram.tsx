@@ -168,6 +168,21 @@ export function Telegram({ arrived, onNext, onBack }: StepProps) {
           setTokenError('');
           setError('');
         }}
+        onPaste={(event) => {
+          const text = event.clipboardData.getData('text/plain');
+          if (!/[\r\n]/.test(text)) return;
+          event.preventDefault();
+          const input = event.currentTarget;
+          input.setRangeText(
+            text.replace(/[\r\n]+/g, ' '),
+            input.selectionStart ?? input.value.length,
+            input.selectionEnd ?? input.value.length,
+            'end',
+          );
+          setToken(input.value);
+          setTokenError('');
+          setError('');
+        }}
       />
       <Button type="submit" variant="outline" disabled={busy || unavailable} data-analytics-public>
         {busy && <Spinner />}
