@@ -74,7 +74,6 @@ export interface Stack {
     init?: RequestInit & { headers?: Record<string, string> },
   ): Promise<Response>;
   directory: string;
-  workspaceRoot: string;
   container: string;
   pool: pg.Pool;
   bossSchema: string;
@@ -341,7 +340,6 @@ export async function startStack(options: {
       request: (path, init) =>
         fetch(new URL(path, baseUrl), { ...init, headers: { ...init?.headers, cookie } }),
       directory,
-      workspaceRoot,
       container,
       pool,
       bossSchema,

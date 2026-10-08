@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { noWrites } from '../checks.ts';
 import { check, scenario } from '../scenario.ts';
 import type { Run } from '../trace.ts';
@@ -43,7 +44,7 @@ export default scenario({
                 {
                   user: 'U05CLAUDIA',
                   at: hoursAgo(now, 3),
-                  text: "Tomorrow's offsite is on, 10:00 to 13:00. I'll post the agenda here tonight.",
+                  text: "Tomorrow's offsite is on, 10:00 to 13:00. Agenda to follow here.",
                 },
               ],
             },
@@ -52,41 +53,52 @@ export default scenario({
         ),
       }),
       now: clock.now,
-      marks: { setup: 0, fired: 0, run: 0 },
+      marks: { setup: 0, run: 0 },
     };
   },
   async play(session, world) {
+    const due = Math.ceil((world.now() + 180_000) / 60_000) * 60_000;
+    const at = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Madrid',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(due);
+    const posted = sleep(Math.max(0, due - 60_000 - Date.now())).then(() =>
+      world.apps.slack!.post('leadership', {
+        user: 'U05CLAUDIA',
+        at: world.now(),
+        text: 'Hi team, agenda for tomorrow: these three topic cards. For the first topic, please focus on the open items in the second screenshot. Happy to refine in the room.',
+        files: [
+          {
+            name: 'Screenshot agenda.png',
+            mimeType: 'image/png',
+            bytes: textPng([
+              'Offsite agenda',
+              ...topics.map((topic, index) => `${index + 1}. ${topic}`),
+            ]),
+          },
+          {
+            name: 'Screenshot open items.png',
+            mimeType: 'image/png',
+            bytes: textPng(['Open items', ...openItems.map((item) => `- ${item}`)]),
+          },
+        ],
+      }),
+    );
     await session.say(
-      "Claudia will post tomorrow's offsite agenda in #leadership tonight. Tomorrow at 7:30, check the channel and send me the agenda so I can prepare. Don't post anything in Slack.",
+      `Claudia is about to post tomorrow's offsite agenda in #leadership. At ${at}, check the channel and send me the agenda so I can prepare. Don't post anything in Slack.`,
     );
     world.marks.setup = await session.assistantCount();
-    world.apps.slack!.post('leadership', {
-      user: 'U05CLAUDIA',
-      at: world.now(),
-      text: 'Hi team, agenda for tomorrow: these three topic cards. For the first topic, please focus on the open items in the second screenshot. Happy to refine in the room.',
-      files: [
-        {
-          name: 'Screenshot agenda.png',
-          mimeType: 'image/png',
-          bytes: textPng([
-            'Offsite agenda',
-            ...topics.map((topic, index) => `${index + 1}. ${topic}`),
-          ]),
-        },
-        {
-          name: 'Screenshot open items.png',
-          mimeType: 'image/png',
-          bytes: textPng(['Open items', ...openItems.map((item) => `- ${item}`)]),
-        },
-      ],
-    });
-    world.marks.fired = await session.fireSchedules();
+    await posted;
+    await sleep(Math.max(0, due - Date.now()));
+    await session.fireSchedules();
+    await session.settle();
     world.marks.run = await session.assistantCount();
   },
   evidence(run, world) {
     return [
       `Agenda screenshot: ${topics.join('; ')}. Open items screenshot: ${openItems.join('; ')}. The message text names neither.`,
-      `Scheduled runs started: ${world.marks.fired}.`,
+      `Scheduled runs started: ${run.scheduleRuns.length}.`,
       `Messages from the scheduled run:\n${run.replies.slice(world.marks.setup, world.marks.run).join('\n') || '(none)'}`,
     ].join('\n');
   },
@@ -99,7 +111,7 @@ export default scenario({
       return { pass: !missing.length, evidence: missing.length ? `missing ${missing}` : undefined };
     };
     return [
-      check('scheduled-run-fired', () => world.marks.fired > 0, { aspect: 'process' }),
+      check('scheduled-run-fired', (run) => run.scheduleRuns.length > 0, { aspect: 'process' }),
       check(
         'opened-both-screenshots',
         (run) => {

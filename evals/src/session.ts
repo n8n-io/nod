@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type pg from 'pg';
 import type { Stack } from './stack.ts';
 import type { UserScript } from './scenario.ts';
@@ -339,7 +339,14 @@ export function createSession(options: {
     workspace: {
       exec: stack.exec,
       async read(path) {
-        return readFile(join(stack.workspaceRoot, path)).catch(() => undefined);
+        return promisify(execFile)(
+          'docker',
+          ['exec', '--user', 'node', stack.container, 'cat', '--', `/workspace/${path}`],
+          { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+        ).then(
+          ({ stdout }) => stdout,
+          () => undefined,
+        );
       },
       async list() {
         const result = await stack.exec(

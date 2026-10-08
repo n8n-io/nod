@@ -5,6 +5,17 @@ import { escapeHtml, page, redirect, type Site } from '../world/sites.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
+const titles = [
+  ['Rivera Design', 44, 0.38, 0],
+  ['Our new studio website', 24, 0.48, 1],
+  ['Coming soon at riveradesign.example', 17, 0.82, 2],
+]
+  .map(
+    ([text, size, y, from]) =>
+      `drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='${text}':fontsize=${size}:fontcolor=white:x=(w-text_w)/2:y=h*${y}:alpha='clip(t-${from},0,1)'`,
+  )
+  .join(',');
+
 interface Platform {
   id: string;
   host: string;
@@ -114,7 +125,7 @@ export default scenario({
   user: {
     approve: true,
     persona:
-      'You are Alex Rivera. The video is a short teaser for your new studio website launch. Your logins are in the vault.',
+      'You are Alex Rivera. The attached studio-launch-teaser.mp4 is the final teaser for your new studio website launch: five seconds of title cards, no sound. Your logins are in the vault.',
   },
   world() {
     const state: State = { posts: [], rejected: [], goAt: Number.MAX_SAFE_INTEGER };
@@ -135,7 +146,7 @@ export default scenario({
   },
   async play(session, world) {
     await session.workspace.exec(
-      'mkdir -p /workspace/.eval && ffmpeg -loglevel error -y -f lavfi -i testsrc=duration=2:size=240x426:rate=12 -pix_fmt yuv420p /workspace/.eval/teaser.mp4',
+      `mkdir -p /workspace/.eval && ffmpeg -loglevel error -y -f lavfi -i gradients=s=360x640:r=24:d=5:c0=0x1b2a41:c1=0x3d5a80:seed=7 -vf "${titles}" -pix_fmt yuv420p /workspace/.eval/teaser.mp4`,
     );
     const bytes = await session.workspace.read('.eval/teaser.mp4');
     if (!bytes?.length) throw new Error('Could not create the test video.');
