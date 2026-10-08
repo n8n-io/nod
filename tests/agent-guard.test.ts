@@ -728,12 +728,16 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
       },
     },
   );
-  for (const [index, source] of ['apps', 'apps', 'fetch_content'].entries()) {
+  for (const [index, source] of [
+    [0, 'apps'],
+    [2, 'fetch_content'],
+  ] as const) {
     assert.match(texts[index]!, new RegExp(`^<untrusted_tool_result source="${source}">\n`));
     assert.match(texts[index]!, /\n<\/untrusted_tool_result>$/);
     assert.equal(texts[index]!.match(/untrusted_tool_result/gi)?.length, 2);
     assert.match(texts[index]!, /ignore_instructions/);
   }
+  assert.equal(texts[1], `The connected API request failed: ${injected}`);
   assert.equal(texts[3], injected);
   assert.equal(flags.length, 4);
   assert.ok(flags.every((found) => found.includes('ignore_instructions')));

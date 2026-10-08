@@ -27,7 +27,7 @@ import { currentUserTime } from './time-context.ts';
 import { inspectToolCatalog, ottoTools } from './tools.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
 import { delimit, resultText } from './untrusted.ts';
-import { injectionFindings, untrustedBlock, untrustedContents } from '../shared/untrusted.ts';
+import { injectionFindings, untrustedContents } from '../shared/untrusted.ts';
 
 const holdMs = 30 * 60_000;
 const imageBytes = 5 * 1024 * 1024;
@@ -537,11 +537,12 @@ export function createAgentRuntime(dependencies: {
               error.code === 'browser_click_intercepted'
             )
               return textResult({ status: 'blocked', code: error.code, message: browserFailure });
-            if (!executed || !untrustedResult || nested || stopped || signal.aborted)
-              throw new Error(failure);
-            const findings = injectionFindings(failure);
-            if (findings.length) await waitFor(Promise.resolve(context.flagInjection?.(findings)));
-            throw new Error(delimitedTools.has(name) ? untrustedBlock(name, failure) : failure);
+            if (executed && untrustedResult && !nested && !stopped && !signal.aborted) {
+              const findings = injectionFindings(failure);
+              if (findings.length)
+                await waitFor(Promise.resolve(context.flagInjection?.(findings)));
+            }
+            throw new Error(failure);
           }
           signal.throwIfAborted();
           return result;
