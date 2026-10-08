@@ -277,9 +277,11 @@ export function createSession(options: {
       return (await response.json()).id as string;
     },
     async api(method, path, body) {
+      if (new URL(path, stack.origin).origin !== stack.origin)
+        throw new Error('Scenario API calls must stay on the Otto server.');
       const response = await stack.request(path, {
         method,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: stack.origin },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       const text = await response.text();

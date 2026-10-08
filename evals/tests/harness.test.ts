@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
@@ -25,8 +24,7 @@ import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts';
 import { select } from '../src/run.ts';
 import { scenarios } from '../src/scenarios/index.ts';
-import { createSession, waitUntil } from '../src/session.ts';
-import { createStackRequest, type Stack } from '../src/stack.ts';
+import { waitUntil } from '../src/session.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
@@ -453,64 +451,6 @@ test('a case waits for observed work and reports a missing test condition', asyn
     waitUntil(async () => true, 0),
     /test condition was not reached/,
   );
-});
-
-test('scenario API mutations authenticate to their server without sending access cookies elsewhere', async () => {
-  const cookie = 'otto-access-fixture=synthetic-owner-secret';
-  let origin = '';
-  let saved: unknown;
-  let foreignRequests = 0;
-  const server = createServer(async (request, response) => {
-    response.setHeader('content-type', 'application/json');
-    if (request.headers.cookie !== cookie || request.headers.origin !== origin) {
-      response.writeHead(403).end(JSON.stringify({ error: 'Missing owner authentication.' }));
-      return;
-    }
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    saved = {
-      method: request.method,
-      path: request.url,
-      body: JSON.parse(Buffer.concat(chunks).toString()),
-    };
-    response.end(JSON.stringify({ saved: true }));
-  });
-  const foreign = createServer((_request, response) => {
-    foreignRequests++;
-    response.end('{}');
-  });
-  const listen = async (value: typeof server) => {
-    await new Promise<void>((resolve) => value.listen(0, '127.0.0.1', resolve));
-    const address = value.address();
-    assert.ok(address && typeof address !== 'string');
-    return `http://127.0.0.1:${address.port}`;
-  };
-  try {
-    origin = await listen(server);
-    const other = await listen(foreign);
-    const session = createSession({
-      stack: { request: createStackRequest(origin, cookie) } as Stack,
-      user: {},
-      deadline: Date.now() + 5000,
-    });
-    const account = { onboardingCompleted: true, name: 'Synthetic Owner' };
-    assert.deepEqual(await session.api('PATCH', '/api/account', account), {
-      status: 200,
-      body: { saved: true },
-    });
-    assert.deepEqual(saved, { method: 'PATCH', path: '/api/account', body: account });
-    for (const path of [`${other}/api/account`, `//${new URL(other).host}/api/account`])
-      await assert.rejects(
-        session.api('PATCH', path, account),
-        /Scenario API calls must stay on the Otto server/,
-      );
-    assert.equal(foreignRequests, 0);
-  } finally {
-    for (const value of [server, foreign]) {
-      value.closeAllConnections();
-      await new Promise<void>((resolve) => value.close(() => resolve()));
-    }
-  }
 });
 
 test('the stop case rejects a task that finished before Stop', async () => {

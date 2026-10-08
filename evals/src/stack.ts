@@ -73,6 +73,7 @@ export interface Stack {
     path: string,
     init?: RequestInit & { headers?: Record<string, string> },
   ): Promise<Response>;
+  origin: string;
   directory: string;
   container: string;
   pool: pg.Pool;
@@ -82,18 +83,6 @@ export interface Stack {
   resetConversation(): Promise<void>;
   event(summary: string): Promise<string>;
   stop(): Promise<void>;
-}
-
-export function createStackRequest(baseUrl: string, cookie: string): Stack['request'] {
-  const origin = new URL(baseUrl).origin;
-  return async (path, init) => {
-    const url = new URL(path, baseUrl);
-    if (url.origin !== origin) throw new Error('Scenario API calls must stay on the Otto server.');
-    const headers = new Headers(init?.headers);
-    headers.set('origin', origin);
-    headers.set('cookie', cookie);
-    return fetch(url, { ...init, headers });
-  };
 }
 
 export async function startStack(options: {
@@ -349,7 +338,9 @@ export async function startStack(options: {
     const baseUrl = `http://localhost:${port}`;
     const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;
     return {
-      request: createStackRequest(baseUrl, cookie),
+      request: (path, init) =>
+        fetch(new URL(path, baseUrl), { ...init, headers: { ...init?.headers, cookie } }),
+      origin: baseUrl,
       directory,
       container,
       pool,
