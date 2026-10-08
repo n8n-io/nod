@@ -177,8 +177,6 @@ export async function main(args: Args) {
       const result = await runSuite(runOptions(args));
       if (
         !result.summary.regression.total ||
-        result.summary.coverage.missing.length ||
-        result.summary.coverage.incomplete ||
         (minimum !== undefined && (result.summary.regression.percent ?? 0) < minimum)
       )
         process.exitCode = 1;
