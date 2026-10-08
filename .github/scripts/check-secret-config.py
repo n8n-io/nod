@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -67,5 +68,32 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
     code, findings = scan(analytics, filename)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
         raise SystemExit("The public token exception must be limited to its configuration file.")
+
+evidence_path = "docs/research/apps-acceptance-b8e489cb.json"
+evidence = (config.parent / evidence_path).read_text()
+code, findings = scan(evidence, evidence_path)
+if code != 0 or findings:
+    raise SystemExit("Verified acceptance source hashes must pass secret scanning.")
+
+for change in ["credential", "source_hash"]:
+    altered = json.loads(evidence)
+    if change == "credential":
+        altered["api_key"] = candidate
+    else:
+        altered["source"]["files"]["src/ports/authentication.ts"] = hashlib.sha256(
+            candidate.encode()
+        ).hexdigest()
+    code, findings = scan(json.dumps(altered, indent=2), evidence_path)
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit("Other values in the acceptance snapshot must fail secret scanning.")
+
+source_line = next(line for line in evidence.splitlines() if '"src/ports/authentication.ts"' in line)
+code, findings = scan(f'{source_line} "api_key": "{candidate}"', evidence_path)
+if code != 1 or not any("api_key" in finding.get("Match", "") for finding in findings):
+    raise SystemExit("A credential beside an allowed source hash must fail secret scanning.")
+
+code, findings = scan(evidence, "docs/research/unverified-snapshot.json")
+if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+    raise SystemExit("Source hash exceptions must be limited to the verified snapshot.")
 
 print("Secret scanning configuration regression passed.")
