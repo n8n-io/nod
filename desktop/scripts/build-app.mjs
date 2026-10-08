@@ -137,6 +137,8 @@ for (const path of [
   'package.json',
   'package-lock.json',
   'tsconfig.json',
+  'LICENSE',
+  'NOTICE',
   'desktop/runtime',
   'desktop/main/engine.mjs',
 ]) {
@@ -197,6 +199,7 @@ const paths = await packager({
   executableName: configuration.productName,
   appBundleId: 'dev.otto.desktop',
   appVersion: version,
+  appCopyright: 'Copyright © 2026 n8n GmbH',
   electronVersion,
   platform: 'darwin',
   arch: 'arm64',
