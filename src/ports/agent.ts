@@ -74,6 +74,7 @@ export interface RuntimeContext {
   timeZone?: string;
   locale?: string;
   hourCycle?: 'auto' | 'h12' | 'h23';
+  notificationRule?: string;
   account?: RuntimeAccount;
   connectedApps?: ConnectedApp[];
   currentMessageId?: string;

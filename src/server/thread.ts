@@ -18,7 +18,6 @@ import type {
   RuntimeResult,
 } from '../ports/agent.ts';
 import { appConfirmation } from '../ports/agent.ts';
-import { welcomeGreeting, welcomePrompt } from './welcome.ts';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
 import { defaultPreferences } from './preferences.ts';
 import { formattingLocale, timeZoneRegion } from '../shared/date-locale.ts';
@@ -476,37 +475,6 @@ export async function restartOnboarding(expectedThreadId?: string) {
   return { turnId: result.turnId, threadId: result.threadId };
 }
 
-export const welcomeSourceId = 'onboarding:welcome';
-export async function startOnboarding(name?: string, apps: string[] = []) {
-  const greeting = welcomeGreeting(name, apps);
-  const started = await transaction(async (client) => {
-    const thread = await lockThread(client);
-    const blocked = await client.query(
-      `SELECT 1 FROM turns WHERE owner_id=$1 AND source_id=$2
-       UNION ALL SELECT 1 FROM turns WHERE thread_id=$3 AND source='user' AND status IN ('queued','running') LIMIT 1`,
-      [ownerId, welcomeSourceId, thread.id],
-    );
-    if (blocked.rowCount) return false;
-    const turnId = randomUUID();
-    await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,status,finished_at)
-       VALUES($1,$2,$3,'event',$4,$5,'web',true,true,$6,CASE WHEN $6='succeeded' THEN now() END)`,
-      [
-        turnId,
-        ownerId,
-        thread.id,
-        welcomeSourceId,
-        welcomePrompt(greeting),
-        apps.length ? 'queued' : 'succeeded',
-      ],
-    );
-    await insertAssistantMessage(client, { threadId: thread.id, turnId }, greeting);
-    if (apps.length) await sendDrain(client, thread.id);
-    return true;
-  });
-  if (started) refresh();
-}
-
 export async function reactToAssistantMessage(
   messageId: string,
   reaction: MessageReaction | null,
@@ -821,9 +789,10 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
         [ownerId, threadId, sourceMessageId, turn.id, Boolean(turn.background)],
       ),
       pool.query('SELECT data FROM profiles WHERE owner_id=$1', [ownerId]),
-      pool.query('SELECT time_zone,locale,hour_cycle FROM preferences WHERE owner_id=$1', [
-        ownerId,
-      ]),
+      pool.query(
+        'SELECT time_zone,locale,hour_cycle,notification_rule FROM preferences WHERE owner_id=$1',
+        [ownerId],
+      ),
       dependencies.accountProfile?.().catch(() => undefined),
       dependencies.memoryContext?.().catch(() => ''),
       turn.background ? dependencies.connectedApps?.() : undefined,
@@ -853,6 +822,7 @@ async function loadTurnContext(turn: any, dependencies: ThreadDependencies) {
       timeZone,
       locale: preference?.locale || formattingLocale(timeZone ? timeZoneRegion(timeZone) : null),
       hourCycle: preference?.hour_cycle || defaultPreferences.hourCycle,
+      notificationRule: preference?.notification_rule ?? defaultPreferences.notificationRule,
       ...(account ? { account } : {}),
       memory: memory ?? '',
       ...(connectedApps ? { connectedApps } : {}),

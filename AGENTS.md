@@ -28,14 +28,15 @@ Setup and commands are in [README](README.md); how the system works is in [archi
 - Pi reads the page from the agent-browser snapshot and chooses login methods and fields. Do not add page-parsing scripts, snapshot regexes or field checks around the browser; leave the page to Pi, the model and agent-browser. Pi can run page JavaScript with browser evaluate. Tool output replaces known secret values. Keep site-specific cases in regression fixtures.
 - Before choosing a login method, check saved account metadata. Reuse a uniquely applicable login; ask when several methods are available without a matching saved login, unless the user already chose. Ask when the matching account or method remains ambiguous.
 - Credential guard: the runtime withholds messages that ask the user for passwords, codes or API keys and redirects the model to `get_credential`.
-- Memory learning reads only the owner's own user messages (short, no attachments, none with a memory-save approval), never assistant text or tool results; web content reaches it only if the user pasted it. Learned entries stay tentative until a second message repeats them, the model never writes consolidated entry text, and automatic changes archive active entries instead of deleting them. The archive itself is bounded, and only a user-requested forget deletes. Sensitive topics (health, religion, politics and similar) are learned only when the owner turns them on or explicitly asks.
+- Memory learning reads only the owner's own user messages (short, no attachments, none with a memory-save approval), never assistant text or tool results; web content reaches it only if the user pasted it. Learned entries stay tentative until a second message repeats them, the model never writes consolidated entry text, and automatic changes archive active entries instead of deleting them. The archive itself is bounded, and only a user-requested forget deletes. Sensitive topics (health, religion, politics and similar) are learned only when the owner turns them on or explicitly asks. One exception: when Gmail connects, a background job reads the owner's own text from recent sent emails (quoted, forwarded and automated mail removed) and saves only their writing style, with no facts, names or quotes, as one capped `preferences` entry labelled "Learned from your sent email" that replaces its earlier version by archiving it.
 - Owner and tenant isolation: every query and route is owner-scoped; tenants get their own SQL role and schemas and never receive control or auth credentials.
 - Internal gateway-to-tenant requests use signed HMAC envelopes binding owner, environment, generation, method, target, body, nonce and expiry. Keep replay and expiry checks.
 
 ## Model policy
 
 - Pi still asks before a destructive connected app action that the current request does not clearly authorize. The trust check is the server floor beneath that instruction, not a replacement.
-- Onboarding welcome turns and activity checks must only read connected apps. The server refuses app actions it classifies as writes in these turns; unclassified actions rely on the instruction.
+- Onboarding turns and activity checks must only read connected apps. The server refuses app actions it classifies as writes in these turns; unclassified actions rely on the instruction.
+- The first-chat task cards are prepared without a turn from the owner's setup answers and, when Gmail is connected, one read of recent inbox subjects and snippets that drops tripwire matches and security mail; the owner's selected model sees that mail only as data, and its cards are validated or replaced by fixed ones. **Do it** sends exactly the visible card title as a normal owner message.
 
 ## Validation
 
@@ -47,7 +48,7 @@ Keep only tests that would catch a real regression in:
 
 - the core harness (one thread and Pi session per owner, sequential turns, stop, interruption, reset, session rebase);
 - sandbox isolation (nothing on the host, no keys in the sandbox, contained paths);
-- safety (approvals, uncertain actions, Vault and sign-in fencing, credential guard, read-only welcome);
+- safety (approvals, uncertain actions, Vault and sign-in fencing, credential guard, read-only turns, onboarding task cards);
 - owner and tenant isolation (gateway, signed envelopes, owner scoping, URL guards, redaction);
 - real integration contracts (channel delivery, schedule firing, downloads, OAuth completion).
 

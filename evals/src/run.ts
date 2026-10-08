@@ -77,7 +77,10 @@ export function select(
       (options.scenarioIds
         ? options.scenarioIds.includes(item.id)
         : (options.tier === 'live' || item.tier !== 'live') &&
-          (options.includePending || item.calibration !== 'pending' || item.stance === 'gap')) &&
+          (options.tier !== 'pr' ||
+            options.includePending ||
+            item.calibration !== 'pending' ||
+            item.stance === 'gap')) &&
       (options.scenarioIds || options.tier !== 'pr' || item.tier === 'pr') &&
       (!options.capability || item.capabilities.includes(options.capability as never)),
   );
@@ -217,6 +220,7 @@ export async function runSuite(options: RunOptions) {
       model,
       judge,
       repeat: options.repeat,
+      scenarioIds: selected.map((item) => item.id),
       k,
       provenance: {
         workspaceImage: await digest(environment.OTTO_EVAL_WORKSPACE_IMAGE!),

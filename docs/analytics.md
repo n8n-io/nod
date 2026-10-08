@@ -6,20 +6,24 @@ The [production dashboard](https://eu.posthog.com/project/231804/dashboard/99834
 
 On 2026-10-05, permanent deletion was submitted for all 134 legacy profiles with their associated events and recordings, and the remaining recordings were deleted directly. An unfiltered SQL check returned zero profiles, zero recordings without a deletion marker and 5,789 historical events. The all-time replay list was empty. PostHog schedules associated event erasure during non-peak hours; complete event and storage erasure remains unverified. The project, public key and production dashboard are retained.
 
+## Consent
+
+Usage data is opt-in per owner and off by default. The owner turns it on with the "Share usage data" switch on the last onboarding step or in Settings (Appearance or General). `PATCH /api/account {usageData}` stores it as `account_settings.usage_data`, and the gateway copies it to the tenant with the account profile. Server events, browser events and recordings are sent only when the deployment's collection setting and the owner's flag are both on; `OTTO_ANALYTICS_ENABLED=false` always wins. Before sign-in no owner has opted in, so nothing is collected. The desktop setup renderer runs before an owner can opt in, so the desktop app always gives it a disabled configuration.
+
 ## Identity and environments
 
-| Runtime               | Identity                                                                                            | Default collection                                                              |
+| Runtime               | Identity                                                                                            | Collection available (still needs the owner's opt-in)                           |
 | --------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | Local web             | `local:<installation UUID>` stored in `<OTTO_DATA_ROOT>/analytics-id`                               | Enabled with `npm start`; disabled with `npm run dev`                           |
 | Desktop               | `local:<installation UUID>` stored in the desktop profile's `analytics-id` and passed to its server | Enabled for packaged apps; disabled for unpackaged development                  |
 | Hosted                | `hosted:<authenticated owner UUID>` derived by the gateway and tenant server                        | Enabled for `OTTO_ENVIRONMENT=production`; disabled for development and staging |
-| Hosted before sign-in | Temporary browser identity held in memory                                                           | Follows hosted collection settings                                              |
+| Hosted before sign-in | None                                                                                                | Disabled                                                                        |
 
 Local UUID creation is atomic and the identity survives restarts. The desktop setup renderer, main web renderer and server use the same installation identity. Hosted identity comes from the authenticated account, never a client-supplied owner or telemetry header. Browser recording stops and its identity resets when the account changes or signs out. Person-profile processing is disabled; names and email addresses are not sent.
 
 Distinct-user metrics count installations or hosted accounts, not exact people. Multiple local installations count separately, and a shared installation counts as one. Anonymous visits are not merged with signed-in accounts. Server events share `distinctId` with the UI but carry no browser `$session_id`, so correlate them by owner and time rather than assuming they belong to one recording.
 
-For self-hosted use, `npm start` builds the app and starts its server in production mode with analytics enabled by default. `npm run dev` runs with automatic reload and collection disabled by default. Enabling collection in development alone does not put those events on the production dashboard.
+For self-hosted use, `npm start` builds the app and starts its server in production mode with analytics available by default; each owner still opts in. `npm run dev` runs with automatic reload and collection disabled by default. Enabling collection in development alone does not put those events on the production dashboard.
 
 Set `OTTO_ANALYTICS_ENABLED=false` to disable both recordings and server events. `true` enables collection explicitly, including development. `OTTO_ANALYTICS_ENVIRONMENT=development` or `production` optionally changes the event label without changing the enabled setting. Desktop labels follow whether the app is packaged. Restart local processes after changing their environment; hosted operators put these settings in `GATEWAY_ENV` and apply a release rollout. The gateway passes the controls to each tenant. No PostHog configuration or provider key enters the agent workspace.
 
@@ -33,7 +37,7 @@ UI events retain the SDK's recording status, trigger states, boolean recorder di
 | -------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `$pageview`                      | A normalized application route becomes visible           | `route`                                                                                                                                 |
 | `$snapshot`                      | Masked full or incremental DOM recording                 | PostHog replay metadata and masked snapshot data                                                                                        |
-| `otto_onboarding_step_viewed`    | Model or app connection onboarding step appears          | `step`: `models`, `apps`                                                                                                                |
+| `otto_onboarding_step_viewed`    | An onboarding step appears                               | `step`: `welcome`, `brain`, `about`, `email`, `telegram`, `open_source`                                                                 |
 | `otto_onboarding_completed`      | The server persists the first completed onboarding state | None                                                                                                                                    |
 | `otto_settings_viewed`           | A settings tab appears                                   | `tab`: `general`, `profile`, `appearance`, `preferences`, `models`                                                                      |
 | `otto_settings_updated`          | A supported settings mutation succeeds                   | `section`: `account`, `preferences`, `connections`, `channels`, `models`; `operation`: `update`, `connect_started`, `disconnect`        |
@@ -48,7 +52,7 @@ UI events retain the SDK's recording status, trigger states, boolean recorder di
 | `otto_desktop_setup_step_viewed` | A native setup step appears                              | `step`: `preferences`, `preparing`, `ready`, `error`                                                                                    |
 | `otto_desktop_setup_completed`   | First-time native setup completes                        | None                                                                                                                                    |
 
-`connect_started` counts successful start or reopen actions, including returning to a pending sign-in flow. It does not count unique OAuth attempts or completed connections. Settings events cover the instrumented HTTP mutations; schedule events are emitted from the service after its transaction commits. Turn events also cover Telegram, WhatsApp and background work. Filter `source=user` for user-requested turns; the automatic welcome uses `source=event` and `background=true`. A process crash can leave a started turn without a completion event, and a turn may consume several queued messages. Do not interpret turn counts as exact message counts.
+`connect_started` counts successful start or reopen actions, including returning to a pending sign-in flow. It does not count unique OAuth attempts or completed connections. Settings events cover the instrumented HTTP mutations; schedule events are emitted from the service after its transaction commits. Turn events also cover Telegram, WhatsApp and background work. Filter `source=user` for user-requested turns. A process crash can leave a started turn without a completion event, and a turn may consume several queued messages. Do not interpret turn counts as exact message counts.
 
 ## Recording boundaries
 
@@ -68,7 +72,7 @@ npm run test:integration
 npm run build
 ```
 
-The existing account, thread and Vault tests exercise owner separation, rejected identity overrides, opaque installation IDs, private-property rejection, durable turn outcomes, real SDK configuration and snapshot uploads, replay diagnostics, recorder masking, account switching, disabling collection and telemetry failure isolation. They use disposable data and injected or intercepted analytics transports, with no live model or PostHog calls. Cloudflare tests additionally verify that startup preserves opt-out and keeps staging traffic separate despite production Node mode; run the [deployment checks and dry runs](../deployment/cloudflare/README.md#checks) for those changes.
+The existing account, thread and Vault tests exercise per-owner opt-in, the environment override, owner separation, rejected identity overrides, opaque installation IDs, private-property rejection, durable turn outcomes, real SDK configuration and snapshot uploads, replay diagnostics, recorder masking, account switching, disabling collection and telemetry failure isolation. They use disposable data and injected or intercepted analytics transports, with no live model or PostHog calls. Cloudflare tests additionally verify that startup preserves opt-out and keeps staging traffic separate despite production Node mode; run the [deployment checks and dry runs](../deployment/cloudflare/README.md#checks) for those changes.
 
 After building the desktop UI with the [desktop build](../desktop/README.md), exercise the real Electron renderer and recorder:
 
@@ -84,4 +88,4 @@ For a manual web walkthrough:
 npx tsx scripts/analytics-fixture.ts
 ```
 
-Open `http://127.0.0.1:4358`, complete the synthetic onboarding, navigate settings and send a synthetic chat message. The fixture substitutes a synthetic token and local collector; captured batches are written to the ignored `.local/analytics-fixture.json`. Check the emitted events and decoded snapshots for the expected paths and absence of the synthetic private markers; decompress any nested snapshot data before searching it. The fixture's `/__fixture__/summary` route performs that recursive decoding for its privacy check. Keep this evidence separate from authenticated production ingestion and replay verification.
+Open `http://127.0.0.1:4358`, complete the synthetic onboarding (the fixture treats usage data as opted in), navigate settings and send a synthetic chat message. The fixture substitutes a synthetic token and local collector; captured batches are written to the ignored `.local/analytics-fixture.json`. Check the emitted events and decoded snapshots for the expected paths and absence of the synthetic private markers; decompress any nested snapshot data before searching it. The fixture's `/__fixture__/summary` route performs that recursive decoding for its privacy check. Keep this evidence separate from authenticated production ingestion and replay verification.

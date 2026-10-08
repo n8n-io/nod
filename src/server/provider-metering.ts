@@ -180,6 +180,16 @@ export function meterIntegrations(
       usage.track({ ...base, operation: 'inspect_account' }, () =>
         provider.inspectAccount(id, owner, options),
       ),
+    sentEmails: provider.sentEmails
+      ? (id, signal) =>
+          usage.track({ ...base, operation: 'sent_emails' }, () => provider.sentEmails!(id, signal))
+      : undefined,
+    inboxSnippets: provider.inboxSnippets
+      ? (id, signal) =>
+          usage.track({ ...base, operation: 'inbox_snippets' }, () =>
+            provider.inboxSnippets!(id, signal),
+          )
+      : undefined,
     pollInbox: provider.pollInbox
       ? (id, cursor, signal) =>
           usage.track({ ...base, operation: 'poll_inbox' }, () =>

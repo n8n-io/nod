@@ -1197,9 +1197,9 @@ else {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return readDesktopSettings();
       });
-      ipcMain.handle('otto:analytics:configuration', (event) => {
+      ipcMain.handle('otto:analytics:configuration', async (event) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
-        return analyticsConfiguration();
+        return { ...(await analyticsConfiguration()), enabled: false };
       });
       ipcMain.handle('otto:settings:reveal', (event, field) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');

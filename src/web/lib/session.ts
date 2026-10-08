@@ -35,7 +35,8 @@ function validSession(value: unknown): value is SessionResponse {
     (user.avatarUrl === null || typeof user.avatarUrl === 'string') &&
     !!session.settings &&
     ['system', 'light', 'dark'].includes(session.settings.theme) &&
-    typeof session.settings.onboardingCompleted === 'boolean'
+    typeof session.settings.onboardingCompleted === 'boolean' &&
+    typeof session.settings.usageData === 'boolean'
   );
 }
 

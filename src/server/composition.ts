@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -49,16 +49,18 @@ import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService } from './models.ts';
-import { createIntegrationKeyService } from './integration-key.ts';
+import { createIntegrationKeyService, registerIntegrationKeyRoutes } from './integration-key.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
+import { injectionFindings } from '../runtime/untrusted.ts';
 import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
+import { learnWritingStyle } from './writing-style.ts';
 import { createTenantDrain } from './tenant-drain.ts';
 import { createChatVerification } from './chat-verification.ts';
 import { createAgentReactionService } from './agent-reactions.ts';
@@ -100,6 +102,8 @@ import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts
 import { registerFeedback } from './feedback.ts';
 import { feedbackContext } from './feedback-context.ts';
 import { createPersonalService } from './personal.ts';
+import { createOnboardingInterview } from './onboarding-interview.ts';
+import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
 import { createMemoryService } from './memory.ts';
 import { createSpeech } from './speech.ts';
@@ -113,7 +117,6 @@ import {
   resumeAfterConnection,
   resumeAfterCredentials,
   retryCredentials,
-  startOnboarding,
   startThreadWorkers,
   stopThreadWorkers,
   withTurnLock,
@@ -160,6 +163,7 @@ export interface ApplicationAdapters {
   keyStore: CredentialKeyStore;
   relevance: RelevanceClassifier;
   memoryCurator?: MemoryCurator;
+  onboardingCurator?: MemoryCurator;
   messaging?: MessagingTransport;
   linkPreviews?: LinkPreviewProvider;
   feedback?: FeedbackDelivery;
@@ -205,6 +209,22 @@ export function createDefaultAdapters(
       return models.current.provider;
     },
     resolve: () => models.resolve(true),
+    configured: () => models.configured,
+  });
+  const selectedCurator = createPiMemoryCurator({
+    get provider() {
+      return models.current.provider;
+    },
+    resolve: async () => {
+      const access = await models.resolve();
+      const efforts = access.definition.choice.efforts;
+      return {
+        ...access,
+        effort:
+          efforts.find((level) => ['off', 'minimal', 'low', 'medium'].includes(level)) ??
+          efforts[0],
+      };
+    },
     configured: () => models.configured,
   });
   const authConfigs: Partial<Record<IntegrationService, string>> = {
@@ -383,6 +403,7 @@ export function createDefaultAdapters(
           },
         },
     memoryCurator: modelCurator,
+    onboardingCurator: selectedCurator,
     messagingSetup: {
       verifier: createChatSdkSetupVerifier(
         runtimeMode === 'tenant'
@@ -589,6 +610,9 @@ async function initializeApplication(
   const integrationProvider = meterIntegrations(adapters.integrations, providerUsage);
   const classify = meterRelevance(adapters.relevance, providerUsage);
   const curator = meterMemoryCurator(memoryCurator, providerUsage);
+  const onboardingCurator = adapters.onboardingCurator
+    ? meterMemoryCurator(adapters.onboardingCurator, providerUsage)
+    : curator;
   const runtime = createAgentRuntime({
     agent: meterAgent(adapters.agent, providerUsage),
     skills: createSkillLibrary(
@@ -601,29 +625,11 @@ async function initializeApplication(
     redactError: createErrorRedactor(inspectorSecrets),
   });
   const speech = createSpeech(speechProvider);
-  const memoryNoticeHash = createHash('sha256').update(`memory-notice:${ownerId}`).digest('hex');
-  const memoryNoticeId = `${memoryNoticeHash.slice(0, 8)}-${memoryNoticeHash.slice(8, 12)}-8${memoryNoticeHash.slice(13, 16)}-8${memoryNoticeHash.slice(17, 20)}-${memoryNoticeHash.slice(20, 32)}`;
   const memory = createMemoryService({
     pool,
     ownerId,
     store: adapters.objectStore ?? createFilesystemObjectStore(join(dataRoot, 'objects')),
     curator,
-    onSaved: async (sourceMessageId) => {
-      const result = await pool.query(
-        `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
-         SELECT $1,$2,'assistant',$3,m.thread_id,m.turn_id FROM messages m
-         JOIN threads t ON t.id=m.thread_id AND t.owner_id=m.owner_id AND t.archived_at IS NULL
-         WHERE m.id=$4 AND m.owner_id=$2 AND m.role='user'
-         ON CONFLICT(id) DO NOTHING RETURNING id`,
-        [
-          memoryNoticeId,
-          ownerId,
-          'I’ve saved this and will remember useful details you share. You can ask me to stop saving or forget your saved details anytime.',
-          sourceMessageId,
-        ],
-      );
-      if (result.rowCount) refresh();
-    },
   });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
   const personal = createPersonalService({
@@ -698,6 +704,7 @@ async function initializeApplication(
         workspace.readArtifact!(turn.threadId, path, maxBytes, 'attachment')),
     validateActivityCheck: triage.validateActivityCheck,
     resumeConnection: resumeAfterConnection,
+    learnWritingStyle: (read, stop) => learnWritingStyle({ memory, curator }, read, stop),
     ...(adapters.directIntegrations
       ? {
           additionalProviders: [
@@ -772,6 +779,32 @@ async function initializeApplication(
   const localAccounts = runtimeMode === 'local' ? createAccountStore(pool) : null;
   const accountProfiles = createAccountProfileStore(pool, ownerId);
   await (localAccounts ?? accountProfiles).initialize();
+  const onboardingSuggestions = createOnboardingSuggestions({
+    ownerId,
+    curator: onboardingCurator,
+    answers: async () =>
+      (await memory.load()).entries
+        .filter((entry) => entry.origin === 'stated' && entry.slug.startsWith('onboarding-'))
+        .map((entry) => entry.text),
+    gmail: async () =>
+      (await integrations.connectedApps()).some(
+        (app) => app.slug === 'gmail' && app.status === 'connected',
+      ),
+    inbox: integrations.inboxSnippets,
+    telegram: async () =>
+      Boolean(
+        (await channelSettings?.status())?.channels.some(
+          (channel) => channel.provider === 'telegram' && channel.enabled && channel.allowedUserId,
+        ),
+      ),
+    tripwire: injectionFindings,
+  });
+  analytics.setUsageData(
+    ownerId,
+    localAccounts
+      ? (await localAccounts.read(ownerId)).usageData
+      : ((await accountProfiles.read())?.usageData ?? false),
+  );
   const accountProfile = async () =>
     runtimeAccount(
       localAccounts
@@ -844,11 +877,10 @@ async function initializeApplication(
             `OTTO_${action}`,
             await personal.validateReview(action, args),
           );
-        if (action === 'memory_save' && (await memory.untrusted(turn.threadId))) {
+        if (action === 'memory_save') {
           const input = memory.validate(args);
-          return approvals.request(turn, 'OTTO_memory_save', input, {
-            confirm: await memory.cites(provenance.sourceMessageId),
-          });
+          if (!(await memory.supported(input, { ...provenance, turnId: turn.turnId })))
+            return { status: 'skipped', reason: 'unsupported_memory' };
         }
         if (
           [
@@ -945,11 +977,7 @@ async function initializeApplication(
     });
   }
   const welcome = async (name?: string) => {
-    if (!adapters.model.configured) return;
-    const connected = (await integrations.list()).filter(
-      (connection) => connection.status === 'connected',
-    );
-    await startOnboarding(name, [...new Set(connected.map((connection) => connection.name))]);
+    if (adapters.model.configured) await onboardingSuggestions.complete(name);
   };
   const app = await createApp({
     analytics: captureAnalytics,
@@ -963,6 +991,7 @@ async function initializeApplication(
       return restartOnboarding(threadId);
     },
     startOnboarding: welcome,
+    planningTasks: onboardingSuggestions.planning,
     computer,
     runtime,
     inspector,
@@ -975,7 +1004,9 @@ async function initializeApplication(
       }),
   });
   adapters.models?.register(app);
-  adapters.integrationKey?.register(app);
+  if (adapters.integrationKey) adapters.integrationKey.register(app);
+  else if (runtimeMode === 'local' && desktopMode)
+    registerIntegrationKeyRoutes(app, adapters.integrations);
   app.addHook('preClose', async () => {
     await adapters.models?.close();
   });
@@ -1028,7 +1059,7 @@ async function initializeApplication(
       return { ok: true };
     });
     app.put('/api/account/profile', async (request) => {
-      await accountProfiles.save(request.body);
+      analytics.setUsageData(ownerId, (await accountProfiles.save(request.body)).usageData);
       return { ok: true };
     });
   }
@@ -1053,6 +1084,8 @@ async function initializeApplication(
   vault.registerRoutes(app);
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
+  createOnboardingInterview({ curator: onboardingCurator, memory }).registerRoutes(app);
+  onboardingSuggestions.registerRoutes(app);
   tasks.registerRoutes(app);
   triage.registerRoutes(app);
   let channels: Awaited<ReturnType<typeof createChannels>> | undefined;
@@ -1139,6 +1172,7 @@ async function initializeApplication(
     channels.registerRoutes(app);
     await channelSettings?.recover();
   }
+  await onboardingSuggestions.initialize();
   let closingConsumers: Promise<void> | undefined;
   app.addHook('preClose', async () => {
     admission.close();

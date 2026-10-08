@@ -48,7 +48,12 @@ describe('account routes', () => {
     const accounts: AccountStore = {
       async read(owner) {
         return (
-          records.get(owner) ?? { theme: 'system', onboardingCompleted: false, displayName: null }
+          records.get(owner) ?? {
+            theme: 'system',
+            onboardingCompleted: false,
+            displayName: null,
+            usageData: false,
+          }
         );
       },
       async update(owner, input) {
@@ -58,6 +63,7 @@ describe('account routes', () => {
           theme: input.theme ?? saved.theme,
           onboardingCompleted: input.onboardingCompleted ?? saved.onboardingCompleted,
           displayName: input.name ?? saved.displayName,
+          usageData: input.usageData ?? saved.usageData,
         };
         records.set(owner, next);
         return {
@@ -188,6 +194,7 @@ describe('account routes', () => {
                 headers: { origin: 'https://otto.example.test' },
                 payload: {
                   onboardingCompleted: true,
+                  usageData: true,
                   ...(index === 0 ? { name: 'Synthetic Updated' } : { theme: 'dark' }),
                 },
               }),
@@ -198,6 +205,7 @@ describe('account routes', () => {
             displayName: 'Synthetic Updated',
             theme: 'dark',
             onboardingCompleted: true,
+            usageData: true,
           });
           const repeated = await apps[0].inject({
             method: 'PATCH',
@@ -232,6 +240,12 @@ describe('account routes', () => {
     const f = await fixture(undefined, undefined, analytics);
     t.after(() => f.app.close());
     for (const owner of ['alex', 'sam']) {
+      await f.app.inject({
+        method: 'PATCH',
+        url: '/api/account',
+        headers: { origin: 'https://otto.example.test', cookie: `fixture=${owner}` },
+        payload: { usageData: true },
+      });
       const session = await f.app.inject({
         method: 'GET',
         url: '/api/session?distinctId=attacker',
@@ -309,6 +323,12 @@ describe('account routes', () => {
     );
     t.after(() => f.app.close());
     const headers = { origin: 'https://otto.example.test', cookie: 'fixture=alex' };
+    await f.app.inject({
+      method: 'PATCH',
+      url: '/api/account',
+      headers,
+      payload: { usageData: true },
+    });
     const failed = await f.app.inject({
       method: 'PATCH',
       url: '/api/account',
@@ -327,6 +347,65 @@ describe('account routes', () => {
     assert.equal(saved.statusCode, 200);
     assert.equal(f.records.get('alex')?.theme, 'dark');
     await analytics.shutdown();
+  });
+
+  test('usage data stays off until each owner opts in and the environment switch always wins', async (t) => {
+    for (const available of [true, false]) {
+      const captured: Parameters<ProductAnalytics['capture']>[0][] = [];
+      const analytics = await createAnalytics({
+        provider: available
+          ? { capture: (event) => captured.push(event), shutdown: async () => {} }
+          : undefined,
+        deployment: 'hosted',
+        environment: 'production',
+        dataRoot: '.',
+      });
+      const f = await fixture(undefined, undefined, analytics);
+      t.after(() => f.app.close());
+      const request = (owner: string, payload?: object) =>
+        f.app.inject({
+          method: payload ? 'PATCH' : 'GET',
+          url: payload ? '/api/account' : '/api/session',
+          headers: { origin: 'https://otto.example.test', cookie: `fixture=${owner}` },
+          ...(payload ? { payload } : {}),
+        });
+      const initial = await request('alex');
+      assert.equal(initial.json().settings.usageData, false);
+      assert.deepEqual(
+        [initial.json().analytics.enabled, initial.json().analytics.distinctId],
+        [false, null],
+      );
+      await request('alex', { name: 'Synthetic Alex', onboardingCompleted: true });
+      analytics.capture('alex', { event: 'otto_conversation_reset' });
+      assert.equal(captured.length, 0);
+      const opted = await request('alex', { usageData: true });
+      assert.equal(opted.statusCode, 200);
+      assert.equal(opted.json().settings.usageData, true);
+      assert.equal(opted.json().analytics.enabled, available);
+      assert.equal(f.records.get('alex')?.usageData, true);
+      const other = await request('sam');
+      assert.deepEqual(
+        [other.json().settings.usageData, other.json().analytics.enabled],
+        [false, false],
+      );
+      await request('sam', { theme: 'dark' });
+      analytics.forOwner('sam')({ event: 'otto_chat_stopped' });
+      await request('alex', { theme: 'dark' });
+      analytics.forOwner('alex')({ event: 'otto_chat_stopped' });
+      assert.deepEqual(
+        captured.map((event) => [event.distinctId, event.event]),
+        available
+          ? [
+              ['hosted:alex', 'otto_settings_updated'],
+              ['hosted:alex', 'otto_chat_stopped'],
+            ]
+          : [],
+      );
+      const declined = await request('alex', { usageData: false });
+      assert.equal(declined.json().analytics.enabled, false);
+      analytics.capture('alex', { event: 'otto_chat_stopped' });
+      assert.equal(captured.length, available ? 2 : 0);
+    }
   });
 
   test('account preparation requires a current same-origin principal and never accepts provider or owner input', async (t) => {
@@ -525,6 +604,7 @@ describe('analytics privacy', () => {
           environment: analyticsEnvironment(env),
           dataRoot: '.',
         });
+        analytics.setUsageData('owner-fixture', true);
         const configuration = analytics.configuration('owner-fixture');
         assert.equal(configuration.enabled, enabled, JSON.stringify(env));
         assert.equal(configuration.environment, environment, JSON.stringify(env));
@@ -545,9 +625,15 @@ describe('analytics privacy', () => {
       environment: 'production' as const,
       dataRoot: join(root, 'first'),
     };
-    const [first, concurrent] = await Promise.all([createAnalytics(input), createAnalytics(input)]);
-    const restarted = await createAnalytics(input);
-    const second = await createAnalytics({ ...input, dataRoot: join(root, 'second') });
+    const optIn = (analytics: Analytics) => {
+      analytics.setUsageData('local-development', true);
+      return analytics;
+    };
+    const [first, concurrent] = (
+      await Promise.all([createAnalytics(input), createAnalytics(input)])
+    ).map(optIn);
+    const restarted = optIn(await createAnalytics(input));
+    const second = optIn(await createAnalytics({ ...input, dataRoot: join(root, 'second') }));
     const id = first.configuration('local-development').distinctId;
     assert.match(id!, /^local:[0-9a-f-]{36}$/);
     assert.equal(concurrent.configuration('local-development').distinctId, id);
@@ -557,23 +643,29 @@ describe('analytics privacy', () => {
       (await readFile(join(input.dataRoot, 'analytics-id'), 'utf8')).trim(),
       id!.slice(6),
     );
-    const supplied = await createAnalytics({
-      ...input,
-      installationId: id!.slice(6),
-      dataRoot: join(root, 'desktop'),
-    });
+    const supplied = optIn(
+      await createAnalytics({
+        ...input,
+        installationId: id!.slice(6),
+        dataRoot: join(root, 'desktop'),
+      }),
+    );
     assert.equal(supplied.configuration('local-development').distinctId, id);
-    const disabled = await createAnalytics({
-      ...input,
-      provider: undefined,
-      dataRoot: join(root, 'disabled'),
-    });
+    const disabled = optIn(
+      await createAnalytics({
+        ...input,
+        provider: undefined,
+        dataRoot: join(root, 'disabled'),
+      }),
+    );
     assert.equal(disabled.configuration('local-development').enabled, false);
     await assert.rejects(readFile(join(root, 'disabled', 'analytics-id')), { code: 'ENOENT' });
-    const invalid = await createAnalytics({
-      ...input,
-      installationId: 'private-email@example.test',
-    });
+    const invalid = optIn(
+      await createAnalytics({
+        ...input,
+        installationId: 'private-email@example.test',
+      }),
+    );
     assert.equal(invalid.configuration('local-development').enabled, false);
   });
 
@@ -585,6 +677,7 @@ describe('analytics privacy', () => {
       environment: 'production',
       dataRoot: '.',
     });
+    analytics.setUsageData('owner-fixture', true);
     const capture = analytics.forOwner('owner-fixture');
     for (const event of [
       { event: 'private-chat-text' },
@@ -681,7 +774,12 @@ describe('account avatar', () => {
       accounts: {
         async read(id) {
           return (
-            accounts.get(id) ?? { theme: 'system', onboardingCompleted: false, displayName: null }
+            accounts.get(id) ?? {
+              theme: 'system',
+              onboardingCompleted: false,
+              displayName: null,
+              usageData: false,
+            }
           );
         },
         async update(id, input) {
@@ -751,7 +849,7 @@ describe('account session store', () => {
     return {
       auth: { mode: 'google', googleAvailable: true },
       user: { id, name: id, email: `${id}@example.test`, avatarUrl: null },
-      settings: { theme, onboardingCompleted: true },
+      settings: { theme, onboardingCompleted: true, usageData: false },
       capabilities: { developer: false },
     };
   }

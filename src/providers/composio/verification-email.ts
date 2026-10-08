@@ -4,20 +4,20 @@ import { z } from 'zod';
 import { parse } from 'tldts';
 import type { VerificationEmail, VerificationEmailQuery } from '../../ports/integrations.ts';
 
-const mailbox = (value: string) => {
+export const mailbox = (value: string) => {
   if (/[,;\r\n]/.test(value)) return;
   const address = (/<([^<>\s]+@[^<>\s]+)>/.exec(value)?.[1] ?? value).trim().toLowerCase();
   return z.email().max(320).safeParse(address).success ? address : undefined;
 };
 const headerSchema = z.object({ name: z.string().max(100), value: z.string().max(8192) });
-const messageSchema = z.object({
+export const messageSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/),
   internalDate: z.string().regex(/^\d{1,16}$/),
   labelIds: z.array(z.string()).max(100).optional(),
   payload: z.object({ headers: z.array(headerSchema).max(200) }).passthrough(),
 });
 
-function messageText(payload: unknown) {
+export function messageText(payload: unknown) {
   const queue: Array<{ value: unknown; depth: number }> = [{ value: payload, depth: 0 }];
   const plain: string[] = [];
   const html: string[] = [];

@@ -14,6 +14,11 @@
   margin-bottom: 32px;
   align-items: flex-start;
 }
+.page-title-row {
+  display: flex;
+  align-items: center;
+  padding-left: max(0px, calc(var(--sidebar-toggle-space, 0px) - var(--page-inline)));
+}
 .page-title {
   display: flex;
   align-items: center;

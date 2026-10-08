@@ -11,6 +11,7 @@ const accountUpdate = z
     name: z.string().trim().min(1).max(100).optional(),
     theme: z.enum(['light', 'dark', 'system']).optional(),
     onboardingCompleted: z.boolean().optional(),
+    usageData: z.boolean().optional(),
   })
   .strict();
 
@@ -67,6 +68,7 @@ export function createAccountSession(options: {
   async function response(request: FastifyRequest): Promise<SessionResponse> {
     const session = await principal(request);
     const account = session ? await options.accounts.read(session.user.id) : null;
+    if (session && account) options.analytics?.setUsageData(session.user.id, account.usageData);
     return {
       auth: { mode, googleAvailable: options.authentication?.configured ?? false },
       user: session
@@ -80,7 +82,11 @@ export function createAccountSession(options: {
           }
         : null,
       settings: account
-        ? { theme: account.theme, onboardingCompleted: account.onboardingCompleted }
+        ? {
+            theme: account.theme,
+            onboardingCompleted: account.onboardingCompleted,
+            usageData: account.usageData,
+          }
         : null,
       capabilities: {
         developer: Boolean(session && options.developerIds?.has(session.user.id)),
@@ -259,16 +265,19 @@ export function createAccountSession(options: {
       if (!session) return;
       const input = accountUpdate.parse(request.body);
       let onboardingCompletedNow = false;
+      let usageData: boolean | undefined;
       if (input.onboardingCompleted) {
         if (!(await prepare(request, reply, session))) return;
         if (
           !(await start(request, reply, session, input.name, async () => {
             const account = await options.accounts.update(session.user.id, input);
             onboardingCompletedNow = account.onboardingCompletedNow === true;
+            usageData = account.usageData;
           }))
         )
           return;
-      } else await options.accounts.update(session.user.id, input);
+      } else usageData = (await options.accounts.update(session.user.id, input)).usageData;
+      if (usageData !== undefined) options.analytics?.setUsageData(session.user.id, usageData);
       if (onboardingCompletedNow)
         options.analytics?.capture(session.user.id, { event: 'otto_onboarding_completed' });
       if (input.name !== undefined || input.theme !== undefined)

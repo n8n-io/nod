@@ -12,7 +12,7 @@ on:
         description: Scenarios to run
         type: choice
         options: [pr, full]
-        default: pr
+        default: full
       repeat:
         description: Attempts per scenario
         type: string
@@ -26,22 +26,22 @@ on:
         type: string
         default: ''
       budget:
-        description: Stop each run after about this many dollars
+        description: Optional spend limit in dollars; leave empty to run all attempts
         type: string
-        default: '50'
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
   group: evals-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   evals:
     name: Capability evals
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: ${{ inputs.tier == 'full' && 240 || 90 }}
+    timeout-minutes: ${{ inputs.tier == 'full' && 360 || 90 }}
     env:
       TEST_DATABASE_URL: postgresql://otto:otto-evals@127.0.0.1:5432/otto_evals
       OTTO_EVAL_WORKSPACE_IMAGE: otto-eval-workspace
@@ -99,7 +99,8 @@ jobs:
         run: |
           set -euo pipefail
           label() { printf '%s' "$1" | tr -c 'a-zA-Z0-9.' '-' | cut -c1-40; }
-          args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5 --tier "$TIER" --repeat "$REPEAT" --concurrency 4 --budget "$BUDGET")
+          args=(--model "$MODEL" --judge anthropic/claude-sonnet-5-5 --tier "$TIER" --repeat "$REPEAT" --concurrency 4)
+          if [ -n "$BUDGET" ]; then args+=(--budget "$BUDGET"); fi
           if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi
           if [ -n "$BASELINE" ]; then
             case "$BASELINE" in -*) echo "::error::The baseline must be a branch or tag."; exit 1 ;; esac

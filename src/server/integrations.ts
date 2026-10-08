@@ -13,6 +13,7 @@ import {
   type IntegrationProvider,
   type IntegrationServiceInfo,
   type IntegrationSession,
+  type SentEmail,
 } from '../ports/integrations.ts';
 import { integrationServiceIds, integrationServices } from '../shared/integrations.ts';
 import {
@@ -109,6 +110,10 @@ type IntegrationOptions = {
   provider: IntegrationProvider;
   additionalProviders?: IntegrationProvider[];
   resumeConnection?(turnId: string, service: Slug): Promise<boolean>;
+  learnWritingStyle?(
+    read: (signal: AbortSignal) => Promise<SentEmail[]>,
+    stop: AbortSignal,
+  ): Promise<void>;
   validateActivityCheck?(turn: TurnRef, connectionId: string): Promise<void>;
   readWorkspaceFile?(turn: TurnRef, path: string, maxBytes: number): Promise<Uint8Array>;
   baseUrl: string;
@@ -1121,13 +1126,20 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       client.release();
     }
     await resetSession(configuredOwner);
+    const selected = providerForRow(row);
     if (row.account_id) {
-      const selected = providerForRow(row);
       if (previousTrigger) await selected.unsubscribe(previousTrigger).catch(() => {});
       if (row.account_id !== row.pending_account_id)
         await selected.deleteAccount(row.account_id).catch(() => {});
     }
-    if (supportsWatch(row.slug, providerForRow(row))) await activateWatch(connectedId);
+    if (supportsWatch(row.slug, selected)) await activateWatch(connectedId);
+    if (row.slug === 'gmail' && selected.sentEmails && options.learnWritingStyle)
+      void background(() =>
+        options.learnWritingStyle!(
+          (signal) => selected.sentEmails!(query.accountId, signal),
+          pollController.signal,
+        ),
+      )?.catch(() => {});
     if (row.turn_id)
       return (await options.resumeConnection?.(row.turn_id, row.slug).catch(() => false)) ?? false;
     return false;
@@ -1620,6 +1632,15 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     }
   }
 
+  async function inboxSnippets(signal: AbortSignal) {
+    for (const row of await connectionRows(configuredOwner)) {
+      const selected = providers.find((item) => item.id === row.provider_id);
+      if (row.slug !== 'gmail' || !row.account_id || !row.account_active || row.revoked) continue;
+      if (selected?.inboxSnippets) return selected.inboxSnippets(row.account_id, signal);
+    }
+    return [];
+  }
+
   function pollInboxes() {
     if (closed || !provider.configured || !provider.pollInbox) return Promise.resolve();
     if (polling) return polling;
@@ -2077,6 +2098,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     executeApproved,
     prepare,
     emailCode,
+    inboxSnippets,
     list,
     catalog,
     connectedApps,

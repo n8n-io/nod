@@ -8,6 +8,8 @@ export interface IntegrationServiceInfo {
   categories?: string[];
 }
 
+export type IntegrationKeyStatus = { managed: boolean; saved: boolean; suffix: string | null };
+
 export const integrationServices: Record<
   IntegrationService,
   { name: string; description: string }

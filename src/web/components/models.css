@@ -303,12 +303,8 @@
   font-size: var(--text-control);
   color: var(--muted-foreground);
 }
-.model-current .model-picker,
-.model-choice .model-picker {
+.model-current .model-picker {
   padding: 0;
-}
-.model-choice .model-picker-trigger {
-  max-width: 260px;
 }
 .model-details {
   margin-top: 16px;

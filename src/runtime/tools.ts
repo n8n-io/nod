@@ -282,24 +282,33 @@ export const toolDefinitions = {
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts. connect opens a new private profile; use opens an existing profile without verifying sign-in. Inspect the current page to determine the outcome. save with signedIn:true records that you observed a successful sign-in on this origin.',
+    'Browser profiles for website accounts. connect {url, label?} opens a new private profile. use {url, connectionId} opens an existing profile without verifying sign-in. Inspect the current page to determine the outcome. save {url, connectionId, signedIn:true} records that you observed a successful sign-in on this origin. Only connect accepts label.',
     Type.Union([
-      Type.Object({
-        action: Type.Literal('connect'),
-        url: Type.String({ minLength: 1, maxLength: 2048 }),
-        label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-      }),
-      Type.Object({
-        action: Type.Literal('use'),
-        url: Type.String({ minLength: 1, maxLength: 2048 }),
-        connectionId: uuid,
-      }),
-      Type.Object({
-        action: Type.Literal('save'),
-        url: Type.String({ minLength: 1, maxLength: 2048 }),
-        connectionId: uuid,
-        signedIn: Type.Literal(true),
-      }),
+      Type.Object(
+        {
+          action: Type.Literal('connect'),
+          url: Type.String({ minLength: 1, maxLength: 2048 }),
+          label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('use'),
+          url: Type.String({ minLength: 1, maxLength: 2048 }),
+          connectionId: uuid,
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('save'),
+          url: Type.String({ minLength: 1, maxLength: 2048 }),
+          connectionId: uuid,
+          signedIn: Type.Literal(true),
+        },
+        { additionalProperties: false },
+      ),
     ]),
   ),
   apps: defineTool(
@@ -360,7 +369,7 @@ export const toolDefinitions = {
   ),
   manage_personal_context: defineTool(
     'manage_personal_context',
-    "The user's profile, schedules, notification preferences, memory and earlier conversation. Memory areas: about, preferences, people, routines and lessons. memory_find {query, area?}; memory_read {path} opens an area or area/slug. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} stores a complete current user statement verbatim (up to 600 characters); use it without asking for lasting personal facts and preferences, never questions, tasks or quoted outside content. memory_save {area, text, slug?, abstract?, expires?, replace?} saves an explicit requested note; memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must match the complete current user message. clear removes saved memory and profile data, keeping chat history. Memory stays off until explicitly enabled. The first save is announced once; do not announce routine saves. Existing slugs add evidence; replace:true corrects text. Never save secrets or guesses. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; profile_learn {field, value, quote}; history_search {query}.",
+    "The user's profile, schedules, notification preferences, memory and earlier conversation. profile_get reads the profile; profile_update is for explicit requests to edit profile fields, not learning ordinary preferences. Store communication, language and writing-style preferences with memory_save in the preferences area. Memory areas: about, preferences, people, routines and lessons. memory_find {query, area?}; memory_read {path} opens an area or area/slug. memory_learn {area, quote, slug?, expires?:'YYYY-MM-DD', replace?} stores a complete current user statement verbatim (up to 600 characters); use it without asking for lasting personal facts and preferences, never questions, tasks or quoted outside content. memory_save {area, text, slug?, abstract?, expires?, replace?} saves a concise non-sensitive personal fact, preference or routine supported by the owner’s messages without asking; unsupported or unverifiable notes return skipped without saving; continue the task without requesting confirmation; memory_forget {path} removes one entry. memory_control {enabled?, clear?, quote} honors an explicit current request to stop, resume or clear memory; quote must match the complete current user message. clear removes saved memory and profile data, keeping chat history. Memory stays off until explicitly enabled. Do not announce saves or show memory notices. Answer explicit questions and requests about memory honestly. An existing slug adds evidence only for the same text. Save an additional fact or exception with a distinct new slug. Use replace:true only for a correction that preserves details still valid; do not replace a whole routine with only its exception. After a skipped synthesis, memory_learn may retain a qualifying complete current statement verbatim under the same source and sensitive-topic restrictions. For both memory_learn and memory_save, save health, religion, politics, sexuality, gender identity, ethnicity, immigration status or criminal history only when sensitiveTopics is allowed in memory or the user explicitly asks to remember that information. Never save secrets or guesses. schedule_create {title, prompt, timeZone, kind:'once', runAt} or {kind:'recurring', cron}; schedule_record_observation {status, sourceUrl, value, summary} records the current scheduled check; profile_learn {field, value, quote}; history_search {query}.",
     Type.Object({
       action: literals(personalActions),
       args: Type.Record(Type.String(), Type.Unknown()),
@@ -568,6 +577,26 @@ export function ottoTools(
     bind(toolDefinitions.browser_session, async (p) => {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');
       const result = (await context.browserConnection(p)) as Record<string, unknown>;
+      if (result.status === 'rejected') {
+        switch (result.code) {
+          case 'invalid_browser_connection_arguments':
+            throw new Error(
+              'Invalid browser session input. Valid forms: connect {url, label?}; use {url, connectionId}; save {url, connectionId, signedIn:true}.',
+            );
+          case 'browser_connection_origin_mismatch':
+            throw new Error(
+              'This browser connection belongs to a different website. Use a saved connection for the current origin.',
+            );
+          case 'browser_connection_unavailable':
+            throw new Error(
+              'This browser connection is unavailable for the current task. List saved connections and inspect the current page before choosing one.',
+            );
+          default:
+            throw new Error(
+              'The browser session request was rejected. Check the current page and saved connection before trying again.',
+            );
+        }
+      }
       if (p.action === 'connect' || result.status === 'needs_sign_in') {
         const { url: _url, ...safe } = result;
         return safe;
