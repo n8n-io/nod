@@ -143,9 +143,9 @@ export function createTrust(options: {
       if (effect === 'unknown') return { confirm: false };
       throw new Error('This turn can only read connected apps.');
     }
-    if (effect === 'change' && (origin.source !== 'event' || draftAction(action, args)))
-      return { confirm: false };
-    if (origin.source === 'event') return { confirm: true, reason: 'background' };
+    if (origin.source === 'event' && !draftAction(action, args))
+      return { confirm: true, reason: 'background' };
+    if (effect === 'change') return { confirm: false };
     if (await flagged(turn.threadId)) return { confirm: true, reason: 'injection' };
     const recipients = [...actionRecipients(action, args)];
     if (

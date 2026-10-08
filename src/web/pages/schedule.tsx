@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { CalendarClock, Sparkles } from 'lucide-react';
-import {
-  lateRunMinutes,
-  type Schedule,
-  type ScheduleHistory,
-  type ScheduleRun,
-} from '../../shared/contracts';
+import type { Schedule, ScheduleHistory, ScheduleRun } from '../../shared/contracts';
 import { StatusIcon, statusLabels } from '../components/turn-status';
 import { usePageData } from '../hooks/use-page-data';
 import { api } from '../lib/api';
@@ -108,7 +103,6 @@ export function ScheduleRow({
 export function ScheduleRunRow({ run }: { run: ScheduleRun }) {
   const dateFormat = useDateFormat();
   const date = (value: string) => scheduleDate(value, run.timeZone, dateFormat);
-  const late = Date.parse(run.createdAt) - Date.parse(run.scheduledFor) >= lateRunMinutes * 60_000;
   return (
     <article className="saved-plan schedule-run">
       <div className="saved-plan-title">
@@ -122,11 +116,6 @@ export function ScheduleRunRow({ run }: { run: ScheduleRun }) {
         <CalendarClock size={16} aria-hidden="true" />
         <time dateTime={run.scheduledFor}>{date(run.scheduledFor)}</time>
         {run.timeZone !== dateFormat.timeZone && <span>{run.timeZone}</span>}
-        {late && (
-          <span>
-            Ran late, <time dateTime={run.createdAt}>{date(run.createdAt)}</time>
-          </span>
-        )}
       </p>
       {run.error && <p className="schedule-run-error">{run.error}</p>}
       {run.observation && (

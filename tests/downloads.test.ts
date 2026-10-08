@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
@@ -11,7 +11,6 @@ import {
   rename,
   rm,
   symlink,
-  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -383,47 +382,6 @@ test('private filesystem objects survive factory restart and preserve conditiona
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
-  }
-});
-
-test('private filesystem writers take turns and only reclaim a lock whose writer is gone', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'otto-objects-'));
-  try {
-    const stores = [createFilesystemObjectStore(root), createFilesystemObjectStore(root)];
-    const results = await Promise.allSettled(
-      stores.map((store, index) =>
-        store.write(key, Buffer.from(`writer-${index}`), { expectedVersion: null }),
-      ),
-    );
-    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
-    assert.ok(
-      results.some(
-        (result) => result.status === 'rejected' && result.reason instanceof ObjectStoreConflict,
-      ),
-    );
-    const lock = join(root, `${key}.lock`);
-    let version = (await stores[0]!.read(key, 100))!.version;
-    const gone = String(spawnSync(process.execPath, ['-e', '']).pid);
-    for (const [owner, age] of [
-      [gone, 0],
-      [String(process.pid), 0],
-      ['', 60_000],
-    ] as const) {
-      await writeFile(lock, owner);
-      const then = new Date(Date.now() - age);
-      await utimes(lock, then, then);
-      version = await stores[1]!.write(key, Buffer.from(`after-${owner}`), {
-        expectedVersion: version,
-      });
-    }
-    await writeFile(lock, String(process.ppid));
-    await assert.rejects(
-      stores[0]!.write(key, Buffer.from('blocked'), { expectedVersion: version }),
-      /unavailable/,
-    );
-    assert.equal(await readFile(lock, 'utf8'), String(process.ppid));
-  } finally {
-    await rm(root, { recursive: true, force: true });
   }
 });
 

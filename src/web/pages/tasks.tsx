@@ -16,6 +16,7 @@ import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
+import { desktopSettingsAvailable } from '../lib/desktop';
 import { ScheduleRow, ScheduleRunRow, useScheduleHistory } from './schedule';
 
 const labels: Record<TaskStatus, string> = {
@@ -276,6 +277,11 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
                 <Empty title="Nothing scheduled">
                   Schedule a one-time task or something that repeats.
                 </Empty>
+              )}
+              {desktopSettingsAvailable() && (
+                <p className="saved-plan-note schedule-availability">
+                  Scheduled tasks run only while your Mac is on and Otto is open.
+                </p>
               )}
               {inactive.length > 0 && (
                 <details className="schedule-inactive" open={!upcoming.length}>

@@ -172,7 +172,8 @@ export function actionRecipients(action: string, args: Record<string, unknown>) 
 }
 
 export function draftAction(action: string, args: Record<string, unknown>) {
-  return actionWords(action, args).some(draft);
+  const words = actionWords(action, args);
+  return effectOf(words) === 'change' && words.some(draft);
 }
 
 export function actionEffect(action: string, args: Record<string, unknown>): ActionEffect {

@@ -199,7 +199,6 @@ export type ScheduleObservation = {
   summary: string;
   checkedAt: string;
 } & ({ status: 'verified'; value: string } | { status: 'unavailable'; value: null });
-export const lateRunMinutes = 10;
 export interface ScheduleRun {
   id: string;
   scheduleId: string;
