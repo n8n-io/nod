@@ -1,12 +1,12 @@
 {
   "phase": "baseline",
-  "startedAt": "2026-10-08T18:24:00.274Z",
-  "endedAt": "2026-10-08T18:24:24.911Z",
+  "startedAt": "2026-10-08T18:44:00.582Z",
+  "endedAt": "2026-10-08T18:44:17.178Z",
   "commit": "437687bb17a3944ce9aa01ac37239e5163515365",
   "sourceSha256": "4e2f5b03d47211ea85653ec88c021c539ad98d9df4738e7df5c6456a3fc48604",
   "sourceState": "committed",
-  "harnessSha256": "a23331dda9ccebeb0f74cdba087ce50e158440ffecfadba0eaeffa6d5382a543",
-  "manifestSha256": "a05162714d60a8013d6dfc6290c77f6ec30019ad13573c3b31229c4bf90bc2ff",
+  "harnessSha256": "e99c252efe1c114a047046621293209da63d6479892b6209c65b8bcb817bbb0f",
+  "manifestSha256": "efd5c24d5fa7eb720f4ab2658b0b6c7f2de7bd24d4a468b5f17d749dad31b2e2",
   "image": "otto-eval-workspace:latest",
   "imageId": "sha256:87db2ce1c700f7aa991a41c41fe3106e1db79692579ada65abfa797408ebef45",
   "architecture": "arm64",
@@ -58,8 +58,8 @@
     {
       "case": "RTK-B1.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:04.563Z",
-      "endedAt": "2026-10-08T18:24:04.901Z",
+      "startedAt": "2026-10-08T18:44:03.237Z",
+      "endedAt": "2026-10-08T18:44:03.537Z",
       "command": "git status",
       "rtkInvocations": [],
       "checks": {
@@ -93,8 +93,8 @@
     {
       "case": "RTK-B2.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:04.901Z",
-      "endedAt": "2026-10-08T18:24:05.239Z",
+      "startedAt": "2026-10-08T18:44:03.537Z",
+      "endedAt": "2026-10-08T18:44:03.819Z",
       "command": "git diff",
       "rtkInvocations": [],
       "checks": {
@@ -128,8 +128,8 @@
     {
       "case": "RTK-H1.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:05.240Z",
-      "endedAt": "2026-10-08T18:24:05.589Z",
+      "startedAt": "2026-10-08T18:44:03.819Z",
+      "endedAt": "2026-10-08T18:44:04.126Z",
       "command": "git log -5",
       "rtkInvocations": [],
       "checks": {
@@ -163,8 +163,8 @@
     {
       "case": "RTK-H2.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:05.589Z",
-      "endedAt": "2026-10-08T18:24:05.934Z",
+      "startedAt": "2026-10-08T18:44:04.126Z",
+      "endedAt": "2026-10-08T18:44:04.403Z",
       "command": "git status",
       "rtkInvocations": [],
       "checks": {
@@ -198,8 +198,8 @@
     {
       "case": "RTK-R1.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:05.934Z",
-      "endedAt": "2026-10-08T18:24:06.253Z",
+      "startedAt": "2026-10-08T18:44:04.403Z",
+      "endedAt": "2026-10-08T18:44:04.681Z",
       "command": "cat ledger.csv > exported.csv",
       "rtkInvocations": [],
       "checks": {
@@ -239,8 +239,8 @@
     {
       "case": "RTK-R2.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:06.253Z",
-      "endedAt": "2026-10-08T18:24:06.581Z",
+      "startedAt": "2026-10-08T18:44:04.681Z",
+      "endedAt": "2026-10-08T18:44:04.958Z",
       "command": "git status --porcelain",
       "rtkInvocations": [],
       "checks": {
@@ -274,8 +274,8 @@
     {
       "case": "RTK-R3.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:06.581Z",
-      "endedAt": "2026-10-08T18:24:06.887Z",
+      "startedAt": "2026-10-08T18:44:04.958Z",
+      "endedAt": "2026-10-08T18:44:05.299Z",
       "command": "git diff HEAD > changes.patch",
       "rtkInvocations": [],
       "checks": {
@@ -315,8 +315,8 @@
     {
       "case": "RTK-R4.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:06.887Z",
-      "endedAt": "2026-10-08T18:24:07.228Z",
+      "startedAt": "2026-10-08T18:44:05.299Z",
+      "endedAt": "2026-10-08T18:44:05.600Z",
       "command": "printf 'synthetic validation failure\\n'; exit 23",
       "rtkInvocations": [],
       "checks": {
@@ -350,8 +350,8 @@
     {
       "case": "RTK-R5.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:07.228Z",
-      "endedAt": "2026-10-08T18:24:07.585Z",
+      "startedAt": "2026-10-08T18:44:05.600Z",
+      "endedAt": "2026-10-08T18:44:05.905Z",
       "command": "git diff HEAD --output=changes.patch",
       "rtkInvocations": [],
       "checks": {
@@ -391,8 +391,8 @@
     {
       "case": "RTK-R6.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:07.701Z",
-      "endedAt": "2026-10-08T18:24:08.027Z",
+      "startedAt": "2026-10-08T18:44:05.966Z",
+      "endedAt": "2026-10-08T18:44:06.322Z",
       "command": "ls",
       "rtkInvocations": [],
       "checks": {
@@ -426,8 +426,8 @@
     {
       "case": "RTK-R7.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:08.027Z",
-      "endedAt": "2026-10-08T18:24:08.413Z",
+      "startedAt": "2026-10-08T18:44:06.322Z",
+      "endedAt": "2026-10-08T18:44:06.608Z",
       "command": "git log",
       "rtkInvocations": [],
       "checks": {
@@ -461,8 +461,8 @@
     {
       "case": "RTK-B3.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:08.542Z",
-      "endedAt": "2026-10-08T18:24:08.922Z",
+      "startedAt": "2026-10-08T18:44:06.648Z",
+      "endedAt": "2026-10-08T18:44:06.931Z",
       "command": "ls -la",
       "rtkInvocations": [],
       "checks": {
@@ -478,16 +478,16 @@
       "result": "fail",
       "raw": {
         "exitCode": 0,
-        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
-        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:44 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-rw-rw-  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-rw-rw-  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-rw-rw-  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-rw-rw-  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-rw-rw-  1 node node   37 Jan  1  2026 notes.md\ndrwxrwxrwx  5 node node  160 Jan  1  2026 src\n",
+        "sha256": "26c74838830242fff09c8b6763edff2e027c44e3d4b3c5ac8467788a6ae3a175",
         "bytes": 613,
         "characters": 613,
         "estimatedTokens": 154
       },
       "pi": {
-        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:44 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-rw-rw-  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-rw-rw-  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-rw-rw-  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-rw-rw-  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-rw-rw-  1 node node   37 Jan  1  2026 notes.md\ndrwxrwxrwx  5 node node  160 Jan  1  2026 src\n",
         "isError": false,
-        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "sha256": "26c74838830242fff09c8b6763edff2e027c44e3d4b3c5ac8467788a6ae3a175",
         "bytes": 613,
         "characters": 613,
         "estimatedTokens": 154
@@ -496,8 +496,8 @@
     {
       "case": "RTK-H3.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:08.922Z",
-      "endedAt": "2026-10-08T18:24:09.228Z",
+      "startedAt": "2026-10-08T18:44:06.931Z",
+      "endedAt": "2026-10-08T18:44:07.266Z",
       "command": "cat src/alpha.ts",
       "rtkInvocations": [],
       "checks": {
@@ -531,8 +531,8 @@
     {
       "case": "RTK-B4.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:09.228Z",
-      "endedAt": "2026-10-08T18:24:09.509Z",
+      "startedAt": "2026-10-08T18:44:07.266Z",
+      "endedAt": "2026-10-08T18:44:07.570Z",
       "command": "rg 'invoiceRate' src",
       "rtkInvocations": [],
       "checks": {
@@ -566,8 +566,8 @@
     {
       "case": "RTK-H4.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:09.509Z",
-      "endedAt": "2026-10-08T18:24:09.846Z",
+      "startedAt": "2026-10-08T18:44:07.570Z",
+      "endedAt": "2026-10-08T18:44:07.845Z",
       "command": "find src -type f",
       "rtkInvocations": [],
       "checks": {
@@ -601,8 +601,8 @@
     {
       "case": "RTK-B1.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:09.846Z",
-      "endedAt": "2026-10-08T18:24:10.197Z",
+      "startedAt": "2026-10-08T18:44:07.845Z",
+      "endedAt": "2026-10-08T18:44:08.221Z",
       "command": "git status",
       "rtkInvocations": [],
       "checks": {
@@ -636,8 +636,8 @@
     {
       "case": "RTK-B2.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:10.197Z",
-      "endedAt": "2026-10-08T18:24:10.550Z",
+      "startedAt": "2026-10-08T18:44:08.222Z",
+      "endedAt": "2026-10-08T18:44:08.513Z",
       "command": "git diff",
       "rtkInvocations": [],
       "checks": {
@@ -671,8 +671,8 @@
     {
       "case": "RTK-H1.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:10.550Z",
-      "endedAt": "2026-10-08T18:24:11.044Z",
+      "startedAt": "2026-10-08T18:44:08.513Z",
+      "endedAt": "2026-10-08T18:44:08.802Z",
       "command": "git log -5",
       "rtkInvocations": [],
       "checks": {
@@ -706,8 +706,8 @@
     {
       "case": "RTK-H2.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:11.044Z",
-      "endedAt": "2026-10-08T18:24:11.592Z",
+      "startedAt": "2026-10-08T18:44:08.802Z",
+      "endedAt": "2026-10-08T18:44:09.083Z",
       "command": "git status",
       "rtkInvocations": [],
       "checks": {
@@ -741,8 +741,8 @@
     {
       "case": "RTK-R1.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:11.592Z",
-      "endedAt": "2026-10-08T18:24:11.899Z",
+      "startedAt": "2026-10-08T18:44:09.083Z",
+      "endedAt": "2026-10-08T18:44:09.401Z",
       "command": "cat ledger.csv > exported.csv",
       "rtkInvocations": [],
       "checks": {
@@ -782,8 +782,8 @@
     {
       "case": "RTK-R2.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:11.899Z",
-      "endedAt": "2026-10-08T18:24:12.265Z",
+      "startedAt": "2026-10-08T18:44:09.401Z",
+      "endedAt": "2026-10-08T18:44:09.660Z",
       "command": "git status --porcelain",
       "rtkInvocations": [],
       "checks": {
@@ -817,8 +817,8 @@
     {
       "case": "RTK-R3.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:12.265Z",
-      "endedAt": "2026-10-08T18:24:12.618Z",
+      "startedAt": "2026-10-08T18:44:09.660Z",
+      "endedAt": "2026-10-08T18:44:09.934Z",
       "command": "git diff HEAD > changes.patch",
       "rtkInvocations": [],
       "checks": {
@@ -858,8 +858,8 @@
     {
       "case": "RTK-R4.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:12.618Z",
-      "endedAt": "2026-10-08T18:24:12.953Z",
+      "startedAt": "2026-10-08T18:44:09.934Z",
+      "endedAt": "2026-10-08T18:44:10.216Z",
       "command": "printf 'synthetic validation failure\\n'; exit 23",
       "rtkInvocations": [],
       "checks": {
@@ -893,8 +893,8 @@
     {
       "case": "RTK-R5.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:12.953Z",
-      "endedAt": "2026-10-08T18:24:13.535Z",
+      "startedAt": "2026-10-08T18:44:10.216Z",
+      "endedAt": "2026-10-08T18:44:10.505Z",
       "command": "git diff HEAD --output=changes.patch",
       "rtkInvocations": [],
       "checks": {
@@ -934,8 +934,8 @@
     {
       "case": "RTK-R6.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:13.652Z",
-      "endedAt": "2026-10-08T18:24:14.050Z",
+      "startedAt": "2026-10-08T18:44:10.548Z",
+      "endedAt": "2026-10-08T18:44:10.795Z",
       "command": "ls",
       "rtkInvocations": [],
       "checks": {
@@ -969,8 +969,8 @@
     {
       "case": "RTK-R7.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:14.050Z",
-      "endedAt": "2026-10-08T18:24:15.265Z",
+      "startedAt": "2026-10-08T18:44:10.796Z",
+      "endedAt": "2026-10-08T18:44:11.097Z",
       "command": "git log",
       "rtkInvocations": [],
       "checks": {
@@ -1004,8 +1004,8 @@
     {
       "case": "RTK-B3.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:15.465Z",
-      "endedAt": "2026-10-08T18:24:15.973Z",
+      "startedAt": "2026-10-08T18:44:11.164Z",
+      "endedAt": "2026-10-08T18:44:11.467Z",
       "command": "ls -la",
       "rtkInvocations": [],
       "checks": {
@@ -1021,16 +1021,16 @@
       "result": "fail",
       "raw": {
         "exitCode": 0,
-        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
-        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:44 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-rw-rw-  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-rw-rw-  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-rw-rw-  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-rw-rw-  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-rw-rw-  1 node node   37 Jan  1  2026 notes.md\ndrwxrwxrwx  5 node node  160 Jan  1  2026 src\n",
+        "sha256": "26c74838830242fff09c8b6763edff2e027c44e3d4b3c5ac8467788a6ae3a175",
         "bytes": 613,
         "characters": 613,
         "estimatedTokens": 154
       },
       "pi": {
-        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:44 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-rw-rw-  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-rw-rw-  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-rw-rw-  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-rw-rw-  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-rw-rw-  1 node node   37 Jan  1  2026 notes.md\ndrwxrwxrwx  5 node node  160 Jan  1  2026 src\n",
         "isError": false,
-        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "sha256": "26c74838830242fff09c8b6763edff2e027c44e3d4b3c5ac8467788a6ae3a175",
         "bytes": 613,
         "characters": 613,
         "estimatedTokens": 154
@@ -1039,8 +1039,8 @@
     {
       "case": "RTK-H3.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:15.973Z",
-      "endedAt": "2026-10-08T18:24:16.430Z",
+      "startedAt": "2026-10-08T18:44:11.467Z",
+      "endedAt": "2026-10-08T18:44:11.776Z",
       "command": "cat src/alpha.ts",
       "rtkInvocations": [],
       "checks": {
@@ -1074,8 +1074,8 @@
     {
       "case": "RTK-B4.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:16.430Z",
-      "endedAt": "2026-10-08T18:24:16.947Z",
+      "startedAt": "2026-10-08T18:44:11.776Z",
+      "endedAt": "2026-10-08T18:44:12.153Z",
       "command": "rg 'invoiceRate' src",
       "rtkInvocations": [],
       "checks": {
@@ -1109,8 +1109,8 @@
     {
       "case": "RTK-H4.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:24:16.947Z",
-      "endedAt": "2026-10-08T18:24:17.296Z",
+      "startedAt": "2026-10-08T18:44:12.153Z",
+      "endedAt": "2026-10-08T18:44:12.412Z",
       "command": "find src -type f",
       "rtkInvocations": [],
       "checks": {
@@ -1144,8 +1144,8 @@
     {
       "case": "RTK-B1.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:17.296Z",
-      "endedAt": "2026-10-08T18:24:17.634Z",
+      "startedAt": "2026-10-08T18:44:12.412Z",
+      "endedAt": "2026-10-08T18:44:12.688Z",
       "command": "git status",
       "rtkInvocations": [],
       "checks": {
@@ -1179,8 +1179,8 @@
     {
       "case": "RTK-B2.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:17.634Z",
-      "endedAt": "2026-10-08T18:24:17.983Z",
+      "startedAt": "2026-10-08T18:44:12.688Z",
+      "endedAt": "2026-10-08T18:44:12.978Z",
       "command": "git diff",
       "rtkInvocations": [],
       "checks": {
@@ -1214,8 +1214,8 @@
     {
       "case": "RTK-H1.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:17.983Z",
-      "endedAt": "2026-10-08T18:24:18.384Z",
+      "startedAt": "2026-10-08T18:44:12.978Z",
+      "endedAt": "2026-10-08T18:44:13.267Z",
       "command": "git log -5",
       "rtkInvocations": [],
       "checks": {
@@ -1249,8 +1249,8 @@
     {
       "case": "RTK-H2.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:18.384Z",
-      "endedAt": "2026-10-08T18:24:18.756Z",
+      "startedAt": "2026-10-08T18:44:13.267Z",
+      "endedAt": "2026-10-08T18:44:13.559Z",
       "command": "git status",
       "rtkInvocations": [],
       "checks": {
@@ -1284,8 +1284,8 @@
     {
       "case": "RTK-R1.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:18.756Z",
-      "endedAt": "2026-10-08T18:24:19.068Z",
+      "startedAt": "2026-10-08T18:44:13.559Z",
+      "endedAt": "2026-10-08T18:44:13.859Z",
       "command": "cat ledger.csv > exported.csv",
       "rtkInvocations": [],
       "checks": {
@@ -1325,8 +1325,8 @@
     {
       "case": "RTK-R2.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:19.068Z",
-      "endedAt": "2026-10-08T18:24:19.432Z",
+      "startedAt": "2026-10-08T18:44:13.859Z",
+      "endedAt": "2026-10-08T18:44:14.248Z",
       "command": "git status --porcelain",
       "rtkInvocations": [],
       "checks": {
@@ -1360,8 +1360,8 @@
     {
       "case": "RTK-R3.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:19.432Z",
-      "endedAt": "2026-10-08T18:24:19.759Z",
+      "startedAt": "2026-10-08T18:44:14.248Z",
+      "endedAt": "2026-10-08T18:44:14.596Z",
       "command": "git diff HEAD > changes.patch",
       "rtkInvocations": [],
       "checks": {
@@ -1401,8 +1401,8 @@
     {
       "case": "RTK-R4.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:19.759Z",
-      "endedAt": "2026-10-08T18:24:20.064Z",
+      "startedAt": "2026-10-08T18:44:14.596Z",
+      "endedAt": "2026-10-08T18:44:14.868Z",
       "command": "printf 'synthetic validation failure\\n'; exit 23",
       "rtkInvocations": [],
       "checks": {
@@ -1436,8 +1436,8 @@
     {
       "case": "RTK-R5.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:20.064Z",
-      "endedAt": "2026-10-08T18:24:20.358Z",
+      "startedAt": "2026-10-08T18:44:14.868Z",
+      "endedAt": "2026-10-08T18:44:15.189Z",
       "command": "git diff HEAD --output=changes.patch",
       "rtkInvocations": [],
       "checks": {
@@ -1477,8 +1477,8 @@
     {
       "case": "RTK-R6.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:20.478Z",
-      "endedAt": "2026-10-08T18:24:20.729Z",
+      "startedAt": "2026-10-08T18:44:15.229Z",
+      "endedAt": "2026-10-08T18:44:15.554Z",
       "command": "ls",
       "rtkInvocations": [],
       "checks": {
@@ -1512,8 +1512,8 @@
     {
       "case": "RTK-R7.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:20.729Z",
-      "endedAt": "2026-10-08T18:24:21.089Z",
+      "startedAt": "2026-10-08T18:44:15.554Z",
+      "endedAt": "2026-10-08T18:44:15.827Z",
       "command": "git log",
       "rtkInvocations": [],
       "checks": {
@@ -1547,8 +1547,8 @@
     {
       "case": "RTK-B3.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:21.222Z",
-      "endedAt": "2026-10-08T18:24:21.575Z",
+      "startedAt": "2026-10-08T18:44:15.867Z",
+      "endedAt": "2026-10-08T18:44:16.171Z",
       "command": "ls -la",
       "rtkInvocations": [],
       "checks": {
@@ -1564,16 +1564,16 @@
       "result": "fail",
       "raw": {
         "exitCode": 0,
-        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
-        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:44 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-rw-rw-  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-rw-rw-  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-rw-rw-  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-rw-rw-  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-rw-rw-  1 node node   37 Jan  1  2026 notes.md\ndrwxrwxrwx  5 node node  160 Jan  1  2026 src\n",
+        "sha256": "26c74838830242fff09c8b6763edff2e027c44e3d4b3c5ac8467788a6ae3a175",
         "bytes": 613,
         "characters": 613,
         "estimatedTokens": 154
       },
       "pi": {
-        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:44 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-rw-rw-  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-rw-rw-  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-rw-rw-  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-rw-rw-  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-rw-rw-  1 node node   37 Jan  1  2026 notes.md\ndrwxrwxrwx  5 node node  160 Jan  1  2026 src\n",
         "isError": false,
-        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "sha256": "26c74838830242fff09c8b6763edff2e027c44e3d4b3c5ac8467788a6ae3a175",
         "bytes": 613,
         "characters": 613,
         "estimatedTokens": 154
@@ -1582,8 +1582,8 @@
     {
       "case": "RTK-H3.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:21.575Z",
-      "endedAt": "2026-10-08T18:24:23.850Z",
+      "startedAt": "2026-10-08T18:44:16.171Z",
+      "endedAt": "2026-10-08T18:44:16.477Z",
       "command": "cat src/alpha.ts",
       "rtkInvocations": [],
       "checks": {
@@ -1617,8 +1617,8 @@
     {
       "case": "RTK-B4.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:23.850Z",
-      "endedAt": "2026-10-08T18:24:24.366Z",
+      "startedAt": "2026-10-08T18:44:16.477Z",
+      "endedAt": "2026-10-08T18:44:16.785Z",
       "command": "rg 'invoiceRate' src",
       "rtkInvocations": [],
       "checks": {
@@ -1652,8 +1652,8 @@
     {
       "case": "RTK-H4.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:24:24.366Z",
-      "endedAt": "2026-10-08T18:24:24.908Z",
+      "startedAt": "2026-10-08T18:44:16.785Z",
+      "endedAt": "2026-10-08T18:44:17.178Z",
       "command": "find src -type f",
       "rtkInvocations": [],
       "checks": {

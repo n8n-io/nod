@@ -7,8 +7,8 @@
     "imageId": "sha256:87db2ce1c700f7aa991a41c41fe3106e1db79692579ada65abfa797408ebef45"
   },
   "candidate": {
-    "commit": "c77cee7dd79592b222a062c9b9ce0bf293965105",
-    "sourceSha256": "a69bb3ddb2fc27ca7a7df70300c3d57ac2d2cc5b264b46f6214dd722e8c0dc18",
+    "commit": "57c6cbdef56190bd61b6470ca275c0c654f1c6a7",
+    "sourceSha256": "daa81373ef3fe34e8bce3ad0e32692ba1d258d3154774c2a6c32aa02530880e9",
     "imageId": "sha256:df551d6613799d6c5c954dfc54600afd8ff8ab30964c87e82c1523614580199c"
   },
   "checks": {

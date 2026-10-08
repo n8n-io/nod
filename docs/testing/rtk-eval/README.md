@@ -1,6 +1,6 @@
 # RTK acceptance and measured output savings
 
-The native RTK 0.51.0 workspace passes **45/45 case runs** on committed runtime source `c77cee7dd79592b222a062c9b9ce0bf293965105`: 15 frozen cases, three repetitions each. The nine equally used display commands produced **5,736 → 3,703 characters (35.4% less)**. Actual RTK execution is verified for Git, listings, file reading, search and find. The Cloudflare image also passes the same 15 cases once.
+The native RTK 0.51.0 workspace passes **45/45 case runs** on committed runtime source `57c6cbdef56190bd61b6470ca275c0c654f1c6a7`: 15 frozen cases, three repetitions each. The nine equally used display commands produced **5,736 → 3,703 characters (35.4% less)**. Actual RTK execution is verified for Git, listings, file reading, search and find. The Cloudflare image also passes the same 15 cases once with a Linux UID-1001 evaluator and UID-1000 workspace on an ext4 volume.
 
 ![Measured RTK output savings](savings.png)
 
@@ -13,31 +13,31 @@ This is controlled execution of the actual Pi bash tool through `createSandbox` 
 | [Frozen cases](baseline/cases.json)                                                                     | Matrix v6 prompts, checks, applicability and repetitions          |
 | [Original baseline](baseline/report.json)                                                               | Source `437687bb` and workspace without RTK                       |
 | [Final candidate](candidate/report.json)                                                                | Full native arm64 workspace; 45/45                                |
-| [Cloudflare smoke](cloudflare-smoke/report.json)                                                        | Full amd64 Cloudflare workspace; 15/15 under local emulation      |
+| [Cloudflare smoke](cloudflare-smoke/report.json)                                                        | Full amd64 Cloudflare workspace; 15/15 with Linux UID mismatch    |
 | [Computed summary](summary.json)                                                                        | Actual characters, estimated tokens and usage assumptions         |
 | [Wrapper/machine-output red](wrapper-check-red.json)                                                    | Historical real-binary wrapper checks and the `ls --zero` failure |
 | [Merge-history red](candidate-red-v5/report.json)                                                       | Earlier runtime loses a merge; R7 fails 3/3                       |
 | [Original rewrite failures](candidate-red-v1/report.json), [extended red](candidate-red-v2/report.json) | Porcelain newline loss and patch corruption                       |
 
-All prior matrix versions remain under `baseline-v1` through `baseline-v5` and matching available candidate directories. The first v6 run is retained as `baseline-v6-initial` / `candidate-v6-initial`. The final run freezes directory timestamps before listing so the raw comparison remains reproducible across minutes. The earlier [controlled overlay](candidate-controlled-overlay/report.json) is v3 evidence, not the expanded v6 workload.
+All prior matrix versions remain under `baseline-v1` through `baseline-v5` and matching available candidate directories. The first v6 run is retained as `baseline-v6-initial` / `candidate-v6-initial`. The reports before the C5 wording clarification and pretty-format fix are retained as `baseline-v6-before-c5`, `candidate-v6-before-pretty` and `cloudflare-smoke-v6-before-pretty`. The prior results before the Linux permission repair remain in `baseline-v6-before-linux-permissions`, `candidate-v6-before-linux-permissions` and `cloudflare-smoke-v6-before-linux-permissions`. The final run freezes directory timestamps before listing so the raw comparison remains reproducible across minutes. The earlier [controlled overlay](candidate-controlled-overlay/report.json) is v3 evidence, not the expanded v6 workload.
 
-Each current attempt records raw and Pi-visible output, output hashes, exit and semantic checks, timestamps, exported content/hashes where applicable, and RTK invocations. A disposable PATH shim logs arguments and immediately execs the installed `/usr/local/bin/rtk`; rewrite probes alone cannot pass the RTK-used check. It does not manufacture command output. Current reports capture commit, source state, runtime source hash and harness hash at run start. Final runtime SHA-256: `a69bb3ddb2fc27ca7a7df70300c3d57ac2d2cc5b264b46f6214dd722e8c0dc18`.
+Each current attempt records raw and Pi-visible output, output hashes, exit and semantic checks, timestamps, exported content/hashes where applicable, and RTK invocations. A disposable PATH shim logs arguments and immediately execs the installed `/usr/local/bin/rtk`; rewrite probes alone cannot pass the RTK-used check. It does not manufacture command output. Current reports capture commit, source state, runtime source hash and harness hash at run start. Final runtime SHA-256: `daa81373ef3fe34e8bce3ad0e32692ba1d258d3154774c2a6c32aa02530880e9`. Final harness SHA-256: `e99c252efe1c114a047046621293209da63d6479892b6209c65b8bcb817bbb0f`.
 
-Historical reports including `candidate-red-v2/report.json` predate `sourceState` and `harnessSha256`. These fields have not been backfilled. Their adjacent patches reconstruct the runtime against the recorded base commit, not the exact earlier harness or entire dirty working tree. Historical outputs and scores remain intact.
+Historical reports including `candidate-red-v2/report.json` predate `sourceState` and `harnessSha256`. These fields have not been backfilled. Their adjacent patches reconstruct the runtime against the recorded base commit, not the exact earlier harness or entire dirty working tree. Historical outputs and scores remain intact. The [manifest annotation](manifest-annotations.md) clarifies the old C5 wording without changing frozen manifest bytes or their recorded hashes.
 
 ## Gates and observed results
 
-All 15 cases pass at least once and all 15 pass every repetition. The display group must reduce aggregate characters in each repetition, and each display case must execute the real RTK command, succeed, and retain its independent expected facts. Individual outputs may grow. Separate regression gates preserve machine-readable bytes, staged and unstaged patch content, a real merge commit, and failure exit status.
+All 15 cases pass at least once and all 15 pass every repetition. The display group must reduce aggregate characters in each repetition, and each display case must execute the real RTK command, succeed, and retain its independent expected facts. Individual outputs may grow. Separate regression gates preserve machine-readable bytes, staged and unstaged patch content, a real merge commit, and failure exit status. C5 compares machine status with raw output, CSV bytes with the independent input, and patch bytes with raw Git output. C7 independently checks expected staged and unstaged semantic facts; it does not supply an independently authored complete patch oracle.
 
-| Group               | Required outcomes                                                                 | Final |
-| ------------------- | --------------------------------------------------------------------------------- | ----- |
-| B1.v2, H2.v2        | All paths and staged, unstaged, deleted and untracked status classes              | 6/6   |
-| B2.v1, H1.v1        | Changed values and all five bounded-history subjects                              | 6/6   |
-| R6.v2, B3.v1        | Main directory entries through actual RTK listings                                | 6/6   |
-| H3.v1, B4.v1, H4.v1 | Expected code, search matches and source files through RTK                        | 9/9   |
-| R1.v1, R2.v1        | Exact 120-row CSV export and porcelain status                                     | 6/6   |
-| R3.v2, R5.v2        | Exact patches containing the staged export addition and unstaged changes/deletion | 6/6   |
-| R4.v1, R7.v1        | Exit 23 retained; complete raw history includes a real merge                      | 6/6   |
+| Group               | Required outcomes                                                          | Final |
+| ------------------- | -------------------------------------------------------------------------- | ----- |
+| B1.v2, H2.v2        | All paths and staged, unstaged, deleted and untracked status classes       | 6/6   |
+| B2.v1, H1.v1        | Changed values and all five bounded-history subjects                       | 6/6   |
+| R6.v2, B3.v1        | Main directory entries through actual RTK listings                         | 6/6   |
+| H3.v1, B4.v1, H4.v1 | Expected code, search matches and source files through RTK                 | 9/9   |
+| R1.v1, R2.v1        | Exact 120-row CSV export and porcelain status                              | 6/6   |
+| R3.v2, R5.v2        | Raw-Git-identical patches plus independent staged/unstaged semantic checks | 6/6   |
+| R4.v1, R7.v1        | Exit 23 retained; complete raw history includes a real merge               | 6/6   |
 
 The original baseline passes semantic and data checks but fails all case gates because RTK is absent; the display group also lacks compression and actual RTK execution. Repetitions are deterministic tool-integration checks, not estimates of model reliability.
 
@@ -49,7 +49,9 @@ The original baseline passes semantic and data checks but fails all case gates b
 - v5 added a separate merge repository and preserved a 3/3 red for automatic bare `git log`; full-history output stays raw.
 - v6 follows the user's explicit direction to use RTK broadly even when imperfect. R6.v2 accepts an enriched listing, four additional display tasks exercise actual tools, and savings use the equally weighted aggregate rather than requiring every command to shrink. Earlier stricter cases and their scores remain preserved.
 
-The CI setup failure was reproduced with a UID-1001-owned directory behind Cloudflare's `/workspace` symlink. The Git safe-directory entry now uses the fixture's canonical `pwd -P` path; the Linux-equivalent reproduction and full Cloudflare smoke pass. Cleanup was checked by forcibly removing a real evaluation container during setup: the run failed as expected and both temporary host directories were removed. The renderer validates complete case/repetition grids, derives one versus three runs from actual records, and rejects duplicates, missing records and gaps.
+A separate [real-binary pretty-format reproduction](pretty-format-red.json) records RTK adding a newline to custom Git history output in all four quoted/count variants. The [focused pre-fix test failure](pretty-format-test-red.txt) records the missing bypass. These are preserved synthetic red records, separate from the frozen matrix; they did not record full source/harness provenance. Commit `57c6cbde` adds the raw-output bypass, and the matrix above was rerun against that committed source.
+
+The CI setup failure was reproduced with a UID-1001-owned directory behind Cloudflare's `/workspace` symlink. The Git safe-directory entry now uses the fixture's canonical `pwd -P` path. A subsequent [full Linux ownership reproduction](linux-uid-setup.json) caught host-owned 0644 input files rejecting workspace writes even though the top directory was writable. The repaired harness explicitly shares write access to synthetic directories and host-written files before sandbox access. The preserved [setup error](linux-uid-setup-red.txt) occurs before scoring; the same UID-1001 runner and UID-1000 workspace now pass all 15 cases on an ext4 Docker volume. This run uses Linux ownership throughout fixture setup and execution; the earlier macOS bind-mount runs did not establish that compatibility. Cleanup was checked by forcibly removing a real evaluation container during setup: the run failed as expected and both temporary host directories were removed. The renderer validates complete case/repetition grids, derives one versus three runs from actual records, and rejects duplicates, missing records and gaps.
 
 ## Output and illustrative cost
 

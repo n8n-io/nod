@@ -228,7 +228,7 @@ const manifest = {
       caseVersion >= 6
         ? 'In each repetition, the sum of visible characters across the nine equally used display commands is lower than the matching raw sum. Applies to the display cases as one shared aggregate gate; individual outputs may grow.'
         : 'Visible output contains fewer characters than the equivalent raw shell command; applies only to the four compact cases.',
-    'C5-exact': `Machine status is byte-identical to raw output and exported CSV/patch bytes match independent inputs; applies to R1, R2 and R3${caseVersion >= 2 ? ' and R5' : ''}${caseVersion >= 3 && caseVersion < 6 ? ' and R6 (ordinary listing)' : ''}${caseVersion >= 5 ? ' and R7 (complete merge history)' : ''}.`,
+    'C5-exact': `Machine status is byte-identical to raw output, exported CSV bytes match the independent input, and patch bytes match raw Git output; applies to R1, R2 and R3${caseVersion >= 2 ? ' and R5' : ''}${caseVersion >= 3 && caseVersion < 6 ? ' and R6 (ordinary listing)' : ''}${caseVersion >= 5 ? ' and R7 (complete merge history)' : ''}.`,
     ...(caseVersion >= 3
       ? {
           'C6-status-class':
@@ -238,7 +238,7 @@ const manifest = {
     ...(caseVersion >= 4
       ? {
           'C7-patch-content':
-            'Saved patches contain the staged export file addition and all changed values and deleted content in the unstaged tracked files; applies to R3.v2 and R5.v2.',
+            'Saved patches contain the independent fixture expectations: the staged export file addition and all changed values and deleted content in the unstaged tracked files; applies to R3.v2 and R5.v2.',
         }
       : {}),
     ...(caseVersion >= 6
@@ -347,8 +347,11 @@ try {
     const directory = join(hostRoot, variant);
     await mkdir(join(directory, 'src'), { recursive: true });
     await chmod(directory, 0o777);
-    for (const [path, contents] of Object.entries(files))
+    await chmod(join(directory, 'src'), 0o777);
+    for (const [path, contents] of Object.entries(files)) {
       await writeFile(join(directory, path), contents);
+      await chmod(join(directory, path), 0o666);
+    }
     const session = provider.open({
       threadId: variant,
       workspacePath: directory,
@@ -404,8 +407,10 @@ try {
       'src/export.ts': `export const format = '${variant}-csv';\n`,
       'notes.md': `Review ${variant} totals before export.\n`,
     };
-    for (const [path, contents] of Object.entries(changes))
+    for (const [path, contents] of Object.entries(changes)) {
       await writeFile(join(directory, path), contents);
+      await chmod(join(directory, path), 0o666);
+    }
     await rm(join(directory, 'obsolete.txt'));
     assert.equal((await exec(session, 'git add src/export.ts')).exitCode, 0);
     fixtures[variant] = Object.fromEntries(

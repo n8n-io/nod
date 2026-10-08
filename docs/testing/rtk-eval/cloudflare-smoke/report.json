@@ -1,12 +1,12 @@
 {
   "phase": "candidate",
-  "startedAt": "2026-10-08T18:24:00.273Z",
-  "endedAt": "2026-10-08T18:24:32.471Z",
-  "commit": "c77cee7dd79592b222a062c9b9ce0bf293965105",
-  "sourceSha256": "a69bb3ddb2fc27ca7a7df70300c3d57ac2d2cc5b264b46f6214dd722e8c0dc18",
+  "startedAt": "2026-10-08T18:43:08.931Z",
+  "endedAt": "2026-10-08T18:43:29.560Z",
+  "commit": "57c6cbdef56190bd61b6470ca275c0c654f1c6a7",
+  "sourceSha256": "daa81373ef3fe34e8bce3ad0e32692ba1d258d3154774c2a6c32aa02530880e9",
   "sourceState": "committed",
-  "harnessSha256": "a23331dda9ccebeb0f74cdba087ce50e158440ffecfadba0eaeffa6d5382a543",
-  "manifestSha256": "722c1fb9ccb96457f85106a7cfb62e263c3d4197963ad3d9f937dec29a244390",
+  "harnessSha256": "e99c252efe1c114a047046621293209da63d6479892b6209c65b8bcb817bbb0f",
+  "manifestSha256": "fbafe0e56243b92a1fd48429bba369d19212af5da43316d1181a34b8efb60f33",
   "image": "otto-lab-585-cloudflare-workspace:amd64",
   "imageId": "sha256:475d49efe9e06832b7f9af3f4d74798d14e73d8edbc92c0f0adc19082f37dee4",
   "architecture": "amd64",
@@ -58,8 +58,8 @@
     {
       "case": "RTK-B1.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:09.005Z",
-      "endedAt": "2026-10-08T18:24:10.433Z",
+      "startedAt": "2026-10-08T18:43:14.228Z",
+      "endedAt": "2026-10-08T18:43:15.339Z",
       "command": "git status",
       "rtkInvocations": ["rewrite git status", "git status"],
       "checks": {
@@ -93,8 +93,8 @@
     {
       "case": "RTK-B2.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:10.433Z",
-      "endedAt": "2026-10-08T18:24:12.257Z",
+      "startedAt": "2026-10-08T18:43:15.339Z",
+      "endedAt": "2026-10-08T18:43:16.446Z",
       "command": "git diff",
       "rtkInvocations": ["rewrite git diff", "git diff"],
       "checks": {
@@ -128,8 +128,8 @@
     {
       "case": "RTK-H1.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:12.258Z",
-      "endedAt": "2026-10-08T18:24:13.846Z",
+      "startedAt": "2026-10-08T18:43:16.446Z",
+      "endedAt": "2026-10-08T18:43:17.539Z",
       "command": "git log -5",
       "rtkInvocations": ["rewrite git log -5", "git log -5"],
       "checks": {
@@ -163,8 +163,8 @@
     {
       "case": "RTK-H2.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:13.846Z",
-      "endedAt": "2026-10-08T18:24:16.600Z",
+      "startedAt": "2026-10-08T18:43:17.539Z",
+      "endedAt": "2026-10-08T18:43:18.649Z",
       "command": "git status",
       "rtkInvocations": ["rewrite git status", "git status"],
       "checks": {
@@ -198,8 +198,8 @@
     {
       "case": "RTK-R1.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:16.600Z",
-      "endedAt": "2026-10-08T18:24:17.791Z",
+      "startedAt": "2026-10-08T18:43:18.649Z",
+      "endedAt": "2026-10-08T18:43:19.498Z",
       "command": "cat ledger.csv > exported.csv",
       "rtkInvocations": [],
       "checks": {
@@ -239,8 +239,8 @@
     {
       "case": "RTK-R2.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:17.792Z",
-      "endedAt": "2026-10-08T18:24:18.970Z",
+      "startedAt": "2026-10-08T18:43:19.498Z",
+      "endedAt": "2026-10-08T18:43:20.405Z",
       "command": "git status --porcelain",
       "rtkInvocations": [],
       "checks": {
@@ -274,8 +274,8 @@
     {
       "case": "RTK-R3.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:18.970Z",
-      "endedAt": "2026-10-08T18:24:20.198Z",
+      "startedAt": "2026-10-08T18:43:20.405Z",
+      "endedAt": "2026-10-08T18:43:21.332Z",
       "command": "git diff HEAD > changes.patch",
       "rtkInvocations": [],
       "checks": {
@@ -315,8 +315,8 @@
     {
       "case": "RTK-R4.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:20.198Z",
-      "endedAt": "2026-10-08T18:24:21.270Z",
+      "startedAt": "2026-10-08T18:43:21.332Z",
+      "endedAt": "2026-10-08T18:43:22.275Z",
       "command": "printf 'synthetic validation failure\\n'; exit 23",
       "rtkInvocations": [],
       "checks": {
@@ -350,8 +350,8 @@
     {
       "case": "RTK-R5.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:21.270Z",
-      "endedAt": "2026-10-08T18:24:24.543Z",
+      "startedAt": "2026-10-08T18:43:22.275Z",
+      "endedAt": "2026-10-08T18:43:23.134Z",
       "command": "git diff HEAD --output=changes.patch",
       "rtkInvocations": [],
       "checks": {
@@ -391,8 +391,8 @@
     {
       "case": "RTK-R6.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:24.928Z",
-      "endedAt": "2026-10-08T18:24:26.251Z",
+      "startedAt": "2026-10-08T18:43:23.212Z",
+      "endedAt": "2026-10-08T18:43:24.239Z",
       "command": "ls",
       "rtkInvocations": ["rewrite ls", "ls"],
       "checks": {
@@ -426,8 +426,8 @@
     {
       "case": "RTK-R7.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:26.251Z",
-      "endedAt": "2026-10-08T18:24:27.346Z",
+      "startedAt": "2026-10-08T18:43:24.239Z",
+      "endedAt": "2026-10-08T18:43:25.256Z",
       "command": "git log",
       "rtkInvocations": [],
       "checks": {
@@ -461,8 +461,8 @@
     {
       "case": "RTK-B3.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:27.631Z",
-      "endedAt": "2026-10-08T18:24:28.795Z",
+      "startedAt": "2026-10-08T18:43:25.335Z",
+      "endedAt": "2026-10-08T18:43:26.392Z",
       "command": "ls -la",
       "rtkInvocations": ["rewrite ls -la", "ls -la"],
       "checks": {
@@ -478,16 +478,16 @@
       "result": "pass",
       "raw": {
         "exitCode": 0,
-        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
-        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
-        "bytes": 613,
-        "characters": 613,
-        "estimatedTokens": 154
+        "output": "total 48\ndrwxrwxrwx 5 1001 1001 4096 Jan  1  2026 .\ndrwxr-xr-x 5 1001 1001 4096 Oct  8 18:43 ..\ndrwxr-xr-x 8 node node 4096 Jan  1  2026 .git\n-rw-rw-rw- 1 1001 1001   34 Jan  1  2026 .gitignore\ndrwxr-xr-x 3 node node 4096 Jan  1  2026 .otto\n-rw-rw-rw- 1 1001 1001   84 Jan  1  2026 audit.txt\n-rw-r--r-- 1 node node 1064 Jan  1  2026 changes.patch\n-rw-rw-rw- 1 1001 1001   66 Jan  1  2026 config.json\n-rw-r--r-- 1 node node 3816 Jan  1  2026 exported.csv\n-rw-rw-rw- 1 1001 1001 3816 Jan  1  2026 ledger.csv\n-rw-rw-rw- 1 1001 1001   37 Jan  1  2026 notes.md\ndrwxrwxrwx 2 1001 1001 4096 Jan  1  2026 src\n",
+        "sha256": "e47aca6240831e94b9d43519a0d7206c177433e8b70a346a4489fdea01c06475",
+        "bytes": 601,
+        "characters": 601,
+        "estimatedTokens": 151
       },
       "pi": {
-        "output": "755  .git/\n755  .otto/\n755  src/\n644  .gitignore  34B\n644  audit.txt  84B\n644  changes.patch  1.0K\n644  config.json  66B\n644  exported.csv  3.7K\n644  ledger.csv  3.7K\n644  notes.md  37B\n",
+        "output": "755  .git/\n755  .otto/\n777  src/\n666  .gitignore  34B\n666  audit.txt  84B\n644  changes.patch  1.0K\n666  config.json  66B\n644  exported.csv  3.7K\n666  ledger.csv  3.7K\n666  notes.md  37B\n",
         "isError": false,
-        "sha256": "67df5e866c294b3c7b3c53272f00558673c9a8ba3e06fb1b83dd06274e1d4ed7",
+        "sha256": "0b5598195a1ca15243458a5093ea8d4c14f627f7e8b7f3083a1f9168d1c2880b",
         "bytes": 186,
         "characters": 186,
         "estimatedTokens": 47
@@ -496,8 +496,8 @@
     {
       "case": "RTK-H3.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:28.795Z",
-      "endedAt": "2026-10-08T18:24:29.844Z",
+      "startedAt": "2026-10-08T18:43:26.392Z",
+      "endedAt": "2026-10-08T18:43:27.339Z",
       "command": "cat src/alpha.ts",
       "rtkInvocations": ["rewrite cat src/alpha.ts", "read src/alpha.ts"],
       "checks": {
@@ -531,8 +531,8 @@
     {
       "case": "RTK-B4.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:29.844Z",
-      "endedAt": "2026-10-08T18:24:31.293Z",
+      "startedAt": "2026-10-08T18:43:27.339Z",
+      "endedAt": "2026-10-08T18:43:28.495Z",
       "command": "rg 'invoiceRate' src",
       "rtkInvocations": ["rewrite rg 'invoiceRate' src", "rg invoiceRate src"],
       "checks": {
@@ -566,8 +566,8 @@
     {
       "case": "RTK-H4.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:24:31.294Z",
-      "endedAt": "2026-10-08T18:24:32.470Z",
+      "startedAt": "2026-10-08T18:43:28.495Z",
+      "endedAt": "2026-10-08T18:43:29.559Z",
       "command": "find src -type f",
       "rtkInvocations": ["rewrite find src -type f", "find src -type f"],
       "checks": {
@@ -583,8 +583,8 @@
       "result": "pass",
       "raw": {
         "exitCode": 0,
-        "output": "src/alpha.ts\nsrc/export.ts\nsrc/beta.ts\n",
-        "sha256": "e8791d4d826661362ca23fe9f4c9528c6c78f47b69742aa2918eb20547ea010c",
+        "output": "src/beta.ts\nsrc/alpha.ts\nsrc/export.ts\n",
+        "sha256": "49bd7f77e9bc417724eb5a5ac7bc45b92a2acf7285bbdd913869b352e44b1c33",
         "bytes": 39,
         "characters": 39,
         "estimatedTokens": 10
