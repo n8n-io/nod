@@ -1564,16 +1564,20 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
     'cat source.txt && printf done',
   ])
     assert.doesNotMatch(await run('bash', { command }), /Command exited/);
+  assert.match(await run('bash', { command: 'git log' }), /Command exited with code 128/);
   assert.equal(await readFile(join(directory, 'copy.txt'), 'utf8'), 'one\ntwo\nthree\n');
   assert.equal(existsSync(join(directory, 'rewrites')), false);
   await writeFile(join(directory, 'job.sh'), 'printf "run\\n" >> executions\nexit 124\n');
   await writeFile(join(bin, 'git'), '#!/bin/sh\nbash job.sh\n', { mode: 0o755 });
-  await writeFile(join(bin, 'rtk'), '#!/bin/sh\nsleep 4\n', { mode: 0o755 });
+  await writeFile(join(bin, 'rtk'), '#!/bin/sh\nsleep 4\nprintf done > rewrite-completed\n', {
+    mode: 0o755,
+  });
   assert.match(
     await run('bash', { command: 'git status', timeout: 1 }),
     /Command exited with code 124/,
   );
   assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
+  assert.equal(existsSync(join(directory, 'rewrite-completed')), false);
 });
 
 // Runtime: credential guard in observations, one active turn, stop and shutdown drain.

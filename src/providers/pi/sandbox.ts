@@ -16,7 +16,7 @@ import type { WorkspaceSession } from '../../ports/computer.ts';
 
 const streamBytes = 1024 * 1024;
 const compactCommand =
-  /^(?:git status|git diff(?: --(?:cached|staged))?|git log(?: -(?:\d+|n \d+)| --max-count(?:=| )\d+)?)$/;
+  /^(?:git status|git diff(?: --(?:cached|staged))?|git log(?: -(?:\d+|n \d+)| --max-count(?:=| )\d+))$/;
 const imageTypes: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
