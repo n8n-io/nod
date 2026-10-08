@@ -1,0 +1,172 @@
+{
+  "version": 6,
+  "sourceTask": "https://linear.app/n8n/issue/LAB-585",
+  "evidenceClass": "Controlled Pi bash tool execution against synthetic files in disposable Linux containers; no model or live account.",
+  "model": null,
+  "repeatCount": 1,
+  "timeoutSeconds": 30,
+  "metric": "Measured UTF-8 bytes and Unicode characters; estimated input tokens = ceil(characters / 4), not tokenizer counts.",
+  "caseGate": "Every applicable required check passes in the same run. Availability and compact checks intentionally fail on the red baseline.",
+  "checks": {
+    "C1-installed": "RTK 0.51.0 executes successfully in the workspace; applies to every case.",
+    "C2-exit": "The Pi result reports the expected success or failure; applies to every case.",
+    "C3-semantic": "Every independent expected filename, changed value or commit subject occurs in the visible result; applies to compact cases and explicit failure and R7 merge history.",
+    "C4-compact": "In each repetition, the sum of visible characters across the nine equally used display commands is lower than the matching raw sum. Applies to the display cases as one shared aggregate gate; individual outputs may grow.",
+    "C5-exact": "Machine status is byte-identical to raw output and exported CSV/patch bytes match independent inputs; applies to R1, R2 and R3 and R5 and R7 (complete merge history).",
+    "C6-status-class": "Staged addition, three unstaged modifications, unstaged deletion and untracked file retain their correct status classes; applies to B1.v2 and H2.v2.",
+    "C7-patch-content": "Saved patches contain the staged export file addition and all changed values and deleted content in the unstaged tracked files; applies to R3.v2 and R5.v2.",
+    "C8-rtk-used": "The execution trace records a real RTK command invocation beyond rewrite probing. A disposable PATH shim logs arguments then execs the installed binary without changing output; applies to the nine display cases."
+  },
+  "cases": [
+    {
+      "id": "RTK-B1.v2",
+      "split": "base",
+      "prompt": "Tell me which files in this invoice project have changed and whether they are staged.",
+      "command": "git status",
+      "semantic": [
+        "config.json",
+        "src/alpha.ts",
+        "src/beta.ts",
+        "src/export.ts",
+        "obsolete.txt",
+        "notes.md"
+      ],
+      "compact": true
+    },
+    {
+      "id": "RTK-B2.v1",
+      "split": "base",
+      "prompt": "Review the changed invoice calculation and explain the change in values.",
+      "command": "git diff",
+      "semantic": ["invoiceRate = 0.15", "invoiceRate = 0.20", "batchSize = 20", "batchSize = 25"],
+      "compact": true
+    },
+    {
+      "id": "RTK-H1.v1",
+      "split": "holdout",
+      "prompt": "Summarize the last five changes to this shipment project.",
+      "command": "git log -5",
+      "semantic": [
+        "Add shipment export",
+        "Validate shipment totals",
+        "Add shipment records",
+        "Set shipment currency",
+        "Seed shipment project"
+      ],
+      "compact": true
+    },
+    {
+      "id": "RTK-H2.v2",
+      "split": "holdout",
+      "prompt": "List the pending changes in the shipment project, including staged and deleted files.",
+      "command": "git status",
+      "semantic": [
+        "config.json",
+        "src/alpha.ts",
+        "src/beta.ts",
+        "src/export.ts",
+        "obsolete.txt",
+        "notes.md"
+      ],
+      "compact": true
+    },
+    {
+      "id": "RTK-R1.v1",
+      "split": "regression",
+      "prompt": "Export the ledger exactly so another tool can process every record.",
+      "command": "cat ledger.csv > exported.csv",
+      "semantic": [],
+      "compact": false,
+      "artifact": "exported.csv"
+    },
+    {
+      "id": "RTK-R2.v1",
+      "split": "regression",
+      "prompt": "Return machine-readable repository status for another program.",
+      "command": "git status --porcelain",
+      "semantic": [],
+      "compact": false
+    },
+    {
+      "id": "RTK-R3.v2",
+      "split": "regression",
+      "prompt": "Save the full patch of staged and unstaged tracked changes for another tool to inspect and apply.",
+      "command": "git diff HEAD > changes.patch",
+      "semantic": [],
+      "compact": false,
+      "artifact": "changes.patch"
+    },
+    {
+      "id": "RTK-R4.v1",
+      "split": "regression",
+      "prompt": "Run the local validation command and retain its failure status.",
+      "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "semantic": ["synthetic validation failure", "Command exited with code 23"],
+      "compact": false,
+      "exitCode": 23
+    },
+    {
+      "id": "RTK-R5.v2",
+      "split": "regression",
+      "prompt": "Save the complete patch of staged and unstaged tracked changes using Git output-file support so another tool can apply it.",
+      "command": "git diff HEAD --output=changes.patch",
+      "semantic": [],
+      "compact": false,
+      "artifact": "changes.patch"
+    },
+    {
+      "id": "RTK-R6.v2",
+      "split": "regression",
+      "prompt": "Show the main files and folders in this project.",
+      "command": "ls",
+      "semantic": ["config.json", "ledger.csv", "src"],
+      "compact": true
+    },
+    {
+      "id": "RTK-R7.v1",
+      "split": "regression",
+      "variant": "merge",
+      "prompt": "Show the complete repository history, including branch merges.",
+      "command": "git log",
+      "semantic": ["Merge synthetic feature", "Add synthetic feature", "Add synthetic main"],
+      "compact": false
+    },
+    {
+      "id": "RTK-B3.v1",
+      "split": "base",
+      "prompt": "Inspect the main files in the project directory.",
+      "command": "ls -la",
+      "semantic": ["config.json", "ledger.csv", "src"],
+      "compact": true
+    },
+    {
+      "id": "RTK-H3.v1",
+      "split": "holdout",
+      "prompt": "Show how the shipment calculation rules work.",
+      "command": "cat src/alpha.ts",
+      "semantic": ["alphaRule0", "invoiceRate = 0.20", "alphaRule11"],
+      "compact": true
+    },
+    {
+      "id": "RTK-B4.v1",
+      "split": "base",
+      "prompt": "Find where the invoice rate is defined and used.",
+      "command": "rg 'invoiceRate' src",
+      "semantic": [
+        "alpha.ts",
+        "invoiceRate = 0.20",
+        "invoiceRate = 0.15",
+        "return amount * invoiceRate"
+      ],
+      "compact": true
+    },
+    {
+      "id": "RTK-H4.v1",
+      "split": "holdout",
+      "prompt": "Find the source files in this project.",
+      "command": "find src -type f",
+      "semantic": ["alpha.ts", "beta.ts", "export.ts"],
+      "compact": true
+    }
+  ]
+}

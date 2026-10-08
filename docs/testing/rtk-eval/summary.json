@@ -7,14 +7,15 @@
     "imageId": "sha256:87db2ce1c700f7aa991a41c41fe3106e1db79692579ada65abfa797408ebef45"
   },
   "candidate": {
-    "commit": "289acf51839ca2658356a00c6477e47e1be734b5",
-    "sourceSha256": "0f1e3f5491c3741bc0e944e8623b6468306a6b7bc5412a9646a5245de9884049",
+    "commit": "c77cee7dd79592b222a062c9b9ce0bf293965105",
+    "sourceSha256": "a69bb3ddb2fc27ca7a7df70300c3d57ac2d2cc5b264b46f6214dd722e8c0dc18",
     "imageId": "sha256:df551d6613799d6c5c954dfc54600afd8ff8ab30964c87e82c1523614580199c"
   },
   "checks": {
     "baselinePassed": 0,
-    "candidatePassed": 30,
-    "candidateTotal": 30
+    "candidatePassed": 45,
+    "candidateTotal": 45,
+    "repetitionsPerCase": 3
   },
   "rows": [
     {
@@ -52,18 +53,63 @@
       "baselineEstimatedTokens": 121,
       "candidateEstimatedTokens": 25,
       "savedCharactersPercent": 79.71014492753623
+    },
+    {
+      "id": "RTK-R6.v2",
+      "command": "ls",
+      "baselineCharacters": 73,
+      "candidateCharacters": 107,
+      "baselineEstimatedTokens": 19,
+      "candidateEstimatedTokens": 27,
+      "savedCharactersPercent": -46.57534246575344
+    },
+    {
+      "id": "RTK-B3.v1",
+      "command": "ls -la",
+      "baselineCharacters": 613,
+      "candidateCharacters": 186,
+      "baselineEstimatedTokens": 154,
+      "candidateEstimatedTokens": 47,
+      "savedCharactersPercent": 69.65742251223492
+    },
+    {
+      "id": "RTK-H3.v1",
+      "command": "cat src/alpha.ts",
+      "baselineCharacters": 1285,
+      "candidateCharacters": 1285,
+      "baselineEstimatedTokens": 322,
+      "candidateEstimatedTokens": 322,
+      "savedCharactersPercent": 0
+    },
+    {
+      "id": "RTK-B4.v1",
+      "command": "rg 'invoiceRate' src",
+      "baselineCharacters": 1020,
+      "candidateCharacters": 1020,
+      "baselineEstimatedTokens": 255,
+      "candidateEstimatedTokens": 255,
+      "savedCharactersPercent": 0
+    },
+    {
+      "id": "RTK-H4.v1",
+      "command": "find src -type f",
+      "baselineCharacters": 39,
+      "candidateCharacters": 27,
+      "baselineEstimatedTokens": 10,
+      "candidateEstimatedTokens": 7,
+      "savedCharactersPercent": 30.76923076923077
     }
   ],
   "totals": {
-    "baselineCharacters": 2706,
-    "candidateCharacters": 1078,
-    "baselineEstimatedTokens": 678,
-    "candidateEstimatedTokens": 271,
-    "savedCharactersPercent": 60.162601626016254,
-    "estimatedTokensSavedPerCall": 101.75
+    "baselineCharacters": 5736,
+    "candidateCharacters": 3703,
+    "baselineEstimatedTokens": 1438,
+    "candidateEstimatedTokens": 929,
+    "savedCharactersPercent": 35.442817294281724,
+    "estimatedTokensSavedPerCall": 56.55555555555556
   },
   "assumptions": [
-    "Usage has the same mix as this fixture: 50% git status, 25% git diff, 25% git log -5.",
+    "Usage has the same equally used display-case mix as this fixture: 2/9 git status, 1/9 git diff, 1/9 git log -5, 1/9 ls, 1/9 ls -la, 1/9 cat src/alpha.ts, 1/9 rg 'invoiceRate' src, 1/9 find src -type f.",
     "Each saved tool-output token is sent once as uncached model input.",
     "EUR 1, 3 and 10 per million input tokens are illustrative rates, not current provider prices.",
     "Model output, unchanged instructions, other tools, cache discounts and repeated conversation-history ingestion are excluded.",
@@ -73,29 +119,29 @@
   "projections": [
     {
       "comparableCommandCalls": 1000,
-      "estimatedInputTokensSaved": 101750,
+      "estimatedInputTokensSaved": 56555.555555555555,
       "costSavedEur": {
-        "1EURPerMillionInputTokens": 0.10175,
-        "3EURPerMillionInputTokens": 0.30525,
-        "10EURPerMillionInputTokens": 1.0175
+        "1EURPerMillionInputTokens": 0.05655555555555555,
+        "3EURPerMillionInputTokens": 0.16966666666666666,
+        "10EURPerMillionInputTokens": 0.5655555555555555
       }
     },
     {
       "comparableCommandCalls": 10000,
-      "estimatedInputTokensSaved": 1017500,
+      "estimatedInputTokensSaved": 565555.5555555556,
       "costSavedEur": {
-        "1EURPerMillionInputTokens": 1.0175,
-        "3EURPerMillionInputTokens": 3.0525,
-        "10EURPerMillionInputTokens": 10.175
+        "1EURPerMillionInputTokens": 0.5655555555555556,
+        "3EURPerMillionInputTokens": 1.696666666666667,
+        "10EURPerMillionInputTokens": 5.655555555555556
       }
     },
     {
       "comparableCommandCalls": 100000,
-      "estimatedInputTokensSaved": 10175000,
+      "estimatedInputTokensSaved": 5655555.555555556,
       "costSavedEur": {
-        "1EURPerMillionInputTokens": 10.175,
-        "3EURPerMillionInputTokens": 30.525,
-        "10EURPerMillionInputTokens": 101.75
+        "1EURPerMillionInputTokens": 5.655555555555556,
+        "3EURPerMillionInputTokens": 16.96666666666667,
+        "10EURPerMillionInputTokens": 56.55555555555556
       }
     }
   ]

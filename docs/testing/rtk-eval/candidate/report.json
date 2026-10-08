@@ -1,12 +1,12 @@
 {
   "phase": "candidate",
-  "startedAt": "2026-10-08T18:03:06.556Z",
-  "endedAt": "2026-10-08T18:03:43.103Z",
-  "commit": "289acf51839ca2658356a00c6477e47e1be734b5",
-  "sourceSha256": "0f1e3f5491c3741bc0e944e8623b6468306a6b7bc5412a9646a5245de9884049",
+  "startedAt": "2026-10-08T18:24:00.273Z",
+  "endedAt": "2026-10-08T18:24:25.628Z",
+  "commit": "c77cee7dd79592b222a062c9b9ce0bf293965105",
+  "sourceSha256": "a69bb3ddb2fc27ca7a7df70300c3d57ac2d2cc5b264b46f6214dd722e8c0dc18",
   "sourceState": "committed",
-  "harnessSha256": "5650ae058474311557b0db02b94d90fbffcfa77730b8c0506dda2ccdda0cc0ae",
-  "manifestSha256": "c8e456edef42bdd610bd9d16068753342a4cf0da80bebb9af55fa3c5994dd22c",
+  "harnessSha256": "a23331dda9ccebeb0f74cdba087ce50e158440ffecfadba0eaeffa6d5382a543",
+  "manifestSha256": "a05162714d60a8013d6dfc6290c77f6ec30019ad13573c3b31229c4bf90bc2ff",
   "image": "otto-lab-585-workspace:arm64",
   "imageId": "sha256:df551d6613799d6c5c954dfc54600afd8ff8ab30964c87e82c1523614580199c",
   "architecture": "arm64",
@@ -39,22 +39,38 @@
       "src/beta.ts": "f74111a1524f58cc4ec359ace53f05af5df9bcd59ddcf6d7e83bd7d1c3bd437e",
       "src/export.ts": "8511a022f0170a240c93ed9ca3cc0242aae4765dd1ab2d8fee0655f8eb074fd5",
       "notes.md": "9db2b4dfb69a734548447260281c0bdf807c56a8deeb0d695631fc937204f907"
+    },
+    "merge": {
+      ".gitignore": "ab232e89b1e1c133d7c814b9f39c014774c9a3ee81a2ebcc3abcf24b92e23fcf",
+      "config.json": "f8447677d92d8611c97aecdd598a2b845c319ffc5660975807493d36ebc4f341",
+      "ledger.csv": "7f59a203de6f4b02ff9280f29a380550975a1a51f88dd18b9b01aa658f588f9e",
+      "obsolete.txt": "8924c4725a85da34bd95c76340a2db26542b16453432fad0aeca239144d31460",
+      "audit.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/alpha.ts": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+      "src/beta.ts": "f74111a1524f58cc4ec359ace53f05af5df9bcd59ddcf6d7e83bd7d1c3bd437e",
+      "src/export.ts": "4805988ef1f97a77102ffc5ea059ea74b7010f66c32f86f4ecefaecdeeec4a40",
+      "notes.md": "de514965872dee1c50413126b70bddfc61ce4d1662199effccfe8874d4435f7e",
+      "merge-feature.txt": "abc7d9cbbdec243821497d3c1d7b78e29caeb103aadabc538bf5db373dc6d043",
+      "merge-main.txt": "d988ed2d20c3ab15ea113cbf66b9a1a1622f14d897c480a55bebfc0672b67398"
     }
   },
   "attempts": [
     {
       "case": "RTK-B1.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:11.715Z",
-      "endedAt": "2026-10-08T18:03:15.002Z",
+      "startedAt": "2026-10-08T18:24:04.645Z",
+      "endedAt": "2026-10-08T18:24:05.038Z",
       "command": "git status",
+      "rtkInvocations": ["rewrite git status", "git status"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": true
+        "C6-status-class": true,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -77,16 +93,19 @@
     {
       "case": "RTK-B2.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:15.002Z",
-      "endedAt": "2026-10-08T18:03:16.095Z",
+      "startedAt": "2026-10-08T18:24:05.038Z",
+      "endedAt": "2026-10-08T18:24:05.428Z",
       "command": "git diff",
+      "rtkInvocations": ["rewrite git diff", "git diff"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -109,16 +128,19 @@
     {
       "case": "RTK-H1.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:16.095Z",
-      "endedAt": "2026-10-08T18:03:18.425Z",
+      "startedAt": "2026-10-08T18:24:05.428Z",
+      "endedAt": "2026-10-08T18:24:05.784Z",
       "command": "git log -5",
+      "rtkInvocations": ["rewrite git log -5", "git log -5"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -141,16 +163,19 @@
     {
       "case": "RTK-H2.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:18.425Z",
-      "endedAt": "2026-10-08T18:03:19.205Z",
+      "startedAt": "2026-10-08T18:24:05.784Z",
+      "endedAt": "2026-10-08T18:24:06.160Z",
       "command": "git status",
+      "rtkInvocations": ["rewrite git status", "git status"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": true
+        "C6-status-class": true,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -173,16 +198,19 @@
     {
       "case": "RTK-R1.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:19.205Z",
-      "endedAt": "2026-10-08T18:03:19.677Z",
+      "startedAt": "2026-10-08T18:24:06.160Z",
+      "endedAt": "2026-10-08T18:24:06.465Z",
       "command": "cat ledger.csv > exported.csv",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -204,22 +232,26 @@
       "artifact": {
         "path": "exported.csv",
         "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
-        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b"
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "content": "id,description,amount,currency\n1,invoice record 1,1.37,EUR\n2,invoice record 2,2.74,EUR\n3,invoice record 3,4.11,EUR\n4,invoice record 4,5.48,EUR\n5,invoice record 5,6.85,EUR\n6,invoice record 6,8.22,EUR\n7,invoice record 7,9.59,EUR\n8,invoice record 8,10.96,EUR\n9,invoice record 9,12.33,EUR\n10,invoice record 10,13.70,EUR\n11,invoice record 11,15.07,EUR\n12,invoice record 12,16.44,EUR\n13,invoice record 13,17.81,EUR\n14,invoice record 14,19.18,EUR\n15,invoice record 15,20.55,EUR\n16,invoice record 16,21.92,EUR\n17,invoice record 17,23.29,EUR\n18,invoice record 18,24.66,EUR\n19,invoice record 19,26.03,EUR\n20,invoice record 20,27.40,EUR\n21,invoice record 21,28.77,EUR\n22,invoice record 22,30.14,EUR\n23,invoice record 23,31.51,EUR\n24,invoice record 24,32.88,EUR\n25,invoice record 25,34.25,EUR\n26,invoice record 26,35.62,EUR\n27,invoice record 27,36.99,EUR\n28,invoice record 28,38.36,EUR\n29,invoice record 29,39.73,EUR\n30,invoice record 30,41.10,EUR\n31,invoice record 31,42.47,EUR\n32,invoice record 32,43.84,EUR\n33,invoice record 33,45.21,EUR\n34,invoice record 34,46.58,EUR\n35,invoice record 35,47.95,EUR\n36,invoice record 36,49.32,EUR\n37,invoice record 37,50.69,EUR\n38,invoice record 38,52.06,EUR\n39,invoice record 39,53.43,EUR\n40,invoice record 40,54.80,EUR\n41,invoice record 41,56.17,EUR\n42,invoice record 42,57.54,EUR\n43,invoice record 43,58.91,EUR\n44,invoice record 44,60.28,EUR\n45,invoice record 45,61.65,EUR\n46,invoice record 46,63.02,EUR\n47,invoice record 47,64.39,EUR\n48,invoice record 48,65.76,EUR\n49,invoice record 49,67.13,EUR\n50,invoice record 50,68.50,EUR\n51,invoice record 51,69.87,EUR\n52,invoice record 52,71.24,EUR\n53,invoice record 53,72.61,EUR\n54,invoice record 54,73.98,EUR\n55,invoice record 55,75.35,EUR\n56,invoice record 56,76.72,EUR\n57,invoice record 57,78.09,EUR\n58,invoice record 58,79.46,EUR\n59,invoice record 59,80.83,EUR\n60,invoice record 60,82.20,EUR\n61,invoice record 61,83.57,EUR\n62,invoice record 62,84.94,EUR\n63,invoice record 63,86.31,EUR\n64,invoice record 64,87.68,EUR\n65,invoice record 65,89.05,EUR\n66,invoice record 66,90.42,EUR\n67,invoice record 67,91.79,EUR\n68,invoice record 68,93.16,EUR\n69,invoice record 69,94.53,EUR\n70,invoice record 70,95.90,EUR\n71,invoice record 71,97.27,EUR\n72,invoice record 72,98.64,EUR\n73,invoice record 73,100.01,EUR\n74,invoice record 74,101.38,EUR\n75,invoice record 75,102.75,EUR\n76,invoice record 76,104.12,EUR\n77,invoice record 77,105.49,EUR\n78,invoice record 78,106.86,EUR\n79,invoice record 79,108.23,EUR\n80,invoice record 80,109.60,EUR\n81,invoice record 81,110.97,EUR\n82,invoice record 82,112.34,EUR\n83,invoice record 83,113.71,EUR\n84,invoice record 84,115.08,EUR\n85,invoice record 85,116.45,EUR\n86,invoice record 86,117.82,EUR\n87,invoice record 87,119.19,EUR\n88,invoice record 88,120.56,EUR\n89,invoice record 89,121.93,EUR\n90,invoice record 90,123.30,EUR\n91,invoice record 91,124.67,EUR\n92,invoice record 92,126.04,EUR\n93,invoice record 93,127.41,EUR\n94,invoice record 94,128.78,EUR\n95,invoice record 95,130.15,EUR\n96,invoice record 96,131.52,EUR\n97,invoice record 97,132.89,EUR\n98,invoice record 98,134.26,EUR\n99,invoice record 99,135.63,EUR\n100,invoice record 100,137.00,EUR\n101,invoice record 101,138.37,EUR\n102,invoice record 102,139.74,EUR\n103,invoice record 103,141.11,EUR\n104,invoice record 104,142.48,EUR\n105,invoice record 105,143.85,EUR\n106,invoice record 106,145.22,EUR\n107,invoice record 107,146.59,EUR\n108,invoice record 108,147.96,EUR\n109,invoice record 109,149.33,EUR\n110,invoice record 110,150.70,EUR\n111,invoice record 111,152.07,EUR\n112,invoice record 112,153.44,EUR\n113,invoice record 113,154.81,EUR\n114,invoice record 114,156.18,EUR\n115,invoice record 115,157.55,EUR\n116,invoice record 116,158.92,EUR\n117,invoice record 117,160.29,EUR\n118,invoice record 118,161.66,EUR\n119,invoice record 119,163.03,EUR\n120,invoice record 120,164.40,EUR\n"
       }
     },
     {
       "case": "RTK-R2.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:19.677Z",
-      "endedAt": "2026-10-08T18:03:20.205Z",
+      "startedAt": "2026-10-08T18:24:06.465Z",
+      "endedAt": "2026-10-08T18:24:06.792Z",
       "command": "git status --porcelain",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -240,18 +272,21 @@
       }
     },
     {
-      "case": "RTK-R3.v1",
+      "case": "RTK-R3.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:20.205Z",
-      "endedAt": "2026-10-08T18:03:21.388Z",
-      "command": "git diff > changes.patch",
+      "startedAt": "2026-10-08T18:24:06.793Z",
+      "endedAt": "2026-10-08T18:24:07.151Z",
+      "command": "git diff HEAD > changes.patch",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": true
       },
       "result": "pass",
       "raw": {
@@ -272,23 +307,27 @@
       },
       "artifact": {
         "path": "changes.patch",
-        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
-        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
       }
     },
     {
       "case": "RTK-R4.v1",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:21.388Z",
-      "endedAt": "2026-10-08T18:03:21.796Z",
+      "startedAt": "2026-10-08T18:24:07.151Z",
+      "endedAt": "2026-10-08T18:24:07.471Z",
       "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": null,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -309,18 +348,21 @@
       }
     },
     {
-      "case": "RTK-R5.v1",
+      "case": "RTK-R5.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:21.796Z",
-      "endedAt": "2026-10-08T18:03:22.390Z",
-      "command": "git diff --output=changes.patch",
+      "startedAt": "2026-10-08T18:24:07.471Z",
+      "endedAt": "2026-10-08T18:24:07.825Z",
+      "command": "git diff HEAD --output=changes.patch",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": true
       },
       "result": "pass",
       "raw": {
@@ -341,23 +383,27 @@
       },
       "artifact": {
         "path": "changes.patch",
-        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
-        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
       }
     },
     {
-      "case": "RTK-R6.v1",
+      "case": "RTK-R6.v2",
       "repetition": 1,
-      "startedAt": "2026-10-08T18:03:22.390Z",
-      "endedAt": "2026-10-08T18:03:22.966Z",
+      "startedAt": "2026-10-08T18:24:07.951Z",
+      "endedAt": "2026-10-08T18:24:08.289Z",
       "command": "ls",
+      "rtkInvocations": ["rewrite ls", "ls"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
-        "C3-semantic": null,
-        "C4-compact": null,
-        "C5-exact": true,
-        "C6-status-class": null
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -369,27 +415,205 @@
         "estimatedTokens": 19
       },
       "pi": {
-        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "output": "src/\naudit.txt  84B\nchanges.patch  1.0K\nconfig.json  66B\nexported.csv  3.7K\nledger.csv  3.7K\nnotes.md  37B\n",
         "isError": false,
-        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
-        "bytes": 73,
-        "characters": 73,
-        "estimatedTokens": 19
+        "sha256": "57f064b223ad54893484dbc399dbd477e597c98546ef2492e1c94302366b795c",
+        "bytes": 107,
+        "characters": 107,
+        "estimatedTokens": 27
+      }
+    },
+    {
+      "case": "RTK-R7.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:24:08.289Z",
+      "endedAt": "2026-10-08T18:24:08.668Z",
+      "command": "git log",
+      "rtkInvocations": [],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      },
+      "pi": {
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "isError": false,
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      }
+    },
+    {
+      "case": "RTK-B3.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:24:08.732Z",
+      "endedAt": "2026-10-08T18:24:09.072Z",
+      "command": "ls -la",
+      "rtkInvocations": ["rewrite ls -la", "ls -la"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
+        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "bytes": 613,
+        "characters": 613,
+        "estimatedTokens": 154
+      },
+      "pi": {
+        "output": "755  .git/\n755  .otto/\n755  src/\n644  .gitignore  34B\n644  audit.txt  84B\n644  changes.patch  1.0K\n644  config.json  66B\n644  exported.csv  3.7K\n644  ledger.csv  3.7K\n644  notes.md  37B\n",
+        "isError": false,
+        "sha256": "67df5e866c294b3c7b3c53272f00558673c9a8ba3e06fb1b83dd06274e1d4ed7",
+        "bytes": 186,
+        "characters": 186,
+        "estimatedTokens": 47
+      }
+    },
+    {
+      "case": "RTK-H3.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:24:09.072Z",
+      "endedAt": "2026-10-08T18:24:09.429Z",
+      "command": "cat src/alpha.ts",
+      "rtkInvocations": ["rewrite cat src/alpha.ts", "read src/alpha.ts"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "export function alphaRule0(amount: number) {\n  const invoiceRate = 0.20;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule1(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule2(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule3(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule4(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule5(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule6(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule7(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule8(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule9(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule10(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule11(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n",
+        "sha256": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+        "bytes": 1285,
+        "characters": 1285,
+        "estimatedTokens": 322
+      },
+      "pi": {
+        "output": "export function alphaRule0(amount: number) {\n  const invoiceRate = 0.20;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule1(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule2(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule3(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule4(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule5(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule6(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule7(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule8(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule9(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule10(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule11(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n",
+        "isError": false,
+        "sha256": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+        "bytes": 1285,
+        "characters": 1285,
+        "estimatedTokens": 322
+      }
+    },
+    {
+      "case": "RTK-B4.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:24:09.429Z",
+      "endedAt": "2026-10-08T18:24:09.750Z",
+      "command": "rg 'invoiceRate' src",
+      "rtkInvocations": ["rewrite rg 'invoiceRate' src", "rg invoiceRate src"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "src/alpha.ts:  const invoiceRate = 0.20;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\n",
+        "sha256": "4c6b300f743eed8d3b8a021c0bc227fa58c56b4ab08e4cfcbdbd041d93f74bbe",
+        "bytes": 1020,
+        "characters": 1020,
+        "estimatedTokens": 255
+      },
+      "pi": {
+        "output": "src/alpha.ts:  const invoiceRate = 0.20;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\n",
+        "isError": false,
+        "sha256": "4c6b300f743eed8d3b8a021c0bc227fa58c56b4ab08e4cfcbdbd041d93f74bbe",
+        "bytes": 1020,
+        "characters": 1020,
+        "estimatedTokens": 255
+      }
+    },
+    {
+      "case": "RTK-H4.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:24:09.750Z",
+      "endedAt": "2026-10-08T18:24:10.075Z",
+      "command": "find src -type f",
+      "rtkInvocations": ["rewrite find src -type f", "find src -type f"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "src/alpha.ts\nsrc/export.ts\nsrc/beta.ts\n",
+        "sha256": "e8791d4d826661362ca23fe9f4c9528c6c78f47b69742aa2918eb20547ea010c",
+        "bytes": 39,
+        "characters": 39,
+        "estimatedTokens": 10
+      },
+      "pi": {
+        "output": "alpha.ts\nbeta.ts\nexport.ts\n",
+        "isError": false,
+        "sha256": "4f88586ba2dce78e13d814ff46b061d555572974326bdef11b0ca5e60fa93fbe",
+        "bytes": 27,
+        "characters": 27,
+        "estimatedTokens": 7
       }
     },
     {
       "case": "RTK-B1.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:22.966Z",
-      "endedAt": "2026-10-08T18:03:23.867Z",
+      "startedAt": "2026-10-08T18:24:10.075Z",
+      "endedAt": "2026-10-08T18:24:10.436Z",
       "command": "git status",
+      "rtkInvocations": ["rewrite git status", "git status"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": true
+        "C6-status-class": true,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -412,16 +636,19 @@
     {
       "case": "RTK-B2.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:23.867Z",
-      "endedAt": "2026-10-08T18:03:24.744Z",
+      "startedAt": "2026-10-08T18:24:10.436Z",
+      "endedAt": "2026-10-08T18:24:10.978Z",
       "command": "git diff",
+      "rtkInvocations": ["rewrite git diff", "git diff"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -444,16 +671,19 @@
     {
       "case": "RTK-H1.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:24.745Z",
-      "endedAt": "2026-10-08T18:03:25.802Z",
+      "startedAt": "2026-10-08T18:24:10.978Z",
+      "endedAt": "2026-10-08T18:24:11.521Z",
       "command": "git log -5",
+      "rtkInvocations": ["rewrite git log -5", "git log -5"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -476,16 +706,19 @@
     {
       "case": "RTK-H2.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:25.802Z",
-      "endedAt": "2026-10-08T18:03:26.855Z",
+      "startedAt": "2026-10-08T18:24:11.521Z",
+      "endedAt": "2026-10-08T18:24:11.884Z",
       "command": "git status",
+      "rtkInvocations": ["rewrite git status", "git status"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": true
+        "C6-status-class": true,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -508,16 +741,19 @@
     {
       "case": "RTK-R1.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:26.855Z",
-      "endedAt": "2026-10-08T18:03:27.867Z",
+      "startedAt": "2026-10-08T18:24:11.884Z",
+      "endedAt": "2026-10-08T18:24:12.198Z",
       "command": "cat ledger.csv > exported.csv",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -539,22 +775,26 @@
       "artifact": {
         "path": "exported.csv",
         "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
-        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b"
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "content": "id,description,amount,currency\n1,invoice record 1,1.37,EUR\n2,invoice record 2,2.74,EUR\n3,invoice record 3,4.11,EUR\n4,invoice record 4,5.48,EUR\n5,invoice record 5,6.85,EUR\n6,invoice record 6,8.22,EUR\n7,invoice record 7,9.59,EUR\n8,invoice record 8,10.96,EUR\n9,invoice record 9,12.33,EUR\n10,invoice record 10,13.70,EUR\n11,invoice record 11,15.07,EUR\n12,invoice record 12,16.44,EUR\n13,invoice record 13,17.81,EUR\n14,invoice record 14,19.18,EUR\n15,invoice record 15,20.55,EUR\n16,invoice record 16,21.92,EUR\n17,invoice record 17,23.29,EUR\n18,invoice record 18,24.66,EUR\n19,invoice record 19,26.03,EUR\n20,invoice record 20,27.40,EUR\n21,invoice record 21,28.77,EUR\n22,invoice record 22,30.14,EUR\n23,invoice record 23,31.51,EUR\n24,invoice record 24,32.88,EUR\n25,invoice record 25,34.25,EUR\n26,invoice record 26,35.62,EUR\n27,invoice record 27,36.99,EUR\n28,invoice record 28,38.36,EUR\n29,invoice record 29,39.73,EUR\n30,invoice record 30,41.10,EUR\n31,invoice record 31,42.47,EUR\n32,invoice record 32,43.84,EUR\n33,invoice record 33,45.21,EUR\n34,invoice record 34,46.58,EUR\n35,invoice record 35,47.95,EUR\n36,invoice record 36,49.32,EUR\n37,invoice record 37,50.69,EUR\n38,invoice record 38,52.06,EUR\n39,invoice record 39,53.43,EUR\n40,invoice record 40,54.80,EUR\n41,invoice record 41,56.17,EUR\n42,invoice record 42,57.54,EUR\n43,invoice record 43,58.91,EUR\n44,invoice record 44,60.28,EUR\n45,invoice record 45,61.65,EUR\n46,invoice record 46,63.02,EUR\n47,invoice record 47,64.39,EUR\n48,invoice record 48,65.76,EUR\n49,invoice record 49,67.13,EUR\n50,invoice record 50,68.50,EUR\n51,invoice record 51,69.87,EUR\n52,invoice record 52,71.24,EUR\n53,invoice record 53,72.61,EUR\n54,invoice record 54,73.98,EUR\n55,invoice record 55,75.35,EUR\n56,invoice record 56,76.72,EUR\n57,invoice record 57,78.09,EUR\n58,invoice record 58,79.46,EUR\n59,invoice record 59,80.83,EUR\n60,invoice record 60,82.20,EUR\n61,invoice record 61,83.57,EUR\n62,invoice record 62,84.94,EUR\n63,invoice record 63,86.31,EUR\n64,invoice record 64,87.68,EUR\n65,invoice record 65,89.05,EUR\n66,invoice record 66,90.42,EUR\n67,invoice record 67,91.79,EUR\n68,invoice record 68,93.16,EUR\n69,invoice record 69,94.53,EUR\n70,invoice record 70,95.90,EUR\n71,invoice record 71,97.27,EUR\n72,invoice record 72,98.64,EUR\n73,invoice record 73,100.01,EUR\n74,invoice record 74,101.38,EUR\n75,invoice record 75,102.75,EUR\n76,invoice record 76,104.12,EUR\n77,invoice record 77,105.49,EUR\n78,invoice record 78,106.86,EUR\n79,invoice record 79,108.23,EUR\n80,invoice record 80,109.60,EUR\n81,invoice record 81,110.97,EUR\n82,invoice record 82,112.34,EUR\n83,invoice record 83,113.71,EUR\n84,invoice record 84,115.08,EUR\n85,invoice record 85,116.45,EUR\n86,invoice record 86,117.82,EUR\n87,invoice record 87,119.19,EUR\n88,invoice record 88,120.56,EUR\n89,invoice record 89,121.93,EUR\n90,invoice record 90,123.30,EUR\n91,invoice record 91,124.67,EUR\n92,invoice record 92,126.04,EUR\n93,invoice record 93,127.41,EUR\n94,invoice record 94,128.78,EUR\n95,invoice record 95,130.15,EUR\n96,invoice record 96,131.52,EUR\n97,invoice record 97,132.89,EUR\n98,invoice record 98,134.26,EUR\n99,invoice record 99,135.63,EUR\n100,invoice record 100,137.00,EUR\n101,invoice record 101,138.37,EUR\n102,invoice record 102,139.74,EUR\n103,invoice record 103,141.11,EUR\n104,invoice record 104,142.48,EUR\n105,invoice record 105,143.85,EUR\n106,invoice record 106,145.22,EUR\n107,invoice record 107,146.59,EUR\n108,invoice record 108,147.96,EUR\n109,invoice record 109,149.33,EUR\n110,invoice record 110,150.70,EUR\n111,invoice record 111,152.07,EUR\n112,invoice record 112,153.44,EUR\n113,invoice record 113,154.81,EUR\n114,invoice record 114,156.18,EUR\n115,invoice record 115,157.55,EUR\n116,invoice record 116,158.92,EUR\n117,invoice record 117,160.29,EUR\n118,invoice record 118,161.66,EUR\n119,invoice record 119,163.03,EUR\n120,invoice record 120,164.40,EUR\n"
       }
     },
     {
       "case": "RTK-R2.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:27.868Z",
-      "endedAt": "2026-10-08T18:03:28.390Z",
+      "startedAt": "2026-10-08T18:24:12.198Z",
+      "endedAt": "2026-10-08T18:24:12.544Z",
       "command": "git status --porcelain",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -575,18 +815,21 @@
       }
     },
     {
-      "case": "RTK-R3.v1",
+      "case": "RTK-R3.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:28.390Z",
-      "endedAt": "2026-10-08T18:03:29.015Z",
-      "command": "git diff > changes.patch",
+      "startedAt": "2026-10-08T18:24:12.544Z",
+      "endedAt": "2026-10-08T18:24:12.881Z",
+      "command": "git diff HEAD > changes.patch",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": true
       },
       "result": "pass",
       "raw": {
@@ -607,23 +850,27 @@
       },
       "artifact": {
         "path": "changes.patch",
-        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
-        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
       }
     },
     {
       "case": "RTK-R4.v1",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:29.016Z",
-      "endedAt": "2026-10-08T18:03:29.730Z",
+      "startedAt": "2026-10-08T18:24:12.881Z",
+      "endedAt": "2026-10-08T18:24:13.439Z",
       "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": null,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -644,18 +891,21 @@
       }
     },
     {
-      "case": "RTK-R5.v1",
+      "case": "RTK-R5.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:29.730Z",
-      "endedAt": "2026-10-08T18:03:31.373Z",
-      "command": "git diff --output=changes.patch",
+      "startedAt": "2026-10-08T18:24:13.439Z",
+      "endedAt": "2026-10-08T18:24:13.972Z",
+      "command": "git diff HEAD --output=changes.patch",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": true
       },
       "result": "pass",
       "raw": {
@@ -676,23 +926,27 @@
       },
       "artifact": {
         "path": "changes.patch",
-        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
-        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
       }
     },
     {
-      "case": "RTK-R6.v1",
+      "case": "RTK-R6.v2",
       "repetition": 2,
-      "startedAt": "2026-10-08T18:03:31.374Z",
-      "endedAt": "2026-10-08T18:03:32.209Z",
+      "startedAt": "2026-10-08T18:24:14.057Z",
+      "endedAt": "2026-10-08T18:24:15.364Z",
       "command": "ls",
+      "rtkInvocations": ["rewrite ls", "ls"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
-        "C3-semantic": null,
-        "C4-compact": null,
-        "C5-exact": true,
-        "C6-status-class": null
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -704,27 +958,205 @@
         "estimatedTokens": 19
       },
       "pi": {
-        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "output": "src/\naudit.txt  84B\nchanges.patch  1.0K\nconfig.json  66B\nexported.csv  3.7K\nledger.csv  3.7K\nnotes.md  37B\n",
         "isError": false,
-        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
-        "bytes": 73,
-        "characters": 73,
-        "estimatedTokens": 19
+        "sha256": "57f064b223ad54893484dbc399dbd477e597c98546ef2492e1c94302366b795c",
+        "bytes": 107,
+        "characters": 107,
+        "estimatedTokens": 27
+      }
+    },
+    {
+      "case": "RTK-R7.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:24:15.364Z",
+      "endedAt": "2026-10-08T18:24:15.984Z",
+      "command": "git log",
+      "rtkInvocations": [],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      },
+      "pi": {
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "isError": false,
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      }
+    },
+    {
+      "case": "RTK-B3.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:24:16.065Z",
+      "endedAt": "2026-10-08T18:24:16.587Z",
+      "command": "ls -la",
+      "rtkInvocations": ["rewrite ls -la", "ls -la"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
+        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "bytes": 613,
+        "characters": 613,
+        "estimatedTokens": 154
+      },
+      "pi": {
+        "output": "755  .git/\n755  .otto/\n755  src/\n644  .gitignore  34B\n644  audit.txt  84B\n644  changes.patch  1.0K\n644  config.json  66B\n644  exported.csv  3.7K\n644  ledger.csv  3.7K\n644  notes.md  37B\n",
+        "isError": false,
+        "sha256": "67df5e866c294b3c7b3c53272f00558673c9a8ba3e06fb1b83dd06274e1d4ed7",
+        "bytes": 186,
+        "characters": 186,
+        "estimatedTokens": 47
+      }
+    },
+    {
+      "case": "RTK-H3.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:24:16.587Z",
+      "endedAt": "2026-10-08T18:24:16.997Z",
+      "command": "cat src/alpha.ts",
+      "rtkInvocations": ["rewrite cat src/alpha.ts", "read src/alpha.ts"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "export function alphaRule0(amount: number) {\n  const invoiceRate = 0.20;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule1(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule2(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule3(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule4(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule5(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule6(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule7(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule8(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule9(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule10(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule11(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n",
+        "sha256": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+        "bytes": 1285,
+        "characters": 1285,
+        "estimatedTokens": 322
+      },
+      "pi": {
+        "output": "export function alphaRule0(amount: number) {\n  const invoiceRate = 0.20;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule1(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule2(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule3(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule4(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule5(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule6(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule7(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule8(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule9(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule10(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule11(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n",
+        "isError": false,
+        "sha256": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+        "bytes": 1285,
+        "characters": 1285,
+        "estimatedTokens": 322
+      }
+    },
+    {
+      "case": "RTK-B4.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:24:16.997Z",
+      "endedAt": "2026-10-08T18:24:17.437Z",
+      "command": "rg 'invoiceRate' src",
+      "rtkInvocations": ["rewrite rg 'invoiceRate' src", "rg invoiceRate src"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "src/alpha.ts:  const invoiceRate = 0.20;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\n",
+        "sha256": "4c6b300f743eed8d3b8a021c0bc227fa58c56b4ab08e4cfcbdbd041d93f74bbe",
+        "bytes": 1020,
+        "characters": 1020,
+        "estimatedTokens": 255
+      },
+      "pi": {
+        "output": "src/alpha.ts:  const invoiceRate = 0.20;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\n",
+        "isError": false,
+        "sha256": "4c6b300f743eed8d3b8a021c0bc227fa58c56b4ab08e4cfcbdbd041d93f74bbe",
+        "bytes": 1020,
+        "characters": 1020,
+        "estimatedTokens": 255
+      }
+    },
+    {
+      "case": "RTK-H4.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:24:17.437Z",
+      "endedAt": "2026-10-08T18:24:17.749Z",
+      "command": "find src -type f",
+      "rtkInvocations": ["rewrite find src -type f", "find src -type f"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "src/alpha.ts\nsrc/export.ts\nsrc/beta.ts\n",
+        "sha256": "e8791d4d826661362ca23fe9f4c9528c6c78f47b69742aa2918eb20547ea010c",
+        "bytes": 39,
+        "characters": 39,
+        "estimatedTokens": 10
+      },
+      "pi": {
+        "output": "alpha.ts\nbeta.ts\nexport.ts\n",
+        "isError": false,
+        "sha256": "4f88586ba2dce78e13d814ff46b061d555572974326bdef11b0ca5e60fa93fbe",
+        "bytes": 27,
+        "characters": 27,
+        "estimatedTokens": 7
       }
     },
     {
       "case": "RTK-B1.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:32.209Z",
-      "endedAt": "2026-10-08T18:03:32.674Z",
+      "startedAt": "2026-10-08T18:24:17.749Z",
+      "endedAt": "2026-10-08T18:24:18.176Z",
       "command": "git status",
+      "rtkInvocations": ["rewrite git status", "git status"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": true
+        "C6-status-class": true,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -747,16 +1179,19 @@
     {
       "case": "RTK-B2.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:32.674Z",
-      "endedAt": "2026-10-08T18:03:33.488Z",
+      "startedAt": "2026-10-08T18:24:18.176Z",
+      "endedAt": "2026-10-08T18:24:18.554Z",
       "command": "git diff",
+      "rtkInvocations": ["rewrite git diff", "git diff"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -779,16 +1214,19 @@
     {
       "case": "RTK-H1.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:33.489Z",
-      "endedAt": "2026-10-08T18:03:34.519Z",
+      "startedAt": "2026-10-08T18:24:18.555Z",
+      "endedAt": "2026-10-08T18:24:18.903Z",
       "command": "git log -5",
+      "rtkInvocations": ["rewrite git log -5", "git log -5"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -811,16 +1249,19 @@
     {
       "case": "RTK-H2.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:34.519Z",
-      "endedAt": "2026-10-08T18:03:35.430Z",
+      "startedAt": "2026-10-08T18:24:18.903Z",
+      "endedAt": "2026-10-08T18:24:19.305Z",
       "command": "git status",
+      "rtkInvocations": ["rewrite git status", "git status"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": true,
         "C5-exact": null,
-        "C6-status-class": true
+        "C6-status-class": true,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -843,16 +1284,19 @@
     {
       "case": "RTK-R1.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:35.430Z",
-      "endedAt": "2026-10-08T18:03:35.900Z",
+      "startedAt": "2026-10-08T18:24:19.305Z",
+      "endedAt": "2026-10-08T18:24:19.584Z",
       "command": "cat ledger.csv > exported.csv",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -874,22 +1318,26 @@
       "artifact": {
         "path": "exported.csv",
         "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
-        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b"
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "content": "id,description,amount,currency\n1,invoice record 1,1.37,EUR\n2,invoice record 2,2.74,EUR\n3,invoice record 3,4.11,EUR\n4,invoice record 4,5.48,EUR\n5,invoice record 5,6.85,EUR\n6,invoice record 6,8.22,EUR\n7,invoice record 7,9.59,EUR\n8,invoice record 8,10.96,EUR\n9,invoice record 9,12.33,EUR\n10,invoice record 10,13.70,EUR\n11,invoice record 11,15.07,EUR\n12,invoice record 12,16.44,EUR\n13,invoice record 13,17.81,EUR\n14,invoice record 14,19.18,EUR\n15,invoice record 15,20.55,EUR\n16,invoice record 16,21.92,EUR\n17,invoice record 17,23.29,EUR\n18,invoice record 18,24.66,EUR\n19,invoice record 19,26.03,EUR\n20,invoice record 20,27.40,EUR\n21,invoice record 21,28.77,EUR\n22,invoice record 22,30.14,EUR\n23,invoice record 23,31.51,EUR\n24,invoice record 24,32.88,EUR\n25,invoice record 25,34.25,EUR\n26,invoice record 26,35.62,EUR\n27,invoice record 27,36.99,EUR\n28,invoice record 28,38.36,EUR\n29,invoice record 29,39.73,EUR\n30,invoice record 30,41.10,EUR\n31,invoice record 31,42.47,EUR\n32,invoice record 32,43.84,EUR\n33,invoice record 33,45.21,EUR\n34,invoice record 34,46.58,EUR\n35,invoice record 35,47.95,EUR\n36,invoice record 36,49.32,EUR\n37,invoice record 37,50.69,EUR\n38,invoice record 38,52.06,EUR\n39,invoice record 39,53.43,EUR\n40,invoice record 40,54.80,EUR\n41,invoice record 41,56.17,EUR\n42,invoice record 42,57.54,EUR\n43,invoice record 43,58.91,EUR\n44,invoice record 44,60.28,EUR\n45,invoice record 45,61.65,EUR\n46,invoice record 46,63.02,EUR\n47,invoice record 47,64.39,EUR\n48,invoice record 48,65.76,EUR\n49,invoice record 49,67.13,EUR\n50,invoice record 50,68.50,EUR\n51,invoice record 51,69.87,EUR\n52,invoice record 52,71.24,EUR\n53,invoice record 53,72.61,EUR\n54,invoice record 54,73.98,EUR\n55,invoice record 55,75.35,EUR\n56,invoice record 56,76.72,EUR\n57,invoice record 57,78.09,EUR\n58,invoice record 58,79.46,EUR\n59,invoice record 59,80.83,EUR\n60,invoice record 60,82.20,EUR\n61,invoice record 61,83.57,EUR\n62,invoice record 62,84.94,EUR\n63,invoice record 63,86.31,EUR\n64,invoice record 64,87.68,EUR\n65,invoice record 65,89.05,EUR\n66,invoice record 66,90.42,EUR\n67,invoice record 67,91.79,EUR\n68,invoice record 68,93.16,EUR\n69,invoice record 69,94.53,EUR\n70,invoice record 70,95.90,EUR\n71,invoice record 71,97.27,EUR\n72,invoice record 72,98.64,EUR\n73,invoice record 73,100.01,EUR\n74,invoice record 74,101.38,EUR\n75,invoice record 75,102.75,EUR\n76,invoice record 76,104.12,EUR\n77,invoice record 77,105.49,EUR\n78,invoice record 78,106.86,EUR\n79,invoice record 79,108.23,EUR\n80,invoice record 80,109.60,EUR\n81,invoice record 81,110.97,EUR\n82,invoice record 82,112.34,EUR\n83,invoice record 83,113.71,EUR\n84,invoice record 84,115.08,EUR\n85,invoice record 85,116.45,EUR\n86,invoice record 86,117.82,EUR\n87,invoice record 87,119.19,EUR\n88,invoice record 88,120.56,EUR\n89,invoice record 89,121.93,EUR\n90,invoice record 90,123.30,EUR\n91,invoice record 91,124.67,EUR\n92,invoice record 92,126.04,EUR\n93,invoice record 93,127.41,EUR\n94,invoice record 94,128.78,EUR\n95,invoice record 95,130.15,EUR\n96,invoice record 96,131.52,EUR\n97,invoice record 97,132.89,EUR\n98,invoice record 98,134.26,EUR\n99,invoice record 99,135.63,EUR\n100,invoice record 100,137.00,EUR\n101,invoice record 101,138.37,EUR\n102,invoice record 102,139.74,EUR\n103,invoice record 103,141.11,EUR\n104,invoice record 104,142.48,EUR\n105,invoice record 105,143.85,EUR\n106,invoice record 106,145.22,EUR\n107,invoice record 107,146.59,EUR\n108,invoice record 108,147.96,EUR\n109,invoice record 109,149.33,EUR\n110,invoice record 110,150.70,EUR\n111,invoice record 111,152.07,EUR\n112,invoice record 112,153.44,EUR\n113,invoice record 113,154.81,EUR\n114,invoice record 114,156.18,EUR\n115,invoice record 115,157.55,EUR\n116,invoice record 116,158.92,EUR\n117,invoice record 117,160.29,EUR\n118,invoice record 118,161.66,EUR\n119,invoice record 119,163.03,EUR\n120,invoice record 120,164.40,EUR\n"
       }
     },
     {
       "case": "RTK-R2.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:35.903Z",
-      "endedAt": "2026-10-08T18:03:37.683Z",
+      "startedAt": "2026-10-08T18:24:19.584Z",
+      "endedAt": "2026-10-08T18:24:19.945Z",
       "command": "git status --porcelain",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -910,18 +1358,21 @@
       }
     },
     {
-      "case": "RTK-R3.v1",
+      "case": "RTK-R3.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:37.686Z",
-      "endedAt": "2026-10-08T18:03:40.384Z",
-      "command": "git diff > changes.patch",
+      "startedAt": "2026-10-08T18:24:19.945Z",
+      "endedAt": "2026-10-08T18:24:20.272Z",
+      "command": "git diff HEAD > changes.patch",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": true
       },
       "result": "pass",
       "raw": {
@@ -942,23 +1393,27 @@
       },
       "artifact": {
         "path": "changes.patch",
-        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
-        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
       }
     },
     {
       "case": "RTK-R4.v1",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:40.385Z",
-      "endedAt": "2026-10-08T18:03:40.929Z",
+      "startedAt": "2026-10-08T18:24:20.272Z",
+      "endedAt": "2026-10-08T18:24:20.642Z",
       "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": true,
         "C4-compact": null,
         "C5-exact": null,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -979,18 +1434,21 @@
       }
     },
     {
-      "case": "RTK-R5.v1",
+      "case": "RTK-R5.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:40.929Z",
-      "endedAt": "2026-10-08T18:03:42.353Z",
-      "command": "git diff --output=changes.patch",
+      "startedAt": "2026-10-08T18:24:20.642Z",
+      "endedAt": "2026-10-08T18:24:20.962Z",
+      "command": "git diff HEAD --output=changes.patch",
+      "rtkInvocations": [],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
         "C3-semantic": null,
         "C4-compact": null,
         "C5-exact": true,
-        "C6-status-class": null
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": true
       },
       "result": "pass",
       "raw": {
@@ -1011,23 +1469,27 @@
       },
       "artifact": {
         "path": "changes.patch",
-        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
-        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
       }
     },
     {
-      "case": "RTK-R6.v1",
+      "case": "RTK-R6.v2",
       "repetition": 3,
-      "startedAt": "2026-10-08T18:03:42.353Z",
-      "endedAt": "2026-10-08T18:03:43.102Z",
+      "startedAt": "2026-10-08T18:24:21.042Z",
+      "endedAt": "2026-10-08T18:24:21.342Z",
       "command": "ls",
+      "rtkInvocations": ["rewrite ls", "ls"],
       "checks": {
         "C1-installed": true,
         "C2-exit": true,
-        "C3-semantic": null,
-        "C4-compact": null,
-        "C5-exact": true,
-        "C6-status-class": null
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
       },
       "result": "pass",
       "raw": {
@@ -1039,12 +1501,187 @@
         "estimatedTokens": 19
       },
       "pi": {
-        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "output": "src/\naudit.txt  84B\nchanges.patch  1.0K\nconfig.json  66B\nexported.csv  3.7K\nledger.csv  3.7K\nnotes.md  37B\n",
         "isError": false,
-        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
-        "bytes": 73,
-        "characters": 73,
-        "estimatedTokens": 19
+        "sha256": "57f064b223ad54893484dbc399dbd477e597c98546ef2492e1c94302366b795c",
+        "bytes": 107,
+        "characters": 107,
+        "estimatedTokens": 27
+      }
+    },
+    {
+      "case": "RTK-R7.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:24:21.342Z",
+      "endedAt": "2026-10-08T18:24:23.675Z",
+      "command": "git log",
+      "rtkInvocations": [],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C8-rtk-used": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      },
+      "pi": {
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "isError": false,
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      }
+    },
+    {
+      "case": "RTK-B3.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:24:23.815Z",
+      "endedAt": "2026-10-08T18:24:24.402Z",
+      "command": "ls -la",
+      "rtkInvocations": ["rewrite ls -la", "ls -la"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "total 28\ndrwxrwxrwx 12 node node  384 Jan  1  2026 .\ndrwxr-xr-x  2 node node   64 Oct  8 18:24 ..\ndrwxr-xr-x 13 node node  416 Jan  1  2026 .git\n-rw-r--r--  1 node node   34 Jan  1  2026 .gitignore\ndrwxr-xr-x  3 node node   96 Jan  1  2026 .otto\n-rw-r--r--  1 node node   84 Jan  1  2026 audit.txt\n-rw-r--r--  1 node node 1064 Jan  1  2026 changes.patch\n-rw-r--r--  1 node node   66 Jan  1  2026 config.json\n-rw-r--r--  1 node node 3816 Jan  1  2026 exported.csv\n-rw-r--r--  1 node node 3816 Jan  1  2026 ledger.csv\n-rw-r--r--  1 node node   37 Jan  1  2026 notes.md\ndrwxr-xr-x  5 node node  160 Jan  1  2026 src\n",
+        "sha256": "9c258ad23a85ef8e6af22e3240a02bc1493c1c39f6943ba2f19e5cdae6652c70",
+        "bytes": 613,
+        "characters": 613,
+        "estimatedTokens": 154
+      },
+      "pi": {
+        "output": "755  .git/\n755  .otto/\n755  src/\n644  .gitignore  34B\n644  audit.txt  84B\n644  changes.patch  1.0K\n644  config.json  66B\n644  exported.csv  3.7K\n644  ledger.csv  3.7K\n644  notes.md  37B\n",
+        "isError": false,
+        "sha256": "67df5e866c294b3c7b3c53272f00558673c9a8ba3e06fb1b83dd06274e1d4ed7",
+        "bytes": 186,
+        "characters": 186,
+        "estimatedTokens": 47
+      }
+    },
+    {
+      "case": "RTK-H3.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:24:24.402Z",
+      "endedAt": "2026-10-08T18:24:24.883Z",
+      "command": "cat src/alpha.ts",
+      "rtkInvocations": ["rewrite cat src/alpha.ts", "read src/alpha.ts"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "export function alphaRule0(amount: number) {\n  const invoiceRate = 0.20;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule1(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule2(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule3(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule4(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule5(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule6(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule7(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule8(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule9(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule10(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule11(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n",
+        "sha256": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+        "bytes": 1285,
+        "characters": 1285,
+        "estimatedTokens": 322
+      },
+      "pi": {
+        "output": "export function alphaRule0(amount: number) {\n  const invoiceRate = 0.20;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule1(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule2(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule3(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule4(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule5(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule6(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule7(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule8(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule9(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule10(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n\nexport function alphaRule11(amount: number) {\n  const invoiceRate = 0.15;\n  return amount * invoiceRate;\n}\n",
+        "isError": false,
+        "sha256": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+        "bytes": 1285,
+        "characters": 1285,
+        "estimatedTokens": 322
+      }
+    },
+    {
+      "case": "RTK-B4.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:24:24.883Z",
+      "endedAt": "2026-10-08T18:24:25.263Z",
+      "command": "rg 'invoiceRate' src",
+      "rtkInvocations": ["rewrite rg 'invoiceRate' src", "rg invoiceRate src"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "src/alpha.ts:  const invoiceRate = 0.20;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\n",
+        "sha256": "4c6b300f743eed8d3b8a021c0bc227fa58c56b4ab08e4cfcbdbd041d93f74bbe",
+        "bytes": 1020,
+        "characters": 1020,
+        "estimatedTokens": 255
+      },
+      "pi": {
+        "output": "src/alpha.ts:  const invoiceRate = 0.20;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\nsrc/alpha.ts:  const invoiceRate = 0.15;\nsrc/alpha.ts:  return amount * invoiceRate;\n",
+        "isError": false,
+        "sha256": "4c6b300f743eed8d3b8a021c0bc227fa58c56b4ab08e4cfcbdbd041d93f74bbe",
+        "bytes": 1020,
+        "characters": 1020,
+        "estimatedTokens": 255
+      }
+    },
+    {
+      "case": "RTK-H4.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:24:25.263Z",
+      "endedAt": "2026-10-08T18:24:25.627Z",
+      "command": "find src -type f",
+      "rtkInvocations": ["rewrite find src -type f", "find src -type f"],
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C8-rtk-used": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "src/alpha.ts\nsrc/export.ts\nsrc/beta.ts\n",
+        "sha256": "e8791d4d826661362ca23fe9f4c9528c6c78f47b69742aa2918eb20547ea010c",
+        "bytes": 39,
+        "characters": 39,
+        "estimatedTokens": 10
+      },
+      "pi": {
+        "output": "alpha.ts\nbeta.ts\nexport.ts\n",
+        "isError": false,
+        "sha256": "4f88586ba2dce78e13d814ff46b061d555572974326bdef11b0ca5e60fa93fbe",
+        "bytes": 27,
+        "characters": 27,
+        "estimatedTokens": 7
       }
     }
   ]

@@ -1,0 +1,3569 @@
+{
+  "startedAt": "2026-10-08T18:10:49.046Z",
+  "endedAt": "2026-10-08T18:11:17.482Z",
+  "evidenceClass": "Paired controlled native ARM64 Docker Pi bash tool microbenchmark; synthetic files, no model calls or live accounts.",
+  "image": "otto-lab-585-workspace:arm64",
+  "imageId": "sha256:df551d6613799d6c5c954dfc54600afd8ff8ab30964c87e82c1523614580199c",
+  "architecture": "arm64",
+  "baselineCommit": "437687bb17a3944ce9aa01ac37239e5163515365",
+  "candidateCommit": "768ec5a00ab652b0d7bd4dba50c12e4b9cb82445",
+  "sourceSha256": {
+    "baseline": "4e2f5b03d47211ea85653ec88c021c539ad98d9df4738e7df5c6456a3fc48604",
+    "candidate": "0f1e3f5491c3741bc0e944e8623b6468306a6b7bc5412a9646a5245de9884049"
+  },
+  "environment": "Linux aarch64\nrtk 0.51.0\ngit version 2.39.5\nv24.21.0\n",
+  "hostNode": "v26.0.0",
+  "containerStartupMs": 177.27658300000007,
+  "repeatsPerCommand": 40,
+  "warmupPairsPerCommand": 5,
+  "order": "Alternating baseline-first/candidate-first paired executions; rotate command order each repetition; same warm WorkspaceSession and image for both.",
+  "fixture": {
+    "trackedTextFiles": 20,
+    "linesPerFile": 40,
+    "unstagedModifiedFiles": 8,
+    "stagedNewFiles": 1,
+    "untrackedFiles": 1,
+    "commits": 5,
+    "baseFileHashes": {
+      "src/rule-00.txt": "872932a7bf152a5a3719a8a9a997d93c0424ed64a513f59ebb230dd995699491",
+      "src/rule-01.txt": "e9dada3721a2750185ddd8cd6e223f1188b5bd478ddf4975fbb902d77007da5a",
+      "src/rule-02.txt": "0ea8e2c6fbd831bf8e03c801ea9f08696834edb7f7b18e33c4b38165afda04e4",
+      "src/rule-03.txt": "63d1c4ec0f38035c294d81f916aa8bfc1fb6f5f6758869f5f790da6ba81e86b1",
+      "src/rule-04.txt": "8e30dfa74c913cc0cfc83f1455cdb1d191da72634b90ae465cbd9b011aa30961",
+      "src/rule-05.txt": "44e48316993f7d7e9e0c2146a7dd568937538cc9baad0fef7190a955a2d11e3d",
+      "src/rule-06.txt": "189e02904f6481a383d0be7aed7ae2ebf0b28fa2c18022748f910da5891815eb",
+      "src/rule-07.txt": "5d5e0309849ace610a6d0be7ba0a3d3e432a18256da6bd2ea4872bead6f6255d",
+      "src/rule-08.txt": "4a947d88c4821cf52d729c8d37344b3726d302f0a6a672b526549740786d14ce",
+      "src/rule-09.txt": "bfb346b74f41f4b639a3092d35a1fd5ec2718118995002cf0518e1b49497ff7a",
+      "src/rule-10.txt": "32729f67fb901664e15f39bb033805c07e85b79e283a643ed6cee171ac0e72e4",
+      "src/rule-11.txt": "b220af35db0ae1e3191b7512a57d645794b702dbbfd82b59b9319198b9790d26",
+      "src/rule-12.txt": "30851e298966cf1b7f8218133a3433e77ed8ace53bd3962c9c2da3bd22470a81",
+      "src/rule-13.txt": "89051dddd262af7548fdeaa5e9d32e97b3b71e2d1b97ee957c7b6846d9d47e47",
+      "src/rule-14.txt": "bcde9e2978d921514a7f53a844403e957b65cef6d3badd252733a5661f8286a7",
+      "src/rule-15.txt": "be5a99875b55e9a06642db3dbd77de956f65eace6adf0d285856f3d052bd9aef",
+      "src/rule-16.txt": "35353477f9ee6c5ed3c21b0ef44e5dfb2650b530ac8a5907423e9f7dce8ac10b",
+      "src/rule-17.txt": "a125fe01a6a0ef1df40ecc39ac96c1c4bafcf81ab145eed2421fa5e8c83fa9b0",
+      "src/rule-18.txt": "34a3296256b8a15b826517da3d6010c238b2e49c74064948a6fbcbe0892edf44",
+      "src/rule-19.txt": "1b8cc6f94d7a6398cb90e67ad3c37df65d9a915907a6bc3baf8999f25714cac4"
+    }
+  },
+  "limitations": [
+    "Local Docker Desktop with bind-mounted files; no E2B/network latency or production repository workload measured.",
+    "Builds and full tests finished before benchmark per coordinating agent; ordinary host/background workloads were not isolated or pinned.",
+    "Container startup reported separately and excluded from every tool measurement; existing container is used in both variants.",
+    "No live model quality or end-to-end answer latency measurement; lower context can reduce model processing but this benchmark cannot establish that."
+  ],
+  "summary": [
+    {
+      "command": "git status",
+      "baseline": {
+        "n": 40,
+        "minMs": 78.20204100000046,
+        "medianMs": 88.67472899999939,
+        "p95Ms": 109.68004099999962,
+        "maxMs": 219.48358400000143,
+        "meanMs": 93.81678112499988
+      },
+      "candidate": {
+        "n": 40,
+        "minMs": 99.97070800000074,
+        "medianMs": 108.61387550000109,
+        "p95Ms": 127.43000000000029,
+        "maxMs": 166.55512500000077,
+        "meanMs": 111.92267499999996
+      },
+      "pairedDelta": {
+        "n": 40,
+        "minMs": -114.12904200000048,
+        "medianMs": 19.636936999997488,
+        "p95Ms": 39.37495900000067,
+        "maxMs": 71.54729199999929,
+        "meanMs": 18.105893875000085
+      },
+      "output": [
+        {
+          "variant": "baseline",
+          "bytes": 614,
+          "characters": 614
+        },
+        {
+          "variant": "candidate",
+          "bytes": 192,
+          "characters": 192
+        }
+      ]
+    },
+    {
+      "command": "git diff",
+      "baseline": {
+        "n": 40,
+        "minMs": 73.689959000003,
+        "medianMs": 88.1170415000006,
+        "p95Ms": 170.93624999999884,
+        "maxMs": 220.3184170000004,
+        "meanMs": 98.81263130000009
+      },
+      "candidate": {
+        "n": 40,
+        "minMs": 91.13475000000108,
+        "medianMs": 108.62954200000058,
+        "p95Ms": 119.55166699999972,
+        "maxMs": 261.41145900000083,
+        "meanMs": 111.66105727500015
+      },
+      "pairedDelta": {
+        "n": 40,
+        "minMs": -97.30812499999956,
+        "medianMs": 19.171895499997845,
+        "p95Ms": 32.82591700000012,
+        "maxMs": 41.09304200000042,
+        "meanMs": 12.848425975000055
+      },
+      "output": [
+        {
+          "variant": "baseline",
+          "bytes": 2856,
+          "characters": 2856
+        },
+        {
+          "variant": "candidate",
+          "bytes": 2099,
+          "characters": 2099
+        }
+      ]
+    },
+    {
+      "command": "git log -5",
+      "baseline": {
+        "n": 40,
+        "minMs": 67.52750000000015,
+        "medianMs": 86.05868750000081,
+        "p95Ms": 98.90675000000192,
+        "maxMs": 261.6092919999992,
+        "meanMs": 90.01513965000001
+      },
+      "candidate": {
+        "n": 40,
+        "minMs": 87.90937500000018,
+        "medianMs": 100.39841700000034,
+        "p95Ms": 126.1314999999995,
+        "maxMs": 178.01079200000004,
+        "meanMs": 103.73495317499992
+      },
+      "pairedDelta": {
+        "n": 40,
+        "minMs": -106.1232089999994,
+        "medianMs": 13.87310449999859,
+        "p95Ms": 33.48387399999956,
+        "maxMs": 98.83820800000012,
+        "meanMs": 13.719813524999903
+      },
+      "output": [
+        {
+          "variant": "baseline",
+          "bytes": 888,
+          "characters": 888
+        },
+        {
+          "variant": "candidate",
+          "bytes": 384,
+          "characters": 384
+        }
+      ]
+    }
+  ],
+  "pairedSamples": [
+    {
+      "command": "git status",
+      "repetition": 0,
+      "order": ["baseline", "candidate"],
+      "baseline": 88.71045799999956,
+      "candidate": 106.92716699999983,
+      "deltaMs": 18.216709000000264
+    },
+    {
+      "command": "git diff",
+      "repetition": 0,
+      "order": ["baseline", "candidate"],
+      "baseline": 87.24937499999942,
+      "candidate": 110.02270899999985,
+      "deltaMs": 22.773334000000432
+    },
+    {
+      "command": "git log -5",
+      "repetition": 0,
+      "order": ["baseline", "candidate"],
+      "baseline": 77.49979199999962,
+      "candidate": 93.19829100000061,
+      "deltaMs": 15.698499000000993
+    },
+    {
+      "command": "git diff",
+      "repetition": 1,
+      "order": ["candidate", "baseline"],
+      "candidate": 98.9437080000007,
+      "baseline": 196.25183300000026,
+      "deltaMs": -97.30812499999956
+    },
+    {
+      "command": "git log -5",
+      "repetition": 1,
+      "order": ["candidate", "baseline"],
+      "candidate": 178.01079200000004,
+      "baseline": 79.17258399999992,
+      "deltaMs": 98.83820800000012
+    },
+    {
+      "command": "git status",
+      "repetition": 1,
+      "order": ["candidate", "baseline"],
+      "candidate": 110.57745800000066,
+      "baseline": 85.12083299999995,
+      "deltaMs": 25.456625000000713
+    },
+    {
+      "command": "git log -5",
+      "repetition": 2,
+      "order": ["baseline", "candidate"],
+      "baseline": 87.61925000000065,
+      "candidate": 110.07837500000005,
+      "deltaMs": 22.459124999999403
+    },
+    {
+      "command": "git status",
+      "repetition": 2,
+      "order": ["baseline", "candidate"],
+      "baseline": 113.08408299999974,
+      "candidate": 117.71691600000031,
+      "deltaMs": 4.6328330000005735
+    },
+    {
+      "command": "git diff",
+      "repetition": 2,
+      "order": ["baseline", "candidate"],
+      "baseline": 94.7440830000005,
+      "candidate": 110.42479099999946,
+      "deltaMs": 15.680707999998958
+    },
+    {
+      "command": "git status",
+      "repetition": 3,
+      "order": ["candidate", "baseline"],
+      "candidate": 105.99129099999936,
+      "baseline": 99.81925000000047,
+      "deltaMs": 6.172040999998899
+    },
+    {
+      "command": "git diff",
+      "repetition": 3,
+      "order": ["candidate", "baseline"],
+      "candidate": 116.24645899999996,
+      "baseline": 83.42054199999984,
+      "deltaMs": 32.82591700000012
+    },
+    {
+      "command": "git log -5",
+      "repetition": 3,
+      "order": ["candidate", "baseline"],
+      "candidate": 98.72904199999994,
+      "baseline": 79.03399999999965,
+      "deltaMs": 19.695042000000285
+    },
+    {
+      "command": "git diff",
+      "repetition": 4,
+      "order": ["baseline", "candidate"],
+      "baseline": 90.98312500000065,
+      "candidate": 110.73149999999987,
+      "deltaMs": 19.748374999999214
+    },
+    {
+      "command": "git log -5",
+      "repetition": 4,
+      "order": ["baseline", "candidate"],
+      "baseline": 89.53341699999964,
+      "candidate": 87.90937500000018,
+      "deltaMs": -1.6240419999994629
+    },
+    {
+      "command": "git status",
+      "repetition": 4,
+      "order": ["baseline", "candidate"],
+      "baseline": 89.54774999999972,
+      "candidate": 155.45766700000058,
+      "deltaMs": 65.90991700000086
+    },
+    {
+      "command": "git log -5",
+      "repetition": 5,
+      "order": ["candidate", "baseline"],
+      "candidate": 126.1314999999995,
+      "baseline": 86.3090000000011,
+      "deltaMs": 39.8224999999984
+    },
+    {
+      "command": "git status",
+      "repetition": 5,
+      "order": ["candidate", "baseline"],
+      "candidate": 127.43000000000029,
+      "baseline": 105.50383300000067,
+      "deltaMs": 21.926166999999623
+    },
+    {
+      "command": "git diff",
+      "repetition": 5,
+      "order": ["candidate", "baseline"],
+      "candidate": 261.41145900000083,
+      "baseline": 220.3184170000004,
+      "deltaMs": 41.09304200000042
+    },
+    {
+      "command": "git status",
+      "repetition": 6,
+      "order": ["baseline", "candidate"],
+      "baseline": 95.82049999999981,
+      "candidate": 112.18762500000048,
+      "deltaMs": 16.36712500000067
+    },
+    {
+      "command": "git diff",
+      "repetition": 6,
+      "order": ["baseline", "candidate"],
+      "baseline": 87.52412499999991,
+      "candidate": 103.18241599999965,
+      "deltaMs": 15.658290999999736
+    },
+    {
+      "command": "git log -5",
+      "repetition": 6,
+      "order": ["baseline", "candidate"],
+      "baseline": 93.75174999999945,
+      "candidate": 95.98433400000067,
+      "deltaMs": 2.232584000001225
+    },
+    {
+      "command": "git diff",
+      "repetition": 7,
+      "order": ["candidate", "baseline"],
+      "candidate": 111.77024999999958,
+      "baseline": 79.30358400000114,
+      "deltaMs": 32.46666599999844
+    },
+    {
+      "command": "git log -5",
+      "repetition": 7,
+      "order": ["candidate", "baseline"],
+      "candidate": 123.78133400000115,
+      "baseline": 95.25087499999972,
+      "deltaMs": 28.53045900000143
+    },
+    {
+      "command": "git status",
+      "repetition": 7,
+      "order": ["candidate", "baseline"],
+      "candidate": 101.0572919999995,
+      "baseline": 99.39470799999981,
+      "deltaMs": 1.662583999999697
+    },
+    {
+      "command": "git log -5",
+      "repetition": 8,
+      "order": ["baseline", "candidate"],
+      "baseline": 261.6092919999992,
+      "candidate": 155.48608299999978,
+      "deltaMs": -106.1232089999994
+    },
+    {
+      "command": "git status",
+      "repetition": 8,
+      "order": ["baseline", "candidate"],
+      "baseline": 89.21337500000118,
+      "candidate": 119.0054999999993,
+      "deltaMs": 29.792124999998123
+    },
+    {
+      "command": "git diff",
+      "repetition": 8,
+      "order": ["baseline", "candidate"],
+      "baseline": 111.78529199999866,
+      "candidate": 112.656332999999,
+      "deltaMs": 0.8710410000003321
+    },
+    {
+      "command": "git status",
+      "repetition": 9,
+      "order": ["candidate", "baseline"],
+      "candidate": 166.55512500000077,
+      "baseline": 95.00783300000148,
+      "deltaMs": 71.54729199999929
+    },
+    {
+      "command": "git diff",
+      "repetition": 9,
+      "order": ["candidate", "baseline"],
+      "candidate": 114.1716669999987,
+      "baseline": 88.54233399999976,
+      "deltaMs": 25.62933299999895
+    },
+    {
+      "command": "git log -5",
+      "repetition": 9,
+      "order": ["candidate", "baseline"],
+      "candidate": 92.27241699999831,
+      "baseline": 79.92791699999907,
+      "deltaMs": 12.344499999999243
+    },
+    {
+      "command": "git diff",
+      "repetition": 10,
+      "order": ["baseline", "candidate"],
+      "baseline": 88.02224999999999,
+      "candidate": 117.3326249999991,
+      "deltaMs": 29.310374999999112
+    },
+    {
+      "command": "git log -5",
+      "repetition": 10,
+      "order": ["baseline", "candidate"],
+      "baseline": 87.23049999999967,
+      "candidate": 94.16762500000004,
+      "deltaMs": 6.937125000000378
+    },
+    {
+      "command": "git status",
+      "repetition": 10,
+      "order": ["baseline", "candidate"],
+      "baseline": 82.88600000000042,
+      "candidate": 102.02620800000113,
+      "deltaMs": 19.14020800000071
+    },
+    {
+      "command": "git log -5",
+      "repetition": 11,
+      "order": ["candidate", "baseline"],
+      "candidate": 88.73516700000073,
+      "baseline": 82.71983300000102,
+      "deltaMs": 6.0153339999997115
+    },
+    {
+      "command": "git status",
+      "repetition": 11,
+      "order": ["candidate", "baseline"],
+      "candidate": 117.49116700000013,
+      "baseline": 86.54041599999982,
+      "deltaMs": 30.95075100000031
+    },
+    {
+      "command": "git diff",
+      "repetition": 11,
+      "order": ["candidate", "baseline"],
+      "candidate": 100.39545800000087,
+      "baseline": 80.8769169999996,
+      "deltaMs": 19.518541000001278
+    },
+    {
+      "command": "git status",
+      "repetition": 12,
+      "order": ["baseline", "candidate"],
+      "baseline": 79.74170799999956,
+      "candidate": 107.52908299999945,
+      "deltaMs": 27.787374999999884
+    },
+    {
+      "command": "git diff",
+      "repetition": 12,
+      "order": ["baseline", "candidate"],
+      "baseline": 86.36829200000102,
+      "candidate": 103.89174999999886,
+      "deltaMs": 17.523457999997845
+    },
+    {
+      "command": "git log -5",
+      "repetition": 12,
+      "order": ["baseline", "candidate"],
+      "baseline": 86.67012500000055,
+      "candidate": 100.42216700000063,
+      "deltaMs": 13.752042000000074
+    },
+    {
+      "command": "git diff",
+      "repetition": 13,
+      "order": ["candidate", "baseline"],
+      "candidate": 117.22795799999949,
+      "baseline": 86.2255409999998,
+      "deltaMs": 31.002416999999696
+    },
+    {
+      "command": "git log -5",
+      "repetition": 13,
+      "order": ["candidate", "baseline"],
+      "candidate": 97.50466699999924,
+      "baseline": 80.15324999999939,
+      "deltaMs": 17.351416999999856
+    },
+    {
+      "command": "git status",
+      "repetition": 13,
+      "order": ["candidate", "baseline"],
+      "candidate": 102.77666700000009,
+      "baseline": 79.58170799999971,
+      "deltaMs": 23.19495900000038
+    },
+    {
+      "command": "git log -5",
+      "repetition": 14,
+      "order": ["baseline", "candidate"],
+      "baseline": 84.86120800000026,
+      "candidate": 104.0776249999999,
+      "deltaMs": 19.216416999999637
+    },
+    {
+      "command": "git status",
+      "repetition": 14,
+      "order": ["baseline", "candidate"],
+      "baseline": 85.65420900000026,
+      "candidate": 102.75895800000035,
+      "deltaMs": 17.104749000000083
+    },
+    {
+      "command": "git diff",
+      "repetition": 14,
+      "order": ["baseline", "candidate"],
+      "baseline": 88.2118330000012,
+      "candidate": 105.03066699999908,
+      "deltaMs": 16.818833999997878
+    },
+    {
+      "command": "git status",
+      "repetition": 15,
+      "order": ["candidate", "baseline"],
+      "candidate": 100.18499999999949,
+      "baseline": 87.39962500000001,
+      "deltaMs": 12.785374999999476
+    },
+    {
+      "command": "git diff",
+      "repetition": 15,
+      "order": ["candidate", "baseline"],
+      "candidate": 99.40629199999967,
+      "baseline": 146.41004200000134,
+      "deltaMs": -47.00375000000167
+    },
+    {
+      "command": "git log -5",
+      "repetition": 15,
+      "order": ["candidate", "baseline"],
+      "candidate": 120.35958299999947,
+      "baseline": 86.87570899999992,
+      "deltaMs": 33.48387399999956
+    },
+    {
+      "command": "git diff",
+      "repetition": 16,
+      "order": ["baseline", "candidate"],
+      "baseline": 90.05987499999901,
+      "candidate": 91.84791700000096,
+      "deltaMs": 1.7880420000019512
+    },
+    {
+      "command": "git log -5",
+      "repetition": 16,
+      "order": ["baseline", "candidate"],
+      "baseline": 86.05412499999875,
+      "candidate": 96.72858399999859,
+      "deltaMs": 10.674458999999842
+    },
+    {
+      "command": "git status",
+      "repetition": 16,
+      "order": ["baseline", "candidate"],
+      "baseline": 96.53974999999991,
+      "candidate": 111.05637500000012,
+      "deltaMs": 14.516625000000204
+    },
+    {
+      "command": "git log -5",
+      "repetition": 17,
+      "order": ["candidate", "baseline"],
+      "candidate": 89.18745800000033,
+      "baseline": 67.52750000000015,
+      "deltaMs": 21.659958000000188
+    },
+    {
+      "command": "git status",
+      "repetition": 17,
+      "order": ["candidate", "baseline"],
+      "candidate": 116.45979199999965,
+      "baseline": 85.77204100000017,
+      "deltaMs": 30.68775099999948
+    },
+    {
+      "command": "git diff",
+      "repetition": 17,
+      "order": ["candidate", "baseline"],
+      "candidate": 110.72491599999921,
+      "baseline": 83.56995800000004,
+      "deltaMs": 27.15495799999917
+    },
+    {
+      "command": "git status",
+      "repetition": 18,
+      "order": ["baseline", "candidate"],
+      "baseline": 88.63899999999921,
+      "candidate": 102.7913750000007,
+      "deltaMs": 14.152375000001484
+    },
+    {
+      "command": "git diff",
+      "repetition": 18,
+      "order": ["baseline", "candidate"],
+      "baseline": 88.9252499999966,
+      "candidate": 103.83075000000099,
+      "deltaMs": 14.905500000004395
+    },
+    {
+      "command": "git log -5",
+      "repetition": 18,
+      "order": ["baseline", "candidate"],
+      "baseline": 81.08020899999974,
+      "candidate": 104.07045800000196,
+      "deltaMs": 22.990249000002223
+    },
+    {
+      "command": "git diff",
+      "repetition": 19,
+      "order": ["candidate", "baseline"],
+      "candidate": 99.8949999999968,
+      "baseline": 81.06029200000194,
+      "deltaMs": 18.834707999994862
+    },
+    {
+      "command": "git log -5",
+      "repetition": 19,
+      "order": ["candidate", "baseline"],
+      "candidate": 97.13308300000062,
+      "baseline": 84.63875000000189,
+      "deltaMs": 12.494332999998733
+    },
+    {
+      "command": "git status",
+      "repetition": 19,
+      "order": ["candidate", "baseline"],
+      "candidate": 103.99079099999653,
+      "baseline": 84.69329199999993,
+      "deltaMs": 19.297498999996606
+    },
+    {
+      "command": "git log -5",
+      "repetition": 20,
+      "order": ["baseline", "candidate"],
+      "baseline": 83.72487499999988,
+      "candidate": 91.52583400000003,
+      "deltaMs": 7.800959000000148
+    },
+    {
+      "command": "git status",
+      "repetition": 20,
+      "order": ["baseline", "candidate"],
+      "baseline": 84.55387500000143,
+      "candidate": 111.30937500000073,
+      "deltaMs": 26.7554999999993
+    },
+    {
+      "command": "git diff",
+      "repetition": 20,
+      "order": ["baseline", "candidate"],
+      "baseline": 83.86208299999998,
+      "candidate": 91.13475000000108,
+      "deltaMs": 7.272667000001093
+    },
+    {
+      "command": "git status",
+      "repetition": 21,
+      "order": ["candidate", "baseline"],
+      "candidate": 104.11441700000069,
+      "baseline": 89.2800419999985,
+      "deltaMs": 14.834375000002183
+    },
+    {
+      "command": "git diff",
+      "repetition": 21,
+      "order": ["candidate", "baseline"],
+      "candidate": 108.64520900000207,
+      "baseline": 86.55574999999953,
+      "deltaMs": 22.089459000002535
+    },
+    {
+      "command": "git log -5",
+      "repetition": 21,
+      "order": ["candidate", "baseline"],
+      "candidate": 92.35849999999846,
+      "baseline": 80.2065419999999,
+      "deltaMs": 12.151957999998558
+    },
+    {
+      "command": "git diff",
+      "repetition": 22,
+      "order": ["baseline", "candidate"],
+      "baseline": 88.83274999999776,
+      "candidate": 96.85575000000244,
+      "deltaMs": 8.023000000004686
+    },
+    {
+      "command": "git log -5",
+      "repetition": 22,
+      "order": ["baseline", "candidate"],
+      "baseline": 87.70154199999888,
+      "candidate": 102.10679199999868,
+      "deltaMs": 14.405249999999796
+    },
+    {
+      "command": "git status",
+      "repetition": 22,
+      "order": ["baseline", "candidate"],
+      "baseline": 109.68004099999962,
+      "candidate": 106.16208299999926,
+      "deltaMs": -3.5179580000003625
+    },
+    {
+      "command": "git log -5",
+      "repetition": 23,
+      "order": ["candidate", "baseline"],
+      "candidate": 89.6675839999989,
+      "baseline": 82.04495799999859,
+      "deltaMs": 7.622626000000309
+    },
+    {
+      "command": "git status",
+      "repetition": 23,
+      "order": ["candidate", "baseline"],
+      "candidate": 113.75950000000012,
+      "baseline": 87.92970799999966,
+      "deltaMs": 25.829792000000452
+    },
+    {
+      "command": "git diff",
+      "repetition": 23,
+      "order": ["candidate", "baseline"],
+      "candidate": 95.61683400000038,
+      "baseline": 73.689959000003,
+      "deltaMs": 21.92687499999738
+    },
+    {
+      "command": "git status",
+      "repetition": 24,
+      "order": ["baseline", "candidate"],
+      "baseline": 88.42708400000265,
+      "candidate": 110.58737499999916,
+      "deltaMs": 22.160290999996505
+    },
+    {
+      "command": "git diff",
+      "repetition": 24,
+      "order": ["baseline", "candidate"],
+      "baseline": 81.1138749999991,
+      "candidate": 106.18904200000179,
+      "deltaMs": 25.075167000002693
+    },
+    {
+      "command": "git log -5",
+      "repetition": 24,
+      "order": ["baseline", "candidate"],
+      "baseline": 81.15912499999831,
+      "candidate": 89.42212500000096,
+      "deltaMs": 8.263000000002648
+    },
+    {
+      "command": "git diff",
+      "repetition": 25,
+      "order": ["candidate", "baseline"],
+      "candidate": 102.85766700000022,
+      "baseline": 85.6214579999978,
+      "deltaMs": 17.236209000002418
+    },
+    {
+      "command": "git log -5",
+      "repetition": 25,
+      "order": ["candidate", "baseline"],
+      "candidate": 102.83941699999923,
+      "baseline": 86.10391700000037,
+      "deltaMs": 16.735499999998865
+    },
+    {
+      "command": "git status",
+      "repetition": 25,
+      "order": ["candidate", "baseline"],
+      "candidate": 115.76308399999834,
+      "baseline": 107.80745799999931,
+      "deltaMs": 7.955625999999029
+    },
+    {
+      "command": "git log -5",
+      "repetition": 26,
+      "order": ["baseline", "candidate"],
+      "baseline": 89.65533300000243,
+      "candidate": 103.64949999999953,
+      "deltaMs": 13.994166999997105
+    },
+    {
+      "command": "git status",
+      "repetition": 26,
+      "order": ["baseline", "candidate"],
+      "baseline": 90.03429200000028,
+      "candidate": 104.14458299999751,
+      "deltaMs": 14.110290999997233
+    },
+    {
+      "command": "git diff",
+      "repetition": 26,
+      "order": ["baseline", "candidate"],
+      "baseline": 85.71683400000256,
+      "candidate": 108.6138749999991,
+      "deltaMs": 22.897040999996534
+    },
+    {
+      "command": "git status",
+      "repetition": 27,
+      "order": ["candidate", "baseline"],
+      "candidate": 101.35666600000332,
+      "baseline": 89.90799999999945,
+      "deltaMs": 11.448666000003868
+    },
+    {
+      "command": "git diff",
+      "repetition": 27,
+      "order": ["candidate", "baseline"],
+      "candidate": 107.4040410000016,
+      "baseline": 94.57287499999802,
+      "deltaMs": 12.831166000003577
+    },
+    {
+      "command": "git log -5",
+      "repetition": 27,
+      "order": ["candidate", "baseline"],
+      "candidate": 114.43808299999728,
+      "baseline": 92.26895799999693,
+      "deltaMs": 22.16912500000035
+    },
+    {
+      "command": "git diff",
+      "repetition": 28,
+      "order": ["baseline", "candidate"],
+      "baseline": 97.91087499999776,
+      "candidate": 118.22350000000006,
+      "deltaMs": 20.3126250000023
+    },
+    {
+      "command": "git log -5",
+      "repetition": 28,
+      "order": ["baseline", "candidate"],
+      "baseline": 82.90266699999847,
+      "candidate": 102.2122500000005,
+      "deltaMs": 19.30958300000202
+    },
+    {
+      "command": "git status",
+      "repetition": 28,
+      "order": ["baseline", "candidate"],
+      "baseline": 90.72820799999681,
+      "candidate": 99.97070800000074,
+      "deltaMs": 9.242500000003929
+    },
+    {
+      "command": "git log -5",
+      "repetition": 29,
+      "order": ["candidate", "baseline"],
+      "candidate": 101.92445800000132,
+      "baseline": 82.35933300000033,
+      "deltaMs": 19.56512500000099
+    },
+    {
+      "command": "git status",
+      "repetition": 29,
+      "order": ["candidate", "baseline"],
+      "candidate": 105.35454200000095,
+      "baseline": 219.48358400000143,
+      "deltaMs": -114.12904200000048
+    },
+    {
+      "command": "git diff",
+      "repetition": 29,
+      "order": ["candidate", "baseline"],
+      "candidate": 119.55166699999972,
+      "baseline": 97.31141600000046,
+      "deltaMs": 22.24025099999926
+    },
+    {
+      "command": "git status",
+      "repetition": 30,
+      "order": ["baseline", "candidate"],
+      "baseline": 87.53504199999952,
+      "candidate": 108.0088340000002,
+      "deltaMs": 20.473792000000685
+    },
+    {
+      "command": "git diff",
+      "repetition": 30,
+      "order": ["baseline", "candidate"],
+      "baseline": 86.14470800000345,
+      "candidate": 116.21650000000227,
+      "deltaMs": 30.071791999998823
+    },
+    {
+      "command": "git log -5",
+      "repetition": 30,
+      "order": ["baseline", "candidate"],
+      "baseline": 80.466207999998,
+      "candidate": 110.66374999999971,
+      "deltaMs": 30.197542000001704
+    },
+    {
+      "command": "git diff",
+      "repetition": 31,
+      "order": ["candidate", "baseline"],
+      "candidate": 118.37908299999981,
+      "baseline": 94.79183299999931,
+      "deltaMs": 23.587250000000495
+    },
+    {
+      "command": "git log -5",
+      "repetition": 31,
+      "order": ["candidate", "baseline"],
+      "candidate": 98.6871659999997,
+      "baseline": 86.35499999999956,
+      "deltaMs": 12.332166000000143
+    },
+    {
+      "command": "git status",
+      "repetition": 31,
+      "order": ["candidate", "baseline"],
+      "candidate": 107.35579199999847,
+      "baseline": 81.67149999999674,
+      "deltaMs": 25.684292000001733
+    },
+    {
+      "command": "git log -5",
+      "repetition": 32,
+      "order": ["baseline", "candidate"],
+      "baseline": 89.86879200000112,
+      "candidate": 90.69904099999985,
+      "deltaMs": 0.8302489999987301
+    },
+    {
+      "command": "git status",
+      "repetition": 32,
+      "order": ["baseline", "candidate"],
+      "baseline": 83.31866599999921,
+      "candidate": 122.69362499999988,
+      "deltaMs": 39.37495900000067
+    },
+    {
+      "command": "git diff",
+      "repetition": 32,
+      "order": ["baseline", "candidate"],
+      "baseline": 84.62004100000195,
+      "candidate": 99.92112500000076,
+      "deltaMs": 15.30108399999881
+    },
+    {
+      "command": "git status",
+      "repetition": 33,
+      "order": ["candidate", "baseline"],
+      "candidate": 109.89374999999927,
+      "baseline": 78.20204100000046,
+      "deltaMs": 31.69170899999881
+    },
+    {
+      "command": "git diff",
+      "repetition": 33,
+      "order": ["candidate", "baseline"],
+      "candidate": 114.83075000000099,
+      "baseline": 100.12816699999894,
+      "deltaMs": 14.70258300000205
+    },
+    {
+      "command": "git log -5",
+      "repetition": 33,
+      "order": ["candidate", "baseline"],
+      "candidate": 105.71329200000037,
+      "baseline": 86.06325000000288,
+      "deltaMs": 19.650041999997484
+    },
+    {
+      "command": "git diff",
+      "repetition": 34,
+      "order": ["baseline", "candidate"],
+      "baseline": 170.93624999999884,
+      "candidate": 116.88429099999848,
+      "deltaMs": -54.05195900000035
+    },
+    {
+      "command": "git log -5",
+      "repetition": 34,
+      "order": ["baseline", "candidate"],
+      "baseline": 98.90675000000192,
+      "candidate": 108.48625000000175,
+      "deltaMs": 9.579499999999825
+    },
+    {
+      "command": "git status",
+      "repetition": 34,
+      "order": ["baseline", "candidate"],
+      "baseline": 91.50641700000051,
+      "candidate": 111.48279199999888,
+      "deltaMs": 19.97637499999837
+    },
+    {
+      "command": "git log -5",
+      "repetition": 35,
+      "order": ["candidate", "baseline"],
+      "candidate": 103.03620800000135,
+      "baseline": 85.58625000000029,
+      "deltaMs": 17.44995800000106
+    },
+    {
+      "command": "git status",
+      "repetition": 35,
+      "order": ["candidate", "baseline"],
+      "candidate": 107.57320799999798,
+      "baseline": 90.94766600000003,
+      "deltaMs": 16.62554199999795
+    },
+    {
+      "command": "git diff",
+      "repetition": 35,
+      "order": ["candidate", "baseline"],
+      "candidate": 105.77895799999897,
+      "baseline": 126.73541700000351,
+      "deltaMs": -20.956459000004543
+    },
+    {
+      "command": "git status",
+      "repetition": 36,
+      "order": ["baseline", "candidate"],
+      "baseline": 84.6864999999998,
+      "candidate": 109.21891700000197,
+      "deltaMs": 24.53241700000217
+    },
+    {
+      "command": "git diff",
+      "repetition": 36,
+      "order": ["baseline", "candidate"],
+      "baseline": 87.98812499999985,
+      "candidate": 122.74187499999971,
+      "deltaMs": 34.753749999999854
+    },
+    {
+      "command": "git log -5",
+      "repetition": 36,
+      "order": ["baseline", "candidate"],
+      "baseline": 113.63562499999898,
+      "candidate": 100.37466700000004,
+      "deltaMs": -13.260957999998936
+    },
+    {
+      "command": "git diff",
+      "repetition": 37,
+      "order": ["candidate", "baseline"],
+      "candidate": 103.7567080000008,
+      "baseline": 88.3157089999986,
+      "deltaMs": 15.440999000002193
+    },
+    {
+      "command": "git log -5",
+      "repetition": 37,
+      "order": ["candidate", "baseline"],
+      "candidate": 103.22662499999933,
+      "baseline": 90.28475000000253,
+      "deltaMs": 12.941874999996799
+    },
+    {
+      "command": "git status",
+      "repetition": 37,
+      "order": ["candidate", "baseline"],
+      "candidate": 112.28391700000066,
+      "baseline": 84.83445799999754,
+      "deltaMs": 27.449459000003117
+    },
+    {
+      "command": "git log -5",
+      "repetition": 38,
+      "order": ["baseline", "candidate"],
+      "baseline": 87.55537499999991,
+      "candidate": 96.29204200000095,
+      "deltaMs": 8.736667000001034
+    },
+    {
+      "command": "git status",
+      "repetition": 38,
+      "order": ["baseline", "candidate"],
+      "baseline": 107.52595800000199,
+      "candidate": 106.6572500000002,
+      "deltaMs": -0.8687080000017886
+    },
+    {
+      "command": "git diff",
+      "repetition": 38,
+      "order": ["baseline", "candidate"],
+      "baseline": 85.72312500000044,
+      "candidate": 102.10591600000043,
+      "deltaMs": 16.382790999999997
+    },
+    {
+      "command": "git status",
+      "repetition": 39,
+      "order": ["candidate", "baseline"],
+      "candidate": 119.24512500000128,
+      "baseline": 85.94033299999865,
+      "deltaMs": 33.304792000002635
+    },
+    {
+      "command": "git diff",
+      "repetition": 39,
+      "order": ["candidate", "baseline"],
+      "candidate": 111.59012500000244,
+      "baseline": 92.08104200000162,
+      "deltaMs": 19.509083000000828
+    },
+    {
+      "command": "git log -5",
+      "repetition": 39,
+      "order": ["candidate", "baseline"],
+      "candidate": 88.10658299999704,
+      "baseline": 76.23725000000195,
+      "deltaMs": 11.869332999995095
+    }
+  ],
+  "observations": [
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 0,
+      "stage": "warmup",
+      "ms": 108.64129200000002,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 0,
+      "stage": "warmup",
+      "ms": 168.95912500000009,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 0,
+      "stage": "warmup",
+      "ms": 83.10108300000002,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 0,
+      "stage": "warmup",
+      "ms": 108.396166,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 0,
+      "stage": "warmup",
+      "ms": 76.22320799999989,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 0,
+      "stage": "warmup",
+      "ms": 92.94679200000019,
+      "bytes": 374,
+      "characters": 374
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 1,
+      "stage": "warmup",
+      "ms": 99.41449999999986,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 1,
+      "stage": "warmup",
+      "ms": 88.79520899999989,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 1,
+      "stage": "warmup",
+      "ms": 110.26549999999997,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 1,
+      "stage": "warmup",
+      "ms": 82.10962500000005,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 1,
+      "stage": "warmup",
+      "ms": 93.37125000000015,
+      "bytes": 374,
+      "characters": 374
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 1,
+      "stage": "warmup",
+      "ms": 75.22629199999983,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 2,
+      "stage": "warmup",
+      "ms": 85.51691599999958,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 2,
+      "stage": "warmup",
+      "ms": 104.04683299999988,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 2,
+      "stage": "warmup",
+      "ms": 76.71704200000022,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 2,
+      "stage": "warmup",
+      "ms": 121.27979199999982,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 2,
+      "stage": "warmup",
+      "ms": 167.29704200000015,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 2,
+      "stage": "warmup",
+      "ms": 103.26800000000003,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 3,
+      "stage": "warmup",
+      "ms": 157.175792,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 3,
+      "stage": "warmup",
+      "ms": 94.65304199999991,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 3,
+      "stage": "warmup",
+      "ms": 154.62379200000032,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 3,
+      "stage": "warmup",
+      "ms": 110.49320899999975,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 3,
+      "stage": "warmup",
+      "ms": 108.26466600000003,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 3,
+      "stage": "warmup",
+      "ms": 108.57929100000001,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 4,
+      "stage": "warmup",
+      "ms": 110.89737499999956,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 4,
+      "stage": "warmup",
+      "ms": 181.14141599999948,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 4,
+      "stage": "warmup",
+      "ms": 103.69012500000008,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 4,
+      "stage": "warmup",
+      "ms": 131.5728339999996,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 4,
+      "stage": "warmup",
+      "ms": 87.33658299999934,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 4,
+      "stage": "warmup",
+      "ms": 96.4623330000004,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 0,
+      "stage": "measured",
+      "ms": 88.71045799999956,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 0,
+      "stage": "measured",
+      "ms": 106.92716699999983,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 0,
+      "stage": "measured",
+      "ms": 87.24937499999942,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 0,
+      "stage": "measured",
+      "ms": 110.02270899999985,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 0,
+      "stage": "measured",
+      "ms": 77.49979199999962,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 0,
+      "stage": "measured",
+      "ms": 93.19829100000061,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 1,
+      "stage": "measured",
+      "ms": 98.9437080000007,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 1,
+      "stage": "measured",
+      "ms": 196.25183300000026,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 1,
+      "stage": "measured",
+      "ms": 178.01079200000004,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 1,
+      "stage": "measured",
+      "ms": 79.17258399999992,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 1,
+      "stage": "measured",
+      "ms": 110.57745800000066,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 1,
+      "stage": "measured",
+      "ms": 85.12083299999995,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 2,
+      "stage": "measured",
+      "ms": 87.61925000000065,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 2,
+      "stage": "measured",
+      "ms": 110.07837500000005,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 2,
+      "stage": "measured",
+      "ms": 113.08408299999974,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 2,
+      "stage": "measured",
+      "ms": 117.71691600000031,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 2,
+      "stage": "measured",
+      "ms": 94.7440830000005,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 2,
+      "stage": "measured",
+      "ms": 110.42479099999946,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 3,
+      "stage": "measured",
+      "ms": 105.99129099999936,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 3,
+      "stage": "measured",
+      "ms": 99.81925000000047,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 3,
+      "stage": "measured",
+      "ms": 116.24645899999996,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 3,
+      "stage": "measured",
+      "ms": 83.42054199999984,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 3,
+      "stage": "measured",
+      "ms": 98.72904199999994,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 3,
+      "stage": "measured",
+      "ms": 79.03399999999965,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 4,
+      "stage": "measured",
+      "ms": 90.98312500000065,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 4,
+      "stage": "measured",
+      "ms": 110.73149999999987,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 4,
+      "stage": "measured",
+      "ms": 89.53341699999964,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 4,
+      "stage": "measured",
+      "ms": 87.90937500000018,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 4,
+      "stage": "measured",
+      "ms": 89.54774999999972,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 4,
+      "stage": "measured",
+      "ms": 155.45766700000058,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 5,
+      "stage": "measured",
+      "ms": 126.1314999999995,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 5,
+      "stage": "measured",
+      "ms": 86.3090000000011,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 5,
+      "stage": "measured",
+      "ms": 127.43000000000029,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 5,
+      "stage": "measured",
+      "ms": 105.50383300000067,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 5,
+      "stage": "measured",
+      "ms": 261.41145900000083,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 5,
+      "stage": "measured",
+      "ms": 220.3184170000004,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 6,
+      "stage": "measured",
+      "ms": 95.82049999999981,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 6,
+      "stage": "measured",
+      "ms": 112.18762500000048,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 6,
+      "stage": "measured",
+      "ms": 87.52412499999991,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 6,
+      "stage": "measured",
+      "ms": 103.18241599999965,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 6,
+      "stage": "measured",
+      "ms": 93.75174999999945,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 6,
+      "stage": "measured",
+      "ms": 95.98433400000067,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 7,
+      "stage": "measured",
+      "ms": 111.77024999999958,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 7,
+      "stage": "measured",
+      "ms": 79.30358400000114,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 7,
+      "stage": "measured",
+      "ms": 123.78133400000115,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 7,
+      "stage": "measured",
+      "ms": 95.25087499999972,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 7,
+      "stage": "measured",
+      "ms": 101.0572919999995,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 7,
+      "stage": "measured",
+      "ms": 99.39470799999981,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 8,
+      "stage": "measured",
+      "ms": 261.6092919999992,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 8,
+      "stage": "measured",
+      "ms": 155.48608299999978,
+      "bytes": 379,
+      "characters": 379
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 8,
+      "stage": "measured",
+      "ms": 89.21337500000118,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 8,
+      "stage": "measured",
+      "ms": 119.0054999999993,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 8,
+      "stage": "measured",
+      "ms": 111.78529199999866,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 8,
+      "stage": "measured",
+      "ms": 112.656332999999,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 9,
+      "stage": "measured",
+      "ms": 166.55512500000077,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 9,
+      "stage": "measured",
+      "ms": 95.00783300000148,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 9,
+      "stage": "measured",
+      "ms": 114.1716669999987,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 9,
+      "stage": "measured",
+      "ms": 88.54233399999976,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 9,
+      "stage": "measured",
+      "ms": 92.27241699999831,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 9,
+      "stage": "measured",
+      "ms": 79.92791699999907,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 10,
+      "stage": "measured",
+      "ms": 88.02224999999999,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 10,
+      "stage": "measured",
+      "ms": 117.3326249999991,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 10,
+      "stage": "measured",
+      "ms": 87.23049999999967,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 10,
+      "stage": "measured",
+      "ms": 94.16762500000004,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 10,
+      "stage": "measured",
+      "ms": 82.88600000000042,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 10,
+      "stage": "measured",
+      "ms": 102.02620800000113,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 11,
+      "stage": "measured",
+      "ms": 88.73516700000073,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 11,
+      "stage": "measured",
+      "ms": 82.71983300000102,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 11,
+      "stage": "measured",
+      "ms": 117.49116700000013,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 11,
+      "stage": "measured",
+      "ms": 86.54041599999982,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 11,
+      "stage": "measured",
+      "ms": 100.39545800000087,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 11,
+      "stage": "measured",
+      "ms": 80.8769169999996,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 12,
+      "stage": "measured",
+      "ms": 79.74170799999956,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 12,
+      "stage": "measured",
+      "ms": 107.52908299999945,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 12,
+      "stage": "measured",
+      "ms": 86.36829200000102,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 12,
+      "stage": "measured",
+      "ms": 103.89174999999886,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 12,
+      "stage": "measured",
+      "ms": 86.67012500000055,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 12,
+      "stage": "measured",
+      "ms": 100.42216700000063,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 13,
+      "stage": "measured",
+      "ms": 117.22795799999949,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 13,
+      "stage": "measured",
+      "ms": 86.2255409999998,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 13,
+      "stage": "measured",
+      "ms": 97.50466699999924,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 13,
+      "stage": "measured",
+      "ms": 80.15324999999939,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 13,
+      "stage": "measured",
+      "ms": 102.77666700000009,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 13,
+      "stage": "measured",
+      "ms": 79.58170799999971,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 14,
+      "stage": "measured",
+      "ms": 84.86120800000026,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 14,
+      "stage": "measured",
+      "ms": 104.0776249999999,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 14,
+      "stage": "measured",
+      "ms": 85.65420900000026,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 14,
+      "stage": "measured",
+      "ms": 102.75895800000035,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 14,
+      "stage": "measured",
+      "ms": 88.2118330000012,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 14,
+      "stage": "measured",
+      "ms": 105.03066699999908,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 15,
+      "stage": "measured",
+      "ms": 100.18499999999949,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 15,
+      "stage": "measured",
+      "ms": 87.39962500000001,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 15,
+      "stage": "measured",
+      "ms": 99.40629199999967,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 15,
+      "stage": "measured",
+      "ms": 146.41004200000134,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 15,
+      "stage": "measured",
+      "ms": 120.35958299999947,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 15,
+      "stage": "measured",
+      "ms": 86.87570899999992,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 16,
+      "stage": "measured",
+      "ms": 90.05987499999901,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 16,
+      "stage": "measured",
+      "ms": 91.84791700000096,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 16,
+      "stage": "measured",
+      "ms": 86.05412499999875,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 16,
+      "stage": "measured",
+      "ms": 96.72858399999859,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 16,
+      "stage": "measured",
+      "ms": 96.53974999999991,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 16,
+      "stage": "measured",
+      "ms": 111.05637500000012,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 17,
+      "stage": "measured",
+      "ms": 89.18745800000033,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 17,
+      "stage": "measured",
+      "ms": 67.52750000000015,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 17,
+      "stage": "measured",
+      "ms": 116.45979199999965,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 17,
+      "stage": "measured",
+      "ms": 85.77204100000017,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 17,
+      "stage": "measured",
+      "ms": 110.72491599999921,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 17,
+      "stage": "measured",
+      "ms": 83.56995800000004,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 18,
+      "stage": "measured",
+      "ms": 88.63899999999921,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 18,
+      "stage": "measured",
+      "ms": 102.7913750000007,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 18,
+      "stage": "measured",
+      "ms": 88.9252499999966,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 18,
+      "stage": "measured",
+      "ms": 103.83075000000099,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 18,
+      "stage": "measured",
+      "ms": 81.08020899999974,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 18,
+      "stage": "measured",
+      "ms": 104.07045800000196,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 19,
+      "stage": "measured",
+      "ms": 99.8949999999968,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 19,
+      "stage": "measured",
+      "ms": 81.06029200000194,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 19,
+      "stage": "measured",
+      "ms": 97.13308300000062,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 19,
+      "stage": "measured",
+      "ms": 84.63875000000189,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 19,
+      "stage": "measured",
+      "ms": 103.99079099999653,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 19,
+      "stage": "measured",
+      "ms": 84.69329199999993,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 20,
+      "stage": "measured",
+      "ms": 83.72487499999988,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 20,
+      "stage": "measured",
+      "ms": 91.52583400000003,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 20,
+      "stage": "measured",
+      "ms": 84.55387500000143,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 20,
+      "stage": "measured",
+      "ms": 111.30937500000073,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 20,
+      "stage": "measured",
+      "ms": 83.86208299999998,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 20,
+      "stage": "measured",
+      "ms": 91.13475000000108,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 21,
+      "stage": "measured",
+      "ms": 104.11441700000069,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 21,
+      "stage": "measured",
+      "ms": 89.2800419999985,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 21,
+      "stage": "measured",
+      "ms": 108.64520900000207,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 21,
+      "stage": "measured",
+      "ms": 86.55574999999953,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 21,
+      "stage": "measured",
+      "ms": 92.35849999999846,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 21,
+      "stage": "measured",
+      "ms": 80.2065419999999,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 22,
+      "stage": "measured",
+      "ms": 88.83274999999776,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 22,
+      "stage": "measured",
+      "ms": 96.85575000000244,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 22,
+      "stage": "measured",
+      "ms": 87.70154199999888,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 22,
+      "stage": "measured",
+      "ms": 102.10679199999868,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 22,
+      "stage": "measured",
+      "ms": 109.68004099999962,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 22,
+      "stage": "measured",
+      "ms": 106.16208299999926,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 23,
+      "stage": "measured",
+      "ms": 89.6675839999989,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 23,
+      "stage": "measured",
+      "ms": 82.04495799999859,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 23,
+      "stage": "measured",
+      "ms": 113.75950000000012,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 23,
+      "stage": "measured",
+      "ms": 87.92970799999966,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 23,
+      "stage": "measured",
+      "ms": 95.61683400000038,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 23,
+      "stage": "measured",
+      "ms": 73.689959000003,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 24,
+      "stage": "measured",
+      "ms": 88.42708400000265,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 24,
+      "stage": "measured",
+      "ms": 110.58737499999916,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 24,
+      "stage": "measured",
+      "ms": 81.1138749999991,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 24,
+      "stage": "measured",
+      "ms": 106.18904200000179,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 24,
+      "stage": "measured",
+      "ms": 81.15912499999831,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 24,
+      "stage": "measured",
+      "ms": 89.42212500000096,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 25,
+      "stage": "measured",
+      "ms": 102.85766700000022,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 25,
+      "stage": "measured",
+      "ms": 85.6214579999978,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 25,
+      "stage": "measured",
+      "ms": 102.83941699999923,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 25,
+      "stage": "measured",
+      "ms": 86.10391700000037,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 25,
+      "stage": "measured",
+      "ms": 115.76308399999834,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 25,
+      "stage": "measured",
+      "ms": 107.80745799999931,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 26,
+      "stage": "measured",
+      "ms": 89.65533300000243,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 26,
+      "stage": "measured",
+      "ms": 103.64949999999953,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 26,
+      "stage": "measured",
+      "ms": 90.03429200000028,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 26,
+      "stage": "measured",
+      "ms": 104.14458299999751,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 26,
+      "stage": "measured",
+      "ms": 85.71683400000256,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 26,
+      "stage": "measured",
+      "ms": 108.6138749999991,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 27,
+      "stage": "measured",
+      "ms": 101.35666600000332,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 27,
+      "stage": "measured",
+      "ms": 89.90799999999945,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 27,
+      "stage": "measured",
+      "ms": 107.4040410000016,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 27,
+      "stage": "measured",
+      "ms": 94.57287499999802,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 27,
+      "stage": "measured",
+      "ms": 114.43808299999728,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 27,
+      "stage": "measured",
+      "ms": 92.26895799999693,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 28,
+      "stage": "measured",
+      "ms": 97.91087499999776,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 28,
+      "stage": "measured",
+      "ms": 118.22350000000006,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 28,
+      "stage": "measured",
+      "ms": 82.90266699999847,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 28,
+      "stage": "measured",
+      "ms": 102.2122500000005,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 28,
+      "stage": "measured",
+      "ms": 90.72820799999681,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 28,
+      "stage": "measured",
+      "ms": 99.97070800000074,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 29,
+      "stage": "measured",
+      "ms": 101.92445800000132,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 29,
+      "stage": "measured",
+      "ms": 82.35933300000033,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 29,
+      "stage": "measured",
+      "ms": 105.35454200000095,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 29,
+      "stage": "measured",
+      "ms": 219.48358400000143,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 29,
+      "stage": "measured",
+      "ms": 119.55166699999972,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 29,
+      "stage": "measured",
+      "ms": 97.31141600000046,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 30,
+      "stage": "measured",
+      "ms": 87.53504199999952,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 30,
+      "stage": "measured",
+      "ms": 108.0088340000002,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 30,
+      "stage": "measured",
+      "ms": 86.14470800000345,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 30,
+      "stage": "measured",
+      "ms": 116.21650000000227,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 30,
+      "stage": "measured",
+      "ms": 80.466207999998,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 30,
+      "stage": "measured",
+      "ms": 110.66374999999971,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 31,
+      "stage": "measured",
+      "ms": 118.37908299999981,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 31,
+      "stage": "measured",
+      "ms": 94.79183299999931,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 31,
+      "stage": "measured",
+      "ms": 98.6871659999997,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 31,
+      "stage": "measured",
+      "ms": 86.35499999999956,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 31,
+      "stage": "measured",
+      "ms": 107.35579199999847,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 31,
+      "stage": "measured",
+      "ms": 81.67149999999674,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 32,
+      "stage": "measured",
+      "ms": 89.86879200000112,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 32,
+      "stage": "measured",
+      "ms": 90.69904099999985,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 32,
+      "stage": "measured",
+      "ms": 83.31866599999921,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 32,
+      "stage": "measured",
+      "ms": 122.69362499999988,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 32,
+      "stage": "measured",
+      "ms": 84.62004100000195,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 32,
+      "stage": "measured",
+      "ms": 99.92112500000076,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 33,
+      "stage": "measured",
+      "ms": 109.89374999999927,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 33,
+      "stage": "measured",
+      "ms": 78.20204100000046,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 33,
+      "stage": "measured",
+      "ms": 114.83075000000099,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 33,
+      "stage": "measured",
+      "ms": 100.12816699999894,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 33,
+      "stage": "measured",
+      "ms": 105.71329200000037,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 33,
+      "stage": "measured",
+      "ms": 86.06325000000288,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 34,
+      "stage": "measured",
+      "ms": 170.93624999999884,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 34,
+      "stage": "measured",
+      "ms": 116.88429099999848,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 34,
+      "stage": "measured",
+      "ms": 98.90675000000192,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 34,
+      "stage": "measured",
+      "ms": 108.48625000000175,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 34,
+      "stage": "measured",
+      "ms": 91.50641700000051,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 34,
+      "stage": "measured",
+      "ms": 111.48279199999888,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 35,
+      "stage": "measured",
+      "ms": 103.03620800000135,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 35,
+      "stage": "measured",
+      "ms": 85.58625000000029,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 35,
+      "stage": "measured",
+      "ms": 107.57320799999798,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 35,
+      "stage": "measured",
+      "ms": 90.94766600000003,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 35,
+      "stage": "measured",
+      "ms": 105.77895799999897,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 35,
+      "stage": "measured",
+      "ms": 126.73541700000351,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 36,
+      "stage": "measured",
+      "ms": 84.6864999999998,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 36,
+      "stage": "measured",
+      "ms": 109.21891700000197,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 36,
+      "stage": "measured",
+      "ms": 87.98812499999985,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 36,
+      "stage": "measured",
+      "ms": 122.74187499999971,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 36,
+      "stage": "measured",
+      "ms": 113.63562499999898,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 36,
+      "stage": "measured",
+      "ms": 100.37466700000004,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 37,
+      "stage": "measured",
+      "ms": 103.7567080000008,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 37,
+      "stage": "measured",
+      "ms": 88.3157089999986,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 37,
+      "stage": "measured",
+      "ms": 103.22662499999933,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 37,
+      "stage": "measured",
+      "ms": 90.28475000000253,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 37,
+      "stage": "measured",
+      "ms": 112.28391700000066,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 37,
+      "stage": "measured",
+      "ms": 84.83445799999754,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 38,
+      "stage": "measured",
+      "ms": 87.55537499999991,
+      "bytes": 888,
+      "characters": 888
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 38,
+      "stage": "measured",
+      "ms": 96.29204200000095,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 38,
+      "stage": "measured",
+      "ms": 107.52595800000199,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 38,
+      "stage": "measured",
+      "ms": 106.6572500000002,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 38,
+      "stage": "measured",
+      "ms": 85.72312500000044,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 38,
+      "stage": "measured",
+      "ms": 102.10591600000043,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "candidate",
+      "command": "git status",
+      "repetition": 39,
+      "stage": "measured",
+      "ms": 119.24512500000128,
+      "bytes": 192,
+      "characters": 192
+    },
+    {
+      "variant": "baseline",
+      "command": "git status",
+      "repetition": 39,
+      "stage": "measured",
+      "ms": 85.94033299999865,
+      "bytes": 614,
+      "characters": 614
+    },
+    {
+      "variant": "candidate",
+      "command": "git diff",
+      "repetition": 39,
+      "stage": "measured",
+      "ms": 111.59012500000244,
+      "bytes": 2099,
+      "characters": 2099
+    },
+    {
+      "variant": "baseline",
+      "command": "git diff",
+      "repetition": 39,
+      "stage": "measured",
+      "ms": 92.08104200000162,
+      "bytes": 2856,
+      "characters": 2856
+    },
+    {
+      "variant": "candidate",
+      "command": "git log -5",
+      "repetition": 39,
+      "stage": "measured",
+      "ms": 88.10658299999704,
+      "bytes": 384,
+      "characters": 384
+    },
+    {
+      "variant": "baseline",
+      "command": "git log -5",
+      "repetition": 39,
+      "stage": "measured",
+      "ms": 76.23725000000195,
+      "bytes": 888,
+      "characters": 888
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "machineFormat": {
+    "command": "ls --zero",
+    "rawExit": 0,
+    "rawBase64": "X19weWNhY2hlX18AY3VzdG9tLWNoZWNrLmNqcwBleGVjdXRpb25zAHBhY2thZ2UuanNvbgBweXRlc3QucHkA",
+    "piOutput": "(empty)\n",
+    "exact": false
+  },
+  "commit": "89c195ac",
+  "sourceSha256": "fe0389bd7733f242266f5d30bf1301ed8492be64095743e911079d6d7000a4a0",
+  "image": "otto-lab-585-workspace:arm64",
+  "evidence": "Actual pinned RTK in native ARM64 disposable Docker container through frozen Pi sandbox source; synthetic command scripts, no live services or models.",
+  "checks": [
+    {
+      "command": "npm run test",
+      "rawExit": 17,
+      "rawExecutions": "test\n",
+      "piOutput": "> test\n> node custom-check.cjs test\nSynthetic validation failure\n\n\nCommand exited with code 17",
+      "piExecutions": "test\n",
+      "rewriteCode": 3,
+      "rewrite": "rtk npm run test"
+    },
+    {
+      "command": "npm run lint",
+      "rawExit": 17,
+      "rawExecutions": "lint\n",
+      "piOutput": "\n> lint\n> node custom-check.cjs lint\n\nSynthetic validation failure\n\n\nCommand exited with code 17",
+      "piExecutions": "lint\n",
+      "rewriteCode": 3,
+      "rewrite": "rtk lint"
+    },
+    {
+      "command": "python3 -m pytest",
+      "rawExit": 17,
+      "rawExecutions": "python3 module\n",
+      "piOutput": "1 failed in 0.01s\n\n\nCommand exited with code 17",
+      "piExecutions": "python3 module\n",
+      "rewriteCode": 3,
+      "rewrite": "rtk pytest"
+    }
+  ]
+}

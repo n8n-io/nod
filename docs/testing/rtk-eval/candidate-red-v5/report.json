@@ -1,0 +1,1202 @@
+{
+  "phase": "candidate",
+  "startedAt": "2026-10-08T18:14:52.941Z",
+  "endedAt": "2026-10-08T18:15:04.060Z",
+  "commit": "768ec5a00ab652b0d7bd4dba50c12e4b9cb82445",
+  "sourceSha256": "0f1e3f5491c3741bc0e944e8623b6468306a6b7bc5412a9646a5245de9884049",
+  "sourceState": "committed",
+  "harnessSha256": "edee087080a9185bf7dbbfc2a1857c745193db678b24e071926476a2417ac896",
+  "manifestSha256": "4ba616ecb6fa49e932f356874b7de866655ef687b1987d9ed69caa8383b1561d",
+  "image": "otto-lab-585-workspace:arm64",
+  "imageId": "sha256:df551d6613799d6c5c954dfc54600afd8ff8ab30964c87e82c1523614580199c",
+  "architecture": "arm64",
+  "environment": "Linux aarch64\nv24.21.0\ngit version 2.39.5\nPython 3.11.2\n",
+  "rtk": {
+    "exitCode": 0,
+    "output": "rtk 0.51.0\n"
+  },
+  "model": null,
+  "measuredModelCost": null,
+  "fixtureHashes": {
+    "invoice": {
+      ".gitignore": "ab232e89b1e1c133d7c814b9f39c014774c9a3ee81a2ebcc3abcf24b92e23fcf",
+      "config.json": "86b6051738850476a9b740f1d9df19b22bd600fc93db5d209cb4a82cb347f3f5",
+      "ledger.csv": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+      "obsolete.txt": "3a3caf523bc87752a6f8512ab8c48f63e8ba18a885752e893b23a35c85f04cc8",
+      "audit.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/alpha.ts": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+      "src/beta.ts": "f74111a1524f58cc4ec359ace53f05af5df9bcd59ddcf6d7e83bd7d1c3bd437e",
+      "src/export.ts": "311956017af3f49707997a63527a761f954ec9806ac6a566b2701e6777057748",
+      "notes.md": "06653cc07fd7e4b446b8ae03d8dc949d60dbb020a662dbcc19d36361e4e7b1f5"
+    },
+    "shipment": {
+      ".gitignore": "ab232e89b1e1c133d7c814b9f39c014774c9a3ee81a2ebcc3abcf24b92e23fcf",
+      "config.json": "564d132f8c5a3f28367d306a90dd49bd40ba1909d3f812e43991868426547aec",
+      "ledger.csv": "8302a6b811154875f6ddf8f2744b39873f55411a25ae206500d43e3e1a14fad2",
+      "obsolete.txt": "9034a9279e6e70f912def701a44e698aa0174ae461ee1f97bcf53aa424572b48",
+      "audit.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/alpha.ts": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+      "src/beta.ts": "f74111a1524f58cc4ec359ace53f05af5df9bcd59ddcf6d7e83bd7d1c3bd437e",
+      "src/export.ts": "8511a022f0170a240c93ed9ca3cc0242aae4765dd1ab2d8fee0655f8eb074fd5",
+      "notes.md": "9db2b4dfb69a734548447260281c0bdf807c56a8deeb0d695631fc937204f907"
+    },
+    "merge": {
+      ".gitignore": "ab232e89b1e1c133d7c814b9f39c014774c9a3ee81a2ebcc3abcf24b92e23fcf",
+      "config.json": "f8447677d92d8611c97aecdd598a2b845c319ffc5660975807493d36ebc4f341",
+      "ledger.csv": "7f59a203de6f4b02ff9280f29a380550975a1a51f88dd18b9b01aa658f588f9e",
+      "obsolete.txt": "8924c4725a85da34bd95c76340a2db26542b16453432fad0aeca239144d31460",
+      "audit.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/alpha.ts": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+      "src/beta.ts": "f74111a1524f58cc4ec359ace53f05af5df9bcd59ddcf6d7e83bd7d1c3bd437e",
+      "src/export.ts": "4805988ef1f97a77102ffc5ea059ea74b7010f66c32f86f4ecefaecdeeec4a40",
+      "notes.md": "de514965872dee1c50413126b70bddfc61ce4d1662199effccfe8874d4435f7e",
+      "merge-feature.txt": "abc7d9cbbdec243821497d3c1d7b78e29caeb103aadabc538bf5db373dc6d043",
+      "merge-main.txt": "d988ed2d20c3ab15ea113cbf66b9a1a1622f14d897c480a55bebfc0672b67398"
+    }
+  },
+  "attempts": [
+    {
+      "case": "RTK-B1.v2",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:58.005Z",
+      "endedAt": "2026-10-08T18:14:58.221Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "* main\n M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "6537b65df526b02056cb30b8db80c17ba0b864dc6aabf30a1345283be452fe5f",
+        "bytes": 98,
+        "characters": 98,
+        "estimatedTokens": 25
+      }
+    },
+    {
+      "case": "RTK-B2.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:58.221Z",
+      "endedAt": "2026-10-08T18:14:58.382Z",
+      "command": "git diff",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      },
+      "pi": {
+        "output": "\n\nChanges:\n\nconfig.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\n  +1 -1\n\nobsolete.txt\n@@ -1 +0,0 @@\n-Unused invoice export path\n  +0 -1\n\nsrc/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \n  +1 -1\n\nsrc/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n  +1 -1\n",
+        "isError": false,
+        "sha256": "7b68caa299a82a1002502e8a24077bb261af4165c59d69bb1a789317e65ec2ba",
+        "bytes": 547,
+        "characters": 547,
+        "estimatedTokens": 137
+      }
+    },
+    {
+      "case": "RTK-H1.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:58.382Z",
+      "endedAt": "2026-10-08T18:14:58.763Z",
+      "command": "git log -5",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      },
+      "pi": {
+        "output": "d3456d6 Add shipment export (9 months ago) <Synthetic Evaluator>\nb2f1ece Validate shipment totals (9 months ago) <Synthetic Evaluator>\na9a3a38 Add shipment records (9 months ago) <Synthetic Evaluator>\n9a788df Set shipment currency (9 months ago) <Synthetic Evaluator>\n31d1181 Seed shipment project (9 months ago) <Synthetic Evaluator>\n",
+        "isError": false,
+        "sha256": "d9707cc7208ef1c789ad10c7c65cc3172aee34268a2e60b82886c68b76274e6b",
+        "bytes": 335,
+        "characters": 335,
+        "estimatedTokens": 84
+      }
+    },
+    {
+      "case": "RTK-H2.v2",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:58.763Z",
+      "endedAt": "2026-10-08T18:14:59.052Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "* main\n M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "6537b65df526b02056cb30b8db80c17ba0b864dc6aabf30a1345283be452fe5f",
+        "bytes": 98,
+        "characters": 98,
+        "estimatedTokens": 25
+      }
+    },
+    {
+      "case": "RTK-R1.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:59.052Z",
+      "endedAt": "2026-10-08T18:14:59.267Z",
+      "command": "cat ledger.csv > exported.csv",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "exported.csv",
+        "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "content": "id,description,amount,currency\n1,invoice record 1,1.37,EUR\n2,invoice record 2,2.74,EUR\n3,invoice record 3,4.11,EUR\n4,invoice record 4,5.48,EUR\n5,invoice record 5,6.85,EUR\n6,invoice record 6,8.22,EUR\n7,invoice record 7,9.59,EUR\n8,invoice record 8,10.96,EUR\n9,invoice record 9,12.33,EUR\n10,invoice record 10,13.70,EUR\n11,invoice record 11,15.07,EUR\n12,invoice record 12,16.44,EUR\n13,invoice record 13,17.81,EUR\n14,invoice record 14,19.18,EUR\n15,invoice record 15,20.55,EUR\n16,invoice record 16,21.92,EUR\n17,invoice record 17,23.29,EUR\n18,invoice record 18,24.66,EUR\n19,invoice record 19,26.03,EUR\n20,invoice record 20,27.40,EUR\n21,invoice record 21,28.77,EUR\n22,invoice record 22,30.14,EUR\n23,invoice record 23,31.51,EUR\n24,invoice record 24,32.88,EUR\n25,invoice record 25,34.25,EUR\n26,invoice record 26,35.62,EUR\n27,invoice record 27,36.99,EUR\n28,invoice record 28,38.36,EUR\n29,invoice record 29,39.73,EUR\n30,invoice record 30,41.10,EUR\n31,invoice record 31,42.47,EUR\n32,invoice record 32,43.84,EUR\n33,invoice record 33,45.21,EUR\n34,invoice record 34,46.58,EUR\n35,invoice record 35,47.95,EUR\n36,invoice record 36,49.32,EUR\n37,invoice record 37,50.69,EUR\n38,invoice record 38,52.06,EUR\n39,invoice record 39,53.43,EUR\n40,invoice record 40,54.80,EUR\n41,invoice record 41,56.17,EUR\n42,invoice record 42,57.54,EUR\n43,invoice record 43,58.91,EUR\n44,invoice record 44,60.28,EUR\n45,invoice record 45,61.65,EUR\n46,invoice record 46,63.02,EUR\n47,invoice record 47,64.39,EUR\n48,invoice record 48,65.76,EUR\n49,invoice record 49,67.13,EUR\n50,invoice record 50,68.50,EUR\n51,invoice record 51,69.87,EUR\n52,invoice record 52,71.24,EUR\n53,invoice record 53,72.61,EUR\n54,invoice record 54,73.98,EUR\n55,invoice record 55,75.35,EUR\n56,invoice record 56,76.72,EUR\n57,invoice record 57,78.09,EUR\n58,invoice record 58,79.46,EUR\n59,invoice record 59,80.83,EUR\n60,invoice record 60,82.20,EUR\n61,invoice record 61,83.57,EUR\n62,invoice record 62,84.94,EUR\n63,invoice record 63,86.31,EUR\n64,invoice record 64,87.68,EUR\n65,invoice record 65,89.05,EUR\n66,invoice record 66,90.42,EUR\n67,invoice record 67,91.79,EUR\n68,invoice record 68,93.16,EUR\n69,invoice record 69,94.53,EUR\n70,invoice record 70,95.90,EUR\n71,invoice record 71,97.27,EUR\n72,invoice record 72,98.64,EUR\n73,invoice record 73,100.01,EUR\n74,invoice record 74,101.38,EUR\n75,invoice record 75,102.75,EUR\n76,invoice record 76,104.12,EUR\n77,invoice record 77,105.49,EUR\n78,invoice record 78,106.86,EUR\n79,invoice record 79,108.23,EUR\n80,invoice record 80,109.60,EUR\n81,invoice record 81,110.97,EUR\n82,invoice record 82,112.34,EUR\n83,invoice record 83,113.71,EUR\n84,invoice record 84,115.08,EUR\n85,invoice record 85,116.45,EUR\n86,invoice record 86,117.82,EUR\n87,invoice record 87,119.19,EUR\n88,invoice record 88,120.56,EUR\n89,invoice record 89,121.93,EUR\n90,invoice record 90,123.30,EUR\n91,invoice record 91,124.67,EUR\n92,invoice record 92,126.04,EUR\n93,invoice record 93,127.41,EUR\n94,invoice record 94,128.78,EUR\n95,invoice record 95,130.15,EUR\n96,invoice record 96,131.52,EUR\n97,invoice record 97,132.89,EUR\n98,invoice record 98,134.26,EUR\n99,invoice record 99,135.63,EUR\n100,invoice record 100,137.00,EUR\n101,invoice record 101,138.37,EUR\n102,invoice record 102,139.74,EUR\n103,invoice record 103,141.11,EUR\n104,invoice record 104,142.48,EUR\n105,invoice record 105,143.85,EUR\n106,invoice record 106,145.22,EUR\n107,invoice record 107,146.59,EUR\n108,invoice record 108,147.96,EUR\n109,invoice record 109,149.33,EUR\n110,invoice record 110,150.70,EUR\n111,invoice record 111,152.07,EUR\n112,invoice record 112,153.44,EUR\n113,invoice record 113,154.81,EUR\n114,invoice record 114,156.18,EUR\n115,invoice record 115,157.55,EUR\n116,invoice record 116,158.92,EUR\n117,invoice record 117,160.29,EUR\n118,invoice record 118,161.66,EUR\n119,invoice record 119,163.03,EUR\n120,invoice record 120,164.40,EUR\n"
+      }
+    },
+    {
+      "case": "RTK-R2.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:59.267Z",
+      "endedAt": "2026-10-08T18:14:59.467Z",
+      "command": "git status --porcelain",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      },
+      "pi": {
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      }
+    },
+    {
+      "case": "RTK-R3.v2",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:59.467Z",
+      "endedAt": "2026-10-08T18:14:59.759Z",
+      "command": "git diff HEAD > changes.patch",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": true
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
+      }
+    },
+    {
+      "case": "RTK-R4.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:59.759Z",
+      "endedAt": "2026-10-08T18:14:59.944Z",
+      "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 23,
+        "output": "synthetic validation failure\n",
+        "sha256": "ba56757af79c0a125d059137d235945e8ab25c18b45cf4872431eaf9ccc1ba7a",
+        "bytes": 29,
+        "characters": 29,
+        "estimatedTokens": 8
+      },
+      "pi": {
+        "output": "synthetic validation failure\n\n\nCommand exited with code 23",
+        "isError": true,
+        "sha256": "ff61fd28a92e53c562c5306d229c95e3c93f2d52436fed9058ecca25aa665168",
+        "bytes": 58,
+        "characters": 58,
+        "estimatedTokens": 15
+      }
+    },
+    {
+      "case": "RTK-R5.v2",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:14:59.944Z",
+      "endedAt": "2026-10-08T18:15:00.138Z",
+      "command": "git diff HEAD --output=changes.patch",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": true
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
+      }
+    },
+    {
+      "case": "RTK-R6.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:15:00.138Z",
+      "endedAt": "2026-10-08T18:15:00.322Z",
+      "command": "ls",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
+        "bytes": 73,
+        "characters": 73,
+        "estimatedTokens": 19
+      },
+      "pi": {
+        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "isError": false,
+        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
+        "bytes": 73,
+        "characters": 73,
+        "estimatedTokens": 19
+      }
+    },
+    {
+      "case": "RTK-R7.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T18:15:00.322Z",
+      "endedAt": "2026-10-08T18:15:00.552Z",
+      "command": "git log",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": false,
+        "C4-compact": null,
+        "C5-exact": false,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      },
+      "pi": {
+        "output": "a2a64ca Add synthetic main (9 months ago) <Synthetic Evaluator>\nead9db8 Add synthetic feature (9 months ago) <Synthetic Evaluator>\nbf7e840 Add merge export (9 months ago) <Synthetic Evaluator>\nf3c7038 Validate merge totals (9 months ago) <Synthetic Evaluator>\n74d3a72 Add merge records (9 months ago) <Synthetic Evaluator>\n306ec0d Set merge currency (9 months ago) <Synthetic Evaluator>\nf1cc48d Seed merge project (9 months ago) <Synthetic Evaluator>\n",
+        "isError": false,
+        "sha256": "acd309008c6adb148274d522d4337b2482e2f30911f436e0592c09c4f7d3776d",
+        "bytes": 451,
+        "characters": 451,
+        "estimatedTokens": 113
+      }
+    },
+    {
+      "case": "RTK-B1.v2",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:00.552Z",
+      "endedAt": "2026-10-08T18:15:00.738Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "* main\n M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "6537b65df526b02056cb30b8db80c17ba0b864dc6aabf30a1345283be452fe5f",
+        "bytes": 98,
+        "characters": 98,
+        "estimatedTokens": 25
+      }
+    },
+    {
+      "case": "RTK-B2.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:00.738Z",
+      "endedAt": "2026-10-08T18:15:00.887Z",
+      "command": "git diff",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      },
+      "pi": {
+        "output": "\n\nChanges:\n\nconfig.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\n  +1 -1\n\nobsolete.txt\n@@ -1 +0,0 @@\n-Unused invoice export path\n  +0 -1\n\nsrc/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \n  +1 -1\n\nsrc/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n  +1 -1\n",
+        "isError": false,
+        "sha256": "7b68caa299a82a1002502e8a24077bb261af4165c59d69bb1a789317e65ec2ba",
+        "bytes": 547,
+        "characters": 547,
+        "estimatedTokens": 137
+      }
+    },
+    {
+      "case": "RTK-H1.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:00.887Z",
+      "endedAt": "2026-10-08T18:15:01.043Z",
+      "command": "git log -5",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      },
+      "pi": {
+        "output": "d3456d6 Add shipment export (9 months ago) <Synthetic Evaluator>\nb2f1ece Validate shipment totals (9 months ago) <Synthetic Evaluator>\na9a3a38 Add shipment records (9 months ago) <Synthetic Evaluator>\n9a788df Set shipment currency (9 months ago) <Synthetic Evaluator>\n31d1181 Seed shipment project (9 months ago) <Synthetic Evaluator>\n",
+        "isError": false,
+        "sha256": "d9707cc7208ef1c789ad10c7c65cc3172aee34268a2e60b82886c68b76274e6b",
+        "bytes": 335,
+        "characters": 335,
+        "estimatedTokens": 84
+      }
+    },
+    {
+      "case": "RTK-H2.v2",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:01.044Z",
+      "endedAt": "2026-10-08T18:15:01.227Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "* main\n M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "6537b65df526b02056cb30b8db80c17ba0b864dc6aabf30a1345283be452fe5f",
+        "bytes": 98,
+        "characters": 98,
+        "estimatedTokens": 25
+      }
+    },
+    {
+      "case": "RTK-R1.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:01.227Z",
+      "endedAt": "2026-10-08T18:15:01.392Z",
+      "command": "cat ledger.csv > exported.csv",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "exported.csv",
+        "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "content": "id,description,amount,currency\n1,invoice record 1,1.37,EUR\n2,invoice record 2,2.74,EUR\n3,invoice record 3,4.11,EUR\n4,invoice record 4,5.48,EUR\n5,invoice record 5,6.85,EUR\n6,invoice record 6,8.22,EUR\n7,invoice record 7,9.59,EUR\n8,invoice record 8,10.96,EUR\n9,invoice record 9,12.33,EUR\n10,invoice record 10,13.70,EUR\n11,invoice record 11,15.07,EUR\n12,invoice record 12,16.44,EUR\n13,invoice record 13,17.81,EUR\n14,invoice record 14,19.18,EUR\n15,invoice record 15,20.55,EUR\n16,invoice record 16,21.92,EUR\n17,invoice record 17,23.29,EUR\n18,invoice record 18,24.66,EUR\n19,invoice record 19,26.03,EUR\n20,invoice record 20,27.40,EUR\n21,invoice record 21,28.77,EUR\n22,invoice record 22,30.14,EUR\n23,invoice record 23,31.51,EUR\n24,invoice record 24,32.88,EUR\n25,invoice record 25,34.25,EUR\n26,invoice record 26,35.62,EUR\n27,invoice record 27,36.99,EUR\n28,invoice record 28,38.36,EUR\n29,invoice record 29,39.73,EUR\n30,invoice record 30,41.10,EUR\n31,invoice record 31,42.47,EUR\n32,invoice record 32,43.84,EUR\n33,invoice record 33,45.21,EUR\n34,invoice record 34,46.58,EUR\n35,invoice record 35,47.95,EUR\n36,invoice record 36,49.32,EUR\n37,invoice record 37,50.69,EUR\n38,invoice record 38,52.06,EUR\n39,invoice record 39,53.43,EUR\n40,invoice record 40,54.80,EUR\n41,invoice record 41,56.17,EUR\n42,invoice record 42,57.54,EUR\n43,invoice record 43,58.91,EUR\n44,invoice record 44,60.28,EUR\n45,invoice record 45,61.65,EUR\n46,invoice record 46,63.02,EUR\n47,invoice record 47,64.39,EUR\n48,invoice record 48,65.76,EUR\n49,invoice record 49,67.13,EUR\n50,invoice record 50,68.50,EUR\n51,invoice record 51,69.87,EUR\n52,invoice record 52,71.24,EUR\n53,invoice record 53,72.61,EUR\n54,invoice record 54,73.98,EUR\n55,invoice record 55,75.35,EUR\n56,invoice record 56,76.72,EUR\n57,invoice record 57,78.09,EUR\n58,invoice record 58,79.46,EUR\n59,invoice record 59,80.83,EUR\n60,invoice record 60,82.20,EUR\n61,invoice record 61,83.57,EUR\n62,invoice record 62,84.94,EUR\n63,invoice record 63,86.31,EUR\n64,invoice record 64,87.68,EUR\n65,invoice record 65,89.05,EUR\n66,invoice record 66,90.42,EUR\n67,invoice record 67,91.79,EUR\n68,invoice record 68,93.16,EUR\n69,invoice record 69,94.53,EUR\n70,invoice record 70,95.90,EUR\n71,invoice record 71,97.27,EUR\n72,invoice record 72,98.64,EUR\n73,invoice record 73,100.01,EUR\n74,invoice record 74,101.38,EUR\n75,invoice record 75,102.75,EUR\n76,invoice record 76,104.12,EUR\n77,invoice record 77,105.49,EUR\n78,invoice record 78,106.86,EUR\n79,invoice record 79,108.23,EUR\n80,invoice record 80,109.60,EUR\n81,invoice record 81,110.97,EUR\n82,invoice record 82,112.34,EUR\n83,invoice record 83,113.71,EUR\n84,invoice record 84,115.08,EUR\n85,invoice record 85,116.45,EUR\n86,invoice record 86,117.82,EUR\n87,invoice record 87,119.19,EUR\n88,invoice record 88,120.56,EUR\n89,invoice record 89,121.93,EUR\n90,invoice record 90,123.30,EUR\n91,invoice record 91,124.67,EUR\n92,invoice record 92,126.04,EUR\n93,invoice record 93,127.41,EUR\n94,invoice record 94,128.78,EUR\n95,invoice record 95,130.15,EUR\n96,invoice record 96,131.52,EUR\n97,invoice record 97,132.89,EUR\n98,invoice record 98,134.26,EUR\n99,invoice record 99,135.63,EUR\n100,invoice record 100,137.00,EUR\n101,invoice record 101,138.37,EUR\n102,invoice record 102,139.74,EUR\n103,invoice record 103,141.11,EUR\n104,invoice record 104,142.48,EUR\n105,invoice record 105,143.85,EUR\n106,invoice record 106,145.22,EUR\n107,invoice record 107,146.59,EUR\n108,invoice record 108,147.96,EUR\n109,invoice record 109,149.33,EUR\n110,invoice record 110,150.70,EUR\n111,invoice record 111,152.07,EUR\n112,invoice record 112,153.44,EUR\n113,invoice record 113,154.81,EUR\n114,invoice record 114,156.18,EUR\n115,invoice record 115,157.55,EUR\n116,invoice record 116,158.92,EUR\n117,invoice record 117,160.29,EUR\n118,invoice record 118,161.66,EUR\n119,invoice record 119,163.03,EUR\n120,invoice record 120,164.40,EUR\n"
+      }
+    },
+    {
+      "case": "RTK-R2.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:01.392Z",
+      "endedAt": "2026-10-08T18:15:01.549Z",
+      "command": "git status --porcelain",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      },
+      "pi": {
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      }
+    },
+    {
+      "case": "RTK-R3.v2",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:01.549Z",
+      "endedAt": "2026-10-08T18:15:01.719Z",
+      "command": "git diff HEAD > changes.patch",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": true
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
+      }
+    },
+    {
+      "case": "RTK-R4.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:01.719Z",
+      "endedAt": "2026-10-08T18:15:01.850Z",
+      "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 23,
+        "output": "synthetic validation failure\n",
+        "sha256": "ba56757af79c0a125d059137d235945e8ab25c18b45cf4872431eaf9ccc1ba7a",
+        "bytes": 29,
+        "characters": 29,
+        "estimatedTokens": 8
+      },
+      "pi": {
+        "output": "synthetic validation failure\n\n\nCommand exited with code 23",
+        "isError": true,
+        "sha256": "ff61fd28a92e53c562c5306d229c95e3c93f2d52436fed9058ecca25aa665168",
+        "bytes": 58,
+        "characters": 58,
+        "estimatedTokens": 15
+      }
+    },
+    {
+      "case": "RTK-R5.v2",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:01.850Z",
+      "endedAt": "2026-10-08T18:15:02.001Z",
+      "command": "git diff HEAD --output=changes.patch",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": true
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
+      }
+    },
+    {
+      "case": "RTK-R6.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:02.001Z",
+      "endedAt": "2026-10-08T18:15:02.155Z",
+      "command": "ls",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
+        "bytes": 73,
+        "characters": 73,
+        "estimatedTokens": 19
+      },
+      "pi": {
+        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "isError": false,
+        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
+        "bytes": 73,
+        "characters": 73,
+        "estimatedTokens": 19
+      }
+    },
+    {
+      "case": "RTK-R7.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T18:15:02.155Z",
+      "endedAt": "2026-10-08T18:15:02.332Z",
+      "command": "git log",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": false,
+        "C4-compact": null,
+        "C5-exact": false,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      },
+      "pi": {
+        "output": "a2a64ca Add synthetic main (9 months ago) <Synthetic Evaluator>\nead9db8 Add synthetic feature (9 months ago) <Synthetic Evaluator>\nbf7e840 Add merge export (9 months ago) <Synthetic Evaluator>\nf3c7038 Validate merge totals (9 months ago) <Synthetic Evaluator>\n74d3a72 Add merge records (9 months ago) <Synthetic Evaluator>\n306ec0d Set merge currency (9 months ago) <Synthetic Evaluator>\nf1cc48d Seed merge project (9 months ago) <Synthetic Evaluator>\n",
+        "isError": false,
+        "sha256": "acd309008c6adb148274d522d4337b2482e2f30911f436e0592c09c4f7d3776d",
+        "bytes": 451,
+        "characters": 451,
+        "estimatedTokens": 113
+      }
+    },
+    {
+      "case": "RTK-B1.v2",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:02.333Z",
+      "endedAt": "2026-10-08T18:15:02.501Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "* main\n M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "6537b65df526b02056cb30b8db80c17ba0b864dc6aabf30a1345283be452fe5f",
+        "bytes": 98,
+        "characters": 98,
+        "estimatedTokens": 25
+      }
+    },
+    {
+      "case": "RTK-B2.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:02.502Z",
+      "endedAt": "2026-10-08T18:15:02.663Z",
+      "command": "git diff",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      },
+      "pi": {
+        "output": "\n\nChanges:\n\nconfig.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\n  +1 -1\n\nobsolete.txt\n@@ -1 +0,0 @@\n-Unused invoice export path\n  +0 -1\n\nsrc/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \n  +1 -1\n\nsrc/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n  +1 -1\n",
+        "isError": false,
+        "sha256": "7b68caa299a82a1002502e8a24077bb261af4165c59d69bb1a789317e65ec2ba",
+        "bytes": 547,
+        "characters": 547,
+        "estimatedTokens": 137
+      }
+    },
+    {
+      "case": "RTK-H1.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:02.664Z",
+      "endedAt": "2026-10-08T18:15:02.821Z",
+      "command": "git log -5",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      },
+      "pi": {
+        "output": "d3456d6 Add shipment export (9 months ago) <Synthetic Evaluator>\nb2f1ece Validate shipment totals (9 months ago) <Synthetic Evaluator>\na9a3a38 Add shipment records (9 months ago) <Synthetic Evaluator>\n9a788df Set shipment currency (9 months ago) <Synthetic Evaluator>\n31d1181 Seed shipment project (9 months ago) <Synthetic Evaluator>\n",
+        "isError": false,
+        "sha256": "d9707cc7208ef1c789ad10c7c65cc3172aee34268a2e60b82886c68b76274e6b",
+        "bytes": 335,
+        "characters": 335,
+        "estimatedTokens": 84
+      }
+    },
+    {
+      "case": "RTK-H2.v2",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:02.821Z",
+      "endedAt": "2026-10-08T18:15:02.989Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": true,
+        "C5-exact": null,
+        "C6-status-class": true,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "* main\n M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "6537b65df526b02056cb30b8db80c17ba0b864dc6aabf30a1345283be452fe5f",
+        "bytes": 98,
+        "characters": 98,
+        "estimatedTokens": 25
+      }
+    },
+    {
+      "case": "RTK-R1.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:02.989Z",
+      "endedAt": "2026-10-08T18:15:03.111Z",
+      "command": "cat ledger.csv > exported.csv",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "exported.csv",
+        "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "content": "id,description,amount,currency\n1,invoice record 1,1.37,EUR\n2,invoice record 2,2.74,EUR\n3,invoice record 3,4.11,EUR\n4,invoice record 4,5.48,EUR\n5,invoice record 5,6.85,EUR\n6,invoice record 6,8.22,EUR\n7,invoice record 7,9.59,EUR\n8,invoice record 8,10.96,EUR\n9,invoice record 9,12.33,EUR\n10,invoice record 10,13.70,EUR\n11,invoice record 11,15.07,EUR\n12,invoice record 12,16.44,EUR\n13,invoice record 13,17.81,EUR\n14,invoice record 14,19.18,EUR\n15,invoice record 15,20.55,EUR\n16,invoice record 16,21.92,EUR\n17,invoice record 17,23.29,EUR\n18,invoice record 18,24.66,EUR\n19,invoice record 19,26.03,EUR\n20,invoice record 20,27.40,EUR\n21,invoice record 21,28.77,EUR\n22,invoice record 22,30.14,EUR\n23,invoice record 23,31.51,EUR\n24,invoice record 24,32.88,EUR\n25,invoice record 25,34.25,EUR\n26,invoice record 26,35.62,EUR\n27,invoice record 27,36.99,EUR\n28,invoice record 28,38.36,EUR\n29,invoice record 29,39.73,EUR\n30,invoice record 30,41.10,EUR\n31,invoice record 31,42.47,EUR\n32,invoice record 32,43.84,EUR\n33,invoice record 33,45.21,EUR\n34,invoice record 34,46.58,EUR\n35,invoice record 35,47.95,EUR\n36,invoice record 36,49.32,EUR\n37,invoice record 37,50.69,EUR\n38,invoice record 38,52.06,EUR\n39,invoice record 39,53.43,EUR\n40,invoice record 40,54.80,EUR\n41,invoice record 41,56.17,EUR\n42,invoice record 42,57.54,EUR\n43,invoice record 43,58.91,EUR\n44,invoice record 44,60.28,EUR\n45,invoice record 45,61.65,EUR\n46,invoice record 46,63.02,EUR\n47,invoice record 47,64.39,EUR\n48,invoice record 48,65.76,EUR\n49,invoice record 49,67.13,EUR\n50,invoice record 50,68.50,EUR\n51,invoice record 51,69.87,EUR\n52,invoice record 52,71.24,EUR\n53,invoice record 53,72.61,EUR\n54,invoice record 54,73.98,EUR\n55,invoice record 55,75.35,EUR\n56,invoice record 56,76.72,EUR\n57,invoice record 57,78.09,EUR\n58,invoice record 58,79.46,EUR\n59,invoice record 59,80.83,EUR\n60,invoice record 60,82.20,EUR\n61,invoice record 61,83.57,EUR\n62,invoice record 62,84.94,EUR\n63,invoice record 63,86.31,EUR\n64,invoice record 64,87.68,EUR\n65,invoice record 65,89.05,EUR\n66,invoice record 66,90.42,EUR\n67,invoice record 67,91.79,EUR\n68,invoice record 68,93.16,EUR\n69,invoice record 69,94.53,EUR\n70,invoice record 70,95.90,EUR\n71,invoice record 71,97.27,EUR\n72,invoice record 72,98.64,EUR\n73,invoice record 73,100.01,EUR\n74,invoice record 74,101.38,EUR\n75,invoice record 75,102.75,EUR\n76,invoice record 76,104.12,EUR\n77,invoice record 77,105.49,EUR\n78,invoice record 78,106.86,EUR\n79,invoice record 79,108.23,EUR\n80,invoice record 80,109.60,EUR\n81,invoice record 81,110.97,EUR\n82,invoice record 82,112.34,EUR\n83,invoice record 83,113.71,EUR\n84,invoice record 84,115.08,EUR\n85,invoice record 85,116.45,EUR\n86,invoice record 86,117.82,EUR\n87,invoice record 87,119.19,EUR\n88,invoice record 88,120.56,EUR\n89,invoice record 89,121.93,EUR\n90,invoice record 90,123.30,EUR\n91,invoice record 91,124.67,EUR\n92,invoice record 92,126.04,EUR\n93,invoice record 93,127.41,EUR\n94,invoice record 94,128.78,EUR\n95,invoice record 95,130.15,EUR\n96,invoice record 96,131.52,EUR\n97,invoice record 97,132.89,EUR\n98,invoice record 98,134.26,EUR\n99,invoice record 99,135.63,EUR\n100,invoice record 100,137.00,EUR\n101,invoice record 101,138.37,EUR\n102,invoice record 102,139.74,EUR\n103,invoice record 103,141.11,EUR\n104,invoice record 104,142.48,EUR\n105,invoice record 105,143.85,EUR\n106,invoice record 106,145.22,EUR\n107,invoice record 107,146.59,EUR\n108,invoice record 108,147.96,EUR\n109,invoice record 109,149.33,EUR\n110,invoice record 110,150.70,EUR\n111,invoice record 111,152.07,EUR\n112,invoice record 112,153.44,EUR\n113,invoice record 113,154.81,EUR\n114,invoice record 114,156.18,EUR\n115,invoice record 115,157.55,EUR\n116,invoice record 116,158.92,EUR\n117,invoice record 117,160.29,EUR\n118,invoice record 118,161.66,EUR\n119,invoice record 119,163.03,EUR\n120,invoice record 120,164.40,EUR\n"
+      }
+    },
+    {
+      "case": "RTK-R2.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:03.111Z",
+      "endedAt": "2026-10-08T18:15:03.271Z",
+      "command": "git status --porcelain",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      },
+      "pi": {
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      }
+    },
+    {
+      "case": "RTK-R3.v2",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:03.271Z",
+      "endedAt": "2026-10-08T18:15:03.434Z",
+      "command": "git diff HEAD > changes.patch",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": true
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
+      }
+    },
+    {
+      "case": "RTK-R4.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:03.434Z",
+      "endedAt": "2026-10-08T18:15:03.574Z",
+      "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": null,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 23,
+        "output": "synthetic validation failure\n",
+        "sha256": "ba56757af79c0a125d059137d235945e8ab25c18b45cf4872431eaf9ccc1ba7a",
+        "bytes": 29,
+        "characters": 29,
+        "estimatedTokens": 8
+      },
+      "pi": {
+        "output": "synthetic validation failure\n\n\nCommand exited with code 23",
+        "isError": true,
+        "sha256": "ff61fd28a92e53c562c5306d229c95e3c93f2d52436fed9058ecca25aa665168",
+        "bytes": 58,
+        "characters": 58,
+        "estimatedTokens": 15
+      }
+    },
+    {
+      "case": "RTK-R5.v2",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:03.574Z",
+      "endedAt": "2026-10-08T18:15:03.728Z",
+      "command": "git diff HEAD --output=changes.patch",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": true
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "actualSha256": "0fcba02e2dc9c72fa5de504e48f33669e1ef4df173283a2b7720aa9e417a957d",
+        "content": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \ndiff --git a/src/export.ts b/src/export.ts\nnew file mode 100644\nindex 0000000..f44ab48\n--- /dev/null\n+++ b/src/export.ts\n@@ -0,0 +1 @@\n+export const format = 'invoice-csv';\n"
+      }
+    },
+    {
+      "case": "RTK-R6.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:03.728Z",
+      "endedAt": "2026-10-08T18:15:03.868Z",
+      "command": "ls",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "pass",
+      "raw": {
+        "exitCode": 0,
+        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
+        "bytes": 73,
+        "characters": 73,
+        "estimatedTokens": 19
+      },
+      "pi": {
+        "output": "audit.txt\nchanges.patch\nconfig.json\nexported.csv\nledger.csv\nnotes.md\nsrc\n",
+        "isError": false,
+        "sha256": "86e9d10cfc23b41eed74722f3762597570c90b858a6d9cfeba654874f8a174d7",
+        "bytes": 73,
+        "characters": 73,
+        "estimatedTokens": 19
+      }
+    },
+    {
+      "case": "RTK-R7.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T18:15:03.868Z",
+      "endedAt": "2026-10-08T18:15:04.060Z",
+      "command": "git log",
+      "checks": {
+        "C1-installed": true,
+        "C2-exit": true,
+        "C3-semantic": false,
+        "C4-compact": null,
+        "C5-exact": false,
+        "C6-status-class": null,
+        "C7-patch-content": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit fdb2725c8a10406e094d8dbbf05b68943e581aa2\nMerge: a2a64ca ead9db8\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 8 00:00:00 2026 +0000\n\n    Merge synthetic feature\n\ncommit a2a64ca88c209ad58f61d0a30070723549d0c1f7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Wed Jan 7 00:00:00 2026 +0000\n\n    Add synthetic main\n\ncommit ead9db862f6b94f99d0c55b63435dece1314de3a\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Tue Jan 6 00:00:00 2026 +0000\n\n    Add synthetic feature\n\ncommit bf7e840494b40c3babedfb7042ed748a37215149\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add merge export\n\ncommit f3c7038dc3a57cd63d7cf086379a74a1f4fb6e68\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate merge totals\n\ncommit 74d3a725a5dc3651a32f5bdb718a3117d23d78cb\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add merge records\n\ncommit 306ec0d1be70d624db2a11abf471308a27c18e4f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set merge currency\n\ncommit f1cc48d705ce2a0511b3b555e301dceccff63756\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed merge project\n",
+        "sha256": "efe4150cf26839bd56009a078daadd2e6994b76d16606e8efe260fb6940ff520",
+        "bytes": 1366,
+        "characters": 1366,
+        "estimatedTokens": 342
+      },
+      "pi": {
+        "output": "a2a64ca Add synthetic main (9 months ago) <Synthetic Evaluator>\nead9db8 Add synthetic feature (9 months ago) <Synthetic Evaluator>\nbf7e840 Add merge export (9 months ago) <Synthetic Evaluator>\nf3c7038 Validate merge totals (9 months ago) <Synthetic Evaluator>\n74d3a72 Add merge records (9 months ago) <Synthetic Evaluator>\n306ec0d Set merge currency (9 months ago) <Synthetic Evaluator>\nf1cc48d Seed merge project (9 months ago) <Synthetic Evaluator>\n",
+        "isError": false,
+        "sha256": "acd309008c6adb148274d522d4337b2482e2f30911f436e0592c09c4f7d3776d",
+        "bytes": 451,
+        "characters": 451,
+        "estimatedTokens": 113
+      }
+    }
+  ]
+}
