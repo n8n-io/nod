@@ -269,7 +269,7 @@ export function verdictMarkdown(
   if (context.compared)
     lines.push(
       '',
-      `Both sides ran in this job with \`${context.model}\` and judge \`${context.judge}\`. The verdict uses the gate scenarios${context.resampled ? ', counting the extra attempts where the candidate did worse' : ''}; the comparison below shows every scenario at the same number of attempts.`,
+      `Both sides ran in this job with \`${context.model}\` and judge \`${context.judge}\`. The verdict uses the gate scenarios${context.resampled ? ', counting the extra attempts for gate scenarios that needed more evidence' : ''}; the comparison below shows every scenario at the same number of attempts.`,
     );
   const reasons = [...result.blocking, ...result.unclear];
   if (reasons.length) lines.push('', ...reasons.map((reason) => `- ${reason}`));
