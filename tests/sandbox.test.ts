@@ -481,6 +481,15 @@ test('connected CLIs run only their sealed install with a clean environment', as
     ]);
     assert.deepEqual(launches[0]!.slice(7, 9), ['/usr/bin/python3', '-I']);
     await assert.rejects(run(['fixturecli']), WorkspaceCommandError);
+    const shared = join(root, 'shared');
+    await mkdir(shared);
+    await chmod(shared, 0o777);
+    await writeFile(join(shared, 'fixturecli'), trap, { mode: 0o755 });
+    await rm(join(prefix, 'bin', 'fixturecli'));
+    await symlink(join(shared, 'fixturecli'), join(prefix, 'bin', 'fixturecli'));
+    const escaped = await run(['status'], cli);
+    assert.equal(escaped.exitCode, 126);
+    assert.match(escaped.stderr.toString(), /not sealed/);
     await chmod(root, 0o777);
     await assert.rejects(run(['status'], cli), WorkspaceCommandError);
     assert.equal(existsSync(stolen), false);

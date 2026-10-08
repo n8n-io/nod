@@ -586,7 +586,11 @@ function AccountApp({
   if (sessionState.locked)
     return (
       <main className="empty-state">
-        <p>Open Otto from the link in your terminal.</p>
+        <p>
+          {desktopSettingsAvailable()
+            ? 'Open Otto in the desktop app.'
+            : 'Open Otto from the link in your terminal.'}
+        </p>
       </main>
     );
   if (sessionState.loading) return <Splash />;

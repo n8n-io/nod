@@ -110,7 +110,9 @@ function commandWords(argv: string[]) {
   const option = (item: string | undefined) =>
     item !== undefined && item !== '--' && /^-[^=]+$/.test(item);
   const commands = argv
-    .filter((item, index) => !item.startsWith('-') && !option(argv[index - 1]))
+    .filter(
+      (item, index) => !item.startsWith('-') && !/^[\w.-]+=/.test(item) && !option(argv[index - 1]),
+    )
     .slice(0, 3)
     .flatMap(pathWords);
   const method = argv
@@ -142,7 +144,8 @@ function actionWords(action: string, args: Record<string, unknown>) {
 }
 
 export function actionPayload(action: string, args: Record<string, unknown>) {
-  if (action === 'CONNECTED_HTTP') return args.body;
+  if (action === 'CONNECTED_HTTP')
+    return String(args.method ?? 'GET').toUpperCase() === 'GET' ? undefined : args.body;
   if (action === 'CONNECTED_MCP_CALL') return args.input;
   if (action === 'CONNECTED_CLI') return undefined;
   return args;
@@ -161,7 +164,11 @@ function collect(value: unknown, inside: boolean, found: Set<string>) {
 }
 
 export function actionRecipients(action: string, args: Record<string, unknown>) {
-  return collect(actionPayload(action, args), false, new Set());
+  const found = collect(actionPayload(action, args), false, new Set());
+  if (action === 'CONNECTED_HTTP')
+    for (const [key, value] of sentUrl(String(args.path ?? '')).searchParams)
+      collect({ [key]: value }, false, found);
+  return found;
 }
 
 export function actionEffect(action: string, args: Record<string, unknown>): ActionEffect {

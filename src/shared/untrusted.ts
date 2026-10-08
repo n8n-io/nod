@@ -52,12 +52,8 @@ const patterns: Array<[string, RegExp]> = [
 const delimiter = /untrusted_tool_result/gi;
 
 export function injectionFindings(text: string) {
-  const found = new Set<string>();
-  for (let start = 0; start < text.length; start += 60_000) {
-    const sample = text.slice(start, start + 64_000).normalize('NFKC');
-    for (const [id, pattern] of patterns) if (pattern.test(sample)) found.add(id);
-  }
-  return [...found];
+  const sample = text.normalize('NFKC');
+  return patterns.filter(([, pattern]) => pattern.test(sample)).map(([id]) => id);
 }
 
 function notice(source: string, findings: string[]) {
@@ -82,6 +78,8 @@ export function untrustedBlock(source: string, text: string) {
 
 export function untrustedContents(text: string) {
   return [
-    ...text.matchAll(/<untrusted_tool_result source="[^"]*">([\s\S]*?)<\/untrusted_tool_result>/g),
+    ...text.matchAll(
+      /<untrusted_tool_result source="[^"]*">([\s\S]*?)(?:<\/untrusted_tool_result>|$)/g,
+    ),
   ].map((match) => match[1]!);
 }

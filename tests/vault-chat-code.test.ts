@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import pg from 'pg';
@@ -17,6 +20,9 @@ test(
     const url = new URL(process.env.TEST_DATABASE_URL!);
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
+    t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
+    process.env.OTTO_DATA_ROOT = runtimeRoot;
     const db = await import('../src/server/db.ts');
     const { createChatVerification } = await import('../src/server/chat-verification.ts');
     const thread = await import('../src/server/thread.ts');

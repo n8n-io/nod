@@ -63,13 +63,13 @@ function label(key: string) {
 }
 
 function leaves(value: unknown, path: string, found: Array<[string, string]>) {
-  if (typeof value === 'string') {
-    if (value.trim()) found.push([path, value.trim()]);
-  } else if (typeof value === 'number' || typeof value === 'boolean')
+  if (typeof value === 'string') found.push([path, value.trim() || '""']);
+  else if (typeof value === 'number' || typeof value === 'boolean')
     found.push([path, String(value)]);
+  else if (value === null) found.push([path, 'null']);
   else if (Array.isArray(value)) {
     if (value.every((item) => ['string', 'number', 'boolean'].includes(typeof item)))
-      leaves(value.join(', '), path, found);
+      found.push([path, value.length ? value.join(', ') : '[]']);
     else value.forEach((item, index) => leaves(item, `${path} ${index + 1}`, found));
   } else if (value && typeof value === 'object')
     for (const [key, item] of Object.entries(value))
@@ -121,6 +121,24 @@ export function actionDetails(action: string, args: Record<string, unknown>, lim
   ].map(([name, value]): [string, string] => [`${name[0]!.toUpperCase()}${name.slice(1)}`, value]);
 }
 
+function fitted(render: (limit: number) => string[], limits: number[], budget: number) {
+  const size = (lines: string[]) => lines.join('\n\n').length;
+  const lines = render(limits.find((limit) => size(render(limit)) <= budget) ?? limits.at(-1)!);
+  let total = -2;
+  const shown = lines.filter((line) => (total += line.length + 2) <= budget);
+  return shown.length < lines.length
+    ? [...shown, `…and ${lines.length - shown.length} more fields`]
+    : shown;
+}
+
+export function reviewedRequest(action: string, args: Record<string, unknown>) {
+  return fitted(
+    (limit) => actionDetails(action, args, limit).map(([name, value]) => `${name}: ${value}`),
+    [300, 100],
+    16_000,
+  );
+}
+
 export function appActionConfirmation(
   action: string,
   args: Record<string, unknown>,
@@ -136,19 +154,17 @@ export function appActionConfirmation(
         : action === 'CONNECTED_CLI'
           ? 'Run a connected command line tool'
           : `${apps[app!] ?? `${app![0]}${app!.slice(1).toLowerCase()}`}: ${words.join(' ').toLowerCase()}`;
-  const render = (limit: number) =>
-    actionDetails(action, args, limit).map(([name, value]) => `${plain(name)}: ${plain(value)}`);
-  const limit = [1500, 600].find((size) => render(size).join('\n\n').length <= 4800) ?? 200;
-  const details = render(limit);
-  let body = account ? `\n\nAccount: ${plain(abbreviated(account, 300))}` : '';
-  for (const [index, detail] of details.entries()) {
-    if (body.length + detail.length > 4800) {
-      body += `\n\n…and ${details.length - index} more fields`;
-      break;
-    }
-    body += `\n\n${detail}`;
-  }
-  return `${title}?${body}\n\nWhy I'm asking: ${reasons[reason]}\n\nReply yes to go ahead, no to skip it, or tell me what to change.`;
+  const details = fitted(
+    (limit) =>
+      actionDetails(action, args, limit).map(([name, value]) => `${plain(name)}: ${plain(value)}`),
+    [1500, 600, 200],
+    4800,
+  );
+  const body = [
+    ...(account ? [`Account: ${plain(abbreviated(account, 300))}`] : []),
+    ...details,
+  ].join('\n\n');
+  return `${title}?${body ? `\n\n${body}` : ''}\n\nWhy I'm asking: ${reasons[reason]}\n\nReply yes to go ahead, no to skip it, or tell me what to change.`;
 }
 
 export function actionConfirmation(

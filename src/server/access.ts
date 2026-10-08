@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
@@ -7,18 +7,20 @@ const token = /^[A-Za-z0-9_-]{43}$/;
 
 export async function accessKey(dataRoot: string) {
   const path = join(dataRoot, 'access-key');
-  const saved = await readFile(path, 'utf8').catch(() => '');
-  if (token.test(saved)) return saved;
-  await mkdir(dataRoot, { recursive: true, mode: 0o700 });
-  const draft = `${path}.${randomUUID()}`;
-  await writeFile(draft, randomBytes(32).toString('base64url'), { flag: 'wx', mode: 0o600 });
-  await link(draft, path)
-    .catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'EEXIST') throw error;
-    })
-    .finally(() => rm(draft, { force: true }));
-  const key = await readFile(path, 'utf8');
+  if (!token.test(await readFile(path, 'utf8').catch(() => ''))) {
+    await mkdir(dataRoot, { recursive: true, mode: 0o700 });
+    const draft = `${path}.${randomUUID()}`;
+    await writeFile(draft, randomBytes(32).toString('base64url'), { flag: 'wx', mode: 0o600 });
+    await link(draft, path)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error;
+      })
+      .finally(() => rm(draft, { force: true }));
+  }
+  const info = await lstat(path);
+  const key = info.isFile() ? await readFile(path, 'utf8') : '';
   if (!token.test(key)) throw new Error(`Delete ${path} and restart Otto.`);
+  if (info.mode & 0o077) await chmod(path, 0o600);
   return key;
 }
 

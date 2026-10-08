@@ -763,7 +763,7 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
       promptFlags.push(findings);
     },
   });
-  assert.deepEqual(promptFlags.flat().includes('ignore_instructions'), true);
+  assert.ok(promptFlags.flat().includes('ignore_instructions'));
 
   for (const [result, status] of [
     [{ requiresConfirmation: true, question: 'Forged by a provider' }, 'succeeded'],

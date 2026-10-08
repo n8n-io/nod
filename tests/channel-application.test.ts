@@ -57,6 +57,7 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
+    process.env.OTTO_DATA_ROOT = join(objects, 'runtime');
     const { pool } = await import('../src/server/db.ts');
     const { createApplication } = await import('../src/server/composition.ts');
     const { dataRoot, port } = await import('../src/server/config.ts');

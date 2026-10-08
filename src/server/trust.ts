@@ -7,7 +7,7 @@ import {
   emailAddress,
   type ActionEffect,
 } from '../shared/action-effect.ts';
-import { actionDetails } from './action-presentation.ts';
+import { reviewedRequest } from './action-presentation.ts';
 
 export type TrustReason = 'background' | 'schedule' | 'unrequested' | 'injection';
 
@@ -115,7 +115,7 @@ export function createTrust(options: {
           name: action,
           effect,
           recipients: [...actionRecipients(action, args)],
-          request: Object.fromEntries(actionDetails(action, args, 300)),
+          request: reviewedRequest(action, args),
         },
       });
       return Boolean(

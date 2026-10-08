@@ -210,13 +210,15 @@ export const sessionStore = createSessionStore(
 export async function claimAccess() {
   const key = new URLSearchParams(window.location.hash.slice(1)).get('access');
   if (!key) return false;
+  const response = await apiResponse('/api/access', {
+    method: 'POST',
+    body: JSON.stringify({ key }),
+  }).catch(() => undefined);
+  if (!response?.ok) return false;
   window.history.replaceState(
     window.history.state,
     '',
     window.location.pathname + window.location.search,
-  );
-  await apiResponse('/api/access', { method: 'POST', body: JSON.stringify({ key }) }).catch(
-    () => {},
   );
   return true;
 }

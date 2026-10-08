@@ -352,7 +352,7 @@ export async function createApprovals(
       (
         await client.query(
           `SELECT m.id FROM messages m JOIN turns u ON u.id=m.turn_id WHERE m.owner_id=$1 AND u.owner_id=$1 AND m.thread_id=$2 AND u.channel=$3 AND m.role='assistant'
-           AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.id=$4 AND s.owner_id=$1 AND s.thread_id=$2 AND (s.created_at,s.id)<(m.created_at,m.id))
+           AND NOT EXISTS (SELECT 1 FROM messages s WHERE s.id=$4 AND s.owner_id=$1 AND s.thread_id=$2 AND date_trunc('milliseconds',s.created_at)<date_trunc('milliseconds',m.created_at))
            ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
           [ownerId, input.threadId, input.channel, input.seenMessageId ?? null],
         )

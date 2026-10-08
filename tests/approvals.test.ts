@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import {
+  chmod,
   mkdir,
   mkdtemp,
   open,
@@ -103,20 +104,23 @@ test('chat answers must be unambiguous and the question omits internal identifie
 
 test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
   const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
-  const key = await accessKey(root);
-  assert.equal(await accessKey(root), key);
-  assert.equal((await stat(join(root, 'access-key'))).mode & 0o777, 0o600);
   const app = Fastify();
-  registerLocalAccess(app, 4310, { key });
-  app.post('/api/fixture', async () => ({ ok: true }));
-  app.get('/api/apps/callback', async () => ({ ok: true }));
-  app.get('/api/privacy', async () => ({ content: null }));
   const desktop = Fastify();
-  registerLocalAccess(desktop, 4310, { key, desktop: true });
-  desktop.post('/api/fixture', async () => ({ ok: true }));
-  const cookie = `otto-access-4310=${key}`;
-  const state = randomBytes(32).toString('base64url');
   try {
+    const key = await accessKey(root);
+    assert.equal(await accessKey(root), key);
+    assert.equal((await stat(join(root, 'access-key'))).mode & 0o777, 0o600);
+    await chmod(join(root, 'access-key'), 0o644);
+    assert.equal(await accessKey(root), key);
+    assert.equal((await stat(join(root, 'access-key'))).mode & 0o777, 0o600);
+    registerLocalAccess(app, 4310, { key });
+    app.post('/api/fixture', async () => ({ ok: true }));
+    app.get('/api/apps/callback', async () => ({ ok: true }));
+    app.get('/api/privacy', async () => ({ content: null }));
+    registerLocalAccess(desktop, 4310, { key, desktop: true });
+    desktop.post('/api/fixture', async () => ({ ok: true }));
+    const cookie = `otto-access-4310=${key}`;
+    const state = randomBytes(32).toString('base64url');
     for (const headers of [
       { host: 'attacker.example:4310', cookie },
       { host: 'localhost:4311', cookie },
@@ -599,6 +603,11 @@ test(
             ['CONNECTED_HTTP', { method: 'POST', path: 'v1/charges?list=1#get', body: {} }],
             ['CONNECTED_CLI', { argv: ['api', '-H', 'X-Get: 1', '-X', 'DELETE', 'repos/o/r'] }],
             ['CONNECTED_CLI', { argv: ['api', 'graphql', '-f', 'query=mutation { deleteRepo }'] }],
+            ['CONNECTED_CLI', { argv: ['api', 'graphql', 'query=mutation { deleteRepo }'] }],
+            [
+              'CONNECTED_HTTP',
+              { method: 'POST', path: 'events/create?attendee=outsider@example.test' },
+            ],
           ];
           for (const [action, args] of disguised)
             assert.deepEqual(await trust.check(event, action, args), {

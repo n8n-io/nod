@@ -274,7 +274,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_connected_cli_accepts_only_the_sealed_install_with_a_clean_environment(self):
         sealed = {"OTTO_BOUNDARY_TOKEN": "synthetic-live-boundary", "HOME": "/tmp/otto-cli-x", "XDG_CONFIG_HOME": "/tmp/otto-cli-x/.config", "LANG": "C.UTF-8"}
-        for label, printed in [(None, None), ("connected-cli-planted", "otto-planted-binary\n"), ("connected-cli", "NPM_CONFIG_PREFIX=/workspace\n")]:
+        for label, printed in [(None, None), ("connected-cli-planted", "otto-planted-binary\n"), ("connected-cli", "NPM_CONFIG_PREFIX=/workspace\n"), ("connected-cli", "PATH=/home/node/.local/bin:/usr/bin:/bin\n")]:
             with self.subTest(label=label), tempfile.TemporaryDirectory() as root:
                 workspace, connected = pathlib.Path(root, "workspace"), pathlib.Path(root, "connected")
                 workspace.mkdir()
@@ -286,7 +286,7 @@ class BoundaryTests(unittest.TestCase):
                     request = calls[-1][3]
                     prefix = connected / "cli" / request["cli"]["id"]
                     values = {**sealed, "PATH": f"{prefix}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-                    text = printed or "".join(f"{key}={value}\n" for key, value in values.items())
+                    text = "".join(f"{key}={value}\n" for key, value in values.items()) + (printed or "")
                     frames = [{"type": "stdout", "data": base64.b64encode(text.encode()).decode()}, {"type": "exit", "code": 0, "reason": None}]
                     return 0, "".join(json.dumps(frame) + "\n" for frame in frames).encode(), b""
 

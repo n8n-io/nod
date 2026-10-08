@@ -155,6 +155,11 @@ def group_running():
  except PermissionError: return True
 for index,(args,child_env,seconds) in enumerate(steps):
  last=index==len(steps)-1
+ try:
+  if last and cli is not None: sealed(args[0])
+ except (OSError,ValueError):
+  output('stderr',b'The connected CLI install is not sealed. Propose it again.\\n')
+  finish({'type':'exit','code':126,'reason':None})
  try: p=subprocess.Popen(args,stdin=subprocess.PIPE if last else subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True,env=child_env,cwd=home)
  except OSError as error:
   output('stderr',(str(error)+'\\n').encode())
