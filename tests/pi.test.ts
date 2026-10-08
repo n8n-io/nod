@@ -1598,6 +1598,15 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
     'git  log',
   ])
     assert.equal(await run('bash', { command }), 'exact output\n');
+  await writeFile(join(bin, 'git'), '#!/bin/sh\nprintf "first-hash\\nsecond-hash"\n', {
+    mode: 0o755,
+  });
+  for (const command of [
+    'git log --pretty=format:%H',
+    'git log "--pretty=format:%H"',
+    "git log '--pretty=format:%H'",
+  ])
+    assert.equal(await run('bash', { command }), 'first-hash\nsecond-hash');
   assert.equal(existsSync(join(directory, 'rewrites')), false);
   await writeFile(join(directory, 'job.sh'), 'printf "run\\n" >> executions\nexit 124\n');
   await writeFile(join(bin, 'git'), '#!/bin/sh\nbash job.sh\n', { mode: 0o755 });
