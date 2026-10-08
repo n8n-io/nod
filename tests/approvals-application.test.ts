@@ -7,6 +7,7 @@ import test from 'node:test';
 import pg from 'pg';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 test(
   'personal approvals revalidate targets before execution',
@@ -86,7 +87,11 @@ test(
       { channels: false },
     );
     integrationFixture.register(application.app);
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const request = (method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>) =>
       application.app.inject({ method, url: path, headers, payload });
     async function waitFor(id: string, status: string) {

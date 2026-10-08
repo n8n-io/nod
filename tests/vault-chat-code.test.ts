@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import pg from 'pg';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 test(
   'chat verification intercepts owned codes before message routing and plaintext persistence',
@@ -20,7 +21,7 @@ test(
     const { createChatVerification } = await import('../src/server/chat-verification.ts');
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
-    const { ownerId, port, configuration } = await import('../src/server/config.ts');
+    const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     await db.initializeDatabase();
     await db.pool.query(`CREATE TABLE credential_requests (
     id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
@@ -58,7 +59,11 @@ test(
         return { threadId: randomUUID(), turnId: randomUUID(), messageId: input!.clientMessageId! };
       },
     });
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const send = (text: string, extra: Record<string, unknown> = {}) =>
       app.inject({
         method: 'POST',

@@ -570,6 +570,12 @@ function AccountApp({
         )}
       </main>
     );
+  if (sessionState.locked)
+    return (
+      <main className="empty-state">
+        <p>Open Otto from the link in your terminal.</p>
+      </main>
+    );
   if (sessionState.loading) return <Splash />;
   if (!session?.user)
     return (

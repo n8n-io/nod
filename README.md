@@ -10,7 +10,7 @@ Requirements: Node.js 24.21.0 or newer and Docker with Compose v2 (start Docker 
 npm start
 ```
 
-The first run installs dependencies, creates `.env`, and starts PostgreSQL plus the workspace and browser containers. Each start builds the web app and runs it in production mode. Open [http://localhost:4310](http://localhost:4310). Local mode serves one owner on `127.0.0.1` with no login.
+The first run installs dependencies, creates `.env`, and starts PostgreSQL plus the workspace and browser containers. Each start builds the web app and runs it in production mode. When the server is ready it prints a link such as `http://localhost:4310/#access=…`; open it once and the browser keeps the access cookie, so [http://localhost:4310](http://localhost:4310) works from then on. The key is saved in `.local/access-key` and stays the same across restarts; delete it and restart to issue a new link. Local mode serves one owner on `127.0.0.1` with no account login.
 
 For development with automatic reload, use `npm run dev`. Development analytics and recordings are disabled by default.
 

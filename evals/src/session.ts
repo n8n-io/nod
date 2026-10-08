@@ -62,7 +62,7 @@ export function createSession(options: {
   let threadId: string | undefined;
 
   async function post(path: string, body: unknown) {
-    const response = await fetch(new URL(path, stack.baseUrl), {
+    const response = await stack.request(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -75,7 +75,7 @@ export function createSession(options: {
 
   async function thread() {
     if (threadId) return threadId;
-    const state = await (await fetch(new URL('/api/state', stack.baseUrl))).json();
+    const state = await (await stack.request('/api/state')).json();
     threadId = state.threadId as string;
     return threadId;
   }
@@ -146,7 +146,7 @@ export function createSession(options: {
     const text = await lastAssistantText();
     if (approval) return { kind: 'approval' as const, approval, text };
     if (turn.waiting_reason === 'credentials') {
-      const state = await (await fetch(new URL('/api/state', stack.baseUrl))).json();
+      const state = await (await stack.request('/api/state')).json();
       return { kind: 'secret' as const, request: state.verificationRequests?.[0], text };
     }
     return { kind: 'question' as const, text };
@@ -268,7 +268,7 @@ export function createSession(options: {
     async upload(name, bytes, mimeType = 'application/octet-stream') {
       const form = new FormData();
       form.set('file', new Blob([new Uint8Array(bytes)], { type: mimeType }), name);
-      const response = await fetch(new URL('/api/uploads', stack.baseUrl), {
+      const response = await stack.request('/api/uploads', {
         method: 'POST',
         body: form,
       });

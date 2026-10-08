@@ -691,7 +691,7 @@ describe('tenant drain', () => {
     const consumers = createWorkConsumers();
     const drain = createTenantDrain({ admission, consumers, computer });
     if (desktop) {
-      registerLocalAccess(app, 4310, { token: identity.secret });
+      registerLocalAccess(app, 4310, { key: identity.secret, desktop: true });
       registerWorkAdmission(app, admission);
     } else {
       registerRuntimeAccess(app, identity);

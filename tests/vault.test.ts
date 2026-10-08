@@ -1297,7 +1297,11 @@ test(
     });
     const key = randomBytes(32);
     const owner = 'local-development';
-    const headers = { host: 'localhost:4310', origin: 'http://localhost:4310' };
+    const headers = {
+      host: 'localhost:4310',
+      origin: 'http://localhost:4310',
+      cookie: 'otto-access-4310=synthetic-local-access',
+    };
     const expiryYear = new Date().getUTCFullYear() + 3;
     const input = {
       kind: 'card',
@@ -1324,7 +1328,7 @@ test(
     );
     const start = async (getKey: () => Promise<Buffer> = async () => key) => {
       const app = Fastify({ logger: false });
-      registerLocalAccess(app, 4310);
+      registerLocalAccess(app, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
         keyStore: { id: 'synthetic', configured: true, getKey },
         inject: async () => assert.fail('Cards must never enter a website login.'),
@@ -1449,10 +1453,14 @@ test(
       "CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running');CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid)",
     );
     const key = randomBytes(32);
-    const headers = { host: 'localhost:4310', origin: 'http://localhost:4310' };
+    const headers = {
+      host: 'localhost:4310',
+      origin: 'http://localhost:4310',
+      cookie: 'otto-access-4310=synthetic-local-access',
+    };
     const start = async (getKey: () => Promise<Buffer> = async () => key) => {
       const instance = Fastify({ logger: false });
-      registerLocalAccess(instance, 4310);
+      registerLocalAccess(instance, 4310, { key: 'synthetic-local-access' });
       const vault = await createVault(pool, {
         keyStore: { id: 'fixture', configured: true, getKey },
         inject: async () => assert.fail('Viewing or editing a login must not fill a browser.'),

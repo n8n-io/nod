@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { pool } from './db.ts';
 import {
   configuration,
+  dataRoot,
   desktopAccess,
   ownerId,
   port,
@@ -25,7 +26,7 @@ import {
   welcomeSourceId,
 } from './thread.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
-import { registerLocalAccess } from './access.ts';
+import { accessKey, registerLocalAccess } from './access.ts';
 import { logFailure } from './failure-log.ts';
 import { inspectorPayloadLimit, inspectorRetentionDays, type InspectorStore } from './inspector.ts';
 import type { AgentToolMetadata } from '../ports/agent.ts';
@@ -112,7 +113,14 @@ export async function createApp(dependencies: AppDependencies = {}) {
           generation: runtimeGeneration,
         })
       : undefined;
-  if (!runtimeAccess) registerLocalAccess(app, port, desktopAccess);
+  if (!runtimeAccess)
+    registerLocalAccess(
+      app,
+      port,
+      desktopAccess
+        ? { key: desktopAccess.token, desktop: true }
+        : { key: await accessKey(dataRoot) },
+    );
   if (runtimeAccess && dependencies.admission && dependencies.deploymentDrain)
     registerTenantDrain(app, {
       admission: dependencies.admission,

@@ -1,14 +1,24 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, mkdtemp, open, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
-import { registerLocalAccess } from '../src/server/access.ts';
+import { accessCookie, accessKey, registerLocalAccess } from '../src/server/access.ts';
 import {
   confirmationAnswer,
   explicitlyRequestsAction,
@@ -91,23 +101,47 @@ test('chat answers must be unambiguous and the question omits internal identifie
     assert.equal(question.includes(hidden), false, hidden);
 });
 
-test('localhost access rejects foreign Host, Origin and browser cross-site requests', async () => {
+test('localhost access requires the owner key and rejects foreign Host, Origin and cross-site requests', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-access-'));
+  const key = await accessKey(root);
+  assert.equal(await accessKey(root), key);
+  assert.equal((await stat(join(root, 'access-key'))).mode & 0o777, 0o600);
   const app = Fastify();
-  registerLocalAccess(app, 4310);
+  registerLocalAccess(app, 4310, { key });
   app.post('/api/fixture', async () => ({ ok: true }));
   app.get('/api/apps/callback', async () => ({ ok: true }));
+  app.get('/api/privacy', async () => ({ content: null }));
+  const desktop = Fastify();
+  registerLocalAccess(desktop, 4310, { key, desktop: true });
+  desktop.post('/api/fixture', async () => ({ ok: true }));
+  const cookie = `otto-access-4310=${key}`;
+  const state = randomBytes(32).toString('base64url');
   try {
     for (const headers of [
-      { host: 'attacker.example:4310' },
-      { host: 'localhost:4311' },
-      { host: 'localhost:4310', origin: 'https://attacker.example' },
-      { host: 'localhost:4310', origin: 'null' },
-      { host: 'localhost:4310', origin: 'https://localhost:4310' },
-      { host: 'localhost:4310', 'sec-fetch-site': 'cross-site' },
+      { host: 'attacker.example:4310', cookie },
+      { host: 'localhost:4311', cookie },
+      { host: 'localhost:4310', cookie, origin: 'https://attacker.example' },
+      { host: 'localhost:4310', cookie, origin: 'null' },
+      { host: 'localhost:4310', cookie, origin: 'https://localhost:4310' },
+      { host: 'localhost:4310', cookie, 'sec-fetch-site': 'cross-site' },
     ])
       assert.equal(
         (await app.inject({ method: 'POST', url: '/api/fixture', headers })).statusCode,
         403,
+      );
+    for (const headers of [
+      { host: 'localhost:4310' },
+      { host: 'localhost:4310', origin: 'http://localhost:4310' },
+      {
+        host: 'localhost:4310',
+        cookie: `otto-access-4310=${randomBytes(32).toString('base64url')}`,
+      },
+      { host: 'localhost:4310', cookie: `otto-access-4311=${key}` },
+      { host: 'localhost:4310', 'x-otto-desktop-token': key },
+    ])
+      assert.equal(
+        (await app.inject({ method: 'POST', url: '/api/fixture', headers })).statusCode,
+        401,
       );
     for (const host of ['localhost:4310', '127.0.0.1:4310', '[::1]:4310'])
       assert.equal(
@@ -115,22 +149,69 @@ test('localhost access rejects foreign Host, Origin and browser cross-site reque
           await app.inject({
             method: 'POST',
             url: '/api/fixture',
-            headers: { host, origin: `http://${host}` },
+            headers: { host, origin: `http://${host}`, cookie: `theme=dark; ${cookie}` },
           })
         ).statusCode,
         200,
       );
     assert.equal(
+      (await app.inject({ url: '/api/privacy', headers: { host: 'localhost:4310' } })).statusCode,
+      200,
+    );
+    for (const [url, status] of [
+      [`/api/apps/callback?state=${state}`, 200],
+      ['/api/apps/callback?state=short', 401],
+      [`/api/apps/callback?state=${state}&state=${state}`, 401],
+    ] as const)
+      assert.equal(
+        (
+          await app.inject({
+            url,
+            headers: { host: 'localhost:4310', 'sec-fetch-site': 'cross-site' },
+          })
+        ).statusCode,
+        status,
+      );
+    const exchange = (candidate: string, headers: Record<string, string> = {}) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/access',
+        headers: { host: 'localhost:4310', origin: 'http://localhost:4310', ...headers },
+        payload: { key: candidate },
+      });
+    for (const rejected of [await exchange(key.slice(1)), await exchange(state)]) {
+      assert.equal(rejected.statusCode, 401);
+      assert.equal(rejected.headers['set-cookie'], undefined);
+    }
+    assert.equal((await exchange(key, { origin: 'https://attacker.example' })).statusCode, 403);
+    const accepted = await exchange(key);
+    assert.equal(accepted.statusCode, 204);
+    const issued = String(accepted.headers['set-cookie']);
+    assert.match(issued, /HttpOnly/);
+    assert.match(issued, /SameSite=Strict/);
+    assert.equal(
       (
         await app.inject({
-          url: '/api/apps/callback?fixture=yes',
-          headers: { host: 'localhost:4310', 'sec-fetch-site': 'cross-site' },
+          method: 'POST',
+          url: '/api/fixture',
+          headers: { host: 'localhost:4310', cookie: issued.split(';')[0]! },
         })
       ).statusCode,
       200,
     );
+    for (const [request, status] of [
+      [{ url: '/api/fixture', headers: { host: '127.0.0.1:4310', cookie } }, 401],
+      [{ url: '/api/access', headers: { host: '127.0.0.1:4310' }, payload: { key } }, 401],
+      [
+        { url: '/api/fixture', headers: { host: '127.0.0.1:4310', 'x-otto-desktop-token': key } },
+        200,
+      ],
+    ] as const)
+      assert.equal((await desktop.inject({ method: 'POST', ...request })).statusCode, status);
   } finally {
     await app.close();
+    await desktop.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -186,7 +267,11 @@ test(
     let executionResult: (() => unknown) | undefined;
     const directories: string[] = [];
     let approvals: Awaited<ReturnType<typeof createApprovals>>;
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const request = (
       method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
       url: string,
