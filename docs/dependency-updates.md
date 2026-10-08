@@ -11,11 +11,12 @@ The workflow runs without checking out pull request code and binds the approval 
 Repository requirements:
 
 - Keep `Checks, tests and build` and `Secret scanning` required on `main`, with the branch required to be up to date. The workflow waits for these check names to appear before watching all required checks.
-- Allow GitHub Actions to approve pull requests. The workflow satisfies the existing one-review requirement; any additional code-owner or reviewer requirements still apply.
+- Allow GitHub Actions to approve pull requests. The workflow satisfies the existing one-review requirement.
+- [CODEOWNERS](../.github/CODEOWNERS) leaves npm manifests, lockfiles, Dockerfiles and `compose.yaml` without owners, so the workflow's approval can merge those updates. GitHub Actions updates change workflow files, which need a code owner's review, so they stay open for a maintainer.
 - Do not require the `auto-merge` job itself, since it waits for required checks.
 
 This uses `GITHUB_TOKEN` and does not need a separate token or the repository's native auto-merge setting. GitHub suppresses ordinary workflow triggers from that token's merge, so the workflow explicitly dispatches CI on `main` after verifying the merge. The existing successful-main-CI deployment workflow then applies normally. If the dispatch fails after a merge, rerun CI manually on `main`.
 
 Dependabot does not manage Python packages installed inline in Dockerfiles, downloaded tools pinned in workflow shell commands, or the desktop runtime's custom build lock. Those pins still need manual updates.
 
-The weekly cadence and three-day delay follow [n8n-cloud's Renovate configuration](https://github.com/n8n-io/n8n-cloud/blob/bf40ec7bded36d079ebb2b2f6a13291c87a60cc5/renovate.json). See GitHub's [Dependabot options](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference) and [workflow token trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow).
+The weekly cadence collects routine updates into one review window. The three-day delay gives package registries and maintainers time to pull broken or malicious releases before Otto installs them. See GitHub's [Dependabot options](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference) and [workflow token trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow).

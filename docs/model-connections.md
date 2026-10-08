@@ -1,6 +1,6 @@
 # Model connections
 
-Otto keeps one selected connection, model, and effort per owner. All channels use that choice. Pi reads it when a turn opens. A running turn keeps its original choice and uses the saved Pi transcript. A removed connection cannot supply credentials to a later request. Errors do not select another connection or repeat a request.
+Otto keeps one selected connection, model, and effort per owner. All channels use that choice. Pi reads it when a turn opens. A running turn keeps its original choice and uses the saved Pi transcript. A removed connection cannot supply credentials to a later request. Errors do not select another connection. Pi retries a model request that fails with a temporary provider error (overload, rate limit, server or network error) up to three times; turns and tool calls are never retried.
 
 ## Connection methods
 

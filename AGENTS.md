@@ -1,6 +1,6 @@
 # Otto
 
-Setup and commands are in [README](README.md); how the system works is in [architecture](docs/architecture.md).
+Setup is in [README](README.md), development and checks are in [CONTRIBUTING](CONTRIBUTING.md), and how the system works is in [architecture](docs/architecture.md).
 
 ## Rules
 

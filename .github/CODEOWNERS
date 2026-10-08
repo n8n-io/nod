@@ -1,0 +1,16 @@
+* @n8n-io/n8n-labs
+
+/package.json
+/package-lock.json
+/desktop/package.json
+/desktop/package-lock.json
+/deployment/cloudflare/package.json
+/deployment/cloudflare/package-lock.json
+/Dockerfile.browser
+/Dockerfile.workspace
+/compose.yaml
+/deployment/cloudflare/Dockerfile
+/deployment/cloudflare/Dockerfile.browser
+/deployment/cloudflare/Dockerfile.workspace
+/deployment/e2b/Dockerfile.computer
+/deployment/e2b/Dockerfile.workspace

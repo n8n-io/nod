@@ -1,0 +1,84 @@
+name: Bug report
+description: Report something in Otto that doesn't work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > This form is for bugs only. Ask questions and share ideas in [Discussions](https://github.com/n8n-io/otto/discussions).
+        > Never report a security vulnerability here. Follow the [security policy](https://github.com/n8n-io/otto/blob/main/SECURITY.md) instead.
+        > Don't paste API keys, passwords, tokens, access links, private conversations or other people's data. Describe them instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What Otto did, including any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Use synthetic data where you can.
+      placeholder: |
+        1. Ask Otto to ...
+        2. Approve ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: Remove keys, tokens, email addresses and private content first.
+  - type: markdown
+    attributes:
+      value: '## Environment'
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run Otto?
+      options:
+        - Desktop app
+        - From source (npm start)
+        - From source (npm run dev)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Otto version
+      description: 'Desktop: Otto → About Otto. Source: `git rev-parse --short HEAD`.'
+      placeholder: ex. 0.1.10 or 6c3af62
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: ex. macOS 15.6 on Apple M3, or Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model connection
+      placeholder: ex. OpenAI API key, GPT-6.1 Sol
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Where did it happen?
+      multiple: true
+      options:
+        - Chat in the app
+        - Telegram
+        - WhatsApp
+        - Setup or onboarding
+        - Other
