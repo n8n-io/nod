@@ -583,7 +583,7 @@ test(
 );
 
 test(
-  'a memory command gets a digest from the outbox without a turn and only for the paired sender',
+  'memory and usage commands get a digest from the outbox without a turn and only for the paired sender',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
     const schema = `test_channel_memory_${randomUUID().replaceAll('-', '')}`;

@@ -112,6 +112,63 @@ async function sessionEvents(sessionRoot: string) {
   return entries;
 }
 
+async function backgroundCapture(stack: Stack, background: Set<string>) {
+  const models: Array<{ tokens: number; cost?: number }> = [];
+  const legacy =
+    !stack.observations.length &&
+    !stack.prompts.length &&
+    (await stack.pool.query("SELECT to_regclass('inspector_records') IS NOT NULL AS found")).rows[0]
+      .found;
+  if (legacy) {
+    const prompts = (
+      await stack.pool.query('SELECT turn_id,payload FROM inspector_prompts ORDER BY created_at,id')
+    ).rows.map((row) => ({ turnId: row.turn_id, instruction: row.payload.instruction }));
+    const records = (
+      await stack.pool.query('SELECT * FROM inspector_records ORDER BY started_at,id')
+    ).rows.filter((record) => background.has(record.turn_id));
+    for (const record of records)
+      if (record.kind === 'model')
+        models.push({ tokens: record.usage?.totalTokens ?? 0, cost: record.usage?.costUsd });
+    const tools = records
+      .filter((record) => record.kind === 'tool')
+      .map((record): ToolCall => ({
+        turnId: record.turn_id,
+        name: record.name,
+        input: record.input,
+        output: JSON.stringify(record.output ?? record.error ?? ''),
+        isError: record.status !== 'succeeded',
+        at: new Date(record.started_at).getTime(),
+        lead: '',
+      }));
+    return { prompts, tools, models };
+  }
+  const tools: ToolCall[] = [];
+  const started = new Map<string, ToolCall>();
+  for (const { turnId, event } of stack.observations) {
+    if (!background.has(turnId)) continue;
+    if (event.type === 'tool_start') {
+      const call: ToolCall = {
+        turnId,
+        name: event.name,
+        input: event.input,
+        output: '',
+        isError: false,
+        at: Date.parse(event.startedAt),
+        lead: '',
+      };
+      started.set(event.id, call);
+      tools.push(call);
+    } else if (event.type === 'tool_end') {
+      const call = started.get(event.id);
+      if (call) {
+        call.output = JSON.stringify(event.output ?? event.error ?? '');
+        call.isError = event.status !== 'succeeded';
+      }
+    } else models.push({ tokens: event.totalTokens, cost: event.costUsd ?? undefined });
+  }
+  return { prompts: stack.prompts, tools, models };
+}
+
 export async function collect(options: {
   task: string;
   stack: Stack;
@@ -207,37 +264,19 @@ export async function collect(options: {
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));
-  const prompts = stack.prompts;
+  const capture = await backgroundCapture(
+    stack,
+    new Set(turns.filter((turn) => turn.background).map((turn) => turn.id)),
+  );
+  const prompts = capture.prompts;
   requireBackgroundPrompts(turns, prompts);
-  const background = new Set(turns.filter((turn) => turn.background).map((turn) => turn.id));
-  const started = new Map<string, ToolCall>();
-  for (const { turnId, event } of stack.observations) {
-    if (!background.has(turnId)) continue;
-    if (event.type === 'tool_start') {
-      const call: ToolCall = {
-        turnId,
-        name: event.name,
-        input: event.input,
-        output: '',
-        isError: false,
-        at: Date.parse(event.startedAt),
-        lead: '',
-      };
-      started.set(event.id, call);
-      tools.push(call);
-    } else if (event.type === 'tool_end') {
-      const call = started.get(event.id);
-      if (call) {
-        call.output = JSON.stringify(event.output ?? event.error ?? '');
-        call.isError = event.status !== 'succeeded';
-      }
-    } else {
-      modelCalls++;
-      tokens += event.totalTokens;
-      if (typeof event.costUsd === 'number') {
-        cost += event.costUsd;
-        costKnown = true;
-      }
+  tools.push(...capture.tools);
+  for (const model of capture.models) {
+    modelCalls++;
+    tokens += model.tokens;
+    if (typeof model.cost === 'number') {
+      cost += model.cost;
+      costKnown = true;
     }
   }
   tools.sort((a, b) => a.at - b.at);

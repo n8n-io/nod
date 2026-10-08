@@ -6,6 +6,7 @@ import type { MemoryCurator } from '../ports/memory-curator.ts';
 import { actionEffect } from '../shared/action-effect.ts';
 import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
 import { actionTitle } from './action-presentation.ts';
+import { formattingLocale, localeRegion, timeZoneRegion } from '../shared/date-locale.ts';
 import type { UsageReport } from './usage-report.ts';
 
 export const spendingLimitReached =
@@ -50,6 +51,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
       action text NOT NULL, effect text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
+    CREATE INDEX IF NOT EXISTS app_actions_turn ON app_actions(turn_id);
     CREATE TABLE IF NOT EXISTS spending_limits (
       owner_id text PRIMARY KEY, monthly_usd double precision NOT NULL CHECK (monthly_usd > 0)
     );`);
@@ -129,7 +131,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
   async function entries(before?: { at: string; id: string }) {
     const { rows } = await pool.query(
       `SELECT u.id,u.source,u.source_id,u.read_only,u.channel,u.status,u.error,u.created_at,
-         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id),u.prompt),400) AS text,c.cost,c.unpriced,
+         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id AND owner_id=$1),u.prompt),400) AS text,c.cost,c.unpriced,
          (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
          (SELECT array_agg(action ORDER BY created_at) FROM app_actions WHERE turn_id=u.id) AS actions
        FROM turns u
@@ -148,7 +150,10 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
       error: row.status === 'failed' ? row.error : null,
       costUsd: row.cost,
       unpriced: Boolean(row.unpriced),
-      actions: (row.actions ?? []).map((name: string) => actionTitle(name)),
+      actions: (row.actions ?? []).map((name: string) => {
+        const { app, label } = actionTitle(name);
+        return app ? `${app}: ${label}` : label;
+      }),
     }));
     const last = page.at(-1);
     return {
@@ -208,13 +213,25 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     const start = Date.parse(view.month.start);
     const items = [...view.entries];
     let next = view.next;
-    while (next && Date.parse(next.at) >= start && items.length < 1000) {
+    while (next && Date.parse(next.at) >= start) {
       const page = await entries(next);
       items.push(...page.entries);
       next = page.next;
     }
-    const timeZone = (await pool.query(`SELECT ${zone} AS zone`, [ownerId])).rows[0].zone;
-    return { view, entries: items.filter((entry) => Date.parse(entry.at) >= start), timeZone };
+    const preference = (
+      await pool.query(
+        `SELECT ${zone} AS zone,(SELECT locale FROM preferences WHERE owner_id=$1),
+           COALESCE((SELECT hour_cycle FROM preferences WHERE owner_id=$1),'auto') AS hour_cycle`,
+        [ownerId],
+      )
+    ).rows[0];
+    return {
+      view,
+      entries: items.filter((entry) => Date.parse(entry.at) >= start),
+      timeZone: preference.zone,
+      locale: formattingLocale(localeRegion(preference.locale) ?? timeZoneRegion(preference.zone)),
+      hourCycle: preference.hour_cycle,
+    };
   }
 
   function registerRoutes(app: FastifyInstance) {

@@ -1,9 +1,12 @@
+import { clockOptions } from '../shared/date-locale.ts';
 import type { TrustEntry, TrustView } from '../shared/trust.ts';
 
 export interface UsageReport {
   view: TrustView;
   entries: TrustEntry[];
   timeZone: string;
+  locale: string;
+  hourCycle: 'auto' | 'h12' | 'h23';
 }
 
 const dollars = (value: number) =>
@@ -19,8 +22,8 @@ function summary(view: TrustView) {
   return `In the last 7 days, Otto did ${week.things} ${week.things === 1 ? 'thing' : 'things'}.${reached} It spent ${dollars(week.spentUsd)}.`;
 }
 
-function month(view: TrustView, timeZone: string) {
-  const name = new Date(view.month.start).toLocaleDateString('en-GB', {
+function month({ view, timeZone, locale }: UsageReport) {
+  const name = new Date(view.month.start).toLocaleDateString(locale, {
     month: 'long',
     year: 'numeric',
     timeZone,
@@ -33,12 +36,12 @@ function month(view: TrustView, timeZone: string) {
   return `${spent} On track for ${dollars(view.month.forecastUsd)}${over}.`;
 }
 
-export function usageDigest(view: TrustView, timeZone: string, link: string | null) {
+export function usageDigest(report: UsageReport, link: string | null) {
   return [
-    summary(view),
-    month(view, timeZone),
-    view.month.unpriced ? 'Some usage runs on your model plan and has no price.' : '',
-    `The PDF lists every run that cost money this month.${link ? ` Open Trust: ${link}` : ''}`,
+    summary(report.view),
+    month(report),
+    report.view.month.unpriced ? 'Some usage has no price, so it isn’t counted.' : '',
+    `The PDF lists this month’s runs.${link ? ` Open Trust: ${link}` : ''}`,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -61,12 +64,14 @@ const winAnsi: Record<string, number> = {
 };
 
 function pdfText(value: string) {
-  const bytes = [...value].map((char) => {
-    const code = char.codePointAt(0)!;
-    const mapped = winAnsi[char] ?? (code >= 32 && code <= 255 ? code : 63);
-    const byte = String.fromCharCode(mapped);
-    return mapped === 40 || mapped === 41 || mapped === 92 ? `\\${byte}` : byte;
-  });
+  const bytes = [...value.replace(/ ?[\p{Extended_Pictographic}\u200d\ufe0f]+/gu, '')].map(
+    (char) => {
+      const code = char.codePointAt(0)!;
+      const mapped = winAnsi[char] ?? (code >= 32 && code <= 255 ? code : 63);
+      const byte = String.fromCharCode(mapped);
+      return mapped === 40 || mapped === 41 || mapped === 92 ? `\\${byte}` : byte;
+    },
+  );
   return `(${bytes.join('')})`;
 }
 
@@ -76,7 +81,7 @@ const width = (text: string, size: number) =>
   1000;
 
 export function usagePdf(report: UsageReport, exported: Date) {
-  const { view, entries, timeZone } = report;
+  const { view, entries, timeZone, locale } = report;
   const lines: Array<[number, number, string, number, string?]> = [];
   const pages: (typeof lines)[] = [lines];
   let y = 790;
@@ -98,18 +103,18 @@ export function usagePdf(report: UsageReport, exported: Date) {
   };
   line('Otto usage', 20, true, 30);
   line(
-    `Exported ${exported.toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone })}`,
+    `Exported ${exported.toLocaleString(locale, { day: 'numeric', month: 'long', year: 'numeric', ...clockOptions(locale, report.hourCycle), timeZone })}`,
     9,
     false,
     24,
   );
-  for (const text of [summary(view), month(view, timeZone)]) line(text, 10, false, 16);
+  for (const text of [summary(view), month(report)]) line(text, 10, false, 16);
   y -= 12;
-  line('Runs that cost money this month', 12, true, 22);
+  line('This month’s runs', 12, true, 22);
   let day = '';
   for (const entry of entries) {
     const at = new Date(entry.at);
-    const label = at.toLocaleDateString('en-GB', {
+    const label = at.toLocaleDateString(locale, {
       weekday: 'long',
       day: 'numeric',
       month: 'long',
@@ -120,8 +125,11 @@ export function usagePdf(report: UsageReport, exported: Date) {
       y -= 6;
       line(label, 9, true, 14);
     }
-    const time = at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone });
-    const did = [...new Set(entry.actions.map((item) => `${item.app}: ${item.label}`))].join(', ');
+    const time = at.toLocaleTimeString(locale, {
+      ...clockOptions(locale, report.hourCycle),
+      timeZone,
+    });
+    const did = [...new Set(entry.actions)].join(', ');
     line(
       `${time}  ${entry.title}${did ? ` (${did})` : ''}`,
       9,

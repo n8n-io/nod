@@ -7422,14 +7422,14 @@ test(
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           read_only boolean NOT NULL DEFAULT false,error text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
-        CREATE TABLE messages(id uuid,text text);
-        CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text);
+        CREATE TABLE messages(id uuid,owner_id text,text text);
+        CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
         CREATE TABLE notifications(owner_id text,turn_id uuid,summary text)`);
       await pool.query(
         `INSERT INTO turns(id,owner_id,source,source_id,prompt,created_at) VALUES
-          ($1,'owner','user',NULL,'Tell Sam we take the quote',now()-interval '2 hours'),
-          ($2,'owner','schedule',$4,'Run the morning brief',now()-interval '1 hour'),
+          ($1,'owner','user',NULL,'Tell Sam we take the quote',greatest(now()-interval '2 hours',date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),
+          ($2,'owner','schedule',$4,'Run the morning brief',greatest(now()-interval '1 hour',(date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')+interval '1 millisecond')),
           ($3,'other','user',NULL,'Foreign request',now())`,
         [chat, scheduled, foreign, `schedule:${schedule}:1:now`],
       );
@@ -7539,7 +7539,7 @@ test(
           ['Tell Sam we take the quote', 'chat', 0.5],
         ],
       );
-      assert.deepEqual(view.entries[1].actions, [{ app: 'Gmail', label: 'send email' }]);
+      assert.deepEqual(view.entries[1].actions, ['Gmail: send email']);
       assert.equal(view.entries[0].unpriced, true);
       const report = await ledger.report();
       assert.deepEqual(

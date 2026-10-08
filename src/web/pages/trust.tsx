@@ -149,7 +149,7 @@ function Limit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
               type="number"
               inputMode="decimal"
               min={1}
-              step={1}
+              step={0.01}
               value={draft}
               autoFocus
               aria-label="Monthly limit in US dollars"
@@ -160,11 +160,23 @@ function Limit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
             Save
           </Button>
           {view.limit && (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void save(null)}>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => void save(null)}
+            >
               Remove
             </Button>
           )}
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setDraft(undefined)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => setDraft(undefined)}
+          >
             Cancel
           </Button>
         </form>
@@ -223,9 +235,7 @@ function Cost({ view, onSaved }: { view: TrustView; onSaved(): void }) {
       </div>
       <Chart month={month} limit={limit?.monthlyUsd} />
       {month.unpriced && (
-        <p className="trust-limit-note">
-          Some usage runs on your model plan and has no price, so it isn’t counted here.
-        </p>
+        <p className="trust-limit-note">Some usage has no price, so it isn’t counted here.</p>
       )}
     </section>
   );
@@ -234,7 +244,7 @@ function Cost({ view, onSaved }: { view: TrustView; onSaved(): void }) {
 function Entry({ entry }: { entry: TrustEntry }) {
   const format = useDateFormat();
   const { icon: Icon, label } = sources[entry.source];
-  const did = [...new Set(entry.actions.map((item) => `${item.app}: ${item.label}`))].join(', ');
+  const did = [...new Set(entry.actions)].join(', ');
   return (
     <li className="trust-entry">
       <Icon size={16} aria-hidden="true" />

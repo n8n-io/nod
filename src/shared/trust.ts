@@ -9,7 +9,7 @@ export interface TrustEntry {
   error: string | null;
   costUsd: number | null;
   unpriced: boolean;
-  actions: Array<{ app: string; label: string }>;
+  actions: string[];
 }
 
 export interface TrustPage {

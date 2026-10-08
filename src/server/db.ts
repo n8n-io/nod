@@ -48,6 +48,7 @@ export async function initializeDatabase() {
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS channel_source_id text;
     CREATE UNIQUE INDEX IF NOT EXISTS turns_owner_source ON turns(owner_id,source_id) WHERE source_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS turns_thread_queue ON turns(thread_id,status,created_at,id);
+    CREATE INDEX IF NOT EXISTS turns_owner_time ON turns(owner_id,created_at,id);
     CREATE TABLE IF NOT EXISTS turn_events (
       id uuid PRIMARY KEY, turn_id uuid NOT NULL REFERENCES turns(id), type text NOT NULL,
       summary text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()

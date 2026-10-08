@@ -129,6 +129,7 @@ export async function startStack(options: {
   process.env.OTTO_MODE = 'local';
   process.env.OTTO_DATA_ROOT = join(directory, '.local');
   process.env.NODE_ENV = 'production';
+  process.env.DEV_INSPECTOR = 'true';
   process.env[keyVariables[model.provider]] = model.apiKey;
   process.chdir(appSource);
 

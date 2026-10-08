@@ -28,6 +28,9 @@ export function BrowserScreen({
   const [capturePaused, setCapturePaused] = useState(false);
   const imageUrl = useRef('');
   useEffect(() => {
+    if (!currentScreen) setEnlarged(false);
+  }, [currentScreen]);
+  useEffect(() => {
     let stopped = false,
       timer: ReturnType<typeof setTimeout>;
     let blockedActivity: string | null = null;
@@ -153,7 +156,10 @@ export function BrowserScreen({
                     const id = browserId;
                     setStoppingBrowser(id);
                     void post('/api/thread/stop')
-                      .then(() => onStopped(id))
+                      .then(() => {
+                        setError('');
+                        onStopped(id);
+                      })
                       .catch((cause) => setError(errorMessage(cause)))
                       .finally(() => setStoppingBrowser(undefined));
                   }}

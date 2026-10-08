@@ -987,7 +987,7 @@ async function initializeApplication(
               )
             : null;
           return {
-            text: usageDigest(report.view, report.timeZone, link),
+            text: usageDigest(report, link),
             attachments: file ? [file] : [],
           };
         }

@@ -81,10 +81,11 @@ export function createPiMemoryCurator(options: {
           reasoning: effort === 'off' ? undefined : effort,
         },
       );
-      report?.({
-        model: model.id,
-        costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
-      });
+      if (reply.usage?.totalTokens)
+        report?.({
+          model: model.id,
+          costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
+        });
       if (reply.stopReason === 'error' || reply.stopReason === 'aborted')
         throw new Error('The memory model is unavailable.');
       return json(
