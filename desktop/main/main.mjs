@@ -37,6 +37,7 @@ import {
 } from './notifications.mjs';
 import { createAppPreferencesStore } from './app-preferences.mjs';
 import { createChatReadCursorStore } from './chat-read-cursors.mjs';
+import { saveArtifactDownload } from './downloads.mjs';
 import { createDesktopLifecycle, desktopSetupMode } from './lifecycle.mjs';
 import { createDesktopUpdater, createUpdateSource, startDesktopUpdateChecks } from './updates.mjs';
 
@@ -337,6 +338,27 @@ function isEngine(event) {
     event.senderFrame === event.sender.mainFrame &&
     trustedAppURL(event.senderFrame?.url)
   );
+}
+
+function saveEngineDownload(event, item, sender, frame) {
+  if (!isEngine({ sender, senderFrame: frame })) return;
+  saveArtifactDownload(event, item, {
+    origin: engineOrigin,
+    directory: app.getPath('downloads'),
+    onError: async (recoveryPath) => {
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        message: 'Otto could not save the file to Downloads.',
+        detail: recoveryPath
+          ? 'The downloaded file is available in a temporary folder.'
+          : 'Try downloading the file again.',
+        buttons: recoveryPath ? ['Show file', 'Close'] : ['OK'],
+        cancelId: recoveryPath ? 1 : 0,
+        noLink: true,
+      });
+      if (recoveryPath && response === 0) shell.showItemInFolder(recoveryPath);
+    },
+  });
 }
 
 function trustedAppURL(value) {
@@ -1130,6 +1152,7 @@ else {
       }
       nativeTheme.on('updated', publishPreferences);
       const appSession = session.fromPartition('persist:otto-app');
+      appSession.on('will-download', saveEngineDownload);
       appSession.webRequest.onBeforeSendHeaders((details, callback) => {
         const headers = { ...details.requestHeaders };
         for (const key of Object.keys(headers))
