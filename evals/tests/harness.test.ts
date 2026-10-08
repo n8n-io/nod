@@ -8,8 +8,12 @@ import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
+import Fastify from 'fastify';
 import type { RuntimeContext } from '../../src/ports/agent.ts';
 import { createAgentRuntime } from '../../src/runtime/index.ts';
+import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
+import { createAccountSession } from '../../src/server/account.ts';
+import type { StoredAccount } from '../../src/server/account-store.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
 import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
@@ -26,7 +30,7 @@ import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts
 import { select } from '../src/run.ts';
 import { scenarios } from '../src/scenarios/index.ts';
 import { createSession, waitUntil } from '../src/session.ts';
-import type { Stack } from '../src/stack.ts';
+import { createStackRequest, type Stack } from '../src/stack.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
@@ -456,43 +460,77 @@ test('a case waits for observed work and reports a missing test condition', asyn
 });
 
 test('scenario API calls use authenticated local transport and refuse outside targets', async (t) => {
-  const received: Array<{ method: string; path: string; body: string }> = [];
-  const server = createServer(async (request, response) => {
-    if (request.headers.cookie !== 'synthetic-access=fixture') {
-      response.writeHead(401).end();
-      return;
-    }
-    let body = '';
-    for await (const chunk of request) body += String(chunk);
-    received.push({ method: request.method!, path: request.url!, body });
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ accepted: true }));
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
-  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const probe = createServer();
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  const port = (probe.address() as { port: number }).port;
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  const origin = `http://127.0.0.1:${port}`;
+  const key = 'a'.repeat(43);
+  const cookie = `${accessCookie(port)}=${key}`;
+  const account: StoredAccount = {
+    theme: 'system',
+    onboardingCompleted: false,
+    displayName: null,
+    usageData: false,
+  };
+  let writes = 0;
+  let started = 0;
+  const app = Fastify();
+  t.after(() => app.close());
+  registerLocalAccess(app, port, { key });
+  createAccountSession({
+    origin,
+    localUser: { id: 'synthetic-owner', name: 'Fixture', email: null, avatarUrl: null },
+    accounts: {
+      async read() {
+        return account;
+      },
+      async update(owner, input) {
+        assert.equal(owner, 'synthetic-owner');
+        writes++;
+        account.displayName = input.name ?? account.displayName;
+        account.onboardingCompleted = input.onboardingCompleted ?? account.onboardingCompleted;
+        return account;
+      },
+    },
+    async start(owner) {
+      assert.equal(owner, 'synthetic-owner');
+      started++;
+    },
+  }).register(app);
+  await app.listen({ host: '127.0.0.1', port });
+  const body = { name: 'Synthetic', onboardingCompleted: true };
+  for (const [headers, status] of [
+    [{ origin }, 401],
+    [{ cookie }, 403],
+  ] as const) {
+    const response = await fetch(`${origin}/api/account`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, status);
+    await response.body?.cancel();
+  }
+  assert.equal(writes, 0);
+  assert.equal(started, 0);
   let calls = 0;
+  const request = createStackRequest(origin, cookie);
   const stack = {
     request(path, init) {
       calls++;
-      return fetch(new URL(path, origin), {
-        ...init,
-        headers: { ...init?.headers, cookie: 'synthetic-access=fixture' },
-      });
+      return request(path, init);
     },
   } as Stack;
   const session = createSession({ stack, user: {}, deadline: Date.now() + 1000 });
-  assert.deepEqual(await session.api('POST', '/api/account?fixture=true', { name: 'Synthetic' }), {
-    status: 200,
-    body: { accepted: true },
-  });
-  assert.deepEqual(received, [
-    {
-      method: 'POST',
-      path: '/api/account?fixture=true',
-      body: JSON.stringify({ name: 'Synthetic' }),
-    },
-  ]);
+  const updated = await session.api('PATCH', '/api/account', body);
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.user.name, 'Synthetic');
+  assert.equal(updated.body.settings.onboardingCompleted, true);
+  assert.equal(account.displayName, 'Synthetic');
+  assert.equal(account.onboardingCompleted, true);
+  assert.equal(writes, 1);
+  assert.equal(started, 1);
   for (const path of [
     'https://outside.example.test/api',
     '//outside.example.test/api',

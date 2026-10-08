@@ -61,4 +61,6 @@ After rebasing onto main `d783d5ac`, the unchanged cancellation cases passed 53/
 
 After the security changes on main `a5b2fdc2`, implementation `8303e83a` passed 723/723 integration checks and 54/54 focused checks in all three attempts. CI then exposed an inherited eval harness compile failure: the scenario API helper still used the public server URL removed from the stack. The helper now uses the stack's authenticated transport and rejects outside targets before dispatch; eval typechecking and all 41 harness tests pass. The failed CI log is preserved as `ci-failed.log`.
 
+PR review caught a missing Origin header in that eval transport fix. The replacement regression exercises the real local-access and account routes: missing authentication returns 401, missing Origin returns 403, and the authenticated same-origin onboarding request updates account state and starts exactly once. Its failure before the Origin fix is preserved in `eval-origin-red.log`.
+
 No UI redesign or live-provider acceptance is claimed. The attachment's final disabled state and repeated confirmations are observed facts; which earlier action originally paused that schedule remains unknown.
