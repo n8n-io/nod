@@ -24,6 +24,7 @@ export interface ChatMessage {
 }
 
 export interface Run {
+  api: Session['api'];
   task: string;
   messages: ChatMessage[];
   replies: string[];
@@ -318,6 +319,7 @@ export async function collect(options: {
     seconds: options.seconds,
     world,
     apps: world.apps,
+    api: session.api,
     read: (path) => session.workspace.read(filePath(path)),
     async text(path) {
       return (await session.workspace.read(filePath(path)))?.toString('utf8') ?? '';

@@ -5,7 +5,7 @@ import { createApps } from './apps.ts';
 
 export function appCatalog(entries: IntegrationServiceInfo[]) {
   const apps = createApps({ name: 'Alex Rivera', email: 'alex@rivera.example' }, {});
-  const requests: Array<{ service: string; url: string; callbackUrl: string }> = [];
+  const requests: Array<{ service: string; url: string }> = [];
   apps.provider.listServices = async () => structuredClone(entries);
   apps.provider.createSession = async () => ({
     id: randomUUID(),
@@ -14,7 +14,7 @@ export function appCatalog(entries: IntegrationServiceInfo[]) {
         throw new Error('This service is not available.');
       const accountId = randomUUID();
       const url = `https://accounts.example.net/connect/${accountId}`;
-      requests.push({ service, url, callbackUrl });
+      requests.push({ service, url });
       apps.callbacks.set(accountId, callbackUrl);
       return { accountId, url };
     },
@@ -83,22 +83,18 @@ export function catalogConnection(input: {
           pass: world.requests.length === 1 && world.requests[0].service === input.slug,
           evidence: JSON.stringify(world.requests.map(({ service }) => service)),
         })),
-        check('catalog-owned-setup-link', async () => {
+        check('catalog-owned-setup-link', async (run) => {
           const request = world.requests[0];
           if (!request) return { pass: false, evidence: 'No sign-in attempt exists.' };
           const hash = createHash('sha256').update(request.url).digest('hex');
-          const response = await fetch(new URL('/api/apps/setup-status', request.callbackUrl), {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ hashes: [hash] }),
-          });
-          const result = (await response.json()) as {
+          const response = await run.api('POST', '/api/apps/setup-status', { hashes: [hash] });
+          const result = response.body as {
             completed?: string[];
             apps?: Array<{ hash: string; slug: string }>;
           };
           return {
             pass:
-              response.ok &&
+              response.status === 200 &&
               result.completed?.length === 0 &&
               result.apps?.some((app) => app.hash === hash && app.slug === input.slug) === true,
             evidence: `Owned setup-status returned ${response.status}; pending ${result.apps?.map((app) => app.slug).join(', ') || 'none'}.`,

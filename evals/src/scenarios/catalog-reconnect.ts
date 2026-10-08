@@ -31,7 +31,6 @@ export default scenario({
         service: string;
         originalAccountId: string;
         url: string;
-        callbackUrl: string;
       }>,
     };
     const createSession = apps.provider.createSession.bind(apps.provider);
@@ -55,22 +54,19 @@ export default scenario({
       world.deleted.push(id);
       await remove(id);
     };
-    apps.provider.reconnectAccount = async (ownerId, service, accountId, callbackUrl) => {
+    apps.provider.reconnectAccount = async (ownerId, service, accountId) => {
       const original = await inspect(accountId, ownerId);
       if (!world.expired || original.service !== service || original.accountEmail !== email)
         throw new Error('The original account could not be verified.');
       const pending = randomUUID();
       const url = `https://accounts.example.net/reconnect/${pending}`;
-      world.requests.push({ service, originalAccountId: accountId, url, callbackUrl });
+      world.requests.push({ service, originalAccountId: accountId, url });
       return { accountId: pending, url, authConfigId };
     };
     return world;
   },
   async play(session, world) {
-    const callback = world.apps.callbacks.values().next().value;
-    if (!callback) throw new Error('The seeded connection did not produce a callback.');
-    const url = new URL('/api/apps', callback);
-    const list = async () => (await (await fetch(url)).json()) as Connection[];
+    const list = async () => (await session.api('GET', '/api/apps')).body as Connection[];
     world.original = (await list()).find((app) => app.slug === 'gmail' && app.connectionId);
     if (!world.original?.accountId) throw new Error('The saved account was not seeded.');
     world.expired = true;
@@ -132,21 +128,17 @@ export default scenario({
           evidence: `${rows.length} saved Gmail rows; ${world.deleted.length} deletions; ${world.apps.calls.length} app executions.`,
         };
       }),
-      check('reconnect-owned-setup-link', async () => {
+      check('reconnect-owned-setup-link', async (run) => {
         const request = world.requests[0];
         if (!request) return false;
         const hash = createHash('sha256').update(request.url).digest('hex');
-        const response = await fetch(new URL('/api/apps/setup-status', request.callbackUrl), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ hashes: [hash] }),
-        });
-        const result = (await response.json()) as {
+        const response = await run.api('POST', '/api/apps/setup-status', { hashes: [hash] });
+        const result = response.body as {
           completed: string[];
           apps: Array<{ hash: string; slug: string }>;
         };
         return (
-          response.ok &&
+          response.status === 200 &&
           result.completed.length === 0 &&
           result.apps.some((app) => app.hash === hash && app.slug === 'gmail')
         );
