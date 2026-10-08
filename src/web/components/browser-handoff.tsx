@@ -133,7 +133,8 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
     if (
       event.key.length === 1 &&
       !event.metaKey &&
-      (!event.ctrlKey || event.getModifierState('AltGraph'))
+      (event.getModifierState('AltGraph') ||
+        (!event.ctrlKey && (!event.altKey || /Mac|iPhone|iPad/.test(window.navigator.platform))))
     ) {
       event.preventDefault();
       return queue({ type: 'text', text: event.key });

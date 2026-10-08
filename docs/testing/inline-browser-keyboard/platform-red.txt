@@ -1,0 +1,60 @@
+▶ native handoff keyboard input preserves layout characters, editing and paste
+  ✔ Option characters reach the remote login field (718.210334ms)
+  ✔ AltGraph characters keep their text instead of becoming Control shortcuts (90.674625ms)
+  ✔ ordinary and Shift characters retain selection, deletion and field navigation (109.41275ms)
+  ✖ bare Alt shortcuts remain local on Linux x86_64 (63.503708ms)
+(node:13) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added to [Socket]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✖ bare Alt shortcuts remain local on Win32 (50.761292ms)
+{"event":"browser_command","at":"2026-10-08T09:55:23.114Z","phase":"cleanup","outcome":"completed","elapsedMs":54}
+✖ native handoff keyboard input preserves layout characters, editing and paste (1162.662626ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 3
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2475.711418
+
+✖ failing tests:
+
+test at tests/browser.test.ts:74:2273
+✖ bare Alt shortcuts remain local on Linux x86_64 (63.503708ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at Object.run (/app/tests/browser.test.ts:3594:20)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3633:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3602:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/browser.test.ts:74:2273
+✖ bare Alt shortcuts remain local on Win32 (50.761292ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at Object.run (/app/tests/browser.test.ts:3594:20)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3633:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3602:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

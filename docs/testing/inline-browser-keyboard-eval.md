@@ -8,12 +8,12 @@ The case uses the real `BrowserHandoff` component, synthetic layout-resolved key
 
 ## Frozen cases and checks
 
-| Case     | Input variation                                                                           | Required observable result                                                                                                                 |
-| -------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| KEY01.v1 | Option-generated `@` inside a synthetic email address                                     | TEXT: the destination contains the complete address, including `@`, exactly once.                                                          |
-| KEY02.v1 | AltGraph-generated `@` with Control and Alt set; another Option-generated symbol          | TEXT: the destination contains the resolved characters exactly once.                                                                       |
-| KEY03.v2 | Ordinary and Shift-generated text; Control/Command+A; Backspace; Tab and Shift+Tab; paste | EDIT: selection and deletion affect the destination field; FOCUS: Tab moves focus and Shift+Tab restores it; PASTE: text is inserted once. |
-| KEY04.v1 | Alt navigation and Control+Alt shortcuts without AltGraph                                 | SHORTCUT: unsupported modifier combinations do not insert text or navigate the destination.                                                |
+| Case     | Input variation                                                                              | Required observable result                                                                                                                 |
+| -------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| KEY01.v1 | Option-generated `@` inside a synthetic email address                                        | TEXT: the destination contains the complete address, including `@`, exactly once.                                                          |
+| KEY02.v1 | AltGraph-generated `@` with Control and Alt set; another Option-generated symbol             | TEXT: the destination contains the resolved characters exactly once.                                                                       |
+| KEY03.v3 | Ordinary and Shift-generated text; Control/Command+A; Backspace; Tab and Shift+Tab; paste    | EDIT: selection and deletion affect the destination field; FOCUS: Tab moves focus and Shift+Tab restores it; PASTE: text is inserted once. |
+| KEY04.v2 | Alt navigation, Control+Alt without AltGraph, and bare Alt+letter/digit on Linux and Windows | SHORTCUT: unsupported modifier combinations do not insert text or navigate the destination.                                                |
 
 All listed checks are required for their case, scored by code against the destination page. Every required check must pass in the same run. Measurement errors and missing browser dependencies are not passes. Run once before the fix and once after, then repeat the unchanged suite in full integration and final-commit CI. The behavior is deterministic; model cost is not applicable. Each focused run has a 120-second limit.
 
@@ -21,13 +21,13 @@ All listed checks are required for their case, scored by code against the destin
 
 The handler rejects all `altKey` events before considering their resolved character. The prediction is a destination email missing `@` for Option and AltGraph input while ordinary text succeeds. A correctly populated destination on the unchanged component would disprove this hypothesis.
 
-The proposed fix handles resolved printable text before rejecting unsupported Alt shortcuts. It does not select a keyboard layout or special-case `@`. Existing Command/Control shortcuts and paste keep their paths. Composition and dead-key support are outside this case.
+The fix handles resolved printable text before rejecting unsupported Alt shortcuts. Bare Option characters are accepted on Apple platforms; explicit AltGraph characters are accepted on all platforms. It does not select a keyboard layout or special-case `@`. Existing Command/Control shortcuts and paste keep their paths. Composition and dead-key support are outside this case.
 
 ## Attempts
 
 Base implementation: `7c097be74846f3fb909596d50bbe4dccf17ce90b`.
 
-Attempt 1 on the unchanged base reproduced KEY01 and KEY02: `loginexample.test` instead of `login@example.test`, and empty text instead of `@€ł`. KEY03.v1 failed because its answer key assumed Shift+Tab leaves the caret at the end. Chromium selects the returned field instead. This is an evaluator fault, not a product failure. KEY03.v2 explicitly verifies returned focus and presses ArrowRight to collapse the selection before appending. The original attempt is retained in `red.log`; the corrected suite is frozen again before the implementation changes.
+Attempt 1 on the unchanged base reproduced KEY01 and KEY02: `loginexample.test` instead of `login@example.test`, and empty text instead of `@€ł`. KEY03.v1 failed because its answer key assumed Shift+Tab leaves the caret at the end. Chromium selects the returned field instead. This is an evaluator fault, not a product failure. KEY03.v2 explicitly verifies returned focus and presses ArrowRight to collapse the selection before appending. The original attempt is retained in [red.txt](inline-browser-keyboard/red.txt); the corrected suite is frozen again before the implementation changes.
 
 | Attempt | Build                                        | Base              | Holdout           | Editing, paste and ignored shortcuts | Outcome |
 | ------- | -------------------------------------------- | ----------------- | ----------------- | ------------------------------------ | ------- |
@@ -47,3 +47,14 @@ SHA-256 identifiers:
 - Passing attempt 3 log: `690bc8c472708dddb01989a45956b2bd8d36e6440d3b25c414bec8e74ed9a695`.
 
 Run the committed cases with `npm run test:integration`. The focused test name is `native handoff keyboard input preserves layout characters, editing and paste`. Full validation and the exact commit's CI are recorded on the pull request. These checks do not claim physical keyboard-layout, live account, or installed-release verification.
+
+## Independent review and expanded platform checks
+
+Review found that the first fix could turn bare Alt shortcuts on Windows/Linux into text. KEY04.v2 adds Linux and Windows platform cases asserting Alt+f and Alt+1 remain unprevented and insert nothing. KEY03.v3 strengthens the paste check: capture the destination before Command/Ctrl+V, require both shortcuts to remain unprevented, and then verify exactly one paste. The original version results above remain historical.
+
+The hypothesis predicted both non-Apple cases would fail on commit `9f3f1baf8cedf8021defe49d5b67368c5fa38354`. [The expanded red run](inline-browser-keyboard/platform-red.txt) confirmed both failures while the original three cases passed. Restricting bare Option text to Apple platforms fixed the regression; [the unchanged expanded cases](inline-browser-keyboard/platform-green.txt) then passed all five scenarios (six tests including the parent, zero failures or skips). Runtime remains Linux Chromium; client platform and key events are synthetic.
+
+- Final frozen test SHA-256: `fb8c96f4bdf5ecfc52a3f767daadabb447d52a3d147926527ffbfe91816e4ed7`.
+- Final handler SHA-256: `48eeced2c81cc807d2ae1cf99376930d8b2741b13599f2de28c2a99318c17c76`.
+
+Preserved logs: [original red](inline-browser-keyboard/red.txt), [corrected evaluator red](inline-browser-keyboard/red-v2.txt), [initial fix green](inline-browser-keyboard/green.txt), [platform regression red](inline-browser-keyboard/platform-red.txt), and [platform fix green](inline-browser-keyboard/platform-green.txt).

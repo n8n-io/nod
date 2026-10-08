@@ -3530,18 +3530,21 @@ test(
     const cases = [
       {
         name: 'Option characters reach the remote login field',
-        run: async (key: (input: KeyboardEventInit) => Promise<void>) => {
+        platform: 'MacIntel',
+        run: async (key: (input: KeyboardEventInit) => Promise<boolean>) => {
           for (const value of 'login') await key({ key: value });
           await key({ key: '@', code: 'Digit2', altKey: true });
           for (const value of 'example.test') await key({ key: value });
           assert.equal((await read()).account, 'login@example.test');
           await key({ key: '€', altKey: true, shiftKey: true });
+          assert.equal(await key({ key: 'a', metaKey: true, altKey: true }), false);
           assert.equal((await read()).account, 'login@example.test€');
         },
       },
       {
         name: 'AltGraph characters keep their text instead of becoming Control shortcuts',
-        run: async (key: (input: KeyboardEventInit) => Promise<void>) => {
+        platform: 'Linux x86_64',
+        run: async (key: (input: KeyboardEventInit) => Promise<boolean>) => {
           for (const input of [
             { key: '@', code: 'KeyQ' },
             { key: '€', code: 'KeyE' },
@@ -3553,7 +3556,8 @@ test(
       },
       {
         name: 'ordinary and Shift characters retain selection, deletion and field navigation',
-        run: async (key: (input: KeyboardEventInit) => Promise<void>) => {
+        platform: 'MacIntel',
+        run: async (key: (input: KeyboardEventInit) => Promise<boolean>) => {
           await key({ key: '@' });
           await key({ key: '@', code: 'Digit2', shiftKey: true });
           assert.equal((await read()).account, '@@');
@@ -3582,6 +3586,16 @@ test(
           assert.equal((await read()).account, 'y!b');
         },
       },
+      ...['Linux x86_64', 'Win32'].map((platform) => ({
+        name: `bare Alt shortcuts remain local on ${platform}`,
+        platform,
+        run: async (key: (input: KeyboardEventInit) => Promise<boolean>) => {
+          for (const value of ['f', '1'])
+            assert.equal(await key({ key: value, altKey: true }), false);
+          await key({ key: 'm' });
+          assert.equal((await read()).account, 'm');
+        },
+      })),
     ];
     try {
       for (const entry of cases)
@@ -3598,27 +3612,32 @@ test(
             await delivered;
             return Response.json({ ok: true });
           });
+          Object.defineProperty(view.dom.window.navigator, 'platform', {
+            value: entry.platform,
+            configurable: true,
+          });
           const key = async (input: KeyboardEventInit) => {
+            const event = new view.dom.window.KeyboardEvent('keydown', {
+              ...input,
+              bubbles: true,
+              cancelable: true,
+            });
             await act(async () => {
-              view.element('.browser-handoff-screen').dispatchEvent(
-                new view.dom.window.KeyboardEvent('keydown', {
-                  ...input,
-                  bubbles: true,
-                  cancelable: true,
-                }),
-              );
+              view.element('.browser-handoff-screen').dispatchEvent(event);
               await delivered;
             });
+            return event.defaultPrevented;
           };
           try {
             await view.showFrame();
             await entry.run(key);
-            await key({ key: 'v', metaKey: true });
+            const before = (await read()).account;
+            assert.equal(await key({ key: 'v', metaKey: true }), false);
+            assert.equal(await key({ key: 'v', ctrlKey: true }), false);
             const paste = new view.dom.window.Event('paste', { bubbles: true, cancelable: true });
             Object.defineProperty(paste, 'clipboardData', {
               value: { getData: () => '+pasted@example.test\r\n' },
             });
-            const before = (await read()).account;
             await act(async () => {
               view.element('.browser-handoff-screen').dispatchEvent(paste);
               await delivered;

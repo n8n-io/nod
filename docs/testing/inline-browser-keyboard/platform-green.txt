@@ -1,0 +1,18 @@
+▶ native handoff keyboard input preserves layout characters, editing and paste
+  ✔ Option characters reach the remote login field (637.483834ms)
+  ✔ AltGraph characters keep their text instead of becoming Control shortcuts (86.603792ms)
+  ✔ ordinary and Shift characters retain selection, deletion and field navigation (107.291584ms)
+  ✔ bare Alt shortcuts remain local on Linux x86_64 (78.864542ms)
+(node:13) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added to [Socket]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✔ bare Alt shortcuts remain local on Win32 (71.882083ms)
+{"event":"browser_command","at":"2026-10-08T09:55:40.660Z","phase":"cleanup","outcome":"completed","elapsedMs":52}
+✔ native handoff keyboard input preserves layout characters, editing and paste (1104.846209ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2358.046834

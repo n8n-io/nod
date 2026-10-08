@@ -1,0 +1,61 @@
+▶ native handoff keyboard input preserves layout characters, editing and paste
+  ✖ Option characters reach the remote login field (696.331084ms)
+  ✖ AltGraph characters keep their text instead of becoming Control shortcuts (59.103417ms)
+  ✔ ordinary and Shift characters retain selection, deletion and field navigation (118.076042ms)
+{"event":"browser_command","at":"2026-10-08T09:51:45.634Z","phase":"cleanup","outcome":"completed","elapsedMs":51}
+✖ native handoff keyboard input preserves layout characters, editing and paste (994.03625ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 1
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2278.848208
+
+✖ failing tests:
+
+test at tests/browser.test.ts:74:1857
+✖ Option characters reach the remote login field (696.331084ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'loginexample.test'
+  - 'login@example.test'
+          ^
+  
+      at Object.run (/app/tests/browser.test.ts:3537:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3615:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3588:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'loginexample.test',
+    expected: 'login@example.test',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/browser.test.ts:74:1857
+✖ AltGraph characters keep their text instead of becoming Control shortcuts (59.103417ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '' !== '@€ł'
+  
+      at Object.run (/app/tests/browser.test.ts:3551:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3615:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3588:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '',
+    expected: '@€ł',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

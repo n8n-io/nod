@@ -1,0 +1,88 @@
+▶ native handoff keyboard input preserves layout characters, editing and paste
+  ✖ Option characters reach the remote login field (716.288458ms)
+  ✖ AltGraph characters keep their text instead of becoming Control shortcuts (59.135666ms)
+  ✖ ordinary and Shift characters retain selection, deletion and field navigation (99.418625ms)
+{"event":"browser_command","at":"2026-10-08T09:51:12.904Z","phase":"cleanup","outcome":"completed","elapsedMs":52}
+✖ native handoff keyboard input preserves layout characters, editing and paste (988.632251ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2260.993668
+
+✖ failing tests:
+
+test at tests/browser.test.ts:74:1780
+✖ Option characters reach the remote login field (716.288458ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'loginexample.test'
+  - 'login@example.test'
+          ^
+  
+      at Object.run (/app/tests/browser.test.ts:3537:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3613:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3586:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'loginexample.test',
+    expected: 'login@example.test',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/browser.test.ts:74:1780
+✖ AltGraph characters keep their text instead of becoming Control shortcuts (59.135666ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '' !== '@€ł'
+  
+      at Object.run (/app/tests/browser.test.ts:3551:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3613:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3586:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '',
+    expected: '@€ł',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/browser.test.ts:74:1780
+✖ ordinary and Shift characters retain selection, deletion and field navigation (99.418625ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   account: '!',
+  -   account: 'y!',
+      focused: 'account',
+      next: 'n'
+    }
+  
+      at Object.run (/app/tests/browser.test.ts:3573:18)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3613:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (/app/tests/browser.test.ts:3586:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { account: '!', next: 'n', focused: 'account' },
+    expected: { account: 'y!', next: 'n', focused: 'account' },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

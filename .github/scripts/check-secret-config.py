@@ -12,22 +12,42 @@ config = Path(__file__).resolve().parents[2] / ".gitleaks.toml"
 sql = "UPDATE tasks SET status='waiting_credentials',waiting_reason='credentials'"
 
 
-def scan(content, filename="app.ts"):
+def scan(content, filename="app.ts", history=False):
     with tempfile.TemporaryDirectory(prefix="otto-secret-regression-") as directory:
         fixture = Path(directory) / "source"
         fixture.mkdir()
         source = fixture / filename
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text(content)
+        if history:
+            for arguments in [
+                ["init", "--quiet"],
+                ["add", "."],
+                [
+                    "-c", "user.name=Secret scanner regression",
+                    "-c", "user.email=scanner@example.test",
+                    "-c", "commit.gpgsign=false",
+                    "commit", "--quiet", "-m", "Generated scanner fixture",
+                ],
+            ]:
+                subprocess.run(
+                    ["git", "-c", "core.hooksPath=/dev/null", *arguments],
+                    cwd=fixture,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
         report = Path(directory) / "findings.json"
         result = subprocess.run(
             [
                 scanner,
-                "dir",
+                "git" if history else "dir",
                 "--no-banner",
                 "--redact",
                 "--config",
                 str(config),
+                "--gitleaks-ignore-path",
+                str(config.parent / ".gitleaksignore"),
                 "--report-format",
                 "json",
                 "--report-path",
@@ -67,5 +87,14 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
     code, findings = scan(analytics, filename)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
         raise SystemExit("The public token exception must be limited to its configuration file.")
+
+acceptance_path = "docs/research/apps-acceptance-b8e489cb.json"
+acceptance_secret = "\n" * 95 + '{\n"src/ports/authentication.ts": "' + candidate + '"\n}'
+for history in [False, True]:
+    code, findings = scan(acceptance_secret, acceptance_path, history=history)
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit(
+            "Historical source hashes must not exempt new secrets at the same path and line."
+        )
 
 print("Secret scanning configuration regression passed.")
