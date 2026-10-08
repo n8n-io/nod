@@ -1,0 +1,36 @@
+diff --git a/src/providers/pi/sandbox.ts b/src/providers/pi/sandbox.ts
+index 09fb926f..aa279bf0 100644
+--- a/src/providers/pi/sandbox.ts
++++ b/src/providers/pi/sandbox.ts
+@@ -204,8 +204,18 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
+       `cd -- ${quote(cwd)} || exit 1`,
+       `mkdir -p ${quote(posix.dirname(file))}`,
+       ...(timeZone ? [`export TZ=${quote(timeZone)}`] : []),
++      'export RTK_TELEMETRY_DISABLED=1',
++      `otto_command=${quote(command)}`,
++      ...(/[\n\r\\|&;<>()`$]/.test(command)
++        ? []
++        : [
++            'otto_rewrite=$(timeout -k 1 2 rtk rewrite "$otto_command" 2>/dev/null)',
++            'otto_rewrite_code=$?',
++            'if [ "$otto_rewrite_code" -eq 2 ]; then printf "%s\\n" "Command denied by workspace RTK policy."; exit 126; fi',
++            'if { [ "$otto_rewrite_code" -eq 0 ] || [ "$otto_rewrite_code" -eq 3 ]; } && [ -n "$otto_rewrite" ]; then otto_command=$otto_rewrite; fi',
++          ]),
+       'start=$(date +%s)',
+-      `timeout -k 5 ${seconds} bash -c ${quote(command)} > ${quote(file)} 2>&1 < /dev/null`,
++      `timeout -k 5 ${seconds} bash -c "$otto_command" > ${quote(file)} 2>&1 < /dev/null`,
+       'code=$?',
+       `size=$(($(wc -c < ${quote(file)})))`,
+       `if [ "$size" -gt ${streamBytes} ]; then`,
+@@ -321,6 +331,11 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
+   ] as ToolDefinition[];
+   return tools.map((definition): ToolDefinition => ({
+     ...definition,
++    ...(definition.name === 'bash'
++      ? {
++          description: `${definition.description}\nSimple commands may use RTK to compress output. Use rtk proxy for exact, unfiltered output.`,
++        }
++      : {}),
+     execute: (id, params, signal, onUpdate, context) =>
+       workspaceOutputs(
+         () => definition.execute(id, params, signal, onUpdate, context),

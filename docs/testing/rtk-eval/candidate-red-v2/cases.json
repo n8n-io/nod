@@ -1,0 +1,115 @@
+{
+  "version": 2,
+  "sourceTask": "https://linear.app/n8n/issue/LAB-585",
+  "evidenceClass": "Controlled Pi bash tool execution against synthetic files in disposable Linux containers; no model or live account.",
+  "model": null,
+  "repeatCount": 3,
+  "timeoutSeconds": 30,
+  "metric": "Measured UTF-8 bytes and Unicode characters; estimated input tokens = ceil(characters / 4), not tokenizer counts.",
+  "caseGate": "Every applicable required check passes in the same run. Availability and compact checks intentionally fail on the red baseline.",
+  "checks": {
+    "C1-installed": "RTK 0.51.0 executes successfully in the workspace; applies to every case.",
+    "C2-exit": "The Pi result reports the expected success or failure; applies to every case.",
+    "C3-semantic": "Every independent expected filename, changed value or commit subject occurs in the visible result; applies to compact cases and explicit failure.",
+    "C4-compact": "Visible output contains fewer characters than the equivalent raw shell command; applies only to the four compact cases.",
+    "C5-exact": "Machine status is byte-identical to raw output and exported CSV/patch bytes match independent inputs; applies to R1, R2 and R3 and R5."
+  },
+  "cases": [
+    {
+      "id": "RTK-B1.v1",
+      "split": "base",
+      "prompt": "Tell me which files in this invoice project have changed and whether they are staged.",
+      "command": "git status",
+      "semantic": [
+        "config.json",
+        "src/alpha.ts",
+        "src/beta.ts",
+        "src/export.ts",
+        "obsolete.txt",
+        "notes.md"
+      ],
+      "compact": true
+    },
+    {
+      "id": "RTK-B2.v1",
+      "split": "base",
+      "prompt": "Review the changed invoice calculation and explain the change in values.",
+      "command": "git diff",
+      "semantic": ["invoiceRate = 0.15", "invoiceRate = 0.20", "batchSize = 20", "batchSize = 25"],
+      "compact": true
+    },
+    {
+      "id": "RTK-H1.v1",
+      "split": "holdout",
+      "prompt": "Summarize the last five changes to this shipment project.",
+      "command": "git log -5",
+      "semantic": [
+        "Add shipment export",
+        "Validate shipment totals",
+        "Add shipment records",
+        "Set shipment currency",
+        "Seed shipment project"
+      ],
+      "compact": true
+    },
+    {
+      "id": "RTK-H2.v1",
+      "split": "holdout",
+      "prompt": "List the pending changes in the shipment project, including staged and deleted files.",
+      "command": "git status",
+      "semantic": [
+        "config.json",
+        "src/alpha.ts",
+        "src/beta.ts",
+        "src/export.ts",
+        "obsolete.txt",
+        "notes.md"
+      ],
+      "compact": true
+    },
+    {
+      "id": "RTK-R1.v1",
+      "split": "regression",
+      "prompt": "Export the ledger exactly so another tool can process every record.",
+      "command": "cat ledger.csv > exported.csv",
+      "semantic": [],
+      "compact": false,
+      "artifact": "exported.csv"
+    },
+    {
+      "id": "RTK-R2.v1",
+      "split": "regression",
+      "prompt": "Return machine-readable repository status for another program.",
+      "command": "git status --porcelain",
+      "semantic": [],
+      "compact": false
+    },
+    {
+      "id": "RTK-R3.v1",
+      "split": "regression",
+      "prompt": "Save the full patch for another tool to inspect and apply.",
+      "command": "git diff > changes.patch",
+      "semantic": [],
+      "compact": false,
+      "artifact": "changes.patch"
+    },
+    {
+      "id": "RTK-R4.v1",
+      "split": "regression",
+      "prompt": "Run the local validation command and retain its failure status.",
+      "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "semantic": ["synthetic validation failure", "Command exited with code 23"],
+      "compact": false,
+      "exitCode": 23
+    },
+    {
+      "id": "RTK-R5.v1",
+      "split": "regression",
+      "prompt": "Save the complete patch using Git output-file support so another tool can apply it.",
+      "command": "git diff --output=changes.patch",
+      "semantic": [],
+      "compact": false,
+      "artifact": "changes.patch"
+    }
+  ]
+}

@@ -92,6 +92,8 @@ jobs:
           docker build --platform linux/amd64 --file Dockerfile.browser --tag otto-ci-local-browser .
       - name: Verify the shared local and desktop browser image
         run: node --import tsx desktop/scripts/check-browser-image.mjs otto-ci-local-browser
+      - name: Verify automatic RTK savings and unfiltered exports
+        run: node --import tsx scripts/eval-rtk.ts --smoke --image otto-ci-workspace
       - name: Run all integration tests with PostgreSQL and Chromium
         run: >-
           docker run --rm --network host --shm-size=1g

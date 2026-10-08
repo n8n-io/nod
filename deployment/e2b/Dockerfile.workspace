@@ -3,11 +3,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python-
 RUN python3 -m venv /opt/yt-dlp && /opt/yt-dlp/bin/pip install --no-cache-dir "yt-dlp[pin,pin-curl-cffi,pin-deno]==2026.8.19" && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
 COPY --chmod=555 save-video /usr/local/bin/save-video
 RUN python3 -m venv --system-site-packages /opt/otto-artifacts && /opt/otto-artifacts/bin/pip install --no-cache-dir reportlab==5.0.1 matplotlib==3.11.2 openpyxl==3.1.5 python-docx==1.2.0 python-pptx==1.0.2 pillow==12.3.0 pandas==3.0.6 pdfplumber==0.11.10 pillow-heif==1.8.0 pypdf==6.19.0 xlrd==2.0.2 odfpy==1.4.1 icalendar==7.3.0
+COPY install-rtk.sh /tmp/install-rtk.sh
+RUN sh /tmp/install-rtk.sh prebuilt && install -m 555 /opt/rtk/bin/rtk /usr/local/bin/rtk && install -D -m 444 /opt/rtk/LICENSE /usr/share/doc/rtk/LICENSE && rm -rf /opt/rtk /tmp/install-rtk.sh
 RUN mkdir -p /workspace /home/node/.local/bin /opt/otto && chown -R node:node /workspace /home/node
 COPY workspace-command.py /opt/otto/workspace-command.py
 RUN chmod 555 /opt/otto && chmod 444 /opt/otto/workspace-command.py
 USER node
 ENV LANG=C.UTF-8
+ENV RTK_TELEMETRY_DISABLED=1
 ENV NPM_CONFIG_PREFIX=/home/node/.local
 ENV PIPX_HOME=/home/node/.local/pipx
 ENV PIPX_BIN_DIR=/home/node/.local/bin

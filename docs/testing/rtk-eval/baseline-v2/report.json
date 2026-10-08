@@ -1,0 +1,926 @@
+{
+  "phase": "baseline",
+  "startedAt": "2026-10-08T17:57:36.794Z",
+  "endedAt": "2026-10-08T17:58:08.428Z",
+  "commit": "437687bb17a3944ce9aa01ac37239e5163515365",
+  "sourceSha256": "4e2f5b03d47211ea85653ec88c021c539ad98d9df4738e7df5c6456a3fc48604",
+  "manifestSha256": "6662c09b10194f51bd8fd245ded111812b990106c788556f574924220297abf6",
+  "image": "otto-eval-workspace:latest",
+  "imageId": "sha256:87db2ce1c700f7aa991a41c41fe3106e1db79692579ada65abfa797408ebef45",
+  "architecture": "arm64",
+  "environment": "Linux aarch64\nv24.21.0\ngit version 2.39.5\nPython 3.11.2\n",
+  "rtk": {
+    "exitCode": 127,
+    "output": "bash: line 1: rtk: command not found\n"
+  },
+  "model": null,
+  "measuredModelCost": null,
+  "fixtureHashes": {
+    "invoice": {
+      ".gitignore": "ab232e89b1e1c133d7c814b9f39c014774c9a3ee81a2ebcc3abcf24b92e23fcf",
+      "config.json": "86b6051738850476a9b740f1d9df19b22bd600fc93db5d209cb4a82cb347f3f5",
+      "ledger.csv": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+      "obsolete.txt": "3a3caf523bc87752a6f8512ab8c48f63e8ba18a885752e893b23a35c85f04cc8",
+      "audit.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/alpha.ts": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+      "src/beta.ts": "f74111a1524f58cc4ec359ace53f05af5df9bcd59ddcf6d7e83bd7d1c3bd437e",
+      "src/export.ts": "311956017af3f49707997a63527a761f954ec9806ac6a566b2701e6777057748",
+      "notes.md": "06653cc07fd7e4b446b8ae03d8dc949d60dbb020a662dbcc19d36361e4e7b1f5"
+    },
+    "shipment": {
+      ".gitignore": "ab232e89b1e1c133d7c814b9f39c014774c9a3ee81a2ebcc3abcf24b92e23fcf",
+      "config.json": "564d132f8c5a3f28367d306a90dd49bd40ba1909d3f812e43991868426547aec",
+      "ledger.csv": "8302a6b811154875f6ddf8f2744b39873f55411a25ae206500d43e3e1a14fad2",
+      "obsolete.txt": "9034a9279e6e70f912def701a44e698aa0174ae461ee1f97bcf53aa424572b48",
+      "audit.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/alpha.ts": "1a85b6e12cc13278ea898f21a85117502df156b4193e728f4507e3831c1d69c5",
+      "src/beta.ts": "f74111a1524f58cc4ec359ace53f05af5df9bcd59ddcf6d7e83bd7d1c3bd437e",
+      "src/export.ts": "8511a022f0170a240c93ed9ca3cc0242aae4765dd1ab2d8fee0655f8eb074fd5",
+      "notes.md": "9db2b4dfb69a734548447260281c0bdf807c56a8deeb0d695631fc937204f907"
+    }
+  },
+  "attempts": [
+    {
+      "case": "RTK-B1.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:44.936Z",
+      "endedAt": "2026-10-08T17:57:46.205Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "isError": false,
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      }
+    },
+    {
+      "case": "RTK-B2.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:46.205Z",
+      "endedAt": "2026-10-08T17:57:46.899Z",
+      "command": "git diff",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      },
+      "pi": {
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "isError": false,
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      }
+    },
+    {
+      "case": "RTK-H1.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:46.899Z",
+      "endedAt": "2026-10-08T17:57:47.617Z",
+      "command": "git log -5",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      },
+      "pi": {
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "isError": false,
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      }
+    },
+    {
+      "case": "RTK-H2.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:47.617Z",
+      "endedAt": "2026-10-08T17:57:48.173Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "isError": false,
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      }
+    },
+    {
+      "case": "RTK-R1.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:48.173Z",
+      "endedAt": "2026-10-08T17:57:48.605Z",
+      "command": "cat ledger.csv > exported.csv",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "exported.csv",
+        "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b"
+      }
+    },
+    {
+      "case": "RTK-R2.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:48.606Z",
+      "endedAt": "2026-10-08T17:57:49.135Z",
+      "command": "git status --porcelain",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      },
+      "pi": {
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      }
+    },
+    {
+      "case": "RTK-R3.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:49.135Z",
+      "endedAt": "2026-10-08T17:57:49.966Z",
+      "command": "git diff > changes.patch",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+      }
+    },
+    {
+      "case": "RTK-R4.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:49.966Z",
+      "endedAt": "2026-10-08T17:57:50.524Z",
+      "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 23,
+        "output": "synthetic validation failure\n",
+        "sha256": "ba56757af79c0a125d059137d235945e8ab25c18b45cf4872431eaf9ccc1ba7a",
+        "bytes": 29,
+        "characters": 29,
+        "estimatedTokens": 8
+      },
+      "pi": {
+        "output": "synthetic validation failure\n\n\nCommand exited with code 23",
+        "isError": true,
+        "sha256": "ff61fd28a92e53c562c5306d229c95e3c93f2d52436fed9058ecca25aa665168",
+        "bytes": 58,
+        "characters": 58,
+        "estimatedTokens": 15
+      }
+    },
+    {
+      "case": "RTK-R5.v1",
+      "repetition": 1,
+      "startedAt": "2026-10-08T17:57:50.524Z",
+      "endedAt": "2026-10-08T17:57:51.229Z",
+      "command": "git diff --output=changes.patch",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+      }
+    },
+    {
+      "case": "RTK-B1.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:51.229Z",
+      "endedAt": "2026-10-08T17:57:51.825Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "isError": false,
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      }
+    },
+    {
+      "case": "RTK-B2.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:51.825Z",
+      "endedAt": "2026-10-08T17:57:52.374Z",
+      "command": "git diff",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      },
+      "pi": {
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "isError": false,
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      }
+    },
+    {
+      "case": "RTK-H1.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:52.374Z",
+      "endedAt": "2026-10-08T17:57:52.906Z",
+      "command": "git log -5",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      },
+      "pi": {
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "isError": false,
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      }
+    },
+    {
+      "case": "RTK-H2.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:52.907Z",
+      "endedAt": "2026-10-08T17:57:53.499Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "isError": false,
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      }
+    },
+    {
+      "case": "RTK-R1.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:53.499Z",
+      "endedAt": "2026-10-08T17:57:54.554Z",
+      "command": "cat ledger.csv > exported.csv",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "exported.csv",
+        "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b"
+      }
+    },
+    {
+      "case": "RTK-R2.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:54.570Z",
+      "endedAt": "2026-10-08T17:57:55.789Z",
+      "command": "git status --porcelain",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      },
+      "pi": {
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      }
+    },
+    {
+      "case": "RTK-R3.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:55.789Z",
+      "endedAt": "2026-10-08T17:57:56.810Z",
+      "command": "git diff > changes.patch",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+      }
+    },
+    {
+      "case": "RTK-R4.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:56.811Z",
+      "endedAt": "2026-10-08T17:57:58.126Z",
+      "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 23,
+        "output": "synthetic validation failure\n",
+        "sha256": "ba56757af79c0a125d059137d235945e8ab25c18b45cf4872431eaf9ccc1ba7a",
+        "bytes": 29,
+        "characters": 29,
+        "estimatedTokens": 8
+      },
+      "pi": {
+        "output": "synthetic validation failure\n\n\nCommand exited with code 23",
+        "isError": true,
+        "sha256": "ff61fd28a92e53c562c5306d229c95e3c93f2d52436fed9058ecca25aa665168",
+        "bytes": 58,
+        "characters": 58,
+        "estimatedTokens": 15
+      }
+    },
+    {
+      "case": "RTK-R5.v1",
+      "repetition": 2,
+      "startedAt": "2026-10-08T17:57:58.126Z",
+      "endedAt": "2026-10-08T17:58:00.137Z",
+      "command": "git diff --output=changes.patch",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+      }
+    },
+    {
+      "case": "RTK-B1.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:00.138Z",
+      "endedAt": "2026-10-08T17:58:01.335Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "isError": false,
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      }
+    },
+    {
+      "case": "RTK-B2.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:01.335Z",
+      "endedAt": "2026-10-08T17:58:02.913Z",
+      "command": "git diff",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      },
+      "pi": {
+        "output": "diff --git a/config.json b/config.json\nindex a03e267..d08db56 100644\n--- a/config.json\n+++ b/config.json\n@@ -1,5 +1,5 @@\n {\n   \"project\": \"invoice\",\n   \"currency\": \"EUR\",\n-  \"precision\": 2\n+  \"precision\": 3\n }\ndiff --git a/obsolete.txt b/obsolete.txt\ndeleted file mode 100644\nindex b61f49c..0000000\n--- a/obsolete.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-Unused invoice export path\ndiff --git a/src/alpha.ts b/src/alpha.ts\nindex 0fb27c3..0f70421 100644\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1,5 +1,5 @@\n export function alphaRule0(amount: number) {\n-  const invoiceRate = 0.15;\n+  const invoiceRate = 0.20;\n   return amount * invoiceRate;\n }\n \ndiff --git a/src/beta.ts b/src/beta.ts\nindex e7ec09e..b9aeaa9 100644\n--- a/src/beta.ts\n+++ b/src/beta.ts\n@@ -1,5 +1,5 @@\n export function betaRule0(amount: number) {\n-  const batchSize = 20;\n+  const batchSize = 25;\n   return amount * batchSize;\n }\n \n",
+        "isError": false,
+        "sha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "bytes": 891,
+        "characters": 891,
+        "estimatedTokens": 223
+      }
+    },
+    {
+      "case": "RTK-H1.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:02.914Z",
+      "endedAt": "2026-10-08T17:58:03.977Z",
+      "command": "git log -5",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      },
+      "pi": {
+        "output": "commit d3456d661c0ee63e76298e1701871555f797ecd3\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Mon Jan 5 00:00:00 2026 +0000\n\n    Add shipment export\n\ncommit b2f1ece79dd774423c9569a807f9a5a448fe153f\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sun Jan 4 00:00:00 2026 +0000\n\n    Validate shipment totals\n\ncommit a9a3a38b233314ce8f1576479450a6e3ae872bc7\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Sat Jan 3 00:00:00 2026 +0000\n\n    Add shipment records\n\ncommit 9a788df67e0325e52babfd3edd7215e88d168f7c\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Fri Jan 2 00:00:00 2026 +0000\n\n    Set shipment currency\n\ncommit 31d11817ab2221390d0f3f55ce2a9945d60abaef\nAuthor: Synthetic Evaluator <synthetic@example.invalid>\nDate:   Thu Jan 1 00:00:00 2026 +0000\n\n    Seed shipment project\n",
+        "isError": false,
+        "sha256": "7e16338901c5ff5341ae083219dc8dab8d5adb0da93f9ea841e3678e52f08a35",
+        "bytes": 849,
+        "characters": 849,
+        "estimatedTokens": 213
+      }
+    },
+    {
+      "case": "RTK-H2.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:03.977Z",
+      "endedAt": "2026-10-08T17:58:04.731Z",
+      "command": "git status",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": false,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      },
+      "pi": {
+        "output": "On branch main\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   src/export.ts\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   config.json\n\tdeleted:    obsolete.txt\n\tmodified:   src/alpha.ts\n\tmodified:   src/beta.ts\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tnotes.md\n\n",
+        "isError": false,
+        "sha256": "418d5b526778a172f954c79b0e90f509a3837e53a474bb4780a6ee7afd3b7e99",
+        "bytes": 483,
+        "characters": 483,
+        "estimatedTokens": 121
+      }
+    },
+    {
+      "case": "RTK-R1.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:04.731Z",
+      "endedAt": "2026-10-08T17:58:05.312Z",
+      "command": "cat ledger.csv > exported.csv",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "exported.csv",
+        "expectedSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b",
+        "actualSha256": "abbe97effe6830a535773b49a9f14afd2c5da757fcaeb5cd9ff2e5f41c5fce0b"
+      }
+    },
+    {
+      "case": "RTK-R2.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:05.344Z",
+      "endedAt": "2026-10-08T17:58:06.016Z",
+      "command": "git status --porcelain",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      },
+      "pi": {
+        "output": " M config.json\n D obsolete.txt\n M src/alpha.ts\n M src/beta.ts\nA  src/export.ts\n?? notes.md\n",
+        "isError": false,
+        "sha256": "f365cdbec1d56476a326ddad2090ff08e9873ac8506ef47e44b7154ab8dac6fc",
+        "bytes": 91,
+        "characters": 91,
+        "estimatedTokens": 23
+      }
+    },
+    {
+      "case": "RTK-R3.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:06.016Z",
+      "endedAt": "2026-10-08T17:58:06.741Z",
+      "command": "git diff > changes.patch",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+      }
+    },
+    {
+      "case": "RTK-R4.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:06.741Z",
+      "endedAt": "2026-10-08T17:58:07.433Z",
+      "command": "printf 'synthetic validation failure\\n'; exit 23",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": true,
+        "C4-compact": null,
+        "C5-exact": null
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 23,
+        "output": "synthetic validation failure\n",
+        "sha256": "ba56757af79c0a125d059137d235945e8ab25c18b45cf4872431eaf9ccc1ba7a",
+        "bytes": 29,
+        "characters": 29,
+        "estimatedTokens": 8
+      },
+      "pi": {
+        "output": "synthetic validation failure\n\n\nCommand exited with code 23",
+        "isError": true,
+        "sha256": "ff61fd28a92e53c562c5306d229c95e3c93f2d52436fed9058ecca25aa665168",
+        "bytes": 58,
+        "characters": 58,
+        "estimatedTokens": 15
+      }
+    },
+    {
+      "case": "RTK-R5.v1",
+      "repetition": 3,
+      "startedAt": "2026-10-08T17:58:07.433Z",
+      "endedAt": "2026-10-08T17:58:08.427Z",
+      "command": "git diff --output=changes.patch",
+      "checks": {
+        "C1-installed": false,
+        "C2-exit": true,
+        "C3-semantic": null,
+        "C4-compact": null,
+        "C5-exact": true
+      },
+      "result": "fail",
+      "raw": {
+        "exitCode": 0,
+        "output": "",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "pi": {
+        "output": "(no output)",
+        "isError": false,
+        "sha256": "efefc15c24ee8645a3f5f6958389db729c1577eb6b32aeac4caab2a86d90daa3",
+        "bytes": 11,
+        "characters": 11,
+        "estimatedTokens": 3
+      },
+      "artifact": {
+        "path": "changes.patch",
+        "expectedSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd",
+        "actualSha256": "8e9bde43bedc3a53326dc46c60bc81a18d7d1fb5f141b6e64402a00b0cccdbcd"
+      }
+    }
+  ]
+}

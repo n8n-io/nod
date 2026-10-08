@@ -88,6 +88,7 @@ export async function prepareE2BContext(options: { role: E2BTemplateRole; root?:
       }
     }
     if (options.role !== 'browser') {
+      await add('install-rtk.sh', await read('src/providers/docker/install-rtk.sh'));
       await add('workspace-command.py', Buffer.from(workspaceCommandProgram));
       await add('save-video', await read('src/providers/docker/save-video.py'));
     }
