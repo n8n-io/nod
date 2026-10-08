@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import re
 import string
 import subprocess
 import sys
@@ -95,5 +96,84 @@ if code != 1 or not any("api_key" in finding.get("Match", "") for finding in fin
 code, findings = scan(evidence, "docs/research/unverified-snapshot.json")
 if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
     raise SystemExit("Source hash exceptions must be limited to the verified snapshot.")
+
+fingerprint_fields = {
+    "projectKeySha256",
+    "src/ports/authentication.ts",
+    "src/ports/key-store.ts",
+    "src/providers/agent-browser/credentials.ts",
+    "src/providers/direct/oauth.ts",
+    "src/providers/discovered/oauth.ts",
+    "src/providers/environment/key-store.ts",
+    "src/providers/keychain/key-store.ts",
+    "src/server/access.ts",
+    "src/server/deployment-auth.ts",
+    "src/server/runtime-auth.ts",
+    "src/web/lib/api.ts",
+    "src/web/pages/credentials.tsx",
+}
+changed_digest = hashlib.sha256(candidate.encode()).hexdigest()
+for filename in [
+    "docs/testing/composio-proxy/cp03.v2.inputs.json",
+    "docs/testing/composio-proxy/cp03.v2.results.json",
+    "docs/testing/composio-proxy/cp06.v2.source.json",
+    "docs/testing/composio-proxy/cp06.v2.upgrade.a02.source.json",
+]:
+    snapshot = (config.parent / filename).read_text()
+    code, findings = scan(snapshot, filename)
+    if code != 0 or findings:
+        raise SystemExit("Verified Composio evidence fingerprints must pass secret scanning.")
+    fingerprints = set()
+    for line in snapshot.splitlines():
+        match = re.fullmatch(r'\s*"([^"]+)": "([a-f0-9]{64})",?', line)
+        if match and match[1] in fingerprint_fields:
+            fingerprints.add((match[1], match[2]))
+    if not fingerprints:
+        raise SystemExit("The Composio snapshot must exercise a fingerprint exception.")
+    for field, digest in sorted(fingerprints):
+        source_line = f'"{field}": "{digest}"'
+        for altered in [
+            f'"{field}": "{changed_digest}"',
+            f'"api_key": "{digest}"',
+            f'{source_line}, "api_key": "{candidate}"',
+            f'{source_line}\n"api_key": "{candidate}"',
+        ]:
+            code, findings = scan(altered, filename)
+            if code != 1 or not any(
+                finding.get("RuleID") == "generic-api-key"
+                and ("api_key" not in altered or "api_key" in finding.get("Match", ""))
+                for finding in findings
+            ):
+                raise SystemExit("Changed fingerprints and adjacent credentials must fail scanning.")
+    for unverified in ["nested/" + filename, "docs/testing/composio-proxy/unverified.json"]:
+        code, findings = scan(snapshot, unverified)
+        if code != 1 or not any(
+            finding.get("RuleID") == "generic-api-key" for finding in findings
+        ):
+            raise SystemExit("Composio fingerprint exceptions must require their exact paths.")
+
+runner_path = "docs/testing/composio-proxy/cp04.v1.results.json"
+code, findings = scan((config.parent / runner_path).read_text(), runner_path)
+if code != 0 or findings:
+    raise SystemExit("The verified frozen runner source must pass secret scanning.")
+
+property_reference = "const attachment = { s3key: " + "executedAttachment.s3key" + " };"
+for altered in [
+    f'const attachment = {{ s3key: "{candidate}" }};',
+    f'{property_reference} api_key = "{candidate}"',
+    f'{property_reference}\napi_key = "{candidate}"',
+]:
+    code, findings = scan(altered, runner_path)
+    if code != 1 or not any(
+        finding.get("RuleID") == "generic-api-key"
+        and ("api_key" not in altered or "api_key" in finding.get("Match", ""))
+        for finding in findings
+    ):
+        raise SystemExit("Credentials replacing or beside the property reference must fail scanning.")
+
+for filename in ["nested/" + runner_path, "docs/testing/composio-proxy/unverified.json"]:
+    code, findings = scan(property_reference, filename)
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit("The source-expression exception must require its exact artifact path.")
 
 print("Secret scanning configuration regression passed.")
