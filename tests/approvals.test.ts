@@ -625,6 +625,26 @@ test(
               { confirm: false },
             );
           }
+          const writes: Array<[string, Record<string, unknown>]> = [
+            ['GOOGLECALENDAR_PATCH_EVENT', { event_id: 'synthetic-shared', start_time: '10:00' }],
+            ['CONNECTED_HTTP', { method: 'PATCH', path: 'v1/items/synthetic', body: {} }],
+            ['GMAIL_SEND_DRAFT', { draft_id: 'synthetic-draft' }],
+          ];
+          for (const [action, args] of writes)
+            assert.deepEqual(
+              await trust.check(await begin('Synthetic event', { source: 'event' }), action, args),
+              { confirm: true, reason: 'background' },
+            );
+          for (const [action, args] of writes.slice(0, 2))
+            for (const source of [undefined, 'schedule'] as const)
+              assert.deepEqual(
+                await trust.check(
+                  await begin('Update my synthetic item.', source ? { source } : {}),
+                  action,
+                  args,
+                ),
+                { confirm: false },
+              );
           const onboarding = await begin('', { source: 'onboarding' });
           await assert.rejects(
             trust.check(onboarding, 'GMAIL_SEND_EMAIL', email('owner@example.test')),
