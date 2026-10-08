@@ -1,0 +1,396 @@
+{
+  "schemaVersion": 1,
+  "issue": "LAB-559",
+  "collectedAtUtc": "2026-10-08T10:20:21.222307+00:00",
+  "source": {
+    "originalBaseline": "d783d5ac622ef2f93cec9248cd7993bbaa3bde33",
+    "rebasedOnto": "a5b2fdc2",
+    "implementationCommit": "2b0f71aa72e9054e33581e6fa3078770530cc6ea",
+    "staticV3SourceHashes": {
+      "src/web/pages/vault.tsx": "f7401c7a9207bc7898565844acfd453b486392a2b8fa26837f275ebfdbcabc24",
+      "src/web/pages/tasks.tsx": "929cc3407a1274200bcb02c766ed4533a9ca9675d2602639d3d107d61ea4d72d",
+      "src/web/components/plan-controls.tsx": "177d346854cc9dc5ed61ea4ec21c1ccff5dce481f9ed4704f41f8a5e0e133d7a",
+      "src/web/components/browser-handoff.tsx": "def23427101622b799f4f80afc9af3ca7f95b576f92cf7c5efb4e94aa6af3f4f",
+      "src/web/lib/message-links.ts": "cd598383c02a37a9871e7e5ad9055b412fd213dd464aab801333e1e8ea64f39f"
+    },
+    "staticV3MatchesListedFeatureSources": true
+  },
+  "scope": {
+    "renderer": "Actual React components controlled in the Codex in-app browser with synthetic APIs.",
+    "server": "Actual server contracts with synthetic data and disposable PostgreSQL schemas.",
+    "liveModelRuns": 0,
+    "realConnectedAccountRuns": 0,
+    "realRecipientDeliveries": 0,
+    "limits": [
+      "Raw artifacts remain local and untracked; this index contains paths, hashes and sanitized outcomes only.",
+      "Screenshot nextRun values are fixed fixture placeholders. Receipts prove selected recurrence; server tests prove occurrence calculation.",
+      "The optional model-written Vault offer is not live-model acceptance.",
+      "UI fixture saves do not prove production persistence or delivery; server integration evidence is separate.",
+      "Static v3 was built before the rebase; the five listed feature files are unchanged. Rebased API/auth compatibility is verified separately by audit and integration tests."
+    ]
+  },
+  "fixtures": [
+    {
+      "path": ".local/debug/lab-559/frozen-baseline.json",
+      "sha256": "ddd4ca4eb131953e167d29c500a9e6014c85ee377832976a7d5888cbb73073a2",
+      "scenarioDataSha256": "1c67bc5d9542190e3c3bc8cfae5fa007b09a5fd506aae392520fb2ba1dc7aee4",
+      "setupSha256": "358bc3dbfa99134e2284f9962a8cf26cf3f7fe9504328e9ab15e81805b48e617",
+      "promptSha256": "3206bb1ac2ef96fa8dc0d9d9dcc97488cf9b1b2be87cfb1e7288c7a56620eaa2"
+    },
+    {
+      "path": ".local/debug/lab-559/attempt-v1/frozen-baseline-ready.json",
+      "sha256": "5d6d8f3f9e1b1f71a00e820e594514192248d78d6a0ecac43c9490af13adc121",
+      "scenarioDataSha256": "c46cee255370e4921b09e51279df56aed7e1307eeb0190762cfaa542201831ad",
+      "setupSha256": "b30b22706d916c35fe84a6997f2a880b48142252ab1f62030f67337b804f1b88",
+      "promptSha256": "aff02a949109a6790688d71a96107007ddeff6e65a7dafad90ac8a454a383222"
+    },
+    {
+      "path": ".local/debug/lab-559/frozen-v2.json",
+      "sha256": "e9d67f912110b7034c3f7eb3820069aab2ccbae8d8d562ac45ca8c39fe696f87",
+      "scenarioDataSha256": "74983d58d9cad77d7581442f09c94a4e91ff8bbf73bf746ea76ab053c75f0464",
+      "setupSha256": "e1b160a43acbde2eae327eeb495d77b5ee8783d8328979da0701ed20a33187b1",
+      "promptSha256": "a084a62b5c697be2f0584ea641579ad5228a12a36cf990d76f258a687a9a2be6"
+    },
+    {
+      "path": ".local/debug/lab-559/static-build-v2.json",
+      "sha256": "d468639cad79eb99a7a18c28849536c74e051f2ad6f346ca5685d53e57dd135c"
+    },
+    {
+      "path": ".local/debug/lab-559/static-build-v3.json",
+      "sha256": "10aff18fef3ef201aaf4df9ae948cd38e3d4a808b02b72a43eeb5755c3b44670"
+    }
+  ],
+  "uiAttempts": [
+    {
+      "id": "baseline-v1",
+      "cases": ["VR1", "SR1"],
+      "result": "red",
+      "evidence": ["handoff-before.jpg", "tasks-before.jpg", "handoff-before-final.jpg"],
+      "note": "No Save login action and no completed-task scheduling action."
+    },
+    {
+      "id": "development-fixture",
+      "result": "unusable",
+      "note": "Repeated development reloads prevented stable inspection; switched to a compiled static bundle."
+    },
+    {
+      "id": "vault-static-v2",
+      "cases": ["VR1", "VR2"],
+      "result": "passed",
+      "receiptSession": "5aa8d942-00ab-4d45-8ec4-b2f178c0f059",
+      "note": "Explicit save, cancel/reopen, separate accounts and original handoff verified in synthetic browser. Vault source unchanged in v3.",
+      "evidence": ["handoff-after-final.jpg", "vault-form.jpg", "vault-saved.jpg"]
+    },
+    {
+      "id": "schedule-base-static-v2",
+      "cases": ["SR1"],
+      "result": "passed",
+      "receiptSession": "64c37794-b1a2-4195-9e87-196e995a0720",
+      "receiptAt": "2026-10-08T10:12:30.989Z"
+    },
+    {
+      "id": "schedule-holdout-static-v2-1",
+      "cases": ["SR2"],
+      "result": "failed-automation-input",
+      "receiptSession": "64c37794-b1a2-4195-9e87-196e995a0720",
+      "receiptAt": "2026-10-08T10:13:18.653Z",
+      "note": "Fill changed DOM time without updating React state; request retained 09:00. Failure retained."
+    },
+    {
+      "id": "schedule-holdout-static-v2-2",
+      "cases": ["SR2"],
+      "result": "passed",
+      "receiptSession": "64c37794-b1a2-4195-9e87-196e995a0720",
+      "receiptAt": "2026-10-08T10:14:28.777Z",
+      "note": "Native keyboard input confirmed 14:30. No production code or checks changed between attempts."
+    },
+    {
+      "id": "schedule-clean-static-v3",
+      "cases": ["SR1", "SR2"],
+      "result": "passed",
+      "receiptSession": "08455677-a017-40e0-8675-fcb07aac345f",
+      "note": "Exactly two creates: weekdays09:00 and Monday14:30 Lisbon. Cancel/reopen wrote nothing; distinct same-title multi-turn prompt retained."
+    }
+  ],
+  "regressionEvidence": {
+    "vaultBaseline": {
+      "log": "vault-red.log",
+      "failed": 2,
+      "passed": 1
+    },
+    "scheduleBaseline": {
+      "log": "schedule-red.log",
+      "failed": 5,
+      "passed": 16
+    },
+    "scheduleRendererBaseline": {
+      "log": "schedule-ui-red.log",
+      "failed": 1
+    },
+    "uncertainSaveBeforeGuard": {
+      "log": "schedule-uncertain-red.log",
+      "failed": 1
+    },
+    "green": {
+      "vaultFocused": 3,
+      "vaultAndGuards": 67,
+      "schedulesIncludingUncertainSave": 22,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "validation": {
+    "preRebase": {
+      "check": "exit0",
+      "integration": "exit0;719 passed;0 failed/skipped/cancelled/todo",
+      "build": "exit0"
+    },
+    "postRebase": {
+      "commit": "2b0f71aa72e9054e33581e6fa3078770530cc6ea",
+      "check": "exit0",
+      "integration": "exit0;723 passed;0 failed/skipped/cancelled/todo",
+      "build": "exit0"
+    }
+  },
+  "logs": [
+    {
+      "path": ".local/debug/lab-559/vault-red.log",
+      "sha256": "95b9fb13f045ca4907bdbe98f65030e99dd833e32c03c7ffb29ae7eba54ead00",
+      "counts": {
+        "tests": 3,
+        "pass": 1,
+        "fail": 2,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "path": ".local/debug/lab-559/schedule-red.log",
+      "sha256": "c4e1b1f135aaef1c92b89fff3f7f47e5bc2c991044a48d90c09d6c54b37b700e",
+      "counts": {
+        "tests": 21,
+        "pass": 16,
+        "fail": 5,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "path": ".local/debug/lab-559/schedule-ui-red.log",
+      "sha256": "cc375f5a9c2e9d39d11793e82c0700294f40bd8866db2be03d1026108dd3eda2",
+      "counts": {
+        "tests": 1,
+        "pass": 0,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "path": ".local/debug/lab-559/schedule-uncertain-red.log",
+      "sha256": "6da87c7959d28e19d4b5dfa7549adb34952ff87162d34c299ac73ee2c924d4d1",
+      "counts": {
+        "tests": 1,
+        "pass": 0,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "path": ".local/debug/lab-559/vault-green.log",
+      "sha256": "04b6b763188e86126b1bf75a94aa72b052162efa7275d642f2466ddd2ac533d6",
+      "counts": {
+        "tests": 3,
+        "pass": 3,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "path": ".local/debug/lab-559/vault-suite.log",
+      "sha256": "59550f3a06ed7003e81a991b548dc98b256ffc14d79065e21d2dd6a4bc8ae095",
+      "counts": {
+        "tests": 67,
+        "pass": 67,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "path": ".local/debug/lab-559/schedule-green.log",
+      "sha256": "a06edc2be278a8096fc9316b7006a8253a7463ec381d80042fdda4f188617e20",
+      "counts": {
+        "tests": 22,
+        "pass": 22,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      }
+    },
+    {
+      "path": ".local/debug/lab-559/pre-rebase-validation/check.log",
+      "sha256": "576d3980cf0da8d29562d5e99d0cde5fec29ba1e92f67720c939e5d75c9ead46"
+    },
+    {
+      "path": ".local/debug/lab-559/pre-rebase-validation/integration.log",
+      "sha256": "599e90b7913779dfad4619d94a7e35314d3c0d794010410bcdd1e9324ee5a98a"
+    },
+    {
+      "path": ".local/debug/lab-559/pre-rebase-validation/build.log",
+      "sha256": "4ab745ffad77a64ddcac274ac036a143df4913c117fbdd41dac07a1a62aa1a19"
+    },
+    {
+      "path": ".local/debug/lab-559/check.log",
+      "sha256": "576d3980cf0da8d29562d5e99d0cde5fec29ba1e92f67720c939e5d75c9ead46"
+    },
+    {
+      "path": ".local/debug/lab-559/integration.log",
+      "sha256": "4726ccf5d8e5b1fe5edb48c2962441e2a0c42b7fe7504368f33903a876022d9e"
+    },
+    {
+      "path": ".local/debug/lab-559/build.log",
+      "sha256": "ea863c049cbb30111a67c0f6b51d0dd1158642f7b3d2ae1c4cb83f9e2b2cce0c"
+    }
+  ],
+  "screenshots": [
+    {
+      "path": ".local/debug/lab-559/evidence/handoff-after-final.jpg",
+      "sha256": "933c2474b9b247d6e0a4d14ac7399c57b54a85f5ea3f731a77d11b1adfbb4ed3",
+      "usable": true,
+      "note": "Final paired toolbar proof in the same scrolled context."
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/handoff-after.jpg",
+      "sha256": "84cd51b16a26dff74c6b9d390932289ca678b79153e81ebe1b9924edf6893c1c",
+      "usable": true,
+      "note": "Honest earlier screenshot; toolbar below viewport. Use handoff-after-final.jpg for Save login proof."
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/handoff-before-final.jpg",
+      "sha256": "79cfd4be66966dbe1317a4b2615d3c7532cdea700bc93b05601d2ef4b24ca8f9",
+      "usable": true,
+      "note": "Final paired toolbar proof in the same scrolled context."
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/handoff-before.jpg",
+      "sha256": "8d84e3b2638ec8cf57309f237df353af74fa2a74cbde07e6b4157d572814cf41",
+      "usable": true
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/schedule-draft-final.jpg",
+      "sha256": "4d920c171a36f8c253dde3964f2cd11462fa894ee2f9817f83a23f107b0c41c4",
+      "usable": true
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/schedule-draft.jpg",
+      "sha256": "674004e71f91f26776187e001f27d7fdf8f6b3edbb98c24baf22c00e0588ebe0",
+      "usable": false,
+      "note": "Blank image, excluded from passing proof."
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/schedule-saved.jpg",
+      "sha256": "4634908834fb0c98560ff3923c2acb81462f79465a773c8fd3167bd0acfb6737",
+      "usable": true
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/schedules-final.jpg",
+      "sha256": "58d1e5cd16d90904ce388919c8256320e13a1d000c2f919eb889e289ecf7bf9d",
+      "usable": true
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/tasks-after.jpg",
+      "sha256": "d03d8936a1fdc78b8430238cda7356529373f7b8082f2e6aa2b7759d317fc050",
+      "usable": true
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/tasks-before.jpg",
+      "sha256": "b7e1b5533414a3512f35d78027faf57fbfeb1fb632fafd9b7502e3996d7b548f",
+      "usable": true
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/vault-form.jpg",
+      "sha256": "be6192d13ee85edfc60743c418e76dfd811b4eb346f3cef635106d48d262758b",
+      "usable": true
+    },
+    {
+      "path": ".local/debug/lab-559/evidence/vault-saved.jpg",
+      "sha256": "f33946d4f9997f9d5ad9ed150c9c5cca07496de594ddacb369b42073e982c25b",
+      "usable": true
+    }
+  ],
+  "receipts": {
+    "current": {
+      "path": ".local/debug/lab-559/evidence/requests-doc-snapshot.jsonl",
+      "sha256": "c768f8cf160205ff1190ee1dbf105bc8e03bc2ba8066122add754716fa8cd032"
+    },
+    "hashIsSnapshotOfAppendOnlyFile": false,
+    "lastReceiptAtCollection": "2026-10-08T10:19:53.955Z",
+    "atBundleReplacement": {
+      "path": ".local/debug/lab-559/evidence/requests-at-static-v3-replacement.jsonl",
+      "sha256": "7ca2686babaa17567fd5641298c5f425da0cdd623355ec446fdbe7313b2bebad"
+    },
+    "selectedSessions": [
+      {
+        "session": "5aa8d942-00ab-4d45-8ec4-b2f178c0f059",
+        "scenario": "vault",
+        "createCount": 2,
+        "separateAccountCount": 2,
+        "secretsRecordedAsPresenceOnly": true
+      },
+      {
+        "session": "64c37794-b1a2-4195-9e87-196e995a0720",
+        "scenario": "tasks",
+        "createCount": 3,
+        "creates": [
+          {
+            "at": "2026-10-08T10:12:30.989Z",
+            "cron": "0 9 * * 1-5",
+            "timeZone": "Europe/Lisbon",
+            "promptSha256": "681dbcccc7abf9d54bbad406929fa0909b6918ba551116d0e702bd083866acd7"
+          },
+          {
+            "at": "2026-10-08T10:13:18.653Z",
+            "cron": "0 9 * * 1",
+            "timeZone": "Europe/Lisbon",
+            "promptSha256": "4ddf3bd4b66a290adffef438d108a77d76231e44fe8cf63780ee3b279b9f218c"
+          },
+          {
+            "at": "2026-10-08T10:14:28.777Z",
+            "cron": "30 14 * * 1",
+            "timeZone": "Europe/Lisbon",
+            "promptSha256": "4ddf3bd4b66a290adffef438d108a77d76231e44fe8cf63780ee3b279b9f218c"
+          }
+        ]
+      },
+      {
+        "session": "08455677-a017-40e0-8675-fcb07aac345f",
+        "scenario": "tasks",
+        "createCount": 2,
+        "creates": [
+          {
+            "at": "2026-10-08T10:15:18.192Z",
+            "cron": "0 9 * * 1-5",
+            "timeZone": "Europe/Lisbon",
+            "promptSha256": "681dbcccc7abf9d54bbad406929fa0909b6918ba551116d0e702bd083866acd7"
+          },
+          {
+            "at": "2026-10-08T10:15:33.568Z",
+            "cron": "30 14 * * 1",
+            "timeZone": "Europe/Lisbon",
+            "promptSha256": "4ddf3bd4b66a290adffef438d108a77d76231e44fe8cf63780ee3b279b9f218c"
+          }
+        ]
+      }
+    ]
+  }
+}
