@@ -25,9 +25,9 @@
     "eval:capability": "tsx evals/src/cli.ts"
   },
   "dependencies": {
-    "@chat-adapter/state-pg": "^4.41.0",
-    "@chat-adapter/telegram": "^4.41.0",
-    "@chat-adapter/whatsapp": "^4.41.0",
+    "@chat-adapter/state-pg": "^4.41.1",
+    "@chat-adapter/telegram": "^4.41.1",
+    "@chat-adapter/whatsapp": "^4.41.1",
     "@composio/core": "0.21.0",
     "@e965/xlsx": "^0.20.3",
     "@earendil-works/pi-ai": "1.0.4",
