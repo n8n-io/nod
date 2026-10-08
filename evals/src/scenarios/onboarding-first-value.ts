@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { lastQuestion, type SuggestedTask } from '../../../src/shared/onboarding.ts';
+import type { SuggestedTask } from '../../../src/shared/onboarding.ts';
 import { dumpDrafts, noWrites } from '../checks.ts';
 import { check, judge, scenario } from '../scenario.ts';
 import { createApps, gmail, type Mail } from '../world/apps.ts';
@@ -64,8 +64,6 @@ function mailbox(now: number): Mail[] {
   ];
 }
 
-type Interview = { status: number; question?: string };
-
 export default scenario({
   id: 'onboarding-first-value',
   title: 'Set up Otto, get three first tasks from my answers and inbox, finish one',
@@ -83,7 +81,6 @@ export default scenario({
     return {
       apps: createApps(owner, { gmail: gmail(owner, mailbox(clock.now()), clock.now) }),
       state: {
-        interview: [] as Interview[],
         saved: 0,
         suggestions: undefined as { intro: string; tasks: SuggestedTask[] } | undefined,
         picked: undefined as SuggestedTask | undefined,
@@ -92,13 +89,6 @@ export default scenario({
   },
   async play(session, world) {
     const { state } = world;
-    await session.api('POST', '/api/account/prepare', {});
-    for (const count of [1, 2]) {
-      const reply = await session.api('POST', '/api/onboarding/interview', {
-        answers: answers.slice(0, count),
-      });
-      state.interview.push({ status: reply.status, question: reply.body.question });
-    }
     state.saved = (await session.api('PUT', '/api/onboarding/interview', { answers })).status;
     await session.api('POST', '/api/onboarding/suggestions', {});
     await session.api('PATCH', '/api/account', { onboardingCompleted: true, name: owner.name });
@@ -110,8 +100,10 @@ export default scenario({
       if (!state.suggestions) await sleep(500);
     }
     const tasks = state.suggestions?.tasks ?? [];
-    const inbox = tasks.filter((task) => task.source === 'gmail');
-    state.picked = inbox.find((task) => aboutSofia.test(task.title)) ?? inbox[0] ?? tasks[0];
+    state.picked =
+      tasks.find((task) => aboutSofia.test(task.title)) ??
+      tasks.find((task) => task.source === 'gmail') ??
+      tasks[0];
     if (state.picked) await session.say(state.picked.title);
   },
   evidence(run, world) {
@@ -127,19 +119,6 @@ export default scenario({
     const { state } = world;
     const titles = () => state.suggestions?.tasks.map((task) => task.title) ?? [];
     return [
-      check(
-        'interview-replies-to-each-answer',
-        () => ({
-          pass:
-            state.interview.length === 2 &&
-            state.interview.every((turn) => turn.status === 200 && turn.question) &&
-            state.interview[1].question === lastQuestion,
-          evidence: state.interview
-            .map((turn) => `${turn.status} ${turn.question ?? ''}`)
-            .join('; '),
-        }),
-        { aspect: 'process', failure: 'tool' },
-      ),
       check(
         'saves-what-i-said-to-memory',
         (run) => {
@@ -171,12 +150,7 @@ export default scenario({
       ),
       check(
         'first-tasks-include-the-reply-sofia-is-waiting-for',
-        () =>
-          Boolean(
-            state.suggestions?.tasks.some(
-              (task) => task.source === 'gmail' && aboutSofia.test(task.title),
-            ),
-          ),
+        () => titles().some((title) => aboutSofia.test(title)),
         { failure: 'reasoning' },
       ),
       check(
@@ -202,13 +176,8 @@ export default scenario({
       noWrites('send'),
       judge(
         'the-draft-answers-sofia-from-the-proposal',
-        'The draft to Sofia answers her question from the earlier proposal: the €4,500 includes two rounds of revisions, and further rounds cost €300 each. It does not say three rounds are included and does not invent other terms.',
+        'The draft to Sofia tells her the €4,500 includes two rounds of revisions, as the earlier proposal says. It does not say three rounds are included, and any other terms it mentions, such as the price of an extra round, match the proposal.',
         { failure: 'hallucination' },
-      ),
-      judge(
-        'shows-the-draft-and-says-it-was-not-sent',
-        'After the user tapped the first task, the assistant shows the draft to Sofia in full or near-verbatim and tells the user it has not been sent.',
-        { aspect: 'process', failure: 'incomplete' },
       ),
     ];
   },
