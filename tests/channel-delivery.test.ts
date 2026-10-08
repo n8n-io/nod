@@ -346,6 +346,81 @@ test(
 );
 
 test(
+  'Telegram setup extracts one pasted token without leaking prose or changing saved setup on invalid input',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const db = await hostedDatabase();
+    const app = Fastify();
+    const key = randomBytes(32);
+    const requests: string[] = [];
+    let botId = 987;
+    const settings = await createChannelSettings(db.pool, {
+      ownerId: 'fixture-owner',
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      verifier: createChatSdkSetupVerifier({
+        fetch: async (url) => {
+          requests.push(String(url));
+          if (url === `https://api.telegram.org/bot${token}/getMe`)
+            return Response.json({
+              ok: true,
+              result: {
+                id: botId,
+                is_bot: true,
+                first_name: 'Fixture bot',
+                username: 'fixture_bot',
+              },
+            });
+          assert.equal(url, `https://api.telegram.org/bot${token}/getWebhookInfo`);
+          return Response.json({ ok: true, result: { url: '' } });
+        },
+      }),
+      apply: async () => {},
+    });
+    settings.registerRoutes(app);
+    const save = (botToken: string) =>
+      app.inject({ method: 'PUT', url: '/api/channel-settings/telegram', payload: { botToken } });
+    try {
+      for (const [index, input] of [
+        token,
+        `Done! Your synthetic bot is ready.\nUse this token to access the HTTP API:\n${token}\nKeep it secure.`,
+        `O teu bot está pronto.\nToken: (${token}).\nGuarda-o em segurança.`,
+      ].entries()) {
+        const saved = await save(input);
+        assert.equal(saved.statusCode, 200, `input ${index}`);
+        assert.equal((await settings.environment()).TELEGRAM_BOT_TOKEN, token);
+        assert.equal(saved.body.includes(token), false);
+        assert.equal(saved.body.includes(input), false);
+        const raw = await db.pool.query('SELECT * FROM channel_settings');
+        assert.equal(JSON.stringify(raw.rows).includes(token), false);
+        assert.equal(JSON.stringify(raw.rows).includes('Your synthetic bot'), false);
+      }
+      const original = await settings.environment();
+      for (const input of [
+        'No token in this message.',
+        `${token}\n988:another-fixture-token`,
+        `987:`,
+        `${'x'.repeat(8192)}\n${token}`,
+      ]) {
+        const before = requests.length;
+        const rejected = await save(input);
+        assert.equal(rejected.statusCode, 400);
+        assert.equal(requests.length, before);
+        assert.equal(rejected.body.includes(input), false);
+        assert.deepEqual(await settings.environment(), original);
+      }
+      botId = 988;
+      assert.equal((await save(`Synthetic bot: ${token}`)).statusCode, 400);
+      assert.deepEqual(await settings.environment(), original);
+      const status = await app.inject('/api/channel-settings');
+      assert.equal(status.body.includes(token), false);
+    } finally {
+      await app.close();
+      await db.close();
+    }
+  },
+);
+
+test(
   'durable channel revisions fence registry operations that finish after their client timed out',
   {
     skip: !process.env.TEST_DATABASE_URL,

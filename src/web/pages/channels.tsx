@@ -84,11 +84,33 @@ export function ChannelSetupStep({
       <>
         <p>
           Open <ExternalLinkText href="https://t.me/BotFather">BotFather</ExternalLinkText> in
-          Telegram and send <code>/newbot</code>. Choose a name and username, then paste the token
-          it gives you.
+          Telegram and send <code>/newbot</code>. Choose a name and username, then paste BotFather’s
+          full reply or just the token here.
         </p>
-        <Field label="Bot token" hint="This stays outside chat and is encrypted when saved.">
-          <Input type="password" autoComplete="off" required autoFocus {...field('botToken')} />
+        <Field
+          label="BotFather message or token"
+          hint="This stays outside chat and is encrypted when saved."
+        >
+          <Input
+            type="password"
+            autoComplete="off"
+            required
+            autoFocus
+            {...field('botToken')}
+            onPaste={(event) => {
+              const text = event.clipboardData.getData('text/plain');
+              if (!/[\r\n]/.test(text)) return;
+              event.preventDefault();
+              const input = event.currentTarget;
+              input.setRangeText(
+                text.replace(/[\r\n]+/g, ' '),
+                input.selectionStart ?? input.value.length,
+                input.selectionEnd ?? input.value.length,
+                'end',
+              );
+              onField('botToken', input.value);
+            }}
+          />
         </Field>
         {!hosted && (
           <details className="channel-advanced">
@@ -551,7 +573,10 @@ function TelegramSetup({
                       level="M"
                       title="Open the Telegram pairing link on your phone"
                     />
-                    <figcaption>Scan to start on mobile.</figcaption>
+                    <figcaption>
+                      Scan this code or use Open Telegram below, then press Start. Use this setup
+                      link, not the bot link from BotFather.
+                    </figcaption>
                   </figure>
                 )}
                 <div className="telegram-checklist-actions">
@@ -568,7 +593,7 @@ function TelegramSetup({
                           target="_blank"
                           rel="noopener noreferrer"
                         >
-                          Open Telegram app
+                          Open Telegram
                           <ExternalLink size={16} />
                         </a>
                       </Button>
