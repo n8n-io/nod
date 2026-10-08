@@ -68,6 +68,7 @@ import { SetupNotice } from '../src/web/components/setup-notice.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
 import { Composer } from '../src/web/components/composer.tsx';
 import type { AppState, Message } from '../src/shared/contracts.ts';
+import { browserHandoffInputs } from '../src/shared/browser-handoff.ts';
 
 // Shared helpers
 
@@ -3486,6 +3487,160 @@ test('the live handoff waits for a frame, merges moves and typing behind a pendi
     await view.close();
   }
 });
+
+test(
+  'native handoff keyboard input preserves layout characters, editing and paste',
+  { skip: process.env.OTTO_TEST_NATIVE_DOWNLOAD !== 'true', timeout: 120_000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'otto-handoff-keyboard-'));
+    const server = createHttpServer((_request, response) => {
+      response.setHeader('content-type', 'text/html');
+      response.end(`<form><input id="account" autocomplete="off"><input id="next" autocomplete="off"></form>
+        <script>
+        window.changes = [];
+        document.addEventListener('input', event => window.changes.push(event.isTrusted));
+        </script>`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const computer = createAgentBrowserComputer({
+      dataRoot: directory,
+      browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      headless: true,
+    });
+    const read = async () => {
+      const observation = await computer.act('fixture', {
+        action: 'evaluate',
+        script: `({
+          account: document.querySelector('#account').value,
+          next: document.querySelector('#next').value,
+          focused: document.activeElement.id,
+          changes: window.changes,
+        })`,
+      });
+      return JSON.parse(observation.text.slice(observation.text.indexOf('\n') + 1)) as {
+        account: string;
+        next: string;
+        focused: string;
+        changes: boolean[];
+      };
+    };
+    const cases = [
+      {
+        name: 'Option characters reach the remote login field',
+        run: async (key: (input: KeyboardEventInit) => Promise<void>) => {
+          for (const value of 'login') await key({ key: value });
+          await key({ key: '@', code: 'Digit2', altKey: true });
+          for (const value of 'example.test') await key({ key: value });
+          assert.equal((await read()).account, 'login@example.test');
+          await key({ key: '€', altKey: true, shiftKey: true });
+          assert.equal((await read()).account, 'login@example.test€');
+        },
+      },
+      {
+        name: 'AltGraph characters keep their text instead of becoming Control shortcuts',
+        run: async (key: (input: KeyboardEventInit) => Promise<void>) => {
+          for (const input of [
+            { key: '@', code: 'KeyQ' },
+            { key: '€', code: 'KeyE' },
+            { key: 'ł', code: 'KeyL' },
+          ])
+            await key({ ...input, ctrlKey: true, altKey: true, modifierAltGraph: true });
+          assert.equal((await read()).account, '@€ł');
+        },
+      },
+      {
+        name: 'ordinary and Shift characters retain selection, deletion and field navigation',
+        run: async (key: (input: KeyboardEventInit) => Promise<void>) => {
+          await key({ key: '@' });
+          await key({ key: '@', code: 'Digit2', shiftKey: true });
+          assert.equal((await read()).account, '@@');
+          await key({ key: 'a', ctrlKey: true });
+          await key({ key: 'x' });
+          assert.equal((await read()).account, 'x');
+          await key({ key: 'a', metaKey: true });
+          await key({ key: 'y' });
+          await key({ key: 'z' });
+          await key({ key: 'Backspace' });
+          assert.equal((await read()).account, 'y');
+          await key({ key: 'Tab' });
+          await key({ key: 'n' });
+          await key({ key: 'Tab', shiftKey: true });
+          assert.equal((await read()).focused, 'account');
+          await key({ key: 'ArrowRight' });
+          await key({ key: '!' });
+          const observed = await read();
+          assert.deepEqual(
+            { account: observed.account, next: observed.next, focused: observed.focused },
+            { account: 'y!', next: 'n', focused: 'account' },
+          );
+          await key({ key: 'ArrowLeft', altKey: true });
+          await key({ key: 'a', altKey: true, ctrlKey: true });
+          await key({ key: 'b' });
+          assert.equal((await read()).account, 'y!b');
+        },
+      },
+    ];
+    try {
+      for (const entry of cases)
+        await t.test(entry.name, async () => {
+          await computer.act('fixture', { action: 'open', url: origin });
+          await computer.act('fixture', { action: 'click', selector: '#account' });
+          let delivered = Promise.resolve();
+          const view = await handoffView(async (path, options) => {
+            assert.equal(path, '/api/browser-handoff');
+            const inputs = browserHandoffInputs.parse(JSON.parse(String(options?.body)).inputs);
+            delivered = (async () => {
+              for (const input of inputs) await computer.control!('fixture', input);
+            })();
+            await delivered;
+            return Response.json({ ok: true });
+          });
+          const key = async (input: KeyboardEventInit) => {
+            await act(async () => {
+              view.element('.browser-handoff-screen').dispatchEvent(
+                new view.dom.window.KeyboardEvent('keydown', {
+                  ...input,
+                  bubbles: true,
+                  cancelable: true,
+                }),
+              );
+              await delivered;
+            });
+          };
+          try {
+            await view.showFrame();
+            await entry.run(key);
+            await key({ key: 'v', metaKey: true });
+            const paste = new view.dom.window.Event('paste', { bubbles: true, cancelable: true });
+            Object.defineProperty(paste, 'clipboardData', {
+              value: { getData: () => '+pasted@example.test\r\n' },
+            });
+            const before = (await read()).account;
+            await act(async () => {
+              view.element('.browser-handoff-screen').dispatchEvent(paste);
+              await delivered;
+            });
+            await view.button('Done');
+            const observed = await read();
+            assert.equal(observed.account, `${before}+pasted@example.test`);
+            assert.ok(observed.changes.length > 0);
+            assert.ok(observed.changes.every(Boolean));
+            assert.equal(view.completions(), 1);
+          } finally {
+            await view.close();
+          }
+        });
+    } finally {
+      await computer.dispose();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test('a handoff with no first frame stops reconnecting and can be reopened without submitting input', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
