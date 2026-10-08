@@ -63,4 +63,6 @@ After the security changes on main `a5b2fdc2`, implementation `8303e83a` passed 
 
 PR review caught a missing Origin header in that eval transport fix. The replacement regression exercises the real local-access and account routes: missing authentication returns 401, missing Origin returns 403, and the authenticated same-origin onboarding request updates account state and starts exactly once. Its failure before the Origin fix is preserved in `eval-origin-red.log`.
 
+Main `2bc71c22` subsequently added the same authenticated API repair and an explicit stack origin. The merge keeps main's API implementation and its support for relative and absolute same-origin paths, plus the shared transport and real-route regression. The test now checks both accepted forms and retains every external-origin rejection case; the earlier restriction on all relative paths was stricter than the existing API contract.
+
 No UI redesign or live-provider acceptance is claimed. The attachment's final disabled state and repeated confirmations are observed facts; which earlier action originally paused that schedule remains unknown.

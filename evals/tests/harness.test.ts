@@ -517,6 +517,7 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   let calls = 0;
   const request = createStackRequest(origin, cookie);
   const stack = {
+    origin,
     request(path, init) {
       calls++;
       return request(path, init);
@@ -531,16 +532,22 @@ test('scenario API calls use authenticated local transport and refuse outside ta
   assert.equal(account.onboardingCompleted, true);
   assert.equal(writes, 1);
   assert.equal(started, 1);
+  for (const path of ['api/session', `${origin}/api/session`]) {
+    const state = await session.api('GET', path);
+    assert.equal(state.status, 200);
+    assert.equal(state.body.user.name, 'Synthetic');
+  }
   for (const path of [
     'https://outside.example.test/api',
     '//outside.example.test/api',
     '/\\outside.example.test/api',
     '/\n/outside.example.test/api',
     '/\t/outside.example.test/api',
-    'api/state',
   ])
     await assert.rejects(session.api('GET', path), /must stay on the Otto server/);
-  assert.equal(calls, 1);
+  assert.equal(calls, 3);
+  assert.equal(writes, 1);
+  assert.equal(started, 1);
 });
 
 test('the stop case rejects a task that finished before Stop', async () => {

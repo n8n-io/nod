@@ -73,6 +73,7 @@ export interface Stack {
     path: string,
     init?: RequestInit & { headers?: Record<string, string> },
   ): Promise<Response>;
+  origin: string;
   directory: string;
   container: string;
   pool: pg.Pool;
@@ -344,6 +345,7 @@ export async function startStack(options: {
     const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;
     return {
       request: createStackRequest(baseUrl, cookie),
+      origin: baseUrl,
       directory,
       container,
       pool,
