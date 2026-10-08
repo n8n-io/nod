@@ -330,6 +330,15 @@ test(
       assert.equal(await thread.resumeAfterConnection(turnId, 'googlesheets'), true);
       return resumed(`connection:${turnId}`);
     };
+    const steer = async (turnId: string, text: string) => {
+      const submitted = await thread.submitUserMessage(text);
+      await db.pool.query('UPDATE messages SET turn_id=$2 WHERE id=$1', [
+        submitted.messageId,
+        turnId,
+      ]);
+      await finish(submitted.turnId, 'succeeded');
+      return submitted.messageId;
+    };
     const proposal = async (turnId: string) =>
       (await db.pool.query('SELECT * FROM approvals WHERE turn_id=$1', [turnId])).rows[0];
     const assistantMessages = async (turnId: string) =>
@@ -766,6 +775,85 @@ test(
         },
       );
 
+      await t.test('absorbed user messages retain their own local plan authority', async () => {
+        for (const resume of [false, true]) {
+          const origin = await begin('Inspect the synthetic dashboard.');
+          const turn = resume ? await afterCredentials(origin.turnId) : origin;
+          const sourceMessageId = await steer(
+            turn.turnId,
+            'Those regular check-ins are no longer useful. Stop them.',
+          );
+          const args = { id: randomUUID() };
+          const before = calls.length;
+          const result = await approvals.request(turn, 'OTTO_schedule_cancel', args, {
+            sourceMessageId,
+          });
+          assert.equal(result.requiresConfirmation, undefined);
+          assert.deepEqual(
+            await approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
+            result,
+          );
+          assert.equal(calls.length, before + 1);
+          assert.equal(calls.at(-1)?.context.sourceMessageId, sourceMessageId);
+          assert.equal(calls.at(-1)?.context.sourceTurnId, turn.turnId);
+          assert.equal((await proposal(turn.turnId)).source_message_id, sourceMessageId);
+          assert.equal(await assistantMessages(turn.turnId), 0);
+        }
+      });
+
+      await t.test(
+        'steering authority cannot come from foreign or synthetic messages',
+        async () => {
+          const args = { id: randomUUID() };
+          const before = calls.length;
+          for (const mutation of [
+            "UPDATE messages SET owner_id='foreign' WHERE id=$1",
+            "UPDATE messages SET role='assistant' WHERE id=$1",
+            'UPDATE messages SET thread_id=$2 WHERE id=$1',
+            'UPDATE messages SET turn_id=$2 WHERE id=$1',
+          ]) {
+            const turn = await afterCredentials((await begin('Inspect my dashboard.')).turnId);
+            const other = await begin('A separate instruction.');
+            const sourceMessageId = await steer(turn.turnId, 'Stop the regular check-ins.');
+            let target = other.turnId;
+            if (mutation.includes('thread_id')) {
+              target = randomUUID();
+              await db.pool.query('INSERT INTO threads(id,owner_id) VALUES($1,$2)', [
+                target,
+                `fixture-${target}`,
+              ]);
+            }
+            await db.pool.query(mutation, [
+              sourceMessageId,
+              ...(mutation.includes('$2') ? [target] : []),
+            ]);
+            await assert.rejects(
+              approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
+              /direct request/,
+            );
+            assert.equal(await proposal(turn.turnId), undefined);
+          }
+          for (const source of ['event', 'schedule', 'onboarding'] as const) {
+            const turn = await begin('Stop the regular check-ins.', { source });
+            const sourceMessageId = await steer(turn.turnId, 'Stop the regular check-ins.');
+            if (source === 'onboarding') {
+              await assert.rejects(
+                approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
+                /read-only/,
+              );
+              assert.equal(await proposal(turn.turnId), undefined);
+            } else {
+              await assert.rejects(
+                approvals.request(turn, 'OTTO_schedule_cancel', args, { sourceMessageId }),
+                /direct request/,
+              );
+              assert.equal(await proposal(turn.turnId), undefined);
+            }
+          }
+          assert.equal(calls.length, before);
+        },
+      );
+
       await t.test(
         'a connected account can finish an owned schedule request after consent',
         async () => {
@@ -1088,6 +1176,126 @@ test(
           });
           assert.equal((await stored(next)).status, 'pending');
           assert.equal(calls.length, before + 1);
+        },
+      );
+
+      await t.test(
+        'a user can replace a background pause proposal with a direct local plan change',
+        async () => {
+          for (const absorbed of [false, true]) {
+            const current = absorbed ? await begin('Inspect the synthetic dashboard.') : undefined;
+            const origin = await begin('Review a paused task.', { source: 'event' });
+            const args = { id: randomUUID() };
+            const id = await propose(origin, 'OTTO_schedule_cancel', args);
+            await finish(origin.turnId);
+            const revised = await messages.submit('I no longer need these check-ins. Stop them.');
+            assert.equal((await stored(id)).status, 'expired');
+            const turn = current ?? (await running(revised.turnId));
+            if (current) {
+              await db.pool.query('UPDATE messages SET turn_id=$2 WHERE id=$1', [
+                revised.messageId,
+                current.turnId,
+              ]);
+              await finish(revised.turnId, 'succeeded');
+            }
+            const before = calls.length;
+            const result = await approvals.request(turn, 'OTTO_schedule_cancel', args, {
+              sourceMessageId: revised.messageId,
+            });
+            assert.equal(result.requiresConfirmation, undefined);
+            assert.equal(calls.length, before + 1);
+            assert.equal(calls.at(-1)?.context.sourceMessageId, revised.messageId);
+            assert.equal((await proposal(turn.turnId)).status, 'completed');
+            assert.equal(await assistantMessages(turn.turnId), 0);
+            await assert.rejects(confirm(id, true), { statusCode: 409 });
+          }
+          const current = await begin('Inspect the synthetic dashboard.');
+          const origin = await begin('Review a preference.', { source: 'event' });
+          const id = await propose(origin, 'OTTO_profile_update', {
+            preferences: 'Original preference.',
+          });
+          const revised = await messages.submit('Update my preferences to shorter reports.');
+          await db.pool.query('UPDATE messages SET turn_id=$2 WHERE id=$1', [
+            revised.messageId,
+            current.turnId,
+          ]);
+          await finish(revised.turnId, 'succeeded');
+          const before = calls.length;
+          const result = await approvals.request(
+            current,
+            'OTTO_profile_update',
+            { preferences: 'Shorter reports.' },
+            { sourceMessageId: revised.messageId },
+          );
+          assert.equal(result.requiresConfirmation, true);
+          assert.equal((await stored(id)).status, 'expired');
+          assert.equal((await proposal(current.turnId)).source_message_id, revised.messageId);
+          assert.equal(calls.length, before);
+        },
+      );
+
+      await t.test(
+        'background turns share one pending confirmation for the same action',
+        async () => {
+          const args = { id: randomUUID() };
+          const turns = await Promise.all([
+            begin('A synthetic event proposes a pause.', { source: 'event' }),
+            begin('A synthetic scheduled check proposes a pause.', { source: 'schedule' }),
+          ]);
+          const before = calls.length;
+          const results = await Promise.all(
+            turns.map((turn) => approvals.request(turn, 'OTTO_schedule_cancel', args)),
+          );
+          for (const result of results) assert.equal(result.requiresConfirmation, true);
+          assert.equal(results[0].question, results[1].question);
+          const records = (
+            await db.pool.query(
+              'SELECT * FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND action=$3 AND args=$4::jsonb',
+              [ownerId, turns[0]!.threadId, 'OTTO_schedule_cancel', args],
+            )
+          ).rows;
+          assert.equal(records.length, 1);
+          assert.equal(records[0].status, 'pending');
+          assert.equal(calls.length, before);
+          assert.equal(
+            (await assistantMessages(turns[0]!.turnId)) +
+              (await assistantMessages(turns[1]!.turnId)),
+            1,
+          );
+          const original = turns.find((turn) => turn.turnId === records[0].turn_id)!;
+          await assert.rejects(approvals.request(original, 'OTTO_schedule_cancel', args), {
+            statusCode: 409,
+          });
+          const other = await begin('A different schedule needs a pause.', { source: 'event' });
+          await propose(other, 'OTTO_schedule_cancel', { id: randomUUID() });
+          assert.equal(await assistantMessages(other.turnId), 1);
+          assert.equal(calls.length, before);
+        },
+      );
+
+      await t.test(
+        'background deduplication never reuses expired or handled confirmations',
+        async () => {
+          const before = calls.length;
+          for (const status of ['expired', 'completed', 'declined', 'uncertain']) {
+            const origin = await begin('A synthetic background pause.', { source: 'event' });
+            const args = { id: randomUUID() };
+            const id = await propose(origin, 'OTTO_schedule_cancel', args);
+            if (status === 'expired') {
+              await db.pool.query(
+                "UPDATE approvals SET expires_at=now()-interval '1 minute' WHERE id=$1",
+                [id],
+              );
+            } else {
+              await db.pool.query('UPDATE approvals SET status=$2 WHERE id=$1', [id, status]);
+            }
+            const next = await begin('A later synthetic background pause.', { source: 'schedule' });
+            const replacement = await propose(next, 'OTTO_schedule_cancel', args);
+            assert.notEqual(replacement, id);
+            assert.equal((await stored(replacement)).status, 'pending');
+            assert.equal(await assistantMessages(next.turnId), 1);
+          }
+          assert.equal(calls.length, before);
         },
       );
 
