@@ -233,7 +233,10 @@ function difference(runs: Loaded[]) {
   const same = after
     .filter((item) =>
       before.some(
-        (other) => other.scenario === item.scenario && other.fingerprint === item.fingerprint,
+        (other) =>
+          Boolean(item.fingerprint) &&
+          other.scenario === item.scenario &&
+          other.fingerprint === item.fingerprint,
       ),
     )
     .map((item) => item.scenario);
