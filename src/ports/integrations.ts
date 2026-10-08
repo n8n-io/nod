@@ -24,12 +24,15 @@ export interface IntegrationSearch {
   tools: unknown;
   suggestions: Array<{ useCase: string; primaryToolSlugs: string[] }>;
 }
+export interface IntegrationAuthorization {
+  accountId: string;
+  url: string;
+  pairingCode?: string;
+  verificationSecret?: string;
+}
 export interface IntegrationSession {
   id: string;
-  authorize(
-    service: IntegrationService,
-    callbackUrl: string,
-  ): Promise<{ accountId: string; url: string }>;
+  authorize(service: IntegrationService, callbackUrl: string): Promise<IntegrationAuthorization>;
   search(query: string, signal?: AbortSignal): Promise<IntegrationSearch>;
   execute(
     action: string,
@@ -42,6 +45,7 @@ export interface IntegrationSession {
     action: string,
     file: IntegrationFile,
     signal?: AbortSignal,
+    accountId?: string,
   ): Promise<Record<string, unknown>>;
 }
 export interface IntegrationEvent {
@@ -108,6 +112,7 @@ export interface InboxSnippet {
 export interface IntegrationProvider {
   id: string;
   configured: boolean;
+  configurationId?: string;
   setApiKey?(apiKey?: string): void;
   verifyApiKey?(apiKey: string): Promise<boolean>;
   supportedServices?: readonly IntegrationService[];
@@ -126,7 +131,7 @@ export interface IntegrationProvider {
     service: IntegrationService,
     accountId: string,
     callbackUrl: string,
-  ): Promise<{ accountId: string; url: string; authConfigId: string }>;
+  ): Promise<IntegrationAuthorization & { authConfigId: string }>;
   inspectAccount(
     id: string,
     ownerId: string,
@@ -151,11 +156,15 @@ export interface IntegrationProvider {
     cursor: string | null,
     signal: AbortSignal,
   ): Promise<IntegrationInboxPoll>;
-  parseCallback(query: unknown):
-    | Promise<{ state: string; accountId: string; success: boolean }>
+  parseCallback(
+    query: unknown,
+    pending?: { accountId: string; verificationSecret?: string | null; service: string },
+  ):
+    | Promise<{ state: string; accountId: string; pendingAccountId?: string; success: boolean }>
     | {
         state: string;
         accountId: string;
+        pendingAccountId?: string;
         success: boolean;
       };
   subscribe(

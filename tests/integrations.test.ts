@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
-import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import {
+  createHash,
+  createHmac,
+  createPublicKey,
+  randomBytes,
+  randomUUID,
+  verify,
+} from 'node:crypto';
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -27,6 +34,7 @@ import {
   type IntegrationSession,
 } from '../src/ports/integrations.ts';
 import { createComposioProvider } from '../src/providers/composio/integrations.ts';
+import { createComposioProxy } from '../src/providers/composio/proxy.ts';
 import { createDirectProvider } from '../src/providers/direct/integrations.ts';
 import { createDirectOAuth } from '../src/providers/direct/oauth.ts';
 import { withDirectMcp } from '../src/providers/direct/mcp.ts';
@@ -37,7 +45,6 @@ import { createDiscoveredConnections } from '../src/server/discovered-connection
 import { registerLocalAccess } from '../src/server/access.ts';
 import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
-import { createIntegrationKeyService } from '../src/server/integration-key.ts';
 import { createErrorRedactor } from '../src/server/inspector-redaction.ts';
 import { createProviderUsageStore } from '../src/server/provider-usage.ts';
 import {
@@ -77,6 +84,1133 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
     },
   };
 }
+
+test('managed integration requests bind SDK calls to a private persisted installation and never retry execution', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-integration-proxy-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const calls: Array<{ path: string; body: Record<string, unknown>; key: string }> = [];
+  let failExecution = false;
+  let uploadResponse = 'otto-file.synthetic-owned-capability';
+  let uploadName = 'synthetic.bin';
+  let failUpload = false;
+  let expectedUser = '';
+  let expectedCallback: Record<string, unknown> = {
+    type: 'loopback',
+    host: 'localhost',
+    port: 4310,
+  };
+  const request: typeof fetch = async (input, init) => {
+    const value = new Request(input, init);
+    const url = new URL(value.url);
+    const bytes = Buffer.from(await value.arrayBuffer());
+    const key = value.headers.get('x-otto-public-key')!;
+    const canonical = [
+      'otto-composio-v1',
+      value.method,
+      url.origin,
+      `${url.pathname}${url.search}`,
+      value.headers.get('x-otto-timestamp'),
+      value.headers.get('x-otto-request-id'),
+      createHash('sha256').update(bytes).digest('hex'),
+    ].join('\n');
+    assert.ok(
+      verify(
+        null,
+        Buffer.from(canonical),
+        createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: key }, format: 'jwk' }),
+        Buffer.from(value.headers.get('x-otto-signature')!, 'base64url'),
+      ),
+    );
+    assert.equal(value.headers.has('x-api-key'), false);
+    assert.equal(value.headers.has('x-user-api-key'), false);
+    assert.equal(value.headers.has('authorization'), false);
+    assert.equal(value.redirect, 'error');
+    const body = bytes.length ? JSON.parse(bytes.toString()) : {};
+    calls.push({ path: url.pathname, body, key });
+    if (url.pathname === '/api/v3.1/toolkits')
+      return Response.json({ items: [], next_cursor: null });
+    if (url.pathname === '/api/v3.1/tools/execute/proxy')
+      return Response.json({ status: 200, data: { messages: [] }, headers: {} });
+    if (url.pathname === '/api/v3.1/tool_router/session') {
+      assert.equal(body.user_id, expectedUser);
+      assert.equal(body.manage_connections.enable, false);
+      assert.equal(body.workbench.enable, false);
+      return Response.json({
+        session_id: 'trs_fixture_proxy',
+        mcp: { type: 'http', url: 'https://proxy.example.test/unsupported-mcp' },
+        config: {
+          user_id: expectedUser,
+          toolkits: { enabled: ['gmail'] },
+          connected_accounts: {},
+        },
+        config_version: 1,
+      });
+    }
+    if (url.pathname.endsWith('/execute')) {
+      if (failExecution) return Response.json({ error: 'Synthetic timeout' }, { status: 503 });
+      return Response.json({ data: { labels: [] }, error: null, log_id: 'fixture-log' });
+    }
+    if (url.pathname === '/v1/files/upload') {
+      assert.deepEqual(body, {
+        sessionId: 'trs_fixture_proxy',
+        action: 'GMAIL_SEND_EMAIL',
+        accountId: 'ca_fixture_proxy',
+        name: 'synthetic.bin',
+        mimeType: 'application/octet-stream',
+        data: 'AP/+CkGA',
+      });
+      if (failUpload) return Response.json({ error: 'upload_failed' }, { status: 503 });
+      return Response.json({
+        name: uploadName,
+        mimetype: 'application/octet-stream',
+        s3key: uploadResponse,
+      });
+    }
+    if (url.pathname === '/v1/connect/start') {
+      assert.equal(body.toolkit, 'gmail');
+      assert.deepEqual(body.callback, expectedCallback);
+      assert.equal('callbackUrl' in body, false);
+      assert.match(String(body.challenge), /^[A-Za-z0-9_-]{43}$/);
+      return Response.json({
+        redirectUrl: 'https://proxy.example.test/v1/connect/browser?ticket=synthetic',
+        transactionId: body.transactionId,
+        pairingCode: '123-456',
+      });
+    }
+    if (url.pathname === '/v1/connect/complete') {
+      assert.equal(body.completionToken, 'synthetic-completion');
+      assert.equal(
+        body.challenge,
+        calls.find((call) => call.path === '/v1/connect/start')!.body.challenge,
+      );
+      return Response.json({
+        connectedAccountId: 'ca_fixture_proxy',
+        toolkit: 'gmail',
+        status: 'ACTIVE',
+      });
+    }
+    throw new Error(`Unexpected fixture route: ${url.pathname}`);
+  };
+  const options = {
+    dataRoot: root,
+    ownerId: 'fixture-owner',
+    url: 'https://proxy.example.test',
+    request,
+  };
+  const proxy = createComposioProxy(options);
+  const concurrent = createComposioProxy(options);
+  await Promise.all([proxy.initialize(), concurrent.initialize()]);
+  assert.equal(proxy.userId, concurrent.userId);
+  const restarted = createComposioProxy(options);
+  await restarted.initialize();
+  assert.equal(proxy.configurationId, restarted.configurationId);
+  expectedUser = proxy.userId;
+  const directory = join(root, 'integration-identity');
+  const entries = await readdir(directory);
+  assert.equal(entries.length, 1);
+  if (process.platform !== 'win32')
+    assert.equal((await stat(join(directory, entries[0]))).mode & 0o077, 0);
+  const other = createComposioProxy({ ...options, ownerId: 'another-owner' });
+  await other.initialize();
+  assert.notEqual(proxy.userId, other.userId);
+  const provider = createComposioProvider({ proxy });
+  const session = await provider.createSession('fixture-owner', {});
+  const state = randomBytes(32).toString('base64url');
+  const attempt = await session.authorize(
+    'gmail',
+    `http://localhost:4310/api/apps/callback?state=${state}`,
+  );
+  assert.equal(attempt.accountId, `pending_${state}`);
+  assert.equal(attempt.pairingCode, '123-456');
+  assert.ok(attempt.verificationSecret);
+  const completed = await provider.parseCallback(
+    { state, completion_token: 'synthetic-completion' },
+    {
+      accountId: attempt.accountId,
+      verificationSecret: attempt.verificationSecret,
+      service: 'gmail',
+    },
+  );
+  assert.equal(completed.accountId, 'ca_fixture_proxy');
+  assert.equal(completed.pendingAccountId, attempt.accountId);
+  for (const [callbackUrl, callback] of [
+    [
+      `http://127.0.0.1/api/apps/callback?state=${state}`,
+      { type: 'loopback', host: 'ipv4', port: 80 },
+    ],
+    [
+      `http://[::1]:65535/api/apps/callback?state=${state}`,
+      { type: 'loopback', host: 'ipv6', port: 65535 },
+    ],
+    [
+      `https://otto.customer.example/api/apps/callback?state=${state}`,
+      {
+        type: 'https',
+        url: `https://otto.customer.example/api/apps/callback?state=${state}`,
+      },
+    ],
+  ] as const) {
+    expectedCallback = callback;
+    const connected = await session.authorize('gmail', callbackUrl);
+    assert.equal(connected.accountId, `pending_${state}`);
+    assert.equal(connected.pairingCode, '123-456');
+  }
+  const completedCalls = calls.length;
+  for (const callbackUrl of [
+    'relative/callback',
+    `http://remote.example/api/apps/callback?state=${state}`,
+    `http://localhost:0/api/apps/callback?state=${state}`,
+    `http://localhost:4310/api/integrations/callback?state=${state}`,
+    `http://localhost:4310/api/apps/callback/?state=${state}`,
+    `http://localhost:4310/api/apps/callback?state=${state}#fragment`,
+    `http://user:password@localhost:4310/api/apps/callback?state=${state}`,
+    `http://localhost:4310/api/apps/callback?state=${state}&state=${state}`,
+    `http://localhost:4310/api/apps/callback?state=${state}&redirect=synthetic`,
+    'http://localhost:4310/api/apps/callback',
+    'http://localhost:4310/api/apps/callback?state=short',
+    `https://otto.customer.example/api/apps/callback?state=${state}&state=${state}`,
+    `https://user@otto.customer.example/api/apps/callback?state=${state}`,
+    ...[
+      'localhost',
+      'localhost.',
+      'app.localhost',
+      '127.0.0.1',
+      '127.1',
+      '2130706433',
+      '[::1]',
+      '[2001:db8::1]',
+      '192.0.2.1',
+      'server',
+    ].map((host) => `https://${host}/api/apps/callback?state=${state}`),
+  ]) {
+    await assert.rejects(session.authorize('gmail', callbackUrl), callbackUrl);
+  }
+  assert.equal(calls.length, completedCalls);
+  await assert.rejects(async () =>
+    provider.parseCallback({ state, completion_token: 'synthetic-completion' }),
+  );
+  await assert.rejects(provider.createSession('another-owner', {}));
+  await assert.rejects(
+    proxy.client
+      .getClient()
+      .post('https://untrusted.example.test/api/v3.1/tool_router/session', { body: {} }),
+  );
+  await assert.rejects(
+    proxy.client
+      .getClient()
+      .withOptions({ baseURL: 'https://untrusted.example.test' })
+      .get('/api/v3.1/toolkits'),
+  );
+  assert.equal(calls.length, completedCalls);
+  const file = {
+    name: 'synthetic.bin',
+    mimeType: 'application/octet-stream',
+    bytes: Uint8Array.from([0, 255, 254, 10, 65, 128]),
+  };
+  await assert.rejects(session.upload!('GMAIL_SEND_EMAIL', file));
+  assert.equal(calls.length, completedCalls);
+  assert.deepEqual(await session.upload!('GMAIL_SEND_EMAIL', file, undefined, 'ca_fixture_proxy'), {
+    name: file.name,
+    mimetype: file.mimeType,
+    s3key: uploadResponse,
+  });
+  assert.equal(calls.length, completedCalls + 1);
+  uploadName = 'another-file.bin';
+  await assert.rejects(session.upload!('GMAIL_SEND_EMAIL', file, undefined, 'ca_fixture_proxy'));
+  uploadName = file.name;
+  uploadResponse = 'raw-project-file-key';
+  await assert.rejects(session.upload!('GMAIL_SEND_EMAIL', file, undefined, 'ca_fixture_proxy'));
+  failUpload = true;
+  const beforeUploadFailure = calls.length;
+  await assert.rejects(session.upload!('GMAIL_SEND_EMAIL', file, undefined, 'ca_fixture_proxy'));
+  assert.equal(calls.length, beforeUploadFailure + 1);
+  const beforeInvalidUpload = calls.length;
+  await assert.rejects(
+    session.upload!(
+      'GMAIL_SEND_EMAIL',
+      file,
+      AbortSignal.abort(new Error('Stopped')),
+      'ca_fixture_proxy',
+    ),
+    /Stopped/,
+  );
+  await assert.rejects(
+    session.upload!(
+      'GMAIL_SEND_EMAIL',
+      { ...file, bytes: new Uint8Array(15 * 1024 * 1024 + 1) },
+      undefined,
+      'ca_fixture_proxy',
+    ),
+  );
+  assert.equal(calls.length, beforeInvalidUpload);
+  assert.deepEqual(await session.execute('GMAIL_LIST_LABELS', {}, 'ca_fixture_proxy'), {
+    data: { labels: [] },
+    error: null,
+    logId: 'fixture-log',
+  });
+  failExecution = true;
+  const before = calls.length;
+  await assert.rejects(session.execute('GMAIL_LIST_LABELS', {}, 'ca_fixture_proxy'));
+  assert.equal(calls.length, before + 1);
+  assert.equal(new Set(calls.map((call) => call.key)).size, 1);
+  assert.deepEqual(
+    await provider.inboxSnippets!('ca_fixture_proxy', new AbortController().signal),
+    [],
+  );
+  assert.equal(calls.at(-1)!.path, '/api/v3.1/tools/execute/proxy');
+  assert.equal(calls.at(-1)!.key, calls[0].key);
+  await proxy.client
+    .getClient()
+    .withOptions({
+      defaultHeaders: {
+        authorization: 'Bearer synthetic-disallowed',
+        'x-api-key': 'synthetic-disallowed',
+      },
+    })
+    .get('/api/v3.1/toolkits');
+});
+
+test('hosted integration identities survive runtime replacement and remain separated by owner', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-integration-hosted-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const identitySecret = randomBytes(32);
+  const first = createComposioProxy({
+    dataRoot: join(root, 'first'),
+    ownerId: 'owner-a',
+    identitySecret,
+  });
+  const restarted = createComposioProxy({
+    dataRoot: join(root, 'replacement'),
+    ownerId: 'owner-a',
+    identitySecret,
+  });
+  const other = createComposioProxy({
+    dataRoot: join(root, 'other'),
+    ownerId: 'owner-b',
+    identitySecret,
+  });
+  const changed = createComposioProxy({
+    dataRoot: join(root, 'changed'),
+    ownerId: 'owner-a',
+    identitySecret: randomBytes(32),
+  });
+  await Promise.all([first, restarted, other, changed].map((proxy) => proxy.initialize()));
+  assert.equal(first.userId, restarted.userId);
+  assert.equal(first.configurationId, restarted.configurationId);
+  assert.notEqual(first.userId, other.userId);
+  assert.notEqual(first.userId, changed.userId);
+  assert.deepEqual(await readdir(root), []);
+  const local = createComposioProxy({ dataRoot: join(root, 'local'), ownerId: 'owner-a' });
+  const separate = createComposioProxy({ dataRoot: join(root, 'separate'), ownerId: 'owner-a' });
+  await Promise.all([local.initialize(), separate.initialize()]);
+  assert.notEqual(local.userId, separate.userId);
+  assert.notEqual(local.userId, first.userId);
+});
+
+test(
+  'deferred integration callbacks use the saved local challenge and activate only the verified completed account',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const database = await hostedDatabase();
+    const app = Fastify();
+    t.after(async () => {
+      await app.close();
+      await database.close();
+    });
+    const secret = randomBytes(32).toString('base64url');
+    let callback = '';
+    let state = '';
+    let completions = 0;
+    const provider = fakeProvider({
+      id: 'fixture-deferred-session',
+      authorize: async (_service, nextCallback) => {
+        callback = nextCallback;
+        state = new URL(callback).searchParams.get('state')!;
+        return {
+          accountId: `pending_${state}`,
+          url: 'https://proxy.example.test/v1/connect/browser?ticket=fixture',
+          pairingCode: '123-456',
+          verificationSecret: secret,
+        };
+      },
+      search: async () => ({ tools: {}, suggestions: [] }),
+      execute: async () => ({}),
+    });
+    provider.configurationId = 'proxy-fixture';
+    provider.supportsSubscriptions = [];
+    provider.webhooksConfigured = false;
+    provider.parseCallback = async (query, pending) => {
+      completions++;
+      assert.deepEqual(pending, {
+        accountId: `pending_${state}`,
+        verificationSecret: secret,
+        service: 'gmail',
+      });
+      assert.equal((query as Record<string, string>).completion_token, 'sealed-fixture');
+      return {
+        state,
+        accountId: 'ca_completed',
+        pendingAccountId: `pending_${state}`,
+        success: true,
+      };
+    };
+    provider.inspectAccount = async (id, owner, options) => {
+      assert.equal(id, 'ca_completed');
+      assert.equal(owner, 'fixture-owner');
+      assert.equal(options?.verifyOwner, true);
+      return { active: true, service: 'gmail' };
+    };
+    const integrations = await createIntegrations(database.pool, {
+      ownerId: 'fixture-owner',
+      provider,
+      baseUrl: 'http://localhost:4310',
+      wake: async () => {},
+    });
+    integrations.registerRoutes(app);
+    const begin = await app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+    assert.equal(begin.statusCode, 200, begin.body);
+    assert.equal(begin.json().pairingCode, '123-456');
+    assert.equal(begin.body.includes(secret), false);
+    const before = await app.inject({
+      url: `/api/apps/callback?state=${randomBytes(32).toString('base64url')}&completion_token=sealed-fixture`,
+    });
+    assert.match(String(before.headers.location), /connection=expired/);
+    assert.equal(completions, 0);
+    const returned = new URL(callback);
+    returned.searchParams.set('completion_token', 'sealed-fixture');
+    const complete = await app.inject({ url: `${returned.pathname}${returned.search}` });
+    assert.match(String(complete.headers.location), /connection=connected/);
+    const row = (
+      await database.pool.query(
+        'SELECT account_id,pending_account_id,callback_verifier,configuration_id FROM app_connections',
+      )
+    ).rows[0];
+    assert.deepEqual(row, {
+      account_id: 'ca_completed',
+      pending_account_id: null,
+      callback_verifier: null,
+      configuration_id: 'proxy-fixture',
+    });
+    const replay = await app.inject({ url: `${returned.pathname}${returned.search}` });
+    assert.match(String(replay.headers.location), /connection=expired/);
+    assert.equal(completions, 1);
+  },
+);
+
+test(
+  'integration configuration upgrades preserve owned accounts and fence unverified recovery data',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    for (const variant of [
+      'missing-fingerprint',
+      'same-project-key-rotation',
+      'wrong-owner',
+      'wrong-service',
+      'unavailable',
+      'inactive',
+      'missing-provider',
+      'unconfigured-provider',
+    ]) {
+      await t.test(variant, async (t) => {
+        const database = await hostedDatabase();
+        const apps: ReturnType<typeof Fastify>[] = [];
+        t.after(async () => {
+          for (const app of apps) await app.close();
+          await database.close();
+        });
+        const owner = 'upgrade-owner';
+        const account = 'retained-account';
+        const connectionId = randomUUID();
+        const state = randomBytes(32).toString('base64url');
+        const verified = ['missing-fingerprint', 'same-project-key-rotation'].includes(variant);
+        const calls: string[] = [];
+        const remote = new Map([
+          [
+            account,
+            {
+              owner: variant === 'wrong-owner' ? 'another-owner' : owner,
+              service: variant === 'wrong-service' ? 'slack' : 'gmail',
+              active: variant !== 'inactive',
+              message: 'owned synthetic message',
+            },
+          ],
+        ]);
+        const session: IntegrationSession = {
+          id: 'upgraded-session',
+          authorize: async () => {
+            calls.push('authorize');
+            throw new Error('Existing connections must not authorize again.');
+          },
+          search: async () => ({ tools: {}, suggestions: [] }),
+          execute: async (_action, _args, accountId) => {
+            calls.push('execute');
+            const value = remote.get(accountId!);
+            assert.equal(value?.owner, owner);
+            return { message: value!.message };
+          },
+        };
+        const provider: IntegrationProvider = {
+          ...fakeProvider(session),
+          configurationId: 'current-project-key',
+          configured: variant !== 'unconfigured-provider',
+          createSession: async (ownerId, accounts) => {
+            calls.push('create-session');
+            assert.equal(ownerId, owner);
+            assert.deepEqual(accounts, { gmail: [account] });
+            return session;
+          },
+          restoreSession: async () => {
+            calls.push('restore-session');
+            throw new Error('Old fingerprint sessions must not be restored.');
+          },
+          inspectAccount: async (accountId, ownerId, options) => {
+            calls.push('inspect');
+            assert.equal(options?.verifyOwner, true);
+            if (variant === 'unavailable') throw new Error('Synthetic provider outage.');
+            const value = remote.get(accountId);
+            if (!value || value.owner !== ownerId) throw new Error('Account owner mismatch.');
+            return { ...value, accountEmail: 'owner@example.test' };
+          },
+          deleteAccount: async () => {
+            calls.push('delete-account');
+          },
+          deleteSession: async () => {
+            calls.push('delete-session');
+          },
+          subscribe: async () => {
+            calls.push('subscribe');
+            return { id: 'new-trigger' };
+          },
+          unsubscribe: async () => {
+            calls.push('unsubscribe');
+          },
+          parseCallback: (value) => {
+            calls.push('callback');
+            return fakeProvider(session).parseCallback(value);
+          },
+          inboxSnippets: async () => {
+            calls.push('inbox');
+            return [];
+          },
+          verificationEmails: async () => {
+            calls.push('verification-email');
+            return [];
+          },
+          sentEmails: async () => {
+            calls.push('sent-email');
+            return [];
+          },
+          pollInbox: async (accountId, cursor) => {
+            calls.push('poll');
+            assert.equal(accountId, account);
+            assert.equal(cursor, 'retained-cursor');
+            return { cursor: 'next-cursor', hasMore: false, messages: [] };
+          },
+        };
+        const setup = await createIntegrations(database.pool, {
+          ownerId: owner,
+          provider: { ...provider, configurationId: undefined },
+          baseUrl: 'http://localhost:4310',
+          wake: async () => {},
+        });
+        const first = Fastify();
+        apps.push(first);
+        setup.registerRoutes(first);
+        await database.pool.query(
+          `INSERT INTO app_connections (id,owner_id,provider_id,slug,account_id,configuration_id,
+           account_active,account_checked_at,account_name,account_email,watch_requested,inbox_cursor,
+           trigger_id,triggers_enabled,pending_account_id,callback_hash,callback_expires,callback_verifier)
+           VALUES ($1,$2,$3,'gmail',$4,$5,true,now(),'Saved account','owner@example.test',true,'retained-cursor',
+           'retained-trigger',true,'retained-pending',$6,now()+interval '10 minutes','retained-verifier')`,
+          [
+            connectionId,
+            owner,
+            variant === 'missing-provider' ? 'removed-provider' : provider.id,
+            account,
+            variant === 'missing-fingerprint' ? null : 'previous-project-key',
+            createHash('sha256').update(state).digest('hex'),
+          ],
+        );
+        await database.pool.query(
+          `INSERT INTO integration_events (id,owner_id,provider_id,summary,slug,account_id,trigger_id)
+           VALUES ('retained-event',$1,$2,'retained synthetic update','gmail',$3,'retained-trigger')`,
+          [owner, variant === 'missing-provider' ? 'removed-provider' : provider.id, account],
+        );
+        await database.pool.query(
+          `INSERT INTO integration_sessions(owner_id,session_id,provider_id,configuration_id)
+           VALUES($1,'retained-session',$2,'previous-project-key')`,
+          [owner, provider.id],
+        );
+        const before = (await database.pool.query('SELECT * FROM app_connections')).rows[0];
+        await first.close();
+        const integrations = await createIntegrations(database.pool, {
+          ownerId: owner,
+          provider,
+          baseUrl: 'http://localhost:4310',
+          wake: async (_summary, _id, _intent, current) => {
+            const client = await database.pool.connect();
+            try {
+              assert.equal(await current!(client), true);
+            } finally {
+              client.release();
+            }
+            calls.push('wake');
+          },
+          learnWritingStyle: async (fetch) => {
+            await fetch(new AbortController().signal);
+          },
+        });
+        const app = Fastify();
+        apps.push(app);
+        integrations.registerRoutes(app);
+        assert.deepEqual((await database.pool.query('SELECT * FROM app_connections')).rows[0], {
+          ...before,
+          configuration_id: verified ? provider.configurationId : before.configuration_id,
+        });
+        assert.deepEqual(
+          calls,
+          ['missing-provider', 'unconfigured-provider'].includes(variant) ? [] : ['inspect'],
+        );
+        const listed = (await integrations.list(owner, { refresh: false })).find(
+          (row) => row.connectionId === connectionId,
+        )!;
+        assert.equal(listed.status === 'connected', verified);
+        if (verified) {
+          assert.deepEqual(
+            await integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }),
+            { message: 'owned synthetic message' },
+          );
+          await integrations.pollInboxes();
+          await integrations.drain();
+          assert.deepEqual(calls, ['inspect', 'create-session', 'execute', 'poll', 'wake']);
+          assert.equal(
+            (await database.pool.query('SELECT inbox_cursor FROM app_connections')).rows[0]
+              .inbox_cursor,
+            'next-cursor',
+          );
+          assert.equal(
+            (await database.pool.query('SELECT state FROM integration_events')).rows[0].state,
+            'delivered',
+          );
+          return;
+        }
+        await assert.rejects(integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }));
+        await assert.rejects(
+          integrations.execute(owner, 'SEARCH_TOOLS', { query: 'Read Gmail', connectionId }),
+        );
+        assert.deepEqual(await integrations.inboxSnippets(new AbortController().signal), []);
+        assert.equal(
+          await integrations.emailCode(
+            owner,
+            {
+              recipient: 'owner@example.test',
+              origin: 'https://example.test',
+              after: Date.now() - 30_000,
+              before: Date.now(),
+            },
+            new AbortController().signal,
+          ),
+          undefined,
+        );
+        await integrations.pollInboxes();
+        await integrations.drain();
+        await app.inject({
+          method: 'POST',
+          url: '/api/webhooks/fixture',
+          headers: { 'x-fixture-valid': 'yes' },
+          payload: {
+            id: 'unverified-update',
+            ownerId: owner,
+            service: 'gmail',
+            accountId: account,
+            subscriptionId: 'retained-trigger',
+            trigger: 'fixture-inbox-update',
+            data: {},
+          },
+        });
+        await app.inject({
+          url: `/api/apps/callback?state=${state}&account_ref=${account}&outcome=ok`,
+        });
+        assert.deepEqual(
+          (await database.pool.query('SELECT * FROM app_connections')).rows[0],
+          before,
+        );
+        assert.deepEqual(
+          (await database.pool.query('SELECT id,state FROM integration_events')).rows,
+          [{ id: 'retained-event', state: 'queued' }],
+        );
+        await database.pool.query('UPDATE app_connections SET trigger_id=NULL WHERE id=$1', [
+          connectionId,
+        ]);
+        await integrations.syncWatches();
+        assert.deepEqual(
+          calls,
+          ['missing-provider', 'unconfigured-provider'].includes(variant) ? [] : ['inspect'],
+        );
+      });
+    }
+  },
+);
+
+test(
+  'integration provider changes replace owned connections only after verified consent',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    for (const variant of [
+      'success',
+      'single-connection',
+      'watch-disabled',
+      'two-accounts',
+      'restart',
+      'claimed-restart',
+      'cancel',
+      'authorize-failure',
+      'wrong-email',
+      'wrong-owner',
+      'unknown-identity',
+      'foreign-target',
+      'superseded',
+      'superseded-during-callback',
+      'concurrent',
+      'callback-race',
+      'expired',
+      'disconnected',
+      'existing-account',
+    ]) {
+      await t.test(variant, async (t) => {
+        const succeeds = [
+          'success',
+          'single-connection',
+          'watch-disabled',
+          'two-accounts',
+          'restart',
+          'claimed-restart',
+          'superseded',
+          'superseded-during-callback',
+          'concurrent',
+          'callback-race',
+        ].includes(variant);
+        const database = await hostedDatabase(
+          ['single-connection', 'callback-race'].includes(variant)
+            ? { max: 1, connectionTimeoutMillis: 1500 }
+            : {},
+        );
+        const apps: ReturnType<typeof Fastify>[] = [];
+        let releaseParsing = () => {};
+        let parsed = () => {};
+        const parsingStarted = new Promise<void>((resolve) => {
+          parsed = resolve;
+        });
+        const parsingHeld = new Promise<void>((resolve) => {
+          releaseParsing = resolve;
+        });
+        let holdingParse = false;
+        let releaseInspection = () => {};
+        let inspected = () => {};
+        const inspectionStarted = new Promise<void>((resolve) => {
+          inspected = resolve;
+        });
+        const inspectionHeld = new Promise<void>((resolve) => {
+          releaseInspection = resolve;
+        });
+        let holdingInspection = false;
+        const completedTokens = new Set<string>();
+        t.after(async () => {
+          releaseParsing();
+          releaseInspection();
+          for (const app of apps) await app.close();
+          await database.close();
+        });
+        const owner = 'fixture-owner';
+        const oldId = randomUUID();
+        const otherId = randomUUID();
+        const selected: Array<Parameters<IntegrationProvider['createSession']>[1]> = [];
+        const removed: string[] = [];
+        const polled: string[] = [];
+        const callbacks = new Map<string, string>();
+        const remote = new Map<string, { email: string; active: boolean; owner: string }>();
+        let nextEmail = variant === 'wrong-email' ? 'wrong@example.test' : 'owner@example.test';
+        let authorizations = 0;
+        const session: IntegrationSession = {
+          id: 'new-session',
+          authorize: async (_service, callback) => {
+            authorizations++;
+            if (variant === 'authorize-failure') throw new Error('Synthetic consent unavailable.');
+            const accountId = `new-account-${authorizations}`;
+            callbacks.set(accountId, callback);
+            remote.set(accountId, {
+              email: nextEmail,
+              active: false,
+              owner: variant === 'wrong-owner' ? 'another-owner' : owner,
+            });
+            return {
+              accountId: `pending_${new URL(callback).searchParams.get('state')}`,
+              verificationSecret: 'synthetic-local-challenge',
+              url: 'https://proxy.example.test/connect',
+            };
+          },
+          search: async () => ({ tools: {}, suggestions: [] }),
+          execute: async (_action, _args, accountId) => {
+            assert.equal(remote.get(accountId!)?.active, true);
+            return { accountId };
+          },
+        };
+        await createIntegrations(database.pool, {
+          ownerId: owner,
+          provider: { ...fakeProvider(session), configurationId: 'previous-project' },
+          baseUrl: 'http://localhost:4310',
+          wake: async () => assert.fail('Old queued work must remain fenced.'),
+        });
+        async function seed(id: string, account: string, email: string | null, rowOwner = owner) {
+          await database.pool.query(
+            `INSERT INTO app_connections (id,owner_id,slug,account_id,provider_id,configuration_id,
+             account_name,account_email,trigger_id,triggers_enabled,watch_requested,inbox_cursor)
+             VALUES ($1,$2,'gmail',$3,'fixture','previous-project','Saved account',$4,$5,true,$6,'old-cursor')`,
+            [id, rowOwner, account, email, `${account}-trigger`, variant !== 'watch-disabled'],
+          );
+          await database.pool.query(
+            `INSERT INTO integration_events (id,owner_id,summary,slug,account_id,provider_id,poll_connection_id)
+             VALUES ($1,$2,'Synthetic old queued message','gmail',$3,'fixture',$4)`,
+            [`${account}-event`, rowOwner, account, id],
+          );
+        }
+        await seed(
+          oldId,
+          'old-account',
+          variant === 'unknown-identity' ? null : 'owner@example.test',
+        );
+        if (variant === 'two-accounts') await seed(otherId, 'old-other', 'second@example.test');
+        if (variant === 'foreign-target')
+          await seed(otherId, 'old-foreign', 'foreign@example.test', 'another-owner');
+        if (variant === 'existing-account') {
+          await database.pool.query(
+            `INSERT INTO app_connections (id,owner_id,slug,account_id,provider_id,configuration_id,account_email,watch_requested)
+             VALUES ($1,$2,'gmail','new-account-1','fixture','managed-project','owner@example.test',false)`,
+            [otherId, owner],
+          );
+          remote.set('new-account-1', { email: 'owner@example.test', active: true, owner });
+        }
+        await database.pool.query(
+          `INSERT INTO integration_sessions(owner_id,session_id,provider_id,configuration_version,configuration_id)
+           VALUES ($1,'old-session','fixture',3,'previous-project')`,
+          [owner],
+        );
+        const provider: IntegrationProvider = {
+          ...fakeProvider(session),
+          configurationId: 'managed-project',
+          supportsSubscriptions: [],
+          webhooksConfigured: false,
+          createSession: async (user, accounts) => {
+            assert.equal(user, owner);
+            assert.ok(
+              Object.values(accounts)
+                .flat()
+                .every((id) => typeof id === 'string' && !id.startsWith('old-')),
+            );
+            selected.push(accounts);
+            return session;
+          },
+          restoreSession: async () => assert.fail('An old project session must not be restored.'),
+          deleteSession: async (id) => {
+            assert.notEqual(id, 'old-session');
+            removed.push(id);
+          },
+          inspectAccount: async (id, user, options) => {
+            assert.equal(user, owner);
+            if (id.startsWith('old-')) {
+              assert.equal(options?.verifyOwner, true);
+              throw new Error('This account belongs to a different project owner.');
+            }
+            const account = remote.get(id);
+            assert.ok(account);
+            assert.equal(options?.verifyOwner, true);
+            assert.equal(account.owner, user);
+            if (variant === 'callback-race' && !holdingInspection) {
+              holdingInspection = true;
+              inspected();
+              await inspectionHeld;
+            }
+            return { active: account.active, service: 'gmail', accountEmail: account.email };
+          },
+          deleteAccount: async (id) => {
+            assert.ok(!id.startsWith('old-'));
+            removed.push(id);
+            if (remote.has(id)) assert.equal(remote.get(id)!.owner, owner);
+            remote.delete(id);
+          },
+          unsubscribe: async (id) => assert.ok(!id.startsWith('old-')),
+          reconnectAccount: async () => assert.fail('An old project account must not be reused.'),
+          parseCallback: async (raw) => {
+            const query = raw as Record<string, string>;
+            if (completedTokens.has(query.state)) throw new Error('Completion token already used.');
+            completedTokens.add(query.state);
+            const account = remote.get(query.account_ref);
+            assert.ok(account);
+            if (query.outcome === 'ok') account.active = true;
+            if (variant === 'superseded-during-callback' && !holdingParse) {
+              holdingParse = true;
+              parsed();
+              await parsingHeld;
+            }
+            return {
+              state: query.state,
+              accountId: query.account_ref,
+              pendingAccountId: `pending_${query.state}`,
+              success: query.outcome === 'ok',
+            };
+          },
+          pollInbox: async (id, cursor) => {
+            assert.equal(remote.get(id)?.active, true);
+            assert.equal(cursor, null);
+            polled.push(id);
+            return { cursor: 'new-cursor', hasMore: false, messages: [] };
+          },
+        };
+        async function start() {
+          const integrations = await createIntegrations(database.pool, {
+            ownerId: owner,
+            provider,
+            baseUrl: 'http://localhost:4310',
+            wake: async () => assert.fail('Old queued work must not be delivered.'),
+          });
+          const app = Fastify();
+          apps.push(app);
+          integrations.registerRoutes(app);
+          return { integrations, app };
+        }
+        let { integrations, app } = await start();
+        const original = (
+          await database.pool.query('SELECT * FROM app_connections WHERE id=$1', [oldId])
+        ).rows[0];
+        const originalOther = (
+          await database.pool.query('SELECT * FROM app_connections WHERE id=$1', [otherId])
+        ).rows[0];
+        const old = (await integrations.list(owner, { refresh: false })).find(
+          (row) => row.connectionId === oldId,
+        )!;
+        assert.equal(old.status, 'disconnected');
+        assert.equal(old.reconnectRequired, true);
+        await assert.rejects(
+          integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId: oldId }),
+        );
+        await integrations.pollInboxes();
+        await integrations.drain();
+        assert.deepEqual(polled, []);
+        async function begin(id = oldId) {
+          return app.inject({
+            method: 'POST',
+            url: '/api/apps/gmail/connect',
+            payload: { connectionId: id },
+          });
+        }
+        async function complete(account: string, outcome = 'ok') {
+          const returned = new URL(callbacks.get(account)!);
+          returned.searchParams.set('account_ref', account);
+          returned.searchParams.set('outcome', outcome);
+          return app.inject({ url: `${returned.pathname}${returned.search}` });
+        }
+        const starts =
+          variant === 'concurrent'
+            ? await Promise.all([begin(), begin()])
+            : [await begin(variant === 'foreign-target' ? otherId : oldId)];
+        const first = starts[0];
+        if (['authorize-failure', 'unknown-identity', 'foreign-target'].includes(variant)) {
+          assert.equal(
+            first.statusCode,
+            variant === 'authorize-failure' ? 502 : variant === 'foreign-target' ? 404 : 409,
+            first.body,
+          );
+          assert.equal(authorizations, variant === 'authorize-failure' ? 1 : 0);
+        } else {
+          assert.equal(first.statusCode, 200, first.body);
+          assert.deepEqual(
+            (await database.pool.query('SELECT * FROM app_connections WHERE id=$1', [oldId]))
+              .rows[0],
+            original,
+          );
+          if (variant === 'restart') {
+            await app.close();
+            ({ integrations, app } = await start());
+          }
+          if (variant === 'claimed-restart') {
+            await database.pool.query(
+              'UPDATE app_connections SET callback_claim_id=$1 WHERE account_id IS NULL',
+              [randomUUID()],
+            );
+            await app.close();
+            ({ integrations, app } = await start());
+            const stale = await complete('new-account-1');
+            assert.doesNotMatch(String(stale.headers.location), /connection=connected/);
+            assert.equal(completedTokens.size, 0);
+            assert.equal((await begin()).statusCode, 200);
+          }
+          if (variant === 'superseded') {
+            const second = await begin();
+            assert.equal(second.statusCode, 200, second.body);
+            const stale = await complete('new-account-1');
+            assert.doesNotMatch(String(stale.headers.location), /connection=connected/);
+          }
+          let currentAccount = ['superseded', 'claimed-restart'].includes(variant)
+            ? 'new-account-2'
+            : 'new-account-1';
+          if (variant === 'concurrent') {
+            assert.equal(starts[1].statusCode, 200, starts[1].body);
+            const pending = await database.pool.query(
+              'SELECT pending_account_id FROM app_connections WHERE account_id IS NULL',
+            );
+            assert.equal(pending.rowCount, 1);
+            currentAccount = [...callbacks].find(
+              ([, url]) =>
+                `pending_${new URL(url).searchParams.get('state')}` ===
+                pending.rows[0].pending_account_id,
+            )![0];
+            const stale = await complete(
+              currentAccount === 'new-account-1' ? 'new-account-2' : 'new-account-1',
+            );
+            assert.doesNotMatch(String(stale.headers.location), /connection=connected/);
+          }
+          if (variant === 'expired')
+            await database.pool.query(
+              "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE account_id IS NULL",
+            );
+          if (variant === 'disconnected') {
+            const disconnect = await app.inject({
+              method: 'POST',
+              url: `/api/apps/gmail/accounts/${oldId}/disconnect`,
+            });
+            assert.equal(disconnect.statusCode, 200, disconnect.body);
+          }
+          if (variant === 'superseded-during-callback') {
+            const previous = complete(currentAccount);
+            await parsingStarted;
+            assert.equal((await begin()).statusCode, 200);
+            releaseParsing();
+            assert.doesNotMatch(String((await previous).headers.location), /connection=connected/);
+            assert.equal(remote.has(currentAccount), false);
+            currentAccount = 'new-account-2';
+          }
+          const accountId = currentAccount;
+          const completion = complete(accountId, variant === 'cancel' ? 'cancel' : 'ok');
+          if (variant === 'callback-race') {
+            await inspectionStarted;
+            const replay = await complete(accountId);
+            assert.doesNotMatch(String(replay.headers.location), /connection=connected/);
+            releaseInspection();
+          }
+          const returned = await completion;
+          if (succeeds) {
+            assert.match(String(returned.headers.location), /connection=connected/);
+            const fresh = (await integrations.list(owner, { refresh: false })).filter(
+              (row) => row.accountEmail === 'owner@example.test',
+            );
+            assert.equal(fresh.length, 1);
+            assert.equal(fresh[0].connectionId, oldId);
+            assert.equal(fresh[0].status, 'connected');
+            assert.equal(fresh[0].reconnectRequired, false);
+            const saved = (
+              await database.pool.query('SELECT * FROM app_connections WHERE id=$1', [oldId])
+            ).rows[0];
+            assert.equal(saved.account_id, accountId);
+            assert.equal(saved.watch_requested, original.watch_requested);
+            assert.equal(saved.inbox_cursor, null);
+            assert.equal(saved.trigger_id, null);
+            assert.equal(
+              (
+                await database.pool.query(
+                  "SELECT state FROM integration_events WHERE id='old-account-event'",
+                )
+              ).rows[0].state,
+              'discarded',
+            );
+            assert.deepEqual(
+              await integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId: oldId }),
+              { accountId },
+            );
+            if (variant === 'two-accounts') {
+              assert.deepEqual(
+                (await database.pool.query('SELECT * FROM app_connections WHERE id=$1', [otherId]))
+                  .rows[0],
+                originalOther,
+              );
+              nextEmail = 'second@example.test';
+              assert.equal((await begin(otherId)).statusCode, 200);
+              assert.match(
+                String((await complete('new-account-2')).headers.location),
+                /connection=connected/,
+              );
+              const second = (await integrations.list(owner, { refresh: false })).find(
+                (row) => row.connectionId === otherId,
+              )!;
+              assert.equal(second.accountId, 'new-account-2');
+              assert.equal(second.status, 'connected');
+            }
+            await integrations.pollInboxes();
+            assert.deepEqual(
+              polled,
+              variant === 'watch-disabled'
+                ? []
+                : variant === 'two-accounts'
+                  ? ['new-account-1', 'new-account-2']
+                  : [accountId],
+            );
+            await integrations.drain();
+            assert.equal(
+              (await database.pool.query('SELECT id FROM app_connections WHERE account_id IS NULL'))
+                .rowCount,
+              0,
+            );
+          } else {
+            assert.doesNotMatch(String(returned.headers.location), /connection=connected/);
+          }
+        }
+        if (!succeeds && variant !== 'disconnected') {
+          assert.deepEqual(
+            (await database.pool.query('SELECT * FROM app_connections WHERE id=$1', [oldId]))
+              .rows[0],
+            original,
+          );
+          assert.equal(
+            (
+              await database.pool.query(
+                "SELECT state FROM integration_events WHERE id='old-account-event'",
+              )
+            ).rows[0].state,
+            'queued',
+          );
+          if (originalOther)
+            assert.deepEqual(
+              (await database.pool.query('SELECT * FROM app_connections WHERE id=$1', [otherId]))
+                .rows[0],
+              originalOther,
+            );
+          await assert.rejects(
+            integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId: oldId }),
+          );
+        }
+        if (variant === 'disconnected')
+          assert.equal(
+            (await integrations.list(owner, { refresh: false })).some(
+              (row) => row.status === 'connected',
+            ),
+            false,
+          );
+        if (['wrong-email', 'disconnected'].includes(variant))
+          assert.equal(remote.has('new-account-1'), false);
+        if (variant === 'wrong-owner') assert.equal(removed.includes('new-account-1'), false);
+        assert.ok(removed.every((id) => !id.startsWith('old-')));
+        assert.ok(
+          selected.every((accounts) =>
+            Object.values(accounts)
+              .flat()
+              .every((id) => typeof id === 'string' && !id.startsWith('old-')),
+          ),
+        );
+      });
+    }
+  },
+);
 
 test('synthetic Gmail filters its inbox and sent mail by query, labels and date', async (t) => {
   const fixture = createIntegrationFixture('http://localhost:4320');
@@ -690,12 +1824,23 @@ test(
         (await app.inject({ method: 'POST', url: '/api/apps/gmail/connect' })).statusCode,
         200,
       );
-      const url = new URL(callback);
+      let url = new URL(callback);
       url.searchParams.set('outcome', 'ok');
       url.searchParams.set('account_ref', 'ca-other-user');
       const foreignAccount = await app.inject({ url: `${url.pathname}${url.search}` });
       assert.equal(foreignAccount.statusCode, 302, foreignAccount.body);
       assert.equal(foreignAccount.headers.location, 'http://localhost:4310/apps?connection=failed');
+      url.searchParams.set('account_ref', 'ca-fixture');
+      assert.equal(
+        (await app.inject({ url: `${url.pathname}${url.search}` })).headers.location,
+        'http://localhost:4310/apps?connection=expired',
+      );
+      assert.equal(
+        (await app.inject({ method: 'POST', url: '/api/apps/gmail/connect' })).statusCode,
+        200,
+      );
+      url = new URL(callback);
+      url.searchParams.set('outcome', 'ok');
       url.searchParams.set('account_ref', 'ca-fixture');
       const inactiveAccount = await app.inject({ url: `${url.pathname}${url.search}` });
       assert.equal(inactiveAccount.statusCode, 302, inactiveAccount.body);
@@ -704,7 +1849,21 @@ test(
         'http://localhost:4310/apps?connection=failed',
       );
       providerStatus = 'ACTIVE';
-      assert.equal((await app.inject({ url: `${url.pathname}${url.search}` })).statusCode, 302);
+      assert.equal(
+        (await app.inject({ url: `${url.pathname}${url.search}` })).headers.location,
+        'http://localhost:4310/apps?connection=expired',
+      );
+      assert.equal(
+        (await app.inject({ method: 'POST', url: '/api/apps/gmail/connect' })).statusCode,
+        200,
+      );
+      url = new URL(callback);
+      url.searchParams.set('outcome', 'ok');
+      url.searchParams.set('account_ref', 'ca-fixture');
+      assert.equal(
+        (await app.inject({ url: `${url.pathname}${url.search}` })).headers.location,
+        'http://localhost:4310/apps?connection=connected',
+      );
       assert.equal(
         (await app.inject({ url: `${url.pathname}${url.search}` })).headers.location,
         'http://localhost:4310/apps?connection=expired',
@@ -1116,11 +2275,20 @@ test(
     const foo = await f.connect('foo');
     const consent = await f.app.inject({ method: 'POST', url: '/api/apps/foo_mcp/connect' });
     assert.equal(consent.statusCode, 200, consent.body);
-    const callback = new URL(f.callbacks.at(-1)!);
-    const accountId = [...f.accounts.keys()].at(-1)!;
+    let callback = new URL(f.callbacks.at(-1)!);
+    let accountId = [...f.accounts.keys()].at(-1)!;
     callback.searchParams.set('account', foo.accountId!);
     const mismatch = await f.app.inject({ url: `${callback.pathname}${callback.search}` });
     assert.equal(new URL(mismatch.headers.location!).searchParams.get('connection'), 'failed');
+    callback.searchParams.set('account', accountId);
+    const replay = await f.app.inject({ url: `${callback.pathname}${callback.search}` });
+    assert.equal(new URL(replay.headers.location!).searchParams.get('connection'), 'expired');
+    assert.equal(
+      (await f.app.inject({ method: 'POST', url: '/api/apps/foo_mcp/connect' })).statusCode,
+      200,
+    );
+    callback = new URL(f.callbacks.at(-1)!);
+    accountId = [...f.accounts.keys()].at(-1)!;
     callback.searchParams.set('account', accountId);
     const completed = await f.app.inject({ url: `${callback.pathname}${callback.search}` });
     assert.equal(new URL(completed.headers.location!).searchParams.get('connection'), 'connected');
@@ -1304,133 +2472,6 @@ test('Composio first-task inbox snippets read at most fifteen subjects and snipp
       { in: 'query', name: 'fields', value: 'snippet,payload/headers' },
     ]);
 });
-
-test(
-  'saved integration keys remain redacted after restart and replacement',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await appsFixture(t);
-    const encryptionKey = randomBytes(32);
-    const keyStore = { id: 'fixture', configured: true, getKey: async () => encryptionKey };
-    const open = async () => {
-      const service = createIntegrationKeyService({
-        database: f.pool,
-        ownerId: 'local-development',
-        keyStore,
-        provider: { ...f.provider, configured: false },
-      });
-      await service.initialize();
-      return service;
-    };
-    const original = 'synthetic-composio-original';
-    const replacement = 'synthetic-composio-replacement';
-    const initial = await open();
-    await initial.save(original);
-    const restarted = await open();
-    const secrets: string[] = [];
-    const redact = createErrorRedactor(secrets);
-    restarted.onSecrets((values) => secrets.push(...values));
-    assert.equal(redact(`Received ${original}.`), 'Received [redacted].');
-    await restarted.save(replacement);
-    await restarted.remove();
-    assert.equal(
-      redact(`Received ${original} and ${replacement}.`),
-      'Received [redacted] and [redacted].',
-    );
-    const lateSecrets: string[] = [];
-    restarted.onSecrets((values) => lateSecrets.push(...values));
-    assert.equal(
-      createErrorRedactor(lateSecrets)(`Received ${original} and ${replacement}.`),
-      'Received [redacted] and [redacted].',
-    );
-  },
-);
-
-test(
-  'integration keys are verified before saving and their status stays owner scoped',
-  { skip: !process.env.TEST_DATABASE_URL },
-  async (t) => {
-    const f = await appsFixture(t);
-    const valid = 'synthetic-composio-valid-wxyz';
-    const checked: string[] = [];
-    let reachable = true;
-    const provider: IntegrationProvider = {
-      ...f.provider,
-      configured: false,
-      setApiKey: () => {},
-      verifyApiKey: async (key) => {
-        checked.push(key);
-        if (!reachable) throw new Error('Synthetic network failure.');
-        return key === valid;
-      },
-    };
-    const keyStore = {
-      id: 'fixture',
-      configured: true,
-      getKey: async () => Buffer.alloc(32, 7),
-    };
-    const open = async (ownerId: string) => {
-      const app = Fastify();
-      const service = createIntegrationKeyService({
-        database: f.pool,
-        ownerId,
-        keyStore,
-        provider,
-      });
-      await service.initialize();
-      service.register(app);
-      await app.ready();
-      t.after(() => app.close());
-      return app;
-    };
-    const owner = await open('local-development');
-    const put = (key: unknown) =>
-      owner.inject({ method: 'PUT', url: '/api/integrations/key', payload: { key } });
-    const status = async (app = owner) =>
-      (await app.inject({ url: '/api/integrations/key' })).json();
-    const rejected = await put('synthetic-composio-wrong');
-    assert.equal(rejected.statusCode, 400);
-    assert.equal(
-      rejected.json().error,
-      'That key didn’t work. Copy it again from Composio and paste it here.',
-    );
-    assert.deepEqual(await status(), { managed: false, saved: false, suffix: null });
-    assert.equal((await put('short')).statusCode, 400);
-    reachable = false;
-    const offline = await put(valid);
-    assert.equal(offline.statusCode, 400);
-    assert.equal(offline.json().error, 'Composio could not be reached. Try again.');
-    assert.deepEqual(await status(), { managed: false, saved: false, suffix: null });
-    reachable = true;
-    const saved = await put(valid);
-    assert.equal(saved.statusCode, 200, saved.body);
-    const current = await owner.inject({ url: '/api/integrations/key' });
-    assert.deepEqual(current.json(), { managed: false, saved: true, suffix: 'wxyz' });
-    assert.doesNotMatch(current.body, /synthetic-composio-valid/);
-    const check = await owner.inject({
-      method: 'POST',
-      url: '/api/integrations/key/check',
-      payload: { key: 'synthetic-composio-wrong' },
-    });
-    assert.equal(check.statusCode, 400);
-    assert.deepEqual(await status(await open('local-development')), {
-      managed: false,
-      saved: true,
-      suffix: 'wxyz',
-    });
-    assert.deepEqual(await status(await open('other-owner')), {
-      managed: false,
-      saved: false,
-      suffix: null,
-    });
-    assert.deepEqual(checked, [
-      'synthetic-composio-wrong',
-      valid,
-      valid,
-      'synthetic-composio-wrong',
-    ]);
-  },
-);
 
 test(
   'desktop OAuth callbacks use a public completion page and preserve owned turn continuation',
@@ -1898,7 +2939,7 @@ test(
     const status = async (...hashes: string[]) => (await setupStatus(...hashes)).completed;
     const complete = async (callback: URL) =>
       (await f.app.inject({ url: `${callback.pathname}${callback.search}` })).headers.location;
-    const personal = await start();
+    let personal = await start();
     const other = await start();
     const foreign = await start();
     await f.pool.query('UPDATE app_connections SET owner_id=$1 WHERE id=$2', [
@@ -1931,8 +2972,15 @@ test(
     assert.deepEqual(await status(personal.hash, other.hash), []);
     assert.equal(
       await complete(personal.callback),
+      'http://localhost:4310/apps?connection=expired',
+    );
+    const rejectedHash = personal.hash;
+    personal = await start();
+    assert.equal(
+      await complete(personal.callback),
       'http://localhost:4310/apps?connection=connected',
     );
+    assert.deepEqual(await status(rejectedHash, personal.hash, other.hash), [personal.hash]);
     assert.deepEqual(await status(personal.hash, other.hash), [personal.hash]);
     assert.deepEqual((await setupStatus(personal.hash)).apps, []);
     await f.pool.query(
@@ -4666,17 +5714,39 @@ test(
     await admin.query(`CREATE SCHEMA ${schema}`);
     const address = new URL(process.env.TEST_DATABASE_URL!);
     address.searchParams.set('options', `-c search_path=${schema}`);
-    const pool = new pg.Pool({ connectionString: address.href });
+    const pool = new pg.Pool({
+      connectionString: address.href,
+      max: 1,
+      connectionTimeoutMillis: 1500,
+    });
     const secretKey = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => secretKey };
     const redirectUris: string[] = [];
     let tokenRequests = 0;
     let refreshRequests = 0;
     let mcpRequests = 0;
+    let routeMode = false;
     const request: typeof fetch = async (input, init) => {
       const url = String(input);
       if (url === 'https://mcp.linear.app/mcp/readonly') {
         mcpRequests += 1;
+        if (routeMode) {
+          if (init?.method === 'GET') return new Response(null, { status: 405 });
+          const message = JSON.parse(String(init?.body));
+          if (message.id === undefined) return new Response(null, { status: 202 });
+          return Response.json({
+            jsonrpc: '2.0',
+            id: message.id,
+            result:
+              message.method === 'initialize'
+                ? {
+                    protocolVersion: message.params.protocolVersion,
+                    capabilities: { tools: {} },
+                    serverInfo: { name: 'fixture', version: '1' },
+                  }
+                : { tools: [] },
+          });
+        }
         throw new Error('The synthetic MCP server is unavailable.');
       }
       if (url.endsWith('/.well-known/oauth-protected-resource/mcp/readonly'))
@@ -4696,6 +5766,8 @@ test(
         return Response.json({ client_id: 'fixture-client' });
       }
       if (url.endsWith('/token')) {
+        if (routeMode)
+          return Response.json({ access_token: 'synthetic-route-token', expires_in: 3600 });
         tokenRequests += 1;
         const body = init?.body as URLSearchParams;
         assert.equal(body.get('client_id'), 'fixture-client');
@@ -4908,6 +5980,38 @@ test(
         JSON.parse((await grantVault.read(race.accountId)).value).accessToken,
         'private-access-token',
       );
+      routeMode = true;
+      const integrations = await createIntegrations(pool, {
+        ownerId: 'fixture-owner',
+        provider,
+        baseUrl: 'http://localhost:4310',
+        wake: async () => {},
+      });
+      const app = Fastify();
+      integrations.registerRoutes(app);
+      try {
+        for (const outcome of ['connected', 'cancelled']) {
+          const started = await app.inject({ method: 'POST', url: '/api/apps/linear/connect' });
+          assert.equal(started.statusCode, 200, started.body);
+          const state = new URL(started.json().url).searchParams.get('state')!;
+          const query = new URLSearchParams({ state, iss: 'https://mcp.linear.app' });
+          query.set(outcome === 'connected' ? 'code' : 'error', 'synthetic-route-result');
+          const returned = await app.inject({ url: `/api/apps/callback?${query}` });
+          assert.equal(
+            returned.headers.location,
+            `http://localhost:4310/apps?connection=${outcome}`,
+            returned.body,
+          );
+        }
+        assert.equal(
+          (await integrations.list('fixture-owner', { refresh: false })).filter(
+            (item) => item.status === 'connected',
+          ).length,
+          1,
+        );
+      } finally {
+        await app.close();
+      }
     } finally {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -5215,6 +6319,14 @@ test(
         firstCallback.headers.location,
         'http://localhost:4310/?connection=failed&service=linear',
       );
+      const replayed = await app.inject({
+        url: `/api/apps/callback?state=${state}&code=fixture`,
+      });
+      assert.equal(replayed.headers.location, 'http://localhost:4310/apps?connection=expired');
+      await integrations.manageConnections('connect', 'linear', {
+        threadId: randomUUID(),
+        turnId,
+      });
       const chatCallback = await app.inject({
         url: `/api/apps/callback?state=${state}&code=fixture`,
       });
@@ -7223,13 +8335,14 @@ test('Composio adapter normalizes sessions without exposing SDK metadata and aut
   );
 });
 
-async function hostedDatabase() {
+async function hostedDatabase(options: pg.PoolConfig = {}) {
   const schema = 'test_hosted_integrations_' + randomUUID().replaceAll('-', '');
   const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new pg.Pool({
     connectionString: process.env.TEST_DATABASE_URL,
     options: `-c search_path=${schema}`,
+    ...options,
   });
   return {
     pool,
@@ -8784,6 +9897,11 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   ];
   let appCatalog: Connection[] = [];
   const appRequests: Array<{ path: string; body: unknown }> = [];
+  let appSignInUrl = 'https://connect.example.test/variant';
+  const completedAppLinks = new Set<string>();
+  let holdReceipt = false;
+  let releaseReceipt: (() => void) | undefined;
+  const receiptHash = (url: string) => createHash('sha256').update(url).digest('hex');
   let pauseAppConnect = false;
   let finishAppConnect: ((response: Response) => void) | undefined;
   let launches = 0;
@@ -8795,19 +9913,25 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   let pauseStatusRead = false;
   let releaseStatusRead: (() => void) | undefined;
   const timers = new Map<number, () => void>();
+  const expiryTimers = new Map<number, () => void>();
   let timerId = 100_000;
   const schedule = dom.window.setTimeout.bind(dom.window);
   const cancel = dom.window.clearTimeout.bind(dom.window);
   dom.window.setTimeout = ((callback: () => void, milliseconds: number, ...args: unknown[]) => {
+    if (milliseconds === 10 * 60_000) {
+      expiryTimers.set(++timerId, callback);
+      return timerId;
+    }
     if (milliseconds !== 5000) return schedule(callback, milliseconds, ...args);
     timers.set(++timerId, callback);
     return timerId;
   }) as typeof dom.window.setTimeout;
   dom.window.clearTimeout = (id) => {
-    if (id !== undefined && timers.delete(id)) return;
+    if (id !== undefined && (timers.delete(id) || expiryTimers.delete(id))) return;
     cancel(id);
   };
   const attempt = 'a'.repeat(43);
+  const pairingCode = '123-456';
   let receive: ((event: { data: unknown }) => void) | undefined;
   class Channel {
     set onmessage(value: (event: { data: unknown }) => void) {
@@ -8822,8 +9946,6 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
         resolvedTheme: 'light',
         notifications: false,
         launchAtLogin: false,
-        hasComposioKey: true,
-        keys: { composioApiKey: { suffix: 'wxyz' } },
         restartRequired: false,
       }),
       onPreferences: () => () => {},
@@ -8860,6 +9982,22 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
         return Response.json(appInventory);
       }
       if (path === '/api/apps/catalog') return Response.json(appCatalog);
+      if (path === '/api/apps/setup-status') {
+        assert.equal(init.method, 'POST');
+        const { hashes } = JSON.parse(String(init.body)) as { hashes: string[] };
+        assert.equal(hashes.length, 1);
+        const response = Response.json({
+          completed: hashes.filter((hash) => completedAppLinks.has(hash)),
+          apps: [],
+        });
+        if (holdReceipt) {
+          holdReceipt = false;
+          return new Promise<Response>((resolve) => {
+            releaseReceipt = () => resolve(response);
+          });
+        }
+        return response;
+      }
       if (
         typeof path === 'string' &&
         /^\/api\/apps\/(?:notion|notion_mcp|linear_mcp)\/connect$/.test(path)
@@ -8871,7 +10009,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
             finishAppConnect = resolve;
           });
         }
-        return Response.json({ url: 'https://connect.example.test/variant' });
+        return Response.json({ url: appSignInUrl, attempt, pairingCode });
       }
       if (
         typeof path === 'string' &&
@@ -8920,7 +10058,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       if (path === '/api/account/prepare') return Response.json({ ok: true });
       if (path === '/api/apps/gmail/connect') {
         assert.deepEqual(JSON.parse(String(init.body)), { returnTo: 'window' });
-        return Response.json({ url: 'https://connect.example.test/gmail', attempt });
+        return Response.json({ url: 'https://connect.example.test/gmail', attempt, pairingCode });
       }
       if (path === `/api/apps/discovery/${id}`) {
         discoveryReads++;
@@ -9112,6 +10250,80 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       path: '/api/apps/notion_mcp/connect',
       body: { returnTo: 'window' },
     });
+    assert.equal(
+      dom.window.document.querySelector('.app-manage-dialog [data-analytics-private]')?.textContent,
+      pairingCode,
+    );
+    await act(async () =>
+      receive!({
+        data: { service: 'notion_mcp', connection: 'connected', attempt: 'b'.repeat(43) },
+      }),
+    );
+    assert.equal(
+      dom.window.document.querySelector('.app-manage-dialog [data-analytics-private]')?.textContent,
+      pairingCode,
+    );
+    await act(async () =>
+      receive!({ data: { service: 'notion_mcp', connection: 'connected', attempt } }),
+    );
+    assert.equal(
+      dom.window.document.querySelector(
+        '.app-manage-dialog .notice a[href="https://connect.example.test/variant"]',
+      ),
+      null,
+    );
+    const startAnotherAccount = async (url: string) => {
+      appSignInUrl = url;
+      await act(async () =>
+        dom.window.document.querySelector<HTMLButtonElement>('[data-add-account]')!.click(),
+      );
+      await settle();
+    };
+    const pairingLink = () =>
+      dom.window.document.querySelector<HTMLAnchorElement>('.app-manage-dialog .notice a')?.href;
+    const firstLink = 'https://connect.example.test/first';
+    const secondLink = 'https://connect.example.test/second';
+    await startAnotherAccount(firstLink);
+    completedAppLinks.add(receiptHash('https://connect.example.test/unrelated'));
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.equal(pairingLink(), firstLink);
+    assert.equal(appInventory[0].status, 'connected');
+    completedAppLinks.add(receiptHash(firstLink));
+    holdReceipt = true;
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    await startAnotherAccount(secondLink);
+    await act(async () => releaseReceipt?.());
+    await settle();
+    assert.equal(pairingLink(), secondLink);
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.equal(pairingLink(), secondLink);
+    completedAppLinks.add(receiptHash(secondLink));
+    await act(async () =>
+      dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')),
+    );
+    await settle();
+    assert.equal(pairingLink(), undefined);
+    assert.equal(expiryTimers.size, 0);
+    const focusedLink = 'https://connect.example.test/completed-before-focus';
+    await startAnotherAccount(focusedLink);
+    completedAppLinks.add(receiptHash(focusedLink));
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.equal(pairingLink(), undefined);
+    assert.equal(expiryTimers.size, 0);
+    const finalLink = 'https://connect.example.test/completed-before-timeout';
+    await startAnotherAccount(finalLink);
+    completedAppLinks.add(receiptHash(finalLink));
+    const expire = expiryTimers.values().next().value!;
+    await act(async () => expire());
+    await settle();
+    assert.equal(pairingLink(), undefined);
+    assert.equal(expiryTimers.size, 0);
+    assert.equal(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'), null);
+    appSignInUrl = 'https://connect.example.test/variant';
     appInventory = [
       { ...mcpAccount, status: 'disconnected', canReconnect: true },
       { ...nativeAccount, status: 'disconnected', canReconnect: false },
@@ -9308,15 +10520,101 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     );
     await settle();
     assert.equal(gmail(), 'waiting');
+    assert.equal(
+      dom.window.document.querySelector('[data-gmail] [data-analytics-private]')?.textContent,
+      pairingCode,
+    );
     assert.equal(opened.at(-1), 'https://connect.example.test/gmail');
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.equal(gmail(), 'waiting');
+    assert.equal(
+      dom.window.document.querySelector<HTMLAnchorElement>('[data-gmail] a')?.href,
+      'https://connect.example.test/gmail',
+    );
     await act(async () =>
       receive!({ data: { service: 'gmail', connection: 'cancelled', attempt: 'b'.repeat(43) } }),
     );
     assert.equal(gmail(), 'waiting');
+    assert.equal(
+      dom.window.document.querySelector('[data-gmail] [data-analytics-private]')?.textContent,
+      pairingCode,
+    );
     await act(async () =>
       receive!({ data: { service: 'gmail', connection: 'cancelled', attempt } }),
     );
     assert.equal(gmail(), 'idle');
+    assert.equal(dom.window.document.querySelector('[data-gmail] [data-analytics-private]'), null);
+    const desktopBridge = (dom.window as unknown as { ottoDesktop?: unknown }).ottoDesktop;
+    Reflect.deleteProperty(dom.window, 'ottoDesktop');
+    dom.window.open = () => null;
+    const openedBeforeBlockedPopup = opened.length;
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('.ob-gmail-connect')!.click(),
+    );
+    await settle();
+    assert.equal(gmail(), 'waiting');
+    assert.equal(dom.window.location.pathname, '/onboarding');
+    assert.equal(opened.length, openedBeforeBlockedPopup);
+    assert.equal(
+      dom.window.document.querySelector('[data-gmail] [data-analytics-private]')?.textContent,
+      pairingCode,
+    );
+    assert.equal(
+      dom.window.document.querySelector<HTMLAnchorElement>('[data-gmail] a')?.href,
+      'https://connect.example.test/gmail',
+    );
+    await act(async () =>
+      receive!({ data: { service: 'gmail', connection: 'cancelled', attempt } }),
+    );
+    assert.equal(gmail(), 'idle');
+    Object.assign(dom.window, { ottoDesktop: desktopBridge });
+    const gmailAccount: Connection = {
+      slug: 'gmail',
+      name: 'Gmail',
+      status: 'connected',
+      connectionId: randomUUID(),
+      accountEmail: 'fixture@example.test',
+      triggersEnabled: false,
+    };
+    appInventory = [gmailAccount];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    assert.equal(gmail(), 'connected');
+    const requestsBeforeReplay = appRequests.length;
+    const openedBeforeReplay = opened.length;
+    await act(async () => root.render(null));
+    dom.window.sessionStorage.setItem('otto.chat.draft', 'Synthetic retained draft');
+    dom.window.history.replaceState(null, '', '/onboarding?replay=1');
+    const renderReplay = () =>
+      root.render(
+        createElement(Onboarding, {
+          user: { id, name: 'Fixture', email: null, avatarUrl: null },
+          replay: true,
+          canLogout: false,
+          onLogout() {},
+          onFeedback() {},
+          async onComplete() {},
+        }),
+      );
+    await act(async () => renderReplay());
+    await settle();
+    assert.equal(dom.window.document.querySelector<HTMLElement>('.ob')!.dataset.step, 'welcome');
+    assert.equal(dom.window.location.search, '');
+    assert.equal(dom.window.sessionStorage.getItem('otto.chat.draft'), 'Synthetic retained draft');
+    assert.deepEqual(appInventory, [gmailAccount]);
+    assert.equal(appRequests.length, requestsBeforeReplay);
+    assert.equal(opened.length, openedBeforeReplay);
+    await act(async () => root.render(null));
+    dom.window.sessionStorage.setItem(
+      'otto.onboarding.step',
+      JSON.stringify({ owner: id, step: 'email' }),
+    );
+    await act(async () => renderReplay());
+    await settle();
+    assert.equal(dom.window.document.querySelector<HTMLElement>('.ob')!.dataset.step, 'email');
+    assert.equal(gmail(), 'connected');
+    assert.equal(appRequests.length, requestsBeforeReplay);
+    assert.equal(opened.length, openedBeforeReplay);
   } finally {
     await act(async () => root.unmount());
     pageDataCache.clear();

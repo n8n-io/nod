@@ -19,7 +19,6 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { createRequire } from 'node:module';
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -78,9 +77,8 @@ let closingEngine = false;
 let tray;
 let engineOrigin = '';
 let authToken = '';
-let restartRequired = false;
-let appliedRevision = 0;
 let replayingOnboarding = process.argv.includes('--onboarding');
+let replayingProductOnboarding = replayingOnboarding;
 let stopNotifications;
 let setupNavigation = { mode: 'settings', section: 'general' };
 let preferences = { theme: 'system', notifications: false, launchAtLogin: false };
@@ -90,7 +88,6 @@ let status = {
   unlockingKeys: false,
   phase: 'idle',
   message: 'Set up Otto on your computer.',
-  restartRequired: false,
   runtime: {
     phase: 'idle',
     message: 'Your computer will prepare in the background.',
@@ -200,7 +197,6 @@ function update(value) {
     ...status,
     ...value,
     message: bounded(value.message || status.message),
-    restartRequired,
   };
   if (value.phase === 'ready' || value.phase === 'error') status.unlockingKeys = false;
   if (value.error) status.error = bounded(value.error);
@@ -220,7 +216,7 @@ function publicPreferences() {
 }
 
 async function readDesktopSettings() {
-  return { ...(await settings.get()), ...publicPreferences(), restartRequired };
+  return { ...(await settings.get()), ...publicPreferences() };
 }
 
 function publishPreferences() {
@@ -505,6 +501,10 @@ function showEngine() {
     return;
   }
   if (engineWindow && !engineWindow.isDestroyed()) {
+    if (replayingProductOnboarding) {
+      replayingProductOnboarding = false;
+      void engineWindow.loadURL(`${engineOrigin}/onboarding?replay=1`);
+    }
     engineWindow.show();
     engineWindow.focus();
     deliverFeedbackRequest(engineWindow);
@@ -535,7 +535,11 @@ function showEngine() {
     engineWindows.delete(window);
     engineWindow = undefined;
   });
-  void engineWindow.loadURL(engineOrigin);
+  const destination = replayingProductOnboarding
+    ? `${engineOrigin}/onboarding?replay=1`
+    : engineOrigin;
+  replayingProductOnboarding = false;
+  void engineWindow.loadURL(destination);
 }
 
 function showFeedback() {
@@ -695,7 +699,6 @@ async function stopEngine() {
 async function finishEnginePreparation() {
   await appPreferences.sync();
   if (quitting || !engine) throw new Error('Otto is closing.');
-  restartRequired = false;
   await writeDiagnostic('Engine ready.').catch(() => {});
   update({ phase: 'ready', message: 'Otto is running on this Mac.', progress: undefined });
   synchronizeNotifications();
@@ -896,13 +899,12 @@ async function validateStart() {
 }
 
 async function startEngine({ runtime, signal }) {
-  if (engine && !restartRequired && enginePreferencesReady) return finishEnginePreparation();
+  if (engine && enginePreferencesReady) return finishEnginePreparation();
   if (engine) {
     if (!(await confirmRestart()))
-      throw Object.assign(
-        new Error('Apply your new settings when Otto finishes its current work.'),
-        { code: 'OTTO_RESTART_DEFERRED' },
-      );
+      throw Object.assign(new Error('Restart Otto when it finishes its current work.'), {
+        code: 'OTTO_RESTART_DEFERRED',
+      });
     await stopEngine();
   }
   if (quitting) throw new Error('Otto is closing.');
@@ -915,9 +917,7 @@ async function startEngine({ runtime, signal }) {
   await new Promise((accept) => setTimeout(accept, 50));
   if (quitting || signal.aborted) throw new Error('Otto is closing.');
   const providerEnvironment = await settings.environment();
-  appliedRevision = await settings.revision();
-  for (const field of ['COMPOSIO_API_KEY', 'OTTO_VAULT_KEY'])
-    if (providerEnvironment[field]) knownSecrets.add(providerEnvironment[field]);
+  if (providerEnvironment.OTTO_VAULT_KEY) knownSecrets.add(providerEnvironment.OTTO_VAULT_KEY);
   if (runtime.env.DATABASE_URL) knownSecrets.add(runtime.env.DATABASE_URL);
   const analytics = await analyticsConfiguration().catch(() => ({ enabled: false }));
   const environment = {
@@ -1043,22 +1043,6 @@ async function prepare(options = {}) {
   return preparing;
 }
 
-async function importSettings() {
-  const path = process.env.OTTO_DESKTOP_IMPORT_ENV;
-  delete process.env.OTTO_DESKTOP_IMPORT_ENV;
-  if (!path) return;
-  if (!isAbsolute(path)) throw new Error('The settings import path must be absolute.');
-  const buffer = await readFile(path);
-  if (buffer.length > 128 * 1024) throw new Error('The settings import file is too large.');
-  const require = createRequire(join(engineRoot, 'package.json'));
-  const values = require('dotenv').parse(buffer);
-  buffer.fill(0);
-  const input = {};
-  for (const [field, name] of [['composioApiKey', 'COMPOSIO_API_KEY']])
-    if (values[name]) input[field] = values[name];
-  await settings.save(input, values);
-}
-
 async function warmRuntime(options = {}) {
   try {
     await lifecycle.warmup({ retry: options?.retry === true });
@@ -1070,6 +1054,7 @@ async function warmRuntime(options = {}) {
 
 function replayOnboarding() {
   replayingOnboarding = true;
+  replayingProductOnboarding = true;
   showSettings('general', 'onboarding', true);
   return status;
 }
@@ -1224,11 +1209,6 @@ else {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
         return { ...(await analyticsConfiguration()), enabled: false };
       });
-      ipcMain.handle('otto:settings:reveal', (event, field) => {
-        if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
-        if (field !== 'composioApiKey') throw new Error('Choose a supported key.');
-        return settings.revealKey(field);
-      });
       ipcMain.handle('otto:feedback:context', (event) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');
         return feedbackContext();
@@ -1249,7 +1229,7 @@ else {
       });
       ipcMain.handle('otto:settings:save', async (event, value) => {
         if (!isSetup(event) && !isEngine(event)) throw new Error('This action is unavailable.');
-        const allowed = ['theme', 'notifications', 'launchAtLogin', 'composioApiKey'];
+        const allowed = ['theme', 'notifications', 'launchAtLogin'];
         if (isSetup(event)) allowed.push('onboardingCompleted');
         if (
           !value ||
@@ -1258,8 +1238,7 @@ else {
           Object.keys(value).some((field) => !allowed.includes(field))
         )
           throw new Error('These settings are not supported.');
-        if ((lifecycle.engineStarting && Object.hasOwn(value, 'composioApiKey')) || quitting)
-          throw new Error('Wait for Otto to finish starting before changing settings.');
+        if (quitting) throw new Error('Otto is closing.');
         const loginChanged = typeof value.launchAtLogin === 'boolean';
         const previousLogin = loginChanged ? app.getLoginItemSettings().openAtLogin : undefined;
         if (loginChanged) app.setLoginItemSettings({ openAtLogin: value.launchAtLogin });
@@ -1276,27 +1255,9 @@ else {
         }
         onboardingCompleted = saved.onboardingCompleted;
         applyPreferences(saved);
-        restartRequired = Boolean(engine) && (await settings.revision()) !== appliedRevision;
         if (!['preparing', 'starting', 'error'].includes(status.phase))
-          update({
-            message: restartRequired ? 'Restart Otto to apply your app connection key.' : 'Ready.',
-          });
+          update({ message: 'Ready.' });
         return readDesktopSettings();
-      });
-      ipcMain.handle('otto:settings:apply', async (event) => {
-        if (!isEngine(event)) throw new Error('This action is unavailable.');
-        if (quitting || lifecycle.busy) throw new Error('Wait for Otto to finish starting.');
-        if (!restartRequired) return;
-        update({ phase: 'preparing', message: 'Applying your app connection key.' });
-        showSettings();
-        const result = await prepare();
-        if (result.error) {
-          if (result.phase === 'ready') {
-            setupWindow?.destroy();
-            showEngine();
-          }
-          throw new Error(result.error);
-        }
       });
       ipcMain.handle('otto:prepare', (event, options) => {
         allowSetup(event);
@@ -1339,7 +1300,6 @@ else {
         app.quit();
       });
       try {
-        await importSettings();
         const saved = await settings.get();
         onboardingCompleted = saved.onboardingCompleted;
         applyPreferences(saved);

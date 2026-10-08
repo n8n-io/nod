@@ -13,7 +13,7 @@ Otto is an early preview. Expect rough edges and breaking changes.
 | You need | About 2.7 GB of downloads on first launch | Node.js 24.21.0 or newer, Docker with Compose v2, and Git |
 | Updates  | Automatic                                 | `git pull` and restart                                    |
 
-Either way, Otto needs a model connection: an OpenAI, Anthropic or OpenRouter API key, or a ChatGPT plan. Models don't run on your computer, and the provider bills you for use. To connect Gmail, Calendar, Slack and other apps, you also need a [Composio key](docs/composio.md).
+Either way, Otto needs a model connection: an OpenAI, Anthropic or OpenRouter API key, or a ChatGPT plan. Models don't run on your computer, and the provider bills you for use. Connect Gmail, Calendar, Slack and other apps through Otto's [managed integrations](docs/composio.md), without creating a Composio account or adding a project key.
 
 ### Install the desktop app
 
@@ -62,14 +62,15 @@ Otto serves one owner on `127.0.0.1` with no account login. Don't expose it to a
 
 Settings live in the ignored `.env`. `.env.example` lists the common ones. Shell variables take priority, and you need to restart after editing. The desktop app manages its own settings in **Settings**.
 
-| Setting                        | Needed for                                                         |
-| ------------------------------ | ------------------------------------------------------------------ |
-| Model connection in **Models** | Chat with a key, ChatGPT plan, or OpenRouter                       |
-| `COMPOSIO_API_KEY`             | Gmail, Calendar, Slack and other [Composio apps](docs/composio.md) |
-| `OTTO_VAULT_KEY`               | Vault encryption on non-macOS hosts (macOS uses Keychain)          |
-| `OTTO_DATA_ROOT`               | Where local data is stored (default `.local`)                      |
-| `PORT`                         | The local port (default `4310`)                                    |
-| `DEV_INSPECTOR=false`          | Disables the Inspector view (on by default locally)                |
+| Setting                        | Needed for                                                                  |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| Model connection in **Models** | Chat with a key, ChatGPT plan, or OpenRouter                                |
+| `COMPOSIO_API_KEY`             | Optional customer-owned Composio project for a source/server install        |
+| `OTTO_COMPOSIO_PROXY_URL`      | Optional custom integration proxy; defaults to `https://composio.n8n.cloud` |
+| `OTTO_VAULT_KEY`               | Vault encryption on non-macOS hosts (macOS uses Keychain)                   |
+| `OTTO_DATA_ROOT`               | Where local data is stored (default `.local`)                               |
+| `PORT`                         | The local port (default `4310`)                                             |
+| `DEV_INSPECTOR=false`          | Disables the Inspector view (on by default locally)                         |
 
 - **Models.** Add or switch connections in **Models** from the account menu. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY` add server-managed connections. See [model connections](docs/model-connections.md).
 - **Apps.** Connect apps from **Apps**. Notion and Linear use their hosted MCP servers without extra keys. See [connect apps with Composio](docs/composio.md).

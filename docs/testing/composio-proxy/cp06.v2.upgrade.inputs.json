@@ -1,0 +1,67 @@
+{
+  "case": "UPGRADE-DEMO.v1",
+  "prompt": "You should record a video of what will to user once they upgrade to the new release that uses the proxy and what they need to do.",
+  "run_rule": {
+    "repeats": 1,
+    "time_limit_seconds": 600,
+    "setup_excluded": true
+  },
+  "setup": "Same CP06.v2 isolated native real application/database, existing synthetic Gmail grant saved under previous integration configuration, actual saved chat/model/Vault/preferences; controlled provider adapters.",
+  "checks": {
+    "UPGRADEUI": {
+      "pass": "Actual native Apps shows retained Gmail requiring sign-in and an available Reconnect action; selecting it shows real app pairing instructions and opens the labelled synthetic consent page.",
+      "evidence": "Native CUA trace and video",
+      "method": "human"
+    },
+    "RECONNECTED": {
+      "pass": "After explicit simulated consent, the real app callback and atomic replacement store one connected Gmail row using the original connection UUID, same email and unchanged watch preference.",
+      "evidence": "Native connected UI plus actual database before/after snapshots and route audit",
+      "method": "code+human"
+    },
+    "RETAINED": {
+      "pass": "The original chat, encrypted Vault rows, saved model selection and product/native preferences retain their semantic values.",
+      "evidence": "Original-row digests, database snapshots and native settings hash",
+      "method": "code"
+    },
+    "VIDEO": {
+      "pass": "A playable local video visibly demonstrates the upgrade steps and clearly labels provider consent as simulated.",
+      "evidence": "Produced media, codec inspection and viewing frames",
+      "method": "code+human"
+    },
+    "SAFE": {
+      "pass": "No real account or model calls, no production OAuth activation, and no normal-profile user content in the recording.",
+      "evidence": "Evaluator audit, explicit isolated configuration and media review",
+      "method": "code+human"
+    }
+  },
+  "limits": "The real native application and backend replacement are exercised. Temporary hosted page renders synthetic consent only; production broker pairing and actual Google/Composio authorization are not verified by this demonstration.",
+  "frozen_at": "2026-10-08T18:21:20.896472+00:00",
+  "source_record": "cp06.v2.source.json",
+  "native_loopback_port": 50072,
+  "evaluator_artifacts": {
+    "engine-fixture.mts": "13b21243f60d70c7284c19dcc4a8f0692b85f71e661104d3fd3c00feacd4044a",
+    "consent-worker.mjs": "c2fb0f9400a1c71c03bc52e9c0e35ffa49d0b7ab10bddfa5cbe1c7bb4c80732f",
+    "before-native.json": "7d6a25c153909ce9d8e50590fc6029afbc5cea7edc50772ce01225f40b8461ef",
+    "engine-ready.json": "7cb63b897d45ec52086efee35ddcec8a30101f5e583807e6f48a12e127e77ef6",
+    "consent-origin.txt": "5eacaf25567904c2a13b5b4484fbf6c97c80ea233b1800d9ae4944919b9cd24a"
+  },
+  "run_environment": {
+    "node": "v24.21.0",
+    "electron": "44.5.0",
+    "app_profile": "isolated cp06-v2/native-profile",
+    "provider": "synthetic IntegrationProvider with actual application callback and database replacement",
+    "demo_origin": "https://otto-upgrade-demo-20261008.n8n-maintenance.workers.dev"
+  },
+  "demo_deployment": {
+    "origin": "https://otto-upgrade-demo-20261008.n8n-maintenance.workers.dev",
+    "version": "906f541f-f4e0-45f8-bcc1-ddaa937e4453",
+    "source_path": ".local/composio-proxy-review/cp06-v2/video-worker/index.mjs",
+    "source_sha256": "335c79d78f8457c647f22bf573b924163ac9af96f62d4c8e992296fce35e0a93",
+    "fixed_callback_origin": "http://127.0.0.1:50072",
+    "secrets": 0,
+    "bindings": 0,
+    "provider_calls": false,
+    "frozen_at": "2026-10-08T18:22:27.318894+00:00"
+  },
+  "final_frozen_at": "2026-10-08T18:22:27.318894+00:00"
+}

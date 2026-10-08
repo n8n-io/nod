@@ -11,7 +11,7 @@ import {
   Plus,
   X,
 } from 'lucide-react';
-import type { Configuration, Connection } from '../../shared/contracts';
+import type { AppSetupStatus, Configuration, Connection } from '../../shared/contracts';
 import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';
 import { api, ApiError, errorMessage } from '../lib/api';
@@ -317,6 +317,12 @@ export function Apps({
   const [error, setError] = useState('');
   const [connectErrorService, setConnectErrorService] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
+  const [signIn, setSignIn] = useState<{
+    service: string;
+    url: string;
+    code?: string;
+    attempt?: string;
+  }>();
   const [manageService, setManageService] = useState<string | null>(null);
   const [pointerRestoredService, setPointerRestoredService] = useState<string | null>(null);
   const [disconnectAccount, setDisconnectAccount] = useState<Connection | null>(null);
@@ -423,6 +429,77 @@ export function Apps({
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }, []);
   useEffect(() => () => actionRequest.current?.abort(), []);
+  useEffect(() => {
+    if (!signIn) return;
+    const controller = new AbortController();
+    const check = async () => {
+      try {
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signIn.url));
+        const hash = Array.from(new Uint8Array(digest), (byte) =>
+          byte.toString(16).padStart(2, '0'),
+        ).join('');
+        const result = await api<AppSetupStatus>('/api/apps/setup-status', {
+          method: 'POST',
+          body: JSON.stringify({ hashes: [hash] }),
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        if (controller.signal.aborted || !result.completed.includes(hash)) return false;
+        controller.abort();
+        setSignIn(undefined);
+        void refresh();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const visible = () => {
+      if (document.visibilityState === 'visible') void check();
+    };
+    visible();
+    window.addEventListener('focus', visible);
+    document.addEventListener('visibilitychange', visible);
+    const timeout = window.setTimeout(() => {
+      void check().then((completed) => {
+        if (completed || controller.signal.aborted) return;
+        setSignIn(undefined);
+        setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
+        setError('The sign-in link expired. Try connecting again.');
+      });
+    }, 10 * 60_000);
+    const channel =
+      typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('otto.apps');
+    if (channel)
+      channel.onmessage = (
+        event: MessageEvent<{ service?: string; attempt?: string; connection?: string } | null>,
+      ) => {
+        if (
+          !signIn.attempt ||
+          event.data?.attempt !== signIn.attempt ||
+          event.data.service !== signIn.service ||
+          !['connected', 'cancelled', 'failed', 'expired'].includes(event.data.connection ?? '')
+        )
+          return;
+        controller.abort();
+        setSignIn(undefined);
+        if (event.data.connection !== 'connected') {
+          setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
+          setError(
+            event.data.connection === 'cancelled'
+              ? 'Connection cancelled. Try again.'
+              : 'The app could not connect. Try again.',
+          );
+        }
+        void refresh();
+      };
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+      window.removeEventListener('focus', visible);
+      document.removeEventListener('visibilitychange', visible);
+      channel?.close();
+    };
+  }, [signIn, refresh]);
   useEffect(() => {
     if (!discoveryId) return;
     let timer: number | undefined;
@@ -566,6 +643,13 @@ export function Apps({
       return;
     }
     const request = new AbortController();
+    const external = desktopLinksAvailable();
+    const popup = external
+      ? null
+      : window.open('', 'otto-connect-app', 'popup,width=520,height=720');
+    try {
+      if (popup) popup.opener = null;
+    } catch {}
     actionRequest.current = request;
     setBusy(
       !addAccount && connection.connectionId
@@ -573,13 +657,14 @@ export function Apps({
         : `connect:${connection.slug}`,
     );
     setError('');
+    setSignIn(undefined);
     try {
-      const result = await api<{ url: string }>(
+      const result = await api<{ url: string; attempt?: string; pairingCode?: string }>(
         `/api/apps/${encodeURIComponent(connection.slug)}/connect`,
         {
           method: 'POST',
           body: JSON.stringify({
-            returnTo: desktopLinksAvailable() ? 'window' : 'apps',
+            returnTo: 'window',
             ...(!addAccount || connection.accessPaths?.some((path) => path.kind !== 'browser')
               ? { connectionId: connection.connectionId }
               : {}),
@@ -587,10 +672,28 @@ export function Apps({
           signal: request.signal,
         },
       );
-      if (request.signal.aborted) return;
-      await openConnection(connectionUrl(result.url, window.location.origin));
-      if (desktopLinksAvailable()) setBusy('');
+      if (request.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
+      const url = connectionUrl(result.url, window.location.origin);
+      if (result.pairingCode !== undefined) {
+        if (
+          !/^\d{3}-\d{3}$/.test(result.pairingCode) ||
+          !result.attempt ||
+          !/^[A-Za-z0-9_-]{43}$/.test(result.attempt)
+        )
+          throw new Error('The app sign-in could not be opened. Try again.');
+      }
+      setSignIn({
+        service: connection.slug,
+        url,
+        code: result.pairingCode,
+        attempt: result.attempt,
+      });
+      if (external) await openConnection(url);
+      else if (popup && !popup.closed) popup.location.href = url;
+      setBusy('');
     } catch (cause) {
+      popup?.close();
+      setSignIn(undefined);
       if (request.signal.aborted) return;
       setConnectErrorService(connection.slug.replace(/_mcp$/, ''));
       setError(errorMessage(cause));
@@ -599,6 +702,19 @@ export function Apps({
       if (actionRequest.current === request) actionRequest.current = null;
     }
   }
+  const pairing = signIn && (
+    <Notice kind="info" onDismiss={() => setSignIn(undefined)}>
+      {signIn.code && (
+        <>
+          Confirm the same code in your browser:{' '}
+          <strong data-analytics-private>{signIn.code}</strong>.{' '}
+        </>
+      )}
+      <a href={signIn.url} target="_blank" rel="noreferrer">
+        Open sign-in
+      </a>
+    </Notice>
+  );
   async function disconnect() {
     const connection = disconnectAccount;
     if (!connection?.connectionId || actionRequest.current || busy) return;
@@ -731,6 +847,7 @@ export function Apps({
         </div>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
+      {pairing && (!managed || managed.key !== signIn?.service.replace(/_mcp$/, '')) && pairing}
       {error && !manageError && <Notice onDismiss={() => setError('')}>{error}</Notice>}
       {loadError && (
         <Notice>
@@ -1049,6 +1166,7 @@ export function Apps({
             </div>
           </div>
           {manageError && <Notice onDismiss={() => setError('')}>{manageError}</Notice>}
+          {pairing && managed?.key === signIn?.service.replace(/_mcp$/, '') && pairing}
           <div className="app-manage-accounts">
             {managed?.accounts.map((account) => (
               <ConnectedAccount

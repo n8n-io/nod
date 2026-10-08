@@ -44,7 +44,7 @@ import { savePreferences } from '../lib/preferences';
 import { exportMemory } from '../lib/memory-export';
 import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable } from '../lib/desktop';
-import { ComposioSettings, DesktopOptions, useDesktopSettings } from './desktop-settings';
+import { DesktopOptions, useDesktopSettings } from './desktop-settings';
 import { Memory } from '../pages/memory';
 import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
 
@@ -380,6 +380,7 @@ export function AccountSettings({
   openRequest,
   onOpenChange,
   onName,
+  onReplayOnboarding,
   returnFocus,
 }: {
   account: AccountControls;
@@ -388,6 +389,7 @@ export function AccountSettings({
   openRequest: number;
   onOpenChange(open: boolean): void;
   onName(name: string): Promise<void>;
+  onReplayOnboarding?(): void;
   returnFocus(): HTMLElement | null;
 }) {
   const desktop = desktopSettingsAvailable();
@@ -399,13 +401,11 @@ export function AccountSettings({
       : ['Profile', 'Models', 'Appearance', 'Preferences', 'Memory'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : desktop ? 'General' : 'Appearance';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
-  const [composioDirty, setComposioDirty] = useState(false);
   const [modelDirty, setModelDirty] = useState(false);
   const [preferencesDirty, setPreferencesDirty] = useState(false);
   const [name, setName] = useState(account.user.name);
   const pending = useRef(false);
   pending.current =
-    composioDirty ||
     modelDirty ||
     preferencesDirty ||
     native.busy ||
@@ -714,10 +714,12 @@ export function AccountSettings({
               {tab === 'Models' && (
                 <>
                   <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />
-                  {desktop && (
-                    <ComposioSettings onDirtyChange={setComposioDirty} applyBlocked={modelDirty} />
-                  )}
                 </>
+              )}
+              {onReplayOnboarding && tab === 'Appearance' && (
+                <Button variant="outline" disabled={pending.current} onClick={onReplayOnboarding}>
+                  Replay onboarding
+                </Button>
               )}
               {error && tab !== 'Profile' && <Notice>{error}</Notice>}
             </div>

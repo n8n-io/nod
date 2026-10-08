@@ -107,6 +107,7 @@ describe('runtime host', () => {
         UNLISTED_OPERATOR_SECRET: 'synthetic-unlisted-secret',
         DATABASE_URL: 'postgresql://operator:private@db.example.test/control',
         OPENAI_API_KEY: 'synthetic-server-provider-key',
+        OTTO_COMPOSIO_PROXY_URL: 'https://integrations.example.test',
         COMPUTER_PROVIDER: 'e2b',
         OBJECT_STORAGE_ROOT: '/private/otto-files',
       },
@@ -442,6 +443,10 @@ describe('runtime host', () => {
       assert.equal(configuration.environment.OTTO_OWNER_ID, configuration.ownerId);
       assert.equal(configuration.environment.OTTO_CONTROL_URL, 'http://otto.control');
       assert.equal(configuration.environment.OPENAI_API_KEY, 'synthetic-server-provider-key');
+      assert.equal(
+        configuration.environment.OTTO_COMPOSIO_PROXY_URL,
+        'https://integrations.example.test',
+      );
       assert.equal(configuration.environment.DEV_INSPECTOR, 'false');
       assert.equal(
         configuration.environment.OBJECT_STORAGE_ROOT,

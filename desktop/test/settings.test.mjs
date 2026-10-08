@@ -394,7 +394,6 @@ test('runtime warmup overlaps onboarding without reading credentials or starting
   await started.promise;
   await assert.rejects(lifecycle.start(), /Setup incomplete/);
   assert.equal(lifecycle.engineStarting, false);
-  await f.store.save({ composioApiKey: 'synthetic-warmup-connection-key' });
   assert.equal(decrypted, 0);
   await f.store.save({ onboardingCompleted: true });
   const running = lifecycle.start();
@@ -749,15 +748,17 @@ async function runningDesktop(
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:feedback:context'"), source.indexOf("      ipcMain.handle('otto:preferences:get'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:save'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:prepare'"), source.indexOf("      ipcMain.handle('otto:runtime:warm'"))}
     globalThis.running = {
       prepare,
       showEngine,
+      showSettings,
       replayOnboarding,
       showFeedback,
       saveEngineDownload,
       setReady: (ready) => { status.phase = ready ? 'ready' : 'starting'; },
       status: () => status,
-      setRestartRequired: (value) => { restartRequired = value; },
+      setEnginePreferencesReady: (value) => { enginePreferencesReady = value; },
       crash: () => { engine = undefined; enginePreferencesReady = false; },
     };`,
     context,
@@ -836,7 +837,7 @@ test('native download publication failure offers the completed file for recovery
 
 test('native settings reject foreign windows, subframes, AI credentials, and web onboarding writes', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('Settings must not make an engine request.'));
-  await f.storage.store.save({ composioApiKey: 'synthetic-existing-key' });
+  await f.storage.store.environment();
   f.showEngine();
   const window = f.windows.at(-1);
   const frame = { url: 'http://127.0.0.1:4310/' };
@@ -846,7 +847,7 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     Promise.resolve().then(() => f.handlers.get(channel)(target, ...args));
   const get = (target = event) => invoke('otto:settings:get', target);
   const save = (value, target = event) => invoke('otto:settings:save', target, value);
-  const reveal = (field, target = event) => invoke('otto:settings:reveal', target, field);
+  assert.equal(f.handlers.has('otto:settings:reveal'), false);
   const analytics = (target = event) => invoke('otto:analytics:configuration', target);
   for (const rejected of [
     { sender: { mainFrame: frame }, senderFrame: frame },
@@ -857,14 +858,12 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
       save({ composioApiKey: 'synthetic-injected-key' }, rejected),
       /unavailable/,
     );
-    await assert.rejects(reveal('composioApiKey', rejected), /unavailable/);
     await assert.rejects(analytics(rejected), /unavailable/);
   }
   for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/files/synthetic']) {
     frame.url = url;
     await assert.rejects(get(), /unavailable/);
     await assert.rejects(save({ theme: 'dark' }), /unavailable/);
-    await assert.rejects(reveal('composioApiKey'), /unavailable/);
     await assert.rejects(analytics(), /unavailable/);
   }
   frame.url = 'http://127.0.0.1:4310/onboarding';
@@ -875,19 +874,16 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     { anthropicApiKey: 'synthetic-ai-key' },
     { vaultKey: 'synthetic-vault-key' },
     { clearKeys: ['composioApiKey'] },
+    { composioApiKey: 'synthetic-injected-key' },
   ])
     await assert.rejects(save(value), /not supported/);
-  for (const field of ['vaultKey', 'integrationConfiguration', 'openaiApiKey', 'anthropicApiKey'])
-    await assert.rejects(reveal(field), /supported key/);
   assert.equal(await readFile(f.storage.path, 'utf8'), previous);
   assert.ok(!JSON.stringify(await get()).includes('synthetic-existing-key'));
   assert.ok(!JSON.stringify(await analytics()).includes('synthetic-existing-key'));
-  assert.equal(await reveal('composioApiKey'), 'synthetic-existing-key');
-  await save({ theme: 'dark', launchAtLogin: true, composioApiKey: 'synthetic-replacement-key' });
+  await save({ theme: 'dark', launchAtLogin: true });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
-  assert.equal(await reveal('composioApiKey'), 'synthetic-replacement-key');
   window.destroy();
-  await assert.rejects(reveal('composioApiKey'), /unavailable/);
+  await assert.rejects(save({ theme: 'light' }), /unavailable/);
 });
 
 test('an engine crash retires every stale chat window before recovery opens the new engine', async (t) => {
@@ -920,144 +916,25 @@ test('an engine crash retires every stale chat window before recovery opens the 
   assert.equal(f.children.length, 2);
 });
 
-test('a settings restart asks before stopping work and Later keeps the healthy chat and pending settings', async (t) => {
-  for (const status of [
-    () => Response.json({ running: [{ source: 'schedule', visible: false }] }),
-    () => Response.json({ error: 'unavailable' }, { status: 503 }),
-    () => {
-      throw new Error('Synthetic connection closed');
-    },
-  ]) {
-    const calls = [];
-    let prompts = 0;
-    const f = await runningDesktop(
-      t,
-      async (url) => {
-        calls.push(url);
-        return status();
-      },
-      {
-        prompt: async () => {
-          prompts++;
-          return { response: 1 };
-        },
-      },
-    );
-    f.setRestartRequired(true);
-    const result = await f.prepare();
-    assert.equal(result.phase, 'ready');
-    assert.equal(result.restartRequired, true);
-    assert.ok(result.error);
-    assert.equal(prompts, 1);
-    assert.deepEqual(calls, ['http://127.0.0.1:4310/api/desktop/status']);
-    f.showEngine();
-    assert.equal(f.windows.at(-1).url, 'http://127.0.0.1:4310');
-  }
-});
-
-test('settings restart displays native progress, restores Chat on success, and keeps startup recovery visible after stopping', async (t) => {
-  for (const [failAfterStop, busy] of [
-    [false, false],
-    [true, false],
-    [false, true],
-  ]) {
-    let f;
-    let current;
-    let progress;
-    let prompts = 0;
-    f = await runningDesktop(
-      t,
-      async (url) => {
-        const path = new URL(url).pathname;
-        if (path === '/api/health') return Response.json({ ok: true });
-        assert.equal(path, '/api/desktop/status');
-        progress = f.windows.find((window) => window.path && !window.isDestroyed());
-        assert.ok(progress?.visible);
-        assert.equal(progress.query.firstSetup, 'false');
-        assert.equal(current.isDestroyed(), false);
-        assert.equal(f.children[0].killed, undefined);
-        if (failAfterStop) f.storage.encryption.isEncryptionAvailable = () => false;
-        return Response.json({ running: busy ? [{ source: 'user', visible: true }] : [] });
-      },
-      {
-        allowStart: true,
-        prompt: async () => {
-          prompts++;
-          return { response: 0 };
-        },
-      },
-    );
-    f.crash();
-    await f.prepare();
-    f.showEngine();
-    current = f.windows.at(-1);
-    f.setRestartRequired(true);
-    const applying = f.handlers.get('otto:settings:apply')({
-      sender: current.webContents,
-      senderFrame: current.webContents.mainFrame,
-    });
-    if (failAfterStop) {
-      await assert.rejects(applying);
-      assert.equal(f.status().phase, 'error');
-      assert.equal(progress.isDestroyed(), false);
-      assert.equal(progress.visible, true);
-      assert.equal(progress.isFocused(), true);
-      assert.equal(f.children[0].killed, true);
-      assert.equal(f.children.length, 1);
-      f.storage.encryption.isEncryptionAvailable = () => true;
-      await f.prepare({ retry: true });
-    } else await applying;
-    assert.equal(prompts, busy ? 1 : 0);
-    assert.equal(current.isDestroyed(), true);
-    assert.equal(f.children[0].killed, true);
-    assert.equal(f.children.length, 2);
-    assert.equal(f.status().phase, 'ready');
-    assert.equal(f.status().restartRequired, false);
-    assert.equal(progress.isDestroyed(), true);
-    const replacement = f.windows.at(-1);
-    assert.notEqual(replacement, current);
-    assert.ok(replacement.url);
-    assert.equal(replacement.url, `http://127.0.0.1:${f.children[1].port}`);
-    assert.equal(replacement.isDestroyed(), false);
-    assert.equal(replacement.visible, true);
-    assert.equal(replacement.isFocused(), true);
-  }
-});
-
 test('a pending recording drain cannot close or detach a newly opened onboarding window', async (t) => {
   const flushing = deferred();
   const flushed = deferred();
-  let f;
-  let progress;
-  f = await runningDesktop(
-    t,
-    async (url) => {
-      const path = new URL(url).pathname;
-      if (path === '/api/health') return Response.json({ ok: true });
-      assert.equal(path, '/api/desktop/status');
-      progress = f.windows.find((window) => window.path && !window.isDestroyed());
-      progress.webContents.executeJavaScript = () => {
-        flushing.resolve();
-        return flushed.promise;
-      };
-      return Response.json({ running: [] });
-    },
-    { allowStart: true },
-  );
-  f.crash();
-  await f.prepare();
+  const f = await runningDesktop(t, () => assert.fail('The healthy engine must not restart.'));
   f.showEngine();
-  const current = f.windows.at(-1);
-  f.setRestartRequired(true);
-  const applying = f.handlers.get('otto:settings:apply')({
-    sender: current.webContents,
-    senderFrame: current.webContents.mainFrame,
-  });
+  f.setReady(false);
+  f.showSettings();
+  f.setReady(true);
+  const progress = f.windows.at(-1);
+  progress.webContents.executeJavaScript = () => {
+    flushing.resolve();
+    return flushed.promise;
+  };
+  const preparing = f.prepare();
   await flushing.promise;
   f.replayOnboarding();
   const replacement = f.windows.at(-1);
   flushed.resolve();
-  await applying;
+  await preparing;
   assert.notEqual(replacement, progress);
   assert.equal(progress.isDestroyed(), true);
   assert.equal(replacement.isDestroyed(), false);
@@ -1076,7 +953,7 @@ test('an engine that crashes during the restart check retains the error state', 
     },
     { prompt: async () => ({ response: 1 }) },
   );
-  f.setRestartRequired(true);
+  f.setEnginePreferencesReady(false);
   assert.equal((await f.prepare()).phase, 'error');
   f.showEngine();
   assert.equal(f.windows.at(-1).url, undefined);
@@ -1084,12 +961,9 @@ test('an engine that crashes during the restart check retains the error state', 
 
 test('saving general preferences reuses the running engine', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('No restart admission check is needed.'));
-  const revision = await f.storage.store.revision();
   await f.storage.store.save({ theme: 'dark', notifications: true });
-  f.setRestartRequired((await f.storage.store.revision()) !== revision);
   const result = await f.prepare();
   assert.equal(result.phase, 'ready');
-  assert.equal(result.restartRequired, false);
   assert.equal(result.error, undefined);
 });
 
@@ -1123,99 +997,64 @@ async function fixture(t) {
   };
 }
 
-test('app connection keys remain encrypted and only masked metadata reaches ordinary reads', async (t) => {
+test('legacy app keys never reach the desktop engine or renderer and its vault remains unchanged', async (t) => {
   const f = await fixture(t);
-  const secret = 'synthetic-composio-key';
-  const saved = await f.store.save({ composioApiKey: secret });
-  assert.equal(saved.hasComposioKey, true);
-  assert.equal(saved.keys.composioApiKey.suffix, secret.slice(-4));
-  assert.equal(saved.keys.composioApiKey.source, 'manual');
-  const disk = await readFile(f.path, 'utf8');
-  assert.ok(!disk.includes(secret));
-  assert.ok(!JSON.stringify(saved).includes(secret));
-  assert.equal((await stat(f.path)).mode & 0o777, 0o600);
-  assert.deepEqual(await f.reopen().get(), saved);
-  const environment = await f.reopen().environment();
-  assert.equal(environment.COMPOSIO_API_KEY, secret);
-  assert.equal(Buffer.from(environment.OTTO_VAULT_KEY, 'base64').length, 32);
-  assert.equal((await f.reopen().environment()).OTTO_VAULT_KEY, environment.OTTO_VAULT_KEY);
-  assert.ok(!disk.includes(environment.OTTO_VAULT_KEY));
-  assert.deepEqual(Object.keys(environment).sort(), ['COMPOSIO_API_KEY', 'OTTO_VAULT_KEY']);
-});
-
-test('invalid edits preserve encrypted keys and later saves still succeed', async (t) => {
-  const f = await fixture(t);
-  await f.store.save({ composioApiKey: 'synthetic-working-key' });
-  const previous = await readFile(f.path, 'utf8');
-  for (const input of [
-    { composioApiKey: {} },
-    { composioApiKey: 'x'.repeat(16_385) },
-    { composioApiKey: 'synthetic-rejected-key', openaiApiKey: 'synthetic-ai-key' },
-    { composioApiKey: null, provider: 'anthropic' },
-    { clearKeys: ['vaultKey'] },
-    { clearKeys: ['anthropicApiKey'] },
-  ]) {
-    await assert.rejects(f.store.save(input));
-    assert.equal(await readFile(f.path, 'utf8'), previous);
-  }
-  assert.equal((await f.store.environment()).COMPOSIO_API_KEY, 'synthetic-working-key');
-  await f.store.save({ composioApiKey: 'synthetic-replacement-key' });
-  assert.equal((await f.reopen().environment()).COMPOSIO_API_KEY, 'synthetic-replacement-key');
-});
-
-test('blank fields preserve the connection key while removal persists without rotating the vault', async (t) => {
-  for (const remove of [{ composioApiKey: null }, { clearKeys: ['composioApiKey'] }]) {
-    const f = await fixture(t);
-    await f.store.save({ composioApiKey: 'synthetic-composio-key' });
-    const before = await f.store.environment();
-    for (const composioApiKey of ['', '   ']) await f.store.save({ composioApiKey });
-    assert.equal((await f.store.environment()).COMPOSIO_API_KEY, before.COMPOSIO_API_KEY);
-    await f.store.save(remove);
-    const after = await f.reopen().environment();
-    assert.equal(after.COMPOSIO_API_KEY, '');
-    assert.equal(after.OTTO_VAULT_KEY, before.OTTO_VAULT_KEY);
-    assert.equal((await f.reopen().get()).hasComposioKey, false);
-  }
-});
-
-test('encrypted integration import cannot configure AI, import accounts, or replace runtime identity', async (t) => {
-  const f = await fixture(t);
-  const rejected = {
-    COMPOSIO_CONNECTED_ACCOUNT_ID: 'synthetic-connected-account',
-    TELEGRAM_BOT_TOKEN: 'synthetic-bot-token',
-    DATABASE_URL: 'synthetic-database-url',
-    OTTO_DESKTOP_OWNER_ID: 'synthetic-owner',
-    OTTO_DESKTOP_AUTH_TOKEN: 'synthetic-desktop-token',
-    OPENAI_API_KEY: 'synthetic-openai-key',
-    ANTHROPIC_API_KEY: 'synthetic-anthropic-key',
-    LLM_PROVIDER: 'openai',
-    LLM_MODEL: 'synthetic-model',
+  await f.store.environment();
+  const saved = JSON.parse(await readFile(f.path, 'utf8'));
+  const secret = 'synthetic-retired-composio-key';
+  saved.secrets.composioApiKey = f.encryption.encryptString(secret).toString('base64');
+  saved.secrets.integrationConfiguration = f.encryption
+    .encryptString(JSON.stringify({ COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'synthetic-retired-config' }))
+    .toString('base64');
+  saved.keyMetadata.composioApiKey = {
+    suffix: secret.slice(-4),
+    source: 'manual',
+    updatedAt: '2026-10-08T00:00:00.000Z',
   };
-  await f.store.save(
-    {},
-    {
-      COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'synthetic-auth-config',
-      OTTO_VAULT_KEY: 'synthetic-vault-key',
-      ...rejected,
-    },
-  );
-  const environment = await f.reopen().environment();
-  assert.equal(environment.COMPOSIO_GMAIL_AUTH_CONFIG_ID, 'synthetic-auth-config');
-  for (const field of Object.keys(rejected)) assert.equal(environment[field], undefined);
-  assert.notEqual(environment.OTTO_VAULT_KEY, 'synthetic-vault-key');
-  assert.ok(!(await readFile(f.path, 'utf8')).includes('synthetic-auth-config'));
+  await writeFile(f.path, JSON.stringify(saved));
+  const store = f.reopen();
+  const expectedVault = f.encryption.decryptString(Buffer.from(saved.secrets.vaultKey, 'base64'));
+  assert.deepEqual(await store.environment(), { OTTO_VAULT_KEY: expectedVault });
+  assert.equal(Object.hasOwn(await store.get(), 'keys'), false);
+  assert.equal(Object.hasOwn(await store.get(), 'hasComposioKey'), false);
+  assert.equal(store.revealKey, undefined);
+  await store.save({ theme: 'dark', notifications: true });
+  assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, saved.secrets);
+  assert.deepEqual(await f.reopen().environment(), { OTTO_VAULT_KEY: expectedVault });
+  await assert.rejects(store.save({ composioApiKey: 'synthetic-replacement-key' }), /supported/);
+});
+
+test('native onboarding replay reaches product onboarding without restarting or resetting the profile', async (t) => {
+  const f = await runningDesktop(t, () => assert.fail('Replay must not make an engine request.'));
+  await f.storage.store.environment();
+  const before = await readFile(f.storage.path, 'utf8');
+  f.showEngine();
+  const chat = f.windows.at(-1);
+  f.replayOnboarding();
+  const intro = f.windows.at(-1);
+  assert.equal(intro.query.mode, 'onboarding');
+  await f.handlers.get('otto:prepare')({
+    sender: intro.webContents,
+    senderFrame: intro.webContents.mainFrame,
+  });
+  assert.equal(chat.url, 'http://127.0.0.1:4310/onboarding?replay=1');
+  assert.equal(chat.isDestroyed(), false);
+  assert.equal(intro.isDestroyed(), true);
+  assert.equal(f.children.length, 0);
+  assert.equal(await readFile(f.storage.path, 'utf8'), before);
 });
 
 test('unavailable or plaintext key stores refuse secret persistence and decryption', async (t) => {
   const f = await fixture(t);
-  await f.store.save({ composioApiKey: 'synthetic-protected-key' });
+  await f.store.environment();
   const previous = await readFile(f.path, 'utf8');
   for (const unavailable of [
     { ...f.encryption, isEncryptionAvailable: () => false },
     { ...f.encryption, getSelectedStorageBackend: () => 'basic_text' },
   ]) {
     const store = createSettingsStore(f.path, unavailable);
-    await assert.rejects(store.save({ composioApiKey: 'synthetic-new-key' }), /system key store/);
+    const fresh = createSettingsStore(join(dirname(f.path), 'fresh.json'), unavailable);
+    await assert.rejects(fresh.environment(), /system key store/);
     await assert.rejects(store.environment(), /system key store/);
     assert.equal(await readFile(f.path, 'utf8'), previous);
   }
@@ -1223,11 +1062,11 @@ test('unavailable or plaintext key stores refuse secret persistence and decrypti
 
 test('unreadable ciphertext fails closed without returning the secret or decryptor error', async (t) => {
   const f = await fixture(t);
-  await f.store.save({ composioApiKey: 'synthetic-private-key' });
+  await f.store.environment();
   const value = JSON.parse(await readFile(f.path, 'utf8'));
-  const ciphertext = Buffer.from(value.secrets.composioApiKey, 'base64');
+  const ciphertext = Buffer.from(value.secrets.vaultKey, 'base64');
   ciphertext[12] ^= 1;
-  value.secrets.composioApiKey = ciphertext.toString('base64');
+  value.secrets.vaultKey = ciphertext.toString('base64');
   await writeFile(f.path, JSON.stringify(value));
   await assert.rejects(f.reopen().environment(), {
     message: 'The system key store could not unlock your saved keys.',
@@ -1236,7 +1075,7 @@ test('unreadable ciphertext fails closed without returning the secret or decrypt
 
 test('preferences persist without unlocking keys or changing the running engine configuration', async (t) => {
   const f = await fixture(t);
-  await f.store.save({ composioApiKey: 'synthetic-retained-connection-key' });
+  const environment = await f.store.environment();
   const before = JSON.parse(await readFile(f.path, 'utf8'));
   const encrypted = { ...before.secrets };
   const store = createSettingsStore(f.path, {
@@ -1245,70 +1084,38 @@ test('preferences persist without unlocking keys or changing the running engine 
       throw new Error('Preferences must not access the key store.');
     },
   });
-  const revision = await store.revision();
   await store.save({
     theme: 'dark',
     notifications: true,
     launchAtLogin: true,
     onboardingCompleted: true,
   });
-  assert.equal(await store.revision(), revision);
   const reopened = await f.reopen().get();
   assert.equal(reopened.theme, 'dark');
   assert.equal(reopened.notifications, true);
   assert.equal(reopened.launchAtLogin, true);
   assert.equal(reopened.onboardingCompleted, true);
   assert.deepEqual(JSON.parse(await readFile(f.path, 'utf8')).secrets, encrypted);
-  assert.equal(
-    (await f.reopen().environment()).COMPOSIO_API_KEY,
-    'synthetic-retained-connection-key',
-  );
+  assert.deepEqual(await f.reopen().environment(), environment);
   await assert.rejects(store.save({ theme: 'invalid' }), /supported appearance/);
   await assert.rejects(store.save({ notifications: 'true' }), /preferences/);
 });
 
-test('explicit reveal permits only the app connection key while ordinary reads retain masked metadata', async (t) => {
-  const f = await fixture(t);
-  const key = 'synthetic-reveal-connection-key';
-  await f.store.save({ composioApiKey: key }, {});
-  assert.equal(await f.store.revealKey('composioApiKey'), key);
-  const redacted = await f.store.get();
-  assert.equal(redacted.keys.composioApiKey.source, 'import');
-  assert.equal(redacted.keys.composioApiKey.suffix, '-key');
-  assert.ok(!JSON.stringify(redacted).includes(key));
-  for (const field of [
-    'vaultKey',
-    'integrationConfiguration',
-    'openaiApiKey',
-    'anthropicApiKey',
-    '__proto__',
-    null,
-  ])
-    await assert.rejects(f.store.revealKey(field), /supported app connection key/);
-  await f.store.save({ composioApiKey: null });
-  assert.equal(await f.store.revealKey('composioApiKey'), '');
-  assert.deepEqual((await f.store.get()).keys.composioApiKey, {
-    suffix: null,
-    source: null,
-    updatedAt: null,
-  });
-});
-
 test('unsupported saved schemas fail closed without rewriting or unlocking their contents', async (t) => {
   const f = await fixture(t);
-  await f.store.save({ composioApiKey: 'synthetic-retained-key' });
+  await f.store.environment();
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
   const variants = [
     { ...saved, version: 2 },
     { ...saved, provider: 'openai' },
     { ...saved, notifications: undefined },
     { ...saved, secrets: { ...saved.secrets, openaiApiKey: 'unsupported-ciphertext' } },
-    { ...saved, keyMetadata: {} },
+    { ...saved, secrets: { ...saved.secrets, vaultKey: '' } },
     {
       ...saved,
       keyMetadata: { composioApiKey: { ...saved.keyMetadata.composioApiKey, source: 'saved' } },
     },
-    { ...saved, secrets: {} },
+    { ...saved, keyMetadata: null },
     null,
     [],
   ];
@@ -1326,25 +1133,16 @@ test('unsupported saved schemas fail closed without rewriting or unlocking their
   }
 });
 
-test('a keyless installation creates one persistent encrypted vault and only connection changes advance the engine revision', async (t) => {
+test('a keyless installation creates one persistent encrypted vault across concurrent startup and preference changes', async (t) => {
   const f = await fixture(t);
-  assert.equal((await f.store.get()).hasComposioKey, false);
+  assert.equal(Object.hasOwn(await f.store.get(), 'hasComposioKey'), false);
   const environments = await Promise.all(Array.from({ length: 8 }, () => f.store.environment()));
   const vault = environments[0].OTTO_VAULT_KEY;
   assert.equal(Buffer.from(vault, 'base64').length, 32);
-  for (const environment of environments)
-    assert.deepEqual(environment, { COMPOSIO_API_KEY: '', OTTO_VAULT_KEY: vault });
+  for (const environment of environments) assert.deepEqual(environment, { OTTO_VAULT_KEY: vault });
   assert.equal((await f.reopen().environment()).OTTO_VAULT_KEY, vault);
   assert.ok(!(await readFile(f.path, 'utf8')).includes(vault));
-  const revision = await f.store.revision();
   await f.store.save({ notifications: true, onboardingCompleted: true });
-  assert.equal(await f.store.revision(), revision);
-  await f.store.save({ composioApiKey: 'synthetic-connection-key' });
-  assert.equal(await f.store.revision(), revision + 1);
-  await f.store.save({}, { COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'synthetic-auth-config' });
-  assert.equal(await f.store.revision(), revision + 2);
-  await f.store.save({ composioApiKey: null });
-  assert.equal(await f.store.revision(), revision + 3);
   assert.equal((await f.store.environment()).OTTO_VAULT_KEY, vault);
 });
 
@@ -1572,7 +1370,7 @@ test('feedback metadata uses installed version and build source with a bounded h
   assert.equal((await context.read()).platform, 'linux-x64');
 });
 
-test('engine preload limits secret access to Composio and withholds privileged IPC event objects', async () => {
+test('engine preload exposes no credential reveal and withholds privileged IPC event objects', async () => {
   const calls = [];
   const listeners = new Map();
   let bridge;
@@ -1599,6 +1397,8 @@ test('engine preload limits secret access to Composio and withholds privileged I
   });
   for (const field of [
     'revealKey',
+    'revealComposioKey',
+    'applySettings',
     'getAppPreferences',
     'saveAppPreferences',
     'prepare',
@@ -1611,10 +1411,8 @@ test('engine preload limits secret access to Composio and withholds privileged I
   bridge.setTheme('dark');
   bridge.openSettings('models');
   bridge.getSettings();
-  const settings = { composioApiKey: 'synthetic-connection-key', notifications: true };
+  const settings = { notifications: true };
   bridge.saveSettings(settings);
-  bridge.revealComposioKey('vaultKey');
-  bridge.applySettings();
   const ownerId = randomUUID();
   const threadId = randomUUID();
   const position = { createdAt: '2026-10-02T10:00:00.000Z', messageIds: [randomUUID()] };
@@ -1628,8 +1426,6 @@ test('engine preload limits secret access to Composio and withholds privileged I
     ['otto:settings:open', 'models'],
     ['otto:settings:get'],
     ['otto:settings:save', settings],
-    ['otto:settings:reveal', 'composioApiKey'],
-    ['otto:settings:apply'],
     ['otto:chat-read:get', ownerId, threadId],
     ['otto:chat-read:set', ownerId, threadId, position],
   ]);

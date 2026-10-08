@@ -1,0 +1,57 @@
+{
+  "case": "CP07.v1",
+  "attempt": "CP07-a02",
+  "status": "blocked",
+  "started_at": "2026-10-08T17:13:40.297066+00:00",
+  "model": "none",
+  "cost": "unavailable",
+  "time_limit_seconds": 600,
+  "proxy_commit": "301caf9",
+  "deployment_version": "5b671905-a2cb-4d4c-b5d6-dac440055c21",
+  "otto_commit": "437687bb17a3944ce9aa01ac37239e5163515365",
+  "script_sha256": "8cdf779cb95a9d0c095fe3e7544ee9ac75f6d0bd52a298434309ddcf96d870b2",
+  "input_policy": "Same frozen canary as a01, with fresh disposable installation keys generated inside each run. No account or model calls.",
+  "hypothesis": "H03: excluding unsupported catalog rows will permit unchanged valid session creation.",
+  "checks": {
+    "CI": {
+      "status": "pass",
+      "evidence": "https://github.com/n8n-io/otto-composio-proxy/actions/runs/37814706599"
+    },
+    "DEPLOY": {
+      "status": "blocked",
+      "reason": "Manual deploy succeeded; protected-main workflow requires maintainer review and merge."
+    },
+    "CATALOG": {
+      "status": "pass",
+      "items": 221
+    },
+    "SECRET": {
+      "status": "pass",
+      "scope": "No key headers or MCP credentials in successful live empty-session responses"
+    }
+  },
+  "ended_at": "2026-10-08T17:16:08.578786+00:00",
+  "canary": {
+    "status": "fail",
+    "passed": [
+      "signed catalog221",
+      "owned sessioncreate",
+      "owned sessionrestore",
+      "foreignread404",
+      "foreigndelete404",
+      "no projectkeyheaders",
+      "session MCPheadersremoved",
+      "owneddelete200",
+      "syntheticcleanup"
+    ],
+    "failed": ["loopbackcallback authgate expectedWorker503, receivedCloudflareHTML403"],
+    "log_sha256": "262cf6b24864ece186a13fac7ace3551f5f3df7ddb9303591e9d47c3c8dbaaf0"
+  },
+  "diagnostic": {
+    "localhost": "CloudflareHTML403",
+    "127.0.0.1": "CloudflareHTML403",
+    "publicHttps": "WorkerJSON503 connections_unavailable",
+    "evidence": "/tmp/otto-proxy-callback-edge.log",
+    "hypothesis": "H04: edge managed-rule false positive on loopbackcallback URL; inspect rule before exception."
+  }
+}

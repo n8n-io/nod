@@ -26,6 +26,7 @@ import { createChatSdkTransport } from '../providers/chat-sdk/index.ts';
 import { createChatSdkSetupVerifier } from '../providers/chat-sdk/settings.ts';
 import { createContainerBrowserComputer } from '../providers/container-browser/index.ts';
 import { createComposioProvider } from '../providers/composio/integrations.ts';
+import { createComposioProxy } from '../providers/composio/proxy.ts';
 import { createDirectProvider } from '../providers/direct/integrations.ts';
 import { createDiscoveredTransport } from '../providers/discovered/remote.ts';
 import { createDiscoveredOAuth } from '../providers/discovered/oauth.ts';
@@ -49,7 +50,6 @@ import { createKeychainKeyStore } from '../providers/keychain/key-store.ts';
 import { createOpenAISpeechProvider } from '../providers/openai/speech.ts';
 import { createPiModelBackend } from '../providers/pi/models.ts';
 import { createModelService } from './models.ts';
-import { createIntegrationKeyService, registerIntegrationKeyRoutes } from './integration-key.ts';
 import { createPiAgent } from '../providers/pi/index.ts';
 import { createSkillLibrary } from '../providers/pi/skills.ts';
 import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
@@ -142,7 +142,6 @@ export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
   models?: ReturnType<typeof createModelService>;
-  integrationKey?: ReturnType<typeof createIntegrationKeyService>;
   prepareComputer?(): Promise<void>;
   computerLifecycle?: { pause(): Promise<void>; resume(): Promise<void> };
   confirmComputerShutdown?(): Promise<void>;
@@ -236,22 +235,28 @@ export function createDefaultAdapters(
     slack: env.COMPOSIO_SLACK_AUTH_CONFIG_ID,
     notion: env.COMPOSIO_NOTION_AUTH_CONFIG_ID,
   };
-  const integrations = createComposioProvider({
-    apiKey: env.COMPOSIO_API_KEY,
-    webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
-    webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
-    authConfigs,
-  });
-  const integrationKey =
-    runtimeMode === 'local' && !desktopMode
-      ? createIntegrationKeyService({
-          database: pool,
+  const integrationKey = env.COMPOSIO_API_KEY?.trim();
+  const integrationProxy =
+    desktopMode || !integrationKey
+      ? createComposioProxy({
+          dataRoot,
           ownerId,
-          keyStore,
-          provider: integrations,
-          changed: refresh,
+          url: desktopMode ? undefined : env.OTTO_COMPOSIO_PROXY_URL,
+          ...(runtimeMode === 'tenant'
+            ? { identitySecret: parseCredentialKey(env.OTTO_VAULT_KEY || '') }
+            : {}),
         })
       : undefined;
+  const integrations = createComposioProvider(
+    integrationProxy
+      ? { proxy: integrationProxy }
+      : {
+          apiKey: integrationKey,
+          webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
+          webhookUrl: env.OTTO_COMPOSIO_WEBHOOK_URL,
+          authConfigs,
+        },
+  );
   const computerProvider = env.COMPUTER_PROVIDER || 'docker';
   if (
     !['docker', 'e2b', 'cloudflare'].includes(computerProvider) ||
@@ -306,7 +311,7 @@ export function createDefaultAdapters(
     ...(analyticsEnabled(env) ? { analytics: createPostHogAnalytics() } : {}),
     initialize: async () => {
       await models.initialize();
-      await integrationKey?.initialize();
+      await integrationProxy?.initialize();
       await allocations?.initialize();
       await databaseObjects?.initialize();
     },
@@ -361,7 +366,6 @@ export function createDefaultAdapters(
       voice: env.TTS_VOICE,
     }),
     integrations,
-    ...(integrationKey ? { integrationKey } : {}),
     ...(['local', 'tenant'].includes(runtimeMode)
       ? {
           directIntegrations: (
@@ -485,7 +489,6 @@ async function initializeApplication(
     } catch {}
   }
   adapters.models?.onSecrets((values) => inspectorSecrets.push(...values));
-  adapters.integrationKey?.onSecrets((values) => inspectorSecrets.push(...values));
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
   const inspector = createInspectorStore(inspectorDatabase, {
@@ -1000,9 +1003,6 @@ async function initializeApplication(
       }),
   });
   adapters.models?.register(app);
-  if (adapters.integrationKey) adapters.integrationKey.register(app);
-  else if (runtimeMode === 'local' && desktopMode)
-    registerIntegrationKeyRoutes(app, adapters.integrations);
   app.addHook('preClose', async () => {
     await adapters.models?.close();
   });
@@ -1324,7 +1324,7 @@ export async function createGatewayApplication(
         listOwners: tenants.listOwners,
         hasOwner: async (owner) => Boolean(await tenants.get(owner)),
         integrations: createComposioProvider({
-          apiKey: env.COMPOSIO_API_KEY,
+          apiKey: env.COMPOSIO_API_KEY?.trim() || undefined,
           webhookSecret: env.COMPOSIO_WEBHOOK_SECRET,
         }),
       }),

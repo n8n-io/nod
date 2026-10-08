@@ -64,7 +64,6 @@ import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
 import { browserFrames } from '../src/web/lib/browser-frames.ts';
-import { SetupNotice } from '../src/web/components/setup-notice.tsx';
 import { Chat } from '../src/web/pages/chat.tsx';
 import { Composer } from '../src/web/components/composer.tsx';
 import type { AppState, Message } from '../src/shared/contracts.ts';
@@ -2967,39 +2966,6 @@ function requestedChatState(): AppState {
   };
 }
 
-test('missing-key setup opens the shared Models settings', async () => {
-  const requests: string[] = [];
-  const view = await handoffView(async () => {
-    throw new Error('Unexpected setup network request.');
-  }, createElement('div'));
-  Object.assign(view.dom.window, {
-    ottoDesktop: {
-      getSettings: async () => {
-        throw new Error('Unexpected native settings request.');
-      },
-    },
-  });
-  const receive = (event: Event) => requests.push((event as CustomEvent<string>).detail);
-  view.dom.window.addEventListener('otto:open-settings', receive);
-  const notice = (integrationsReady: boolean) =>
-    createElement(SetupNotice, {
-      configuration: { ...requestedChatState().configuration, integrationsReady },
-    });
-  try {
-    await view.render(notice(false));
-    await act(async () => view.element<HTMLButtonElement>('button').click());
-    assert.deepEqual(requests, ['models']);
-    await act(async () => view.element<HTMLButtonElement>('button').click());
-    assert.deepEqual(requests, ['models', 'models']);
-    await view.render(notice(true));
-    assert.equal(view.dom.window.document.querySelector('button'), null);
-    assert.deepEqual(requests, ['models', 'models']);
-  } finally {
-    view.dom.window.removeEventListener('otto:open-settings', receive);
-    await view.close();
-  }
-});
-
 test('chat request submits once under StrictMode and keeps the pending message visible', async () => {
   const state = requestedChatState();
   const pending = deferred<Response>();
@@ -3069,6 +3035,8 @@ test('chat request waits for model readiness before consuming and submitting onc
     });
   const view = await handoffView(async (path, options) => {
     if (path === '/api/apps') return Response.json([]);
+    if (path === '/api/models')
+      return Response.json({ connections: [], selection: null, subscriptionAvailable: true });
     assert.equal(path, '/api/messages');
     submissions.push(JSON.parse(String(options?.body)));
     return pending.promise;
@@ -3076,7 +3044,12 @@ test('chat request waits for model readiness before consuming and submitting onc
   try {
     assert.equal(submissions.length, 0);
     assert.deepEqual(handled, []);
+    assert.equal(
+      view.element<HTMLButtonElement>('.model-setup .model-picker-trigger').disabled,
+      false,
+    );
     await view.render(chat(true));
+    assert.equal(view.dom.window.document.querySelector('.model-setup'), null);
     assert.equal(submissions.length, 1);
     assert.deepEqual(handled, [request.id]);
     await act(async () =>

@@ -1,0 +1,801 @@
+{
+  "case": "CP05.v1",
+  "status": "pass",
+  "attempts": [
+    {
+      "id": "storage-prerequisite-1",
+      "evidence": {
+        "phase": "CP05.storage-prerequisite.v1",
+        "proxyRevision": "e084e412317ed412f3fe4d4fbbbc74ce2ef74ddd",
+        "runtime": "v24.21.0",
+        "startedAt": "2026-10-08T17:28:51.287Z",
+        "endedAt": "2026-10-08T17:29:23.888Z",
+        "results": [
+          {
+            "variant": "base",
+            "pass": true,
+            "checks": {
+              "exactOriginalBytes": true,
+              "helperSha256AndSize": true,
+              "sameNameContentDistinctObjects": true,
+              "overwritePreservesFirst": true,
+              "replacementOnlySecond": true,
+              "emptyToolkitsAndDisabledHelpers": true
+            },
+            "sha256After": [
+              "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0",
+              "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98"
+            ],
+            "elapsedMs": 15698
+          },
+          {
+            "variant": "holdout",
+            "pass": true,
+            "checks": {
+              "exactOriginalBytes": true,
+              "helperSha256AndSize": true,
+              "sameNameContentDistinctObjects": true,
+              "overwritePreservesFirst": true,
+              "replacementOnlySecond": true,
+              "emptyToolkitsAndDisabledHelpers": true
+            },
+            "sha256After": [
+              "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98",
+              "b9fef2a8fc93b05e7701e97196fda6c4fbeea25ff8e64fdfee7015eca8fa617d"
+            ],
+            "elapsedMs": 14601
+          }
+        ],
+        "requests": [
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/upload_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/execute_meta",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/upload_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/execute_meta",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/upload_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/upload_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/execute_meta",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/upload_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/execute_meta",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/upload_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 201
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/delete",
+            "status": 200
+          },
+          {
+            "method": "DELETE",
+            "route": "/api/v3.1/tool_router/session/:session",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/delete",
+            "status": 200
+          },
+          {
+            "method": "DELETE",
+            "route": "/api/v3.1/tool_router/session/:session",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/delete",
+            "status": 200
+          },
+          {
+            "method": "DELETE",
+            "route": "/api/v3.1/tool_router/session/:session",
+            "status": 200
+          },
+          {
+            "method": "POST",
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/delete",
+            "status": 200
+          },
+          {
+            "method": "DELETE",
+            "route": "/api/v3.1/tool_router/session/:session",
+            "status": 200
+          }
+        ],
+        "cleanup": {
+          "deletedFiles": 4,
+          "deletedSessions": 4,
+          "remainingSessions": 0
+        },
+        "liveConnectedAccountCalls": 0,
+        "modelCalls": 0,
+        "liveToolExecutions": 0,
+        "fixedFileHelperCalls": 4,
+        "pass": true
+      },
+      "reportSha256": "362d7ea640aa6661ec26cf961b85eb9326526ab98d34ef590b3cf978cbb54f81"
+    },
+    {
+      "id": "fixture-1",
+      "classification": "evaluator-error",
+      "evidence": {
+        "case": "CP05.v1",
+        "phase": "actual-service-sdk-worker-fixture",
+        "proxyRevision": "e35aadb5ae8b44ccecdd703ee0a51aca5d6bd663",
+        "runtime": "v24.21.0",
+        "startedAt": "2026-10-08T17:33:10.310Z",
+        "endedAt": "2026-10-08T17:33:10.516Z",
+        "results": [],
+        "failure": {
+          "name": "AssertionError",
+          "message": "Expected values to be strictly equal:\n+ actual - expected\n\n+ undefined\n- 'b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0'\n"
+        },
+        "publicRequests": 10,
+        "upstreamRequests": 39,
+        "denied": [],
+        "modelCalls": 0,
+        "liveConnectedAccountCalls": 0,
+        "realRecipientCalls": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "fixture-2",
+      "classification": "pass",
+      "freeze": "CP05.final-candidate.v1.attempt-2",
+      "scriptSha256": "e3894f85fcc395f2b3ec6865c08b6264229e1f676017dac10049a379aab932a7",
+      "evidence": {
+        "case": "CP05.v1",
+        "phase": "actual-service-sdk-worker-fixture",
+        "proxyRevision": "e35aadb5ae8b44ccecdd703ee0a51aca5d6bd663",
+        "runtime": "v24.21.0",
+        "startedAt": "2026-10-08T17:33:50.532Z",
+        "endedAt": "2026-10-08T17:33:50.849Z",
+        "results": [
+          {
+            "variant": "base",
+            "pass": true,
+            "checks": {
+              "BYTES": true,
+              "FILEOWNER": true,
+              "IMMUTABLE": true,
+              "ACTION": true,
+              "SECRET": true
+            },
+            "bytes": [6, 6],
+            "sha256": [
+              "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0",
+              "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0"
+            ],
+            "workspaceReads": 3,
+            "receivingDrafts": 3,
+            "deniedAttacks": 6,
+            "executedFromNewSessionAfterSourceDeletion": true,
+            "cleanup": {
+              "storedFiles": 0,
+              "sessions": 0
+            },
+            "elapsedMs": 206
+          },
+          {
+            "variant": "holdout",
+            "pass": true,
+            "checks": {
+              "BYTES": true,
+              "FILEOWNER": true,
+              "IMMUTABLE": true,
+              "ACTION": true,
+              "SECRET": true
+            },
+            "bytes": [128, 128],
+            "sha256": [
+              "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98",
+              "b9fef2a8fc93b05e7701e97196fda6c4fbeea25ff8e64fdfee7015eca8fa617d"
+            ],
+            "workspaceReads": 3,
+            "receivingDrafts": 3,
+            "deniedAttacks": 6,
+            "executedFromNewSessionAfterSourceDeletion": true,
+            "cleanup": {
+              "storedFiles": 0,
+              "sessions": 0
+            },
+            "elapsedMs": 86
+          }
+        ],
+        "publicRequests": 48,
+        "upstreamRequests": 150,
+        "denied": [
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/v1/files/delete",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 404
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/v1/files/delete",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 404
+          }
+        ],
+        "modelCalls": 0,
+        "liveConnectedAccountCalls": 0,
+        "realRecipientCalls": 0,
+        "pass": true
+      },
+      "resultSha256": "b0190e1c19549d7c13b9387b589c7f1869ed9b7479ef1fd268acdc03cc2737a3"
+    },
+    {
+      "id": "workerd-15MiB-1",
+      "classification": "pass",
+      "proxyRevision": "e35aadb5ae8b44ccecdd703ee0a51aca5d6bd663",
+      "runtime": "v24.21.0",
+      "test": "workerd accepts and verifies a signed 15 MiB upload through the complete broker path",
+      "startedAt": "2026-10-08T17:33:14.744485+00:00",
+      "endedAt": "2026-10-08T17:33:16.025436+00:00",
+      "timeEvidence": "Log file creation/modification timestamps; test runner reports precise duration below",
+      "log": "\u2714 workerd accepts and verifies a signed 15 MiB upload through the complete broker path (508.937666ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 802.558542\n",
+      "logSha256": "8d8bd905ed189449043e07497a258249fc423f492c9fd38598009f90021d22a4",
+      "file": {
+        "size": 15728640,
+        "byte": 173,
+        "sha256": "3fd32c763b3605d4d4114b364282caf0fbdd9e3cbb45487d95b3d3204b846ae5"
+      },
+      "liveAccountCalls": 0,
+      "modelCalls": 0
+    },
+    {
+      "id": "fixture-3",
+      "classification": "pass",
+      "freeze": "CP05.final-candidate.v1.attempt-3",
+      "frozenInputsSha256": "2b14cdb442727a5e695b440efd60f7b6e4e431bf9fb88f218892320d6d36bbb3",
+      "scriptSha256": "e3894f85fcc395f2b3ec6865c08b6264229e1f676017dac10049a379aab932a7",
+      "run": {
+        "id": "fixture-3",
+        "command": [
+          "npm",
+          "exec",
+          "--yes",
+          "--package=node@24.21.0",
+          "--",
+          "node",
+          "--experimental-transform-types",
+          ".local/cp05-eval/fixture.mts"
+        ],
+        "startedAt": "2026-10-08T17:50:10.612827+00:00",
+        "endedAt": "2026-10-08T17:50:12.439163+00:00",
+        "elapsedSeconds": 1.8262295830063522,
+        "exitCode": 0,
+        "logSha256": "aaf13db8208c626f998d1899cf0d9f61bee27db4fe3621a936c29ae561afc4bd"
+      },
+      "evidence": {
+        "case": "CP05.v1",
+        "phase": "actual-service-sdk-worker-fixture",
+        "proxyRevision": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+        "runtime": "v24.21.0",
+        "startedAt": "2026-10-08T17:50:12.003Z",
+        "endedAt": "2026-10-08T17:50:12.368Z",
+        "results": [
+          {
+            "variant": "base",
+            "pass": true,
+            "checks": {
+              "BYTES": true,
+              "FILEOWNER": true,
+              "IMMUTABLE": true,
+              "ACTION": true,
+              "SECRET": true
+            },
+            "bytes": [6, 6],
+            "sha256": [
+              "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0",
+              "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0"
+            ],
+            "workspaceReads": 3,
+            "receivingDrafts": 3,
+            "deniedAttacks": 6,
+            "executedFromNewSessionAfterSourceDeletion": true,
+            "cleanup": {
+              "storedFiles": 0,
+              "sessions": 0
+            },
+            "elapsedMs": 211
+          },
+          {
+            "variant": "holdout",
+            "pass": true,
+            "checks": {
+              "BYTES": true,
+              "FILEOWNER": true,
+              "IMMUTABLE": true,
+              "ACTION": true,
+              "SECRET": true
+            },
+            "bytes": [128, 128],
+            "sha256": [
+              "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98",
+              "b9fef2a8fc93b05e7701e97196fda6c4fbeea25ff8e64fdfee7015eca8fa617d"
+            ],
+            "workspaceReads": 3,
+            "receivingDrafts": 3,
+            "deniedAttacks": 6,
+            "executedFromNewSessionAfterSourceDeletion": true,
+            "cleanup": {
+              "storedFiles": 0,
+              "sessions": 0
+            },
+            "elapsedMs": 128
+          }
+        ],
+        "publicRequests": 48,
+        "upstreamRequests": 150,
+        "denied": [
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/v1/files/delete",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 404
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/v1/files/delete",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 404
+          }
+        ],
+        "modelCalls": 0,
+        "liveConnectedAccountCalls": 0,
+        "realRecipientCalls": 0,
+        "pass": true
+      },
+      "resultSha256": "5db83ff370914cea415877a69e042b3e42e5ae4a741d40f40d44626ce8dc5cff"
+    },
+    {
+      "id": "workerd-15MiB-2",
+      "classification": "pass",
+      "freeze": "CP05.final-candidate.v1.attempt-3",
+      "proxyRevision": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+      "runtime": "v24.21.0",
+      "test": "workerd accepts and verifies a signed 15 MiB upload through the complete broker path",
+      "run": {
+        "id": "workerd-15MiB-2",
+        "command": [
+          "npm",
+          "exec",
+          "--yes",
+          "--package=node@24.21.0",
+          "--",
+          "node",
+          "--test",
+          "--test-name-pattern=workerd accepts and verifies a signed 15 MiB upload",
+          "test/broker.test.ts"
+        ],
+        "startedAt": "2026-10-08T17:50:10.613055+00:00",
+        "endedAt": "2026-10-08T17:50:12.609015+00:00",
+        "elapsedSeconds": 1.9958751669619232,
+        "exitCode": 0,
+        "logSha256": "608d0144776cfe714d11e1bd749651b73bdb5ee16046d969e23a978ea8e06d65"
+      },
+      "log": "\u2714 workerd accepts and verifies a signed 15 MiB upload through the complete broker path (920.839791ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 1291.808208\n",
+      "logSha256": "608d0144776cfe714d11e1bd749651b73bdb5ee16046d969e23a978ea8e06d65",
+      "file": {
+        "size": 15728640,
+        "byte": 173,
+        "sha256": "3fd32c763b3605d4d4114b364282caf0fbdd9e3cbb45487d95b3d3204b846ae5"
+      },
+      "liveAccountCalls": 0,
+      "modelCalls": 0
+    },
+    {
+      "id": "fixture-4",
+      "classification": "final-source-frozen-repeat",
+      "freeze": "CP05.final-candidate.v1.attempt-4",
+      "frozenInputsSha256": "6a9eca3f85850f7af6a1f1357e4feb98b81e9422ac3c1041e93f2746e684141a",
+      "scriptSha256": "e3894f85fcc395f2b3ec6865c08b6264229e1f676017dac10049a379aab932a7",
+      "run": {
+        "id": "fixture-4",
+        "freeze": "CP05.final-candidate.v1.attempt-4",
+        "frozenInputsSha256": "6a9eca3f85850f7af6a1f1357e4feb98b81e9422ac3c1041e93f2746e684141a",
+        "command": [
+          "/Users/filipetavares/.npm/_npx/538786c08bcb9442/node_modules/node/bin/node",
+          "--experimental-transform-types",
+          ".local/cp05-eval/fixture.mts"
+        ],
+        "startedAt": "2026-10-08T18:20:13.666379+00:00",
+        "endedAt": "2026-10-08T18:20:14.571362+00:00",
+        "elapsedSeconds": 0.9056452501099557,
+        "exitCode": 0,
+        "logSha256": "3da6776b6f45e7d5929ade719ed97d559fc1c7d739e549178b73b8725ed58901"
+      },
+      "evidence": {
+        "case": "CP05.v1",
+        "phase": "actual-service-sdk-worker-fixture",
+        "proxyRevision": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+        "runtime": "v24.21.0",
+        "startedAt": "2026-10-08T18:20:14.197Z",
+        "endedAt": "2026-10-08T18:20:14.560Z",
+        "results": [
+          {
+            "variant": "base",
+            "pass": true,
+            "checks": {
+              "BYTES": true,
+              "FILEOWNER": true,
+              "IMMUTABLE": true,
+              "ACTION": true,
+              "SECRET": true
+            },
+            "bytes": [6, 6],
+            "sha256": [
+              "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0",
+              "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0"
+            ],
+            "workspaceReads": 3,
+            "receivingDrafts": 3,
+            "deniedAttacks": 6,
+            "executedFromNewSessionAfterSourceDeletion": true,
+            "cleanup": {
+              "storedFiles": 0,
+              "sessions": 0
+            },
+            "elapsedMs": 224
+          },
+          {
+            "variant": "holdout",
+            "pass": true,
+            "checks": {
+              "BYTES": true,
+              "FILEOWNER": true,
+              "IMMUTABLE": true,
+              "ACTION": true,
+              "SECRET": true
+            },
+            "bytes": [128, 128],
+            "sha256": [
+              "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98",
+              "b9fef2a8fc93b05e7701e97196fda6c4fbeea25ff8e64fdfee7015eca8fa617d"
+            ],
+            "workspaceReads": 3,
+            "receivingDrafts": 3,
+            "deniedAttacks": 6,
+            "executedFromNewSessionAfterSourceDeletion": true,
+            "cleanup": {
+              "storedFiles": 0,
+              "sessions": 0
+            },
+            "elapsedMs": 120
+          }
+        ],
+        "publicRequests": 48,
+        "upstreamRequests": 150,
+        "denied": [
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/v1/files/delete",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 404
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/execute",
+            "status": 403
+          },
+          {
+            "route": "/v1/files/delete",
+            "status": 403
+          },
+          {
+            "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url",
+            "status": 404
+          }
+        ],
+        "modelCalls": 0,
+        "liveConnectedAccountCalls": 0,
+        "realRecipientCalls": 0,
+        "pass": true
+      },
+      "resultSha256": "73d338f1dc2a400c29becd8c402909990e7d4156a111926b914024eaf794fdd9"
+    }
+  ],
+  "limitations": [
+    "No real connected-account or recipient execution; receiving drafts are stateful fixtures, not live Gmail delivery.",
+    "Real Composio storage calls used only task-created empty-toolkit sessions/files and the fixed file helper; every created file/session was deleted.",
+    "No live 24-hour retention measurement.",
+    "The initial fixture attempt was a preserved evaluator parser error, followed by the exact base/holdout checks with corrected envelope parsing."
+  ],
+  "hypotheses": [
+    {
+      "id": "CP05-H01",
+      "writtenAt": "2026-10-08T17:33:49.194980+00:00",
+      "redCheck": "BYTES measurement in fixture-1",
+      "hypothesis": "The actual Composio session adapter returns an execution envelope with the draft receipt in result.data; the evaluator incorrectly read result.sha256.",
+      "prediction": "Reading result.data.sha256 yields the independently expected source digest, and the existing receiver journal confirms the exact uploaded object bytes.",
+      "rejectionEvidence": "The data field also lacks the receipt or its digest differs from the workspace source.",
+      "evidence": "src/providers/composio/integrations.ts returns files(result); the receiving fixture creates Response.json({data:{draftId,sha256,bytes},error:null}).",
+      "change": "Receipt parser only: use draft.data.sha256. Preserve case inputs, outcomes and every required check."
+    }
+  ],
+  "scope": "Frozen CP05.v1 contract evaluation: actual Otto service/database/SDK/Worker with controlled account metadata and receiving draft fixture; separate real Composio mount prerequisite; real local workerd 15 MiB upload.",
+  "checks": {
+    "BYTES": {
+      "base": "pass",
+      "holdout": "pass"
+    },
+    "FILEOWNER": {
+      "base": "pass",
+      "holdout": "pass"
+    },
+    "IMMUTABLE": {
+      "base": "pass",
+      "holdout": "pass"
+    },
+    "ACTION": {
+      "base": "pass",
+      "holdout": "pass"
+    },
+    "SECRET": {
+      "base": "pass",
+      "holdout": "pass"
+    }
+  },
+  "sourceVerification": {
+    "verifiedAt": "2026-10-08T18:21:07.551748+00:00",
+    "ottoFrozenFilesUnchanged": true,
+    "proxyFrozenFilesUnchanged": true,
+    "proxyRevision": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+    "liveHelperByteIdenticalToFinal": true,
+    "helperFunctionSourceSha256": "a91c0f066ee119c5ad62d0428b07f55e4451ee6bc0f805c3ce214b4d490df642",
+    "helperSourceSpan": "raw bytes [index(export function fileHelper), index(export class FileUploads))",
+    "fixtureScriptUnchanged": true,
+    "caseInputsAndChecksUnchanged": true,
+    "frozenInputsSha256": "6a9eca3f85850f7af6a1f1357e4feb98b81e9422ac3c1041e93f2746e684141a",
+    "ottoServiceSha256": "174fc5b7f55f30a0d401556b467e88ed8ca421eb6bde48a79a4bcf2d788023f7"
+  },
+  "cost": "unavailable; provider mounts/fixed helper may incur provider usage, no model or app-tool execution",
+  "sourceVerificationHistory": [
+    {
+      "verifiedAt": "2026-10-08T17:34:49.587807+00:00",
+      "ottoFrozenFilesUnchanged": true,
+      "proxyFrozenFilesUnchanged": true,
+      "proxyRevision": "e35aadb5ae8b44ccecdd703ee0a51aca5d6bd663",
+      "liveHelperByteIdenticalToFinal": true,
+      "helperFunctionSourceSha256": "d63c3999680dfa908df40884dca4d39b662e671ef813a044b0c34938ee21ba19"
+    },
+    {
+      "verifiedAt": "2026-10-08T17:50:48.171019+00:00",
+      "ottoFrozenFilesUnchanged": true,
+      "proxyFrozenFilesUnchanged": true,
+      "proxyRevision": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+      "liveHelperByteIdenticalToFinal": true,
+      "helperFunctionSourceSha256": "a91c0f066ee119c5ad62d0428b07f55e4451ee6bc0f805c3ce214b4d490df642",
+      "helperSourceSpan": "raw bytes [index(export function fileHelper), index(export class FileUploads))",
+      "fixtureScriptUnchanged": true,
+      "caseInputsAndChecksUnchanged": true,
+      "frozenInputsSha256": "2b14cdb442727a5e695b440efd60f7b6e4e431bf9fb88f218892320d6d36bbb3"
+    }
+  ],
+  "finalRepeat": {
+    "freeze": "CP05.final-candidate.v1.attempt-4",
+    "reason": "Final-source repeat after provider-change reconnect and callback admission fixes. Upload provider/Worker code, prompt, checks, inputs, evaluator, runtime and repeats unchanged.",
+    "fixture": "fixture-4",
+    "workerd": "workerd-15MiB-2",
+    "liveStorageEvidence": "storage-prerequisite-1",
+    "base": {
+      "pass": 1,
+      "runs": 1
+    },
+    "holdout": {
+      "pass": 1,
+      "runs": 1
+    },
+    "workerd15MiB": {
+      "pass": 1,
+      "runs": 1
+    },
+    "liveAccountCalls": 0,
+    "modelCalls": 0,
+    "realRecipientCalls": 0,
+    "workerdReuse": {
+      "attempt": "workerd-15MiB-2",
+      "reason": "Exact Worker994fc6d, lockfile, test and upload-helper bytes unchanged; only Otto service/composition changed."
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "case": "CP03-preflight.v1",
+  "build": {
+    "commit": "437687bb17a3944ce9aa01ac37239e5163515365",
+    "diffSha256": "dcf80289fc0f1fdbbbac92159d593d47b69f9c4686074cb21375021da95eea1a",
+    "scriptSha256": "5d82d8d4d07d346d30e4372c2b8a88c61932b176de84dd1d993964b9df4fc9c9",
+    "node": "v24.21.0"
+  },
+  "results": [
+    {
+      "variant": "missing-fingerprint",
+      "checks": {
+        "sameConnection": true,
+        "active": true,
+        "cursor": true,
+        "watch": true,
+        "event": true,
+        "execution": true,
+        "noNewConsentOrDeletion": true
+      },
+      "pass": true,
+      "calls": ["verify-owner", "execute"]
+    },
+    {
+      "variant": "same-project-key-rotation",
+      "checks": {
+        "sameConnection": true,
+        "active": true,
+        "cursor": true,
+        "watch": true,
+        "event": true,
+        "execution": true,
+        "noNewConsentOrDeletion": true
+      },
+      "pass": true,
+      "calls": ["verify-owner", "execute"]
+    }
+  ],
+  "status": "pass",
+  "endedAt": "2026-10-08T17:17:17.749Z",
+  "modelCalls": 0,
+  "liveAccountCalls": 0,
+  "cost": "unavailable"
+}

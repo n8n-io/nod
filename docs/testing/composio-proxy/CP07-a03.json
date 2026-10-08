@@ -1,0 +1,158 @@
+{
+  "case": "CP07.v1",
+  "attempt": "CP07-a03",
+  "status": "blocked",
+  "ended_at": "2026-10-08T17:56:08.452067+00:00",
+  "inputs": "CP07-a03-inputs.json",
+  "proxy_commit": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+  "deployment_version": "bd116af2-19af-472f-80d9-073d5bc88f31",
+  "checks": {
+    "CI": {
+      "status": "pass",
+      "evidence": "https://github.com/n8n-io/otto-composio-proxy/actions/runs/37818910493"
+    },
+    "DEPLOY": {
+      "status": "blocked",
+      "reason": "Manual candidate deployment succeeded; protected main requires maintainer review and merge. No main workflow execution yet."
+    },
+    "CATALOG": {
+      "status": "pass",
+      "items": 221
+    },
+    "SECRET": {
+      "status": "pass",
+      "scope": "Independently verified signed keyless requests; no project key headers or MCP credentials in successful synthetic session responses."
+    }
+  },
+  "canary": {
+    "status": "pass",
+    "phase": "complete",
+    "report": {
+      "kind": "manual_live_keyless_contract",
+      "keyless": true,
+      "requestCount": 8,
+      "catalogCount": 221,
+      "distinctOwners": true,
+      "ownershipDerived": true,
+      "signaturesVerified": 8,
+      "forbiddenHeaders": 0,
+      "safeMcpResponses": 2,
+      "sessionCreated": true,
+      "sessionRestored": true,
+      "foreignReadStatus": 404,
+      "foreignDeleteStatus": 404,
+      "authStartStatus": 503,
+      "authStartCode": "connections_unavailable",
+      "sessionDeleted": true,
+      "cleanupComplete": true,
+      "statuses": [
+        {
+          "method": "GET",
+          "operation": "/api/v3.1/toolkits",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "operation": "/api/v3.1/toolkits",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "operation": "/api/v3.1/tool_router/session",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "operation": "/api/v3.1/tool_router/session/:id",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "operation": "/api/v3.1/tool_router/session/:id",
+          "status": 404
+        },
+        {
+          "method": "DELETE",
+          "operation": "/api/v3.1/tool_router/session/:id",
+          "status": 404
+        },
+        {
+          "method": "POST",
+          "operation": "/v1/connect/start",
+          "status": 503
+        },
+        {
+          "method": "DELETE",
+          "operation": "/api/v3.1/tool_router/session/:id",
+          "status": 200
+        }
+      ]
+    }
+  },
+  "holdout": {
+    "status": "pass",
+    "observations": [
+      {
+        "callback": {
+          "type": "loopback",
+          "host": "localhost",
+          "port": 4310
+        },
+        "status": 503,
+        "type": "application/json",
+        "error": "connections_unavailable"
+      },
+      {
+        "callback": {
+          "type": "loopback",
+          "host": "ipv4",
+          "port": 4310
+        },
+        "status": 503,
+        "type": "application/json",
+        "error": "connections_unavailable"
+      },
+      {
+        "callback": {
+          "type": "loopback",
+          "host": "ipv6",
+          "port": 4310
+        },
+        "status": 503,
+        "type": "application/json",
+        "error": "connections_unavailable"
+      },
+      {
+        "callback": {
+          "type": "https",
+          "url": "https://otto.example.com/api/apps/callback?state=jbHmneAfnxpA1yihpZGn8A274MxnmMgaR5RF5wLzNJg"
+        },
+        "status": 503,
+        "type": "application/json",
+        "error": "connections_unavailable"
+      }
+    ],
+    "unsignedStatus": 401,
+    "interpretation": "All signed callback forms reach the intentional OAuth-disabled Worker gate; no actual consent."
+  },
+  "logs": {
+    "otto-proxy-live-keyless-994fc6d.log": {
+      "path": "/tmp/otto-proxy-live-keyless-994fc6d.log",
+      "sha256": "7cf75e381ca5dad0cfe41fcae06164eafc8dda748aefcfb86630a8f0723d5edd"
+    },
+    "otto-proxy-callback-edge-994fc6d.log": {
+      "path": "/tmp/otto-proxy-callback-edge-994fc6d.log",
+      "sha256": "b14e1e053b20b13dbf7c3faf4934e199678538c6ec4f9ed8cfbb4e260eb7ae36"
+    },
+    "otto-proxy-deploy-994fc6d.log": {
+      "path": "/tmp/otto-proxy-deploy-994fc6d.log",
+      "sha256": "ca2e9c75a175752314c847db5c8fb8dd2a27c5c9d143f51cfd8e32973a8e406c"
+    }
+  },
+  "limitations": [
+    "OAuth remains intentionally disabled; these503 responses establish callback routing, not real consent.",
+    "No real connected accounts, models or recipients were used.",
+    "All created synthetic sessions and local profiles were removed."
+  ],
+  "original_input_sha256": "e1740c87cefb6acb26fce00223dc92b31932b33c4e1ff733f1adda390be02d90"
+}

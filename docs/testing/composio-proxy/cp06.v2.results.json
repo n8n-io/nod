@@ -1,0 +1,161 @@
+{
+  "case": "CP06.v2",
+  "result": "pass",
+  "scope": "Actual native Electron UI and real application PostgreSQL/Vault/model persistence with synthetic provider/model adapters. No live OAuth or model call.",
+  "source_record": "cp06.v2.source.json",
+  "source_record_sha256": "63f3b6c3caaa63ab2465ea1f387a138e15e40c5f6f0bcda92525406ae6030655",
+  "inputs_record": "cp06.v2.inputs.json",
+  "inputs_sha256": "1049dc5b40dcadcacc765d7d995ccef0fab77b9992176a9854ed918f0ed841a1",
+  "git_base": "437687bb17a3944ce9aa01ac37239e5163515365",
+  "git_dirty": true,
+  "model": "No live model; explicit synthetic interview curator and agent adapter. UI controlled by Codex native CUA.",
+  "cost": "Unavailable; no provider/model billing calls.",
+  "attempts": [
+    {
+      "attempt": "native-base-a01",
+      "variant": "base",
+      "result": "pass",
+      "started_at": "2026-10-08T18:26:24.946595+00:00",
+      "ended_at": "2026-10-08T18:30:05.678079+00:00",
+      "elapsed_seconds": 220.732,
+      "time_limit_seconds": 600,
+      "checks": {
+        "REPLAYUI": {
+          "status": "pass",
+          "evidence": "Native CUA trace; observed_screens below and application route audit."
+        },
+        "DATA": {
+          "status": "pass",
+          "evidence": {
+            "originalConnections": true,
+            "originalData": {
+              "account_settings": true,
+              "preferences": true,
+              "profiles": true,
+              "threads": true,
+              "messages": true,
+              "model_connections": true,
+              "model_settings": true,
+              "vault_entries": true,
+              "vault_app_grants": true
+            },
+            "nativeSettings": true,
+            "noReconnect": true,
+            "noUnexpectedOutbound": true,
+            "noForbiddenMutation": true,
+            "withinTimeLimit": true
+          }
+        },
+        "SAFE": {
+          "status": "pass",
+          "evidence": "No unexpected outbound, reconnect, reset, disconnect or model-sign-in requests in independent provider/route audit."
+        }
+      },
+      "observed_screens": [
+        "native setup firstSetup=false",
+        "welcome",
+        "brain saved Acceptance fixture",
+        "about three answers",
+        "email cp06@example.test connected",
+        "telegram skipped",
+        "open source",
+        "original chat"
+      ],
+      "independent_score": ".local/composio-proxy-review/cp06-v2/replay-base-score.json",
+      "independent_score_sha256": "7806539fe54f6ec0c07e34da475d6d5a9931a3c91630b597fb22508da69f93e0",
+      "requests": 29
+    },
+    {
+      "attempt": "native-holdout-a01",
+      "variant": "holdout",
+      "result": "pass",
+      "started_at": "2026-10-08T18:31:04.866606+00:00",
+      "ended_at": "2026-10-08T18:36:28.415709+00:00",
+      "elapsed_seconds": 323.549,
+      "time_limit_seconds": 600,
+      "checks": {
+        "REPLAYUI": {
+          "status": "pass",
+          "evidence": "Native CUA trace; observed_screens below and application route audit."
+        },
+        "DATA": {
+          "status": "pass",
+          "evidence": {
+            "originalConnections": true,
+            "originalData": {
+              "account_settings": true,
+              "preferences": true,
+              "profiles": true,
+              "threads": true,
+              "messages": true,
+              "model_connections": true,
+              "model_settings": true,
+              "vault_entries": true,
+              "vault_app_grants": true
+            },
+            "nativeSettings": true,
+            "noReconnect": true,
+            "noUnexpectedOutbound": true,
+            "noForbiddenMutation": true,
+            "withinTimeLimit": true
+          }
+        },
+        "SAFE": {
+          "status": "pass",
+          "evidence": "No unexpected outbound, reconnect, reset, disconnect or model-sign-in requests in independent provider/route audit."
+        }
+      },
+      "observed_screens": [
+        "native menu replay",
+        "native setup firstSetup=false",
+        "welcome",
+        "saved model",
+        "about partial interview",
+        "native reload remained at About",
+        "native menu Replay restarted partial flow at Welcome",
+        "saved model reused",
+        "about three answers",
+        "email cp06@example.test connected",
+        "telegram skipped",
+        "open source",
+        "original retained chat"
+      ],
+      "independent_score": ".local/composio-proxy-review/cp06-v2/replay-holdout-score.json",
+      "independent_score_sha256": "b505a431de564bb7339b0832f3e1809cfcf14c644fc1ed852a6168ecb520af2f",
+      "requests": 39
+    }
+  ],
+  "retained_prior_records": ["cp06.v1.inputs.json", "cp06.v1.results.json"],
+  "measurement_errors": {
+    "time": "2026-10-08T18:30:19.077041+00:00",
+    "case": "CP06.v2",
+    "attempt": "native-base-a01",
+    "kind": "measurement_error",
+    "errors": [
+      "Optional after-account.json copy failed because completed profile replay did not PATCH account. Timing record already saved.",
+      "Read-only scorer resolved frozen inputs one directory too high (ENOENT). No scoring checks ran."
+    ],
+    "hypothesis": "Use the correct three-parent relative input path and rely on the independent SQL score rather than an optional account-mutation snapshot.",
+    "prediction": "Read-only scorer will load exact frozen inputs and compare actual retained rows.",
+    "changes": "Only scoring helper input path; no app, fixture, state or acceptance-check changes."
+  },
+  "scope_annotations": [
+    "The frozen holdout description called the entry Settings. The actual supported entry is the native application menu Replay onboarding; all frozen observable outcome checks are unchanged.",
+    "The holdout Cmd+[ attempt caused no visible navigation. Cmd+R preserved the About screen; native Replay explicitly interrupted and restarted at Welcome, after which the entire flow completed.",
+    "After this frozen copy was created, only src/web/pages/apps.tsx changed to reconcile completed pairing prompts. The final a02 source map proves all other entries in the 391-file source map unchanged; replay is reported only against its recorded copy, with separate final Apps acceptance."
+  ],
+  "artifacts": {
+    ".local/composio-proxy-review/cp06-v2/engine-fixture.mts": "13b21243f60d70c7284c19dcc4a8f0692b85f71e661104d3fd3c00feacd4044a",
+    ".local/composio-proxy-review/cp06-v2/score-replay.mjs": "49f29765689b50cd9a2454c63c3d6f21086ae6711d64b6fb8c6ee6946de1e409",
+    ".local/composio-proxy-review/cp06-v2/replay-before.json": "9c09d696a0d9dc55238006af34e67683886ad022fad62689aef725e031d4ca8a",
+    ".local/composio-proxy-review/cp06-v2/replay-base-start.json": "2507ce4e70f51a4876ba2955db71f71a050c5813b87a697881d134511dea5149",
+    ".local/composio-proxy-review/cp06-v2/replay-base-timing.json": "e4bd7ce7ee1510a6cd8559681594422707504c9cc19ce375e55646f892a4b597",
+    ".local/composio-proxy-review/cp06-v2/replay-base-score.json": "7806539fe54f6ec0c07e34da475d6d5a9931a3c91630b597fb22508da69f93e0",
+    ".local/composio-proxy-review/cp06-v2/replay-holdout-start.json": "e78b19fea346a66cfb2af20b40e5dd088cd6ec91acfdc78e0e18aade39d2564b",
+    ".local/composio-proxy-review/cp06-v2/replay-holdout-timing.json": "2a3dca8c2fd0e31b691b6dfbd9adedd3326fe9056352895edbf21150d799bf67",
+    ".local/composio-proxy-review/cp06-v2/replay-holdout-score.json": "b505a431de564bb7339b0832f3e1809cfcf14c644fc1ed852a6168ecb520af2f",
+    ".local/composio-proxy-review/cp06-v2/engine-audit.jsonl": "fb102545f3e503ed87e310c7277ddbf9fde53061027402588e13520421a217c3",
+    ".local/composio-proxy-review/cp06-v2/replay-base-measurement-errors.json": "91e9125314bb62a0aa8126b096ca3ab77b8c104a3ec2d05f5837e1e62021b71c"
+  },
+  "recorded_at": "2026-10-08T18:39:33.458371+00:00"
+}

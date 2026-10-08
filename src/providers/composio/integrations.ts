@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { integrationServices, type IntegrationServiceInfo } from '../../shared/integrations.ts';
 import { createComposioFiles } from './downloads.ts';
+import type { createComposioProxy } from './proxy.ts';
 import { readInboxSnippets, readSentEmails } from './sent-email.ts';
 import { readVerificationEmails } from './verification-email.ts';
 import { safeRemoteFetch } from '../discovered/remote.ts';
@@ -223,6 +224,7 @@ export function createComposioProvider(options: {
   webhookUrl?: string;
   authConfigs?: Partial<Record<IntegrationService, string>>;
   client?: Composio;
+  proxy?: ReturnType<typeof createComposioProxy>;
   fileDownload?: Parameters<typeof createComposioFiles>[0];
   fileUploadRequest?: typeof fetch;
 }): IntegrationProvider {
@@ -268,7 +270,12 @@ export function createComposioProvider(options: {
         })
       : undefined;
   }
-  let client = options.client ?? connect(options.apiKey);
+  let client = options.proxy?.client ?? options.client ?? connect(options.apiKey);
+  function userId(ownerId: string) {
+    if (options.proxy && ownerId !== options.proxy.ownerId)
+      throw new Error('This connected account owner is unavailable.');
+    return options.proxy?.userId ?? ownerId;
+  }
   function required() {
     if (!client) throw new Error('The connection provider is not configured.');
     return client;
@@ -278,7 +285,7 @@ export function createComposioProvider(options: {
       await sdk.getClient().connectedAccounts.retrieve(id, { signal, maxRetries: 0 }),
     );
     if (sdk !== client) throw new Error('The connection provider changed. Try again.');
-    if (account.id !== id || account.user_id !== ownerId)
+    if (account.id !== id || account.user_id !== userId(ownerId))
       throw new Error('This connected account is unavailable.');
     return account;
   }
@@ -452,7 +459,7 @@ export function createComposioProvider(options: {
       let inspection: ManagedSession | undefined;
       try {
         inspection = await required().sessions.create(
-          ownerId,
+          userId(ownerId),
           {
             toolkits: [service],
             tools: { [service]: [tool.action] },
@@ -567,6 +574,7 @@ export function createComposioProvider(options: {
             !(await listServices()).some((entry) => entry.slug === slug))
         )
           throw new Error('This app is not available for connection.');
+        if (options.proxy) return options.proxy.authorize(slug, callbackUrl);
         const signal = AbortSignal.timeout(15_000);
         if (googleOAuthToolkits.has(slug) && !authConfigs[slug]) {
           const id = await projectAuthConfig(sdk, slug, signal);
@@ -700,7 +708,12 @@ export function createComposioProvider(options: {
           throw new Error(providerFailure(action, result as Record<string, unknown>));
         return files(result, signal ?? new AbortController().signal, options?.files !== false);
       },
-      async upload(action, file, signal) {
+      async upload(action, file, signal, accountId) {
+        if (options.proxy) {
+          actionToolkit(action);
+          if (!accountId) throw new Error('Select an account before uploading a file.');
+          return options.proxy.upload(value.sessionId, action, file, accountId, signal);
+        }
         const operation = signal
           ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
           : AbortSignal.timeout(30_000);
@@ -753,7 +766,16 @@ export function createComposioProvider(options: {
     get configured() {
       return Boolean(client);
     },
+    get configurationId() {
+      return (
+        options.proxy?.configurationId ??
+        (options.apiKey
+          ? createHash('sha256').update(`direct:${options.apiKey}`).digest('hex')
+          : undefined)
+      );
+    },
     setApiKey(apiKey) {
+      if (options.proxy) throw new Error('The integration provider is managed by Otto.');
       client = connect(apiKey);
       catalog = undefined;
       catalogRequest = undefined;
@@ -776,7 +798,7 @@ export function createComposioProvider(options: {
     get webhooksConfigured() {
       return Boolean(client && options.webhookSecret);
     },
-    supportsSubscriptions: ['gmail', 'googlecalendar', 'slack', 'notion'],
+    supportsSubscriptions: options.proxy ? [] : ['gmail', 'googlecalendar', 'slack', 'notion'],
     verificationEmails: (accountId, query, signal) =>
       readVerificationEmails(required().tools, accountId, query, signal),
     sentEmails: (accountId, signal) => readSentEmails(required().tools, accountId, signal),
@@ -1056,7 +1078,7 @@ export function createComposioProvider(options: {
       signal?.throwIfAborted();
       if (sdk !== client) throw new Error('The connection provider changed. Try again.');
       const value = await sdk.sessions.create(
-        ownerId,
+        userId(ownerId),
         {
           toolkits: selectedToolkits,
           connectedAccounts,
@@ -1097,8 +1119,13 @@ export function createComposioProvider(options: {
       const original = await ownedAccount(sdk, accountId, ownerId, signal);
       if (original.toolkit.slug !== slug || original.auth_config.is_disabled)
         throw new Error('This connection sign-in configuration is unavailable.');
+      if (options.proxy)
+        return {
+          ...(await options.proxy.authorize(slug, callbackUrl, original.auth_config.id)),
+          authConfigId: original.auth_config.id,
+        };
       const value = await sdk.sessions.create(
-        ownerId,
+        userId(ownerId),
         {
           toolkits: [slug],
           authConfigs: { [slug]: original.auth_config.id },
@@ -1161,13 +1188,15 @@ export function createComposioProvider(options: {
       };
     },
     async deleteAccount(id, ownerId) {
+      if (options.proxy?.isPendingAccount(id)) return;
       const sdk = required();
       if (ownerId) await ownedAccount(sdk, id, ownerId, AbortSignal.timeout(10_000));
       if (sdk !== client) throw new Error('The connection provider changed. Try again.');
       await sdk.connectedAccounts.delete(id);
       for (const key of identities.keys()) if (JSON.parse(key)[1] === id) identities.delete(key);
     },
-    parseCallback(query) {
+    parseCallback(query, pending) {
+      if (options.proxy) return options.proxy.parseCallback(query, pending);
       const result = z
         .object({
           state: z.string(),
@@ -1182,6 +1211,7 @@ export function createComposioProvider(options: {
       };
     },
     async subscribe(ownerId, service, accountId) {
+      if (options.proxy) throw new Error('Automatic updates are unavailable for this service.');
       if (!(service in subscriptions))
         throw new Error('Automatic updates are unavailable for this service.');
       const subscription = subscriptions[service as keyof typeof subscriptions];

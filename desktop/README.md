@@ -11,8 +11,8 @@ Desktop is a wrapper around the same Otto product: it starts `src/server/index.t
 1. Download the release's `Otto-arm64.dmg` using the supplied installation link, open it, drag **Otto** to **Applications**, then open it from Applications. No GitHub account or developer tools are needed.
 2. This alpha is self-signed. If macOS blocks its first launch, approve this installation in **System Settings → Privacy & Security → Open Anyway**. Approve the normal Keychain prompt if shown so Otto can use its saved credentials.
 3. Choose your preferences and keep an internet connection available while Otto automatically downloads and prepares its computer and browser. An existing verified runtime is reused.
-4. Connect an AI provider in the shared product onboarding: a supported API key or ChatGPT plan. Optionally add a Composio key and connect apps.
-5. Use **Settings → Models** for AI connections and the Composio key. The app menu, menu bar and **⌘,** open the same Settings screen.
+4. Connect an AI provider in the shared product onboarding: a supported API key or ChatGPT plan. Connect apps through the hosted integration service.
+5. Use **Settings → Models** for AI connections. The app menu, menu bar and **⌘,** open the same Settings screen.
 
 Alternatively, quit Otto and install the latest published release from Terminal:
 
@@ -30,7 +30,7 @@ Otto checks for updates after startup, every six hours while open, and after wak
 
 **General** contains appearance, launch-at-login and notifications. **Preferences** contains region, clock, timezone and quiet hours. AI connections and model selection use the same server APIs, encrypted credential store and components as the web product; the desktop wrapper does not maintain a second AI provider selection.
 
-The native introduction prepares the computer without requiring an AI key. Shared product onboarding offers AI connections; without one, Chat prompts the user to connect a model before the assistant can work. Preparing the computer does not send a model request. If notifications are enabled and setup finishes while Otto is in the background, a readiness notification brings you back without automatically focusing the app. Quiet hours still apply; normal app launches do not send readiness notifications. **Otto → Replay onboarding** reopens the computer introduction without resetting its profile.
+The native introduction prepares the computer without requiring an AI key. Shared product onboarding offers AI connections; without one, Chat prompts the user to connect a model before the assistant can work. Preparing the computer does not send a model request. If notifications are enabled and setup finishes while Otto is in the background, a readiness notification brings you back without automatically focusing the app. Quiet hours still apply; normal app launches do not send readiness notifications. **Otto → Replay onboarding** reopens the computer introduction and then the complete product onboarding from its first step, preserving conversations, preferences and connected accounts.
 
 First-launch downloads use the same configured release source as app updates. Private releases use the n8n download service; users do not need a GitHub account or token. Publish the matching runtime before distributing the app, because draft runtime packs are not served. Builds without a release source or an archive URL still offer manual import of the compressed matching `Otto-Runtime-darwin-arm64-….tar.gz`. Splitting the files reduces the app download; it does not remove the first installation's computer-image download or disk usage.
 
@@ -44,7 +44,7 @@ Otto uses a fresh profile, separate from repository development and earlier desk
 - Lima and Apple's Virtualization framework run a private Ubuntu computer.
 - The private computer contains PostgreSQL and separate workspace and browser containers. Docker is an internal implementation detail; Docker Desktop is not a prerequisite.
 - Container images, the base computer image, Lima, and Docker binaries live in the versioned runtime pack. First-run provisioning may still require network access for guest system packages. The optional full build embeds these assets in the app.
-- The Composio key and Vault encryption key are encrypted through Electron `safeStorage`, backed by the macOS key store. Shared model connections use the Vault encryption key; model credentials never enter the computer containers. The settings screen reveals the Composio key only on an explicit user action.
+- The Vault encryption key is encrypted through Electron `safeStorage`, backed by the macOS key store. Shared model connections use the Vault encryption key; model credentials never enter the computer containers. App connections use the hosted integration service; Composio project keys never enter the desktop engine.
 - The engine listens on a loopback port protected by a per-launch token. Approved app windows receive access; an ordinary website or browser tab does not.
 - The workspace and browser have separate networks, no host home-directory mount, no Docker socket, and no model-provider credentials.
 
@@ -56,7 +56,7 @@ Application state is under `~/Library/Application Support/Otto/profiles/local`. 
 
 Verified runtime versions live under `~/Library/Application Support/Otto/runtime/<release identifier>`. Installation checks the archive size and SHA-256 before extraction, accepts only the manifest's regular files, bounds expanded size, verifies every extracted file, and publishes the cache atomically. Interrupted installation can be retried. The running computer mounts this cache read-only; it does not depend on the checkout or app location.
 
-The app and DMG contain no provider keys. A local, one-time development import can populate encrypted settings from an existing environment file; only the optional Composio key and configuration are accepted. AI connections are configured in the shared product UI. That import is not part of the normal user flow.
+The app and DMG contain no provider keys. AI connections are configured in the shared product UI. Previously saved Composio keys and auth configuration remain inert in the profile and are never sent to the engine. Source and server installations can supply their own project key through `COMPOSIO_API_KEY`; the desktop always uses the hosted integration service.
 
 ## Current limits
 

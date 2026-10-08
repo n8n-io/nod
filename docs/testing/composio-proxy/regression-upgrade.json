@@ -1,0 +1,47 @@
+{
+  "recorded_at": "2026-10-08T17:37:59.405568+00:00",
+  "otto_base": "437687bb17a3944ce9aa01ac37239e5163515365",
+  "node": "24.21.0",
+  "checks": {
+    "check": "pass",
+    "integration": {
+      "pass": 750,
+      "fail": 0,
+      "skip": 0
+    },
+    "build": "pass"
+  },
+  "scope": "Upgrade bootstrap source passed full regression checks before the pending structured callback change. A final-source run is still required after that change.",
+  "logs": {
+    "otto-proxy-otto-check-upgrade-final.log": {
+      "path": "/tmp/otto-proxy-otto-check-upgrade-final.log",
+      "sha256": "576d3980cf0da8d29562d5e99d0cde5fec29ba1e92f67720c939e5d75c9ead46"
+    },
+    "otto-proxy-otto-integration-upgrade-final.log": {
+      "path": "/tmp/otto-proxy-otto-integration-upgrade-final.log",
+      "sha256": "f39f3e4c1b286eb2f70aa18ce51068c5cfdc9f401a76da52f160ae44057ab147"
+    },
+    "otto-proxy-otto-build-upgrade-final.log": {
+      "path": "/tmp/otto-proxy-otto-build-upgrade-final.log",
+      "sha256": "06b14cfc3da59ae79ae4d574a3e9385060d7bb6db93e90fe7ad775be8a07eeb6"
+    },
+    "otto-proxy-upload-bounds-red.log": {
+      "path": "/tmp/otto-proxy-upload-bounds-red.log",
+      "sha256": "3b6d5498bb2f0d3bbb1588e2ab712e7bfdb0adeca178deaecf326979f3828f98"
+    },
+    "otto-proxy-upload-bounds-final.log": {
+      "path": "/tmp/otto-proxy-upload-bounds-final.log",
+      "sha256": "92b8b7c91e901ba00e1bcc3ed8e144904361c7f13ce524eaf1d6a6dfd2ba4d12"
+    },
+    "otto-proxy-hardening-test.log": {
+      "path": "/tmp/otto-proxy-hardening-test.log",
+      "sha256": "1c462fc799a0b9611d1b69555e79e8d94e3dfcf4119de26c828cd0db79f0f879"
+    }
+  },
+  "notes": [
+    "Upload fanout red: 256 duplicate references caused 256 lookups.",
+    "Upload admission red: second overlapping body was consumed and accepted.",
+    "Extended file-limit fixture initially used a deleted source session; corrected test-only input to the current execution session. Original setup failure retained.",
+    "Independent bootstrap and resource-limit reviews found no blocking defect in their respective scopes."
+  ]
+}

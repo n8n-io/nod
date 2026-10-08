@@ -1,0 +1,332 @@
+import { Composio } from '@composio/core';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  hkdfSync,
+  randomBytes,
+  randomUUID,
+  sign,
+  type KeyObject,
+} from 'node:crypto';
+import { link, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { z } from 'zod';
+import type { IntegrationFile } from '../../ports/integrations.ts';
+
+const stateSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const pendingPrefix = 'pending_';
+
+export function createComposioProxy(options: {
+  dataRoot: string;
+  ownerId: string;
+  identitySecret?: Uint8Array;
+  url?: string;
+  request?: typeof fetch;
+}) {
+  const endpoint = new URL(options.url || 'https://composio.n8n.cloud');
+  if (
+    (endpoint.protocol !== 'https:' &&
+      !(
+        endpoint.protocol === 'http:' &&
+        ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)
+      )) ||
+    endpoint.pathname !== '/' ||
+    endpoint.search ||
+    endpoint.hash ||
+    endpoint.username ||
+    endpoint.password
+  )
+    throw new Error('The integration proxy address must be an HTTPS origin or local test server.');
+  const origin = endpoint.origin;
+  let identity: { key: KeyObject; publicKey: string; userId: string } | undefined;
+  let initializing: Promise<void> | undefined;
+  async function initialize() {
+    if (identity) return;
+    initializing ??= (async () => {
+      let key: KeyObject;
+      if (options.identitySecret) {
+        if (options.identitySecret.byteLength !== 32)
+          throw new Error('The integration identity secret is invalid.');
+        const seed = hkdfSync(
+          'sha256',
+          options.identitySecret,
+          Buffer.from('otto-composio-installation-v1'),
+          Buffer.from(options.ownerId),
+          32,
+        );
+        key = createPrivateKey({
+          key: Buffer.concat([
+            Buffer.from('302e020100300506032b657004220420', 'hex'),
+            Buffer.from(seed),
+          ]),
+          format: 'der',
+          type: 'pkcs8',
+        });
+      } else {
+        const directory = join(options.dataRoot, 'integration-identity');
+        await mkdir(directory, { recursive: true, mode: 0o700 });
+        const path = join(
+          directory,
+          `${createHash('sha256').update(options.ownerId).digest('hex')}.pem`,
+        );
+        const temporary = `${path}.${randomUUID()}.tmp`;
+        try {
+          const file = await open(temporary, 'wx', 0o600);
+          try {
+            const generated = generateKeyPairSync('ed25519');
+            await file.writeFile(generated.privateKey.export({ type: 'pkcs8', format: 'pem' }));
+            await file.sync();
+          } finally {
+            await file.close();
+          }
+          await link(temporary, path);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        } finally {
+          await rm(temporary, { force: true });
+        }
+        const metadata = await stat(path);
+        if (!metadata.isFile() || (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0))
+          throw new Error('The integration identity file permissions are unsafe.');
+        key = createPrivateKey(await readFile(path));
+      }
+      if (key.asymmetricKeyType !== 'ed25519')
+        throw new Error('The integration identity is invalid.');
+      const publicKey = createPublicKey(key).export({ format: 'jwk' }).x;
+      if (!publicKey || Buffer.from(publicKey, 'base64url').length !== 32)
+        throw new Error('The integration identity is invalid.');
+      identity = {
+        key,
+        publicKey,
+        userId: `otto_${createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex')}`,
+      };
+    })();
+    await initializing;
+  }
+  function requiredIdentity() {
+    if (!identity) throw new Error('The integration identity has not been initialized.');
+    return identity;
+  }
+  const request: typeof fetch = async (input, init) => {
+    await initialize();
+    const value = new Request(input, init);
+    const url = new URL(value.url);
+    if (url.origin !== origin || !/^\/(?:api\/v3\.1|v1)\//.test(url.pathname))
+      throw new Error('The integration request destination is invalid.');
+    const body = Buffer.from(await value.arrayBuffer());
+    if (body.length > (url.pathname === '/v1/files/upload' ? 21 : 16) * 1024 * 1024)
+      throw new Error('The integration request is too large.');
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const requestId = randomUUID();
+    const current = requiredIdentity();
+    const canonical = [
+      'otto-composio-v1',
+      value.method,
+      origin,
+      `${url.pathname}${url.search}`,
+      timestamp,
+      requestId,
+      createHash('sha256').update(body).digest('hex'),
+    ].join('\n');
+    const headers = new Headers({
+      Accept: 'application/json',
+      'x-otto-public-key': current.publicKey,
+      'x-otto-timestamp': timestamp,
+      'x-otto-request-id': requestId,
+      'x-otto-signature': sign(null, Buffer.from(canonical), current.key).toString('base64url'),
+    });
+    if (value.headers.has('content-type'))
+      headers.set('content-type', value.headers.get('content-type')!);
+    return (options.request ?? fetch)(url, {
+      method: value.method,
+      headers,
+      ...(body.length ? { body } : {}),
+      signal: value.signal,
+      redirect: 'error',
+    });
+  };
+  const client = new Composio({
+    apiKey: 'otto-managed-proxy',
+    userApiKey: null,
+    orgApiKey: null,
+    baseURL: origin,
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const transport = client.getClient().withOptions({ fetch: request, maxRetries: 0 });
+  client.getClient().request = transport.request.bind(transport);
+  client.getClient().withOptions = (options) =>
+    transport.withOptions({ ...options, fetch: request, maxRetries: 0 });
+  async function rpc(
+    path: string,
+    body: unknown,
+    options: { signal?: AbortSignal; timeout?: number; failure?: string } = {},
+  ) {
+    const timeout = AbortSignal.timeout(options.timeout ?? 30_000);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    signal.throwIfAborted();
+    const response = await request(`${origin}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(
+        options.failure ?? 'The integration connection could not be completed. Try again.',
+      );
+    }
+    const text = await response.text();
+    if (text.length > 32_768) throw new Error('The integration response is invalid.');
+    return JSON.parse(text) as unknown;
+  }
+  return {
+    client,
+    ownerId: options.ownerId,
+    initialize,
+    get userId() {
+      return requiredIdentity().userId;
+    },
+    get configurationId() {
+      return createHash('sha256')
+        .update(JSON.stringify(['proxy-v1', origin, requiredIdentity().userId]))
+        .digest('hex');
+    },
+    async upload(
+      sessionId: string,
+      action: string,
+      file: IntegrationFile,
+      accountId: string,
+      signal?: AbortSignal,
+    ) {
+      signal?.throwIfAborted();
+      if (!file.bytes.byteLength || file.bytes.byteLength > 15 * 1024 * 1024)
+        throw new Error('The file size is unsupported.');
+      const result = z
+        .object({
+          name: z.literal(file.name),
+          mimetype: z.literal(file.mimeType),
+          s3key: z
+            .string()
+            .min(20)
+            .max(24_000)
+            .regex(/^otto-file\.[A-Za-z0-9._-]+$/),
+        })
+        .strict()
+        .parse(
+          await rpc(
+            '/v1/files/upload',
+            {
+              sessionId,
+              action,
+              accountId,
+              name: file.name,
+              mimeType: file.mimeType,
+              data: Buffer.from(file.bytes).toString('base64'),
+            },
+            {
+              signal,
+              timeout: 210_000,
+              failure: 'The file could not be uploaded for this app.',
+            },
+          ),
+        );
+      signal?.throwIfAborted();
+      return result;
+    },
+    async authorize(toolkit: string, callbackUrl: string, authConfigId?: string) {
+      const callback = new URL(callbackUrl);
+      const transactionId = stateSchema.parse(callback.searchParams.get('state'));
+      const host =
+        callback.hostname === 'localhost'
+          ? 'localhost'
+          : callback.hostname === '127.0.0.1'
+            ? 'ipv4'
+            : callback.hostname === '[::1]'
+              ? 'ipv6'
+              : undefined;
+      const port = Number(callback.port || 80);
+      const local = callback.protocol === 'http:' && host !== undefined && port >= 1;
+      const hostname = callback.hostname.replace(/\.$/, '');
+      const publicHttps =
+        callback.protocol === 'https:' &&
+        hostname !== 'localhost' &&
+        !hostname.endsWith('.localhost') &&
+        hostname.includes('.') &&
+        !/^\d+\.\d+\.\d+\.\d+$/.test(hostname) &&
+        !hostname.startsWith('[');
+      if (
+        (!local && !publicHttps) ||
+        callback.pathname !== '/api/apps/callback' ||
+        callback.username ||
+        callback.password ||
+        callback.hash ||
+        callback.href.length > 1500 ||
+        callback.searchParams.size !== 1
+      )
+        throw new Error('The integration callback address is invalid.');
+      const challenge = randomBytes(32).toString('base64url');
+      const result = z
+        .object({
+          redirectUrl: z.url(),
+          transactionId: stateSchema,
+          pairingCode: z.string().regex(/^\d{3}-\d{3}$/),
+        })
+        .parse(
+          await rpc('/v1/connect/start', {
+            toolkit,
+            callback: local
+              ? { type: 'loopback', host, port }
+              : { type: 'https', url: callback.href },
+            transactionId,
+            challenge,
+            ...(authConfigId ? { authConfigId } : {}),
+          }),
+        );
+      if (result.transactionId !== transactionId || new URL(result.redirectUrl).origin !== origin)
+        throw new Error('The integration sign-in address is invalid.');
+      return {
+        accountId: `${pendingPrefix}${transactionId}`,
+        url: result.redirectUrl,
+        pairingCode: result.pairingCode,
+        verificationSecret: challenge,
+      };
+    },
+    async parseCallback(
+      query: unknown,
+      pending?: { accountId: string; verificationSecret?: string | null; service: string },
+    ) {
+      const input = z
+        .object({ state: stateSchema, completion_token: z.string().min(1).max(24_000) })
+        .parse(query);
+      if (!pending?.verificationSecret || pending.accountId !== `${pendingPrefix}${input.state}`)
+        throw new Error('This integration connection attempt is unavailable.');
+      const result = z
+        .object({
+          connectedAccountId: z.string().regex(/^[A-Za-z0-9_-]{1,200}$/),
+          toolkit: z.string(),
+          status: z.literal('ACTIVE'),
+        })
+        .parse(
+          await rpc('/v1/connect/complete', {
+            completionToken: input.completion_token,
+            transactionId: input.state,
+            challenge: pending.verificationSecret,
+          }),
+        );
+      if (result.toolkit !== pending.service)
+        throw new Error('The connected integration does not match this attempt.');
+      return {
+        state: input.state,
+        accountId: result.connectedAccountId,
+        pendingAccountId: pending.accountId,
+        success: true,
+      };
+    },
+    isPendingAccount: (id: string) => id.startsWith(pendingPrefix),
+  };
+}

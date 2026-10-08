@@ -1,0 +1,214 @@
+{
+  "family": "UPGRADE-DEMO",
+  "result": "pass",
+  "prompt": "You should record a video of what will to user once they upgrade to the new release that uses the proxy and what they need to do.",
+  "scope": "Actual isolated native app and real application database with synthetic consent/provider adapters. Production Composio OAuth remained disabled. No live account/model call.",
+  "model": "No live model; native CUA controls the real UI.",
+  "cost": "Unavailable; no provider/model billing calls.",
+  "attempts": [
+    {
+      "case": "UPGRADE-DEMO.v1",
+      "attempt": "a01",
+      "result": "fail",
+      "started_at": "2026-10-08T18:22:55Z",
+      "connected_at": "2026-10-08T18:24:03.653Z",
+      "inputs": "cp06.v2.upgrade.inputs.json",
+      "inputs_sha256": "ec8bd58003da580b2939f2de6eea4f59e7c0fe9340f975b8cbafc320b188e041",
+      "source": "cp06.v2.source.json",
+      "source_sha256": "63f3b6c3caaa63ab2465ea1f387a138e15e40c5f6f0bcda92525406ae6030655",
+      "data_checks": {
+        "oneSavedConnection": true,
+        "stableConnectionId": true,
+        "currentConfiguration": true,
+        "replacedAccount": true,
+        "retainedEmail": true,
+        "retainedWatchPreference": true,
+        "notRevoked": true,
+        "originalData": {
+          "account_settings": true,
+          "preferences": true,
+          "profiles": true,
+          "threads": true,
+          "messages": true,
+          "model_connections": true,
+          "model_settings": true,
+          "vault_entries": true,
+          "vault_app_grants": true
+        },
+        "exactlyOneSyntheticConsent": true,
+        "noUnexpectedOutbound": true,
+        "noAccountDeletion": true,
+        "noForbiddenMutation": true
+      },
+      "counts": {
+        "applicationRequests": 19,
+        "syntheticAuthorizations": 1,
+        "syntheticConsents": 1,
+        "externalApplicationRequests": 0
+      },
+      "acceptance_defect": "The account became Connected, but the native pairing prompt stayed visible until manually dismissed. The stale prompt could later show a false expiration. The earlier video and frozen source are preserved.",
+      "check_gap": "The original narrow checks did not explicitly test successful-pairing prompt reconciliation. v2 adds PAIRING_CLEARED and retains the original failed task outcome.",
+      "hypothesis_before_fix": {
+        "cause": "The native app opens consent in an external browser, so its setup state misses completion returned to another browser window.",
+        "prediction": "Authoritative account state becomes Connected while native setup link remains until dismissed or timeout.",
+        "rejection": "The setup prompt clears on focus using the completed owned setup receipt.",
+        "change": "General Apps receipt reconciliation on focus/visibility; no fixture-specific branch."
+      },
+      "media": [
+        ".local/composio-proxy-review/video/upgrade-app-01.mov",
+        ".local/composio-proxy-review/video/upgrade-consent-02.mov",
+        ".local/composio-proxy-review/video/upgrade-app-03.mov"
+      ]
+    },
+    {
+      "case": "UPGRADE-DEMO.v2",
+      "attempt": "a02",
+      "result": "pass",
+      "started_at": "2026-10-08T18:39:04Z",
+      "time_limit_seconds": 600,
+      "inputs": "cp06.v2.upgrade.a02.inputs.json",
+      "inputs_sha256": "89fe908c5fd98571b2fd775024a9e6d6b5f1033cc15a0521c51f134dbfb01d12",
+      "source": "cp06.v2.upgrade.a02.source.json",
+      "source_sha256": "6beeaa5352cf2ae7a781c3f1c365bb973e84a7b9c2e3b0da81adeecdf0aba58d",
+      "checks": {
+        "UPGRADEUI": {
+          "status": "pass",
+          "evidence": "Root native CUA/video observed Chat\u2192Apps\u2192Gmail\u2192Reconnect\u2192actual pairing instructions\u2192clearly labelled simulated consent."
+        },
+        "RECONNECTED": {
+          "status": "pass",
+          "evidence": "Exactly one synthetic authorization and consent; real callback atomically replaced the grant under original saved connection UUID. Connected UI verified on native focus return."
+        },
+        "RETAINED": {
+          "status": "pass",
+          "evidence": "Independent SQL retained all 9 semantic table digests, same email/watch preference and native settings bytes. Retained Chat visible18:40:07Z."
+        },
+        "PAIRING_CLEARED": {
+          "status": "pass",
+          "evidence": "Root native CUA observed pairing container/link/dismiss button absent after focus return; no manual dismissal occurred."
+        },
+        "SAFE": {
+          "status": "pass",
+          "evidence": "Isolated app window, synthetic provider page, zero unexpected backend outbound, no model/account calls or normal profile. Final exported media review remains part of VIDEO."
+        },
+        "VIDEO": {
+          "status": "pass",
+          "evidence": "Final 76.033333 s H264 1280x1024 silent video; full decode passed; independent representative frame review verifies real native steps, persistent simulation label, cleared pairing prompt and retained chat. Final artifact available 343 s after run start."
+        }
+      },
+      "data_checks": {
+        "oneSavedConnection": true,
+        "stableConnectionId": true,
+        "currentConfiguration": true,
+        "replacedAccount": true,
+        "retainedEmail": true,
+        "retainedWatchPreference": true,
+        "notRevoked": true,
+        "originalData": {
+          "account_settings": true,
+          "preferences": true,
+          "profiles": true,
+          "threads": true,
+          "messages": true,
+          "model_connections": true,
+          "model_settings": true,
+          "vault_entries": true,
+          "vault_app_grants": true
+        },
+        "exactlyOneSyntheticConsent": true,
+        "noUnexpectedOutbound": true,
+        "noAccountDeletion": true,
+        "noForbiddenMutation": true
+      },
+      "counts": {
+        "applicationRequests": 27,
+        "syntheticAuthorizations": 1,
+        "syntheticConsents": 1,
+        "externalApplicationRequests": 0
+      },
+      "native_settings_unchanged": true,
+      "frozen_sources_unchanged": true,
+      "frozen_source_files": 391,
+      "native_copy_verification": {
+        "checked": 91,
+        "only_evaluator_entry_excluded": "desktop/main/engine.mjs",
+        "all_copied_original_files_match_candidate": true,
+        "differences": []
+      },
+      "media": {
+        "path": "docs/testing/composio-proxy/upgrade-demo.mp4",
+        "sha256": "9b9743faedb3914cb3a9a793a78e8ba192e22564e67bb78114a91c0ad6ca8b75",
+        "size_bytes": 708570,
+        "duration_seconds": 76.033333,
+        "video": {
+          "codec": "h264",
+          "width": 1280,
+          "height": 1024,
+          "frame_rate": "30/1"
+        },
+        "audio_streams": 0,
+        "full_decode_exit_code": 0,
+        "ready_and_root_inspected_at": "2026-10-08T18:44:47Z",
+        "artifact_elapsed_seconds": 343,
+        "independent_review_at": "2026-10-08T18:45:54.032010+00:00",
+        "independent_review": "Viewed final contact sheet, intro, connected account with cleared prompt, explicitly labelled simulated consent, and retained Chat at 70 seconds. No private windows in inspected frames. Hash/codec and full ffmpeg decode independently verified.",
+        "representative_frames": [
+          ".local/composio-proxy-review/video/a02/final-contact.png",
+          ".local/composio-proxy-review/video/a02/frame-0.png",
+          ".local/composio-proxy-review/video/a02/frame-60.png",
+          ".local/composio-proxy-review/video/a02/independent-frame-30.png",
+          ".local/composio-proxy-review/video/a02/independent-frame-70.png"
+        ]
+      },
+      "ui_completed_at": "2026-10-08T18:40:07Z",
+      "ui_elapsed_seconds": 63,
+      "audit_cutoff": "2026-10-08T18:40:07Z",
+      "ended_at": "2026-10-08T18:45:54.032010+00:00",
+      "elapsed_seconds": 410.03201,
+      "within_time_limit": true,
+      "prior_schema_preserved": true
+    }
+  ],
+  "setup_errors": [
+    {
+      "stage": "setup-before-run",
+      "error": "FileNotFoundError src/web/screens/Apps.tsx while writing manifest; no launch or schema mutation occurred",
+      "hypothesis": "Manifest used incorrect path; source file is src/web/pages/apps.tsx. Correct path only, then freeze.",
+      "resolved": true
+    }
+  ],
+  "artifacts": {
+    ".local/composio-proxy-review/cp06-v2/upgrade-score.json": "a20eac3f1f4b946bd005a521b9f1768956a47f5c0cd8017c41aaca7a5cf0b0b7",
+    ".local/composio-proxy-review/cp06-v2/score-upgrade.mjs": "e6933bf52489d9b034ff228177e3b0af23ebfb1e306645ab28fd566d64044d96",
+    ".local/composio-proxy-review/cp06-v2/before-native.json": "7d6a25c153909ce9d8e50590fc6029afbc5cea7edc50772ce01225f40b8461ef",
+    ".local/composio-proxy-review/cp06-v2/after-reconnect.json": "9c09d696a0d9dc55238006af34e67683886ad022fad62689aef725e031d4ca8a",
+    ".local/composio-proxy-review/cp06-v2/consent-worker-a01-frozen.mjs": "335c79d78f8457c647f22bf573b924163ac9af96f62d4c8e992296fce35e0a93",
+    ".local/composio-proxy-review/cp06-v2-a02/upgrade-score.json": "5b4b484cd62f0168d87c54581d860c629afec9758a3554bfcbb9d3c24a2b02aa",
+    ".local/composio-proxy-review/cp06-v2-a02/upgrade-independent-extra.json": "f94cb520c8bc2ed623fabc518524b3d33489026277f5bc6113a8924858d531ba",
+    ".local/composio-proxy-review/cp06-v2-a02/copied-app-verification.json": "e8cf9beadea0e9a7ba167dd6fea49f0c196f17da07c6d1d8f141fe068d16341e",
+    ".local/composio-proxy-review/cp06-v2-a02/score-upgrade.mjs": "c3a836ae6550489f0d41af94f065c23f614ed148dab49336704c5cd62367a56b",
+    ".local/composio-proxy-review/cp06-v2-a02/before-native.json": "b92841bdd1f5fc19c3bfa9d377cee384a060c123577c8557d972a146154e6d52",
+    ".local/composio-proxy-review/cp06-v2-a02/after-reconnect.json": "06b5030d94623752a147b7be956d66a1d8bf34fffbf857d7b65f3ddea0a589ec",
+    ".local/composio-proxy-review/cp06-v2-a02/consent-worker-a02-frozen.mjs": "8a513b0ba9b46cade70b1ef3613d9c964813cd45820106fc2436d62b584d7735",
+    ".local/composio-proxy-review/cp06-v2-a02/setup-errors.json": "5f3fe07d54728d94e1f8d44495c987f5ed8c1ccf5d7f3ebd9c0163ddc61c3fbd",
+    ".local/composio-proxy-review/cp06-v2-a02/upgrade-a02-audit.jsonl": "dcf2a086c705c91d3bb322c6bef825c75d34030c690a04658915bbd679a4e850",
+    ".local/composio-proxy-review/cp06-v2-a02/prior-schema-verification.json": "b3a2c4fe6414dffee12877333cb761d1d56bd7552d2e9869063e07aa1d946a11",
+    ".local/composio-proxy-review/cp06-v2-a02/verify-prior-schema.mjs": "e02b98b21a1ab4ef0df74472e92b29b1fe0c6b91662b7c9b3b0b75f319f4a8ec",
+    ".local/composio-proxy-review/video/a02/upgrade-app.mov": "a414ff2028760fffe95ec6ca4701a5cc69c37439f4f8d33f8f63b669576d884e",
+    ".local/composio-proxy-review/video/a02/upgrade-consent.mov": "bb0f1262b795675c1374c36da3b39e0a5151ffae61a889329de5a5215a0c4a0f",
+    ".local/composio-proxy-review/video/a02/final-spec.json": "ec0b25fe3b36da6cbccfd2f66694ba01a8ce364623b75c85bf1413f1606ccfd3",
+    ".local/composio-proxy-review/video/a02/final-contact.png": "c8feb20a72adebc0b435ceb9ab5bcaceb6f5c066f7bcc3fa9fe312837ece8cb3",
+    ".local/composio-proxy-review/video/a02/frame-0.png": "b0fb7d4b14712539fac18dabb9003a4349a1304882e841f9368a44089ef3dec0",
+    ".local/composio-proxy-review/video/a02/frame-60.png": "18fd687a38273ef46ca9ca79fa614fac775e756c55a49fca9ad2febc9ab8abeb",
+    ".local/composio-proxy-review/video/a02/independent-frame-30.png": "8d2df4abb57cd142daf4d7e5b4ebb6c7c1b038f721d539b93bdb1bdae6db5eac",
+    ".local/composio-proxy-review/video/a02/independent-frame-70.png": "e9c2ab9fb3d4612942c6269f919f7401b48520ebc5a003035196b50865d750c5",
+    "docs/testing/composio-proxy/upgrade-demo.mp4": "9b9743faedb3914cb3a9a793a78e8ba192e22564e67bb78114a91c0ad6ca8b75"
+  },
+  "recorded_at": "2026-10-08T18:45:54.032010+00:00",
+  "temporary_demo_cleanup": {
+    "deleted": true,
+    "management_api_get_status": 404,
+    "verified_by": "Parent agent Cloudflare API readback after deletion",
+    "production_oauth_enabled": false
+  }
+}

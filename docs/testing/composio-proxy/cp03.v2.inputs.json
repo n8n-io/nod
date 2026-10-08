@@ -1,0 +1,1366 @@
+{
+  "case": {
+    "id": "CP03.v2",
+    "prompt": "Test that the server uses my Composio key when I provide it and otherwise uses the hosted proxy seamlessly, while the desktop always uses the proxy.",
+    "setup": "Real createDefaultAdapters, provider and SDK in separate scrubbed-environment subprocesses. Stateful synthetic transport; unrelated model initialization bypassed. No live provider, model or normal local database.",
+    "expected_result": "Desktop always managed; server explicit key direct; server no key managed; trusted proxy override and stable isolated identity work; same-project direct key rotation retains existing owned connections.",
+    "checks": [
+      "DEFAULT",
+      "EXPLICIT",
+      "KEYLESS",
+      "CUSTOM",
+      "IDENTITY",
+      "PRESERVE",
+      "NOLEGACY",
+      "SECRET"
+    ],
+    "holdout": "Rotated explicit key, persisted/restarted profile, distinct owners and replaced tenant data root with stable secret.",
+    "prompt_sha256": "163cb309a50317c84b1a3912ee12d921f15a5da2cc3b5f23eef2a35727c4717a"
+  },
+  "casesSha256": "8e9f4d2fb800be327dfbe30fca0728ca20fbf33a2fb668f545d6f12ca8251daa",
+  "checks": {
+    "DEFAULT": {
+      "applies_when": "The frozen scenario contains the subject named in the condition.",
+      "pass_condition": "Actual desktop composition ignores environment and saved Composio keys and custom proxy overrides; signed requests target the hosted proxy.",
+      "method": "code and source review",
+      "evidence": "Frozen harness trace, before/after database/profile, actual signed SDK requests and assertions."
+    },
+    "EXPLICIT": {
+      "applies_when": "The frozen scenario contains the subject named in the condition.",
+      "pass_condition": "Actual server composition with an explicit COMPOSIO_API_KEY uses direct Composio with the configured owner and synthetic project key.",
+      "method": "code and source review",
+      "evidence": "Frozen harness trace, before/after database/profile, actual signed SDK requests and assertions."
+    },
+    "KEYLESS": {
+      "applies_when": "The frozen scenario contains the subject named in the condition.",
+      "pass_condition": "Actual server composition without an environment key uses signed hosted requests without any project key.",
+      "method": "code and source review",
+      "evidence": "Frozen harness trace, before/after database/profile, actual signed SDK requests and assertions."
+    },
+    "CUSTOM": {
+      "applies_when": "The frozen scenario contains the subject named in the condition.",
+      "pass_condition": "Non-desktop composition accepts a trusted custom proxy and signs requests for that exact origin.",
+      "method": "code and source review",
+      "evidence": "Frozen harness trace, before/after database/profile, actual signed SDK requests and assertions."
+    },
+    "IDENTITY": {
+      "applies_when": "The frozen scenario contains the subject named in the condition.",
+      "pass_condition": "Restart preserves the managed identity; distinct local profiles/owners remain isolated; tenant identity survives data-root replacement with the same owner secret.",
+      "method": "code and source review",
+      "evidence": "Frozen harness trace, before/after database/profile, actual signed SDK requests and assertions."
+    },
+    "PRESERVE": {
+      "applies_when": "The frozen scenario contains the subject named in the condition.",
+      "pass_condition": "Explicit direct same-project key rotation preserves the account, active state, local connection ID, watch preference, cursor and queued work without consent.",
+      "method": "code and source review",
+      "evidence": "Frozen harness trace, before/after database/profile, actual signed SDK requests and assertions."
+    },
+    "NOLEGACY": {
+      "applies_when": "The frozen scenario contains the subject named in the condition.",
+      "pass_condition": "No legacy provider, old-key fallback, UUID adoption or migration certificate is added.",
+      "method": "code and source review",
+      "evidence": "Frozen harness trace, before/after database/profile, actual signed SDK requests and assertions."
+    },
+    "SECRET": {
+      "applies_when": "The frozen scenario contains the subject named in the condition.",
+      "pass_condition": "Managed requests and renderer/sandbox settings contain no project key or private signing key.",
+      "method": "code and source review",
+      "evidence": "Frozen harness trace, before/after database/profile, actual signed SDK requests and assertions."
+    }
+  },
+  "freezes": [
+    {
+      "id": "CP03.v2.mode.attempt-1",
+      "attemptId": "mode-attempt-1",
+      "frozenAt": "2026-10-08T17:57:36.961197+00:00",
+      "ottoBase": "437687bb17a3944ce9aa01ac37239e5163515365",
+      "proxyCandidate": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+      "sourceSha256": {
+        "desktop/main/settings.mjs": "771c688fab0dd170d8534f3a2525bf538db847bc65035d3c8c309bd2f83d6dd9",
+        "package-lock.json": "f3e48127fd373f35c5e0ca3f9edf60acf1ebdbe28cd296fdaee0fcf939f0fcfa",
+        "src/ports/integrations.ts": "29dcf9b5b765e8220e5d013573363b8a6acbd0343d735f31d1790408a3bb3547",
+        "src/providers/composio/downloads.ts": "6708b448db975118ef424854d7e54265d6dc9fa596bbcbb2ea73491dc994bcab",
+        "src/providers/composio/integrations.ts": "36cc855d7dcd1fb9a2afb7fd8a9ad3cf79ad1dfd86181aa8bf57cf25cc32e5f1",
+        "src/providers/composio/proxy.ts": "19d5c45ecbf81e9c016b73d01295dd7ba469ee0b5f9f9a04049dfc8df8984621",
+        "src/providers/composio/sent-email.ts": "19eb40f6cd5ddb003a5740ade64c6b3f90c99f50c8b00ee13ecda18626a3e5e7",
+        "src/providers/composio/verification-email.ts": "3613281aa56a5b002435433a5a50a2f8bca5e0599010e58c3ce2b752c1ebe5d8",
+        "src/providers/environment/key-store.ts": "f24292271eeb16e17fa57da9d16990ad318eee5ed4a6b4c29b8077df819ba951",
+        "src/server/composition.ts": "7752a3cebb6cc73df0068950e8c54cac07accaaad81c34adc4b8e61aaabe4509",
+        "src/server/config.ts": "a48cf70684eaf5d363af06baf17db5adaf21bd89970b26de0b0d5df8d3e5bb51",
+        "src/server/db.ts": "905f5ea2dae04ce2821335b2dc3de741d32e73a64e094fd5dbb8ba55242f0152",
+        "src/shared/integrations.ts": "f4c4ad6321456f21bde698eca1107bcda09c34896cbed1cae15ff62344d58014"
+      },
+      "scriptsSha256": {
+        ".local/cp03-v2/child.mts": "6739dc67200bb33f11943affe631e8a19dcf5340853e0cc668ff21d72c93cba8",
+        ".local/cp03-v2/run.mts": "cd399df772970e18f9536ab724f48b7a47b73ece6916f05b863184ae126152f8"
+      },
+      "runtime": "Node24.21.0 --experimental-transform-types",
+      "model": "none",
+      "timeLimitSeconds": 600,
+      "perProcessTimeLimitSeconds": 60,
+      "baseRepeats": 1,
+      "holdoutRepeats": 1,
+      "syntheticSavedKey": "synthetic-retired-composio-key-cp03v2",
+      "variants": [
+        {
+          "id": "desktop-base",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-a",
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "desktop-restart",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "IDENTITY", "NOLEGACY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "desktop-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "desktop-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "desktop-other-owner",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "22222222-2222-4222-8222-222222222222",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedOwner",
+              "variant": "desktop-base",
+              "property": "owner",
+              "equal": false
+            },
+            {
+              "id": "isolatedConfiguration",
+              "variant": "desktop-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-keyless-base",
+          "profile": "keyless",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-keyless-restart",
+          "profile": "keyless",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-keyless-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "server-keyless-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "server-keyless-new-profile",
+          "profile": "keyless-new",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedProfile",
+              "variant": "server-keyless-base",
+              "property": "owner",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-explicit-base",
+          "profile": "direct",
+          "environment": {
+            "COMPOSIO_API_KEY": "synthetic-explicit-project-a",
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "direct",
+            "origin": "https://backend.composio.dev"
+          },
+          "checks": ["EXPLICIT", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-explicit-rotated",
+          "profile": "direct",
+          "environment": {
+            "COMPOSIO_API_KEY": "synthetic-explicit-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "direct",
+            "origin": "https://backend.composio.dev"
+          },
+          "checks": ["EXPLICIT", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-explicit-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "changedConfiguration",
+              "variant": "server-explicit-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-custom-base",
+          "profile": "custom",
+          "environment": {
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://trusted-proxy.example"
+          },
+          "checks": ["CUSTOM", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-custom-origin-changed",
+          "profile": "custom",
+          "environment": {
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://replacement-proxy.example"
+          },
+          "checks": ["CUSTOM", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-custom-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "changedConfiguration",
+              "variant": "server-custom-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "tenant-base",
+          "profile": "tenant",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "tenant-replaced-root",
+          "profile": "tenant-replaced",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "tenant-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "tenant-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "tenant-other-owner",
+          "profile": "tenant-other",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "22222222-2222-4222-8222-222222222222",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedOwner",
+              "variant": "tenant-base",
+              "property": "owner",
+              "equal": false
+            },
+            {
+              "id": "isolatedConfiguration",
+              "variant": "tenant-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        }
+      ],
+      "networkPolicy": "Replace global fetch before importing composition; no passthrough. SDK version metadata intercepted too. Reject unlisted destinations/routes. PostgreSQL Pool query/connect are forbidden.",
+      "bypass": "Only adapters.models.initialize; provider initialization, native settings, composition and SDK remain real.",
+      "sourceScope": "Selection/settings/provider sources exercised here. Server integration-state preservation is a separately frozen preflight after reconnect source is stable.",
+      "environmentPolicy": "Subprocess allowlist only PATH/LANG/TZ/NODE_ENV/CI/DOTENV_CONFIG_PATH plus synthetic runtime/provider values; dotenv is /dev/null. Explicit COMPOSIO_BASE_URL avoids CLI base-url fallback.",
+      "cost": "zero paid provider/model calls; local CPU only",
+      "limitations": [
+        "No live OAuth, connected account, model or recipient.",
+        "No actual container workspace launch; no provider credentials are supplied to any workspace action in this run.",
+        "PRESERVE must additionally pass the separate frozen database preflight; this mode run alone cannot pass the whole case."
+      ]
+    },
+    {
+      "id": "CP03.v2.mode.attempt-2-whitespace-red",
+      "attemptId": "mode-attempt-2",
+      "frozenAt": "2026-10-08T18:09:53.102190+00:00",
+      "ottoBase": "437687bb17a3944ce9aa01ac37239e5163515365",
+      "proxyCandidate": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+      "sourceSha256": {
+        "desktop/main/settings.mjs": "771c688fab0dd170d8534f3a2525bf538db847bc65035d3c8c309bd2f83d6dd9",
+        "package-lock.json": "f3e48127fd373f35c5e0ca3f9edf60acf1ebdbe28cd296fdaee0fcf939f0fcfa",
+        "src/ports/integrations.ts": "29dcf9b5b765e8220e5d013573363b8a6acbd0343d735f31d1790408a3bb3547",
+        "src/providers/composio/downloads.ts": "6708b448db975118ef424854d7e54265d6dc9fa596bbcbb2ea73491dc994bcab",
+        "src/providers/composio/integrations.ts": "36cc855d7dcd1fb9a2afb7fd8a9ad3cf79ad1dfd86181aa8bf57cf25cc32e5f1",
+        "src/providers/composio/proxy.ts": "19d5c45ecbf81e9c016b73d01295dd7ba469ee0b5f9f9a04049dfc8df8984621",
+        "src/providers/composio/sent-email.ts": "19eb40f6cd5ddb003a5740ade64c6b3f90c99f50c8b00ee13ecda18626a3e5e7",
+        "src/providers/composio/verification-email.ts": "3613281aa56a5b002435433a5a50a2f8bca5e0599010e58c3ce2b752c1ebe5d8",
+        "src/providers/environment/key-store.ts": "f24292271eeb16e17fa57da9d16990ad318eee5ed4a6b4c29b8077df819ba951",
+        "src/server/composition.ts": "7752a3cebb6cc73df0068950e8c54cac07accaaad81c34adc4b8e61aaabe4509",
+        "src/server/config.ts": "a48cf70684eaf5d363af06baf17db5adaf21bd89970b26de0b0d5df8d3e5bb51",
+        "src/server/db.ts": "905f5ea2dae04ce2821335b2dc3de741d32e73a64e094fd5dbb8ba55242f0152",
+        "src/shared/integrations.ts": "f4c4ad6321456f21bde698eca1107bcda09c34896cbed1cae15ff62344d58014"
+      },
+      "scriptsSha256": {
+        ".local/cp03-v2/child.mts": "6739dc67200bb33f11943affe631e8a19dcf5340853e0cc668ff21d72c93cba8",
+        ".local/cp03-v2/run.mts": "cd399df772970e18f9536ab724f48b7a47b73ece6916f05b863184ae126152f8"
+      },
+      "runtime": "Node24.21.0 --experimental-transform-types",
+      "model": "none",
+      "timeLimitSeconds": 600,
+      "perProcessTimeLimitSeconds": 60,
+      "baseRepeats": 1,
+      "holdoutRepeats": 1,
+      "syntheticSavedKey": "synthetic-retired-composio-key-cp03v2",
+      "variants": [
+        {
+          "id": "desktop-base",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-a",
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "desktop-restart",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "IDENTITY", "NOLEGACY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "desktop-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "desktop-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "desktop-other-owner",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "22222222-2222-4222-8222-222222222222",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedOwner",
+              "variant": "desktop-base",
+              "property": "owner",
+              "equal": false
+            },
+            {
+              "id": "isolatedConfiguration",
+              "variant": "desktop-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-keyless-base",
+          "profile": "keyless",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-keyless-restart",
+          "profile": "keyless",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-keyless-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "server-keyless-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "server-keyless-new-profile",
+          "profile": "keyless-new",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedProfile",
+              "variant": "server-keyless-base",
+              "property": "owner",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-explicit-base",
+          "profile": "direct",
+          "environment": {
+            "COMPOSIO_API_KEY": "synthetic-explicit-project-a",
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "direct",
+            "origin": "https://backend.composio.dev"
+          },
+          "checks": ["EXPLICIT", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-explicit-rotated",
+          "profile": "direct",
+          "environment": {
+            "COMPOSIO_API_KEY": "synthetic-explicit-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "direct",
+            "origin": "https://backend.composio.dev"
+          },
+          "checks": ["EXPLICIT", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-explicit-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "changedConfiguration",
+              "variant": "server-explicit-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-custom-base",
+          "profile": "custom",
+          "environment": {
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://trusted-proxy.example"
+          },
+          "checks": ["CUSTOM", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-custom-origin-changed",
+          "profile": "custom",
+          "environment": {
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://replacement-proxy.example"
+          },
+          "checks": ["CUSTOM", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-custom-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "changedConfiguration",
+              "variant": "server-custom-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "tenant-base",
+          "profile": "tenant",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "tenant-replaced-root",
+          "profile": "tenant-replaced",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "tenant-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "tenant-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "tenant-other-owner",
+          "profile": "tenant-other",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "22222222-2222-4222-8222-222222222222",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedOwner",
+              "variant": "tenant-base",
+              "property": "owner",
+              "equal": false
+            },
+            {
+              "id": "isolatedConfiguration",
+              "variant": "tenant-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-whitespace-spaces",
+          "profile": "server-whitespace-spaces",
+          "environment": {
+            "COMPOSIO_API_KEY": "   "
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-whitespace-tabs",
+          "profile": "server-whitespace-tabs",
+          "environment": {
+            "COMPOSIO_API_KEY": "\t \t"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-empty-key",
+          "profile": "server-empty-key",
+          "environment": {
+            "COMPOSIO_API_KEY": ""
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        }
+      ],
+      "networkPolicy": "Replace global fetch before importing composition; no passthrough. SDK version metadata intercepted too. Reject unlisted destinations/routes. PostgreSQL Pool query/connect are forbidden.",
+      "bypass": "Only adapters.models.initialize; provider initialization, native settings, composition and SDK remain real.",
+      "sourceScope": "Selection/settings/provider sources exercised here. Server integration-state preservation is a separately frozen preflight after reconnect source is stable.",
+      "environmentPolicy": "Subprocess allowlist only PATH/LANG/TZ/NODE_ENV/CI/DOTENV_CONFIG_PATH plus synthetic runtime/provider values; dotenv is /dev/null. Explicit COMPOSIO_BASE_URL avoids CLI base-url fallback.",
+      "cost": "zero paid provider/model calls; local CPU only",
+      "limitations": [
+        "No live OAuth, connected account, model or recipient.",
+        "No actual container workspace launch; no provider credentials are supplied to any workspace action in this run.",
+        "PRESERVE must additionally pass the separate frozen database preflight; this mode run alone cannot pass the whole case."
+      ],
+      "inputVersion": 2,
+      "reason": "Add whitespace-only and empty-string environment-key holdouts before the requested normalization fix. Existing prompt, required checks and original variants remain unchanged.",
+      "sourceObservation": "Installed SDK getSDKConfig hasValue uses string length, so whitespace is an explicit invalid direct key; no CLI-key fallback claim is made."
+    },
+    {
+      "id": "CP03.v2.mode.attempt-3-whitespace-green",
+      "attemptId": "mode-attempt-3",
+      "frozenAt": "2026-10-08T18:11:37.061136+00:00",
+      "ottoBase": "437687bb17a3944ce9aa01ac37239e5163515365",
+      "proxyCandidate": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+      "sourceSha256": {
+        "desktop/main/settings.mjs": "771c688fab0dd170d8534f3a2525bf538db847bc65035d3c8c309bd2f83d6dd9",
+        "package-lock.json": "f3e48127fd373f35c5e0ca3f9edf60acf1ebdbe28cd296fdaee0fcf939f0fcfa",
+        "src/ports/integrations.ts": "29dcf9b5b765e8220e5d013573363b8a6acbd0343d735f31d1790408a3bb3547",
+        "src/providers/composio/downloads.ts": "6708b448db975118ef424854d7e54265d6dc9fa596bbcbb2ea73491dc994bcab",
+        "src/providers/composio/integrations.ts": "36cc855d7dcd1fb9a2afb7fd8a9ad3cf79ad1dfd86181aa8bf57cf25cc32e5f1",
+        "src/providers/composio/proxy.ts": "19d5c45ecbf81e9c016b73d01295dd7ba469ee0b5f9f9a04049dfc8df8984621",
+        "src/providers/composio/sent-email.ts": "19eb40f6cd5ddb003a5740ade64c6b3f90c99f50c8b00ee13ecda18626a3e5e7",
+        "src/providers/composio/verification-email.ts": "3613281aa56a5b002435433a5a50a2f8bca5e0599010e58c3ce2b752c1ebe5d8",
+        "src/providers/environment/key-store.ts": "f24292271eeb16e17fa57da9d16990ad318eee5ed4a6b4c29b8077df819ba951",
+        "src/server/composition.ts": "f26de453106c85a9280a31e4768df53717e827f28b112a1ddb07d914f3c74dd6",
+        "src/server/config.ts": "a48cf70684eaf5d363af06baf17db5adaf21bd89970b26de0b0d5df8d3e5bb51",
+        "src/server/db.ts": "905f5ea2dae04ce2821335b2dc3de741d32e73a64e094fd5dbb8ba55242f0152",
+        "src/shared/integrations.ts": "f4c4ad6321456f21bde698eca1107bcda09c34896cbed1cae15ff62344d58014"
+      },
+      "scriptsSha256": {
+        ".local/cp03-v2/child.mts": "6739dc67200bb33f11943affe631e8a19dcf5340853e0cc668ff21d72c93cba8",
+        ".local/cp03-v2/run.mts": "cd399df772970e18f9536ab724f48b7a47b73ece6916f05b863184ae126152f8"
+      },
+      "runtime": "Node24.21.0 --experimental-transform-types",
+      "model": "none",
+      "timeLimitSeconds": 600,
+      "perProcessTimeLimitSeconds": 60,
+      "baseRepeats": 1,
+      "holdoutRepeats": 1,
+      "syntheticSavedKey": "synthetic-retired-composio-key-cp03v2",
+      "variants": [
+        {
+          "id": "desktop-base",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-a",
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "desktop-restart",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "IDENTITY", "NOLEGACY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "desktop-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "desktop-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "desktop-other-owner",
+          "profile": "desktop",
+          "environment": {
+            "OTTO_DESKTOP": "true",
+            "OTTO_DESKTOP_OWNER_ID": "22222222-2222-4222-8222-222222222222",
+            "OTTO_DESKTOP_AUTH_TOKEN": "sssssssssssssssssssssssssssssssssssssssssss",
+            "OTTO_PUBLIC_URL": "http://127.0.0.1:4310",
+            "COMPOSIO_API_KEY": "synthetic-ignored-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example",
+            "COMPOSIO_USER_API_KEY": "synthetic-ignored-user-key",
+            "COMPOSIO_ORG_API_KEY": "synthetic-ignored-org-key"
+          },
+          "savedDesktop": true,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["DEFAULT", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedOwner",
+              "variant": "desktop-base",
+              "property": "owner",
+              "equal": false
+            },
+            {
+              "id": "isolatedConfiguration",
+              "variant": "desktop-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-keyless-base",
+          "profile": "keyless",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-keyless-restart",
+          "profile": "keyless",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-keyless-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "server-keyless-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "server-keyless-new-profile",
+          "profile": "keyless-new",
+          "environment": {},
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedProfile",
+              "variant": "server-keyless-base",
+              "property": "owner",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-explicit-base",
+          "profile": "direct",
+          "environment": {
+            "COMPOSIO_API_KEY": "synthetic-explicit-project-a",
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "direct",
+            "origin": "https://backend.composio.dev"
+          },
+          "checks": ["EXPLICIT", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-explicit-rotated",
+          "profile": "direct",
+          "environment": {
+            "COMPOSIO_API_KEY": "synthetic-explicit-project-b",
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "direct",
+            "origin": "https://backend.composio.dev"
+          },
+          "checks": ["EXPLICIT", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-explicit-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "changedConfiguration",
+              "variant": "server-explicit-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-custom-base",
+          "profile": "custom",
+          "environment": {
+            "OTTO_COMPOSIO_PROXY_URL": "https://trusted-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://trusted-proxy.example"
+          },
+          "checks": ["CUSTOM", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-custom-origin-changed",
+          "profile": "custom",
+          "environment": {
+            "OTTO_COMPOSIO_PROXY_URL": "https://replacement-proxy.example"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://replacement-proxy.example"
+          },
+          "checks": ["CUSTOM", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "server-custom-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "changedConfiguration",
+              "variant": "server-custom-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "tenant-base",
+          "profile": "tenant",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "tenant-replaced-root",
+          "profile": "tenant-replaced",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "11111111-1111-4111-8111-111111111111",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "stableOwner",
+              "variant": "tenant-base",
+              "property": "owner",
+              "equal": true
+            },
+            {
+              "id": "stableConfiguration",
+              "variant": "tenant-base",
+              "property": "configurationId",
+              "equal": true
+            }
+          ]
+        },
+        {
+          "id": "tenant-other-owner",
+          "profile": "tenant-other",
+          "environment": {
+            "OTTO_MODE": "tenant",
+            "OTTO_OWNER_ID": "22222222-2222-4222-8222-222222222222",
+            "OTTO_RUNTIME_SECRET": "ccccccccccccccccccccccccccccccccccccccccccc",
+            "OTTO_RUNTIME_GENERATION": "1",
+            "PGBOSS_SCHEMA": "sk_jobs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "OTTO_CONTROL_URL": "https://control.example",
+            "OTTO_ENVIRONMENT": "synthetic-eval",
+            "COMPUTER_PROVIDER": "cloudflare",
+            "OBJECT_STORAGE_PROVIDER": "http",
+            "OBJECT_STORAGE_ENDPOINT": "http://otto.storage/v1/objects/"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "IDENTITY", "SECRET"],
+          "relations": [
+            {
+              "id": "isolatedOwner",
+              "variant": "tenant-base",
+              "property": "owner",
+              "equal": false
+            },
+            {
+              "id": "isolatedConfiguration",
+              "variant": "tenant-base",
+              "property": "configurationId",
+              "equal": false
+            }
+          ]
+        },
+        {
+          "id": "server-whitespace-spaces",
+          "profile": "server-whitespace-spaces",
+          "environment": {
+            "COMPOSIO_API_KEY": "   "
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-whitespace-tabs",
+          "profile": "server-whitespace-tabs",
+          "environment": {
+            "COMPOSIO_API_KEY": "\t \t"
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        },
+        {
+          "id": "server-empty-key",
+          "profile": "server-empty-key",
+          "environment": {
+            "COMPOSIO_API_KEY": ""
+          },
+          "savedDesktop": false,
+          "expected": {
+            "mode": "managed",
+            "origin": "https://composio.n8n.cloud"
+          },
+          "checks": ["KEYLESS", "NOLEGACY", "SECRET"],
+          "relations": []
+        }
+      ],
+      "networkPolicy": "Replace global fetch before importing composition; no passthrough. SDK version metadata intercepted too. Reject unlisted destinations/routes. PostgreSQL Pool query/connect are forbidden.",
+      "bypass": "Only adapters.models.initialize; provider initialization, native settings, composition and SDK remain real.",
+      "sourceScope": "Selection/settings/provider sources exercised here. Server integration-state preservation is a separately frozen preflight after reconnect source is stable.",
+      "environmentPolicy": "Subprocess allowlist only PATH/LANG/TZ/NODE_ENV/CI/DOTENV_CONFIG_PATH plus synthetic runtime/provider values; dotenv is /dev/null. Explicit COMPOSIO_BASE_URL avoids CLI base-url fallback.",
+      "cost": "zero paid provider/model calls; local CPU only",
+      "limitations": [
+        "No live OAuth, connected account, model or recipient.",
+        "No actual container workspace launch; no provider credentials are supplied to any workspace action in this run.",
+        "PRESERVE must additionally pass the separate frozen database preflight; this mode run alone cannot pass the whole case."
+      ],
+      "inputVersion": 2,
+      "reason": "CP03.v2-H01 normalization fix. Exact sixteen variants, expectations, scripts, checks and runtime retained from preserved red attempt 2.",
+      "sourceObservation": "Installed SDK getSDKConfig hasValue uses string length, so whitespace is an explicit invalid direct key; no CLI-key fallback claim is made.",
+      "change": "Whitespace-only Composio keys are absent at normal and hosted-webhook composition boundaries."
+    }
+  ],
+  "evaluatorScripts": {
+    ".local/cp03-v2/child.mts": "import assert from 'node:assert/strict';\nimport { createHash, createCipheriv, createDecipheriv, createPublicKey, randomBytes, verify } from 'node:crypto';\nimport { readFile, writeFile, readdir, stat } from 'node:fs/promises';\nimport { join } from 'node:path';\nimport pg from 'pg';\n\nlet source = '';\nfor await (const chunk of process.stdin) source += chunk;\nconst input = JSON.parse(source);\nconst hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');\nconst requests: any[] = [];\nconst unexpected: string[] = [];\nconst sessions = new Map<string, any>();\nconst requestIds = new Set<string>();\nconst startedAt = new Date().toISOString();\nlet databaseCalls = 0;\nlet modelInitializationBypasses = 0;\nlet savedSettings: any;\nlet failure: any;\nlet output: any;\npg.Pool.prototype.query = (() => { databaseCalls++; throw new Error('Database access is forbidden in the mode evaluator.'); }) as any;\npg.Pool.prototype.connect = (() => { databaseCalls++; throw new Error('Database access is forbidden in the mode evaluator.'); }) as any;\n\nglobalThis.fetch = async (resource, options) => {\n  const request = new Request(resource, options);\n  const url = new URL(request.url);\n  const bytes = new Uint8Array(await request.arrayBuffer());\n  const text = Buffer.from(bytes).toString('utf8');\n  const body = text ? JSON.parse(text) : undefined;\n  const publicKey = request.headers.get('x-otto-public-key');\n  const timestamp = request.headers.get('x-otto-timestamp');\n  const requestId = request.headers.get('x-otto-request-id');\n  const signature = request.headers.get('x-otto-signature');\n  let signatureValid = false;\n  let derivedOwner: string | undefined;\n  if (publicKey && timestamp && requestId && signature) {\n    const raw = Buffer.from(publicKey, 'base64url');\n    const key = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: publicKey }, format: 'jwk' });\n    const canonical = ['otto-composio-v1', request.method, url.origin, url.pathname + url.search, timestamp, requestId, hash(bytes)].join('\\n');\n    signatureValid = raw.length === 32 && verify(null, Buffer.from(canonical), key, Buffer.from(signature, 'base64url'));\n    derivedOwner = 'otto_' + hash(raw);\n  }\n  const wire = JSON.stringify({ url: request.url, headers: [...request.headers], text });\n  const record = {\n    origin: url.origin,\n    path: url.pathname,\n    method: request.method,\n    signatureValid,\n    derivedOwner,\n    publicKeySha256: publicKey ? hash(Buffer.from(publicKey, 'base64url')) : undefined,\n    timestampFresh: timestamp ? Math.abs(Date.now() / 1000 - Number(timestamp)) < 90 : false,\n    uniqueRequestId: requestId ? !requestIds.has(requestId) : false,\n    projectKeySha256: request.headers.has('x-api-key') ? hash(request.headers.get('x-api-key')!) : undefined,\n    otherCredentialHeaders: ['authorization', 'x-user-api-key', 'x-org-api-key'].filter(name => request.headers.has(name)),\n    savedKeyLeaked: wire.includes(input.savedKey),\n    privateKeyLeaked: wire.includes('PRIVATE KEY'),\n    bodyOwner: body?.user_id,\n    connectedAccounts: body?.connected_accounts,\n  };\n  if (requestId) requestIds.add(requestId);\n  requests.push(record);\n  if (url.origin === 'https://registry.npmjs.org' && url.pathname === '/@composio/core/latest') {\n    assert.equal(record.projectKeySha256, undefined);\n    assert.deepEqual(record.otherCredentialHeaders, []);\n    return Response.json({ version: '0.0.1' });\n  }\n  if (!['https://backend.composio.dev', 'https://composio.n8n.cloud', 'https://trusted-proxy.example', 'https://replacement-proxy.example'].includes(url.origin)) {\n    unexpected.push(url.origin);\n    throw new Error('Unexpected outbound destination.');\n  }\n  if (url.pathname === '/api/v3.1/toolkits' && request.method === 'GET') {\n    return Response.json({ items: [], next_cursor: null });\n  }\n  if (url.pathname === '/api/v3.1/tool_router/session' && request.method === 'POST') {\n    const sessionId = 'session_' + input.id.replaceAll('-', '_');\n    const value = {\n      session_id: sessionId,\n      config: { ...body, connected_accounts: body.connected_accounts ?? {}, toolkits: { enabled: body.toolkits?.enable ?? [], disabled: [] }, workbench: { enable: false, tool_execution_enabled: false, proxy_execution_enabled: false } },\n      config_version: 1,\n      mcp: { type: 'http', url: url.origin + '/unsupported-mcp', headers: {} },\n    };\n    sessions.set(sessionId, value);\n    return Response.json(value);\n  }\n  const match = url.pathname.match(/^\\/api\\/v3\\.1\\/tool_router\\/session\\/([^/]+)$/);\n  if (match && sessions.has(match[1])) {\n    if (request.method === 'GET') return Response.json(sessions.get(match[1]));\n    if (request.method === 'DELETE') {\n      sessions.delete(match[1]);\n      return Response.json({ session_id: match[1], deleted: true });\n    }\n  }\n  unexpected.push(request.method + ' ' + url.pathname);\n  throw new Error('Unexpected outbound route.');\n};\n\ntry {\n  if (input.savedDesktop) {\n    const { createSettingsStore } = await import('../../desktop/main/settings.mjs');\n    const key = Buffer.alloc(32, 73);\n    const encryption = {\n      isEncryptionAvailable: () => true,\n      getSelectedStorageBackend: () => 'synthetic-secure-store',\n      encryptString(value: string) {\n        const nonce = randomBytes(12);\n        const cipher = createCipheriv('aes-256-gcm', key, nonce);\n        const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);\n        return Buffer.concat([nonce, cipher.getAuthTag(), encrypted]);\n      },\n      decryptString(value: Buffer) {\n        const decipher = createDecipheriv('aes-256-gcm', key, value.subarray(0, 12));\n        decipher.setAuthTag(value.subarray(12, 28));\n        return Buffer.concat([decipher.update(value.subarray(28)), decipher.final()]).toString('utf8');\n      },\n    };\n    const path = join(input.profileRoot, 'settings.json');\n    const firstStore = createSettingsStore(path, encryption);\n    await firstStore.environment();\n    const previous = JSON.parse(await readFile(path, 'utf8'));\n    if (!previous.secrets.composioApiKey) {\n      previous.secrets.composioApiKey = encryption.encryptString(input.savedKey).toString('base64');\n      previous.secrets.integrationConfiguration = encryption.encryptString(JSON.stringify({ COMPOSIO_GMAIL_AUTH_CONFIG_ID: 'synthetic-retired-config' })).toString('base64');\n      previous.keyMetadata.composioApiKey = { suffix: input.savedKey.slice(-4), source: 'manual', updatedAt: '2026-10-08T00:00:00.000Z' };\n      await writeFile(path, JSON.stringify(previous));\n    }\n    const before = await readFile(path);\n    const store = createSettingsStore(path, encryption);\n    const settingsEnvironment = await store.environment();\n    const rendererSettings = await store.get();\n    savedSettings = {\n      environmentKeys: Object.keys(settingsEnvironment),\n      rendererKeys: Object.keys(rendererSettings),\n      savedKeyExposed: JSON.stringify({ settingsEnvironment, rendererSettings }).includes(input.savedKey),\n      rendererSecretsExposed: JSON.stringify(rendererSettings).includes('secrets') || JSON.stringify(rendererSettings).includes('composio'),\n      savedCiphertextUnchanged: (await readFile(path)).equals(before),\n    };\n    Object.assign(process.env, settingsEnvironment);\n  }\n  const { createDefaultAdapters } = await import('../../src/server/composition.ts');\n  const { ownerId } = await import('../../src/server/config.ts');\n  const { pool } = await import('../../src/server/db.ts');\n  const adapters = createDefaultAdapters(process.env);\n  assert.ok(adapters.models);\n  adapters.models.initialize = async () => { modelInitializationBypasses++; };\n  await adapters.initialize?.();\n  const provider = adapters.integrations!;\n  assert.equal(provider.configured, true);\n  await provider.listServices?.();\n  const session = await provider.createSession(ownerId, {});\n  const restored = await provider.restoreSession(session.id);\n  assert.equal(restored.id, session.id);\n  await provider.deleteSession(session.id);\n  let foreignOwnerDenied: boolean | undefined;\n  let foreignOwnerAddedRequests = 0;\n  if (requests.some(request => request.signatureValid)) {\n    const before = requests.length;\n    try { await provider.createSession('foreign-owner', {}); foreignOwnerDenied = false; }\n    catch { foreignOwnerDenied = true; }\n    foreignOwnerAddedRequests = requests.length - before;\n  }\n  let identityFiles: any[] = [];\n  const directory = join(process.env.OTTO_DATA_ROOT!, 'integration-identity');\n  try {\n    identityFiles = await Promise.all((await readdir(directory)).map(async name => ({ mode: (await stat(join(directory, name))).mode & 0o777, temporary: name.endsWith('.tmp') })));\n  } catch (error) { if ((error as any).code !== 'ENOENT') throw error; }\n  output = { ownerId, configurationId: provider.configurationId, configured: provider.configured, sessionRestored: true, remainingSessions: sessions.size, foreignOwnerDenied, foreignOwnerAddedRequests, identityFiles };\n  await pool.end();\n} catch (error) {\n  failure = { name: error instanceof Error ? error.name : typeof error, message: error instanceof Error ? error.message : 'Unknown failure' };\n}\n\nconst report = { id: input.id, runtime: process.version, startedAt, endedAt: new Date().toISOString(), output, savedSettings, requests, unexpected, databaseCalls, modelInitializationBypasses, networkPassthroughCalls: 0, modelCalls: 0, liveAccountCalls: 0, failure };\nprocess.stdout.write(JSON.stringify(report) + '\\n');\nif (failure) process.exitCode = 1;\n",
+    ".local/cp03-v2/run.mts": "import assert from 'node:assert/strict';\nimport { createHash } from 'node:crypto';\nimport { spawnSync } from 'node:child_process';\nimport { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';\nimport { join } from 'node:path';\n\nconst directory = '.local/cp03-v2';\nconst manifest = JSON.parse(await readFile('docs/testing/composio-proxy/cp03.v2.inputs.json', 'utf8'));\nconst freeze = manifest.freezes.at(-1);\nconst hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');\nfor (const [path, expected] of Object.entries(freeze.sourceSha256)) assert.equal(hash(await readFile(path)), expected, path);\nfor (const [path, expected] of Object.entries(freeze.scriptsSha256)) assert.equal(hash(await readFile(path)), expected, path);\nconst root = await mkdtemp(join(directory, 'profiles-'));\nconst results: any[] = [];\nconst reports = new Map<string, any>();\nconst startedAt = new Date().toISOString();\nlet failure: any;\ntry {\n  for (const variant of freeze.variants) {\n    const profileRoot = join(process.cwd(), root, variant.profile);\n    const dataRoot = join(profileRoot, 'runtime');\n    await mkdir(dataRoot, { recursive: true });\n    const env = {\n      PATH: process.env.PATH,\n      LANG: 'C.UTF-8',\n      TZ: 'UTC',\n      NODE_ENV: 'test',\n      CI: 'true',\n      DOTENV_CONFIG_PATH: '/dev/null',\n      COMPOSIO_BASE_URL: 'https://backend.composio.dev',\n      OTTO_DATA_ROOT: dataRoot,\n      OTTO_VAULT_KEY: Buffer.alloc(32, 11).toString('base64'),\n      OTTO_ANALYTICS_ENABLED: 'false',\n      DATABASE_URL: 'postgresql://blocked:blocked@127.0.0.1:1/blocked',\n      ...variant.environment,\n    };\n    const input = { id: variant.id, profileRoot, savedDesktop: variant.savedDesktop, savedKey: freeze.syntheticSavedKey };\n    const child = spawnSync(process.execPath, ['--experimental-transform-types', join(directory, 'child.mts')], { env, input: JSON.stringify(input), encoding: 'utf8', timeout: freeze.perProcessTimeLimitSeconds * 1000, maxBuffer: 1024 * 1024 });\n    await writeFile(join(directory, freeze.attemptId + '-' + variant.id + '.stdout.txt'), child.stdout ?? '');\n    await writeFile(join(directory, freeze.attemptId + '-' + variant.id + '.stderr.txt'), child.stderr ?? '');\n    if (child.error) throw child.error;\n    const lines = child.stdout.trim().split('\\n');\n    const report = JSON.parse(lines.at(-1)!);\n    reports.set(variant.id, report);\n    const relevant = report.requests.filter((request: any) => request.origin !== 'https://registry.npmjs.org');\n    const created = relevant.filter((request: any) => request.method === 'POST' && request.path === '/api/v3.1/tool_router/session');\n    const managed = variant.expected.mode === 'managed';\n    const checks: Record<string, boolean> = {\n      runtime: report.runtime === 'v24.21.0',\n      actualProviderSessionLifecycle: report.output?.configured && report.output?.sessionRestored && report.output?.remainingSessions === 0 && created.length === 1 && relevant.some((r: any) => r.method === 'GET' && r.path.includes('/tool_router/session/')) && relevant.some((r: any) => r.method === 'DELETE'),\n      destination: relevant.length >= 4 && relevant.every((r: any) => r.origin === variant.expected.origin),\n      authority: managed\n        ? relevant.every((r: any) => r.signatureValid && r.timestampFresh && r.uniqueRequestId && !r.projectKeySha256 && r.otherCredentialHeaders.length === 0) && created[0]?.bodyOwner === created[0]?.derivedOwner\n        : relevant.every((r: any) => !r.signatureValid && r.projectKeySha256 === hash(variant.environment.COMPOSIO_API_KEY) && r.otherCredentialHeaders.length === 0) && created[0]?.bodyOwner === report.output?.ownerId,\n      secrecy: report.requests.every((r: any) => !r.savedKeyLeaked && !r.privateKeyLeaked) && !child.stdout.includes(freeze.syntheticSavedKey) && !child.stderr.includes(freeze.syntheticSavedKey),\n      isolation: !managed || (report.output?.foreignOwnerDenied === true && report.output?.foreignOwnerAddedRequests === 0),\n      noExternalOrDatabaseCalls: report.databaseCalls === 0 && report.networkPassthroughCalls === 0 && report.modelCalls === 0 && report.liveAccountCalls === 0 && report.unexpected.length === 0,\n      unrelatedModelOnlyBypass: report.modelInitializationBypasses === 1,\n      successfulProcess: child.status === 0 && !report.failure,\n      identityStorage: managed ? variant.environment.OTTO_MODE === 'tenant' ? report.output?.identityFiles.length === 0 : report.output?.identityFiles.length > 0 && report.output?.identityFiles.every((f: any) => f.mode === 0o600 && !f.temporary) : report.output?.identityFiles.length === 0,\n    };\n    if (variant.savedDesktop) checks.savedSettings = report.savedSettings?.savedCiphertextUnchanged && !report.savedSettings?.savedKeyExposed && !report.savedSettings?.rendererSecretsExposed && JSON.stringify(report.savedSettings?.environmentKeys) === JSON.stringify(['OTTO_VAULT_KEY']);\n    for (const relation of variant.relations ?? []) {\n      const previous = reports.get(relation.variant);\n      const currentOwner = created[0]?.bodyOwner;\n      const previousOwner = previous.requests.find((r: any) => r.bodyOwner)?.bodyOwner;\n      checks[relation.id] = relation.property === 'configurationId'\n        ? relation.equal === (report.output.configurationId === previous.output.configurationId)\n        : relation.equal === (currentOwner === previousOwner);\n    }\n    results.push({ id: variant.id, applicability: variant.checks, pass: Object.values(checks).every(Boolean), checks, report, stderrSha256: hash(child.stderr), stdoutSha256: hash(child.stdout) });\n  }\n  assert.ok(results.every(result => result.pass), 'A frozen mode-selection check failed.');\n  for (const [path, expected] of Object.entries(freeze.sourceSha256)) assert.equal(hash(await readFile(path)), expected, path);\n} catch (error) {\n  failure = { name: error instanceof Error ? error.name : typeof error, message: error instanceof Error ? error.message : 'Unknown failure' };\n} finally {\n  await rm(root, { recursive: true, force: true });\n  const report = { case: 'CP03.v2', phase: 'real-composition-sdk-mode-selection', freeze: freeze.id, startedAt, endedAt: new Date().toISOString(), runtime: process.version, results, failure, pass: !failure && results.length === freeze.variants.length, profileCleanup: true, modelCalls: 0, liveAccountCalls: 0, networkPassthroughCalls: 0 };\n  await writeFile(join(directory, freeze.attemptId + '.json'), JSON.stringify(report, null, 2) + '\\n');\n  process.stdout.write(JSON.stringify({ case: report.case, freeze: report.freeze, variants: results.map(result => ({ id: result.id, pass: result.pass, failed: Object.entries(result.checks).filter(([, pass]) => !pass).map(([id]) => id) })), pass: report.pass, failure }) + '\\n');\n  if (!report.pass) process.exitCode = 1;\n}\n",
+    ".local/composio-upgrade-eval/run.mts": "import assert from 'node:assert/strict';\nimport {randomUUID,createHash} from 'node:crypto';\nimport {readFile,writeFile} from 'node:fs/promises';\nimport {execFileSync} from 'node:child_process';\nimport Fastify from 'fastify';\nimport pg from 'pg';\nimport {createIntegrations} from '../../src/server/integrations.ts';\nimport type {IntegrationProvider,IntegrationSession} from '../../src/ports/integrations.ts';\nconst connectionString='postgresql://otto_test:otto_test_only@127.0.0.1:50028/otto_test';\nconst frozen={id:'CP03-preflight.v1',prompt:'I upgraded Otto and kept my Composio project. Keep my existing account and inbox updates working.',model:'none',limitSeconds:60,repeats:1,variants:[{id:'missing-fingerprint',previous:null},{id:'same-project-key-rotation',previous:'previous-key-fingerprint'}],owner:'synthetic-upgrade-owner',account:'synthetic_existing_account',connection:'a290176f-79ea-412f-8a52-04c68c07bf56',cursor:'synthetic-cursor',message:'synthetic-owned-result',checks:['same local connection ID','active state preserved','cursor preserved','watch preference preserved','queued event preserved','existing account execution succeeds','no new authorization or grant deletion'],scope:'Actual service and database upgrade; external provider is stateful synthetic fixture, not native full-app or live-provider acceptance.'};\nconst build={commit:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),diffSha256:createHash('sha256').update(execFileSync('git',['diff','HEAD'])).digest('hex'),scriptSha256:createHash('sha256').update(await readFile(import.meta.filename)).digest('hex'),node:process.version};\nawait writeFile('.local/composio-upgrade-eval/frozen.json',JSON.stringify({frozen,build,startedAt:new Date().toISOString()},null,2)+'\\n');\nconst results=[];\nfor(const variant of frozen.variants){\n const schema='test_composio_upgrade_'+randomUUID().replaceAll('-','');\n const admin=new pg.Pool({connectionString});await admin.query(`CREATE SCHEMA ${schema}`);\n const pool=new pg.Pool({connectionString,options:`-c search_path=${schema}`});\n const apps=[];const calls=[];\n const accounts=new Map([[frozen.account,{owner:frozen.owner,service:'gmail',value:frozen.message}]]);\n const session:IntegrationSession={id:'synthetic_current_session',authorize:async()=>assert.fail('No new consent allowed'),search:async()=>({tools:{},suggestions:[]}),execute:async(_action,_args,account)=>{const value=accounts.get(account!);assert.ok(value);calls.push('execute');return {result:value.value};}};\n const provider:IntegrationProvider={id:'composio',configured:true,configurationId:'current-key-fingerprint',webhooksConfigured:false,supportedServices:['gmail'],supportsSubscriptions:[],createSession:async(owner,selected)=>{assert.equal(owner,frozen.owner);for(const account of Object.values(selected).flat())assert.equal(accounts.get(account!)?.owner,owner);return session;},restoreSession:async()=>session,deleteSession:async()=>{},inspectAccount:async(account,owner,options)=>{assert.equal(options?.verifyOwner,true);const value=accounts.get(account);assert.equal(value?.owner,owner);calls.push('verify-owner');return {active:true,service:value!.service};},deleteAccount:async()=>assert.fail('No grant deletion allowed'),parseCallback:()=>assert.fail('No consent callback allowed'),subscribe:async()=>assert.fail('No new subscription allowed'),unsubscribe:async()=>assert.fail('No subscription deletion allowed'),verifyWebhook:async()=>assert.fail(),matchesSubscription:()=>false,pollInbox:async(account,cursor)=>{assert.equal(account,frozen.account);assert.equal(cursor,frozen.cursor);return {cursor,hasMore:false,messages:[]};}};\n try{\n  const setup=await createIntegrations(pool,{ownerId:frozen.owner,provider:{...provider,configurationId:undefined},baseUrl:'http://localhost:4310',wake:async()=>{}});\n  const first=Fastify();apps.push(first);setup.registerRoutes(first);\n  await pool.query('INSERT INTO app_connections(id,owner_id,slug,account_id,configuration_id,account_active,account_checked_at,watch_requested,inbox_cursor) VALUES($1,$2,\\'gmail\\',$3,$4,true,now(),true,$5)',[frozen.connection,frozen.owner,frozen.account,variant.previous,frozen.cursor]);\n  await pool.query(\"INSERT INTO integration_events(id,owner_id,summary,slug,account_id) VALUES('synthetic-event',$1,'synthetic event','gmail',$2)\",[frozen.owner,frozen.account]);\n  await first.close();\n  const upgraded=await createIntegrations(pool,{ownerId:frozen.owner,provider,baseUrl:'http://localhost:4310',wake:async()=>{}});\n  const next=Fastify();apps.push(next);upgraded.registerRoutes(next);\n  const row=(await pool.query('SELECT * FROM app_connections WHERE id=$1',[frozen.connection])).rows[0];\n  const event=(await pool.query(\"SELECT state FROM integration_events WHERE id='synthetic-event'\")).rows[0];\n  let execution=false;try{execution=JSON.stringify(await upgraded.execute(frozen.owner,'GMAIL_LIST_LABELS',{connectionId:frozen.connection}))===JSON.stringify({result:frozen.message});}catch{}\n  const checks={sameConnection:row.id===frozen.connection,active:row.account_active===true,cursor:row.inbox_cursor===frozen.cursor,watch:row.watch_requested===true,event:event.state==='queued',execution,noNewConsentOrDeletion:true};\n  results.push({variant:variant.id,checks,pass:Object.values(checks).every(Boolean),calls});\n }finally{for(const app of apps)await app.close();await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();}\n}\nconst report={case:frozen.id,build,results,status:results.every(r=>r.pass)?'pass':'fail',endedAt:new Date().toISOString(),modelCalls:0,liveAccountCalls:0,cost:'unavailable'};\nawait writeFile('.local/composio-upgrade-eval/attempt-1.json',JSON.stringify(report,null,2)+'\\n');\nconsole.log(JSON.stringify(report));\nif(report.status!=='pass')process.exitCode=1;\n",
+    ".local/cp03-v2/old-schema.mts": "import assert from 'node:assert/strict';\nimport { randomUUID, createHash } from 'node:crypto';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport Fastify from 'fastify';\nimport pg from 'pg';\nimport { createIntegrations } from '../../src/server/integrations.ts';\nimport type { IntegrationProvider, IntegrationSession } from '../../src/ports/integrations.ts';\n\nconst manifest = JSON.parse(await readFile('docs/testing/composio-proxy/cp03.v2.inputs.json', 'utf8'));\nconst frozen = manifest.preservationFreezes.at(-1);\nconst hash = (value: Uint8Array) => createHash('sha256').update(value).digest('hex');\nfor (const [path, expected] of Object.entries(frozen.sourceSha256)) assert.equal(hash(await readFile(path)), expected, path);\nconst ddl = await readFile('.local/cp03-v2/base-schema.sql', 'utf8');\nassert.equal(hash(Buffer.from(ddl)), frozen.oldSchemaSha256);\nconst startedAt = new Date().toISOString();\nconst results: any[] = [];\nlet failure: any;\ntry {\n  for (const variant of frozen.oldSchemaVariants) {\n    const schema = 'cp03_old_' + randomUUID().replaceAll('-', '');\n    const admin = new pg.Pool({ connectionString: frozen.databaseUrl });\n    await admin.query(`CREATE SCHEMA ${schema}`);\n    const pool = new pg.Pool({ connectionString: frozen.databaseUrl, options: `-c search_path=${schema}` });\n    const app = Fastify();\n    const calls: string[] = [];\n    const owner = 'synthetic-old-schema-owner';\n    const account = 'synthetic-old-schema-account';\n    const connectionId = '33333333-3333-4333-8333-333333333333';\n    const session: IntegrationSession = {\n      id: 'synthetic-owned-current-session',\n      authorize: async () => assert.fail('No new consent allowed.'),\n      search: async () => ({ tools: {}, suggestions: [] }),\n      execute: async (_action, _args, accountId) => { assert.equal(accountId, account); calls.push('execute'); return { received: 'synthetic-owned-result' }; },\n    };\n    const provider: IntegrationProvider = {\n      id: 'composio', configured: true, configurationId: 'synthetic-current-key-fingerprint', webhooksConfigured: false, supportedServices: ['gmail'], supportsSubscriptions: [],\n      createSession: async (user, selected) => { assert.equal(user, owner); assert.deepEqual(selected, { gmail: [account] }); return session; },\n      restoreSession: async () => assert.fail('An old unbound session must not be restored.'),\n      deleteSession: async id => { assert.notEqual(id, 'synthetic-old-session'); },\n      inspectAccount: async (id, user, options) => { assert.equal(id, account); assert.equal(user, owner); assert.equal(options?.verifyOwner, true); calls.push('verify-owner'); return { active: true, service: 'gmail' }; },\n      deleteAccount: async () => assert.fail('No grant deletion allowed.'),\n      parseCallback: () => assert.fail('No consent callback allowed.'),\n      subscribe: async () => assert.fail('No new subscription allowed.'),\n      unsubscribe: async () => assert.fail('No subscription deletion allowed.'),\n      verifyWebhook: async () => assert.fail('No webhook call allowed.'),\n      matchesSubscription: () => false,\n      pollInbox: async (id, cursor) => { assert.equal(id, account); assert.equal(cursor, 'synthetic-old-cursor'); calls.push('poll'); return { cursor, hasMore: false, messages: [] }; },\n    };\n    try {\n      await pool.query(ddl);\n      const columns = async (table: string) => (await pool.query('SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1', [table])).rows.map(row => row.column_name);\n      const beforeColumns = await columns('app_connections');\n      assert.ok(['configuration_id', 'callback_verifier', 'callback_claim_id', 'replaces_connection_id'].every(name => !beforeColumns.includes(name)));\n      await pool.query(`INSERT INTO app_connections(id,owner_id,slug,account_id,account_active,account_checked_at,watch_requested,inbox_cursor) VALUES($1,$2,'gmail',$3,true,now(),$4,'synthetic-old-cursor')`, [connectionId, owner, account, variant.watch]);\n      await pool.query(`INSERT INTO integration_sessions(owner_id,session_id,provider_id,configuration_version) VALUES($1,'synthetic-old-session','composio',3)`, [owner]);\n      await pool.query(`INSERT INTO integration_events(id,owner_id,summary,slug,account_id) VALUES('synthetic-old-event',$1,'Synthetic queued event','gmail',$2)`, [owner, account]);\n      const before = (await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])).rows[0];\n      const service = await createIntegrations(pool, { ownerId: owner, provider, baseUrl: 'http://localhost:4310', wake: async () => assert.fail('Queued work must not dispatch during this preflight.') });\n      service.registerRoutes(app);\n      const after = (await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])).rows[0];\n      assert.deepEqual(Object.fromEntries(Object.keys(before).map(key => [key, after[key]])), before);\n      const afterColumns = await columns('app_connections');\n      assert.ok(['configuration_id', 'callback_verifier', 'callback_claim_id', 'replaces_connection_id'].every(name => afterColumns.includes(name)));\n      assert.ok((await columns('integration_sessions')).includes('configuration_id'));\n      assert.equal(after.configuration_id, provider.configurationId);\n      assert.equal((await pool.query(\"SELECT state FROM integration_events WHERE id='synthetic-old-event'\")).rows[0].state, 'queued');\n      assert.deepEqual(await service.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }), { received: 'synthetic-owned-result' });\n      await service.pollInboxes();\n      assert.equal(calls.includes('poll'), variant.watch);\n      results.push({ variant: variant.id, pass: true, checks: { genuineOldSchema: true, additiveColumns: true, oldFieldsPreserved: true, authoritativeOwnerVerification: true, activeAccountExecution: true, watchPreferenceRespected: true, queuedEventPreserved: true, noConsentOrGrantDeletion: true }, calls });\n    } finally {\n      await app.close();\n      await pool.end();\n      await admin.query(`DROP SCHEMA ${schema} CASCADE`);\n      await admin.end();\n    }\n  }\n  for (const [path, expected] of Object.entries(frozen.sourceSha256)) assert.equal(hash(await readFile(path)), expected, path);\n} catch (error) {\n  failure = { name: error instanceof Error ? error.name : typeof error, message: error instanceof Error ? error.message : 'Unknown failure' };\n} finally {\n  const report = { case: 'CP03.v2', phase: 'genuine-old-schema-preservation', freeze: frozen.id, runtime: process.version, startedAt, endedAt: new Date().toISOString(), results, failure, pass: !failure && results.length === frozen.oldSchemaVariants.length, modelCalls: 0, liveAccountCalls: 0 };\n  await writeFile('.local/cp03-v2/' + frozen.oldSchemaAttemptId + '.json', JSON.stringify(report, null, 2) + '\\n');\n  process.stdout.write(JSON.stringify(report) + '\\n');\n  if (!report.pass) process.exitCode = 1;\n}\n"
+  },
+  "preservationFreezes": [
+    {
+      "id": "CP03.v2.preservation.attempt-1",
+      "frozenAt": "2026-10-08T18:17:23.191053+00:00",
+      "ottoBase": "437687bb17a3944ce9aa01ac37239e5163515365",
+      "sourceSha256": {
+        "src/server/integrations.ts": "52460f7dae56b349f69d48511633e4a9a986e6e5132a208e7700346d7f03c3b5",
+        "src/ports/integrations.ts": "29dcf9b5b765e8220e5d013573363b8a6acbd0343d735f31d1790408a3bb3547",
+        "src/server/integration-files.ts": "1c03acef51c6fd715fb7943fe56b2190995d1c8cad94cc0ea961a4cf197c6d93",
+        "src/shared/integrations.ts": "f4c4ad6321456f21bde698eca1107bcda09c34896cbed1cae15ff62344d58014"
+      },
+      "scriptsSha256": {
+        ".local/composio-upgrade-eval/run.mts": "5d82d8d4d07d346d30e4372c2b8a88c61932b176de84dd1d993964b9df4fc9c9",
+        ".local/cp03-v2/old-schema.mts": "5ae6580b627135ea6e8e7177d09577ec1a72c16613cf5785f5721748395ecf76"
+      },
+      "runtime": "Node24.21.0 --experimental-transform-types",
+      "model": "none",
+      "databaseUrl": "postgresql://otto_test:otto_test_only@127.0.0.1:50028/otto_test",
+      "databaseScope": "Fresh random schemas only, each dropped; no normal schema accessed",
+      "preflightAttemptId": "preserve-attempt-1",
+      "oldSchemaAttemptId": "old-schema-attempt-1",
+      "timeLimitSeconds": 180,
+      "baseRepeats": 1,
+      "holdoutRepeats": 1,
+      "preflightVariants": ["missing-fingerprint", "same-project-key-rotation"],
+      "oldSchemaVariants": [
+        {
+          "id": "genuine-old-schema-watch-enabled",
+          "watch": true
+        },
+        {
+          "id": "genuine-old-schema-watch-disabled",
+          "watch": false
+        }
+      ],
+      "oldSchemaSource": "git show 437687bb17a3944ce9aa01ac37239e5163515365:src/server/integrations.ts initial CREATE/ALTER block",
+      "oldSchemaSha256": "fdf7cc067c5845682a8146a6bbadf002ddddb9397ba8625a0941d4f6987ae2a4",
+      "oldSchemaContents": "\n    CREATE TABLE IF NOT EXISTS app_connections (\n      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n      owner_id text NOT NULL, slug text NOT NULL, account_id text, pending_account_id text,\n      callback_hash text, callback_expires timestamptz, trigger_id text,\n      triggers_enabled boolean NOT NULL DEFAULT false, revoked boolean NOT NULL DEFAULT false,\n      callback_return_to text NOT NULL DEFAULT 'apps', provider_id text NOT NULL DEFAULT 'composio',\n      turn_id uuid, account_name text, account_email text,\n      account_active boolean NOT NULL DEFAULT true, account_checked_at timestamptz,\n      watch_retry_at timestamptz, watch_attempted_at timestamptz,\n      watch_failures integer NOT NULL DEFAULT 0, watch_requested boolean NOT NULL DEFAULT true,\n      watch_attempted boolean NOT NULL DEFAULT false, watch_revision integer NOT NULL DEFAULT 0\n    );\n    CREATE TABLE IF NOT EXISTS integration_sessions (\n      owner_id text PRIMARY KEY, session_id text NOT NULL,\n      provider_id text NOT NULL DEFAULT 'composio', configuration_version integer NOT NULL DEFAULT 1\n    );\n    CREATE TABLE IF NOT EXISTS app_setup_completions (\n      owner_id text NOT NULL, link_hash text NOT NULL,\n      PRIMARY KEY (owner_id,link_hash)\n    );\n    CREATE TABLE IF NOT EXISTS integration_events (\n      id text PRIMARY KEY, owner_id text NOT NULL, summary text NOT NULL, state text NOT NULL DEFAULT 'queued',\n      slug text, account_id text, trigger_id text, claimed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),\n      provider_id text NOT NULL DEFAULT 'composio'\n    );\n    CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;\n    ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,\n      ADD COLUMN IF NOT EXISTS setup_link_hash text,\n      ADD COLUMN IF NOT EXISTS pending_account_email text,\n      ADD COLUMN IF NOT EXISTS pending_auth_config_id text,\n      ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,\n      ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,\n      ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;\n    ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid,\n      ADD COLUMN IF NOT EXISTS intent text NOT NULL DEFAULT 'classify' CHECK(intent IN ('classify','inspect_message'));\n",
+      "checks": {
+        "PRESERVE": "Existing local ID, active status, cursor, watch preference and queued event remain; owned execution succeeds after authoritative owner/service/active verification; no new consent/deletion.",
+        "ADDITIVE": "Genuine base-release tables initially lack configuration_id, callback_verifier, callback_claim_id and replaces_connection_id; current initialization adds all four and integration_sessions.configuration_id without modifying any old connection field."
+      },
+      "scope": "Actual service and PostgreSQL with synthetic owned provider fixture, no real accounts/models/recipients."
+    },
+    {
+      "id": "CP03.v2.preservation.attempt-2",
+      "frozenAt": "2026-10-08T18:19:57.570391+00:00",
+      "ottoBase": "437687bb17a3944ce9aa01ac37239e5163515365",
+      "sourceSha256": {
+        "src/server/integrations.ts": "174fc5b7f55f30a0d401556b467e88ed8ca421eb6bde48a79a4bcf2d788023f7",
+        "src/ports/integrations.ts": "29dcf9b5b765e8220e5d013573363b8a6acbd0343d735f31d1790408a3bb3547",
+        "src/server/integration-files.ts": "1c03acef51c6fd715fb7943fe56b2190995d1c8cad94cc0ea961a4cf197c6d93",
+        "src/shared/integrations.ts": "f4c4ad6321456f21bde698eca1107bcda09c34896cbed1cae15ff62344d58014"
+      },
+      "scriptsSha256": {
+        ".local/composio-upgrade-eval/run.mts": "5d82d8d4d07d346d30e4372c2b8a88c61932b176de84dd1d993964b9df4fc9c9",
+        ".local/cp03-v2/old-schema.mts": "5ae6580b627135ea6e8e7177d09577ec1a72c16613cf5785f5721748395ecf76"
+      },
+      "runtime": "Node24.21.0 --experimental-transform-types",
+      "model": "none",
+      "databaseUrl": "postgresql://otto_test:otto_test_only@127.0.0.1:50028/otto_test",
+      "databaseScope": "Fresh random schemas only, each dropped; no normal schema accessed",
+      "preflightAttemptId": "preserve-attempt-2",
+      "oldSchemaAttemptId": "old-schema-attempt-2",
+      "timeLimitSeconds": 180,
+      "baseRepeats": 1,
+      "holdoutRepeats": 1,
+      "preflightVariants": ["missing-fingerprint", "same-project-key-rotation"],
+      "oldSchemaVariants": [
+        {
+          "id": "genuine-old-schema-watch-enabled",
+          "watch": true
+        },
+        {
+          "id": "genuine-old-schema-watch-disabled",
+          "watch": false
+        }
+      ],
+      "oldSchemaSource": "git show 437687bb17a3944ce9aa01ac37239e5163515365:src/server/integrations.ts initial CREATE/ALTER block",
+      "oldSchemaSha256": "fdf7cc067c5845682a8146a6bbadf002ddddb9397ba8625a0941d4f6987ae2a4",
+      "oldSchemaContents": "\n    CREATE TABLE IF NOT EXISTS app_connections (\n      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n      owner_id text NOT NULL, slug text NOT NULL, account_id text, pending_account_id text,\n      callback_hash text, callback_expires timestamptz, trigger_id text,\n      triggers_enabled boolean NOT NULL DEFAULT false, revoked boolean NOT NULL DEFAULT false,\n      callback_return_to text NOT NULL DEFAULT 'apps', provider_id text NOT NULL DEFAULT 'composio',\n      turn_id uuid, account_name text, account_email text,\n      account_active boolean NOT NULL DEFAULT true, account_checked_at timestamptz,\n      watch_retry_at timestamptz, watch_attempted_at timestamptz,\n      watch_failures integer NOT NULL DEFAULT 0, watch_requested boolean NOT NULL DEFAULT true,\n      watch_attempted boolean NOT NULL DEFAULT false, watch_revision integer NOT NULL DEFAULT 0\n    );\n    CREATE TABLE IF NOT EXISTS integration_sessions (\n      owner_id text PRIMARY KEY, session_id text NOT NULL,\n      provider_id text NOT NULL DEFAULT 'composio', configuration_version integer NOT NULL DEFAULT 1\n    );\n    CREATE TABLE IF NOT EXISTS app_setup_completions (\n      owner_id text NOT NULL, link_hash text NOT NULL,\n      PRIMARY KEY (owner_id,link_hash)\n    );\n    CREATE TABLE IF NOT EXISTS integration_events (\n      id text PRIMARY KEY, owner_id text NOT NULL, summary text NOT NULL, state text NOT NULL DEFAULT 'queued',\n      slug text, account_id text, trigger_id text, claimed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),\n      provider_id text NOT NULL DEFAULT 'composio'\n    );\n    CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;\n    ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,\n      ADD COLUMN IF NOT EXISTS setup_link_hash text,\n      ADD COLUMN IF NOT EXISTS pending_account_email text,\n      ADD COLUMN IF NOT EXISTS pending_auth_config_id text,\n      ADD COLUMN IF NOT EXISTS inbox_poll_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_claim_id text,\n      ADD COLUMN IF NOT EXISTS inbox_checked_at timestamptz, ADD COLUMN IF NOT EXISTS inbox_failed boolean NOT NULL DEFAULT false,\n      ADD COLUMN IF NOT EXISTS inbox_reconnect_required boolean NOT NULL DEFAULT false;\n    ALTER TABLE integration_events ADD COLUMN IF NOT EXISTS poll_connection_id uuid,\n      ADD COLUMN IF NOT EXISTS intent text NOT NULL DEFAULT 'classify' CHECK(intent IN ('classify','inspect_message'));\n",
+      "checks": {
+        "PRESERVE": "Existing local ID, active status, cursor, watch preference and queued event remain; owned execution succeeds after authoritative owner/service/active verification; no new consent/deletion.",
+        "ADDITIVE": "Genuine base-release tables initially lack configuration_id, callback_verifier, callback_claim_id and replaces_connection_id; current initialization adds all four and integration_sessions.configuration_id without modifying any old connection field."
+      },
+      "scope": "Actual service and PostgreSQL with synthetic owned provider fixture, no real accounts/models/recipients.",
+      "reason": "Final-source repeat after callback cleanup timing fix; unchanged scripts, inputs, checks, runtime and repeats."
+    }
+  ]
+}

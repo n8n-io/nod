@@ -1,0 +1,72 @@
+{
+  "case": "CP07.v1",
+  "attempt": "CP07-a01",
+  "status": "blocked",
+  "started_at": "2026-10-08T16:53:56.314193+00:00",
+  "model": "none",
+  "cost": "unavailable",
+  "channel": "shell and deployed API",
+  "time_limit_seconds": 600,
+  "build": {
+    "otto": {
+      "commit": "437687bb17a3944ce9aa01ac37239e5163515365",
+      "diff_sha256": "f3fed056f7d06510c76bd058d2625f8ad4a3dcd00149d267cf6c9214e8193f7f"
+    },
+    "proxy": {
+      "commit": "a35717fee2cbf8f0cc9da9b8c5cf336ed801a1b9",
+      "diff_sha256": "16f2402c72ef9abaae7b5de579f769c4a35f3255da485723ed56235bd09b6826"
+    }
+  },
+  "inputs": {
+    "cases.v1.json": "92f91bab7c7b245eecb80288126e70d7d171e63f401640295b2a17a195e04b0d",
+    "README.md": "d2f4de8c567cf5f4f36e6e9db7cd3d946743b6a704a67b5749b3bf0436a95108"
+  },
+  "checks": {
+    "CI": {
+      "status": "pass",
+      "revision": "21ffb5e",
+      "evidence": "https://github.com/n8n-io/otto-composio-proxy/actions/runs/37812608310"
+    },
+    "DEPLOY": {
+      "status": "blocked",
+      "reason": "Manual deployment succeeded; protected main workflow is not yet available until PR merge."
+    },
+    "CATALOG": {
+      "status": "pass",
+      "items": 221,
+      "forbidden_key_headers": 0,
+      "evidence": "/tmp/otto-proxy-live-keyless-21ffb5e.log"
+    },
+    "SECRET": {
+      "status": "pass",
+      "scope": "Signed catalog and empty-session request headers contained no project key; session response could not yet be tested."
+    }
+  },
+  "limits": "Deployment workflow fix and signed catalog only; no OAuth/account execution.",
+  "catalog_probe": {
+    "script_sha256": "8cdf779cb95a9d0c095fe3e7544ee9ac75f6d0bd52a298434309ddcf96d870b2",
+    "frozen_checks": [
+      "Empty environment has no Composio key headers",
+      "Derived owners differ for two temporary profiles",
+      "Catalog has at least one item",
+      "Own empty session creates/restores/deletes",
+      "Other profile cannot read/delete the session",
+      "No provider keys in session response",
+      "OAuth start remains gated",
+      "Synthetic resources cleaned"
+    ],
+    "started_at": "2026-10-08T16:56:57.919277+00:00",
+    "deployment_version": "48594eee-7df4-426e-b260-b8031c518558",
+    "proxy_commit": "21ffb5e"
+  },
+  "ended_at": "2026-10-08T16:58:41.652846+00:00",
+  "canary": {
+    "status": "fail",
+    "phase": "create_empty_session",
+    "http_status": 400,
+    "cause": "Six native toolkit catalog rows have unsupported slugs; strict whole-page validation rejected them.",
+    "cleanup_complete": true,
+    "log_sha256": "cac463df3b017be3bf14221f8b459894d429a391f80f4672465de3eaecebbf16"
+  },
+  "review": "Catalog-only live evidence. No OAuth consent, connected-account use or CI deployment claim."
+}

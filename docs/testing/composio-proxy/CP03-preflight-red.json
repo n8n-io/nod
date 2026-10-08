@@ -1,0 +1,90 @@
+{
+  "case": "CP03-preflight.v1",
+  "build": {
+    "commit": "437687bb17a3944ce9aa01ac37239e5163515365",
+    "diffSha256": "644b376f826139b4b219a2a3335f18ee3bc9d0b6ec9087c12de71b6cb976d47d",
+    "scriptSha256": "5d82d8d4d07d346d30e4372c2b8a88c61932b176de84dd1d993964b9df4fc9c9",
+    "node": "v24.21.0"
+  },
+  "results": [
+    {
+      "variant": "missing-fingerprint",
+      "checks": {
+        "sameConnection": true,
+        "active": false,
+        "cursor": false,
+        "watch": false,
+        "event": false,
+        "execution": false,
+        "noNewConsentOrDeletion": true
+      },
+      "pass": false,
+      "calls": []
+    },
+    {
+      "variant": "same-project-key-rotation",
+      "checks": {
+        "sameConnection": true,
+        "active": false,
+        "cursor": false,
+        "watch": false,
+        "event": false,
+        "execution": false,
+        "noNewConsentOrDeletion": true
+      },
+      "pass": false,
+      "calls": []
+    }
+  ],
+  "status": "fail",
+  "endedAt": "2026-10-08T17:09:41.132Z",
+  "modelCalls": 0,
+  "liveAccountCalls": 0,
+  "cost": "unavailable",
+  "frozen": {
+    "id": "CP03-preflight.v1",
+    "prompt": "I upgraded Otto and kept my Composio project. Keep my existing account and inbox updates working.",
+    "model": "none",
+    "limitSeconds": 60,
+    "repeats": 1,
+    "variants": [
+      {
+        "id": "missing-fingerprint",
+        "previous": null
+      },
+      {
+        "id": "same-project-key-rotation",
+        "previous": "previous-key-fingerprint"
+      }
+    ],
+    "owner": "synthetic-upgrade-owner",
+    "account": "synthetic_existing_account",
+    "connection": "a290176f-79ea-412f-8a52-04c68c07bf56",
+    "cursor": "synthetic-cursor",
+    "message": "synthetic-owned-result",
+    "checks": [
+      "same local connection ID",
+      "active state preserved",
+      "cursor preserved",
+      "watch preference preserved",
+      "queued event preserved",
+      "existing account execution succeeds",
+      "no new authorization or grant deletion"
+    ],
+    "scope": "Actual service and database upgrade; external provider is stateful synthetic fixture, not native full-app or live-provider acceptance."
+  },
+  "startedAt": "2026-10-08T17:09:40.928Z",
+  "hypothesis": "H01: configuration fingerprints are treated as project changes before ownership verification, clearing existing state.",
+  "setupError": {
+    "scope": "Evaluator invocation",
+    "error": "Node strip-only mode rejected existing TypeScript parameter properties before the run.",
+    "correction": "Use Node24.21.0 --experimental-transform-types. No application source or check was changed.",
+    "evidence_sha256": "46ba65bbdb2e4e46a6e145e045e68137503bfda44d454d07c07224a6123646b8"
+  },
+  "evidence": {
+    "script": ".local/composio-upgrade-eval/run.mts",
+    "result": ".local/composio-upgrade-eval/attempt-1.json",
+    "rawLog": "/tmp/otto-proxy-upgrade-red.log",
+    "log_sha256": "e7e73fcdad9b9c2cc1169092b8d7b1ae23d4d20ce64def8e11d94655ea633e70"
+  }
+}
