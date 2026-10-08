@@ -6,6 +6,9 @@ import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { createAgentSession } from '@earendil-works/pi-coding-agent';
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { appConfirmation } from '../src/ports/agent.ts';
 import type {
   Agent,
@@ -19,6 +22,7 @@ import type {
 } from '../src/ports/agent.ts';
 import { requestsPrivateInput } from '../src/runtime/communication.ts';
 import { createSkillLibrary } from '../src/providers/pi/skills.ts';
+import { createPiAgent } from '../src/providers/pi/index.ts';
 import { coreSkills } from '../src/runtime/prompt.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { inlineAppResult } from '../src/server/integration-result.ts';
@@ -33,6 +37,7 @@ async function fixture(
   ) => Promise<void>,
   overrides: Partial<RuntimeContext> = {},
   runtimeOptions: {
+    agent?: Agent;
     observationTimeoutMs?: number;
     computer?: Computer;
     workspace?: Workspace;
@@ -122,6 +127,165 @@ async function fixture(
 async function call(tools: Map<string, AgentTool>, name: string, args: Record<string, unknown>) {
   return tools.get(name)!.execute(args);
 }
+
+async function browserSessionFixture(
+  inputs: Array<Parameters<typeof fauxToolCall>[1]>,
+  browserConnection: NonNullable<RuntimeContext['browserConnection']>,
+) {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-session-contract-'));
+  const observed: RuntimeObservation[] = [];
+  let returned: Array<{ toolCallId: string; isError: boolean; content: unknown }> = [];
+  let step = 0;
+  const agent = createPiAgent({
+    provider: 'openai',
+    apiKey: 'synthetic-browser-session-key',
+    sessionRoot: join(directory, 'sessions'),
+    configRoot: join(directory, 'config'),
+    createSession: async (options) => {
+      const result = await createAgentSession(options);
+      result.session.agent.streamFunction = (model, request) => {
+        assert.ok(step <= inputs.length);
+        returned = request.messages.flatMap((message) =>
+          message.role === 'toolResult' ? [message] : [],
+        );
+        const input = inputs[step++];
+        const output = {
+          ...fauxAssistantMessage(
+            input
+              ? fauxToolCall('browser_session', input, { id: `session-${step}` })
+              : 'Finished the synthetic browser session checks.',
+            { stopReason: input ? 'toolUse' : 'stop' },
+          ),
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: 'start', partial: output });
+        stream.push({ type: 'done', reason: input ? 'toolUse' : 'stop', message: output });
+        return stream;
+      };
+      return result;
+    },
+  });
+  try {
+    await fixture(
+      async () => {},
+      {
+        browserConnection,
+        observe: async (entry) => {
+          observed.push(entry);
+        },
+      },
+      { agent },
+    );
+    return {
+      returned,
+      observed,
+      ended: observed.filter((entry) => entry.type === 'tool_end'),
+    };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test('browser session action fields fail before dispatch and a corrected save can proceed', async () => {
+  const connectionId = randomUUID();
+  const url = 'https://account.example.test/';
+  const connect = { action: 'connect', url, label: 'Synthetic account' };
+  const save = { action: 'save', url, connectionId, signedIn: true };
+  const use = { action: 'use', url, connectionId };
+  const requested: unknown[] = [];
+  let opened = 0;
+  let saved = 0;
+  const { returned, ended } = await browserSessionFixture(
+    [
+      connect,
+      { ...save, label: 'Synthetic account' },
+      save,
+      { ...use, signedIn: true },
+      { ...connect, connectionId },
+      use,
+    ],
+    async (request) => {
+      requested.push(structuredClone(request));
+      if (request.action === 'connect') {
+        opened++;
+        return { status: 'profile_opened', connectionId };
+      }
+      assert.ok(opened > 0);
+      if (request.action === 'save') saved++;
+      return {
+        status: request.action === 'save' ? 'session_saved' : 'session_opened',
+        connectionId,
+      };
+    },
+  );
+  assert.deepEqual(requested, [connect, save, use]);
+  assert.equal(opened, 1);
+  assert.equal(saved, 1);
+  assert.deepEqual(
+    returned.map((result) => result.isError),
+    [false, true, false, true, true, false],
+  );
+  assert.deepEqual(
+    ended.map((entry) => entry.status),
+    ['succeeded', 'failed', 'succeeded', 'failed', 'failed', 'succeeded'],
+  );
+  for (const index of [1, 3, 4]) {
+    assert.match(JSON.stringify(returned[index].content), /Valid forms:/);
+    assert.equal(ended[index].output, undefined);
+  }
+});
+
+test('browser session rejections reach Pi as failures while sign-in continuation stays available', async () => {
+  const connectionId = randomUUID();
+  const url = 'https://account.example.test/';
+  const privateUrl = 'https://account.example.test/continue?token=synthetic-private-return';
+  const privateMarker = 'synthetic-private-rejection-token';
+  const save = { action: 'save', url, connectionId, signedIn: true };
+  const connect = { action: 'connect', url, label: 'Synthetic account' };
+  const use = { action: 'use', url, connectionId };
+  const codes = [
+    'invalid_browser_connection_arguments',
+    'browser_connection_origin_mismatch',
+    'browser_connection_unavailable',
+    `unknown_${privateMarker}`,
+  ];
+  const requested: unknown[] = [];
+  let rejected = 0;
+  const { returned, observed, ended } = await browserSessionFixture(
+    [...codes.map(() => save), connect, use],
+    async (request) => {
+      requested.push(structuredClone(request));
+      if (request.action === 'save') return { status: 'rejected', code: codes[rejected++] };
+      return {
+        status: request.action === 'connect' ? 'profile_opened' : 'needs_sign_in',
+        connectionId,
+        url: privateUrl,
+      };
+    },
+  );
+  assert.deepEqual(requested, [...codes.map(() => save), connect, use]);
+  assert.deepEqual(
+    returned.map((result) => result.isError),
+    [true, true, true, true, false, false],
+  );
+  assert.deepEqual(
+    ended.map((entry) => entry.status),
+    ['failed', 'failed', 'failed', 'failed', 'succeeded', 'succeeded'],
+  );
+  for (const entry of ended.slice(0, codes.length)) {
+    assert.equal(entry.output, undefined);
+    assert.ok(entry.error);
+  }
+  const text = (index: number) => JSON.stringify(returned[index].content);
+  assert.match(text(codes.length), /profile_opened/);
+  assert.match(text(codes.length + 1), /needs_sign_in/);
+  assert.equal(JSON.stringify(returned).includes(privateUrl), false);
+  assert.equal(JSON.stringify(returned).includes(privateMarker), false);
+  assert.equal(JSON.stringify(observed).includes(privateMarker), false);
+});
 
 test('verification email codes stay out of app tool results, observations and workspace files', async () => {
   const privateCodes = ['318742', '640193', '729461', '803527', '516294'];

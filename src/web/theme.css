@@ -39,6 +39,7 @@
   --accent-soft: var(--pink-10);
   --accent-border: var(--pink-30);
   --link: var(--accent);
+  --link-hover: var(--pink-80);
   --primary: var(--brand-pink);
   --primary-hover: var(--pink-20);
   --primary-pressed: var(--pink-30);
@@ -103,10 +104,18 @@
   --page-inline: clamp(24px, 4vw, 48px);
   --page-width: 1184px;
   --chat-width: 880px;
+  --telegram: #2aabee;
+  --task-pink: oklch(0.9 0.06 5);
+  --task-blue: oklch(0.9 0.06 240);
+  --task-butter: oklch(0.93 0.07 100);
+  --ease-reveal: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-travel: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
+  --link-hover: var(--pink-20);
   --background: var(--black);
   --sidebar: #1f1f1f;
   --surface: var(--gray-90);
@@ -148,6 +157,10 @@
   --shadow-overlay: #00000059;
   --shadow-color: #00000026;
   --shadow-composer: 0 4px 16px var(--shadow-color), 0 1px 3px var(--shadow-color);
+  --task-pink: oklch(0.36 0.06 5);
+  --task-blue: oklch(0.36 0.06 240);
+  --task-butter: oklch(0.38 0.06 100);
+  --telegram: #229ed9;
 }
 
 :root[data-theme='dark'] .dialog-content {

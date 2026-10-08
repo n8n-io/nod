@@ -3,14 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, ExternalLink, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { ChannelProvider, ChannelSetupSummary } from '../../shared/contracts';
-import { api, errorMessage } from '../lib/api';
+import { telegramState, useChannelSettings } from '../hooks/use-channel-settings';
 import {
   channelLabel,
   channelSetupBody,
   telegramBotUrl,
   telegramIdentity,
-  type ChannelResponse,
-  type ChannelSettings,
 } from '../lib/secondary-pages';
 import {
   Button,
@@ -397,13 +395,9 @@ function TelegramSetup({
   onSaveId(event: React.FormEvent): void;
 }) {
   const [copied, setCopied] = useState(false);
-  const saved = Boolean(setup?.enabled);
-  const needsDelivery = saved && setup?.webhookStatus === 'registration_pending';
-  const ready = saved && !needsDelivery;
-  const paired = Boolean(ready && setup?.allowedUserId && !setup.pairingExpiresAt);
-  const expiry = saved && !paired ? setup?.pairingExpiresAt : undefined;
-  const expired = Boolean(expiry && Date.parse(expiry) <= Date.now());
-  const candidate = ready && !paired && !expired && !manual ? setup?.pairingCandidate : undefined;
+  const state = telegramState(setup);
+  const { saved, needsDelivery, ready, paired, expired } = state;
+  const candidate = manual ? undefined : state.candidate;
   const botUrl = telegramBotUrl(setup?.accountHandle);
   const identity =
     paired && setup?.allowedUserId
@@ -624,22 +618,27 @@ function TelegramSetup({
 }
 
 export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
-  const [data, setData] = useState<ChannelResponse | null>(null);
-  const [settings, setSettings] = useState<ChannelSettings | null>(null);
-  const [error, setError] = useState('');
-  const [loadError, setLoadError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<ChannelProvider | null>(null);
+  const {
+    data,
+    settings,
+    error,
+    setError,
+    loadError,
+    loading,
+    busy,
+    pairingUrl,
+    setPairingUrl,
+    save,
+    telegramAction: telegramRequest,
+    remove,
+  } = useChannelSettings({ watchTelegram: editing === 'telegram' });
   const [step, setStep] = useState(0);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [policy, setPolicy] = useState(false);
-  const [pairingUrl, setPairingUrl] = useState<string | null>(null);
   const [manualId, setManualId] = useState(false);
   const [removing, setRemoving] = useState<ChannelProvider | null>(null);
   const [removeError, setRemoveError] = useState('');
-  const request = useRef<AbortController | null>(null);
-  const actionRequest = useRef<AbortController | null>(null);
   const page = useRef<HTMLDivElement>(null);
   const removeTrigger = useRef<HTMLButtonElement | null>(null);
   const removeProvider = useRef<ChannelProvider | null>(null);
@@ -651,13 +650,7 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
     return { provider, setup, configured, connected: Boolean(setup?.enabled || configured) };
   });
   const telegramSetup = channels[0].setup;
-  const telegramWaiting = Boolean(
-    editing === 'telegram' &&
-    telegramSetup?.enabled &&
-    telegramSetup.webhookStatus !== 'registration_pending' &&
-    telegramSetup.pairingExpiresAt &&
-    Date.parse(telegramSetup.pairingExpiresAt) > Date.now(),
-  );
+  const telegramWaiting = editing === 'telegram' && telegramState(telegramSetup).waiting;
   const telegramStage =
     editing !== 'telegram'
       ? ''
@@ -672,47 +665,10 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
         ].join(':');
   const connected = channels.filter((channel) => channel.connected);
   const available = channels.filter((channel) => !channel.connected);
-  async function load() {
-    request.current?.abort();
-    const current = new AbortController();
-    request.current = current;
-    setLoading(true);
-    try {
-      const [status, setup] = await Promise.all([
-        api<ChannelResponse>('/api/channels', { signal: current.signal }),
-        api<ChannelSettings>('/api/channel-settings', { signal: current.signal }),
-      ]);
-      if (!current.signal.aborted) {
-        setData(status);
-        setSettings(setup);
-        setLoadError('');
-        return setup;
-      }
-    } catch (cause) {
-      if (!current.signal.aborted) setLoadError(errorMessage(cause));
-    } finally {
-      if (!current.signal.aborted) setLoading(false);
-    }
-  }
-  useEffect(() => {
-    void load();
-    const focus = () => void load();
-    window.addEventListener('focus', focus);
-    return () => {
-      request.current?.abort();
-      actionRequest.current?.abort();
-      window.removeEventListener('focus', focus);
-    };
-  }, []);
   useEffect(() => {
     if (telegramStage)
       document.querySelector<HTMLElement>('[role="dialog"] [data-telegram-primary]')?.focus();
   }, [telegramStage]);
-  useEffect(() => {
-    if (!telegramWaiting) return;
-    const timer = setInterval(() => void load(), 2000);
-    return () => clearInterval(timer);
-  }, [telegramWaiting]);
   function close() {
     setEditing(null);
     setFields({});
@@ -729,146 +685,39 @@ export function Channels({ hosted = false }: { hosted?: boolean } = {}) {
     setStep(0);
     setEditing(provider);
   }
-  function acceptedSetup(channel: ChannelSetupSummary) {
-    request.current?.abort();
-    setSettings((current) =>
-      current
-        ? {
-            ...current,
-            channels: [
-              ...current.channels.filter((item) => item.provider !== channel.provider),
-              channel,
-            ],
-          }
-        : current,
-    );
-    setData((current) =>
-      current
-        ? {
-            ...current,
-            error: null,
-            channels: [
-              ...current.channels.filter((item) => item.provider !== channel.provider),
-              {
-                provider: channel.provider,
-                status: channel.enabled ? 'configured' : 'disabled',
-                missing: [],
-              },
-            ],
-          }
-        : current,
-    );
-  }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!editing || actionRequest.current || busy) return;
+    if (!editing || busy) return;
     if (editing === 'whatsapp' && step < whatsappSteps.length - 1) {
       setStep((value) => value + 1);
       return;
     }
-    const current = new AbortController();
-    actionRequest.current = current;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api<{ channel: ChannelSetupSummary; pairingUrl?: string }>(
-        `/api/channel-settings/${editing}`,
-        {
-          method: 'PUT',
-          body: JSON.stringify(channelSetupBody(editing, fields, policy)),
-          signal: current.signal,
-        },
-      );
-      if (current.signal.aborted) return;
-      acceptedSetup(result.channel);
-      if (editing === 'telegram') {
-        setFields({});
-        setPairingUrl(result.pairingUrl ?? null);
-      } else close();
-      void load();
-    } catch (cause) {
-      if (!current.signal.aborted) {
-        if (editing === 'telegram') {
-          const latest = await load();
-          if (
-            latest?.channels.some((channel) => channel.provider === 'telegram' && channel.enabled)
-          )
-            setFields({});
-        }
-        if (!current.signal.aborted) setError(errorMessage(cause));
-      }
-    } finally {
-      if (actionRequest.current === current) actionRequest.current = null;
-      if (!current.signal.aborted) setBusy(false);
-    }
+    const provider = editing;
+    const result = await save(provider, channelSetupBody(provider, fields, policy));
+    if (provider === 'telegram') {
+      if (result.ok || result.channel?.enabled) setFields({});
+    } else if (result.ok) close();
   }
   async function telegramAction(action: 'pairing' | 'confirm' | 'user', body: object = {}) {
-    if (actionRequest.current || busy) return;
-    const current = new AbortController();
-    actionRequest.current = current;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api<{ channel: ChannelSetupSummary; pairingUrl?: string }>(
-        `/api/channel-settings/telegram/${action}`,
-        { method: 'POST', body: JSON.stringify(body), signal: current.signal },
-      );
-      if (current.signal.aborted) return;
-      acceptedSetup(result.channel);
-      setPairingUrl(result.pairingUrl ?? null);
-      setManualId(false);
-      setFields({});
-      setEditing('telegram');
-    } catch (cause) {
-      if (!current.signal.aborted) {
-        await load();
-        if (!current.signal.aborted) setError(errorMessage(cause));
-      }
-    } finally {
-      if (actionRequest.current === current) actionRequest.current = null;
-      if (!current.signal.aborted) setBusy(false);
-    }
+    if (!(await telegramRequest(action, body))) return;
+    setManualId(false);
+    setFields({});
+    setEditing('telegram');
   }
   function resumeTelegram() {
     setError('');
     setManualId(false);
     setEditing('telegram');
-    const candidate = telegramSetup?.pairingCandidate;
-    const expiry = telegramSetup?.pairingExpiresAt;
-    if (
-      telegramSetup?.webhookStatus !== 'registration_pending' &&
-      candidate &&
-      expiry &&
-      Date.parse(expiry) > Date.now()
-    )
-      return;
-    void telegramAction('pairing');
+    const state = telegramState(telegramSetup);
+    if (!state.candidate || !state.waiting) void telegramAction('pairing');
   }
   async function disconnect() {
     const provider = removing;
-    if (!provider || actionRequest.current || busy) return;
-    const current = new AbortController();
-    actionRequest.current = current;
-    setBusy(true);
+    if (!provider || busy) return;
     setRemoveError('');
-    try {
-      const result = await api<{ channel: ChannelSetupSummary }>(
-        `/api/channel-settings/${provider}`,
-        {
-          method: 'DELETE',
-          signal: AbortSignal.any([current.signal, AbortSignal.timeout(15000)]),
-        },
-      );
-      if (current.signal.aborted) return;
-      acceptedSetup(result.channel);
-      setRemoving(null);
-      void load();
-    } catch (cause) {
-      if (!current.signal.aborted) setRemoveError(errorMessage(cause));
-    } finally {
-      if (actionRequest.current === current) actionRequest.current = null;
-      if (!current.signal.aborted) setBusy(false);
-    }
+    const failure = await remove(provider);
+    if (failure === '') setRemoving(null);
+    else if (failure) setRemoveError(failure);
   }
   function cards(items: typeof channels) {
     return (

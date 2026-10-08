@@ -1,0 +1,122 @@
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { Button } from '../../../components/ui';
+import { sessionStore } from '../../../lib/session';
+import type { StepProps } from '..';
+import { Bubble, Messages, OttoGlyph, Rise, useReveal, type RevealStep } from '../motion';
+
+const sequence: RevealStep[] = [
+  { wait: 40 },
+  { wait: 60 },
+  { wait: 1050 },
+  { wait: 650, typing: 600 },
+  { wait: 400, typing: 600 },
+  { wait: 400, typing: 600 },
+  { wait: 400 },
+];
+
+export function Welcome({ arrived, onNext }: StepProps) {
+  const hosted = useSyncExternalStore(
+    sessionStore.subscribe,
+    () => sessionStore.getSnapshot().session?.auth.mode === 'google',
+  );
+  const section = useRef<HTMLElement>(null);
+  const slot = useRef<HTMLSpanElement>(null);
+  const [offset, setOffset] = useState({ dx: 0, dy: 0 });
+  const {
+    revealed: stage,
+    typing,
+    played,
+    replay,
+  } = useReveal(sequence, {
+    enabled: arrived === 'forward',
+  });
+  useLayoutEffect(() => {
+    if (stage !== 1 || !section.current || !slot.current) return;
+    const area = section.current.getBoundingClientRect();
+    const target = slot.current.getBoundingClientRect();
+    const scale = area.width / (section.current.offsetWidth || area.width) || 1;
+    setOffset({
+      dx: Math.round((area.left + area.width / 2 - target.left - target.width / 2) / scale),
+      dy: Math.round((area.top + area.height / 2 - target.top - target.height / 2) / scale),
+    });
+  }, [stage]);
+  const away = `translate(${offset.dx}px, ${offset.dy}px)`;
+  const avatar: CSSProperties =
+    stage === 0
+      ? { opacity: 0, transition: 'none' }
+      : stage === 1
+        ? { opacity: 0, transform: `${away} scale(1.8)`, transition: 'none' }
+        : stage === 2
+          ? {
+              transform: `${away} scale(3)`,
+              transition: 'transform 640ms var(--ease-pop), opacity 300ms ease-out',
+            }
+          : {
+              transform: 'translate(0, 0) scale(1)',
+              transition: 'transform 760ms var(--ease-travel)',
+            };
+  return (
+    <section
+      ref={section}
+      className={`ob-step ob-welcome${stage === 0 ? ' ob-welcome-reset' : ''}`}
+      data-analytics-public
+    >
+      <Messages
+        revealed={Math.max(0, stage - 3)}
+        typing={typing}
+        avatar={
+          <span ref={slot} className="ob-avatar ob-welcome-slot">
+            <button
+              type="button"
+              className="ob-welcome-avatar"
+              style={avatar}
+              title="Say hi again"
+              aria-label="Say hi again"
+              onClick={replay}
+            >
+              <OttoGlyph mode={typing ? 'thinking' : 'idle'} />
+            </button>
+          </span>
+        }
+        items={[
+          <Bubble className="ob-greeting">
+            <span className="ob-greeting-title">
+              <span
+                className={`ob-wave-hand${played && stage >= 4 ? ' waving' : ''}`}
+                aria-hidden="true"
+              >
+                👋
+              </span>
+              Hey, I’m Otto.
+            </span>
+            <span className="ob-greeting-sub">
+              Your personal assistant for <strong>work and life</strong>.
+            </span>
+          </Bubble>,
+          <Bubble>
+            {hosted ? (
+              'I work'
+            ) : (
+              <>
+                I run on <strong>your computer</strong> and work
+              </>
+            )}{' '}
+            in <strong>the apps you already use</strong>. Let’s get to know each other a bit first,
+            so I can really help.
+          </Bubble>,
+          <Bubble>
+            It’s <strong>safe</strong> to connect your work accounts. Your{' '}
+            <strong>keys and passwords are encrypted</strong>, and I{' '}
+            <strong>check with you before I send, post or delete</strong> anything you didn’t ask
+            for.
+          </Bubble>,
+        ]}
+      />
+      <Rise show={stage >= 7} className="ob-welcome-cta">
+        <Button className="ob-next" onClick={onNext}>
+          Let’s go
+        </Button>
+      </Rise>
+    </section>
+  );
+}

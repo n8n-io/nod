@@ -1,0 +1,175 @@
+.ob-email-card {
+  display: grid;
+  gap: 24px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--dialog-radius);
+  background: var(--surface);
+}
+.ob-email-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.ob-email-tile {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--card-radius);
+  background: var(--control);
+}
+.ob-email-tile > img {
+  display: block;
+}
+.ob-email-title {
+  flex: 1;
+  min-width: 0;
+}
+.ob-email-name {
+  font-weight: 500;
+}
+.ob-email-muted {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.ob-email-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: var(--text-control);
+  font-weight: 500;
+  animation: ob-step-in 260ms ease-out;
+}
+.ob-email-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 16px;
+}
+.ob-email-badge {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--control);
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  font-weight: 600;
+  transition:
+    background 200ms ease,
+    color 200ms ease;
+}
+.ob-email-badge[data-state='active'] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.ob-email-badge[data-state='done'] {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.ob-email-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.ob-email-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 28px;
+}
+.ob-email-label > p {
+  font-weight: 500;
+}
+.ob-email-link,
+.ob-email-change {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-control);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.ob-email-link {
+  color: var(--link);
+}
+.ob-email-link:hover {
+  color: var(--link-hover);
+}
+.ob-email-change {
+  color: var(--muted-foreground);
+}
+.ob-email-change:hover {
+  color: var(--foreground);
+}
+.ob-email-explain {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: var(--card-radius);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+  line-height: 1.55;
+  animation: ob-step-in 200ms ease-out;
+}
+.ob .ob-email-explain a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: start;
+  font-weight: 500;
+}
+.ob-email-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ob-email-form > .input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.ob-email-error {
+  color: var(--error);
+  font-size: var(--text-control);
+}
+.ob-email-saved {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+}
+.ob-email-connect {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+.ob-email-connect > .ob-email-muted {
+  flex: 1 1 200px;
+}
+.ob-email-waiting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.ob-email-waiting > svg {
+  color: var(--text-secondary);
+}
+.ob-email-waiting > p {
+  flex: 1;
+}
+.ob-email-done > strong {
+  font-weight: 500;
+}

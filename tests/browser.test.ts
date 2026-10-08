@@ -3931,7 +3931,7 @@ test('native Settings and feedback preserve the active credential form', async (
         if (path === '/api/session') return Response.json({
           auth: { mode: 'local', googleAvailable: false },
           user: { id: 'synthetic-owner', name: 'Fixture', email: null, avatarUrl: null },
-          settings: { theme: 'system', onboardingCompleted: true },
+          settings: { theme: 'system', onboardingCompleted: true, usageData: false },
           capabilities: { developer: true },
         });
         if (path === '/api/feedback/context') return Response.json({
@@ -4008,7 +4008,7 @@ test('native Settings and feedback preserve the active credential form', async (
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
-test('a selected model arriving during onboarding keeps the picker closed', async () => {
+test('a selected model arriving after settings load keeps the picker closed', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,
     input: `
@@ -4034,7 +4034,7 @@ test('a selected model arriving during onboarding keeps the picker closed', asyn
       const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
       const root = createRoot(document.querySelector('#root'));
       try {
-        await act(async () => root.render(createElement(ModelSettings, { onboarding: true })));
+        await act(async () => root.render(createElement(ModelSettings)));
         models = {
           connections: [{ id: 'fixture', provider: 'openai', method: 'subscription', label: 'Fixture', status: 'connected', managed: false,
             models: [{ id: 'gpt-6-sol', name: 'GPT-6 Sol', efforts: ['high'], images: true, contextWindow: 1000 }] }],

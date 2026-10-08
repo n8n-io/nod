@@ -18,7 +18,6 @@ import type {
   RuntimeResult,
 } from '../ports/agent.ts';
 import { appConfirmation } from '../ports/agent.ts';
-import { welcomeGreeting, welcomePrompt } from './welcome.ts';
 import { isMessageReaction, reactionEmoji } from '../shared/emoji.ts';
 import { defaultPreferences } from './preferences.ts';
 import { formattingLocale, timeZoneRegion } from '../shared/date-locale.ts';
@@ -472,37 +471,6 @@ export async function restartOnboarding(expectedThreadId?: string) {
     prompt: onboardingPrompt,
   });
   return { turnId: result.turnId, threadId: result.threadId };
-}
-
-export const welcomeSourceId = 'onboarding:welcome';
-export async function startOnboarding(name?: string, apps: string[] = []) {
-  const greeting = welcomeGreeting(name, apps);
-  const started = await transaction(async (client) => {
-    const thread = await lockThread(client);
-    const blocked = await client.query(
-      `SELECT 1 FROM turns WHERE owner_id=$1 AND source_id=$2
-       UNION ALL SELECT 1 FROM turns WHERE thread_id=$3 AND source='user' AND status IN ('queued','running') LIMIT 1`,
-      [ownerId, welcomeSourceId, thread.id],
-    );
-    if (blocked.rowCount) return false;
-    const turnId = randomUUID();
-    await client.query(
-      `INSERT INTO turns(id,owner_id,thread_id,source,source_id,prompt,channel,background,read_only,status,finished_at)
-       VALUES($1,$2,$3,'event',$4,$5,'web',true,true,$6,CASE WHEN $6='succeeded' THEN now() END)`,
-      [
-        turnId,
-        ownerId,
-        thread.id,
-        welcomeSourceId,
-        welcomePrompt(greeting),
-        apps.length ? 'queued' : 'succeeded',
-      ],
-    );
-    await insertAssistantMessage(client, { threadId: thread.id, turnId }, greeting);
-    if (apps.length) await sendDrain(client, thread.id);
-    return true;
-  });
-  if (started) refresh();
 }
 
 export async function reactToAssistantMessage(

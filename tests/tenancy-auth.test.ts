@@ -110,10 +110,20 @@ describe('gateway', () => {
       sessionCheckIntervalMs: 10,
       accounts: {
         async read() {
-          return { theme: 'system', onboardingCompleted: true, displayName: null };
+          return {
+            theme: 'system',
+            onboardingCompleted: true,
+            displayName: null,
+            usageData: false,
+          };
         },
         async update() {
-          return { theme: 'system', onboardingCompleted: true, displayName: null };
+          return {
+            theme: 'system',
+            onboardingCompleted: true,
+            displayName: null,
+            usageData: false,
+          };
         },
       },
     });

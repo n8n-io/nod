@@ -79,10 +79,21 @@ export interface VerificationEmail {
   authenticatedDomain: string;
   text: string;
 }
+export interface SentEmail {
+  from: string;
+  to: string[];
+  automated: boolean;
+  text: string;
+}
+export interface InboxSnippet {
+  subject: string;
+  snippet: string;
+}
 export interface IntegrationProvider {
   id: string;
   configured: boolean;
   setApiKey?(apiKey?: string): void;
+  verifyApiKey?(apiKey: string): Promise<boolean>;
   supportedServices?: readonly IntegrationService[];
   webhooksConfigured: boolean;
   supportsSubscriptions: readonly IntegrationService[];
@@ -108,6 +119,8 @@ export interface IntegrationProvider {
     query: VerificationEmailQuery,
     signal: AbortSignal,
   ): Promise<VerificationEmail[] | undefined>;
+  sentEmails?(accountId: string, signal: AbortSignal): Promise<SentEmail[]>;
+  inboxSnippets?(accountId: string, signal: AbortSignal): Promise<InboxSnippet[]>;
   pollInbox?(
     accountId: string,
     cursor: string | null,

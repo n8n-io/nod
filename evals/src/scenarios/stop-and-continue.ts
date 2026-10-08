@@ -14,19 +14,35 @@ export default scenario({
   seconds: 600,
   calibration: 'pending',
   user: { approve: true },
-  world: () => ({ apps: createApps(owner, {}) }),
-  async play(session) {
-    await session.interruptAfter(
+  world: () => ({ apps: createApps(owner, {}), filesBeforeStop: [] as string[] }),
+  async play(session, world) {
+    await session.interruptWhen(
       'Create five files in a folder called batch: file1.txt to file5.txt, each containing its own number. Create them one at a time with a 6 second pause between each so I can watch.',
-      14_000,
+      async () => {
+        world.filesBeforeStop = (await session.workspace.list()).filter((path) =>
+          /\/batch\//.test(path),
+        );
+        return world.filesBeforeStop.some((path) => path.endsWith('/batch/file2.txt'));
+      },
     );
     await session.say('continue');
   },
   evidence(run) {
     return `Files in the workspace: ${run.files.join(', ') || 'none'}.`;
   },
-  expect() {
+  expect(world) {
     return [
+      check(
+        'work-was-stopped-before-all-files-were-created',
+        (run) => ({
+          pass:
+            world.filesBeforeStop.length >= 2 &&
+            world.filesBeforeStop.length < 5 &&
+            run.turns.some((turn) => turn.status === 'cancelled'),
+          evidence: `${world.filesBeforeStop.length} files before Stop`,
+        }),
+        { aspect: 'process', failure: 'incomplete' },
+      ),
       check(
         'all-five-files-exist-exactly-once-with-their-number',
         async (run) => {

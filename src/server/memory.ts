@@ -54,6 +54,10 @@ const findInput = z
   .strict();
 const readInput = z.object({ path: z.union([area, path]) }).strict();
 const noteInput = z.object({ area, text: line(600), expires: z.iso.date().optional() }).strict();
+const restateInput = z
+  .array(z.object({ area, slug, text: line(600) }).strict())
+  .min(1)
+  .max(10);
 const changeInput = z
   .object({
     text: line(600).optional(),
@@ -344,6 +348,41 @@ export function createMemoryService(options: {
     });
   }
 
+  async function restate(raw: unknown) {
+    const notes = restateInput.parse(raw);
+    notes.forEach((note) => safe(note.text));
+    return owned((tree, now) => {
+      for (const note of notes) {
+        const current = locate(tree, pathOf(note));
+        if (current?.origin === 'stated' && current.text === note.text) continue;
+        if (current) archive(tree, current, 'superseded', now);
+        if (areaEntries(tree, note.area).some((entry) => same(entry.text, note.text))) continue;
+        if (tree.entries.length >= maxEntries) fail('Memory is full. Forget a note first.');
+        tree.entries.push({ ...note, origin: 'stated', updated: now, edited: now, sources: [] });
+      }
+    });
+  }
+
+  async function style(raw: string) {
+    const text = line(600).parse(raw);
+    safe(text);
+    return edit((tree) => {
+      const now = new Date().toISOString();
+      const current = locate(tree, 'preferences/writing-style');
+      if (current && (current.origin !== 'email' || current.text === text)) return;
+      if (current) archive(tree, current, 'superseded', now);
+      else if (tree.entries.length >= maxEntries) fail('Memory is full. Forget a note first.');
+      tree.entries.push({
+        area: 'preferences',
+        slug: 'writing-style',
+        text,
+        origin: 'email',
+        updated: now,
+        sources: [],
+      });
+    });
+  }
+
   async function change(target: string, raw: unknown) {
     const at = path.parse(target);
     const input = changeInput.parse(raw);
@@ -465,6 +504,8 @@ export function createMemoryService(options: {
     forget,
     edit,
     add,
+    restate,
+    style,
     change,
     restore,
     forgetArchived,

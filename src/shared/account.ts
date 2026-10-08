@@ -13,6 +13,7 @@ export interface AccountUser {
 export interface AccountSettings {
   theme: AccountTheme;
   onboardingCompleted: boolean;
+  usageData: boolean;
 }
 
 export interface SessionResponse {
@@ -27,6 +28,7 @@ export interface AccountUpdate {
   name?: string;
   theme?: AccountTheme;
   onboardingCompleted?: boolean;
+  usageData?: boolean;
 }
 
 export interface AccountPreparationResponse {

@@ -33,7 +33,7 @@ const messages: unknown[] = [];
 const session = () => ({
   auth: { mode: 'google', googleAvailable: true },
   user: { id: user, name: privateText, email: `${privateText}@example.test`, avatarUrl: null },
-  settings: { theme: 'system', onboardingCompleted: completed },
+  settings: { theme: 'system', onboardingCompleted: completed, usageData: true },
   capabilities: { developer: true },
   analytics: {
     enabled: true,

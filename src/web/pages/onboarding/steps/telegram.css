@@ -1,0 +1,221 @@
+.ob-tg-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 32px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--dialog-radius);
+  background: var(--surface);
+}
+.ob-tg-steps,
+.ob-tg-steps > ol {
+  display: grid;
+  align-content: start;
+  gap: 24px;
+}
+.ob-tg-steps > ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ob-tg-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+}
+.ob-tg-logo {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--telegram);
+  color: var(--gray-0);
+}
+.ob-tg-logo > svg {
+  margin-left: -2px;
+}
+.ob-tg-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 16px;
+  transition: opacity 200ms ease;
+}
+.ob-tg-item[data-state='next'] {
+  opacity: 0.5;
+}
+.ob-tg-badge {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--control);
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  font-weight: 600;
+  transition:
+    background 240ms ease,
+    color 240ms ease;
+}
+.ob-tg-badge > * {
+  grid-area: 1 / 1;
+  transition:
+    opacity 200ms ease-out,
+    transform 360ms var(--ease-pop);
+}
+.ob-tg-badge > svg {
+  opacity: 0;
+  transform: scale(0.4);
+}
+.ob-tg-item[data-state='active'] .ob-tg-badge {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.ob-tg-item[data-state='done'] .ob-tg-badge {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.ob-tg-item[data-state='done'] .ob-tg-badge > span {
+  opacity: 0;
+  transform: scale(0.4);
+}
+.ob-tg-item[data-state='done'] .ob-tg-badge > svg {
+  opacity: 1;
+  transform: none;
+}
+.ob-tg-body {
+  display: grid;
+  min-width: 0;
+}
+.ob-tg-body > .ob-grow {
+  margin-inline: -4px;
+}
+.ob-tg-text {
+  display: grid;
+  gap: 4px;
+  padding-top: 4px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.ob-tg-text > .ob-tg-title {
+  color: var(--foreground);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+.ob-tg-extra {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 8px 4px 4px;
+}
+.ob-tg-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+.ob-tg-form > .input {
+  flex: 1 1 180px;
+}
+.ob-tg-spinner {
+  flex-shrink: 0;
+  animation: ob-spin 0.9s linear infinite;
+}
+.ob-tg-swap {
+  animation: ob-tg-swap 260ms ease-out;
+}
+.ob-tg-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+}
+.ob-tg-candidate {
+  display: grid;
+  gap: 8px;
+  font-size: var(--text-control);
+}
+.ob-tg-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ob-tg-error {
+  color: var(--error);
+  font-size: var(--text-control);
+}
+.ob-tg-panel {
+  display: grid;
+  min-height: 300px;
+  padding: 24px;
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--foreground) 4%, var(--surface));
+  text-align: center;
+}
+.ob-tg-layer {
+  --rise-from: scale(0.96);
+  display: grid;
+  grid-area: 1 / 1;
+  place-items: center;
+  align-content: center;
+  gap: 16px;
+}
+.ob-tg-code {
+  padding: 12px;
+  border-radius: var(--card-radius);
+  background: var(--gray-0);
+  line-height: 0;
+}
+.ob-tg-code-empty {
+  display: grid;
+  place-items: center;
+  width: 184px;
+  height: 184px;
+  color: var(--gray-70);
+}
+.ob-tg-caption {
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+}
+.ob a.ob-tg-open {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.ob a.ob-tg-open:hover {
+  color: var(--foreground);
+}
+.ob-tg-check {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--success-soft);
+  color: var(--success);
+}
+.ob-tg-done[data-show='true'] > .ob-tg-check {
+  animation: ob-tg-pop 520ms var(--ease-pop);
+}
+.ob-tg-paired {
+  font-weight: 500;
+}
+@keyframes ob-tg-swap {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes ob-tg-pop {
+  from {
+    transform: scale(0.5);
+  }
+}
+@media (max-width: 640px) {
+  .ob-tg-card {
+    padding: 16px;
+  }
+}
