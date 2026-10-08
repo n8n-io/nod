@@ -110,7 +110,6 @@ process.env.OTTO_DATA_ROOT = join(directory, '.local');
 const access = await accessKey(process.env.OTTO_DATA_ROOT);
 process.env.OTTO_PUBLIC_URL = baseUrl;
 process.env.NODE_ENV = 'production';
-process.env.DEV_INSPECTOR = 'true';
 if (provider === 'anthropic') process.env.ANTHROPIC_API_KEY = apiKey;
 else process.env.OPENAI_API_KEY = apiKey;
 process.chdir(directory);

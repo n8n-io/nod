@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Check, CornerUpLeft, SmilePlus, ScanSearch, MoreHorizontal, X } from 'lucide-react';
+import { Copy, Check, CornerUpLeft, SmilePlus, MoreHorizontal, X } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -118,7 +118,6 @@ function ReactionGlyph({ value }: { value: string }) {
 export function MessageBubble({
   message,
   connectedAppIds,
-  inspectorEnabled = false,
   grouped = false,
   streaming = false,
   onReply,
@@ -126,7 +125,6 @@ export function MessageBubble({
 }: {
   message: Message;
   connectedAppIds?: ReadonlySet<string>;
-  inspectorEnabled?: boolean;
   grouped?: boolean;
   streaming?: boolean;
   onReply?(): void;
@@ -149,7 +147,6 @@ export function MessageBubble({
   const menuTrigger = useRef<HTMLElement | null>(null);
   const pickerTrigger = useRef<HTMLElement | null>(null);
   const pickerElement = useRef<HTMLDivElement>(null);
-  const canInspect = message.role === 'assistant' && inspectorEnabled && Boolean(message.turnId);
   const agentReaction =
     message.role === 'user'
       ? reactionEmoji(message.reactions?.find((item) => item.actor === 'assistant')?.reaction ?? '')
@@ -306,14 +303,6 @@ export function MessageBubble({
       setError('The message could not be copied.');
     }
   }
-  function inspect() {
-    setMenu(null);
-    window.dispatchEvent(
-      new CustomEvent('otto:inspect-message', {
-        detail: { messageId: message.id, turnId: message.turnId },
-      }),
-    );
-  }
   function reply() {
     setMenu(null);
     onReply?.();
@@ -419,17 +408,6 @@ export function MessageBubble({
                     <SmilePlus size={16} />
                   </Button>
                 )}
-                {canInspect && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="Inspect message"
-                    title="Inspect"
-                    onClick={inspect}
-                  >
-                    <ScanSearch size={16} />
-                  </Button>
-                )}
               </div>
               <Button
                 className="message-more-action"
@@ -520,12 +498,6 @@ export function MessageBubble({
               <Copy size={16} />
               Copy
             </button>
-            {canInspect && (
-              <button role="menuitem" onClick={inspect}>
-                <ScanSearch size={16} />
-                Inspect
-              </button>
-            )}
           </div>,
           document.body,
         )}

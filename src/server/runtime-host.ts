@@ -81,7 +81,6 @@ export function createTenantRuntimeHost(options: {
   masterKey: Uint8Array;
   environment: string;
   operatorEnvironment: Record<string, string | undefined>;
-  developerIds?: ReadonlySet<string>;
   leaseDurationMs?: number;
   heartbeatMs?: number;
 }): TenantRuntimeHost {
@@ -205,16 +204,11 @@ export function createTenantRuntimeHost(options: {
         OTTO_DATA_ROOT: '/data',
         DATABASE_URL: configuration.databaseUrl,
         DATABASE_POOL_MAX: String(configuration.poolMax),
-        INSPECTOR_DATABASE_POOL_MAX: '1',
         PGBOSS_SCHEMA: configuration.jobsSchema,
         PORT: '4310',
         NODE_ENV: 'production',
         OTTO_ANALYTICS_ENABLED: String(analyticsEnabled(options.operatorEnvironment)),
         OTTO_ANALYTICS_ENVIRONMENT: analyticsEnvironment(options.operatorEnvironment),
-        DEV_INSPECTOR: String(
-          options.operatorEnvironment.DEV_INSPECTOR === 'true' &&
-            (options.developerIds?.has(ownerId) ?? false),
-        ),
         OTTO_VAULT_KEY: Buffer.from(
           hkdfSync(
             'sha256',

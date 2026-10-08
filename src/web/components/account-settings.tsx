@@ -10,6 +10,7 @@ import {
   LogOut,
   Monitor,
   Moon,
+  ShieldCheck,
   SlidersHorizontal,
   Sun,
   UserRound,
@@ -46,6 +47,7 @@ import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { ComposioSettings, DesktopOptions, useDesktopSettings } from './desktop-settings';
 import { Memory } from '../pages/memory';
+import { Trust } from '../pages/trust';
 import { isEditingTarget, navigationShortcut, shortcutLabel } from '../lib/navigation';
 
 const editablePreferences = ['quietHoursEnabled', 'quietStart', 'quietEnd'] as const;
@@ -393,10 +395,10 @@ export function AccountSettings({
   const desktop = desktopSettingsAvailable();
   const native = useDesktopSettings(desktop && open);
   const tabs: AccountTab[] = desktop
-    ? ['General', 'Models', 'Preferences', 'Memory']
+    ? ['General', 'Models', 'Preferences', 'Memory', 'Trust']
     : account.local
-      ? ['Models', 'Appearance', 'Preferences', 'Memory']
-      : ['Profile', 'Models', 'Appearance', 'Preferences', 'Memory'];
+      ? ['Models', 'Appearance', 'Preferences', 'Memory', 'Trust']
+      : ['Profile', 'Models', 'Appearance', 'Preferences', 'Memory', 'Trust'];
   const selectedTab = tabs.includes(initialTab) ? initialTab : desktop ? 'General' : 'Appearance';
   const [tab, setTab] = useState<AccountTab>(selectedTab);
   const [composioDirty, setComposioDirty] = useState(false);
@@ -487,13 +489,11 @@ export function AccountSettings({
           }
         }}
         onKeyDown={(event) => {
-          if (
-            navigationShortcut(event.nativeEvent)?.type !== 'memory' ||
-            isEditingTarget(event.target)
-          )
+          const shortcut = navigationShortcut(event.nativeEvent)?.type;
+          if ((shortcut !== 'memory' && shortcut !== 'trust') || isEditingTarget(event.target))
             return;
           event.preventDefault();
-          changeTab('Memory');
+          changeTab(shortcut === 'memory' ? 'Memory' : 'Trust');
         }}
       >
         <DialogTitle className="sr-only" data-analytics-public>
@@ -514,9 +514,11 @@ export function AccountSettings({
                     ? UserRound
                     : value === 'Memory'
                       ? Brain
-                      : value === 'Appearance' || value === 'General'
-                        ? Sun
-                        : SlidersHorizontal;
+                      : value === 'Trust'
+                        ? ShieldCheck
+                        : value === 'Appearance' || value === 'General'
+                          ? Sun
+                          : SlidersHorizontal;
               return (
                 <button
                   key={value}
@@ -525,10 +527,16 @@ export function AccountSettings({
                   role="tab"
                   aria-selected={value === tab}
                   aria-label={value}
-                  aria-keyshortcuts={value === 'Memory' ? 'Meta+Y Control+Y' : undefined}
-                  title={
+                  aria-keyshortcuts={
                     value === 'Memory'
-                      ? `${value} (${shortcutLabel('y', /Mac|iPhone|iPad/.test(navigator.platform))})`
+                      ? 'Meta+Y Control+Y'
+                      : value === 'Trust'
+                        ? 'Meta+I Control+I'
+                        : undefined
+                  }
+                  title={
+                    value === 'Memory' || value === 'Trust'
+                      ? `${value} (${shortcutLabel(value === 'Memory' ? 'y' : 'i', /Mac|iPhone|iPad/.test(navigator.platform))})`
                       : value
                   }
                   aria-controls={`${id}-content`}
@@ -568,7 +576,7 @@ export function AccountSettings({
             </header>
             <div
               key={tab}
-              className={`account-settings-body${tab === 'Memory' ? ' is-wide' : ''}`}
+              className={`account-settings-body${tab === 'Memory' || tab === 'Trust' ? ' is-wide' : ''}`}
               tabIndex={0}
             >
               {!account.local && tab === 'Profile' && (
@@ -711,6 +719,7 @@ export function AccountSettings({
                 </>
               )}
               {tab === 'Memory' && <Memory />}
+              {tab === 'Trust' && <Trust />}
               {tab === 'Models' && (
                 <>
                   <ModelSettings onDirtyChange={desktop ? setModelDirty : undefined} />

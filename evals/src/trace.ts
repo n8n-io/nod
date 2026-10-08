@@ -89,7 +89,7 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
   );
   if (missing.length)
     throw new Error(
-      `Inspector prompt capture is missing for completed background turns: ${missing.map((turn) => turn.id).join(', ')}`,
+      `Prompt capture is missing for completed background turns: ${missing.map((turn) => turn.id).join(', ')}`,
     );
 }
 
@@ -207,30 +207,35 @@ export async function collect(options: {
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));
-  const prompts = (
-    await stack.pool.query('SELECT turn_id,payload FROM inspector_prompts ORDER BY created_at,id')
-  ).rows.map((row) => ({ turnId: row.turn_id, instruction: row.payload.instruction }));
+  const prompts = stack.prompts;
   requireBackgroundPrompts(turns, prompts);
-  const background = (
-    await stack.pool.query(`SELECT r.* FROM inspector_records r JOIN turns t ON t.id=r.turn_id
-      WHERE t.background ORDER BY r.started_at,r.id`)
-  ).rows;
-  for (const record of background) {
-    if (record.kind === 'tool')
-      tools.push({
-        turnId: record.turn_id,
-        name: record.name,
-        input: record.input,
-        output: JSON.stringify(record.output ?? record.error ?? ''),
-        isError: record.status !== 'succeeded',
-        at: new Date(record.started_at).getTime(),
+  const background = new Set(turns.filter((turn) => turn.background).map((turn) => turn.id));
+  const started = new Map<string, ToolCall>();
+  for (const { turnId, event } of stack.observations) {
+    if (!background.has(turnId)) continue;
+    if (event.type === 'tool_start') {
+      const call: ToolCall = {
+        turnId,
+        name: event.name,
+        input: event.input,
+        output: '',
+        isError: false,
+        at: Date.parse(event.startedAt),
         lead: '',
-      });
-    if (record.kind === 'model') {
+      };
+      started.set(event.id, call);
+      tools.push(call);
+    } else if (event.type === 'tool_end') {
+      const call = started.get(event.id);
+      if (call) {
+        call.output = JSON.stringify(event.output ?? event.error ?? '');
+        call.isError = event.status !== 'succeeded';
+      }
+    } else {
       modelCalls++;
-      tokens += record.usage?.totalTokens ?? 0;
-      if (typeof record.usage?.costUsd === 'number') {
-        cost += record.usage.costUsd;
+      tokens += event.totalTokens;
+      if (typeof event.costUsd === 'number') {
+        cost += event.costUsd;
         costKnown = true;
       }
     }

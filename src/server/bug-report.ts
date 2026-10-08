@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { activeThread } from './thread.ts';
-import { createInspectorRedactor } from './inspector-redaction.ts';
+import { createRedactor } from './redaction.ts';
 import { feedbackLimits } from '../shared/feedback.ts';
 
 type RecordValue = Record<string, unknown>;
@@ -8,7 +8,6 @@ type RecordValue = Record<string, unknown>;
 export interface FeedbackReportOptions {
   pool: Pool;
   ownerId: string;
-  captureEnabled(): boolean;
   secrets?: string[];
   provider?: string;
   model?: string;
@@ -18,7 +17,7 @@ export interface FeedbackReportOptions {
 export async function buildFeedbackReport(options: FeedbackReportOptions) {
   const thread = await activeThread(options.pool, options.ownerId);
   const values = [options.ownerId, thread.id];
-  const [messages, turns, trace] = await Promise.all([
+  const [messages, turns] = await Promise.all([
     options.pool.query(
       `SELECT id,role,text,turn_id,created_at FROM messages
        WHERE owner_id=$1 AND thread_id=$2 AND created_at >= now()-interval '24 hours'
@@ -31,24 +30,14 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
        ORDER BY created_at DESC,id DESC LIMIT 21`,
       values,
     ),
-    options.pool.query(
-      `SELECT id,turn_id,kind,name,status,input,output,error,duration_ms,started_at,finished_at
-       FROM inspector_records WHERE owner_id=$1 AND thread_id=$2
-       AND recorded_at >= now()-interval '24 hours'
-       ORDER BY started_at DESC,id DESC LIMIT 61`,
-      values,
-    ),
   ]);
   const entries = (await options.sessionEntries?.(thread.id)) ?? [];
-  const redact = createInspectorRedactor(
-    [...(options.secrets ?? []), ...savedCredentialValues(entries)],
-    { string: 4000, payload: 12_000, minimumSecretLength: 1 },
-  );
-  const toolCaptureEnabled = options.captureEnabled();
-  const useSessionTrace = !toolCaptureEnabled || !trace.rows.length;
-  const toolTrace = useSessionTrace
-    ? savedToolTrace(entries, Date.now())
-    : { rows: trace.rows.slice(0, 60), truncated: trace.rows.length > 60 };
+  const redact = createRedactor([...(options.secrets ?? []), ...savedCredentialValues(entries)], {
+    string: 4000,
+    payload: 12_000,
+    minimumSecretLength: 1,
+  });
+  const toolTrace = savedToolTrace(entries, Date.now());
   const report = {
     format: 'otto-feedback-report-v1',
     generatedAt: new Date().toISOString(),
@@ -57,8 +46,7 @@ export async function buildFeedbackReport(options: FeedbackReportOptions) {
     model: options.model,
     coverage: {
       hours: 24,
-      toolCaptureEnabled,
-      toolTraceSource: useSessionTrace ? 'saved-session' : 'inspector',
+      toolTraceSource: 'saved-session',
       maximumMessages: 30,
       maximumTurns: 20,
       maximumToolRecords: 60,

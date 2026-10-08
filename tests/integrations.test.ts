@@ -38,15 +38,10 @@ import { registerLocalAccess } from '../src/server/access.ts';
 import { registerAnalyticsRoutes, type AnalyticsEvent } from '../src/server/analytics.ts';
 import { createIntegrations, eventOverview } from '../src/server/integrations.ts';
 import { createIntegrationKeyService } from '../src/server/integration-key.ts';
-import { createErrorRedactor } from '../src/server/inspector-redaction.ts';
-import { createProviderUsageStore } from '../src/server/provider-usage.ts';
-import {
-  meterAgent,
-  meterComputer,
-  meterIntegrations,
-  meterRelevance,
-  meterSpeech,
-} from '../src/server/provider-metering.ts';
+import { createErrorRedactor } from '../src/server/redaction.ts';
+import { createLedger } from '../src/server/ledger.ts';
+import { usagePdf } from '../src/server/usage-report.ts';
+import type { TrustEntry } from '../src/shared/trust.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
 import type { Connection } from '../src/shared/contracts.ts';
@@ -3652,15 +3647,12 @@ async function managedReconnectFixture(t: TestContext, watchRequested = true) {
   t.mock.method(client.triggers, 'delete', async (id: string) => {
     unsubscribed.push(id);
   });
-  const provider = meterIntegrations(
-    createComposioProvider({
-      client,
-      authConfigs: { gmail: 'different-current-default' },
-      webhookSecret: 'fixture-signing-secret',
-      webhookUrl: 'https://fixture.example.test/api/webhooks/composio',
-    }),
-    createProviderUsageStore(pool, { ownerId, enabled: () => false, coverage: [] }),
-  );
+  const provider = createComposioProvider({
+    client,
+    authConfigs: { gmail: 'different-current-default' },
+    webhookSecret: 'fixture-signing-secret',
+    webhookUrl: 'https://fixture.example.test/api/webhooks/composio',
+  });
   const integrations = await createIntegrations(pool, {
     ownerId,
     provider,
@@ -7409,244 +7401,189 @@ test(
 );
 
 test(
-  'provider usage stays owned, counts all operations, preserves unknown pricing and avoids payload capture',
+  'the ledger keeps owned costs and actions, reports them and enforces the monthly limit',
   { skip: !process.env.TEST_DATABASE_URL },
   async () => {
-    const schema = `test_usage_${randomUUID().replaceAll('-', '')}`;
+    const schema = `test_ledger_${randomUUID().replaceAll('-', '')}`;
     const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA ${schema}`);
     const pool = new pg.Pool({
       connectionString: process.env.TEST_DATABASE_URL,
       options: `-c search_path=${schema}`,
     });
-    const turn = randomUUID(),
-      foreign = randomUUID();
-    let enabled = true;
-    const usage = createProviderUsageStore(pool, {
-      ownerId: 'owner',
-      enabled: () => enabled,
-      coverage: [],
-    });
     const app = Fastify();
+    const chat = randomUUID(),
+      scheduled = randomUUID(),
+      foreign = randomUUID(),
+      schedule = randomUUID();
     try {
-      await pool.query('CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL)');
-      await pool.query('INSERT INTO turns VALUES($1,$2),($3,$4)', [
-        turn,
-        'owner',
-        foreign,
-        'other',
-      ]);
-      await usage.initialize();
-      usage.registerRoutes(app);
-      const base = {
+      await pool.query(`
+        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,source text NOT NULL,source_id text,
+          message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
+          read_only boolean NOT NULL DEFAULT false,error text,created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
+        CREATE TABLE messages(id uuid,text text);
+        CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text);
+        CREATE TABLE schedules(id uuid,owner_id text,title text);
+        CREATE TABLE notifications(owner_id text,turn_id uuid,summary text)`);
+      await pool.query(
+        `INSERT INTO turns(id,owner_id,source,source_id,prompt,created_at) VALUES
+          ($1,'owner','user',NULL,'Tell Sam we take the quote',now()-interval '2 hours'),
+          ($2,'owner','schedule',$4,'Run the morning brief',now()-interval '1 hour'),
+          ($3,'other','user',NULL,'Foreign request',now())`,
+        [chat, scheduled, foreign, `schedule:${schedule}:1:now`],
+      );
+      await pool.query("INSERT INTO schedules VALUES($1,'owner','Morning brief')", [schedule]);
+      await pool.query(
+        "INSERT INTO turn_events(turn_id,type) VALUES($1,'tool_complete'),($1,'tool_complete'),($2,'tool_complete'),($3,'tool_complete')",
+        [chat, scheduled, foreign],
+      );
+      const ledger = createLedger({ pool, ownerId: 'owner' });
+      await ledger.initialize();
+      ledger.registerRoutes(app);
+      const forwarded: AgentEvent[] = [];
+      const usage = (turnId: string, costUsd: number | null): AgentEvent => ({
+        type: 'model_usage',
+        id: randomUUID(),
         provider: 'openai',
-        category: 'agent' as const,
-        operation: 'response',
-        status: 'succeeded' as const,
-        durationMs: 10,
-        turnId: turn,
-      };
-      const id = randomUUID();
-      usage.record({ ...base, id, inputTokens: 100, costUsd: 0.01, pricing: 'sdk_estimate' });
-      usage.record({ ...base, id, inputTokens: 100, costUsd: 0.01, pricing: 'sdk_estimate' });
-      usage.record({ ...base, inputTokens: 25, costUsd: 100, pricing: 'unavailable' });
-      usage.record({ ...base, turnId: foreign, inputTokens: 999 });
-      await usage.withTurn(turn, () =>
-        usage.track(
-          { provider: 'composio', category: 'integration', operation: 'execute' },
-          async () => ({ private: 'never stored' }),
-        ),
+        model: 'fixture',
+        inputTokens: 4,
+        outputTokens: 2,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 6,
+        costUsd,
+        costSource: costUsd === null ? 'unavailable' : 'sdk_estimate',
+        createdAt: new Date().toISOString(),
+      });
+      const agent = ledger.agent({
+        async open(options) {
+          return {
+            resumed: false,
+            async prompt() {
+              options.onEvent(usage(options.turnId, options.turnId === chat ? 0.4 : null));
+              options.onEvent({
+                type: 'provider_usage',
+                usage: {
+                  provider: 'openai',
+                  category: 'agent',
+                  operation: 'compaction',
+                  status: 'succeeded',
+                  durationMs: 1,
+                  costUsd: 0.1,
+                  pricing: 'sdk_estimate',
+                },
+              });
+            },
+            abort() {},
+            dispose() {},
+          };
+        },
+        dispose() {},
+      });
+      for (const turnId of [chat, scheduled, foreign])
+        await (
+          await agent.open({
+            threadId: randomUUID(),
+            turnId,
+            systemPrompt: 'Synthetic prompt',
+            tools: [],
+            workspace: fakeWorkspace().open({
+              threadId: randomUUID(),
+              workspacePath: '/fixture/workspace',
+              signal: new AbortController().signal,
+            }),
+            runTool: (_name, _params, run) => run(),
+            shouldStop: () => false,
+            onEvent: (event) => forwarded.push(event),
+          })
+        ).prompt('Synthetic message', []);
+      assert.deepEqual(
+        forwarded.map((event) => event.type),
+        ['model_usage', 'model_usage', 'model_usage'],
       );
-      await assert.rejects(
-        usage.track({ provider: 'jev', category: 'relevance', operation: 'classify' }, async () => {
-          throw new Error('private provider error');
-        }),
+      await ledger
+        .curator({
+          id: 'fixture',
+          configured: true,
+          curate: async (_request, _signal, report) => {
+            report?.({ model: 'fixture-small', costUsd: 0.05 });
+            return {};
+          },
+        })
+        .curate({ task: 'review', instructions: 'Synthetic', input: {} });
+      await ledger.action(chat, 'GMAIL_FETCH_EMAILS', { query: 'from:sam' });
+      await ledger.action(chat, 'GMAIL_SEND_EMAIL', { recipient_email: 'sam@example.test' });
+      await ledger.action(foreign, 'GMAIL_SEND_EMAIL', { recipient_email: 'x@example.test' });
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const rows = await pool.query('SELECT count(*)::int AS count FROM model_usage');
+        if (rows.rows[0].count === 5) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.deepEqual((await pool.query('SELECT DISTINCT owner_id FROM model_usage')).rows, [
+        { owner_id: 'owner' },
+      ]);
+      assert.deepEqual((await pool.query('SELECT action,effect FROM app_actions')).rows, [
+        { action: 'GMAIL_SEND_EMAIL', effect: 'outbound' },
+      ]);
+      const view = (await app.inject('/api/trust')).json();
+      assert.deepEqual(
+        { ...view.week, spentUsd: Math.round(view.week.spentUsd * 100) / 100 },
+        { things: 3, reached: 1, spentUsd: 0.65 },
       );
-      await usage.flush();
-      const current = await usage.read(turn);
-      const model = current.providers.find((row) => row.provider === 'openai')!;
-      assert.equal(model.requests, 2);
-      assert.equal(model.inputTokens, 125);
-      assert.equal(model.costUsd, 0.01);
-      assert.equal(model.pricedRequests, 1);
-      assert.equal(model.pricing, 'sdk_estimate');
-      assert.equal(current.providers.find((row) => row.provider === 'composio')?.costUsd, null);
+      assert.equal(view.month.unpriced, true);
+      assert.deepEqual(
+        view.entries.map((entry: TrustEntry) => [entry.title, entry.source, entry.costUsd]),
+        [
+          ['Morning brief', 'schedule', 0.1],
+          ['Tell Sam we take the quote', 'chat', 0.5],
+        ],
+      );
+      assert.deepEqual(view.entries[1].actions, [{ app: 'Gmail', label: 'send email' }]);
+      assert.equal(view.entries[0].unpriced, true);
+      const report = await ledger.report();
+      assert.deepEqual(
+        report.entries.map((entry) => entry.id),
+        view.entries.map((entry: TrustEntry) => entry.id),
+      );
+      const pdf = usagePdf(report, new Date()).toString('latin1');
+      assert.match(pdf, /^%PDF-1\.4\n/);
+      assert.match(pdf, /\(\d\d:\d\d  Tell Sam we take the quote \\\(Gmail: send email\\\)\) Tj/);
+      assert.doesNotMatch(pdf, /Foreign request/);
+      assert.ok(pdf.slice(Number(/startxref\n(\d+)/.exec(pdf)![1])).startsWith('xref\n'));
+      const limit = async (monthlyUsd: number | null) =>
+        (
+          await app.inject({ method: 'PUT', url: '/api/trust/limit', payload: { monthlyUsd } })
+        ).json().limit;
+      assert.deepEqual(await limit(1), { monthlyUsd: 1, reached: false });
+      assert.equal(await ledger.limitReached(), false);
+      await pool.query(
+        "INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd) VALUES('extra','owner',NULL,'fixture',0.5)",
+      );
+      assert.equal(await ledger.limitReached(), true);
+      assert.deepEqual((await app.inject('/api/trust')).json().limit, {
+        monthlyUsd: 1,
+        reached: true,
+      });
+      assert.equal(await limit(null), null);
+      assert.equal(await ledger.limitReached(), false);
+      assert.notEqual(
+        (await app.inject({ method: 'PUT', url: '/api/trust/limit', payload: { monthlyUsd: 0 } }))
+          .statusCode,
+        200,
+      );
       assert.equal(
-        current.providers.some((row) => row.provider === 'jev'),
-        false,
+        (await pool.query('SELECT count(*)::int AS n FROM spending_limits')).rows[0].n,
+        0,
       );
-      assert.equal(
-        (await usage.read()).providers.find((row) => row.provider === 'jev')?.failures,
-        1,
-      );
-      assert.equal(
-        (await app.inject(`/api/inspector/providers?turnId=${foreign}`)).statusCode,
-        404,
-      );
-      assert.doesNotMatch(
-        JSON.stringify((await pool.query('SELECT * FROM provider_usage')).rows),
-        /never stored|private provider error/,
-      );
-      enabled = false;
-      usage.record(base);
-      await usage.flush();
-      assert.equal(
-        (await usage.read(turn)).providers.find((row) => row.provider === 'openai')?.requests,
-        2,
-      );
-      assert.equal((await app.inject('/api/inspector/providers')).statusCode, 404);
-      enabled = true;
-      await pool.query("UPDATE provider_usage SET recorded_at=now()-interval '8 days'");
-      assert.equal((await usage.read()).providers.length, 0);
     } finally {
       await app.close();
-      await usage.close();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
     }
   },
 );
-
-test('metering covers capabilities without recording prompts, arguments, output or secrets', async () => {
-  const rows: unknown[][] = [];
-  const pool = {
-    query: async (sql: string, values?: unknown[]) => {
-      if (sql.includes('INSERT INTO provider_usage')) rows.push(values!);
-      return { rows: [], rowCount: 1 };
-    },
-  } as unknown as pg.Pool;
-  const usage = createProviderUsageStore(pool, {
-    ownerId: 'owner',
-    enabled: () => true,
-    coverage: [],
-  });
-  const events: AgentEvent[] = [];
-  const agent = meterAgent(
-    {
-      async open(options) {
-        return {
-          resumed: false,
-          async prompt() {
-            options.onEvent({
-              type: 'model_usage',
-              id: randomUUID(),
-              provider: 'openai',
-              model: 'fixture',
-              inputTokens: 4,
-              outputTokens: 2,
-              cacheReadTokens: 0,
-              cacheWriteTokens: 0,
-              totalTokens: 6,
-              costUsd: 0.1,
-              costSource: 'sdk_estimate',
-              createdAt: new Date().toISOString(),
-            });
-            options.onEvent({
-              type: 'provider_usage',
-              usage: {
-                provider: 'openai',
-                category: 'agent',
-                operation: 'compaction',
-                status: 'succeeded',
-                durationMs: 3,
-                inputTokens: 5,
-              },
-            });
-          },
-          abort() {},
-          dispose() {},
-        };
-      },
-      dispose() {},
-    },
-    usage,
-  );
-  await (
-    await agent.open({
-      threadId: randomUUID(),
-      turnId: randomUUID(),
-      systemPrompt: 'private prompt',
-      tools: [],
-      workspace: fakeWorkspace().open({
-        threadId: randomUUID(),
-        workspacePath: '/fixture/workspace',
-        signal: new AbortController().signal,
-      }),
-      runTool: (_name, _params, run) => run(),
-      shouldStop: () => false,
-      onEvent: (event) => events.push(event),
-    })
-  ).prompt('private text', []);
-  assert.equal(events.filter((event) => event.type === 'provider_usage').length, 0);
-  const speech = meterSpeech(
-    {
-      id: 'openai',
-      configured: true,
-      synthesize: async () => ({
-        bytes: Buffer.from('sound'),
-        mimeType: 'audio/mpeg',
-        fileName: 'reply.mp3',
-      }),
-    },
-    usage,
-  );
-  await speech.synthesize('private speech');
-  await meterRelevance(
-    { id: 'jev', configured: true, classify: async () => 'ignore' },
-    usage,
-  ).classify(
-    { private: 'context' },
-    {
-      instructions: 'private policy',
-      criteria: { ignore: '', digest: '', wake: '' },
-      minWakeConfidence: 0.5,
-    },
-  );
-  const integration = {
-    id: 'composio',
-    pollInbox: async () => ({ cursor: 'private-cursor', hasMore: false, messages: [] }),
-    restoreSession: async () => ({
-      id: 'private-session',
-      authorize: async () => ({ accountId: 'private-account', url: 'https://secret.example' }),
-      search: async () => ({ tools: [], suggestions: [] }),
-      execute: async () => ({ private: 'result' }),
-    }),
-  } as unknown as IntegrationProvider;
-  await (
-    await meterIntegrations(integration, usage).restoreSession('private-session')
-  ).execute('ACTION', { secret: 'private-credential' }, 'private-account');
-  await meterIntegrations(integration, usage).pollInbox!(
-    'private-account',
-    null,
-    new AbortController().signal,
-  );
-  await meterComputer(
-    {
-      ...fakeComputer(),
-      currentPage: async (threadId) => {
-        assert.equal(threadId, 'private-thread');
-        return { origin: 'https://private.example', url: 'https://private.example/verification' };
-      },
-    },
-    usage,
-  ).currentPage('private-thread');
-  await usage.flush();
-  assert.deepEqual(
-    rows.map((row) => row[5]).sort(),
-    [
-      'response',
-      'compaction',
-      'synthesize',
-      'classify',
-      'restore_session',
-      'execute',
-      'poll_inbox',
-      'current_page',
-    ].sort(),
-  );
-  assert.doesNotMatch(JSON.stringify(rows), /private|secret\.example/);
-});
 
 function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' = 'pollInbox'>(
   t: TestContext,
@@ -8176,10 +8113,7 @@ test('connected provider cancellation reaches session creation, search, schemas,
       return block(options.signal);
     },
   );
-  const usage = {
-    track: async (_input: unknown, run: () => Promise<unknown>) => run(),
-  } as Parameters<typeof meterIntegrations>[1];
-  const provider = meterIntegrations(createComposioProvider({ client }), usage);
+  const provider = createComposioProvider({ client });
   const session = await provider.createSession('fixture-owner', { gmail: ['fixture-account'] });
   for (const [name, run] of [
     ['create', (signal: AbortSignal) => provider.createSession('fixture-owner', {}, signal)],
@@ -8913,7 +8847,6 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
           model: 'fixture',
           llmReady: true,
           integrationsReady: true,
-          inspectorEnabled: false,
           localOnly: true,
           conversationResetEnabled: false,
         });

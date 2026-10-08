@@ -455,14 +455,6 @@
 .sidebar-collapsed .sidebar-account-menu .account-menu-trigger {
   padding-inline: 0;
 }
-@media (max-width: 1150px) {
-  .with-inspector .account-menu-chevron {
-    display: none;
-  }
-  .with-inspector .sidebar-account-menu .account-menu-trigger {
-    padding-inline: 0;
-  }
-}
 @media (max-width: 800px) {
   .account-menu-chevron {
     display: none;

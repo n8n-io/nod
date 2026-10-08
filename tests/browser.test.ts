@@ -57,7 +57,7 @@ import {
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { toolDefinitions } from '../src/runtime/tools.ts';
-import { createInspectorRedactor } from '../src/server/inspector-redaction.ts';
+import { createRedactor } from '../src/server/redaction.ts';
 import type { CredentialInjection } from '../src/server/vault.ts';
 import { createBrowserFixture } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
@@ -108,7 +108,6 @@ test(
     let currentId: string | undefined;
     let locked = false;
     let fail = false;
-    let inspectorEnabled = false;
     let browserHeld = false;
     let pageShown = true;
     let onView: ((signal: AbortSignal) => AsyncGenerator<Buffer>) | undefined;
@@ -116,7 +115,7 @@ test(
     const captures: string[] = [];
     const controls: unknown[] = [];
     const app = await createApp({
-      configuration: () => configuration({ inspectorEnabled }),
+      configuration: () => configuration(),
       runtime: {
         status: () => ({ browser: 'Ready', workspace: 'Ready' }),
         holdBrowserForUser: () => !browserHeld,
@@ -179,8 +178,6 @@ test(
           lastActivityAt: capturedAt,
         },
       });
-      for (const path of ['/api/inspector', '/api/inspector/screen'])
-        assert.equal((await request(path)).statusCode, 404);
       const frame = await request('/api/browser/screen');
       assert.equal(frame.statusCode, 200);
       assert.match(String(frame.headers['content-type']), /^image\/png/);
@@ -189,17 +186,14 @@ test(
       assert.equal(frame.headers['x-screen-state'], 'live');
       assert.equal(frame.body, 'synthetic-public-browser-frame');
       assert.deepEqual(captures, [thread.id]);
-      inspectorEnabled = true;
       await db.pool.query(
         "UPDATE turns SET status='waiting',waiting_reason='credentials' WHERE id=$1",
         [turnId],
       );
-      for (const path of ['/api/browser/screen', '/api/inspector/screen']) {
-        const pending = await request(path);
-        assert.equal(pending.statusCode, 423);
-        assert.equal(pending.headers['cache-control'], 'no-store');
-        assert.equal(pending.body.includes('synthetic-public-browser-frame'), false);
-      }
+      const paused = await request('/api/browser/screen');
+      assert.equal(paused.statusCode, 423);
+      assert.equal(paused.headers['cache-control'], 'no-store');
+      assert.equal(paused.body.includes('synthetic-public-browser-frame'), false);
       assert.deepEqual(captures, [thread.id]);
       await db.pool.query("UPDATE turns SET status='running',waiting_reason=NULL WHERE id=$1", [
         turnId,
@@ -2679,10 +2673,10 @@ test('a restarted credential session serves only its cached masked image without
   }
 });
 
-test('inspector masks nested credentials, headers and encoded JSON before persistence', () => {
+test('redaction masks nested credentials, headers and encoded JSON before persistence', () => {
   const secret = 'fixture-provider-secret-with/slash';
   const secrets = [secret];
-  const redact = createInspectorRedactor(secrets);
+  const redact = createRedactor(secrets);
   const input = {
     query: 'messages after yesterday',
     password: 'private-password',
@@ -2725,8 +2719,8 @@ test('inspector masks nested credentials, headers and encoded JSON before persis
   assert.ok(!rotated.includes(secret));
 });
 
-test('inspector masks secure links, common token strings and secret assignments in tool text', () => {
-  const redact = createInspectorRedactor();
+test('redaction masks secure links, common token strings and secret assignments in tool text', () => {
+  const redact = createRedactor();
   const values = [
     'opaque-form-token',
     'opaque-approval-id',
@@ -2757,7 +2751,7 @@ test('inspector masks secure links, common token strings and secret assignments 
 });
 
 test('short secret masking does not scan replacement markers again', () => {
-  const redact = createInspectorRedactor(['a', 'red'], { minimumSecretLength: 1 });
+  const redact = createRedactor(['a', 'red'], { minimumSecretLength: 1 });
   assert.equal(redact('red a'), '[redacted] [redacted]');
 });
 
@@ -2960,7 +2954,6 @@ function requestedChatState(): AppState {
       model: 'none',
       llmReady: true,
       integrationsReady: false,
-      inspectorEnabled: false,
       localOnly: true,
       conversationResetEnabled: false,
     },
@@ -3373,7 +3366,6 @@ for (const failure of ['rejected', 'disconnected'] as const)
         model: 'none',
         llmReady: true,
         integrationsReady: false,
-        inspectorEnabled: false,
         localOnly: true,
         conversationResetEnabled: false,
       },
@@ -3968,7 +3960,6 @@ test('chat keeps every message across refreshes after earlier messages were load
       model: 'none',
       llmReady: true,
       integrationsReady: false,
-      inspectorEnabled: false,
       localOnly: true,
       conversationResetEnabled: false,
     },

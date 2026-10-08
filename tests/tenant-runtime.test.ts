@@ -98,7 +98,6 @@ describe('runtime host', () => {
       environment: 'development',
       heartbeatMs,
       operatorEnvironment: {
-        DEV_INSPECTOR: 'false',
         OTTO_PUBLIC_URL: 'https://otto.example.test',
         OTTO_RUNTIME_URL: 'http://otto.runtime',
         OTTO_MASTER_KEY: 'synthetic-master-key',
@@ -442,7 +441,6 @@ describe('runtime host', () => {
       assert.equal(configuration.environment.OTTO_OWNER_ID, configuration.ownerId);
       assert.equal(configuration.environment.OTTO_CONTROL_URL, 'http://otto.control');
       assert.equal(configuration.environment.OPENAI_API_KEY, 'synthetic-server-provider-key');
-      assert.equal(configuration.environment.DEV_INSPECTOR, 'false');
       assert.equal(
         configuration.environment.OBJECT_STORAGE_ROOT,
         `/private/otto-files/${configuration.ownerId}`,

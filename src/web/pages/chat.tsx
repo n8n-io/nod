@@ -907,7 +907,6 @@ export function Chat({
                     message={message}
                     connectedAppIds={connectedAppIds}
                     streaming={streamIds.has(message.streamId ?? '')}
-                    inspectorEnabled={state.configuration.inspectorEnabled}
                     grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
                     onHandoffDone={
                       message.id === returningHandoff ||

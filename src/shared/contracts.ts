@@ -137,7 +137,6 @@ export interface Configuration {
   model: string;
   llmReady: boolean;
   integrationsReady: boolean;
-  inspectorEnabled: boolean;
   localOnly: boolean;
   conversationResetEnabled: boolean;
 }
@@ -154,11 +153,11 @@ export interface MessageHistoryPage {
   messages: Message[];
   hasMore: boolean;
 }
-export interface InspectorState {
-  turns: Turn[];
-  events: TurnEvent[];
-  runtime: { browser: string; workspace: string; database: string };
-  currentBrowser?: { threadId: string; title: string; status: string; lastActivityAt: string };
+export interface CurrentBrowser {
+  threadId: string;
+  title: string;
+  status: string;
+  lastActivityAt: string;
 }
 export type TaskStatus =
   'working' | 'needs_you' | 'waiting' | 'scheduled' | 'stalled' | 'done' | 'cancelled';

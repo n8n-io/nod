@@ -537,7 +537,7 @@ test('app reads in one batch run together while app changes run one at a time in
   assert.ok(events.indexOf('end GMAIL_CREATE_DRAFT') < events.indexOf('start NOTION_UPDATE_PAGE'));
 });
 
-test('saved memory reaches Pi but stays out of inspector records', async () => {
+test('saved memory reaches Pi but stays out of observations and prompt snapshots', async () => {
   const note = 'Prefers short synthetic reports.';
   const observations: unknown[] = [];
   const snapshots: unknown[] = [];

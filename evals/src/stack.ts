@@ -8,6 +8,7 @@ import pg from 'pg';
 import { parse } from 'dotenv';
 import { readFile } from 'node:fs/promises';
 import type { IntegrationProvider } from '../../src/ports/integrations.ts';
+import type { RuntimeObservation } from '../../src/ports/agent.ts';
 import { runProcess } from '../../src/providers/process.ts';
 import { agentModels } from '../../src/shared/model-defaults.ts';
 import { ChannelSetupFailure } from '../../src/ports/channel-settings.ts';
@@ -79,6 +80,8 @@ export interface Stack {
   pool: pg.Pool;
   bossSchema: string;
   sessionRoot: string;
+  observations: Array<{ turnId: string; event: RuntimeObservation }>;
+  prompts: Array<{ turnId: string; instruction: string }>;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   resetConversation(): Promise<void>;
   event(summary: string): Promise<string>;
@@ -126,7 +129,6 @@ export async function startStack(options: {
   process.env.OTTO_MODE = 'local';
   process.env.OTTO_DATA_ROOT = join(directory, '.local');
   process.env.NODE_ENV = 'production';
-  process.env.DEV_INSPECTOR = 'true';
   process.env[keyVariables[model.provider]] = model.apiKey;
   process.chdir(appSource);
 
@@ -296,7 +298,12 @@ export async function startStack(options: {
       dataRoot: join(directory, '.local'),
       container: browserContainer,
     });
+    const observations: Stack['observations'] = [];
+    const prompts: Stack['prompts'] = [];
     application = await createApplication({
+      observe: (turnId, event) => observations.push({ turnId, event }),
+      inspectPrompt: (turnId, snapshot) =>
+        prompts.push({ turnId, instruction: snapshot.instruction }),
       agent: createPiAgent({
         provider: model.provider,
         model: model.name,
@@ -351,6 +358,8 @@ export async function startStack(options: {
       pool,
       bossSchema,
       sessionRoot,
+      observations,
+      prompts,
       async exec(command, timeoutMs = 120_000) {
         const result = await runProcess(
           'docker',

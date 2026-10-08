@@ -74,7 +74,6 @@ test(
     const db = await import('../src/server/db.ts');
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
-    const { createPromptInspector } = await import('../src/server/inspector-prompts.ts');
     const { configuration, dataRoot, ownerId, port } = await import('../src/server/config.ts');
     const { localArtifacts, storeArtifact } = await import('../src/server/artifacts.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
@@ -108,13 +107,6 @@ test(
       refresh() {},
     });
     await personal.initialize({ workers: false });
-    const promptInspector = createPromptInspector(db.pool, {
-      ownerId,
-      enabled: () => true,
-      provider: 'fixture',
-      model: 'fixture',
-    });
-    await promptInspector.initialize(db.pool);
     let injected = 0;
     let executed = 0;
     const fixtureKey = randomBytes(32);
@@ -285,8 +277,8 @@ test(
     });
     let failRelease = 0;
     let taskHold = Promise.resolve();
-    const finishedTurns = new Set<string>();
 
+    let limitReached = false;
     const browserHolds: Array<{ threadId: string; until: number | null; runs: number }> = [];
     const dependencies: ThreadDependencies = {
       analytics: captureAnalytics,
@@ -295,9 +287,7 @@ test(
       },
       connectedApps: readConnectedApps,
       activityCheck: async (turn) => activityLookup?.(turn),
-      finishObservationSegment: async (turnId) => {
-        finishedTurns.add(turnId);
-      },
+      spendingLimitReached: async () => limitReached,
       speech: {
         synthesize: async () => {
           throw new Error('Unused fixture');
@@ -1058,6 +1048,34 @@ test(
           assert.equal(history.find((item) => item.text === 'done: steer-long')?.unseen, false);
         },
       );
+
+      await t.test('a reached spending limit pauses background turns but not chat', async (t) => {
+        limitReached = true;
+        t.after(() => {
+          limitReached = false;
+        });
+        const background = [
+          await thread.enqueueTurn('limit schedule fixture', {
+            source: 'schedule',
+            sourceId: `schedule:limit:${randomUUID()}:1`,
+          }),
+          await thread.enqueueTurn('limit event fixture', {
+            source: 'event',
+            sourceId: `notification:limit:${randomUUID()}`,
+          }),
+        ];
+        const chat = await thread.submitUserMessage('limit chat fixture', [], { channel: 'web' });
+        for (const turnId of [...background, chat.turnId]) await waitFor(settled(turnId));
+        for (const turnId of background) {
+          assert.equal(ran(turnId), undefined);
+          const row = (await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [turnId]))
+            .rows[0];
+          assert.equal(row.status, 'failed');
+          assert.match(row.error, /spending limit was reached/);
+        }
+        assert.ok(ran(chat.turnId));
+        assert.equal(await turnStatus(chat.turnId), 'succeeded');
+      });
 
       await t.test(
         'background turns see completed history from their trigger time without adopting active chat requests',
@@ -3106,7 +3124,6 @@ test(
       await thread.stopThreadWorkers();
       await quietRuntime.dispose();
       await app.close();
-      await promptInspector.close();
       await db.pool.end();
       await admin.query(`DROP SCHEMA IF EXISTS ${bossSchema} CASCADE`);
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -4776,20 +4793,16 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
         sampled.add('turns');
         return { rows: [{ status: 'running' }] };
       }
-      if (sql.includes('FROM inspector_records')) {
-        sampled.add('trace');
-        return { rows: [{ name: 'browser', output: { text: `Mirrored ${password}` } }] };
-      }
       assert.fail('Unexpected diagnostic query');
     },
   } as unknown as pg.Pool;
   const report = await buildFeedbackReport({
     pool,
     ownerId,
-    captureEnabled: () => true,
     sessionEntries: async (id) => {
       assert.equal(id, threadId);
-      assert.equal(sampled.size, 3);
+      assert.equal(sampled.size, 2);
+      const at = new Date().toISOString();
       return credentialAvailable
         ? [
             {
@@ -4797,6 +4810,24 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
                 role: 'toolResult',
                 toolName: 'get_credential',
                 content: [{ type: 'text', text: JSON.stringify({ password }) }],
+              },
+            },
+            {
+              type: 'message',
+              timestamp: at,
+              message: {
+                role: 'assistant',
+                content: [{ type: 'toolCall', id: 'mirror', name: 'browser', arguments: {} }],
+              },
+            },
+            {
+              type: 'message',
+              timestamp: at,
+              message: {
+                role: 'toolResult',
+                toolCallId: 'mirror',
+                toolName: 'browser',
+                content: [{ type: 'text', text: `Mirrored ${password}` }],
               },
             },
           ]
@@ -4810,7 +4841,6 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
     buildFeedbackReport({
       pool,
       ownerId,
-      captureEnabled: () => true,
       sessionEntries: async () => {
         throw new Error('Synthetic session unavailable');
       },
@@ -4819,20 +4849,19 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
   );
 });
 
-test('feedback diagnostics recover bounded private tool activity when inspector capture is unavailable', async () => {
+test('feedback diagnostics build bounded private tool activity from the saved session', async () => {
   const { buildFeedbackReport } = await import('../src/server/bug-report.ts');
   const ownerId = randomUUID();
   const threadId = randomUUID();
   const now = Date.now() - 1000;
   const password = 'synthetic-saved-session-password';
   const username = 'synthetic-saved-session-user';
-  let inspectorRows: unknown[] = [];
   const pool = {
     async query(sql: string, values: string[]) {
       assert.equal(values[0], ownerId);
       if (sql.includes('FROM threads')) return { rows: [{ id: threadId, status: 'idle' }] };
       assert.equal(values[1], threadId);
-      return { rows: sql.includes('FROM inspector_records') ? inspectorRows : [] };
+      return { rows: [] };
     },
   } as unknown as pg.Pool;
   function activity(
@@ -4922,14 +4951,13 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
   const options = {
     pool,
     ownerId,
-    captureEnabled: () => false,
     sessionEntries: async (id: string) => {
       assert.equal(id, threadId);
       return entries;
     },
   };
-  for (const captureEnabled of [false, true]) {
-    const encoded = await buildFeedbackReport({ ...options, captureEnabled: () => captureEnabled });
+  {
+    const encoded = await buildFeedbackReport(options);
     const report = JSON.parse(encoded);
     assert.equal(report.coverage.toolTraceSource, 'saved-session');
     assert.equal(report.coverage.truncated, false);
@@ -4969,14 +4997,6 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
     ])
       assert.ok(!encoded.includes(omitted), omitted);
   }
-  inspectorRows = [{ id: 'captured', name: 'browser', output: 'Captured activity' }];
-  const captured = JSON.parse(
-    await buildFeedbackReport({ ...options, captureEnabled: () => true }),
-  );
-  assert.equal(captured.coverage.toolTraceSource, 'inspector');
-  assert.equal(captured.trace.length, 1);
-  assert.equal(captured.trace[0].id, 'captured');
-  assert.equal(JSON.parse(await buildFeedbackReport(options)).trace.length, 7);
   entries = Array.from({ length: 60 }, (_, index) =>
     activity(`compact-${index}`, 'browser', {}, 'synthetic', now - (61 - index) * 1000),
   ).flat();
@@ -4989,11 +5009,6 @@ test('feedback diagnostics recover bounded private tool activity when inspector 
   assert.deepEqual(
     sampled.trace.map((row: { id: string }) => row.id),
     Array.from({ length: 60 }, (_, index) => `compact-${index + 1}`),
-  );
-  assert.equal(
-    JSON.parse(await buildFeedbackReport({ ...options, captureEnabled: () => true })).coverage
-      .truncated,
-    false,
   );
   const large = 'x'.repeat(3500);
   entries = Array.from({ length: 70 }, (_, index) =>
@@ -5024,7 +5039,6 @@ test(
       CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text,status text DEFAULT 'idle',archived_at timestamptz);
       CREATE TABLE messages(id uuid,owner_id text,thread_id uuid,turn_id uuid,role text,text text,created_at timestamptz DEFAULT now());
       CREATE TABLE turns(id uuid,owner_id text,thread_id uuid,source text,status text,error text,background boolean DEFAULT false,waiting_reason text,created_at timestamptz DEFAULT now(),started_at timestamptz,finished_at timestamptz);
-      CREATE TABLE inspector_records(id uuid,owner_id text,thread_id uuid,turn_id uuid,kind text,name text,status text,input jsonb,output jsonb,error text,duration_ms integer,recorded_at timestamptz DEFAULT now(),started_at timestamptz DEFAULT now(),finished_at timestamptz);
       CREATE TABLE profiles(owner_id text,data jsonb);
       CREATE TABLE goals(owner_id text,title text);
       CREATE TABLE schedules(owner_id text,prompt text)
@@ -5065,31 +5079,32 @@ test(
         `INSERT INTO messages(id,owner_id,thread_id,role,text,created_at) VALUES($1,$2,$3,'assistant',$4,${row[3]})`,
         [randomUUID(), row[0], row[1], row[2]],
       );
-    await f.pool.query(
-      "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,input,output,error) VALUES($1,$2,$3,'tool','get_credential',$4,$5,$6)",
-      [
-        randomUUID(),
-        ownerId,
-        threadId,
-        { origin: 'synthetic-credential-origin' },
-        { value: secret },
-        `echo ${secret}`,
-      ],
-    );
-    await f.pool.query(
-      "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,input,output) VALUES($1,$2,$3,'tool','browser',$4,$5)",
-      [
-        randomUUID(),
-        ownerId,
-        threadId,
-        { action: `echo ${secret}` },
-        { result: `Visible tool activity ${username}` },
-      ],
-    );
+    const toolCall = (id: string, name: string, input: unknown, output: string) => {
+      const timestamp = new Date().toISOString();
+      return [
+        {
+          type: 'message',
+          timestamp,
+          message: {
+            role: 'assistant',
+            content: [{ type: 'toolCall', id, name, arguments: input }],
+          },
+        },
+        {
+          type: 'message',
+          timestamp,
+          message: {
+            role: 'toolResult',
+            toolCallId: id,
+            toolName: name,
+            content: [{ type: 'text', text: output }],
+          },
+        },
+      ];
+    };
     const options = {
       pool: f.pool,
       ownerId,
-      captureEnabled: () => true,
       secrets: [apiKey],
       provider: 'synthetic',
       model: 'synthetic',
@@ -5111,6 +5126,18 @@ test(
               content: [{ type: 'thinking', thinking: 'synthetic-private-reasoning' }],
             },
           },
+          ...toolCall(
+            'credential',
+            'get_credential',
+            { origin: 'synthetic-credential-origin' },
+            secret,
+          ),
+          ...toolCall(
+            'browser',
+            'browser',
+            { action: `echo ${secret}` },
+            `Visible tool activity ${username}`,
+          ),
         ];
       },
     };
@@ -5137,17 +5164,11 @@ test(
     assert.equal(report.messages.length, 1);
     assert.equal(report.trace.length, 2);
     const large = 'x'.repeat(3500);
-    for (let index = 0; index < 60; index++) {
+    for (let index = 0; index < 60; index++)
       await f.pool.query(
-        "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,input,output) VALUES($1,$2,$3,'tool','browser',$4,$5)",
-        [randomUUID(), ownerId, threadId, { first: large }, { second: large, third: large }],
+        "INSERT INTO messages(id,owner_id,thread_id,role,text) VALUES($1,$2,$3,'assistant',$4)",
+        [randomUUID(), ownerId, threadId, `${large}${large}${large}`],
       );
-      if (index < 30)
-        await f.pool.query(
-          "INSERT INTO messages(id,owner_id,thread_id,role,text) VALUES($1,$2,$3,'assistant',$4)",
-          [randomUUID(), ownerId, threadId, large],
-        );
-    }
     const bounded = await buildFeedbackReport(options);
     assert.ok(Buffer.byteLength(bounded) <= feedbackLimits.reportBytes);
     const truncated = JSON.parse(bounded);
@@ -5166,14 +5187,9 @@ test(
         20,
         "INSERT INTO turns(id,owner_id,thread_id,source,status,background,waiting_reason,created_at) VALUES($1,$2,$3,'schedule','waiting',true,'user',$4)",
       ],
-      [
-        'trace',
-        60,
-        "INSERT INTO inspector_records(id,owner_id,thread_id,kind,name,started_at) VALUES($1,$2,$3,'tool','browser',$4)",
-      ],
     ] as const) {
       await t.test(`${field} reports omitted older records at the row limit`, async () => {
-        await f.pool.query('TRUNCATE messages,turns,inspector_records');
+        await f.pool.query('TRUNCATE messages,turns');
         const ids: string[] = [];
         const start = Date.now() - 120_000;
         for (let index = 0; index <= limit; index++) {

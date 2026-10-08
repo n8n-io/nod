@@ -1,7 +1,7 @@
 import { Monitor } from 'lucide-react';
-import { InspectorScreen } from '../components/inspector-screen';
+import { BrowserScreen } from '../components/browser-screen';
 import { Loading, Notice } from '../components/ui';
-import { useBrowserState } from '../hooks/use-inspector-state';
+import { useBrowserState } from '../hooks/use-browser-state';
 
 export function BrowserWindow() {
   const { data, error, browserStopped } = useBrowserState();
@@ -15,13 +15,7 @@ export function BrowserWindow() {
       </header>
       {error && <Notice>{error}</Notice>}
       {!data && !error && <Loading label="Opening the browser view…" />}
-      <InspectorScreen
-        data={data}
-        active
-        onStopped={browserStopped}
-        showDetails={false}
-        screenPath="/api/browser/screen"
-      />
+      <BrowserScreen data={data} onStopped={browserStopped} />
     </main>
   );
 }

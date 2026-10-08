@@ -408,7 +408,6 @@ test('chat read storage and delayed native loads remain scoped to the owner and 
       model: '',
       llmReady: false,
       integrationsReady: false,
-      inspectorEnabled: false,
       localOnly: true,
       conversationResetEnabled: false,
     },

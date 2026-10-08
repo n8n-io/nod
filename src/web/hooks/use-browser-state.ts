@@ -1,23 +1,18 @@
 import { useEffect, useState } from 'react';
-import type { Artifact, InspectorState } from '../../shared/contracts';
+import type { CurrentBrowser } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 
-export type InspectorDetail = InspectorState & { artifacts?: (Artifact & { threadId: string })[] };
+type BrowserState = { currentBrowser: CurrentBrowser | null };
 
-export type BrowserDetail = { currentBrowser?: InspectorDetail['currentBrowser'] | null };
-
-function useBrowserSnapshot<T extends BrowserDetail>(path: string, enabled: boolean) {
-  const [data, setData] = useState<T | null>(null);
+export function useBrowserState() {
+  const [data, setData] = useState<BrowserState | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    setData(null);
-    setError('');
-    if (!enabled) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const next = await api<T>(path, { signal: controller.signal });
+        const next = await api<BrowserState>('/api/browser', { signal: controller.signal });
         if (!controller.signal.aborted) {
           setData(next);
           setError('');
@@ -36,24 +31,13 @@ function useBrowserSnapshot<T extends BrowserDetail>(path: string, enabled: bool
       controller.abort();
       clearTimeout(timer);
     };
-  }, [enabled, path]);
+  }, []);
   function browserStopped(threadId: string) {
     setData((current) =>
       current?.currentBrowser?.threadId === threadId
-        ? {
-            ...current,
-            currentBrowser: { ...current.currentBrowser, status: 'cancelled' },
-          }
+        ? { currentBrowser: { ...current.currentBrowser, status: 'cancelled' } }
         : current,
     );
   }
   return { data, error, browserStopped };
-}
-
-export function useInspectorState(enabled = true) {
-  return useBrowserSnapshot<InspectorDetail>('/api/inspector', enabled);
-}
-
-export function useBrowserState() {
-  return useBrowserSnapshot<BrowserDetail>('/api/browser', true);
 }

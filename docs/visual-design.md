@@ -88,7 +88,7 @@ has the same background as its surrounding surface.
 
 Use a 24 px dot grid on the sign-in story and the empty conversation. Align
 it with the layout scale. Keep the dot grid out of messages, tables, forms,
-app lists, and the Inspector.
+app lists, and Settings.
 
 Do not show a construction grid. Do not add marketing capsules to application
 controls. A status, tab, or navigation item must stay a clear control.
@@ -118,7 +118,7 @@ new base colors for that mark. Keep its shape and proportions.
 | Tasks and schedules             | Shared title, tabs, row spacing, and action height                     |
 | Apps and channels               | Neutral cards; visible connection state; consistent controls           |
 | Vault                           | Clear selection, fields, and error states; preserve secure forms       |
-| Inspector                       | Dense, readable details; preserve resizing and code case               |
+| Trust                           | One summary line, one cost card, a quiet statement list                |
 | Account settings                | Consistent fields and theme samples; preserve keyboard access          |
 | Sign-in                         | Plain capability text; pink sign-in action; one inset story panel      |
 | Onboarding                      | Clear connection steps; no decorative grid behind fields               |

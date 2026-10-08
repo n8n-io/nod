@@ -5,7 +5,6 @@ import { Vault } from './pages/vault';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials } from './pages/credentials';
-import { Inspector } from './pages/inspector';
 import { Tasks } from './pages/tasks';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
@@ -95,10 +94,6 @@ function Workspace({
   const unread = useChatUnread(session.user!.id, state);
   useSavedDateFormat();
   useBrowserTimeZone();
-  const [inspector, setInspector] = useState(
-    () =>
-      path === '/dev' || (window.innerWidth > 720 && readUiPreference('otto.inspector') === 'open'),
-  );
   const [collapsed, setCollapsed] = useState(() => readUiPreference('otto.sidebar') !== 'expanded');
   const [toolbarActions, setToolbarActions] = useState<HTMLDivElement | null>(null);
   const [pendingMessageFocus, setPendingMessageFocus] = useState<string>();
@@ -111,8 +106,6 @@ function Workspace({
     setChatRequests((current) => [...current, { id: crypto.randomUUID(), text }]);
     navigate('/');
   };
-  const [inspectionFocus, setInspectionFocus] = useState<{ messageId: string; turnId: string }>();
-  const developer = session.capabilities.developer;
   useEffect(() => subscribeDesktopFocusMessage(setNotificationTarget), []);
   useEffect(() => {
     if (notificationTarget === undefined || (notificationTarget && !state)) return;
@@ -134,21 +127,10 @@ function Workspace({
         navigate('/');
       }
     };
-    const inspect = (event: Event) => {
-      if (!developer) return;
-      const detail = (event as CustomEvent<{ messageId: string; turnId: string }>).detail;
-      if (!detail?.turnId) return;
-      setInspectionFocus(detail);
-      setInspector(true);
-    };
     window.addEventListener('otto:focus-message', focusMessage);
-    window.addEventListener('otto:inspect-message', inspect);
-    return () => {
-      window.removeEventListener('otto:focus-message', focusMessage);
-      window.removeEventListener('otto:inspect-message', inspect);
-    };
-  }, [developer, state]);
-  const currentPath = path === '/dev' || path === '/you' ? '/' : path;
+    return () => window.removeEventListener('otto:focus-message', focusMessage);
+  }, [state]);
+  const currentPath = path === '/you' ? '/' : path;
   const loaded = !!state;
   const hasMessages = state ? state.messages.length > 0 : null;
   useEffect(() => {
@@ -178,29 +160,11 @@ function Workspace({
     ]);
   }, []);
   useEffect(() => {
-    if (path === '/dev') setInspector(true);
-  }, [path]);
-  useEffect(() => {
-    const closeOnNavigation = () => {
-      if (window.innerWidth <= 720 && window.location.pathname !== '/dev') setInspector(false);
-    };
-    window.addEventListener('popstate', closeOnNavigation);
-    return () => window.removeEventListener('popstate', closeOnNavigation);
-  }, []);
-  useEffect(() => {
-    writeUiPreference('otto.inspector', inspector ? 'open' : 'closed');
-  }, [inspector]);
-  useEffect(() => {
     writeUiPreference('otto.sidebar', collapsed ? 'collapsed' : 'expanded');
   }, [collapsed]);
-  const inspectorEnabled = developer && !!state?.configuration.inspectorEnabled;
-  const inspectorOpen = inspectorEnabled && inspector;
-  const visibleState = state
-    ? { ...state, configuration: { ...state.configuration, inspectorEnabled } }
-    : null;
   return (
     <div
-      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${inspectorOpen ? 'with-inspector' : ''} ${entering ? 'shell-entering' : ''}`}
+      className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''} ${entering ? 'shell-entering' : ''}`}
     >
       <a href="#workspace" className="skip-link">
         Skip to content
@@ -217,9 +181,6 @@ function Workspace({
         unreadCount={unread.count}
         unreadPending={unread.pending}
         onToggle={() => setCollapsed((value) => !value)}
-        inspectorEnabled={inspectorEnabled}
-        inspectorOpen={inspectorOpen}
-        onToggleInspector={() => setInspector((value) => !value)}
         onNavigate={navigate}
         account={account}
       />
@@ -238,10 +199,10 @@ function Workspace({
                 className={`chat-route ${handoff ? 'chat-entering' : ''}`}
                 hidden={currentPath !== '/'}
               >
-                {visibleState ? (
+                {state ? (
                   <Chat
                     ownerId={session.user!.id}
-                    state={visibleState}
+                    state={state}
                     streams={streams}
                     refresh={refresh}
                     resetConversation={resetConversation}
@@ -292,9 +253,6 @@ function Workspace({
                 </div>
               )}
             </main>
-            {inspectorOpen && (
-              <Inspector focus={inspectionFocus} onClose={() => setInspector(false)} />
-            )}
           </div>
         </div>
       </SidebarToggleContext.Provider>
@@ -358,7 +316,8 @@ function AuthenticatedApp({
   const [settingsError, setSettingsError] = useState('');
   const settingsTrigger = useRef<HTMLElement | null>(null);
   const lastPath = useRef('/');
-  if (path !== '/memory') lastPath.current = path;
+  const settingsPath = path === '/memory' ? 'Memory' : path === '/trust' ? 'Trust' : undefined;
+  if (!settingsPath) lastPath.current = path;
   const openSettings = (tab: AccountTab, trigger?: HTMLElement) => {
     setSettingsError('');
     setSettingsRequest((current) => current + 1);
@@ -382,21 +341,23 @@ function AuthenticatedApp({
     [session.auth.mode],
   );
   useEffect(() => {
-    if (path !== '/memory' || !session.settings!.onboardingCompleted) return;
+    if (!settingsPath || !session.settings!.onboardingCompleted) return;
     window.history.replaceState(null, '', lastPath.current);
     window.dispatchEvent(new PopStateEvent('popstate'));
-    openSettings('Memory');
+    openSettings(settingsPath);
   }, [path, session.settings!.onboardingCompleted]);
   useEffect(() => {
-    const openMemory = (event: MouseEvent) => {
-      const link = event.target instanceof Element && event.target.closest('a[href="/memory"]');
+    const openSettingsLink = (event: MouseEvent) => {
+      const link =
+        event.target instanceof Element &&
+        event.target.closest<HTMLAnchorElement>('a[href="/memory"], a[href="/trust"]');
       if (!link || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
         return;
       event.preventDefault();
-      openSettings('Memory', link as HTMLElement);
+      openSettings(link.getAttribute('href') === '/trust' ? 'Trust' : 'Memory', link);
     };
-    document.addEventListener('click', openMemory);
-    return () => document.removeEventListener('click', openMemory);
+    document.addEventListener('click', openSettingsLink);
+    return () => document.removeEventListener('click', openSettingsLink);
   }, []);
   useEffect(() => {
     const apply = () => {
@@ -450,7 +411,7 @@ function AuthenticatedApp({
     onUsageData: (usageData) => onAccountUpdate({ usageData }),
     onLogout,
   };
-  const allowed = !['/browser', '/dev'].includes(path) || session.capabilities.developer;
+  const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(?:vault|credentials)\/([^/]+)\/?$/.exec(path);
   const onboarding = !session.settings!.onboardingCompleted || replayingOnboarding(path);
   const workspace = allowed && path !== '/browser' && !match && !onboarding;

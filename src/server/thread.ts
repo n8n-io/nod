@@ -27,6 +27,7 @@ import type { WorkConsumers } from './work-admission.ts';
 import type { AnalyticsEvent, CaptureAnalytics } from './analytics.ts';
 import { appResultInlineChars, inlineAppResult } from './integration-result.ts';
 import { saveIntegrationFiles } from './integration-files.ts';
+import { spendingLimitReached } from './ledger.ts';
 
 const queue = 'thread-drain';
 export const boss = new PgBoss({
@@ -104,10 +105,9 @@ export interface ThreadDependencies {
     turnId: string,
     signal: AbortSignal,
   ) => Promise<{ prompt: string } | undefined>;
-  recordFailure?: (turnId: string, error: unknown) => Promise<void>;
-  observe?: (turnId: string, event: RuntimeObservation) => Promise<void>;
-  inspectPrompt?: (turnId: string, snapshot: PromptSnapshot) => Promise<void>;
-  finishObservationSegment?: (turnId: string) => Promise<void>;
+  spendingLimitReached?: () => Promise<boolean>;
+  observe?: (turnId: string, event: RuntimeObservation) => void;
+  inspectPrompt?: (turnId: string, snapshot: PromptSnapshot) => void;
   accountProfile?: () => Promise<RuntimeContext['account']>;
   connectedApps?: () => Promise<NonNullable<RuntimeContext['connectedApps']>>;
   activityCheck?: (turn: TurnRef) => Promise<RuntimeContext['activityCheck']>;
@@ -1001,6 +1001,16 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       refresh();
     };
     const { reactToMessage, connections, browserConnection, observe, inspectPrompt } = dependencies;
+    if (
+      turn.background &&
+      turn.source !== 'resume' &&
+      (await dependencies.spendingLimitReached?.())
+    ) {
+      await current((client) =>
+        finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
+      );
+      return;
+    }
     await emit('started', 'Turn started.');
     const result = await dependencies.runTurn({
       threadId,
@@ -1016,8 +1026,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       workspacePath,
       signal,
       attachments,
-      observe: observe && ((event) => observe(turnId, event)),
-      inspectPrompt: inspectPrompt && ((snapshot) => inspectPrompt(turnId, snapshot)),
+      observe: observe && (async (event) => observe(turnId, event)),
+      inspectPrompt: inspectPrompt && (async (snapshot) => inspectPrompt(turnId, snapshot)),
       emit,
       reply: (text, streamId, replyToMessageId) => post(text, [], streamId, replyToMessageId),
       waitForUser: (question) => post(question),
@@ -1137,12 +1147,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return;
     }
     if (signal.aborted) outcome = 'cancelled';
-    if (await interruptTurn(turnId)) {
+    if (await interruptTurn(turnId))
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
-      void Promise.resolve()
-        .then(() => dependencies.recordFailure?.(turnId, error))
-        .catch(() => {});
-    }
   } finally {
     unwatch?.();
     dependencies.analytics?.({
@@ -1153,9 +1159,6 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         duration_ms: Math.max(0, Date.now() - startedAt),
       },
     });
-    void Promise.resolve()
-      .then(() => dependencies.finishObservationSegment?.(turnId))
-      .catch(() => {});
     running.delete(turnId);
   }
 }

@@ -941,7 +941,6 @@ async function startEngine({ runtime, signal }) {
       process.env.OTTO_FEEDBACK_URL ?? 'https://internal.users.n8n.cloud/webhook/otto/feedback',
     PI_CODING_AGENT_DIR: join(profileRoot, 'pi'),
     COMPUTER_PROVIDER: 'docker',
-    DEV_INSPECTOR: 'false',
   };
   if (quitting || signal.aborted) throw new Error('Otto is closing.');
   update({

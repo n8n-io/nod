@@ -1,0 +1,252 @@
+import type { FastifyInstance } from 'fastify';
+import type { Pool } from 'pg';
+import { z } from 'zod';
+import type { Agent } from '../ports/agent.ts';
+import type { MemoryCurator } from '../ports/memory-curator.ts';
+import { actionEffect } from '../shared/action-effect.ts';
+import type { TrustEntry, TrustSource, TrustView } from '../shared/trust.ts';
+import { actionTitle } from './action-presentation.ts';
+import type { UsageReport } from './usage-report.ts';
+
+export const spendingLimitReached =
+  'Paused because this month’s spending limit was reached. Raise the limit in Settings › Trust to resume.';
+
+const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UTC')`;
+const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
+const spentThisMonth = `COALESCE((SELECT sum(cost_usd) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
+const pageSize = 30;
+const cost = (value: number | null | undefined) =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+
+function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'> {
+  const id: string = row.source_id ?? '';
+  const first = (text: string | null) => text?.trim().split('\n')[0]?.slice(0, 120);
+  if (row.source === 'user') return { source: 'chat', title: first(row.text) || 'Your message' };
+  if (row.source === 'schedule')
+    return { source: 'schedule', title: first(row.schedule) || 'Scheduled task' };
+  if (row.source === 'resume')
+    return {
+      source: 'resume',
+      title: id.startsWith('confirmation:') ? 'Ran an action you approved' : 'Continued a task',
+    };
+  const source: TrustSource = row.read_only ? 'check' : 'event';
+  if (id.startsWith('activity-check:')) return { source, title: 'Checked a connected app' };
+  if (id.startsWith('onboarding:')) return { source, title: 'Welcome' };
+  return { source, title: 'Woke for an email or app event' };
+}
+
+export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string }) {
+  async function initialize() {
+    await pool.query(`DROP TABLE IF EXISTS provider_usage;
+    CREATE TABLE IF NOT EXISTS model_usage (
+      id text PRIMARY KEY, owner_id text NOT NULL, turn_id uuid REFERENCES turns(id) ON DELETE SET NULL,
+      model text, cost_usd double precision, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS model_usage_owner_time ON model_usage(owner_id,created_at);
+    CREATE INDEX IF NOT EXISTS model_usage_turn ON model_usage(turn_id);
+    CREATE TABLE IF NOT EXISTS app_actions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id text NOT NULL,
+      turn_id uuid NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+      action text NOT NULL, effect text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS app_actions_owner_time ON app_actions(owner_id,created_at);
+    CREATE TABLE IF NOT EXISTS spending_limits (
+      owner_id text PRIMARY KEY, monthly_usd double precision NOT NULL CHECK (monthly_usd > 0)
+    );`);
+  }
+
+  function save(sql: string, values: unknown[]) {
+    return pool.query(sql, values).then(
+      () => undefined,
+      (error) => console.error(`The ledger skipped a record: ${error?.name ?? 'error'}`),
+    );
+  }
+
+  function usage(id: string, turnId: string | null, model: string | undefined, costUsd: unknown) {
+    void save(
+      `INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd)
+       SELECT $1,$2,$3,$4,$5 WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
+       ON CONFLICT(id) DO NOTHING`,
+      [id, ownerId, turnId, model?.slice(0, 200) ?? null, cost(costUsd as number)],
+    );
+  }
+
+  function agent(base: Agent): Agent {
+    return {
+      ...base,
+      open: (session) =>
+        base.open({
+          ...session,
+          onEvent(event) {
+            if (event.type === 'model_usage')
+              usage(event.id, session.turnId, event.model, event.costUsd);
+            if (event.type !== 'provider_usage') return session.onEvent(event);
+            usage(
+              event.usage.id ?? crypto.randomUUID(),
+              session.turnId,
+              event.usage.model,
+              event.usage.costUsd,
+            );
+          },
+        }),
+    };
+  }
+
+  function curator(base: MemoryCurator): MemoryCurator {
+    return {
+      ...base,
+      get configured() {
+        return base.configured;
+      },
+      curate: (request, signal, report) =>
+        base.curate(request, signal, (value) => {
+          usage(crypto.randomUUID(), null, value.model, value.costUsd);
+          report?.(value);
+        }),
+    };
+  }
+
+  function action(turnId: string, name: string, args: Record<string, unknown>) {
+    const effect = actionEffect(name, args);
+    if (effect === 'read') return Promise.resolve();
+    return save(
+      `INSERT INTO app_actions(owner_id,turn_id,action,effect)
+       SELECT $1,id,$3,$4 FROM turns WHERE id=$2 AND owner_id=$1`,
+      [ownerId, turnId, name.slice(0, 200), effect],
+    );
+  }
+
+  async function limit() {
+    const row = (
+      await pool.query(
+        `SELECT monthly_usd,${spentThisMonth} AS spent FROM spending_limits WHERE owner_id=$1`,
+        [ownerId],
+      )
+    ).rows[0];
+    return row ? { monthlyUsd: row.monthly_usd, reached: row.spent >= row.monthly_usd } : null;
+  }
+
+  async function entries(before?: { at: string; id: string }) {
+    const { rows } = await pool.query(
+      `SELECT u.id,u.source,u.source_id,u.read_only,u.channel,u.status,u.error,u.created_at,
+         left(COALESCE((SELECT text FROM messages WHERE id=u.message_id),u.prompt),400) AS text,c.cost,c.unpriced,
+         (SELECT title FROM schedules WHERE owner_id=$1 AND id::text=split_part(u.source_id,':',2)) AS schedule,
+         (SELECT array_agg(action ORDER BY created_at) FROM app_actions WHERE turn_id=u.id) AS actions
+       FROM turns u
+       LEFT JOIN LATERAL (SELECT sum(cost_usd)::float8 AS cost,bool_or(cost_usd IS NULL) AS unpriced
+         FROM model_usage WHERE turn_id=u.id) c ON true
+       WHERE u.owner_id=$1 AND ($2::timestamptz IS NULL OR (u.created_at,u.id)<($2,$3::uuid))
+         AND (c.cost>0 OR c.unpriced OR EXISTS(SELECT 1 FROM app_actions a WHERE a.turn_id=u.id))
+       ORDER BY u.created_at DESC,u.id DESC LIMIT ${pageSize + 1}`,
+      [ownerId, before?.at ?? null, before?.id ?? null],
+    );
+    const page = rows.slice(0, pageSize).map((row): TrustEntry => ({
+      id: row.id,
+      at: row.created_at.toISOString(),
+      ...describe(row),
+      channel: String(row.channel).split(':')[0]!,
+      error: row.status === 'failed' ? row.error : null,
+      costUsd: row.cost,
+      unpriced: Boolean(row.unpriced),
+      actions: (row.actions ?? []).map((name: string) => actionTitle(name)),
+    }));
+    const last = page.at(-1);
+    return {
+      entries: page,
+      next: rows.length > pageSize && last ? { at: last.at, id: last.id } : null,
+    };
+  }
+
+  async function read(): Promise<TrustView> {
+    const [summary, daily, page, current] = await Promise.all([
+      pool.query(
+        `SELECT
+           (SELECT count(*) FROM turn_events e JOIN turns u ON u.id=e.turn_id
+             WHERE u.owner_id=$1 AND e.type='tool_complete' AND e.created_at>now()-interval '7 days')::int AS things,
+           (SELECT count(*) FROM app_actions WHERE owner_id=$1 AND effect='outbound'
+             AND created_at>now()-interval '7 days')::int AS reached,
+           (SELECT COALESCE(sum(cost_usd),0) FROM model_usage WHERE owner_id=$1
+             AND created_at>now()-interval '7 days')::float8 AS week,
+           EXISTS(SELECT 1 FROM model_usage WHERE owner_id=$1 AND cost_usd IS NULL
+             AND created_at>=${monthStart}) AS unpriced,
+           ${monthStart} AS start,
+           extract(day FROM date_trunc('month', now() AT TIME ZONE ${zone}) + interval '1 month - 1 day')::int AS days,
+           extract(epoch FROM now()-${monthStart})::float8/86400 AS elapsed`,
+        [ownerId],
+      ),
+      pool.query(
+        `SELECT extract(day FROM created_at AT TIME ZONE ${zone})::int AS day,sum(cost_usd)::float8 AS cost
+         FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart} GROUP BY 1`,
+        [ownerId],
+      ),
+      entries(),
+      limit(),
+    ]);
+    const row = summary.rows[0];
+    const elapsed = Math.min(row.days, Math.max(row.elapsed, 0));
+    const days: number[] = Array.from({ length: Math.ceil(elapsed) || 1 }, () => 0);
+    for (const { day, cost } of daily.rows) if (day <= days.length) days[day - 1] = cost ?? 0;
+    const spent = days.reduce((sum, value) => sum + value, 0);
+    return {
+      week: { things: row.things, reached: row.reached, spentUsd: row.week },
+      month: {
+        start: row.start.toISOString(),
+        days: row.days,
+        elapsedDays: elapsed,
+        spentUsd: spent,
+        forecastUsd: (spent / Math.max(elapsed, 1)) * row.days,
+        daily: days,
+        unpriced: row.unpriced,
+      },
+      limit: current,
+      ...page,
+    };
+  }
+
+  async function report(): Promise<UsageReport> {
+    const view = await read();
+    const start = Date.parse(view.month.start);
+    const items = [...view.entries];
+    let next = view.next;
+    while (next && Date.parse(next.at) >= start && items.length < 1000) {
+      const page = await entries(next);
+      items.push(...page.entries);
+      next = page.next;
+    }
+    const timeZone = (await pool.query(`SELECT ${zone} AS zone`, [ownerId])).rows[0].zone;
+    return { view, entries: items.filter((entry) => Date.parse(entry.at) >= start), timeZone };
+  }
+
+  function registerRoutes(app: FastifyInstance) {
+    app.get('/api/trust', () => read());
+    app.get('/api/trust/entries', (request) =>
+      entries(z.object({ at: z.iso.datetime(), id: z.uuid() }).strict().parse(request.query)),
+    );
+    app.put('/api/trust/limit', async (request) => {
+      const { monthlyUsd } = z
+        .object({ monthlyUsd: z.number().min(1).max(100_000).nullable() })
+        .strict()
+        .parse(request.body);
+      if (monthlyUsd === null)
+        await pool.query('DELETE FROM spending_limits WHERE owner_id=$1', [ownerId]);
+      else
+        await pool.query(
+          `INSERT INTO spending_limits(owner_id,monthly_usd) VALUES($1,$2)
+           ON CONFLICT(owner_id) DO UPDATE SET monthly_usd=$2`,
+          [ownerId, Math.round(monthlyUsd * 100) / 100],
+        );
+      return { limit: await limit() };
+    });
+  }
+
+  return {
+    initialize,
+    agent,
+    curator,
+    action,
+    limitReached: async () => Boolean((await limit())?.reached),
+    read,
+    report,
+    registerRoutes,
+  };
+}

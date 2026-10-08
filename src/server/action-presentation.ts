@@ -139,21 +139,25 @@ export function reviewedRequest(action: string, args: Record<string, unknown>) {
   );
 }
 
+export function actionTitle(action: string) {
+  if (action === 'CONNECTED_HTTP') return { app: '', label: 'Call a connected API' };
+  if (action === 'CONNECTED_MCP_CALL') return { app: '', label: 'Run a tool on a connected app' };
+  if (action === 'CONNECTED_CLI') return { app: '', label: 'Run a connected command line tool' };
+  const [app, ...words] = action.split('_');
+  return {
+    app: apps[app!] ?? `${app![0]}${app!.slice(1).toLowerCase()}`,
+    label: words.join(' ').toLowerCase(),
+  };
+}
+
 export function appActionConfirmation(
   action: string,
   args: Record<string, unknown>,
   reason: TrustReason,
   account?: string,
 ) {
-  const [app, ...words] = action.split('_');
-  const title =
-    action === 'CONNECTED_HTTP'
-      ? 'Call a connected API'
-      : action === 'CONNECTED_MCP_CALL'
-        ? 'Run a tool on a connected app'
-        : action === 'CONNECTED_CLI'
-          ? 'Run a connected command line tool'
-          : `${apps[app!] ?? `${app![0]}${app!.slice(1).toLowerCase()}`}: ${words.join(' ').toLowerCase()}`;
+  const { app, label } = actionTitle(action);
+  const title = app ? `${app}: ${label}` : label;
   const details = fitted(
     (limit) =>
       actionDetails(action, args, limit).map(([name, value]) => `${plain(name)}: ${plain(value)}`),

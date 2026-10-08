@@ -179,11 +179,7 @@ export function registerRuntimeAccess(
       return reply.code(403).send({ error: 'This request is not permitted.' });
     if (
       !verified.developer &&
-      (path.startsWith('/api/inspector') ||
-        path === '/api/browser' ||
-        path.startsWith('/api/browser/') ||
-        path === '/browser' ||
-        path === '/dev')
+      (path === '/api/browser' || path.startsWith('/api/browser/') || path === '/browser')
     )
       return reply.code(404).send({ error: 'Route not found.' });
     if (

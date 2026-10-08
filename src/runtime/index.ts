@@ -24,7 +24,7 @@ import { requestsPrivateInput } from './communication.ts';
 import { createObservationQueue } from './observations.ts';
 import { firstInstruction, steeredInstruction, systemContext, systemPrompt } from './prompt.ts';
 import { currentUserTime } from './time-context.ts';
-import { inspectToolCatalog, ottoTools } from './tools.ts';
+import { ottoTools } from './tools.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
 import { delimit, resultText } from './untrusted.ts';
 import { injectionFindings, untrustedContents } from '../shared/untrusted.ts';
@@ -84,6 +84,7 @@ const readOnlyTools: Record<string, true | string[]> = {
     'memory_find',
     'memory_read',
     'schedule_list',
+    'usage_get',
   ],
   task: ['list'],
 };
@@ -781,10 +782,6 @@ export function createAgentRuntime(dependencies: {
   return {
     runTurn,
     holdBrowserForUser: (threadId: string) => claims.holdForUser(threadId),
-    inspectTools: () => [
-      ...(agent.nativeTools ?? []).map((tool) => structuredClone(tool)),
-      ...inspectToolCatalog(),
-    ],
     status: () => ({
       browser: computer.status(),
       workspace: dependencies.workspace.status(),

@@ -690,25 +690,6 @@ input[type='range']:disabled {
 .sidebar-bottom .nav-link {
   font-size: var(--text-control);
 }
-.sidebar-app-menu .connection-menu {
-  display: block;
-}
-.sidebar-app-menu .connection-menu > .nav-link {
-  width: 100%;
-  height: auto;
-  justify-content: flex-start;
-}
-.sidebar .sidebar-app-menu .connection-menu-options {
-  top: auto;
-  bottom: 0;
-  left: calc(100% + 14px);
-  right: auto;
-  width: 270px;
-  max-width: calc(100vw - 90px);
-}
-.sidebar-collapsed .sidebar-app-menu .connection-menu > .nav-link {
-  justify-content: center;
-}
 .mobile-top-bar {
   display: none;
 }
@@ -1696,43 +1677,6 @@ input[type='range']:disabled {
     font-size: var(--text-body);
   }
 }
-@media (max-width: 1150px) {
-  .with-inspector .sidebar {
-    width: 72px;
-    padding-inline: 8px;
-  }
-  .with-inspector .brand {
-    padding: 0 4px;
-  }
-  .with-inspector .sidebar-header {
-    flex-direction: column;
-  }
-  .with-inspector {
-    --sidebar-toggle-space: 0px;
-  }
-  .with-inspector .sidebar-toggle {
-    display: none;
-  }
-  .with-inspector .brand > span:last-child,
-  .with-inspector .nav-link > span {
-    display: none;
-  }
-  .with-inspector .nav-link,
-  .with-inspector .sidebar-app-menu .connection-menu > .nav-link {
-    justify-content: center;
-    padding-inline: 0;
-  }
-  .with-inspector .nav-shortcut {
-    left: calc(100% + 6px);
-    right: auto;
-  }
-  .with-inspector .conversation-column {
-    padding-inline: 24px;
-  }
-  .with-inspector .message-assistant .message-content {
-    max-width: calc(100% - 40px);
-  }
-}
 @media (max-width: 800px) {
   .sidebar {
     width: 64px;
@@ -1753,11 +1697,6 @@ input[type='range']:disabled {
   .brand > span:last-child,
   .nav-link > span {
     display: none;
-  }
-  .nav-link,
-  .sidebar-app-menu .connection-menu > .nav-link {
-    justify-content: center;
-    padding-inline: 0;
   }
   .conversation-column {
     padding-inline: 16px;
@@ -1780,24 +1719,6 @@ input[type='range']:disabled {
   .message-user .message-content {
     max-width: 95%;
   }
-  .with-inspector .conversation-column {
-    padding-inline: 12px;
-  }
-  .with-inspector .assistant-mark {
-    display: none;
-  }
-  .with-inspector .message-assistant .message-content {
-    max-width: 100%;
-  }
-  .with-inspector .message-actions {
-    flex-wrap: wrap;
-  }
-  .with-inspector .message-meta {
-    flex-wrap: wrap;
-  }
-  .with-inspector .composer {
-    padding: 8px 8px 8px;
-  }
 }
 @media (max-width: 540px) {
   .sidebar {
@@ -1806,11 +1727,6 @@ input[type='range']:disabled {
   }
   .brand {
     padding: 0 0;
-  }
-  .sidebar-collapsed .sidebar,
-  .with-inspector .sidebar {
-    width: 50px;
-    padding-inline: 4px;
   }
   .content-page {
     padding: 24px 16px;

@@ -69,7 +69,6 @@ Settings live in the ignored `.env`. `.env.example` lists the common ones. Shell
 | `OTTO_VAULT_KEY`               | Vault encryption on non-macOS hosts (macOS uses Keychain)          |
 | `OTTO_DATA_ROOT`               | Where local data is stored (default `.local`)                      |
 | `PORT`                         | The local port (default `4310`)                                    |
-| `DEV_INSPECTOR=false`          | Disables the Inspector view (on by default locally)                |
 
 - **Models.** Add or switch connections in **Models** from the account menu. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY` add server-managed connections. See [model connections](docs/model-connections.md).
 - **Apps.** Connect apps from **Apps**. Notion and Linear use their hosted MCP servers without extra keys. See [connect apps with Composio](docs/composio.md).
