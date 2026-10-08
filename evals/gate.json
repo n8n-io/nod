@@ -1,1 +1,58 @@
-{}
+{
+  "book-dinner": {
+    "fingerprint": "e5e067822070",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "cancel-subscription": {
+    "fingerprint": "ea93d50f95dc",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "cart-from-recipes": {
+    "fingerprint": "caac6e3eaa12",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "finance-sheet": {
+    "fingerprint": "243c4c5b552d",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "invoices-overdue": {
+    "fingerprint": "15a9ca1fc3ef",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "login-2fa-metrics": {
+    "fingerprint": "33be5f45c89a",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "metrics-week-over-week": {
+    "fingerprint": "9a20c6b68264",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "portal-account-choice": {
+    "fingerprint": "5b63658aaf40",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "portal-nif-signin": {
+    "fingerprint": "5e49dabcc7d3",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "price-watch": {
+    "fingerprint": "325ccbe5cfd1",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "purchase-within-limit": {
+    "fingerprint": "3595df77c836",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "reply-drafts": {
+    "fingerprint": "013b9e5c2c68",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "schedule-meeting-invite": {
+    "fingerprint": "e0f6d9bee70d",
+    "proof": "main-2bc71c2: 5/5"
+  },
+  "slack-catchup": {
+    "fingerprint": "97ae7da8eb3e",
+    "proof": "main-2bc71c2: 5/5"
+  }
+}
