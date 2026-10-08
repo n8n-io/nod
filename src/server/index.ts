@@ -1,5 +1,14 @@
 import { pool } from './db.ts';
-import { desktopMode, port, ownerId, runtimeMode, runtimeGeneration, webRoot } from './config.ts';
+import {
+  dataRoot,
+  desktopMode,
+  port,
+  ownerId,
+  runtimeMode,
+  runtimeGeneration,
+  webRoot,
+} from './config.ts';
+import { accessKey } from './access.ts';
 import {
   createApplication,
   createDefaultAdapters,
@@ -108,4 +117,7 @@ if (runtimeMode === 'tenant')
     generation: runtimeGeneration,
   });
 else if (desktopMode) process.send?.({ type: 'otto-ready', port: listeningPort });
-else console.log(`Otto is ready at http://localhost:${listeningPort}`);
+else
+  console.log(
+    `Otto is ready at http://localhost:${listeningPort}${runtimeMode === 'local' ? `/#access=${await accessKey(dataRoot)}` : ''}`,
+  );

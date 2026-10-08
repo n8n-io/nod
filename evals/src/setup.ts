@@ -8,7 +8,7 @@ async function call(
   body?: unknown,
   redirect: RequestRedirect = 'follow',
 ) {
-  const response = await fetch(new URL(path, stack.baseUrl), {
+  const response = await stack.request(path, {
     method,
     redirect,
     headers: { 'content-type': 'application/json' },

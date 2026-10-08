@@ -49,7 +49,7 @@ try {
     );
     return environment;
   });
-  console.log('\nOtto starts at http://localhost:4310. Add provider keys to .env when ready.\n');
+  console.log('\nOtto is starting. Open the link it prints when it is ready.\n');
   const child = spawn(
     'npx',
     ['--no-install', 'tsx', ...(production ? [] : ['watch']), 'src/server/index.ts'],

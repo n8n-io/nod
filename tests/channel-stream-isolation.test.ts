@@ -19,6 +19,7 @@ import {
   unreadChatMessageIds,
   writeChatReadCursor,
 } from '../src/web/lib/chat-unread.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 test(
   'web SSE excludes external-channel and background deltas while the shared thread retains every reply',
@@ -57,7 +58,10 @@ test(
       }
       assert.fail('The synthetic stream did not reach its expected boundary.');
     };
-    const headers = { host: `localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     try {
       await db.initializeDatabase();
       await thread.initializeThreads();

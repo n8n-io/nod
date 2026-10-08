@@ -257,7 +257,7 @@ export async function collect(options: {
     observation: row.observation,
     turnId: row.turn_id as string | null,
   }));
-  const view = (await (await fetch(new URL('/api/memory', stack.baseUrl))).json()) as {
+  const view = (await (await stack.request('/api/memory')).json()) as {
     notes?: Array<{ path: string; text: string; status: string }>;
     archive?: Array<{ path: string; text: string; reason: string }>;
   };

@@ -25,6 +25,7 @@ import {
   type Tree,
 } from '../src/server/memory-tree.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 type Step = {
   tool: string;
@@ -143,7 +144,11 @@ test(
       },
       { channels: false },
     );
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const send = async (payload: Record<string, unknown>) => {
       const response = await application.app.inject({
         method: 'POST',

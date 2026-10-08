@@ -28,7 +28,9 @@ async function request<T>(
   const headers = new Headers(options.headers);
   if (options.body && !(options.body instanceof FormData))
     headers.set('Content-Type', 'application/json');
-  const expectedAccount = !['/api/session', '/api/login', '/api/logout'].includes(path)
+  const expectedAccount = !['/api/session', '/api/login', '/api/logout', '/api/access'].includes(
+    path,
+  )
     ? requestAccount
     : null;
   const generation = accountGeneration;
@@ -56,6 +58,7 @@ async function request<T>(
     )
       throw new DOMException('The account changed.', 'AbortError');
     if (
+      expectedAccount &&
       response.status === 401 &&
       typeof window !== 'undefined' &&
       generation === accountGeneration &&

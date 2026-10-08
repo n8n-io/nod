@@ -1150,10 +1150,13 @@ test(
       });
       const app = Fastify();
       t.after(() => app.close());
-      const token = 'synthetic-desktop-token';
-      registerLocalAccess(app, 4310, desktop ? { token } : undefined);
+      const token = 'synthetic-access-token';
+      registerLocalAccess(app, 4310, { key: token, desktop });
       integrations.registerRoutes(app);
-      const headers = { host: '127.0.0.1:4310', 'x-otto-desktop-token': token };
+      const headers = {
+        host: '127.0.0.1:4310',
+        ...(desktop ? { 'x-otto-desktop-token': token } : { cookie: `otto-access-4310=${token}` }),
+      };
       for (const fromChat of [false, true]) {
         const turn = fromChat ? { threadId: randomUUID(), turnId: randomUUID() } : undefined;
         const expectedPage = desktop ? '/connected.html' : fromChat ? '/' : '/apps';
@@ -1204,11 +1207,10 @@ test(
         assert.deepEqual(resumed, turn ? [turn.turnId] : []);
         resumed.length = 0;
       }
-      if (desktop)
-        assert.equal(
-          (await app.inject({ url: '/api/apps', headers: { host: headers.host } })).statusCode,
-          401,
-        );
+      assert.equal(
+        (await app.inject({ url: '/api/apps', headers: { host: headers.host } })).statusCode,
+        401,
+      );
     }
   },
 );
@@ -1280,7 +1282,7 @@ test(
     });
     const app = Fastify();
     t.after(() => app.close());
-    registerLocalAccess(app, 4310, { token: 'synthetic-desktop-token' });
+    registerLocalAccess(app, 4310, { key: 'synthetic-desktop-token', desktop: true });
     const captured: AnalyticsEvent[] = [];
     registerAnalyticsRoutes(app, (event) => captured.push(event));
     service.registerRoutes(app);

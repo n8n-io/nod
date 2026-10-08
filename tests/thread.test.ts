@@ -33,6 +33,7 @@ import { areaEntries, digest } from '../src/server/memory-tree.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics } from '../src/server/analytics.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 test(
   'one thread runs every turn in order on the same session and workspace',
@@ -175,7 +176,11 @@ test(
         await thread.startOnboarding(name, ['Gmail']);
       },
     }).register(app);
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const request = (
       method: 'GET' | 'POST' | 'PUT' | 'PATCH',
       path: string,

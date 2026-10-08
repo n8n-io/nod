@@ -30,6 +30,7 @@ import { agentModels } from '../src/shared/model-defaults.ts';
 import { createFixtureMessagingSetup } from './e2e-channels.ts';
 import { workspaceNetwork } from './e2e-workspace.ts';
 import { integrationDatabaseUrl } from './local-database.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const environment = {
@@ -106,6 +107,7 @@ process.env.PGBOSS_SCHEMA = bossSchema;
 process.env.PORT = String(port);
 process.env.OTTO_MODE = 'local';
 process.env.OTTO_DATA_ROOT = join(directory, '.local');
+const access = await accessKey(process.env.OTTO_DATA_ROOT);
 process.env.OTTO_PUBLIC_URL = baseUrl;
 process.env.NODE_ENV = 'production';
 process.env.DEV_INSPECTOR = 'true';
@@ -463,6 +465,7 @@ try {
       headers: {
         host: new URL(baseUrl).host,
         origin: baseUrl,
+        cookie: `${accessCookie(port)}=${access}`,
         'content-type': 'application/json',
         'x-fixture-signature': operatorToken,
       },
@@ -682,7 +685,11 @@ try {
   };
   await writeFile(
     join(directory, 'manifest.json'),
-    JSON.stringify({ ...manifest, operatorToken }, null, 2),
+    JSON.stringify(
+      { ...manifest, operatorToken, accessUrl: `${baseUrl}/#access=${access}` },
+      null,
+      2,
+    ),
     {
       mode: 0o600,
     },
