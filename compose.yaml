@@ -1,7 +1,7 @@
 name: otto-local
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: otto
       POSTGRES_PASSWORD: ${OTTO_POSTGRES_PASSWORD:?Run npm run dev to prepare the local database}
