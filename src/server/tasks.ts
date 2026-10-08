@@ -18,7 +18,7 @@ const waits = z
   )
   .max(10);
 const nextCheck = z.iso.datetime({ offset: true });
-const credentialUrl = /(?<![\w:/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
+const credentialUrl = /(?<![\w/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
 const input = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
   z

@@ -428,6 +428,10 @@ test(
         const credentialLinks = await seed([
           reusable[0],
           'Open https://alice:s3cr3t@example.test/invoices.',
+          'Check URL:https://alice:s3cr3t@example.test/invoices.',
+          'Check URL:https://alice@example.test/invoices.',
+          'Check URL=(https://alice:s3cr3t@example.test/invoices).',
+          'Check URL—https://alice:s3cr3t@example.test/invoices.',
           'Open [the report](https://alice:p%40ss%3Aword@example.test/invoices).',
           'Open https://alice@example.test/invoices.',
           'Open http://:p%3Aa%40ss@example.test/invoices.',

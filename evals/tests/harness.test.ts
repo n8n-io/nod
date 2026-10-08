@@ -717,8 +717,9 @@ test('scenario API calls use authenticated transport and keep its cookie on the 
   app.get('/api/empty', async (_request, reply) => reply.code(204).send());
   app.get('/api/redirect', async (_request, reply) => reply.redirect(`${outsideUrl}/receiver`));
   const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+  const request = createStackRequest(baseUrl, cookie);
   const session = createSession({
-    stack: { request: createStackRequest(baseUrl, cookie) } as Stack,
+    stack: { request, origin: baseUrl } as Stack,
     user: {},
     deadline: Date.now() + 5000,
   });
@@ -734,6 +735,10 @@ test('scenario API calls use authenticated transport and keep its cookie on the 
     for (const path of [`${outsideUrl}/receiver`, `${outsideUrl.replace('http:', '')}/receiver`])
       await assert.rejects(session.api('GET', path), /must stay on the Otto server/);
     await assert.rejects(session.api('GET', '/api/redirect'));
+    await assert.rejects(request('/api/redirect', { redirect: 'follow' }));
+    const callback = await request('/api/redirect', { redirect: 'manual' });
+    assert.equal(callback.status, 302);
+    assert.equal(callback.headers.get('location'), `${outsideUrl}/receiver`);
     assert.equal(outsideRequests, 0);
   } finally {
     await app.close();

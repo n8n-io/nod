@@ -93,7 +93,11 @@ export function createStackRequest(baseUrl: string, cookie: string): Stack['requ
     const headers = new Headers(init?.headers);
     headers.set('cookie', cookie);
     headers.set('origin', origin);
-    return fetch(url, { ...init, headers, redirect: 'error' });
+    return fetch(url, {
+      ...init,
+      headers,
+      redirect: init?.redirect === 'manual' ? 'manual' : 'error',
+    });
   };
 }
 
