@@ -79,12 +79,19 @@ function fitnova(state: State): Site {
 }
 
 function sessionRows(run: Run, dates: string[]) {
-  const logs = (run.apps?.sheets?.books ?? []).map((book) =>
-    book.tabs.flatMap((tab) => tab.rows.map((row) => row.join(' '))),
+  const columns = (run.apps?.sheets?.books ?? []).flatMap((book) =>
+    book.tabs.flatMap((tab) =>
+      Array.from(
+        { length: tab.rows.reduce((width, row) => Math.max(width, row.length), 0) },
+        (_, column) =>
+          tab.rows.flatMap((row) => {
+            const found = dates.filter((date) => row[column]?.includes(date));
+            return found.length === 1 ? [{ date: found[0], text: row.join(' ') }] : [];
+          }),
+      ),
+    ),
   );
-  const hits = (rows: string[]) =>
-    rows.filter((row) => dates.some((date) => row.includes(date))).length;
-  return logs.sort((a, b) => hits(b) - hits(a))[0] ?? [];
+  return columns.sort((a, b) => b.length - a.length)[0] ?? [];
 }
 
 export default scenario({
@@ -146,15 +153,12 @@ export default scenario({
         'sheet-has-one-row-per-session',
         (run) => {
           const rows = sessionRows(run, dates);
-          const count = (date: string) => rows.filter((row) => row.includes(date)).length;
+          const count = (date: string) => rows.filter((row) => row.date === date).length;
           const missing = dates.filter((date) => !count(date));
           const repeated = dates.filter((date) => count(date) > 1);
-          const crowded = rows.filter(
-            (row) => dates.filter((date) => row.includes(date)).length > 2,
-          );
           return {
-            pass: !missing.length && !repeated.length && !crowded.length,
-            evidence: `${missing.length} of ${dates.length} sessions missing${missing.length ? ` (e.g. ${missing.slice(0, 3).join(', ')})` : ''}, ${repeated.length} repeated, ${crowded.length} rows holding several sessions`,
+            pass: !missing.length && !repeated.length,
+            evidence: `${missing.length} of ${dates.length} sessions missing${missing.length ? ` (e.g. ${missing.slice(0, 3).join(', ')})` : ''}, ${repeated.length} repeated${repeated.length ? ` (e.g. ${repeated.slice(0, 3).join(', ')})` : ''}`,
           };
         },
         { failure: 'incomplete' },
@@ -164,7 +168,7 @@ export default scenario({
         (run) => {
           const rows = sessionRows(run, dates);
           const wrong = world.state.sessions.filter((entry) => {
-            const row = rows.find((line) => line.includes(entry.date)) ?? '';
+            const row = rows.find((line) => line.date === entry.date)?.text ?? '';
             return !new RegExp(
               String(entry.exercises[0][1].match(/@ ([\d.]+)/)?.[1]).replace('.', '\\.'),
             ).test(row);
