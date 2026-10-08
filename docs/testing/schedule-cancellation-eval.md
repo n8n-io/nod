@@ -59,4 +59,6 @@ On implementation `fca81731`, 140 focused thread/approval/scheduler checks passe
 
 After rebasing onto main `d783d5ac`, the unchanged cancellation cases passed 53/53 in each of three fresh attempts on `b9355aaa` (100% passed at least once; 100% passed every time). Final integration and CI results are recorded on [PR #178](https://github.com/n8n-io/otto/pull/178). The PR's checks identify the exact final revision. Source review found no actionable findings.
 
+After the security changes on main `a5b2fdc2`, implementation `8303e83a` passed 723/723 integration checks and 54/54 focused checks in all three attempts. CI then exposed an inherited eval harness compile failure: the scenario API helper still used the public server URL removed from the stack. The helper now uses the stack's authenticated transport and rejects outside targets before dispatch; eval typechecking and all 41 harness tests pass. The failed CI log is preserved as `ci-failed.log`.
+
 No UI redesign or live-provider acceptance is claimed. The attachment's final disabled state and repeated confirmations are observed facts; which earlier action originally paused that schedule remains unknown.

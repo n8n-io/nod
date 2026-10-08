@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
@@ -24,7 +25,8 @@ import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts';
 import { select } from '../src/run.ts';
 import { scenarios } from '../src/scenarios/index.ts';
-import { waitUntil } from '../src/session.ts';
+import { createSession, waitUntil } from '../src/session.ts';
+import type { Stack } from '../src/stack.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
 import { routeFixtureHosts } from '../src/world/fixture-fetch.ts';
 import { page, serveSites } from '../src/world/sites.ts';
@@ -451,6 +453,56 @@ test('a case waits for observed work and reports a missing test condition', asyn
     waitUntil(async () => true, 0),
     /test condition was not reached/,
   );
+});
+
+test('scenario API calls use authenticated local transport and refuse outside targets', async (t) => {
+  const received: Array<{ method: string; path: string; body: string }> = [];
+  const server = createServer(async (request, response) => {
+    if (request.headers.cookie !== 'synthetic-access=fixture') {
+      response.writeHead(401).end();
+      return;
+    }
+    let body = '';
+    for await (const chunk of request) body += String(chunk);
+    received.push({ method: request.method!, path: request.url!, body });
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ accepted: true }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  let calls = 0;
+  const stack = {
+    request(path, init) {
+      calls++;
+      return fetch(new URL(path, origin), {
+        ...init,
+        headers: { ...init?.headers, cookie: 'synthetic-access=fixture' },
+      });
+    },
+  } as Stack;
+  const session = createSession({ stack, user: {}, deadline: Date.now() + 1000 });
+  assert.deepEqual(await session.api('POST', '/api/account?fixture=true', { name: 'Synthetic' }), {
+    status: 200,
+    body: { accepted: true },
+  });
+  assert.deepEqual(received, [
+    {
+      method: 'POST',
+      path: '/api/account?fixture=true',
+      body: JSON.stringify({ name: 'Synthetic' }),
+    },
+  ]);
+  for (const path of [
+    'https://outside.example.test/api',
+    '//outside.example.test/api',
+    '/\\outside.example.test/api',
+    '/\n/outside.example.test/api',
+    '/\t/outside.example.test/api',
+    'api/state',
+  ])
+    await assert.rejects(session.api('GET', path), /must stay on the Otto server/);
+  assert.equal(calls, 1);
 });
 
 test('the stop case rejects a task that finished before Stop', async () => {
