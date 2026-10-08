@@ -92,7 +92,7 @@ CI runs on the pull request. Workflows from first-time contributors start after 
 
 ## From merge to release
 
-Merged changes go into the next desktop release. Releases are cut from `main` every day, and installed apps update automatically; see [desktop releases](desktop/RELEASING.md). Source installs pick up changes with `git pull`.
+Merged changes go into the next desktop release. A release from `main` is scheduled every day and is published only after it builds, signs and passes its checks; installed apps then update automatically. See [desktop releases](desktop/RELEASING.md). Source installs pick up changes with `git pull`.
 
 ## Coding agents
 

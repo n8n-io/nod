@@ -64,15 +64,13 @@ If you are unsure whether something is in scope, report it privately anyway.
 
 Test only installations and accounts you own. Use synthetic data. Do not access or change other people's data, send messages to real recipients, or degrade services that n8n or anyone else runs. Stop and report as soon as you have shown the problem.
 
-If you follow this policy, we consider your research authorized and will not take legal action against you for it.
-
 ## How Otto protects your data
 
 Otto is driven by a language model. Content it reads, such as web pages, emails and documents, can try to steer it. The server checks below limit what that can lead to; they do not make the model's judgment reliable. If you can make Otto do something the server should have stopped, that is a vulnerability. If Otto makes an unwise choice that the server allows, it is a bug or a design issue. Report it privately if it could put users at risk.
 
-- **Where Otto runs.** The server, database, workspace and browser run on your computer; the desktop app keeps them in a private virtual machine. Model requests go to the provider you choose. Apps you connect through Composio, MCP or OAuth go to those services. Telegram and WhatsApp messages go through those services.
+- **Where Otto runs.** The server, database, workspace and browser run on your computer. In the desktop app, the server runs on your Mac and the database, workspace and browser run in a private virtual machine. Model requests go to the provider you choose. Apps you connect through Composio, MCP or OAuth go to those services. Telegram and WhatsApp messages go through those services.
 - **Local access.** A source install listens on `127.0.0.1` and asks for an access key once. The desktop app gives each launch its own token, and only its own windows receive it.
-- **Keys and saved logins.** Model keys, the Composio key and saved logins are encrypted with a key kept in the macOS Keychain or in `OTTO_VAULT_KEY`. Provider keys never enter the workspace or the browser. To sign in to a website, Otto can read one saved login for that exact site; that login then enters the model's context and the saved conversation.
+- **Keys and saved logins.** Model keys, the Composio key and saved logins are encrypted with a key kept in the macOS Keychain or in `OTTO_VAULT_KEY`. Hosted deployments derive a separate key for each user from the operator's master key. Provider keys never enter the workspace or the browser. To sign in to a website, Otto can read one saved login for that exact site; that login then enters the model's context and the saved conversation.
 - **Workspace.** Otto's commands and file tools run in a container with no access to your home directory, no Docker socket and no provider keys.
 - **Untrusted content.** Results from apps, the browser and the web reach the model marked as data, not instructions. If such content looks like an attempt to steer Otto, the server holds sends and deletions for your confirmation until your next message.
 - **Approvals.** Otto's server checks connected-app actions before they run. Reads and changes to your own data run directly. Actions that reach other people, delete data or can't be classified need your confirmation, unless every recipient is someone you named or confirmed before, or a review model that sees only your recent messages matches the action to your request. Confirmed actions run once and are never retried. Actions in websites through Otto's browser depend on the model's instructions, not this check.

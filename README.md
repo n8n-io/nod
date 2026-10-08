@@ -36,7 +36,8 @@ On Linux, create the settings file and a Vault key before the first start. Otto 
 
 ```sh
 cp .env.example .env
-sed -i "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .env
+chmod 600 .env
+sed -i.bak "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak
 ```
 
 Keep a copy of `OTTO_VAULT_KEY` somewhere safe. Saved credentials can't be read without it. Then start Otto:
@@ -53,7 +54,7 @@ Otto serves one owner on `127.0.0.1` with no account login. Don't expose it to a
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Stop Otto      | Press Ctrl-C, then run `docker compose stop` to stop the containers.                                                                                      |
 | Update Otto    | Stop it, run `git pull` and `npm ci`, then `npm start`.                                                                                                   |
-| Get a new link | Delete `.local/access-key` and restart. The key otherwise stays the same across restarts.                                                                 |
+| Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. The key otherwise stays the same across restarts.                             |
 | Find your data | `.local/` (or `OTTO_DATA_ROOT`) and the Docker volumes. The Vault key is in `.env`, or in the macOS Keychain item `dev.otto.vault` if you didn't set one. |
 | Back up        | Stop Otto, then copy `.local/`, the Docker volumes and the Vault key. A tested restore procedure doesn't exist yet.                                       |
 
