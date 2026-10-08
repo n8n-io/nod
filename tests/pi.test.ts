@@ -1589,8 +1589,12 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
     'git status --porcelain',
     'git status --porcelain=v2 -z',
     'git diff --output=changes.patch',
+    'git diff "--output=changes.patch"',
+    'git diff --output-file changes.patch',
+    'git diff -ochanges.patch',
     'git log --format=json',
     'git log --json',
+    'git  log',
   ])
     assert.equal(await run('bash', { command }), 'exact output\n');
   assert.equal(existsSync(join(directory, 'rewrites')), false);

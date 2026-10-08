@@ -16,7 +16,7 @@ import type { WorkspaceSession } from '../../ports/computer.ts';
 
 const streamBytes = 1024 * 1024;
 const rawCommand =
-  /[|&;<>\n\r`$\\]|^\s*[\w]+=[^\s]*|(?:^|\s)(?:--(?:json|porcelain|raw|format|output|outfile|output-file|null|null-data)(?:[=\s]|$)|-(?:0|z|o|O|print0)(?:\s|$))/;
+  /[|&;<>\n\r`$\\]|^\s*\w+=\S*|(?:^|\s)["']?(?:--(?:json|porcelain|raw|format|output|outfile|output-file|null)(?:[-=\s"']|$)|-[oO]|-(?:0|z|print0)(?:[\s"']|$))/;
 const invocationWrapper =
   /^\s*(?:\S*\/)?(?:npm|pnpm|yarn|bun|npx|bunx|python[\d.]*|uv|poetry|pipenv|pipx|env|command|exec|sudo|doas)(?:\s|$)/;
 const imageTypes: Record<string, string> = {
@@ -210,7 +210,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       ...(timeZone ? [`export TZ=${quote(timeZone)}`] : []),
       'export RTK_TELEMETRY_DISABLED=1',
       `otto_command=${quote(command)}`,
-      ...(!rawCommand.test(command) && command.trim() !== 'git log'
+      ...(!rawCommand.test(command) && !/^\s*git\s+log\s*$/.test(command)
         ? [
             'otto_rewrite=$(timeout -k 1 2 rtk rewrite "$otto_command" 2>/dev/null)',
             'otto_rewrite_code=$?',
