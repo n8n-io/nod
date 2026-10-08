@@ -1,19 +1,37 @@
 import { Composio, type ToolRouterSession } from '@composio/core';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { integrationServiceIds } from '../../shared/integrations.ts';
+import { integrationServices, type IntegrationServiceInfo } from '../../shared/integrations.ts';
 import { createComposioFiles } from './downloads.ts';
 import { readInboxSnippets, readSentEmails } from './sent-email.ts';
 import { readVerificationEmails } from './verification-email.ts';
 import { safeRemoteFetch } from '../discovered/remote.ts';
 import {
+  IntegrationAuthConfigurationError,
+  IntegrationCatalogAccessDenied,
   IntegrationInboxCursorExpired,
   type IntegrationProvider,
   type IntegrationService,
   type IntegrationSession,
 } from '../../ports/integrations.ts';
 
-const toolkits = integrationServiceIds.filter((service) => service !== 'linear');
+const toolkitVersions = {
+  gmail: '20260915_00',
+  googlecalendar: '20260915_00',
+  googledrive: '20260921_00',
+  googlesheets: '20260915_00',
+  googledocs: '20260826_00',
+  slack: '20260915_00',
+  notion: '20260915_00',
+};
+const toolkits = Object.keys(toolkitVersions);
+const googleOAuthToolkits = new Set([
+  'gmail',
+  'googlecalendar',
+  'googledrive',
+  'googlesheets',
+  'googledocs',
+]);
 const subscriptions = {
   gmail: {
     trigger: 'GMAIL_NEW_GMAIL_MESSAGE',
@@ -27,13 +45,71 @@ const subscriptions = {
   notion: { trigger: 'NOTION_PAGE_CONTENT_UPDATED', config: {} },
 } as const;
 type ManagedSession = Awaited<ReturnType<Composio['sessions']['use']>> &
-  Pick<InstanceType<typeof ToolRouterSession>, 'search' | 'execute'>;
+  Pick<InstanceType<typeof ToolRouterSession>, 'search' | 'execute' | 'update' | 'authorize'>;
 type AccountIdentity = { expiresAt: number; accountName?: string; accountEmail?: string };
 const toolSlug = z
   .string()
   .max(200)
   .regex(/^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/);
-const schemaToolkit = z.string().toLowerCase().pipe(z.enum(integrationServiceIds));
+const schemaToolkit = z
+  .string()
+  .toLowerCase()
+  .regex(/^[a-z][a-z0-9_]{0,79}$/);
+const catalogLogo = z
+  .string()
+  .max(2048)
+  .regex(
+    /^https:\/\/(?:logos\.composio\.dev\/api\/[a-z0-9_-]+|assets\.composio\.dev\/logos\/[a-z0-9][a-z0-9_.-]*\.(?:svg|png|webp|jpe?g|ico))$/i,
+  );
+const catalogCategory = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .regex(/^[^\p{Cc}\p{Cf}]+$/u),
+});
+const catalogPage = z.object({
+  items: z.array(z.unknown()).max(1000),
+  next_cursor: z.string().max(2048).nullable().optional(),
+});
+const catalogItem = z.object({
+  slug: schemaToolkit,
+  name: z.string().trim().min(1).max(200),
+  meta: z
+    .object({
+      description: z.string().max(10_000).optional().catch(undefined),
+      logo: z.unknown().optional(),
+      categories: z.unknown().optional(),
+    })
+    .catch({}),
+  auth_schemes: z.array(z.string().max(100)).max(30).optional(),
+  composio_managed_auth_schemes: z.array(z.string().max(100)).max(30).optional(),
+});
+const authConfigPage = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/),
+        toolkit: z.object({ slug: schemaToolkit }),
+        status: z.enum(['ENABLED', 'DISABLED']),
+        auth_scheme: z.string().optional(),
+        is_composio_managed: z.boolean().optional(),
+        is_enabled_for_tool_router: z.boolean().optional(),
+      }),
+    )
+    .max(200),
+  next_cursor: z.string().max(2048).nullable().optional(),
+});
+const accountRouting = z.object({
+  id: z.string().min(1).max(200),
+  user_id: z.string().min(1).max(200),
+  toolkit: z.object({ slug: schemaToolkit }),
+  auth_config: z.object({
+    id: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/),
+    is_disabled: z.boolean(),
+  }),
+});
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -84,12 +160,20 @@ const identityTools = {
   gmail: { action: 'GMAIL_GET_PROFILE', args: { user_id: 'me' } },
   slack: { action: 'SLACK_WHO_AM_I', args: {} },
   notion: { action: 'NOTION_WHO_AM_I', args: {} },
+  sentry: { action: 'SENTRY_VALIDATE_CREDENTIAL', args: {} },
   googlecalendar: { action: 'GOOGLECALENDAR_GET_CURRENT_USER', args: {} },
   googledrive: {
     action: 'GOOGLEDRIVE_GET_ABOUT',
     args: { fields: 'user(displayName,emailAddress)' },
   },
 } as const;
+const accountDisplayName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^[^\p{Cc}\p{Cf}]+$/u)
+  .refine((value) => !/^(?:\[?redacted\]?|<redacted>|\*{3,})$/i.test(value));
 
 function identityFields(
   value: unknown,
@@ -125,16 +209,11 @@ function identityFields(
     .email()
     .max(320)
     .safeParse(data.email ?? data.emailAddress ?? data.id);
-  const name = z
-    .string()
-    .trim()
-    .min(1)
-    .max(200)
-    .safeParse(data.name ?? data.displayName ?? data.display_name);
+  const name = accountDisplayName.safeParse(data.name ?? data.displayName ?? data.display_name);
   if (!email.success && !name.success) return;
   return {
     ...(email.success ? { accountEmail: email.data } : {}),
-    ...(name.success ? { accountName: name.data.replace(/[\u0000-\u001f]/g, ' ') } : {}),
+    ...(name.success ? { accountName: name.data } : {}),
   };
 }
 
@@ -169,25 +248,23 @@ export function createComposioProvider(options: {
   const identities = new Map<string, AccountIdentity>();
   const pendingIdentities = new Map<string, Promise<AccountIdentity>>();
   const authConfigs = Object.fromEntries(
-    Object.entries(options.authConfigs ?? {}).filter(
-      ([, id]) => typeof id === 'string' && id.trim().length > 0,
-    ),
+    Object.entries(options.authConfigs ?? {})
+      .filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === 'string' && entry[1].trim().length > 0,
+      )
+      .map(([slug, id]) => [schemaToolkit.parse(slug), id]),
   );
+  let catalog: { services: IntegrationServiceInfo[]; expiresAt: number } | undefined;
+  let catalogRequest: Promise<IntegrationServiceInfo[]> | undefined;
+  let catalogRetryAfter = 0;
   function connect(apiKey?: string) {
     return apiKey
       ? new Composio({
           apiKey,
           allowTracking: false,
           fileUploadDirs: false,
-          toolkitVersions: {
-            gmail: '20260915_00',
-            googlecalendar: '20260915_00',
-            googledrive: '20260921_00',
-            googlesheets: '20260915_00',
-            googledocs: '20260826_00',
-            slack: '20260915_00',
-            notion: '20260915_00',
-          },
+          toolkitVersions,
         })
       : undefined;
   }
@@ -195,6 +272,175 @@ export function createComposioProvider(options: {
   function required() {
     if (!client) throw new Error('The connection provider is not configured.');
     return client;
+  }
+  async function ownedAccount(sdk: Composio, id: string, ownerId: string, signal: AbortSignal) {
+    const account = accountRouting.parse(
+      await sdk.getClient().connectedAccounts.retrieve(id, { signal, maxRetries: 0 }),
+    );
+    if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+    if (account.id !== id || account.user_id !== ownerId)
+      throw new Error('This connected account is unavailable.');
+    return account;
+  }
+  async function projectAuthConfig(sdk: Composio, slug: string, signal: AbortSignal) {
+    const candidates = new Set<string>();
+    const cursors = new Set<string>();
+    let custom = false;
+    let cursor: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      signal.throwIfAborted();
+      let result;
+      try {
+        result = authConfigPage.parse(
+          await sdk.getClient().authConfigs.list(
+            {
+              toolkit_slug: slug,
+              is_composio_managed: false,
+              show_disabled: false,
+              limit: 200,
+              ...(cursor ? { cursor } : {}),
+            },
+            { signal, maxRetries: 0 },
+          ),
+        );
+      } catch (error) {
+        if (error && typeof error === 'object' && 'status' in error && error.status === 403)
+          throw new IntegrationAuthConfigurationError('permission');
+        throw new Error('The project sign-in configuration could not be loaded.');
+      }
+      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+      for (const item of result.items) {
+        if (
+          item.toolkit.slug !== slug ||
+          item.status !== 'ENABLED' ||
+          item.is_composio_managed !== false ||
+          item.auth_scheme !== 'OAUTH2'
+        )
+          continue;
+        custom = true;
+        if (item.is_enabled_for_tool_router === true) candidates.add(item.id);
+      }
+      if (candidates.size > 1) throw new IntegrationAuthConfigurationError('ambiguous');
+      if (!result.next_cursor) {
+        if (custom && !candidates.size) throw new IntegrationAuthConfigurationError('unavailable');
+        return candidates.values().next().value;
+      }
+      if (cursors.has(result.next_cursor))
+        throw new Error('The project sign-in configuration could not be loaded.');
+      cursors.add(result.next_cursor);
+      cursor = result.next_cursor;
+    }
+    throw new Error('The project sign-in configuration could not be loaded.');
+  }
+  function legacyServices(): IntegrationServiceInfo[] {
+    return [...new Set([...toolkits, ...Object.keys(authConfigs)])].map((slug) => ({
+      slug,
+      name: integrationServices[slug]?.name ?? slug.replaceAll('_', ' '),
+      description: integrationServices[slug]?.description ?? '',
+    }));
+  }
+  async function listServices(): Promise<IntegrationServiceInfo[]> {
+    const sdk = required();
+    if (catalog && catalog.expiresAt > Date.now()) return catalog.services;
+    if (catalogRequest) return catalogRequest;
+    const pending = (async () => {
+      const operation = AbortSignal.timeout(10_000);
+      const services = new Map(legacyServices().map((service) => [service.slug, service]));
+      const cursors = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        operation.throwIfAborted();
+        const page = catalogPage.parse(
+          await sdk.getClient().toolkits.list(
+            {
+              type: 'native',
+              include_deprecated: false,
+              limit: 1000,
+              ...(cursor ? { cursor } : {}),
+            },
+            { signal: operation, maxRetries: 0 },
+          ),
+        );
+        for (const entry of page.items) {
+          const parsed = catalogItem.safeParse(entry);
+          if (!parsed.success) continue;
+          const item = parsed.data;
+          if (
+            !item.composio_managed_auth_schemes?.length &&
+            !item.auth_schemes?.some((scheme) => scheme.toUpperCase() === 'DCR_OAUTH') &&
+            !services.has(item.slug)
+          )
+            continue;
+          const logo = catalogLogo.safeParse(item.meta.logo);
+          const categories = Array.isArray(item.meta.categories)
+            ? [
+                ...new Set(
+                  item.meta.categories.slice(0, 32).flatMap((category) => {
+                    const parsed = catalogCategory.safeParse(category);
+                    return parsed.success ? [parsed.data.name] : [];
+                  }),
+                ),
+              ].slice(0, 12)
+            : [];
+          services.set(item.slug, {
+            slug: item.slug,
+            name: item.name,
+            description: item.meta.description?.slice(0, 1000) ?? '',
+            ...(logo.success ? { logoUrl: logo.data } : {}),
+            ...(categories.length ? { categories } : {}),
+          });
+        }
+        cursor = page.next_cursor ?? undefined;
+        if (cursor) {
+          if (cursors.has(cursor) || cursors.size >= 10)
+            throw new Error('The app catalog pagination is invalid.');
+          cursors.add(cursor);
+        }
+      } while (cursor);
+      operation.throwIfAborted();
+      if (client !== sdk) throw new Error('The connection provider changed.');
+      const result = [...services.values()].sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
+      catalog = { services: result, expiresAt: Date.now() + 15 * 60_000 };
+      catalogRetryAfter = 0;
+      return result;
+    })().catch((error: unknown) => {
+      if (client === sdk) catalogRetryAfter = Date.now() + 30_000;
+      const status =
+        error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+      if (status === 403) throw new IntegrationCatalogAccessDenied();
+      throw new Error('The app catalog could not be loaded. Try again later.');
+    });
+    catalogRequest = pending;
+    try {
+      return await pending;
+    } finally {
+      if (catalogRequest === pending) catalogRequest = undefined;
+    }
+  }
+  async function sessionServices(signal?: AbortSignal) {
+    let services = legacyServices();
+    if (Date.now() < catalogRetryAfter) return services.map((service) => service.slug);
+    let abort: (() => void) | undefined;
+    try {
+      const pending = listServices();
+      services = signal
+        ? await Promise.race([
+            pending,
+            new Promise<never>((_, reject) => {
+              abort = () => reject(signal.reason);
+              signal.addEventListener('abort', abort, { once: true });
+              if (signal.aborted) abort();
+            }),
+          ])
+        : await pending;
+    } catch {
+      signal?.throwIfAborted();
+    } finally {
+      if (abort) signal?.removeEventListener('abort', abort);
+    }
+    return services.map((service) => service.slug);
   }
   async function fetchIdentity(
     id: string,
@@ -286,11 +532,57 @@ export function createComposioProvider(options: {
     }
     return pending;
   }
-  function session(value: ManagedSession): IntegrationSession {
+  function session(
+    value: ManagedSession,
+    selectedToolkits?: string[],
+    sdk = required(),
+  ): IntegrationSession {
+    const savedToolkits = value.config?.toolkits;
+    const enabled = new Set(
+      selectedToolkits ??
+        (savedToolkits && 'enabled' in savedToolkits
+          ? savedToolkits.enabled
+          : [
+              ...legacyServices().map((service) => service.slug),
+              ...Object.keys(value.config?.connected_accounts ?? {}),
+            ].filter((slug) => !savedToolkits?.disabled.includes(slug))),
+    );
+    function actionToolkit(action: string) {
+      toolSlug.parse(action);
+      const toolkit = [...enabled]
+        .sort((left, right) => right.length - left.length)
+        .find((slug) => action.startsWith(`${slug.toUpperCase()}_`));
+      if (!toolkit) throw new Error('This action is outside the connected apps.');
+      return toolkit;
+    }
     return {
       id: value.sessionId,
       async authorize(service, callbackUrl) {
-        const result = await value.authorize(service, { callbackUrl });
+        const slug = schemaToolkit.parse(service);
+        if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+        if (
+          !enabled.has(slug) ||
+          (!toolkits.includes(slug) &&
+            !authConfigs[slug] &&
+            !(await listServices()).some((entry) => entry.slug === slug))
+        )
+          throw new Error('This app is not available for connection.');
+        const signal = AbortSignal.timeout(15_000);
+        if (googleOAuthToolkits.has(slug) && !authConfigs[slug]) {
+          const id = await projectAuthConfig(sdk, slug, signal);
+          if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+          if (id)
+            await value.update(
+              {
+                authConfigs: { ...value.config?.auth_configs, ...authConfigs, [slug]: id },
+                expectedConfigVersion: value.configVersion,
+              },
+              { signal },
+            );
+        }
+        if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+        const result = await value.authorize(service, { callbackUrl }, { signal });
+        if (sdk !== client) throw new Error('The connection provider changed. Try again.');
         if (
           !result.redirectUrl ||
           new URL(result.redirectUrl).origin !== 'https://connect.composio.dev'
@@ -301,7 +593,7 @@ export function createComposioProvider(options: {
       async search(query, signal) {
         try {
           signal?.throwIfAborted();
-          const result = await value.search({ query, toolkits }, { signal });
+          const result = await value.search({ query, toolkits: [...enabled] }, { signal });
           signal?.throwIfAborted();
           if (!result.success || result.error != null) throw new Error();
           const entries = Object.entries(result.toolSchemas).map(
@@ -311,7 +603,11 @@ export function createComposioProvider(options: {
           const advertised = new Set(entries.map(([slug]) => slug));
           for (const [slug, tool] of entries) {
             toolSlug.parse(slug);
-            if (tool.toolSlug !== slug || !slug.startsWith(`${tool.toolkit.toUpperCase()}_`))
+            if (
+              !enabled.has(tool.toolkit) ||
+              tool.toolSlug !== slug ||
+              actionToolkit(slug) !== tool.toolkit
+            )
               throw new Error();
           }
           const missing = entries.filter(
@@ -385,6 +681,7 @@ export function createComposioProvider(options: {
       },
       async execute(action, args, accountId, signal, options) {
         signal?.throwIfAborted();
+        actionToolkit(action);
         const result = await value.execute(
           action,
           args,
@@ -409,8 +706,7 @@ export function createComposioProvider(options: {
           : AbortSignal.timeout(30_000);
         try {
           operation.throwIfAborted();
-          toolSlug.parse(action);
-          const toolkit = schemaToolkit.parse(action.split('_')[0]);
+          const toolkit = actionToolkit(action);
           if (!file.bytes.byteLength || file.bytes.byteLength > 15 * 1024 * 1024)
             throw new Error('The file size is unsupported.');
           const result = await required()
@@ -459,6 +755,9 @@ export function createComposioProvider(options: {
     },
     setApiKey(apiKey) {
       client = connect(apiKey);
+      catalog = undefined;
+      catalogRequest = undefined;
+      catalogRetryAfter = 0;
     },
     async verifyApiKey(apiKey) {
       try {
@@ -472,7 +771,8 @@ export function createComposioProvider(options: {
         throw error;
       }
     },
-    supportedServices: toolkits,
+    supportedServices: legacyServices().map((service) => service.slug),
+    listServices,
     get webhooksConfigured() {
       return Boolean(client && options.webhookSecret);
     },
@@ -741,49 +1041,130 @@ export function createComposioProvider(options: {
     },
     async createSession(ownerId, accounts, signal) {
       signal?.throwIfAborted();
-      return session(
-        await required().sessions.create(
-          ownerId,
-          {
-            toolkits,
-            connectedAccounts: accounts,
-            multiAccount: {
-              enable: true,
-              maxAccountsPerToolkit: 10,
-              requireExplicitSelection: true,
-            },
-            ...(Object.keys(authConfigs).length ? { authConfigs } : {}),
-            manageConnections: false,
-            sandbox: { enable: false },
-            premiumUsage: false,
-          },
-          { signal },
+      const sdk = required();
+      const connectedAccounts = Object.fromEntries(
+        Object.entries(accounts).filter(
+          (entry): entry is [string, string | string[]] => entry[1] !== undefined,
         ),
       );
+      const selectedToolkits = [
+        ...new Set([
+          ...(await sessionServices(signal)),
+          ...Object.keys(connectedAccounts).map((slug) => schemaToolkit.parse(slug)),
+        ]),
+      ];
+      signal?.throwIfAborted();
+      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+      const value = await sdk.sessions.create(
+        ownerId,
+        {
+          toolkits: selectedToolkits,
+          connectedAccounts,
+          multiAccount: {
+            enable: true,
+            maxAccountsPerToolkit: 10,
+            requireExplicitSelection: true,
+          },
+          ...(Object.keys(authConfigs).length ? { authConfigs } : {}),
+          manageConnections: false,
+          sandbox: { enable: false },
+          premiumUsage: false,
+        },
+        { signal },
+      );
+      if (sdk !== client) {
+        await sdk.sessions
+          .delete(value.sessionId, { signal: AbortSignal.timeout(5_000) })
+          .catch(() => {});
+        throw new Error('The connection provider changed. Try again.');
+      }
+      return session(value, selectedToolkits, sdk);
     },
     async restoreSession(id, signal) {
       signal?.throwIfAborted();
-      return session(await required().sessions.use(id, undefined, { signal }));
+      const sdk = required();
+      const value = await sdk.sessions.use(id, undefined, { signal });
+      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+      return session(value, undefined, sdk);
     },
     async deleteSession(id) {
       await required().sessions.delete(id, { signal: AbortSignal.timeout(5_000) });
     },
-    async inspectAccount(id, ownerId) {
-      const account = await required().connectedAccounts.get(id, {
+    async reconnectAccount(ownerId, service, accountId, callbackUrl) {
+      const sdk = required();
+      const slug = schemaToolkit.parse(service);
+      const signal = AbortSignal.timeout(30_000);
+      const original = await ownedAccount(sdk, accountId, ownerId, signal);
+      if (original.toolkit.slug !== slug || original.auth_config.is_disabled)
+        throw new Error('This connection sign-in configuration is unavailable.');
+      const value = await sdk.sessions.create(
+        ownerId,
+        {
+          toolkits: [slug],
+          authConfigs: { [slug]: original.auth_config.id },
+          multiAccount: {
+            enable: true,
+            maxAccountsPerToolkit: 10,
+            requireExplicitSelection: true,
+          },
+          connectedAccounts: {},
+          manageConnections: false,
+          sandbox: { enable: false },
+          premiumUsage: false,
+        },
+        { signal },
+      );
+      try {
+        if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+        const result = await (value as ManagedSession).authorize(slug, { callbackUrl }, { signal });
+        if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+        if (
+          !result.redirectUrl ||
+          new URL(result.redirectUrl).origin !== 'https://connect.composio.dev'
+        )
+          throw new Error('The connection sign-in address is invalid.');
+        return {
+          accountId: result.id,
+          url: result.redirectUrl,
+          authConfigId: original.auth_config.id,
+        };
+      } finally {
+        await sdk.sessions
+          .delete(value.sessionId, { signal: AbortSignal.timeout(5_000) })
+          .catch(() => {});
+      }
+    },
+    async inspectAccount(id, ownerId, inspection) {
+      const sdk = required();
+      const routing = inspection?.verifyOwner
+        ? await ownedAccount(sdk, id, ownerId, AbortSignal.timeout(10_000))
+        : undefined;
+      const account = await sdk.connectedAccounts.get(id, {
         signal: AbortSignal.timeout(10_000),
       });
+      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
       const active = account.status === 'ACTIVE' && !account.isDisabled;
       const service = account.toolkit.slug.toLowerCase();
+      if (routing && (routing.toolkit.slug !== service || routing.auth_config.is_disabled))
+        throw new Error('This connected account is unavailable.');
       const details = active ? await identity(id, service, ownerId) : undefined;
+      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+      const displayName = accountDisplayName.safeParse(account.state?.val.displayName);
+      const accountName =
+        details?.accountName ?? (active && displayName.success ? displayName.data : undefined);
       return {
         active,
         service,
-        ...(details?.accountName ? { accountName: details.accountName } : {}),
+        ...(accountName ? { accountName } : {}),
         ...(details?.accountEmail ? { accountEmail: details.accountEmail } : {}),
+        ...(routing ? { authConfigId: routing.auth_config.id } : {}),
       };
     },
-    async deleteAccount(id) {
-      await required().connectedAccounts.delete(id);
+    async deleteAccount(id, ownerId) {
+      const sdk = required();
+      if (ownerId) await ownedAccount(sdk, id, ownerId, AbortSignal.timeout(10_000));
+      if (sdk !== client) throw new Error('The connection provider changed. Try again.');
+      await sdk.connectedAccounts.delete(id);
       for (const key of identities.keys()) if (JSON.parse(key)[1] === id) identities.delete(key);
     },
     parseCallback(query) {

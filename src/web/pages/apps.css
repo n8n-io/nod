@@ -11,10 +11,196 @@
   font-weight: 500;
   line-height: 1.5;
 }
+.apps-views {
+  display: flex;
+  gap: 20px;
+  min-height: var(--secondary-tab-height);
+  margin-bottom: var(--secondary-section-gap);
+  border-bottom: 1px solid var(--border);
+}
+.apps-views > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(var(--secondary-tab-height) - 1px);
+  padding: 8px 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  cursor: pointer;
+}
+.apps-views > button[aria-selected='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--foreground);
+}
+.apps-views > button > span {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.apps-views > button:focus-visible,
+.apps-results:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.app-catalog-search {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  margin: -12px 0 4px;
+  padding: 12px 0;
+  background: var(--canvas);
+  box-shadow: 0 1px 0 var(--border);
+}
+.app-catalog-search input::-webkit-search-cancel-button,
+.app-category-panel input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+.app-category-trigger {
+  min-height: var(--control-height);
+  padding: 8px 12px;
+}
+.app-category-trigger[data-filtered] {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.app-category-count {
+  font-variant-numeric: tabular-nums;
+}
+.app-category-panel {
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(420px, calc(100dvh - 24px), var(--radix-popover-content-available-height));
+  padding: 8px;
+  overflow: hidden;
+  outline: none;
+}
+.app-category-panel > .search-field,
+.app-category-actions {
+  flex: none;
+}
+.app-category-options {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+.app-category-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px;
+  border-radius: var(--menu-item-radius);
+  font-size: var(--text-control);
+  line-height: 1.4;
+  cursor: pointer;
+}
+.app-category-option > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.app-category-option:hover {
+  background: var(--hover);
+}
+.app-category-option[data-selected] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.app-category-option:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.app-category-option > .checkbox:focus-visible {
+  outline: none;
+}
+.app-category-empty {
+  margin: 0;
+  padding: 16px 8px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.app-category-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.app-category-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.app-category-chip {
+  min-width: 0;
+  max-width: 100%;
+}
+.app-category-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-catalog-end {
+  height: 1px;
+}
+.apps-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 56px 16px;
+  text-align: center;
+}
+.apps-empty h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.apps-empty p {
+  max-width: 360px;
+  margin: 0 0 12px;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  line-height: 1.6;
+}
+.app-catalog-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+.app-catalog-footer p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
 .apps-page .app-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+.apps-page .app-catalog-grid {
+  grid-auto-rows: 1fr;
+}
+.apps-page .app-catalog-grid .app-card-description {
+  min-height: 3em;
 }
 .apps-page .app-card {
   display: grid;
@@ -44,13 +230,60 @@
   font-size: var(--text-control);
   font-weight: 500;
   line-height: 1.5;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .apps-page .app-card-description {
   margin: 4px 0 0;
   color: var(--muted-foreground);
   font-size: var(--text-control);
   line-height: 1.5;
+}
+.apps-page .app-description-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.apps-page .app-description-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--control-radius);
+  background: transparent;
+  text-align: left;
+  cursor: help;
+}
+.apps-page .app-description-trigger:hover,
+.apps-page .app-description-trigger[aria-expanded='true'] {
+  color: var(--foreground);
+}
+.apps-page .app-description-trigger:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.app-description-popover {
+  z-index: 55;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(320px, var(--radix-popover-content-available-height));
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--foreground);
+  font-size: var(--text-control);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+.app-description-popover > strong {
+  font-weight: 500;
+}
+.app-description-popover > p {
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
 }
 .app-status {
   display: flex;
@@ -72,6 +305,12 @@
 .app-status > svg {
   flex: none;
 }
+.apps-page .app-manage[data-pointer-restored]:focus {
+  outline: none;
+}
+.app-manage-dialog {
+  width: min(440px, calc(100vw - 32px));
+}
 .app-status[data-status='connected'] {
   background: var(--success-soft);
   color: var(--success);
@@ -84,6 +323,7 @@
   display: flex;
   align-items: flex-start;
   gap: 12px;
+  margin-bottom: 16px;
   padding-right: 24px;
 }
 .app-manage-heading > img,
@@ -95,29 +335,31 @@
 .app-manage-heading h2 {
   overflow-wrap: anywhere;
 }
+.app-manage-heading h2:focus-visible {
+  outline: none;
+}
+.app-manage-heading p {
+  margin-top: 4px;
+}
 .app-manage-accounts {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 .compact-account {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px 16px;
+  gap: 12px;
   min-width: 0;
   padding: 16px 0;
-}
-.compact-account:first-child {
-  padding-top: 0;
-}
-.compact-account:last-child {
-  padding-bottom: 0;
 }
 .compact-account + .compact-account {
   border-top: 1px solid var(--border);
 }
 .compact-account-details {
-  flex: 1 1 180px;
   min-width: 0;
+  padding-top: 0;
 }
 .compact-account-name,
 .compact-account-email {
@@ -145,6 +387,14 @@
 }
 .app-website-dialog {
   width: min(480px, calc(100vw - 32px));
+}
+.app-manage-dialog .app-account-actions {
+  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.app-manage-actions {
+  justify-content: space-between;
 }
 .app-discovery-dialog {
   width: min(500px, calc(100vw - 32px));
@@ -221,14 +471,15 @@
 .app-disconnect-dialog[aria-busy='true'] > .dialog-close {
   visibility: hidden;
 }
-@container (max-width: 1000px) {
-  .apps-page .app-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
 @container (max-width: 580px) {
   .apps-page .app-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .app-catalog-search {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-category-trigger {
+    justify-self: start;
   }
 }
 @container (max-width: 400px) {
@@ -240,5 +491,15 @@
   .apps-page .app-card > .button,
   .app-account-actions > .button {
     min-height: 40px;
+  }
+}
+@media (max-width: 420px) {
+  .app-manage-dialog .compact-account {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .app-manage-dialog .app-account-actions {
+    flex-direction: row;
+    align-items: center;
   }
 }

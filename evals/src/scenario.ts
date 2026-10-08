@@ -27,6 +27,7 @@ export type FailureClass =
   | 'format';
 
 export interface World {
+  notificationRule?: string;
   apps?: AppsWorld;
   sites?: Record<string, Site>;
   logins?: Array<{ label: string; origin: string; username: string; password: string }>;
@@ -84,6 +85,7 @@ export interface Scenario<W extends World = World> {
   user: UserScript;
   world(clock: { now(): number }): W;
   play(session: Session, world: W): Promise<void>;
+  completion?(world: W): Expectation;
   expect(world: W): Expectation[];
   evidence?(run: Run, world: W): string;
 }

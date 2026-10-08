@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Check, Globe2, KeyRound, Link2, MonitorSmartphone } from 'lucide-react';
-import type { CredentialRequest } from '../../shared/contracts';
+import type { AppSetupStatus, CredentialRequest } from '../../shared/contracts';
 import { api } from '../lib/api';
 import type { SetupKind } from '../lib/message-links';
+import { ServiceLogo } from './service-logo';
 
 const icons = { vault: KeyRound, website: Globe2, app: Link2, browser: MonitorSmartphone };
 const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
+const appLink = /^\/apps\?connect=([a-f0-9-]{36})$/i;
 
-function useCompletedAppLinks(hrefs: string[]) {
+function useAppLinks(hrefs: string[]) {
   const [completed, setCompleted] = useState<Set<string>>(new Set());
+  const [apps, setApps] = useState<Map<string, AppSetupStatus['apps'][number]>>(new Map());
   const key = JSON.stringify(hrefs);
   useEffect(() => {
     const links = JSON.parse(key) as string[];
@@ -19,16 +22,23 @@ function useCompletedAppLinks(hrefs: string[]) {
       try {
         const fingerprints = await Promise.all(
           links.map(async (href) => {
-            const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(href));
+            const connectionId = appLink.exec(href)?.[1].toLowerCase();
+            const digest = await crypto.subtle.digest(
+              'SHA-256',
+              new TextEncoder().encode(connectionId ? `/apps?connect=${connectionId}` : href),
+            );
             const hash = Array.from(new Uint8Array(digest), (byte) =>
               byte.toString(16).padStart(2, '0'),
             ).join('');
-            return { href, hash };
+            return { href, hash, connectionId };
           }),
         );
-        const hashes = await api<string[]>('/api/apps/setup-status', {
+        const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
-          body: JSON.stringify({ hashes: fingerprints.map((link) => link.hash) }),
+          body: JSON.stringify({
+            hashes: fingerprints.map((link) => link.hash),
+            connectionIds: fingerprints.flatMap((link) => link.connectionId ?? []),
+          }),
           signal: controller.signal,
           cache: 'no-store',
         });
@@ -36,8 +46,18 @@ function useCompletedAppLinks(hrefs: string[]) {
           (current) =>
             new Set([
               ...current,
-              ...fingerprints.filter((link) => hashes.includes(link.hash)).map((link) => link.href),
+              ...fingerprints
+                .filter((link) => result.completed.includes(link.hash))
+                .map((link) => link.href),
             ]),
+        );
+        setApps(
+          new Map(
+            fingerprints.flatMap(({ href, hash }) => {
+              const app = result.apps.find((item) => item.hash === hash);
+              return app ? [[href, app]] : [];
+            }),
+          ),
         );
       } catch {}
     };
@@ -50,7 +70,7 @@ function useCompletedAppLinks(hrefs: string[]) {
       document.removeEventListener('visibilitychange', check);
     };
   }, [key]);
-  return completed;
+  return { completed, apps };
 }
 
 function useRequestStatus(href: string) {
@@ -80,7 +100,17 @@ function useRequestStatus(href: string) {
   return status;
 }
 
-function SetupAction({ href, setup, label }: { href: string; setup: SetupKind; label: string }) {
+function SetupAction({
+  href,
+  setup,
+  label,
+  app,
+}: {
+  href: string;
+  setup: SetupKind;
+  label: string;
+  app?: AppSetupStatus['apps'][number];
+}) {
   const status = useRequestStatus(href);
   const Icon = icons[setup];
   if (status !== 'pending')
@@ -97,8 +127,12 @@ function SetupAction({ href, setup, label }: { href: string; setup: SetupKind; l
   if (setup === 'app')
     return (
       <button type="button" data-setup={setup} onClick={() => window.location.assign(href)}>
-        <Icon size={16} aria-hidden="true" />
-        {label}
+        {app ? (
+          <ServiceLogo slug={app.slug} logoUrl={app.logoUrl} size={18} />
+        ) : (
+          <Icon size={18} aria-hidden="true" />
+        )}
+        <span>{label}</span>
       </button>
     );
   return (
@@ -121,17 +155,15 @@ export function SetupActions({
 }: {
   actions: { href: string; setup: SetupKind; label: string }[];
 }) {
-  const completed = useCompletedAppLinks(
-    actions
-      .filter((action) => action.setup === 'app' && action.href.startsWith('https://'))
-      .map((action) => action.href),
+  const { completed, apps } = useAppLinks(
+    actions.filter((action) => action.setup === 'app').map((action) => action.href),
   );
   const pending = actions.filter((action) => !completed.has(action.href));
   if (!pending.length) return null;
   return (
     <div className="setup-group">
       {pending.map((action) => (
-        <SetupAction key={action.href} {...action} />
+        <SetupAction key={action.href} {...action} app={apps.get(action.href)} />
       ))}
     </div>
   );

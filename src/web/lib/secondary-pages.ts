@@ -1,28 +1,71 @@
 import type { ChannelProvider, ChannelSetupSummary, Connection } from '../../shared/contracts';
 
-export function connectionGroups(connections: Connection[]) {
-  const groups = new Map<string, { service: Connection; accounts: Connection[] }>();
-  for (const connection of connections) {
-    const group = groups.get(connection.slug) ?? { service: connection, accounts: [] };
-    if (connection.connectionId) group.accounts.push(connection);
-    groups.set(connection.slug, group);
+export function connectionGroups(connections: Connection[], catalog: Connection[] = []) {
+  const knownServices = new Set(connections.map((connection) => connection.slug));
+  const catalogServices = new Map(catalog.map((service) => [service.slug, service]));
+  const groups = new Map<string, Connection[]>();
+  for (const connection of [
+    ...connections.map((connection) =>
+      connection.connectionId ? connection : (catalogServices.get(connection.slug) ?? connection),
+    ),
+    ...catalog.filter((service) => !knownServices.has(service.slug)),
+  ]) {
+    const key = connection.slug.replace(/_mcp$/, '');
+    const group = groups.get(key) ?? [];
+    group.push(connection);
+    groups.set(key, group);
   }
-  return [...groups.values()];
+  return [...groups].map(([key, variants]) => {
+    const base = variants.find((connection) => connection.slug === key);
+    const configured = variants.filter((connection) => connection.status !== 'not_configured');
+    const primary =
+      configured.find((connection) => connection.slug === key) ??
+      configured[0] ??
+      base ??
+      variants[0];
+    const metadata =
+      catalogServices.get(key) ??
+      catalogServices.get(primary.slug) ??
+      variants.find((connection) => !connection.connectionId);
+    return {
+      key,
+      service: {
+        ...primary,
+        name: (metadata?.name ?? base?.name ?? primary.name).replace(/\s+MCP$/i, ''),
+        description: metadata?.description,
+        logoUrl:
+          metadata?.logoUrl ??
+          primary.logoUrl ??
+          variants.find((connection) => connection.logoUrl)?.logoUrl,
+        categories: [
+          ...new Set(
+            variants.flatMap(
+              (connection) =>
+                catalogServices.get(connection.slug)?.categories ?? connection.categories ?? [],
+            ),
+          ),
+        ],
+      },
+      accounts: variants.filter((connection) => connection.connectionId),
+    };
+  });
 }
 
 export function connectionIssue(connection: Connection) {
   if (connection.browserState === 'disconnecting') return 'Removal needs retry';
   if (connection.browserState === 'pending') return 'Finish sign-in';
   if (connection.browserState === 'needs_sign_in') return 'Sign-in required';
-  if (connection.status !== 'connected') return 'Sign-in required';
+  if (connection.status !== 'connected' || connection.reconnectRequired) return 'Sign-in required';
   return null;
 }
 
 export function connectionIdentity(connection: Connection) {
-  const name = connection.accountName?.trim();
+  const name = connection.accountName
+    ?.trim()
+    .replace(/^(?:\[?redacted\]?|<redacted>|\*{3,})$/i, '');
   const email = connection.accountEmail?.trim();
   return {
-    primary: name || email || 'Account details unavailable',
+    primary: name || email || `${connection.name.replace(/\s+MCP$/i, '')} account`,
     secondary:
       name && email && name.toLocaleLowerCase() !== email.toLocaleLowerCase() ? email : null,
   };

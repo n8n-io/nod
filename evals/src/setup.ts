@@ -22,7 +22,11 @@ async function call(
 }
 
 export async function prepare(stack: Stack, world: World, timeZone: string) {
-  await call(stack, 'PATCH', '/api/preferences', { timeZone, quietHoursEnabled: false });
+  await call(stack, 'PATCH', '/api/preferences', {
+    timeZone,
+    quietHoursEnabled: false,
+    notificationRule: world.notificationRule,
+  });
   const slugs = world.apps?.services ?? [];
   for (const slug of slugs) {
     await call(stack, 'POST', `/api/apps/${slug}/connect`, { returnTo: 'apps' });

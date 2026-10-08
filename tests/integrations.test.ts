@@ -19,6 +19,7 @@ import type {
 } from '../src/ports/agent.ts';
 import type { DiscoveredOAuthState } from '../src/ports/discovered.ts';
 import {
+  IntegrationCatalogAccessDenied,
   IntegrationInboxCursorExpired,
   type IntegrationFile,
   type IntegrationProvider,
@@ -48,6 +49,7 @@ import {
 } from '../src/server/provider-metering.ts';
 import { createAppGrantVault } from '../src/server/vault-app-grants.ts';
 import { integrationServiceIds } from '../src/shared/integrations.ts';
+import type { Connection } from '../src/shared/contracts.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 
 function fakeProvider(session: IntegrationSession): IntegrationProvider {
@@ -1055,6 +1057,153 @@ async function appsFixture(
 }
 
 test(
+  'managed app discovery keeps consent and underscore tool routing bound to owned accounts',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    let failure: Error | undefined;
+    f.provider.listServices = async () => {
+      if (failure) throw failure;
+      return [
+        { slug: 'foo', name: 'Foo', description: '' },
+        {
+          slug: 'foo_mcp',
+          name: 'Foo MCP',
+          description: '',
+          logoUrl: 'https://logos.composio.dev/api/foo_mcp',
+          categories: ['Productivity', 'Meetings'],
+        },
+        { slug: 'gmail', name: 'Gmail', description: '', categories: ['Email'] },
+        ...Array.from({ length: 35 }, (_, index) => ({
+          slug: `notes_${index}`,
+          name: `Notes ${index}`,
+          description: 'Project notes',
+        })),
+      ];
+    };
+    const inspect = t.mock.method(f.provider, 'inspectAccount');
+    const response = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().length, 38);
+    assert.equal(
+      response.json().find((entry: { slug: string }) => entry.slug === 'foo_mcp').logoUrl,
+      'https://logos.composio.dev/api/foo_mcp',
+    );
+    assert.deepEqual(
+      response.json().find((entry: { slug: string }) => entry.slug === 'foo_mcp').categories,
+      ['Productivity', 'Meetings'],
+    );
+    assert.deepEqual((await f.service.list()).find((entry) => entry.slug === 'gmail')?.categories, [
+      'Email',
+    ]);
+    assert.equal(inspect.mock.callCount(), 0);
+    assert.equal((await f.pool.query('SELECT id FROM app_connections')).rowCount, 0);
+    const discovered = await f.service.manageConnections(
+      'discover',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'project notes',
+    );
+    assert.ok('services' in discovered);
+    assert.ok(discovered.services);
+    assert.equal(discovered.services.length, 30);
+    assert.equal(discovered.total, 35);
+    assert.equal(discovered.hasMore, true);
+    const foo = await f.connect('foo');
+    const consent = await f.app.inject({ method: 'POST', url: '/api/apps/foo_mcp/connect' });
+    assert.equal(consent.statusCode, 200, consent.body);
+    const callback = new URL(f.callbacks.at(-1)!);
+    const accountId = [...f.accounts.keys()].at(-1)!;
+    callback.searchParams.set('account', foo.accountId!);
+    const mismatch = await f.app.inject({ url: `${callback.pathname}${callback.search}` });
+    assert.equal(new URL(mismatch.headers.location!).searchParams.get('connection'), 'failed');
+    callback.searchParams.set('account', accountId);
+    const completed = await f.app.inject({ url: `${callback.pathname}${callback.search}` });
+    assert.equal(new URL(completed.headers.location!).searchParams.get('connection'), 'connected');
+    const mcp = (await f.service.list()).find((entry) => entry.accountId === accountId)!;
+    assert.equal(mcp.slug, 'foo_mcp');
+    assert.equal(mcp.status, 'connected');
+    assert.equal(mcp.logoUrl, 'https://logos.composio.dev/api/foo_mcp');
+    assert.deepEqual(mcp.categories, ['Productivity', 'Meetings']);
+    const available = await f.service.manageConnections(
+      'discover',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'meetings',
+    );
+    assert.ok('services' in available);
+    assert.deepEqual(available.services, [
+      {
+        slug: 'foo_mcp',
+        name: 'Foo MCP',
+        description: '',
+        logoUrl: 'https://logos.composio.dev/api/foo_mcp',
+        categories: ['Productivity', 'Meetings'],
+      },
+    ]);
+    const foreign = randomUUID();
+    await f.pool.query(
+      `INSERT INTO app_connections(id,owner_id,slug,account_id,provider_id,account_active,account_checked_at)
+       VALUES($1,'foreign-owner','foo_mcp','foreign-account','fixture',true,now())`,
+      [foreign],
+    );
+    await assert.rejects(
+      f.service.execute('local-development', 'FOO_MCP_LIST', { connectionId: foreign }),
+      { statusCode: 404 },
+    );
+    await assert.rejects(
+      f.service.execute('local-development', 'FOO_MCP_LIST', { connectionId: foo.connectionId }),
+      { statusCode: 404 },
+    );
+    assert.equal(f.executed.length, 0);
+    f.session.search = async () => ({
+      tools: { FOO_LIST: {}, FOO_MCP_LIST: {} },
+      suggestions: [],
+    });
+    const scoped = (await f.service.execute('local-development', 'SEARCH_TOOLS', {
+      query: 'list',
+      connectionId: foo.connectionId,
+    })) as { tools: Record<string, unknown> };
+    assert.deepEqual(Object.keys(scoped.tools), ['FOO_LIST']);
+    failure = new Error('private-provider-detail');
+    const failed = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(failed.statusCode, 502);
+    assert.doesNotMatch(failed.body, /private-provider-detail/);
+    failure = new IntegrationCatalogAccessDenied();
+    const denied = await f.app.inject({ url: '/api/apps/catalog' });
+    assert.equal(denied.statusCode, 403);
+    assert.match(denied.json().error, /Toolkit read access/);
+    const inventory = await f.app.inject({ url: '/api/apps' });
+    assert.equal(inventory.statusCode, 200, inventory.body);
+    assert.ok(
+      inventory
+        .json()
+        .some((entry: { connectionId: string }) => entry.connectionId === mcp.connectionId),
+    );
+    assert.equal(
+      inventory.json().some((entry: { connectionId: string }) => entry.connectionId === foreign),
+      false,
+    );
+    await f.service.execute('local-development', 'FOO_MCP_LIST', {
+      connectionId: mcp.connectionId,
+    });
+    assert.deepEqual(f.executed, [{ action: 'FOO_MCP_LIST', args: {}, accountId }]);
+    const reconnect = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
+    assert.equal(reconnect.statusCode, 200, reconnect.body);
+    const removed = await f.app.inject({
+      method: 'POST',
+      url: `/api/apps/foo_mcp/accounts/${mcp.connectionId}/disconnect`,
+    });
+    assert.equal(removed.statusCode, 200, removed.body);
+    assert.equal(f.accounts.has(accountId), false);
+  },
+);
+
+test(
   'connecting Gmail starts style learning in the background on that account only',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -1482,6 +1631,17 @@ test(
     });
     const id = new URL(proposed.url, options.baseUrl).searchParams.get('connect');
     const path = `/api/apps/discovery/${id}`;
+    const setupHash = createHash('sha256').update(proposed.url).digest('hex');
+    const setupStatus = async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-status',
+        headers,
+        payload: { hashes: [setupHash], connectionIds: [id] },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      return response.json();
+    };
     const authorize = () =>
       app.inject({ method: 'POST', url: `${path}/authorize`, headers, payload: {} });
     const status = async () => {
@@ -1502,6 +1662,10 @@ test(
     };
     const first = await authorize();
     assert.equal(first.statusCode, 200, first.body);
+    assert.deepEqual(await setupStatus(), {
+      completed: [],
+      apps: [{ hash: setupHash, slug: 'fixture-desktop', name: 'Fixture app' }],
+    });
     const connectionStarted: AnalyticsEvent = {
       event: 'otto_settings_updated',
       properties: { section: 'connections', operation: 'connect_started' },
@@ -1557,6 +1721,7 @@ test(
     assert.equal(await callback(states[2], 'code=fixture-code'), 'expired');
     assert.equal(await callback(states[3], 'code=fixture-code'), 'connected');
     assert.equal((await status()).oauthStatus, 'connected');
+    assert.deepEqual(await setupStatus(), { completed: [setupHash], apps: [] });
     await createDiscoveredConnections(f.pool, options);
     assert.equal((await recovered.inject(path)).json().oauthStatus, 'connected');
     assert.equal((await status()).authorizationUrl, undefined);
@@ -1566,6 +1731,11 @@ test(
     assert.equal(finished, 3);
     assert.equal((await discovered.list()).length, 1);
     await assert.rejects(grantVault.read(id!));
+    await f.pool.query(
+      "UPDATE discovered_connection_proposals SET expires_at=now()-interval '1 second' WHERE id=$1",
+      [id],
+    );
+    assert.deepEqual(await setupStatus(), { completed: [setupHash], apps: [] });
   },
 );
 
@@ -1688,6 +1858,11 @@ test(
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     const f = await appsFixture(t);
+    const logoUrl = 'https://logos.composio.dev/api/gmail';
+    f.provider.listServices = async () => [
+      { slug: 'gmail', name: 'Fixture mailbox', description: '', logoUrl },
+    ];
+    await f.service.catalog();
     const work = await f.connect('gmail');
     const start = async () => {
       const response = await f.app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
@@ -1703,7 +1878,7 @@ test(
       assert.equal(pending.setup_link_hash, hash);
       return { id: pending.id, hash, callback };
     };
-    const status = async (...hashes: string[]) => {
+    const setupStatus = async (...hashes: string[]) => {
       const response = await f.app.inject({
         method: 'POST',
         url: '/api/apps/setup-status',
@@ -1711,12 +1886,36 @@ test(
       });
       assert.equal(response.statusCode, 200);
       assert.equal(response.headers['cache-control'], 'no-store');
-      return response.json();
+      return response.json<{
+        completed: string[];
+        apps: Array<{ hash: string; slug: string; name: string; logoUrl?: string }>;
+      }>();
     };
+    const status = async (...hashes: string[]) => (await setupStatus(...hashes)).completed;
     const complete = async (callback: URL) =>
       (await f.app.inject({ url: `${callback.pathname}${callback.search}` })).headers.location;
     const personal = await start();
     const other = await start();
+    const foreign = await start();
+    await f.pool.query('UPDATE app_connections SET owner_id=$1 WHERE id=$2', [
+      'foreign-owner',
+      foreign.id,
+    ]);
+    const pendingStatus = await setupStatus(
+      personal.hash,
+      other.hash,
+      foreign.hash,
+      '0'.repeat(64),
+      personal.hash,
+    );
+    assert.deepEqual(Object.keys(pendingStatus).sort(), ['apps', 'completed']);
+    assert.deepEqual(pendingStatus.completed, []);
+    assert.deepEqual(
+      pendingStatus.apps.sort((left, right) => left.hash.localeCompare(right.hash)),
+      [personal.hash, other.hash]
+        .sort()
+        .map((hash) => ({ hash, slug: 'gmail', name: work.name, logoUrl })),
+    );
     await f.pool.query('INSERT INTO app_setup_completions(owner_id,link_hash) VALUES($1,$2)', [
       'foreign-owner',
       other.hash,
@@ -1731,12 +1930,14 @@ test(
       'http://localhost:4310/apps?connection=connected',
     );
     assert.deepEqual(await status(personal.hash, other.hash), [personal.hash]);
+    assert.deepEqual((await setupStatus(personal.hash)).apps, []);
     await f.pool.query(
       "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE id=$1",
       [other.id],
     );
     assert.equal(await complete(other.callback), 'http://localhost:4310/apps?connection=expired');
     assert.deepEqual(await status(other.hash), []);
+    assert.deepEqual((await setupStatus(other.hash, foreign.hash, '0'.repeat(64))).apps, []);
     f.session.authorize = async (_service, callback) => {
       f.callbacks.push(callback);
       return { accountId: work.accountId!, url: 'https://consent.example.com/reconnect-work' };
@@ -1757,6 +1958,7 @@ test(
       work.connectionId,
     );
     assert.deepEqual(await status(reconnect.hash), [reconnect.hash]);
+    assert.deepEqual((await setupStatus(reconnect.hash)).apps, []);
     assert.equal(
       await complete(reconnect.callback),
       'http://localhost:4310/apps?connection=expired',
@@ -1893,6 +2095,23 @@ test(
       result.accounts.map((account) => account.connectionId),
       [selected.connectionId],
     );
+    const dynamic = randomUUID();
+    await f.pool.query(
+      `INSERT INTO app_connections(id,owner_id,slug,account_id,provider_id)
+       VALUES($1,'local-development','foo','foo-account','fixture'),
+             ($2,'local-development','foo_mcp','mcp-account','fixture')`,
+      [dynamic, randomUUID()],
+    );
+    t.mock.method(f.session, 'search', async () => ({
+      tools: { FOO_LIST: {}, FOO_MCP_LIST: {} },
+      suggestions: [],
+    }));
+    const cold = (await f.service.execute('local-development', 'SEARCH_TOOLS', {
+      query: 'list',
+      connectionId: dynamic,
+    })) as { tools: Record<string, unknown> };
+    assert.deepEqual(f.sessions.at(-1), { foo: ['foo-account'] });
+    assert.deepEqual(Object.keys(cold.tools), ['FOO_LIST']);
   },
 );
 
@@ -3290,6 +3509,812 @@ test(
   },
 );
 
+async function managedReconnectFixture(t: TestContext, watchRequested = true) {
+  const database = await hostedDatabase();
+  const pool = database.pool;
+  const app = Fastify();
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const raw = client.getClient();
+  const transport = raw.toolRouter.session;
+  const ownerId = 'local-development';
+  const authConfigId = 'original-gmail-auth';
+  const remoteAccount = (id: string, status = 'ACTIVE') => ({
+    id,
+    user_id: ownerId,
+    toolkit: { slug: 'gmail' },
+    auth_config: {
+      id: authConfigId,
+      auth_scheme: 'OAUTH2',
+      is_composio_managed: false,
+      is_disabled: false,
+    },
+    status,
+    status_reason: null,
+    is_disabled: false,
+    created_at: '2026-10-01T00:00:00.000Z',
+    updated_at: '2026-10-07T00:00:00.000Z',
+  });
+  const accounts = new Map([['old-account', remoteAccount('old-account', 'EXPIRED')]]);
+  const emails = new Map([['old-account', 'work@example.test']]);
+  const configurations = new Map<string, Record<string, unknown>>([
+    ['old-execution-session', { connected_accounts: { gmail: ['old-account'] } }],
+  ]);
+  const links: Array<{ id: string; accountId: string; callback: URL }> = [];
+  const removed: string[] = [];
+  const unsubscribed: string[] = [];
+  const subscribed: string[] = [];
+  const executed: Array<{ action: string; account: string }> = [];
+  const resumed: Array<{ turnId: string; service: string }> = [];
+  const control = {
+    pause: async (_phase: string, _id: string) => {},
+  };
+  t.mock.method(raw.toolkits, 'list', async () => ({ items: [], next_cursor: null }));
+  t.mock.method(raw.authConfigs, 'list', async () => {
+    assert.fail('Reconnect must retain the original auth config instead of selecting a default.');
+  });
+  t.mock.method(raw.authConfigs, 'retrieve', async () => {
+    assert.fail('Reconnect must use the auth config bound to the original account.');
+  });
+  t.mock.method(raw.connectedAccounts, 'retrieve', async (id: string) => {
+    await control.pause('account', id);
+    const account = accounts.get(id);
+    if (!account)
+      throw Object.assign(new Error('synthetic-private-account-detail'), { status: 404 });
+    return structuredClone(account);
+  });
+  t.mock.method(raw.connectedAccounts, 'delete', async (id: string) => {
+    await control.pause('delete', id);
+    removed.push(id);
+    accounts.delete(id);
+    return { success: true };
+  });
+  const snapshot = (id: string) => ({
+    session_id: id,
+    mcp: { type: 'http', url: `https://backend.composio.dev/tool_router/mcp/${id}` },
+    config: { user_id: ownerId, ...configurations.get(id) },
+    config_version: 1,
+  });
+  let nextSession = 0;
+  t.mock.method(transport, 'create', async (config: Record<string, unknown>) => {
+    const id = `recovery-session-${++nextSession}`;
+    configurations.set(id, config);
+    await control.pause('create', id);
+    return snapshot(id);
+  });
+  t.mock.method(transport, 'retrieve', async (id: string) => {
+    await control.pause('restore', id);
+    return snapshot(id);
+  });
+  t.mock.method(transport, 'link', async (id: string, input: Record<string, unknown>) => {
+    assert.deepEqual(configurations.get(id)?.auth_configs, { gmail: authConfigId });
+    assert.deepEqual(configurations.get(id)?.toolkits, { enable: ['gmail'] });
+    const selected = configurations.get(id)?.connected_accounts as Record<string, string[]>;
+    assert.equal(selected?.gmail, undefined);
+    const accountId = `replacement-${links.length + 1}`;
+    accounts.set(accountId, remoteAccount(accountId, 'INITIATED'));
+    emails.set(accountId, 'work@example.test');
+    links.push({ id, accountId, callback: new URL(String(input.callback_url)) });
+    await control.pause('link', accountId);
+    return {
+      connected_account_id: accountId,
+      redirect_url: `https://connect.composio.dev/link/${accountId}`,
+    };
+  });
+  t.mock.method(raw, 'delete', async (path: string) => {
+    assert.match(path, /^\/api\/v3\.1\/tool_router\/session\//);
+    const id = decodeURIComponent(path.split('/').at(-1)!);
+    removed.push(id);
+    return { session_id: id, deleted: true };
+  });
+  t.mock.method(transport, 'execute', async (id: string, input: Record<string, unknown>) => {
+    const action = String(input.tool_slug);
+    const account = String(input.account);
+    const bindings = configurations.get(id)?.connected_accounts as Record<
+      string,
+      string | string[]
+    >;
+    const gmail = bindings?.gmail;
+    assert.ok(typeof gmail === 'string' ? gmail === account : gmail?.includes(account));
+    executed.push({ action, account });
+    const response = {
+      data: action === 'GMAIL_GET_PROFILE' ? { emailAddress: emails.get(account) } : { labels: [] },
+      error: null,
+      log_id: 'synthetic-recovery-log',
+    };
+    await control.pause('execute', account);
+    return response;
+  });
+  t.mock.method(client.tools, 'proxyExecute', async () => {
+    throw new Error('No unverified identity fallback is available.');
+  });
+  t.mock.method(client.tools, 'getRawComposioToolBySlug', async (slug: string) => ({
+    slug,
+    name: slug,
+    tags: ['readOnlyHint'],
+  }));
+  t.mock.method(
+    raw.triggerInstances,
+    'upsert',
+    async (_slug: string, input: { connected_account_id: string }) => {
+      subscribed.push(input.connected_account_id);
+      return { trigger_id: `trigger-${input.connected_account_id}` };
+    },
+  );
+  t.mock.method(client.triggers, 'delete', async (id: string) => {
+    unsubscribed.push(id);
+  });
+  const provider = meterIntegrations(
+    createComposioProvider({
+      client,
+      authConfigs: { gmail: 'different-current-default' },
+      webhookSecret: 'fixture-signing-secret',
+      webhookUrl: 'https://fixture.example.test/api/webhooks/composio',
+    }),
+    createProviderUsageStore(pool, { ownerId, enabled: () => false, coverage: [] }),
+  );
+  const integrations = await createIntegrations(pool, {
+    ownerId,
+    provider,
+    additionalProviders: [
+      {
+        ...provider,
+        id: 'different-default',
+        supportedServices: ['gmail'],
+        reconnectAccount: async () => assert.fail('Reconnect must retain the saved provider.'),
+        createSession: async () =>
+          assert.fail('Saved accounts must execute through their original provider.'),
+      },
+    ],
+    baseUrl: 'http://localhost:4310',
+    wake: async () => {},
+    resumeConnection: async (turnId, service) => {
+      resumed.push({ turnId, service });
+      return true;
+    },
+  });
+  integrations.registerRoutes(app);
+  t.after(async () => {
+    await app.close();
+    await database.close();
+  });
+  const inserted = await pool.query<{ id: string }>(
+    `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active,account_checked_at,
+     account_email,account_name,watch_requested,watch_attempted,watch_revision,trigger_id,triggers_enabled,
+     inbox_cursor,inbox_claim_id,inbox_failed,inbox_reconnect_required)
+     VALUES($1,'gmail','old-account','composio',false,now(),'work@example.test','Work', $2,true,7,
+     'old-trigger',true,'old-cursor','old-claim',true,true) RETURNING id`,
+    [ownerId, watchRequested],
+  );
+  const connectionId = inserted.rows[0].id;
+  await pool.query(
+    `INSERT INTO integration_sessions(owner_id,session_id,provider_id,configuration_version)
+     VALUES($1,'old-execution-session','composio',3)`,
+    [ownerId],
+  );
+  await pool.query(
+    `INSERT INTO integration_events(id,owner_id,summary,slug,account_id,trigger_id,provider_id,poll_connection_id)
+     VALUES('old-event',$1,'Synthetic old update','gmail','old-account','old-trigger','composio',$2)`,
+    [ownerId, connectionId],
+  );
+  const row = async () =>
+    (await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])).rows[0];
+  const reconnect = (id = connectionId, slug = 'gmail') =>
+    app.inject({ method: 'POST', url: `/api/apps/${slug}/connect`, payload: { connectionId: id } });
+  const complete = async (link = links.at(-1)!, status = 'success', accountId = link.accountId) => {
+    const url = new URL(link.callback);
+    url.searchParams.set('connected_account_id', accountId);
+    url.searchParams.set('status', status);
+    const response = await app.inject({ url: `${url.pathname}${url.search}` });
+    assert.equal(response.statusCode, 302);
+    return new URL(response.headers.location!).searchParams.get('connection');
+  };
+  const disconnect = () =>
+    app.inject({ method: 'POST', url: `/api/apps/gmail/accounts/${connectionId}/disconnect` });
+  return {
+    app,
+    pool,
+    provider,
+    integrations,
+    accounts,
+    emails,
+    control,
+    configurations,
+    links,
+    removed,
+    unsubscribed,
+    subscribed,
+    executed,
+    resumed,
+    ownerId,
+    authConfigId,
+    connectionId,
+    row,
+    reconnect,
+    complete,
+    disconnect,
+  };
+}
+
+test(
+  'managed reconnect preserves the owned connection and watch preference until matching consent completes',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const [watch, active] of [
+      [false, false],
+      [true, false],
+      [true, true],
+    ])
+      await t.test(`watch ${watch}, active ${active}`, async (t) => {
+        const f = await managedReconnectFixture(t, watch);
+        f.accounts.get('old-account')!.status = active ? 'ACTIVE' : 'EXPIRED';
+        await f.pool.query('UPDATE app_connections SET turn_id=$2,account_active=$3 WHERE id=$1', [
+          f.connectionId,
+          randomUUID(),
+          active,
+        ]);
+        const before = await f.row();
+        const saved = (await f.integrations.list()).find(
+          (row) => row.connectionId === f.connectionId,
+        )!;
+        assert.equal(saved.canReconnect, true);
+        assert.equal(saved.reconnectRequired, true);
+        assert.equal(saved.status, active ? 'connected' : 'disconnected');
+        const response = await f.reconnect();
+        assert.equal(response.statusCode, 200, response.body);
+        assert.doesNotMatch(response.body, /original-gmail-auth|work@example|private/);
+        const pending = await f.row();
+        for (const key of [
+          'id',
+          'account_id',
+          'provider_id',
+          'watch_requested',
+          'watch_revision',
+          'trigger_id',
+          'inbox_cursor',
+        ])
+          assert.equal(pending[key], before[key], key);
+        assert.equal(
+          (await f.pool.query('SELECT count(*) FROM app_connections')).rows[0].count,
+          '1',
+        );
+        assert.equal(f.accounts.has('old-account'), true);
+        assert.equal(f.removed.includes('old-account'), false);
+        assert.deepEqual(f.unsubscribed, []);
+        assert.deepEqual(f.subscribed, []);
+        const link = f.links.at(-1)!;
+        f.accounts.get(link.accountId)!.status = 'ACTIVE';
+        assert.equal(await f.complete(link), 'connected');
+        const after = await f.row();
+        assert.equal(after.id, f.connectionId);
+        assert.equal(after.account_id, link.accountId);
+        assert.equal(after.provider_id, 'composio');
+        assert.equal(after.account_email, 'work@example.test');
+        assert.equal(after.account_active, true);
+        assert.equal(after.watch_requested, watch);
+        assert.deepEqual(f.resumed, []);
+        assert.ok(after.watch_revision > before.watch_revision);
+        for (const key of [
+          'pending_account_id',
+          'callback_hash',
+          'callback_expires',
+          'inbox_cursor',
+          'inbox_claim_id',
+        ])
+          assert.equal(after[key], null, key);
+        assert.equal(after.inbox_failed, false);
+        assert.equal(after.inbox_reconnect_required, false);
+        assert.equal(
+          (await f.integrations.list()).find((row) => row.connectionId === f.connectionId)
+            ?.reconnectRequired,
+          false,
+        );
+        assert.deepEqual(f.unsubscribed, ['old-trigger']);
+        assert.deepEqual(f.subscribed, watch ? [link.accountId] : []);
+        assert.equal(after.trigger_id, watch ? `trigger-${link.accountId}` : null);
+        assert.deepEqual(
+          (await f.pool.query('SELECT state,poll_connection_id FROM integration_events')).rows,
+          [{ state: 'discarded', poll_connection_id: f.connectionId }],
+        );
+        assert.equal((await f.pool.query('SELECT * FROM integration_sessions')).rowCount, 0);
+        assert.equal(f.removed.includes('old-execution-session'), true);
+        await f.integrations.execute(f.ownerId, 'GMAIL_LIST_LABELS', {
+          connectionId: f.connectionId,
+          user_id: 'me',
+        });
+        assert.deepEqual(f.executed.at(-1), {
+          action: 'GMAIL_LIST_LABELS',
+          account: link.accountId,
+        });
+        assert.equal(await f.complete(link), 'expired');
+        assert.equal((await f.row()).account_id, link.accountId);
+      });
+  },
+);
+
+test(
+  'managed reconnect rejects unowned connections and unusable original auth configs before opening consent',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await managedReconnectFixture(t);
+    const original = structuredClone(f.accounts.get('old-account')!);
+    const foreign = await f.pool.query<{ id: string }>(
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_email,account_active)
+       VALUES('foreign-owner','gmail','foreign-account','composio','work@example.test',false) RETURNING id`,
+    );
+    for (const [id, slug] of [
+      [randomUUID(), 'gmail'],
+      [foreign.rows[0].id, 'gmail'],
+      [f.connectionId, 'googledrive'],
+    ])
+      assert.equal((await f.reconnect(id, slug)).statusCode, 404);
+    for (const kind of [
+      'owner',
+      'missing-owner',
+      'id',
+      'toolkit',
+      'disabled-auth',
+      'missing-auth',
+      'email',
+    ] as const) {
+      f.accounts.set('old-account', structuredClone(original));
+      await f.pool.query(
+        "UPDATE app_connections SET account_email='work@example.test' WHERE id=$1",
+        [f.connectionId],
+      );
+      const account = f.accounts.get('old-account')!;
+      if (kind === 'owner') account.user_id = 'foreign-owner';
+      if (kind === 'missing-owner') Reflect.deleteProperty(account, 'user_id');
+      if (kind === 'id') account.id = 'different-account';
+      if (kind === 'toolkit') account.toolkit.slug = 'googledrive';
+      if (kind === 'disabled-auth') account.auth_config.is_disabled = true;
+      if (kind === 'missing-auth') Reflect.deleteProperty(account, 'auth_config');
+      if (kind === 'email')
+        await f.pool.query('UPDATE app_connections SET account_email=NULL WHERE id=$1', [
+          f.connectionId,
+        ]);
+      const response = await f.reconnect();
+      assert.ok(response.statusCode >= 400, `${kind}: ${response.body}`);
+      assert.doesNotMatch(response.body, /synthetic-private|original-gmail-auth|work@example/);
+      assert.equal(f.links.length, 0, kind);
+      const row = await f.row();
+      assert.equal(row.account_id, 'old-account', kind);
+      assert.equal(row.callback_hash, null, kind);
+      assert.equal(f.accounts.has('old-account'), true, kind);
+    }
+  },
+);
+
+test(
+  'managed reconnect recovers a missing cached email only from verified provider identity',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const available of [false, true])
+      await t.test(`identity available ${available}`, async (t) => {
+        const f = await managedReconnectFixture(t);
+        await f.pool.query('UPDATE app_connections SET account_email=NULL WHERE id=$1', [
+          f.connectionId,
+        ]);
+        f.accounts.get('old-account')!.status = available ? 'ACTIVE' : 'EXPIRED';
+        const saved = (await f.integrations.list(f.ownerId, { refresh: false })).find(
+          (row) => row.connectionId === f.connectionId,
+        )!;
+        assert.equal(saved.canReconnect, true);
+        assert.equal(saved.accountEmail, undefined);
+        const response = await f.reconnect();
+        assert.equal(response.statusCode, available ? 200 : 409, response.body);
+        assert.equal((await f.row()).account_id, 'old-account');
+        assert.equal(f.accounts.has('old-account'), true);
+        if (available) {
+          assert.equal((await f.row()).pending_account_email, 'work@example.test');
+          assert.equal(f.links.length, 1);
+          assert.equal(await f.complete(f.links[0], 'cancelled'), 'cancelled');
+          assert.equal(f.accounts.has(f.links[0].accountId), false);
+        } else {
+          assert.equal(f.links.length, 0);
+          assert.equal((await f.row()).callback_hash, null);
+        }
+      });
+  },
+);
+
+test(
+  'managed reconnect consumes rejected consent without replacing the saved account or its watches',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const kind of [
+      'owner',
+      'missing-owner',
+      'id',
+      'toolkit',
+      'auth-config',
+      'disabled-auth',
+      'disabled-account',
+      'inactive',
+      'identity',
+      'missing-identity',
+      'callback-id',
+      'cancelled',
+      'failed',
+      'expired',
+      'already-saved',
+    ] as const)
+      await t.test(kind, async (t) => {
+        const f = await managedReconnectFixture(t);
+        const before = await f.row();
+        assert.equal((await f.reconnect()).statusCode, 200);
+        const link = f.links.at(-1)!;
+        const account = f.accounts.get(link.accountId)!;
+        account.status = 'ACTIVE';
+        if (kind === 'owner') account.user_id = 'foreign-owner';
+        if (kind === 'missing-owner') Reflect.deleteProperty(account, 'user_id');
+        if (kind === 'id') account.id = 'unrelated-account';
+        if (kind === 'toolkit') account.toolkit.slug = 'googledrive';
+        if (kind === 'auth-config') account.auth_config.id = 'different-auth';
+        if (kind === 'disabled-auth') account.auth_config.is_disabled = true;
+        if (kind === 'disabled-account') account.is_disabled = true;
+        if (kind === 'inactive') account.status = 'INITIATED';
+        if (kind === 'identity') f.emails.set(link.accountId, 'other@example.test');
+        if (kind === 'missing-identity') f.emails.delete(link.accountId);
+        if (kind === 'expired')
+          await f.pool.query(
+            "UPDATE app_connections SET callback_expires=now()-interval '1 minute' WHERE id=$1",
+            [f.connectionId],
+          );
+        if (kind === 'already-saved')
+          await f.pool.query(
+            `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_email,account_active)
+         VALUES($1,'gmail',$2,'composio','work@example.test',true)`,
+            [f.ownerId, link.accountId],
+          );
+        const result = await f.complete(
+          link,
+          kind === 'cancelled' || kind === 'failed' ? kind : 'success',
+          kind === 'callback-id' ? 'unrelated-account' : link.accountId,
+        );
+        assert.equal(
+          result,
+          kind === 'expired'
+            ? 'expired'
+            : kind === 'cancelled' || kind === 'failed'
+              ? 'cancelled'
+              : 'failed',
+        );
+        const after = await f.row();
+        for (const key of [
+          'id',
+          'account_id',
+          'provider_id',
+          'watch_requested',
+          'watch_revision',
+          'trigger_id',
+          'triggers_enabled',
+          'inbox_cursor',
+          'inbox_claim_id',
+        ])
+          assert.equal(after[key], before[key], key);
+        assert.equal(f.accounts.has('old-account'), true);
+        assert.equal(f.removed.includes('old-account'), false);
+        assert.equal(f.removed.includes('old-execution-session'), false);
+        const retained = ['owner', 'missing-owner', 'id', 'already-saved'].includes(kind);
+        assert.equal(f.accounts.has(link.accountId), retained);
+        assert.equal(f.removed.includes(link.accountId), !retained);
+        assert.equal(f.removed.includes('unrelated-account'), false);
+        assert.deepEqual(f.unsubscribed, []);
+        assert.deepEqual(f.subscribed, []);
+        assert.deepEqual(f.resumed, []);
+        if (['owner', 'missing-owner', 'id', 'callback-id'].includes(kind))
+          assert.deepEqual(f.executed, []);
+        assert.equal(
+          (await f.pool.query('SELECT state FROM integration_events')).rows[0].state,
+          'queued',
+        );
+        assert.equal(
+          (await f.pool.query('SELECT session_id FROM integration_sessions')).rows[0].session_id,
+          'old-execution-session',
+        );
+        assert.equal(await f.complete(link), 'expired');
+        if (kind !== 'expired')
+          for (const key of [
+            'pending_account_id',
+            'pending_account_email',
+            'pending_auth_config_id',
+            'callback_hash',
+            'callback_expires',
+          ])
+            assert.equal(after[key], null, key);
+      });
+  },
+);
+
+test(
+  'managed reconnect fences older authorization and completion attempts from a newer reconnect',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const phase of ['link', 'execute'] as const)
+      await t.test(phase, async (t) => {
+        const f = await managedReconnectFixture(t);
+        const entered = deferred();
+        const release = deferred();
+        f.control.pause = async (current, accountId) => {
+          if (current !== phase || accountId !== 'replacement-1') return;
+          entered.resolve();
+          await release.promise;
+        };
+        let first: Promise<unknown>;
+        if (phase === 'link')
+          first = f.reconnect().then((response) => {
+            assert.equal(response.statusCode, 409, response.body);
+          });
+        else {
+          assert.equal((await f.reconnect()).statusCode, 200);
+          f.accounts.get('replacement-1')!.status = 'ACTIVE';
+          first = f.complete().then((result) => assert.equal(result, 'failed'));
+        }
+        await entered.promise;
+        assert.equal((await f.reconnect()).statusCode, 200);
+        const newest = f.links.at(-1)!;
+        const pending = await f.row();
+        assert.equal(pending.pending_account_id, newest.accountId);
+        release.resolve();
+        await first;
+        const after = await f.row();
+        assert.equal(after.account_id, 'old-account');
+        assert.equal(after.pending_account_id, newest.accountId);
+        assert.equal(after.callback_hash, pending.callback_hash);
+        assert.equal(await f.complete(f.links[0]), 'expired');
+        assert.equal(f.accounts.has(f.links[0].accountId), false);
+        assert.equal(f.accounts.has(newest.accountId), true);
+        f.accounts.get(newest.accountId)!.status = 'ACTIVE';
+        assert.equal(await f.complete(newest), 'connected');
+        assert.equal((await f.row()).account_id, newest.accountId);
+        assert.equal(f.removed.filter((id) => id === 'old-account').length, 1);
+        assert.deepEqual(f.subscribed, [newest.accountId]);
+      });
+  },
+);
+
+test(
+  'managed reconnect cannot revive an account disconnected during authorization or completion',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    for (const phase of ['link', 'execute'] as const)
+      await t.test(phase, async (t) => {
+        const f = await managedReconnectFixture(t);
+        const entered = deferred();
+        const release = deferred();
+        f.control.pause = async (current, accountId) => {
+          if (current !== phase || accountId !== 'replacement-1') return;
+          entered.resolve();
+          await release.promise;
+        };
+        let inflight: Promise<unknown>;
+        if (phase === 'link')
+          inflight = f.reconnect().then((response) => {
+            assert.equal(response.statusCode, 409, response.body);
+          });
+        else {
+          assert.equal((await f.reconnect()).statusCode, 200);
+          f.accounts.get('replacement-1')!.status = 'ACTIVE';
+          inflight = f.complete().then((result) => assert.equal(result, 'failed'));
+        }
+        await entered.promise;
+        const response = await f.disconnect();
+        assert.equal(response.statusCode, 200, response.body);
+        release.resolve();
+        await inflight;
+        assert.equal(await f.row(), undefined);
+        assert.equal(await f.complete(f.links[0]), 'expired');
+        assert.deepEqual(f.subscribed, []);
+        assert.equal(f.accounts.has('old-account'), false);
+        assert.equal(f.accounts.has(f.links[0].accountId), false);
+        assert.equal((await f.pool.query('SELECT * FROM integration_sessions')).rowCount, 0);
+      });
+  },
+);
+
+test(
+  'managed reconnect accepts one completion and preserves watch changes made during consent',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await managedReconnectFixture(t);
+    assert.equal((await f.reconnect()).statusCode, 200);
+    const link = f.links.at(-1)!;
+    f.accounts.get(link.accountId)!.status = 'ACTIVE';
+    f.emails.set(link.accountId, 'WORK@example.test');
+    const entered = deferred();
+    const release = deferred();
+    f.control.pause = async (phase, accountId) => {
+      if (phase !== 'execute' || accountId !== link.accountId) return;
+      entered.resolve();
+      await release.promise;
+    };
+    const first = f.complete(link);
+    await entered.promise;
+    const second = f.complete(link);
+    await f.pool.query(
+      "UPDATE app_connections SET watch_requested=false,trigger_id='updated-trigger',watch_revision=watch_revision+1 WHERE id=$1",
+      [f.connectionId],
+    );
+    release.resolve();
+    const results = await Promise.all([first, second]);
+    assert.equal(results.filter((result) => result === 'connected').length, 1);
+    assert.ok(results.every((result) => ['connected', 'failed', 'expired'].includes(result!)));
+    const after = await f.row();
+    assert.equal(after.id, f.connectionId);
+    assert.equal(after.account_id, link.accountId);
+    assert.equal(after.watch_requested, false);
+    assert.deepEqual(f.unsubscribed, ['updated-trigger']);
+    assert.deepEqual(f.subscribed, []);
+    assert.equal(f.removed.filter((id) => id === 'old-account').length, 1);
+  },
+);
+
+test(
+  'managed reconnect discards in-flight session creation without overwriting its replacement session',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await managedReconnectFixture(t);
+    await f.pool.query('DELETE FROM integration_sessions');
+    await f.pool.query('UPDATE app_connections SET account_active=true WHERE id=$1', [
+      f.connectionId,
+    ]);
+    const entered = deferred();
+    const release = deferred();
+    let staleSession = '';
+    f.control.pause = async (phase, id) => {
+      const bindings = f.configurations.get(id)?.connected_accounts as Record<string, string[]>;
+      if (phase !== 'create' || !bindings?.gmail?.includes('old-account')) return;
+      staleSession = id;
+      entered.resolve();
+      await release.promise;
+    };
+    const execute = () =>
+      f.integrations.execute(f.ownerId, 'GMAIL_LIST_LABELS', {
+        connectionId: f.connectionId,
+        user_id: 'me',
+      });
+    const oldExecution = assert.rejects(execute());
+    await entered.promise;
+    assert.equal((await f.reconnect()).statusCode, 200);
+    const link = f.links[0];
+    f.accounts.get(link.accountId)!.status = 'ACTIVE';
+    assert.equal(await f.complete(link), 'connected');
+    await execute();
+    const replacementSession = (await f.pool.query('SELECT session_id FROM integration_sessions'))
+      .rows[0].session_id;
+    assert.notEqual(replacementSession, staleSession);
+    release.resolve();
+    await oldExecution;
+    assert.equal(
+      (await f.pool.query('SELECT session_id FROM integration_sessions')).rows[0].session_id,
+      replacementSession,
+    );
+    assert.equal(f.removed.includes(staleSession), true);
+    assert.equal(f.removed.includes(replacementSession), false);
+    const sessionCount = f.configurations.size;
+    await execute();
+    assert.equal(f.configurations.size, sessionCount);
+    assert.deepEqual(f.executed.at(-1), { action: 'GMAIL_LIST_LABELS', account: link.accountId });
+  },
+);
+
+test(
+  'a stale restore cannot delete the saved session reused after a failed reset',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await managedReconnectFixture(t);
+    await f.pool.query('UPDATE app_connections SET account_active=true WHERE id=$1', [
+      f.connectionId,
+    ]);
+    const other = await f.pool.query<{ id: string }>(
+      `INSERT INTO app_connections(owner_id,slug,account_id,provider_id,account_active)
+       VALUES($1,'gmail','other-account','composio',true) RETURNING id`,
+      [f.ownerId],
+    );
+    const query = f.pool.query;
+    let failReset = true;
+    t.mock.method(f.pool, 'query', function (this: pg.Pool, ...args: unknown[]) {
+      if (
+        failReset &&
+        typeof args[0] === 'string' &&
+        args[0].startsWith('DELETE FROM integration_sessions') &&
+        args[0].includes('RETURNING')
+      ) {
+        failReset = false;
+        return Promise.reject(new Error('Synthetic session reset failure.'));
+      }
+      return Reflect.apply(query, this, args);
+    });
+    const entered = deferred();
+    const release = deferred();
+    let restores = 0;
+    f.control.pause = async (phase, id) => {
+      if (phase !== 'restore' || id !== 'old-execution-session') return;
+      restores++;
+      if (restores !== 1) return;
+      entered.resolve();
+      await release.promise;
+    };
+    const execute = () =>
+      f.integrations.execute(f.ownerId, 'GMAIL_LIST_LABELS', {
+        connectionId: f.connectionId,
+        user_id: 'me',
+      });
+    const stale = assert.rejects(execute());
+    await entered.promise;
+    const response = await f.app.inject({
+      method: 'POST',
+      url: `/api/apps/gmail/accounts/${other.rows[0].id}/disconnect`,
+    });
+    assert.equal(response.statusCode, 502);
+    assert.equal(failReset, false);
+    await execute();
+    assert.equal(restores, 2);
+    release.resolve();
+    await stale;
+    assert.equal(f.removed.includes('old-execution-session'), false);
+    assert.equal(
+      (await f.pool.query('SELECT session_id FROM integration_sessions')).rows[0].session_id,
+      'old-execution-session',
+    );
+    await execute();
+    assert.equal(restores, 2);
+  },
+);
+
+test(
+  'managed reconnect from the agent requires an explicit owned connection and resumes only its waiting turn',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await managedReconnectFixture(t);
+    const turn = { threadId: randomUUID(), turnId: randomUUID() };
+    for (const [action, newAccount, connectionId] of [
+      ['list', undefined, f.connectionId],
+      ['discover', undefined, f.connectionId],
+      ['connect', true, f.connectionId],
+      ['connect', undefined, 'not-a-uuid'],
+      ['connect', undefined, randomUUID()],
+    ] as const)
+      await assert.rejects(
+        f.integrations.manageConnections(
+          action,
+          'gmail',
+          turn,
+          undefined,
+          newAccount,
+          undefined,
+          connectionId,
+        ),
+      );
+    assert.equal(f.links.length, 0);
+    const response = await f.integrations.manageConnections(
+      'connect',
+      'gmail',
+      turn,
+      undefined,
+      undefined,
+      undefined,
+      f.connectionId,
+    );
+    assert.match(JSON.stringify(response), /https:\/\/connect\.composio\.dev\/link\/replacement-1/);
+    assert.doesNotMatch(JSON.stringify(response), /original-gmail-auth|old-account|work@example/);
+    assert.equal((await f.row()).id, f.connectionId);
+    assert.equal((await f.row()).turn_id, turn.turnId);
+    assert.equal((await f.pool.query('SELECT count(*) FROM app_connections')).rows[0].count, '1');
+    const link = f.links[0];
+    f.accounts.get(link.accountId)!.status = 'ACTIVE';
+    assert.equal(await f.complete(link), 'continued');
+    assert.deepEqual(f.resumed, [{ turnId: turn.turnId, service: 'gmail' }]);
+    assert.equal(await f.complete(link), 'expired');
+    assert.equal(f.resumed.length, 1);
+  },
+);
+
 test(
   'adding another Gmail account uses isolated consent without changing the pinned execution account',
   { skip: !process.env.TEST_DATABASE_URL },
@@ -3314,10 +4339,79 @@ test(
       disableVersionCheck: true,
       fileUploadDirs: false,
     });
+    t.mock.method(client.getClient().toolkits, 'list', async () => ({
+      items: [],
+      next_cursor: null,
+    }));
     const transport = client.getClient().toolRouter.session;
     const created: Array<{ id: string; config: Record<string, unknown> }> = [];
     const deleted: string[] = [];
     const links: Array<{ id: string; input: Record<string, unknown> }> = [];
+    const patches: Array<{ id: string; input: Record<string, unknown> }> = [];
+    const authReads: Array<Record<string, unknown>> = [];
+    let authFailure:
+      | 'permission'
+      | 'ambiguous'
+      | 'unavailable'
+      | 'malformed'
+      | 'cursor'
+      | 'page-limit'
+      | 'transport'
+      | undefined;
+    const customAuth = {
+      id: 'custom-gmail-auth',
+      toolkit: { slug: 'gmail' },
+      status: 'ENABLED',
+      auth_scheme: 'OAUTH2',
+      is_composio_managed: false,
+      is_enabled_for_tool_router: true,
+      credentials: { client_secret: 'synthetic-private-auth-detail' },
+    };
+    t.mock.method(
+      client.getClient().authConfigs,
+      'list',
+      async (
+        input: Record<string, unknown>,
+        options: { signal: AbortSignal; maxRetries: number },
+      ) => {
+        authReads.push(input);
+        assert.deepEqual(input, {
+          toolkit_slug: 'gmail',
+          is_composio_managed: false,
+          show_disabled: false,
+          limit: 200,
+          ...(input.cursor ? { cursor: input.cursor } : {}),
+        });
+        assert.equal(options.signal.aborted, false);
+        assert.equal(options.maxRetries, 0);
+        if (authFailure === 'permission')
+          throw Object.assign(new Error('synthetic-private-auth-detail'), { status: 403 });
+        if (authFailure === 'transport') throw new Error('synthetic-private-auth-detail');
+        if (authFailure === 'malformed')
+          return { items: [{ ...customAuth, id: { token: 'synthetic-private-auth-detail' } }] };
+        if (authFailure === 'ambiguous')
+          return { items: [customAuth, { ...customAuth, id: 'another-custom-gmail-auth' }] };
+        if (authFailure === 'unavailable')
+          return { items: [{ ...customAuth, is_enabled_for_tool_router: false }] };
+        if (authFailure === 'cursor') return { items: [customAuth], next_cursor: 'repeated' };
+        if (authFailure === 'page-limit')
+          return { items: [customAuth], next_cursor: `page-${authReads.length}` };
+        if (input.cursor) {
+          assert.equal(input.cursor, 'custom-auth-page');
+          return { items: [customAuth, customAuth], next_cursor: null };
+        }
+        return {
+          items: [
+            { ...customAuth, id: 'managed-auth', is_composio_managed: true },
+            { ...customAuth, id: 'disabled-auth', status: 'DISABLED' },
+            { ...customAuth, id: 'another-toolkit-auth', toolkit: { slug: 'googledrive' } },
+            { ...customAuth, id: 'other-scheme-auth', auth_scheme: 'API_KEY' },
+            { ...customAuth, id: 'not-session-enabled-auth', is_enabled_for_tool_router: false },
+          ],
+          next_cursor: 'custom-auth-page',
+        };
+      },
+    );
     const configurations = new Map<string, Record<string, unknown>>([
       ['execution-session', { connected_accounts: { gmail: ['existing-account'] } }],
     ]);
@@ -3332,10 +4426,36 @@ test(
     t.mock.method(transport, 'retrieve', async (id: string) => session(id));
     t.mock.method(transport, 'create', async (config: Record<string, unknown>) => {
       const id = `consent-session-${created.length + 1}`;
-      configurations.set(id, config);
+      configurations.set(id, {
+        ...config,
+        auth_configs: {
+          notion: 'backend-notion-auth',
+          ...(config.auth_configs as Record<string, string>),
+        },
+      });
       created.push({ id, config });
       return session(id);
     });
+    t.mock.method(
+      transport,
+      'patch',
+      async (
+        id: string,
+        input: Record<string, unknown>,
+        options: { signal: AbortSignal; maxRetries: number },
+      ) => {
+        assert.notEqual(id, 'execution-session');
+        assert.equal(input.expected_config_version, 1);
+        assert.equal(options.signal.aborted, false);
+        assert.equal(options.maxRetries, 0);
+        patches.push({ id, input });
+        configurations.set(id, {
+          ...configurations.get(id),
+          auth_configs: input.auth_configs,
+        });
+        return { ...session(id), config_version: 2 };
+      },
+    );
     let failure: 'provider' | 'url' | undefined;
     let cleanupFailure = false;
     t.mock.method(transport, 'link', async (id: string, input: Record<string, unknown>) => {
@@ -3348,6 +4468,11 @@ test(
           ),
           { status: 400, error: { code: 4309 } },
         );
+      assert.deepEqual(configurations.get(id)?.auth_configs, {
+        notion: 'backend-notion-auth',
+        slack: 'explicit-slack-auth',
+        gmail: 'custom-gmail-auth',
+      });
       if (failure === 'provider') throw new Error('synthetic-private-provider-detail');
       return {
         connected_account_id: `new-account-${created.length}`,
@@ -3389,7 +4514,7 @@ test(
     );
     const provider = createComposioProvider({
       client,
-      authConfigs: { gmail: 'custom-gmail-auth' },
+      authConfigs: { slack: 'explicit-slack-auth' },
     });
     const integrations = await createIntegrations(pool, {
       ownerId: 'local-development',
@@ -3419,7 +4544,21 @@ test(
     });
     assert.equal(created.length, 1);
     assert.deepEqual(created[0].config.connected_accounts, {});
-    assert.deepEqual(created[0].config.auth_configs, { gmail: 'custom-gmail-auth' });
+    assert.deepEqual(created[0].config.auth_configs, { slack: 'explicit-slack-auth' });
+    assert.equal(authReads.length, 2);
+    assert.deepEqual(patches, [
+      {
+        id: 'consent-session-1',
+        input: {
+          auth_configs: {
+            notion: 'backend-notion-auth',
+            slack: 'explicit-slack-auth',
+            gmail: 'custom-gmail-auth',
+          },
+          expected_config_version: 1,
+        },
+      },
+    ]);
     assert.deepEqual(created[0].config.multi_account, {
       enable: true,
       max_accounts_per_toolkit: 10,
@@ -3456,6 +4595,42 @@ test(
       user_id: 'me',
     });
     assert.equal(execution.mock.callCount(), 1);
+    assert.equal(authReads.length, 2);
+    assert.equal(patches.length, 1);
+    for (const kind of [
+      'permission',
+      'ambiguous',
+      'unavailable',
+      'malformed',
+      'cursor',
+      'page-limit',
+      'transport',
+    ] as const) {
+      authFailure = kind;
+      const before: number = authReads.length;
+      const rejected = await connect();
+      const expected = {
+        permission: /Auth configs read/,
+        ambiguous: /multiple custom sign-in configurations/,
+        unavailable: /custom sign-in configuration is unavailable/,
+      }[kind as 'permission' | 'ambiguous' | 'unavailable'];
+      assert.equal(rejected.statusCode, expected ? 503 : 502);
+      assert.deepEqual(Object.keys(rejected.json()), ['error']);
+      if (expected) assert.match(rejected.json().error, expected);
+      else
+        assert.equal(
+          rejected.json().error,
+          'The connection provider could not complete this request.',
+        );
+      assert.equal(rejected.body.includes('synthetic-private-auth-detail'), false);
+      assert.equal(links.length, 1);
+      assert.equal(patches.length, 1);
+      assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 2);
+      assert.equal(deleted.at(-1), created.at(-1)!.id);
+      if (kind === 'cursor') assert.equal(authReads.length - before, 2);
+      if (kind === 'page-limit') assert.equal(authReads.length - before, 5);
+    }
+    authFailure = undefined;
     for (const kind of ['provider', 'url'] as const) {
       failure = kind;
       const rejected = await connect();
@@ -3465,13 +4640,16 @@ test(
       });
       assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 2);
     }
-    assert.deepEqual(deleted, ['consent-session-1', 'consent-session-2', 'consent-session-3']);
+    assert.deepEqual(
+      deleted,
+      created.map(({ id }) => id),
+    );
     failure = undefined;
     cleanupFailure = true;
     const accepted = await connect();
     assert.equal(accepted.statusCode, 200);
     assert.equal((await pool.query('SELECT id FROM app_connections')).rowCount, 3);
-    assert.equal(deleted.at(-1), 'consent-session-4');
+    assert.equal(deleted.at(-1), created.at(-1)!.id);
   },
 );
 
@@ -4552,12 +5730,53 @@ test(
         },
       });
       integrations.registerRoutes(app);
+      const foreignProposal = randomUUID();
+      const expiredProposal = randomUUID();
+      for (const [proposalId, proposalOwner, expired] of [
+        [foreignProposal, 'other-owner', false],
+        [expiredProposal, owner, true],
+      ] as const)
+        await pool.query(
+          `INSERT INTO discovered_connection_proposals(id,owner_id,service,name,paths,expires_at)
+           SELECT $2,$3,service,name,paths,CASE WHEN $4 THEN now()-interval '1 second' ELSE expires_at END
+           FROM discovered_connection_proposals WHERE id=$1`,
+          [id, proposalId, proposalOwner, expired],
+        );
+      const setupHash = (proposalId: string) =>
+        createHash('sha256').update(`/apps?connect=${proposalId}`).digest('hex');
+      const proposalStatus = async (hashes: string[], connectionIds: string[]) => {
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/apps/setup-status',
+          payload: { hashes, connectionIds },
+        });
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.headers['cache-control'], 'no-store');
+        return response.json();
+      };
+      assert.ok(id);
+      assert.deepEqual(
+        await proposalStatus(
+          [setupHash(id), setupHash(foreignProposal), setupHash(expiredProposal), '0'.repeat(64)],
+          [id, foreignProposal, expiredProposal, randomUUID()],
+        ),
+        { completed: [], apps: [{ hash: setupHash(id), slug: 'fixture-app', name: result.name }] },
+      );
+      assert.deepEqual(await proposalStatus(['0'.repeat(64)], [id]), {
+        completed: [],
+        apps: [],
+      });
+      assert.deepEqual(catalogs, []);
       const cliSetup = await app.inject({
         method: 'POST',
         url: `/api/apps/discovery/${id}/complete`,
         payload: { token: 'synthetic-cli-token', accountName: 'Fixture CLI account' },
       });
       assert.equal(cliSetup.statusCode, 200);
+      assert.deepEqual(await proposalStatus([setupHash(id)], [id]), {
+        completed: [],
+        apps: [],
+      });
       const connectionUpdated: AnalyticsEvent = {
         event: 'otto_settings_updated',
         properties: { section: 'connections', operation: 'update' },
@@ -5010,6 +6229,10 @@ test('Composio uploads file bytes before the app consumes its storage reference'
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
   let presignFailure = false;
   const presign = t.mock.method(
     client.getClient().files,
@@ -5092,6 +6315,298 @@ test('Composio uploads file bytes before the app consumes its storage reference'
   assert.equal(presign.mock.callCount(), requests);
 });
 
+test('Composio paginates managed apps and native DCR MCPs with exact slugs for consent and tools', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const item = (
+    slug: string,
+    schemes: string[] = ['OAUTH2'],
+    logo?: unknown,
+    authSchemes = schemes,
+    categories?: unknown,
+  ) => ({
+    slug,
+    name: slug,
+    type: 'native',
+    meta: {
+      description: `Connect ${slug}`,
+      ...(logo !== undefined ? { logo } : {}),
+      ...(categories !== undefined ? { categories } : {}),
+    },
+    auth_schemes: authSchemes,
+    composio_managed_auth_schemes: schemes,
+  });
+  const categories = [
+    { id: 'meetings', name: ' Meetings ' },
+    { id: 'duplicate', name: 'Meetings' },
+    { id: 'empty', name: ' ' },
+    { id: 'invalid', name: 42 },
+    { id: 'long', name: 'x'.repeat(81) },
+    { id: 'control', name: 'Category\u0000name' },
+    { id: 'direction', name: 'Category\u202ename' },
+    ...Array.from({ length: 40 }, (_, index) => ({
+      id: `category_${index}`,
+      name: `Group ${index}`,
+    })),
+  ];
+  const gate = deferred();
+  const listing = t.mock.method(
+    client.getClient().toolkits,
+    'list',
+    async (input: { cursor?: string }, options: { signal: AbortSignal; maxRetries: number }) => {
+      assert.equal(options.maxRetries, 0);
+      assert.equal(options.signal.aborted, false);
+      await gate.promise;
+      if (!input.cursor)
+        return {
+          items: [
+            item(
+              'granola_mcp',
+              [],
+              'https://logos.composio.dev/api/granola_mcp',
+              ['DCR_OAUTH'],
+              categories,
+            ),
+            item('private_api', [], undefined, ['API_KEY']),
+            item('custom_oauth', [], undefined, ['OAUTH2']),
+            item('../invalid'),
+            null,
+            42,
+            { ...item('invalid_name'), name: ' ' },
+            { ...item('invalid_auth'), composio_managed_auth_schemes: 'OAUTH2' },
+            { ...item('missing_meta'), meta: undefined },
+            { ...item('invalid_meta'), meta: null },
+            {
+              ...item('invalid_description'),
+              meta: { description: 42, logo: 'https://logos.composio.dev/api/notes' },
+            },
+            { ...item('long_description'), meta: { description: 'x'.repeat(1500) } },
+          ],
+          next_cursor: 'second-page',
+        };
+      assert.equal(input.cursor, 'second-page');
+      return {
+        items: [
+          item(
+            'granola_mcp',
+            [],
+            'https://logos.composio.dev/api/granola_mcp',
+            ['dcr_oauth'],
+            categories,
+          ),
+          item(
+            'managed_notes',
+            ['OAUTH2'],
+            'https://assets.composio.dev/logos/notes.svg',
+            ['OAUTH2'],
+            { name: 'Not an array' },
+          ),
+          item('custom_app', []),
+          ...[
+            'https://user:credential@logos.composio.dev/api/notes',
+            'https://logos.composio.dev/api/notes?token=private',
+            'https://logos.composio.dev/api/notes#private',
+            'https://logos.composio.dev.example.com/api/notes',
+            'https://untrusted.example/logo.svg',
+            42,
+          ].map((logo, index) => item(`unsafe_logo_${index}`, ['OAUTH2'], logo)),
+        ],
+        next_cursor: null,
+      };
+    },
+  );
+  const authorize = t.mock.fn(async () => ({
+    id: 'fixture-account',
+    redirectUrl: 'https://connect.composio.dev/link/fixture',
+  }));
+  const create = t.mock.method(client.sessions, 'create', async () => ({
+    sessionId: 'fixture-session',
+    authorize,
+    search: async () => ({
+      success: true,
+      error: null,
+      toolSchemas: {
+        GRANOLA_MCP_SEARCH_NOTES: {
+          toolSlug: 'GRANOLA_MCP_SEARCH_NOTES',
+          toolkit: 'granola_mcp',
+          inputSchema: { type: 'object' },
+        },
+      },
+      results: [],
+    }),
+  }));
+  const provider = createComposioProvider({ client, authConfigs: { custom_app: 'fixture-auth' } });
+  const first = provider.listServices!();
+  const concurrent = provider.listServices!();
+  gate.resolve();
+  const [services, repeated] = await Promise.all([first, concurrent]);
+  assert.deepEqual(services, repeated);
+  assert.equal(listing.mock.callCount(), 2);
+  assert.equal(services.filter((entry) => entry.slug === 'granola_mcp').length, 1);
+  assert.ok(services.some((entry) => entry.slug === 'managed_notes'));
+  assert.ok(services.some((entry) => entry.slug === 'custom_app'));
+  assert.equal(
+    services.some((entry) =>
+      ['private_api', 'custom_oauth', '../invalid', 'invalid_name', 'invalid_auth'].includes(
+        entry.slug,
+      ),
+    ),
+    false,
+  );
+  for (const slug of ['missing_meta', 'invalid_meta', 'invalid_description']) {
+    const service = services.find((entry) => entry.slug === slug);
+    assert.ok(service);
+    assert.equal(service.description, '');
+  }
+  assert.equal(
+    services.find((entry) => entry.slug === 'invalid_description')?.logoUrl,
+    'https://logos.composio.dev/api/notes',
+  );
+  assert.equal(
+    services.find((entry) => entry.slug === 'long_description')?.description.length,
+    1000,
+  );
+  assert.equal(
+    services.find((entry) => entry.slug === 'granola_mcp')?.logoUrl,
+    'https://logos.composio.dev/api/granola_mcp',
+  );
+  assert.equal(
+    services.find((entry) => entry.slug === 'managed_notes')?.logoUrl,
+    'https://assets.composio.dev/logos/notes.svg',
+  );
+  const unsafeLogos = services.filter((entry) => entry.slug.startsWith('unsafe_logo_'));
+  assert.equal(unsafeLogos.length, 6);
+  assert.ok(unsafeLogos.every((entry) => !entry.logoUrl));
+  assert.deepEqual(services.find((entry) => entry.slug === 'granola_mcp')?.categories, [
+    'Meetings',
+    ...Array.from({ length: 11 }, (_, index) => `Group ${index}`),
+  ]);
+  assert.equal(services.find((entry) => entry.slug === 'managed_notes')?.categories, undefined);
+  const accounts = { retired_mcp: ['owned-account'] };
+  const session = await provider.createSession('fixture-owner', accounts);
+  const [owner, configuration] = create.mock.calls[0]!.arguments as unknown as [
+    string,
+    { toolkits: string[]; connectedAccounts: typeof accounts; authConfigs: Record<string, string> },
+  ];
+  assert.equal(owner, 'fixture-owner');
+  assert.deepEqual(configuration.connectedAccounts, accounts);
+  assert.ok(configuration.toolkits.includes('granola_mcp'));
+  assert.ok(configuration.toolkits.includes('retired_mcp'));
+  assert.equal(configuration.authConfigs.custom_app, 'fixture-auth');
+  await session.authorize('granola_mcp', 'http://localhost:4310/api/apps/callback');
+  await assert.rejects(session.authorize('private_api', 'http://localhost:4310/api/apps/callback'));
+  assert.equal(authorize.mock.callCount(), 1);
+  assert.deepEqual(Object.keys((await session.search('Find notes')).tools as object), [
+    'GRANOLA_MCP_SEARCH_NOTES',
+  ]);
+  assert.equal(listing.mock.callCount(), 2);
+});
+
+test('Composio rejects invalid catalog pages and repeated cursors without caching partial results', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  let valid = false;
+  let invalidPage: unknown;
+  const listing = t.mock.method(
+    client.getClient().toolkits,
+    'list',
+    async () =>
+      invalidPage ?? {
+        items: [
+          {
+            slug: valid ? 'recovered_app' : 'partial_app',
+            name: 'Fixture app',
+            meta: {},
+            composio_managed_auth_schemes: ['OAUTH2'],
+          },
+        ],
+        next_cursor: valid ? null : 'repeated-cursor',
+      },
+  );
+  const provider = createComposioProvider({ client });
+  for (const page of [{ items: {} }, { items: [], next_cursor: 42 }]) {
+    invalidPage = page;
+    await assert.rejects(provider.listServices!());
+  }
+  invalidPage = undefined;
+  await assert.rejects(provider.listServices!());
+  assert.equal(listing.mock.callCount(), 4);
+  valid = true;
+  const recovered = await provider.listServices!();
+  assert.ok(recovered.some((entry) => entry.slug === 'recovered_app'));
+  assert.equal(
+    recovered.some((entry) => entry.slug === 'partial_app'),
+    false,
+  );
+  assert.equal(listing.mock.callCount(), 5);
+});
+
+test('Composio catalog failures preserve owned accounts and restored session permissions', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  const listing = t.mock.method(client.getClient().toolkits, 'list', async () => {
+    throw Object.assign(new Error('private-provider-response'), { status: 403 });
+  });
+  const execute = t.mock.fn(async () => ({ data: { ok: true }, error: null }));
+  const create = t.mock.method(client.sessions, 'create', async () => ({
+    sessionId: 'new-session',
+    execute,
+  }));
+  const search = t.mock.fn(async (_input: { toolkits: string[] }) => ({
+    success: true,
+    error: null,
+    toolSchemas: {
+      GMAIL_FETCH_EMAILS: {
+        toolSlug: 'GMAIL_FETCH_EMAILS',
+        toolkit: 'gmail',
+        inputSchema: { type: 'object' },
+      },
+    },
+    results: [],
+  }));
+  t.mock.method(client.sessions, 'use', async () => ({
+    sessionId: 'restored-session',
+    config: {
+      toolkits: { enabled: ['granola_mcp', 'retired_mcp'] },
+      connected_accounts: { retired_mcp: ['owned-account'], gmail: ['excluded-account'] },
+    },
+    execute,
+    search,
+  }));
+  const provider = createComposioProvider({ client });
+  await assert.rejects(provider.listServices!(), (error: Error) => {
+    assert.ok(error instanceof IntegrationCatalogAccessDenied);
+    assert.match(error.message, /Toolkit read access/);
+    assert.doesNotMatch(error.message, /private-provider-response/);
+    return true;
+  });
+  const session = await provider.createSession('fixture-owner', { retired_mcp: ['owned-account'] });
+  const configuration = create.mock.calls[0]!.arguments[1] as unknown as { toolkits: string[] };
+  assert.ok(configuration.toolkits.includes('retired_mcp'));
+  await session.execute('RETIRED_MCP_LIST', {}, 'owned-account');
+  const restored = await provider.restoreSession('restored-session');
+  await restored.execute('GRANOLA_MCP_LIST', {}, 'granola-account');
+  await restored.execute('RETIRED_MCP_LIST', {}, 'owned-account');
+  await assert.rejects(restored.execute('GMAIL_FETCH_EMAILS', {}, 'excluded-account'));
+  await assert.rejects(restored.search('Find email'));
+  const searched = search.mock.calls[0]!.arguments[0];
+  assert.equal(searched.toolkits.includes('gmail'), false);
+  assert.equal(execute.mock.callCount(), 3);
+  assert.equal(listing.mock.callCount(), 1);
+});
+
 test('Composio failure envelopes reject with the provider error', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -5099,6 +6614,10 @@ test('Composio failure envelopes reject with the provider error', async (t) => {
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
   let result: Record<string, unknown> = {};
   t.mock.method(client.sessions, 'create', async () => ({
     sessionId: 'fixture-session',
@@ -5138,6 +6657,10 @@ test(
       disableVersionCheck: true,
       fileUploadDirs: false,
     });
+    t.mock.method(client.getClient().toolkits, 'list', async () => ({
+      items: [],
+      next_cursor: null,
+    }));
     const lookup = t.mock.method(client.tools, 'getRawComposioToolBySlug', async () => {
       throw new Error('Fixture catalog outage');
     });
@@ -5174,21 +6697,56 @@ test(
   },
 );
 
-test('Composio account identity comes from an account-bound Google response and excludes credentials', async (t) => {
+test('Composio account identity uses safe display metadata and account-bound profiles without credentials', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
     allowTracking: false,
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
-  t.mock.method(client.connectedAccounts, 'get', async () => ({
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
+  let account: Record<string, unknown> = {
     status: 'ACTIVE',
     isDisabled: false,
     toolkit: { slug: 'gmail' },
     data: { access_token: 'must-not-expose', email: 'untrusted@example.com' },
-  }));
-  t.mock.method(client.sessions, 'create', async () => {
-    throw new Error('Fixture session is unavailable.');
+  };
+  t.mock.method(client.connectedAccounts, 'get', async () => account);
+  let profileSessions = 0;
+  let sentryProfile: Record<string, unknown> | undefined;
+  let sentryAccount = 'sentry-profile-account';
+  let inspectedSentry = 0;
+  let deletedSessions = 0;
+  t.mock.method(client.sessions, 'create', async (ownerId: string, params: unknown) => {
+    profileSessions++;
+    if (!sentryProfile) throw new Error('Fixture session is unavailable.');
+    assert.equal(ownerId, 'fixture-owner');
+    assert.deepEqual(params, {
+      toolkits: ['sentry'],
+      tools: { sentry: ['SENTRY_VALIDATE_CREDENTIAL'] },
+      connectedAccounts: { sentry: sentryAccount },
+      multiAccount: { enable: true, maxAccountsPerToolkit: 2, requireExplicitSelection: true },
+      manageConnections: false,
+      sandbox: { enable: false },
+      premiumUsage: false,
+    });
+    return {
+      sessionId: 'identity-session',
+      execute: async (action: string, args: unknown, selected: unknown) => {
+        assert.equal(action, 'SENTRY_VALIDATE_CREDENTIAL');
+        assert.deepEqual(args, {});
+        assert.deepEqual(selected, { account: sentryAccount });
+        inspectedSentry++;
+        return sentryProfile;
+      },
+    };
+  });
+  t.mock.method(client.sessions, 'delete', async (id: string) => {
+    assert.equal(id, 'identity-session');
+    deletedSessions++;
   });
   const endpoints: string[] = [];
   t.mock.method(
@@ -5223,6 +6781,293 @@ test('Composio account identity comes from an account-bound Google response and 
     accountEmail: 'verified@example.com',
   });
   assert.equal(endpoints.length, 2);
+  assert.equal(profileSessions, 1);
+  account = {
+    status: 'ACTIVE',
+    isDisabled: false,
+    toolkit: { slug: 'github' },
+    alias: 'Do not use this label',
+    state: {
+      authScheme: 'OAUTH2',
+      val: {
+        displayName: '  fixture-octocat  ',
+        access_token: 'must-not-expose',
+        refresh_token: 'must-not-expose',
+        email: 'untrusted@example.test',
+      },
+    },
+    data: { displayName: 'Do not use auth data', email: 'untrusted@example.test' },
+    params: { displayName: 'Do not use auth parameters' },
+  };
+  assert.deepEqual(await provider.inspectAccount('github-account', 'fixture-owner'), {
+    active: true,
+    service: 'github',
+    accountName: 'fixture-octocat',
+  });
+  for (const displayName of ['owner@example.test', 'Updated account']) {
+    account.state = { authScheme: 'OAUTH2', val: { displayName } };
+    assert.deepEqual(await provider.inspectAccount('github-account', 'fixture-owner'), {
+      active: true,
+      service: 'github',
+      accountName: displayName,
+    });
+  }
+  for (const displayName of [
+    undefined,
+    null,
+    '',
+    ' ',
+    42,
+    {},
+    'x'.repeat(201),
+    'Name\u202e',
+    'REDACTED',
+    '[redacted]',
+    '<redacted>',
+    '***',
+  ]) {
+    account.state = { authScheme: 'OAUTH2', val: { displayName } };
+    assert.deepEqual(await provider.inspectAccount('github-account', 'fixture-owner'), {
+      active: true,
+      service: 'github',
+    });
+  }
+  account.toolkit = { slug: 'sentry' };
+  account.state = {
+    authScheme: 'OAUTH2',
+    val: {
+      access_token: 'must-not-expose',
+      user: { id: 'private-user-id', name: 'Fixture Sentry user', email: 'owner@example.test' },
+    },
+  };
+  assert.deepEqual(await provider.inspectAccount('sentry-account', 'fixture-owner'), {
+    active: true,
+    service: 'sentry',
+  });
+  for (const name of ['', 'x'.repeat(201), 'Name\u0000', undefined, 'REDACTED', '[REDACTED]']) {
+    account.state = { authScheme: 'OAUTH2', val: { user: { name, email: 'owner@example.test' } } };
+    assert.deepEqual(await provider.inspectAccount('sentry-account', 'fixture-owner'), {
+      active: true,
+      service: 'sentry',
+    });
+  }
+  account.state = { authScheme: 'API_KEY', val: { user: { name: 'Unverified token user' } } };
+  assert.deepEqual(await provider.inspectAccount('sentry-account', 'fixture-owner'), {
+    active: true,
+    service: 'sentry',
+  });
+  account.toolkit = { slug: 'github' };
+  account.state = { authScheme: 'OAUTH2', val: { user: { name: 'No generic user fallback' } } };
+  assert.deepEqual(await provider.inspectAccount('github-account', 'fixture-owner'), {
+    active: true,
+    service: 'github',
+  });
+  account.state = { authScheme: 'OAUTH2', val: { displayName: 'Fixture account' } };
+  for (const change of [{ status: 'INACTIVE' }, { status: 'ACTIVE', isDisabled: true }]) {
+    Object.assign(account, change);
+    assert.deepEqual(await provider.inspectAccount('github-account', 'fixture-owner'), {
+      active: false,
+      service: 'github',
+    });
+  }
+  assert.equal(endpoints.length, 2);
+  assert.equal(profileSessions, 2);
+  account.status = 'ACTIVE';
+  account.isDisabled = false;
+  account.toolkit = { slug: 'sentry' };
+  account.state = {
+    authScheme: 'OAUTH2',
+    val: { user: { name: 'REDACTED', email: 'REDACTED' } },
+  };
+  sentryProfile = {
+    successful: true,
+    data: {
+      version: '0',
+      user: {
+        id: 'private-user-id',
+        name: 'Verified Sentry user',
+        email: 'verified@example.test',
+        access_token: 'must-not-expose',
+      },
+      auth: { id: 'private-token-id', token: 'must-not-expose', scopes: ['full'] },
+    },
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.deepEqual(await provider.inspectAccount(sentryAccount, 'fixture-owner'), {
+      active: true,
+      service: 'sentry',
+      accountName: 'Verified Sentry user',
+      accountEmail: 'verified@example.test',
+    });
+  }
+  assert.equal(inspectedSentry, 1);
+  assert.equal(deletedSessions, 1);
+  sentryAccount = 'sentry-redacted-profile';
+  sentryProfile = { successful: true, data: { user: { name: 'REDACTED', email: 'REDACTED' } } };
+  assert.deepEqual(await provider.inspectAccount(sentryAccount, 'fixture-owner'), {
+    active: true,
+    service: 'sentry',
+  });
+  assert.equal(endpoints.length, 2);
+  assert.equal(inspectedSentry, 2);
+  assert.equal(deletedSessions, 2);
+  assert.equal(profileSessions, 4);
+});
+
+test('Composio Google consent preserves explicit auth, project defaults and provider boundaries', async (t) => {
+  const client = new Composio({
+    apiKey: 'fixture-key-never-live',
+    allowTracking: false,
+    disableVersionCheck: true,
+    fileUploadDirs: false,
+  });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
+  const transport = client.getClient().toolRouter.session;
+  const configurations = new Map<string, Record<string, unknown>>();
+  function snapshot(id: string) {
+    return {
+      session_id: id,
+      mcp: { type: 'http', url: `https://backend.composio.dev/tool_router/mcp/${id}` },
+      config: { user_id: 'fixture-owner', ...configurations.get(id) },
+      config_version: 1,
+    };
+  }
+  t.mock.method(transport, 'create', async (config: Record<string, unknown>) => {
+    const id = `fixture-session-${configurations.size}`;
+    configurations.set(id, config);
+    await pause('create');
+    return snapshot(id);
+  });
+  t.mock.method(transport, 'retrieve', async (id: string) => {
+    await pause('restore');
+    return snapshot(id);
+  });
+  const deleted: string[] = [];
+  t.mock.method(client.getClient(), 'delete', async (path: string) => {
+    const id = decodeURIComponent(path.split('/').at(-1)!);
+    assert.ok(configurations.has(id));
+    deleted.push(id);
+    return { session_id: id, deleted: true };
+  });
+  let empty = false;
+  let paused: 'create' | 'restore' | 'list' | 'patch' | 'link' | undefined;
+  let started = deferred();
+  let released = deferred();
+  async function pause(phase: typeof paused) {
+    if (phase !== paused) return;
+    started.resolve();
+    await released.promise;
+  }
+  const list = t.mock.method(
+    client.getClient().authConfigs,
+    'list',
+    async (input: { toolkit_slug: string }) => {
+      await pause('list');
+      return {
+        items: empty
+          ? []
+          : [
+              {
+                id: `custom-${input.toolkit_slug}`,
+                toolkit: { slug: input.toolkit_slug },
+                status: 'ENABLED',
+                auth_scheme: 'OAUTH2',
+                is_composio_managed: false,
+                is_enabled_for_tool_router: true,
+              },
+            ],
+        next_cursor: null,
+      };
+    },
+  );
+  const patch = t.mock.method(
+    transport,
+    'patch',
+    async (id: string, input: Record<string, unknown>) => {
+      await pause('patch');
+      configurations.set(id, { ...configurations.get(id), auth_configs: input.auth_configs });
+      return { ...snapshot(id), config_version: 2 };
+    },
+  );
+  const link = t.mock.method(
+    transport,
+    'link',
+    async (_id: string, _input: unknown, options: { signal: AbortSignal }) => {
+      assert.equal(options.signal.aborted, false);
+      await pause('link');
+      return {
+        connected_account_id: 'fixture-account',
+        redirect_url: 'https://connect.composio.dev/link/fixture',
+      };
+    },
+  );
+  const callback = 'http://localhost:4310/api/apps/callback';
+  const provider = createComposioProvider({ client });
+  for (const slug of ['gmail', 'googlecalendar', 'googledrive', 'googlesheets', 'googledocs']) {
+    const before = list.mock.callCount();
+    const session = await provider.createSession('fixture-owner', {});
+    assert.equal(list.mock.callCount(), before);
+    await session.authorize(slug, callback);
+    assert.equal(list.mock.callCount(), before + 1);
+    assert.deepEqual(configurations.get(session.id)?.auth_configs, { [slug]: `custom-${slug}` });
+  }
+  const explicit = createComposioProvider({ client, authConfigs: { gmail: 'explicit-gmail' } });
+  const session = await explicit.createSession('fixture-owner', {});
+  await session.authorize('gmail', callback);
+  await session.authorize('slack', callback);
+  assert.equal(list.mock.callCount(), 5);
+  assert.equal(patch.mock.callCount(), 5);
+  assert.deepEqual(configurations.get(session.id)?.auth_configs, { gmail: 'explicit-gmail' });
+  empty = true;
+  const fallback = await provider.createSession('fixture-owner', {});
+  await fallback.authorize('gmail', callback);
+  assert.equal(list.mock.callCount(), 6);
+  assert.equal(patch.mock.callCount(), 5);
+  assert.equal(configurations.get(fallback.id)?.auth_configs, undefined);
+  empty = false;
+  for (const phase of ['list', 'patch', 'link'] as const) {
+    paused = phase;
+    started = deferred();
+    released = deferred();
+    const changed = createComposioProvider({ client });
+    const session = await changed.createSession('fixture-owner', {});
+    const before = {
+      list: list.mock.callCount(),
+      patch: patch.mock.callCount(),
+      link: link.mock.callCount(),
+    };
+    const pending = session.authorize('gmail', callback);
+    await started.promise;
+    changed.setApiKey!();
+    released.resolve();
+    await assert.rejects(pending, /connection provider changed/);
+    assert.equal(list.mock.callCount(), before.list + 1);
+    assert.equal(patch.mock.callCount(), before.patch + (phase === 'list' ? 0 : 1));
+    assert.equal(link.mock.callCount(), before.link + (phase === 'link' ? 1 : 0));
+    await assert.rejects(session.authorize('gmail', callback), /connection provider changed/);
+    assert.equal(list.mock.callCount(), before.list + 1);
+  }
+  const before = list.mock.callCount();
+  for (const phase of ['create', 'restore'] as const) {
+    paused = phase;
+    started = deferred();
+    released = deferred();
+    const changed = createComposioProvider({ client });
+    const pending =
+      phase === 'create'
+        ? changed.createSession('fixture-owner', {})
+        : changed.restoreSession(session.id);
+    await started.promise;
+    changed.setApiKey!();
+    released.resolve();
+    await assert.rejects(pending, /connection provider changed/);
+    assert.equal(list.mock.callCount(), before);
+  }
+  assert.deepEqual(deleted, [[...configurations.keys()].at(-1)]);
+  assert.equal(deleted.includes(session.id), false);
 });
 
 test('Composio adapter normalizes sessions without exposing SDK metadata and authenticates raw webhooks', async (t) => {
@@ -5232,6 +7077,14 @@ test('Composio adapter normalizes sessions without exposing SDK metadata and aut
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
+  t.mock.method(client.getClient().authConfigs, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
   t.mock.method(client.sessions, 'create', async () => ({
     sessionId: 'fixture-session',
     authorize: async () => ({
@@ -5743,6 +7596,10 @@ function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' = 'pollInbox'>
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
   t.mock.method(
     client.tools,
     'proxyExecute',
@@ -6183,6 +8040,10 @@ test('connected provider cancellation reaches session creation, search, schemas,
     disableVersionCheck: true,
     fileUploadDirs: false,
   });
+  t.mock.method(client.getClient().toolkits, 'list', async () => ({
+    items: [],
+    next_cursor: null,
+  }));
   let phase = '';
   let started = () => {};
   const requests: AbortSignal[] = [];
@@ -6852,6 +8713,13 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     pretendToBeVisual: true,
   });
   const opened: string[] = [];
+  let appInventory: Connection[] = [
+    { slug: 'gmail', name: 'Gmail', status: 'disconnected', triggersEnabled: false },
+  ];
+  let appCatalog: Connection[] = [];
+  const appRequests: Array<{ path: string; body: unknown }> = [];
+  let pauseAppConnect = false;
+  let finishAppConnect: ((response: Response) => void) | undefined;
   let launches = 0;
   let discoveryStatus: 'pending' | 'cancelled' | 'failed' | 'connected' | undefined;
   let discoveryReads = 0;
@@ -6923,7 +8791,30 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     fetch: async (path: unknown, init: RequestInit = {}) => {
       if (path === '/api/apps') {
         inventoryReads++;
-        return Response.json([{ slug: 'gmail', name: 'Gmail', status: 'disconnected' }]);
+        return Response.json(appInventory);
+      }
+      if (path === '/api/apps/catalog') return Response.json(appCatalog);
+      if (
+        typeof path === 'string' &&
+        /^\/api\/apps\/(?:notion|notion_mcp|linear_mcp)\/connect$/.test(path)
+      ) {
+        appRequests.push({ path, body: JSON.parse(String(init.body)) });
+        if (pauseAppConnect) {
+          pauseAppConnect = false;
+          return new Promise<Response>((resolve) => {
+            finishAppConnect = resolve;
+          });
+        }
+        return Response.json({ url: 'https://connect.example.test/variant' });
+      }
+      if (
+        typeof path === 'string' &&
+        path.startsWith('/api/apps/notion_mcp/accounts/') &&
+        path.endsWith('/disconnect')
+      ) {
+        appRequests.push({ path, body: JSON.parse(String(init.body)) });
+        appInventory = appInventory.filter((account) => !path.includes(account.connectionId ?? ''));
+        return Response.json({ ok: true });
       }
       if (path === '/api/models')
         return Response.json({
@@ -7111,6 +9002,219 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(dom.window.location.search, '');
     assert.equal(timers.size, 0);
     const completedReads = discoveryReads;
+    const mcpAccount: Connection = {
+      slug: 'notion_mcp',
+      name: 'Notion MCP',
+      connectionId: randomUUID(),
+      accountName: 'MCP fixture',
+      status: 'connected',
+      triggersEnabled: false,
+    };
+    const nativeAccount: Connection = {
+      slug: 'notion',
+      name: 'Notion',
+      connectionId: randomUUID(),
+      accountName: 'Native fixture',
+      status: 'connected',
+      triggersEnabled: false,
+    };
+    appInventory = [mcpAccount];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('[data-manage-service="notion"]')!
+        .click(),
+    );
+    await settle();
+    assert.ok(dom.window.document.querySelector('.app-manage-dialog'));
+    appCatalog = [
+      { slug: 'notion', name: 'Notion', status: 'disconnected', triggersEnabled: false },
+      { slug: 'notion_mcp', name: 'Notion MCP', status: 'disconnected', triggersEnabled: false },
+      { slug: 'linear', name: 'Linear', status: 'not_configured', triggersEnabled: false },
+      { slug: 'linear_mcp', name: 'Linear MCP', status: 'disconnected', triggersEnabled: false },
+    ];
+    await act(async () => pageDataCache.update('/api/apps/catalog', () => appCatalog));
+    await settle();
+    assert.ok(dom.window.document.querySelector('.app-manage-dialog'));
+    assert.equal(dom.window.document.querySelectorAll('[data-manage-service="notion"]').length, 1);
+    assert.equal(dom.window.document.querySelector('[data-connect-service="notion"]'), null);
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('[data-add-account]')!.click(),
+    );
+    await settle();
+    assert.deepEqual(appRequests.at(-1), {
+      path: '/api/apps/notion_mcp/connect',
+      body: { returnTo: 'window' },
+    });
+    appInventory = [
+      { ...mcpAccount, status: 'disconnected', canReconnect: true },
+      { ...nativeAccount, status: 'disconnected', canReconnect: false },
+    ];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    const reconnectButtons = () => [
+      ...dom.window.document.querySelectorAll<HTMLButtonElement>(
+        '.app-manage-dialog button[aria-label^="Reconnect "]',
+      ),
+    ];
+    assert.equal(reconnectButtons().length, 1);
+    pauseAppConnect = true;
+    await act(async () => reconnectButtons()[0].click());
+    await settle();
+    assert.deepEqual(appRequests.at(-1), {
+      path: '/api/apps/notion_mcp/connect',
+      body: { connectionId: mcpAccount.connectionId, returnTo: 'window' },
+    });
+    assert.equal(reconnectButtons()[0].getAttribute('aria-busy'), 'true');
+    await act(async () =>
+      finishAppConnect!(Response.json({ url: 'https://connect.example.test/reconnect' })),
+    );
+    await settle();
+    appInventory = [
+      { ...mcpAccount, status: 'disconnected', canReconnect: false },
+      { ...nativeAccount, status: 'connected', canReconnect: true, reconnectRequired: true },
+    ];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    assert.equal(reconnectButtons().length, 1);
+    await act(async () => reconnectButtons()[0].click());
+    await settle();
+    assert.deepEqual(appRequests.at(-1), {
+      path: '/api/apps/notion/connect',
+      body: { connectionId: nativeAccount.connectionId, returnTo: 'window' },
+    });
+    appInventory = [
+      { ...mcpAccount, status: 'disconnected', canReconnect: false },
+      { ...nativeAccount, status: 'disconnected' },
+    ];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    assert.equal(reconnectButtons().length, 0);
+    appInventory = [{ ...mcpAccount, status: 'not_configured' }];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('[data-add-account]')!.click(),
+    );
+    await settle();
+    assert.deepEqual(appRequests.at(-1), {
+      path: '/api/apps/notion/connect',
+      body: { returnTo: 'window' },
+    });
+    assert.ok(
+      dom.window.document.querySelector(`[data-disconnect-account="${mcpAccount.connectionId}"]`),
+    );
+    appInventory = [mcpAccount, nativeAccount];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    assert.deepEqual(
+      [...dom.window.document.querySelectorAll<HTMLButtonElement>('[data-disconnect-account]')].map(
+        (button) => button.dataset.disconnectAccount,
+      ),
+      [mcpAccount.connectionId, nativeAccount.connectionId],
+    );
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('[data-add-account]')!.click(),
+    );
+    await settle();
+    assert.deepEqual(appRequests.at(-1), {
+      path: '/api/apps/notion/connect',
+      body: { returnTo: 'window' },
+    });
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>(`[data-disconnect-account="${mcpAccount.connectionId}"]`)!
+        .click(),
+    );
+    await settle();
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('.app-disconnect-dialog .button-destructive')!
+        .click(),
+    );
+    await settle();
+    assert.deepEqual(appRequests.at(-1), {
+      path: `/api/apps/notion_mcp/accounts/${mcpAccount.connectionId}/disconnect`,
+      body: {},
+    });
+    assert.equal(dom.window.document.querySelectorAll('[data-manage-service="notion"]').length, 1);
+    assert.equal(dom.window.document.querySelector('[data-connect-service="notion"]'), null);
+    assert.equal(
+      (dom.window.document.activeElement as HTMLElement).dataset.manageService,
+      'notion',
+    );
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('[data-connect-service="linear"]')!
+        .click(),
+    );
+    await settle();
+    assert.deepEqual(appRequests.at(-1), {
+      path: '/api/apps/linear_mcp/connect',
+      body: { returnTo: 'window' },
+    });
+    appInventory = [
+      nativeAccount,
+      {
+        slug: 'linear',
+        name: 'Linear',
+        connectionId: randomUUID(),
+        status: 'connected',
+        triggersEnabled: false,
+      },
+    ];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('[data-manage-service="notion"]')!
+        .click(),
+    );
+    await settle();
+    pauseAppConnect = true;
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('[data-add-account]')!.click(),
+    );
+    await settle();
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('.app-manage-dialog .dialog-close')!
+        .click(),
+    );
+    await settle();
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('[data-manage-service="linear"]')!
+        .click(),
+    );
+    await settle();
+    await act(async () =>
+      finishAppConnect!(Response.json({ error: 'Synthetic connection failure.' }, { status: 503 })),
+    );
+    await settle();
+    assert.equal(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'), null);
+    assert.ok(dom.window.document.querySelector('.apps-page > [role="alert"]'));
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('.app-manage-dialog .dialog-close')!
+        .click(),
+    );
+    await settle();
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('[data-manage-service="notion"]')!
+        .click(),
+    );
+    await settle();
+    assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
+    pauseAppConnect = true;
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('[data-add-account]')!.click(),
+    );
+    await act(async () =>
+      finishAppConnect!(Response.json({ error: 'Synthetic connection failure.' }, { status: 503 })),
+    );
+    await settle();
+    assert.ok(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'));
+    assert.equal(dom.window.document.querySelector('.apps-page > [role="alert"]'), null);
+    appInventory = [
+      { slug: 'gmail', name: 'Gmail', status: 'disconnected', triggersEnabled: false },
+    ];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
     dom.window.history.replaceState(null, '', '/onboarding');
     dom.window.sessionStorage.setItem(
       'otto.onboarding.step',

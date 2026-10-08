@@ -20,7 +20,10 @@ export async function grade(options: {
   const task: Judged[] = [];
   let graderFault: string | undefined;
   let judgeFault: string | undefined;
-  for (const expectation of [...defaults, ...tripwires, ...definition.expect(world)]) {
+  const shared = definition.completion
+    ? [definition.completion(world), ...defaults.slice(1)]
+    : defaults;
+  for (const expectation of [...shared, ...tripwires, ...definition.expect(world)]) {
     if (expectation.kind === 'judge') {
       task.push(expectation);
       continue;

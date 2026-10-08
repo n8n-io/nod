@@ -1,8 +1,19 @@
 import { PageTitle } from '../components/page-title';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertCircle, Check, ExternalLink, Link2, LoaderCircle, Plus } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import * as Popover from '@radix-ui/react-popover';
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  ListFilter,
+  LoaderCircle,
+  Plus,
+  X,
+} from 'lucide-react';
 import type { Configuration, Connection } from '../../shared/contracts';
 import { SetupNotice } from '../components/setup-notice';
+import { ServiceLogo } from '../components/service-logo';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -15,6 +26,7 @@ import {
 import { usePageData } from '../hooks/use-page-data';
 import {
   Button,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -23,6 +35,7 @@ import {
   Input,
   Loading,
   Notice,
+  SearchField,
 } from '../components/ui';
 
 type Discovery = {
@@ -44,45 +57,27 @@ type Discovery = {
   }>;
 };
 
-const logos = new Set([
-  'gmail',
-  'googlecalendar',
-  'googledrive',
-  'googlesheets',
-  'googledocs',
-  'slack',
-  'notion',
-  'linear',
-]);
-
-function ServiceLogo({ connection }: { connection: Connection }) {
-  const [failed, setFailed] = useState<string>();
-  const source = logos.has(connection.slug)
-    ? `/logos/${connection.slug}.svg`
-    : connection.connectionId
-      ? `/api/apps/${encodeURIComponent(connection.connectionId)}/icon`
-      : undefined;
-  return source && failed !== source ? (
-    <img
-      src={source}
-      alt=""
-      width={24}
-      height={24}
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(source)}
-    />
-  ) : (
-    <Link2 size={24} aria-hidden="true" />
-  );
-}
-
 function accountLabel(account: Connection) {
   const identity = connectionIdentity(account);
   return account.slug === 'notion' && identity.secondary
     ? `${identity.primary} · ${identity.secondary}`
     : (identity.secondary ?? identity.primary);
+}
+
+function categoryKey(value: string) {
+  const key = value.trim().toLocaleLowerCase();
+  if (key === 'calendar' || key === 'scheduling & booking') return 'calendar & scheduling';
+  if (key === 'commerce' || key === 'e-commerce' || key === 'ecommerce') return 'commerce';
+  return key;
+}
+
+function categoryLabel(value: string) {
+  const label = value.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().toLocaleLowerCase();
+  if (label === 'model context protocol') return 'MCP servers';
+  return `${label.charAt(0).toLocaleUpperCase()}${label.slice(1)}`.replace(
+    /\b(ai|api|crm|erp|hr|it|llm|mcp|pdf|seo|sms|sql|ui|url|ux)\b/gi,
+    (word) => word.toUpperCase(),
+  );
 }
 
 function readCheckUrl(path: { endpoint: string; testPath?: string }) {
@@ -97,14 +92,138 @@ function readCheckUrl(path: { endpoint: string; testPath?: string }) {
   }
 }
 
+function AppDescription({ name, description }: { name: string; description?: string }) {
+  const descriptionId = useId();
+  const text = useRef<HTMLSpanElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pinned = useRef(false);
+  const [truncated, setTruncated] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    const element = text.current;
+    if (!element) return;
+    const measure = () => {
+      const next = element.scrollHeight > element.clientHeight + 1;
+      setTruncated(next);
+      if (!next) {
+        pinned.current = false;
+        setOpen(false);
+      }
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [description, truncated]);
+
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
+  function preview() {
+    clearTimeout(closeTimer.current);
+    setOpen(true);
+  }
+
+  function closePreview() {
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => {
+      if (
+        !pinned.current &&
+        document.activeElement !== trigger.current &&
+        !content.current?.contains(document.activeElement)
+      ) {
+        setOpen(false);
+      }
+    }, 160);
+  }
+
+  const summary = (
+    <span ref={text} className="app-description-text">
+      {description}
+    </span>
+  );
+  if (!truncated) return <p className="app-card-description">{summary}</p>;
+  return (
+    <Popover.Root
+      open={open}
+      onOpenChange={(next) => {
+        pinned.current = false;
+        setOpen(next);
+      }}
+    >
+      <Popover.Trigger
+        ref={trigger}
+        className="app-card-description app-description-trigger"
+        aria-label={`Read full description of ${name}`}
+        aria-describedby={open ? descriptionId : undefined}
+        onPointerEnter={(event) => event.pointerType === 'mouse' && preview()}
+        onPointerLeave={closePreview}
+        onFocus={preview}
+        onBlur={closePreview}
+        onKeyDown={(event) => {
+          const panel = content.current;
+          if (!panel || !['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(event.key)) return;
+          event.preventDefault();
+          const distance = event.key.startsWith('Page') ? panel.clientHeight : 40;
+          panel.scrollTop += event.key.endsWith('Up') ? -distance : distance;
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          pinned.current = !pinned.current;
+          setOpen(pinned.current);
+        }}
+      >
+        {summary}
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          ref={content}
+          className="menu app-description-popover"
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          collisionPadding={12}
+          aria-label={`${name} description`}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          onEscapeKeyDown={() => {
+            if (content.current?.contains(document.activeElement)) trigger.current?.focus();
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Tab') return;
+            event.preventDefault();
+            trigger.current?.focus();
+            pinned.current = false;
+            setOpen(false);
+          }}
+          onPointerEnter={() => clearTimeout(closeTimer.current)}
+          onPointerLeave={closePreview}
+          onBlur={closePreview}
+        >
+          <strong>{name}</strong>
+          <p id={descriptionId}>{description}</p>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 export function ConnectedAccount({
   account,
   busy,
+  reconnecting = false,
   onDisconnect,
   onReconnect,
 }: {
   account: Connection;
   busy: boolean;
+  reconnecting?: boolean;
   onDisconnect(trigger: HTMLButtonElement): void;
   onReconnect?(): void;
 }) {
@@ -126,10 +245,28 @@ export function ConnectedAccount({
         </p>
       </div>
       <div className="app-account-actions">
-        {(account.browserState === 'needs_sign_in' || account.browserState === 'pending') &&
+        {((account.canReconnect &&
+          (account.status === 'disconnected' || account.reconnectRequired)) ||
+          account.browserState === 'needs_sign_in' ||
+          account.browserState === 'pending') &&
           onReconnect && (
-            <Button variant="outline" size="sm" disabled={busy} onClick={onReconnect}>
-              {account.browserState === 'pending' ? 'Continue sign-in' : 'Reconnect'}
+            <Button
+              size="sm"
+              aria-label={
+                account.browserState === 'pending'
+                  ? `Continue signing in to ${account.name} as ${label}`
+                  : `Reconnect ${label} to ${account.name}`
+              }
+              aria-busy={reconnecting}
+              disabled={busy}
+              onClick={onReconnect}
+            >
+              {reconnecting && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+              {reconnecting
+                ? 'Opening…'
+                : account.browserState === 'pending'
+                  ? 'Continue sign-in'
+                  : 'Reconnect'}
             </Button>
           )}
         <Button
@@ -148,7 +285,13 @@ export function ConnectedAccount({
   );
 }
 
-export function Apps({ configuration }: { configuration?: Configuration }) {
+export function Apps({
+  configuration,
+  onAsk,
+}: {
+  configuration?: Configuration;
+  onAsk(text: string): void;
+}) {
   const {
     data: connections,
     error: loadError,
@@ -156,9 +299,25 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
     refresh,
     update,
   } = usePageData<Connection[]>('/api/apps');
+  const {
+    data: catalog,
+    error: catalogError,
+    loading: catalogLoading,
+    refreshing: catalogRefreshing,
+    refresh: refreshCatalog,
+  } = usePageData<Connection[]>('/api/apps/catalog');
+  const tabsId = useId();
+  const [view, setView] = useState<'all' | 'connected'>('all');
+  const [query, setQuery] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [categoryQuery, setCategoryQuery] = useState('');
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState('');
+  const [connectErrorService, setConnectErrorService] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [manageService, setManageService] = useState<string | null>(null);
+  const [pointerRestoredService, setPointerRestoredService] = useState<string | null>(null);
   const [disconnectAccount, setDisconnectAccount] = useState<Connection | null>(null);
   const [disconnectError, setDisconnectError] = useState('');
   const [websiteOpen, setWebsiteOpen] = useState(false);
@@ -175,15 +334,79 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
   const [discoverySignIn, setDiscoverySignIn] = useState<{ id: string; url: string } | null>(null);
   const [discoveryVersion, setDiscoveryVersion] = useState(0);
   const page = useRef<HTMLDivElement>(null);
+  const catalogEnd = useRef<HTMLDivElement>(null);
+  const appSearch = useRef<HTMLInputElement>(null);
+  const categorySearch = useRef<HTMLInputElement>(null);
+  const manageTitle = useRef<HTMLHeadingElement>(null);
+  const manageKeyboard = useRef(false);
   const dialogTrigger = useRef<HTMLButtonElement | null>(null);
   const dialogService = useRef('');
   const discoveryTitle = useRef<HTMLHeadingElement>(null);
   const actionRequest = useRef<AbortController | null>(null);
   const discoveryRequest = useRef<AbortController | null>(null);
-  const groups = connectionGroups(connections ?? []);
-  const managed = groups.find((group) => group.service.slug === manageService);
-  const connected = groups.filter((group) => group.accounts.length);
-  const available = groups.filter((group) => !group.accounts.length);
+  const groups = connectionGroups(connections ?? [], catalog ?? []);
+  const managed = groups.find((group) => group.key === manageService);
+  const manageError = managed?.key === connectErrorService ? error : '';
+  const addAccountConnection =
+    managed?.accounts.find(
+      (account) => account.slug === managed.service.slug && account.status !== 'not_configured',
+    ) ??
+    managed?.accounts.find((account) => account.status !== 'not_configured') ??
+    managed?.service;
+  const categories = [
+    ...new Set(groups.flatMap(({ service }) => (service.categories ?? []).map(categoryKey))),
+  ].sort((left, right) => categoryLabel(left).localeCompare(categoryLabel(right)));
+  const categoryMatches = categories.filter((name) =>
+    categoryLabel(name).toLocaleLowerCase().includes(categoryQuery.trim().toLocaleLowerCase()),
+  );
+  const search = query.trim().toLocaleLowerCase();
+  const filtered = groups.filter(
+    (group) =>
+      (!selectedCategories.length ||
+        group.service.categories?.some((category) =>
+          selectedCategories.includes(categoryKey(category)),
+        )) &&
+      (!search ||
+        `${group.service.name} ${group.service.slug} ${group.service.description ?? ''}`
+          .toLocaleLowerCase()
+          .includes(search)),
+  );
+  const connected = filtered.filter((group) => group.accounts.length);
+  const available = filtered.filter((group) => !group.accounts.length);
+  const connectedCount = groups.filter((group) => group.accounts.length).length;
+  const hasFilters = Boolean(search || selectedCategories.length);
+  const empty =
+    view === 'connected' ? !connected.length : !filtered.length && !catalogLoading && !catalogError;
+  function toggleCategory(category: string) {
+    setSelectedCategories((current) =>
+      current.includes(category)
+        ? current.filter((value) => value !== category)
+        : [...current, category],
+    );
+    setVisibleCount(24);
+  }
+  function clearCategories() {
+    setSelectedCategories([]);
+    setVisibleCount(24);
+  }
+  useEffect(() => {
+    const target = catalogEnd.current;
+    if (view !== 'all' || !target || visibleCount >= available.length) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisibleCount(available.length);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        setVisibleCount((count) => Math.min(count + 24, available.length));
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [available.length, visibleCount, query, selectedCategories, view, connections]);
   useEffect(() => {
     const url = new URL(window.location.href);
     const outcome = url.searchParams.get('connection');
@@ -343,7 +566,11 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
     }
     const request = new AbortController();
     actionRequest.current = request;
-    setBusy(`connect:${connection.slug}`);
+    setBusy(
+      !addAccount && connection.connectionId
+        ? `reconnect:${connection.connectionId}`
+        : `connect:${connection.slug}`,
+    );
     setError('');
     try {
       const result = await api<{ url: string }>(
@@ -352,7 +579,7 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
           method: 'POST',
           body: JSON.stringify({
             returnTo: desktopLinksAvailable() ? 'window' : 'apps',
-            ...(connection.accessPaths?.some((path) => path.kind !== 'browser')
+            ...(!addAccount || connection.accessPaths?.some((path) => path.kind !== 'browser')
               ? { connectionId: connection.connectionId }
               : {}),
           }),
@@ -364,6 +591,7 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
       if (desktopLinksAvailable()) setBusy('');
     } catch (cause) {
       if (request.signal.aborted) return;
+      setConnectErrorService(connection.slug.replace(/_mcp$/, ''));
       setError(errorMessage(cause));
       setBusy('');
     } finally {
@@ -402,15 +630,33 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
       if (!request.signal.aborted) setBusy('');
     }
   }
-  function cards(items: typeof groups) {
+  function restoreAppFocus() {
+    const button = Array.from(
+      page.current?.querySelectorAll<HTMLButtonElement>(
+        '[data-manage-service],[data-connect-service]',
+      ) ?? [],
+    ).find(
+      (candidate) =>
+        candidate.dataset.manageService === dialogService.current ||
+        candidate.dataset.connectService === dialogService.current,
+    );
+    setPointerRestoredService(
+      !manageKeyboard.current && button?.dataset.manageService ? dialogService.current : null,
+    );
+    button?.focus();
+  }
+
+  function cards(items: typeof groups, catalogCards = false) {
     return (
-      <div className="app-grid">
-        {items.map(({ service, accounts }) => (
-          <article key={service.slug} className="app-card" aria-labelledby={`app-${service.slug}`}>
-            <ServiceLogo connection={service} />
+      <div className={catalogCards ? 'app-grid app-catalog-grid' : 'app-grid'}>
+        {items.map(({ key, service, accounts }) => (
+          <article key={key} className="app-card" aria-labelledby={`app-${key}`}>
+            <ServiceLogo {...service} />
             <div className="app-card-copy">
-              <h3 id={`app-${service.slug}`}>{service.name}</h3>
-              {!accounts.length && <p className="app-card-description">{service.description}</p>}
+              <h3 id={`app-${key}`} title={service.name}>
+                {service.name}
+              </h3>
+              <AppDescription name={service.name} description={service.description} />
               {service.status === 'not_configured' && (
                 <p className="app-status">Sign-in unavailable</p>
               )}
@@ -425,9 +671,20 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
               <Button
                 variant="ghost"
                 size="sm"
-                data-manage-service={service.slug}
+                className="app-manage"
+                data-manage-service={key}
+                data-pointer-restored={pointerRestoredService === key || undefined}
                 aria-label={`Manage ${service.name} accounts`}
-                onClick={() => setManageService(service.slug)}
+                onKeyDown={() => setPointerRestoredService(null)}
+                onBlur={() => setPointerRestoredService(null)}
+                onClick={(event) => {
+                  dialogService.current = key;
+                  dialogTrigger.current = null;
+                  manageKeyboard.current = event.detail === 0;
+                  setPointerRestoredService(null);
+                  setError('');
+                  setManageService(key);
+                }}
               >
                 Manage
               </Button>
@@ -435,7 +692,8 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
               <Button
                 variant="outline"
                 size="sm"
-                data-connect-service={service.slug}
+                className="app-connect"
+                data-connect-service={key}
                 aria-label={`Connect ${service.name}`}
                 aria-busy={busy === `connect:${service.slug}`}
                 disabled={service.status === 'not_configured' || Boolean(busy)}
@@ -472,8 +730,16 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
         </div>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
-      {(error || loadError) && (
-        <Notice onDismiss={error ? () => setError('') : undefined}>{error || loadError}</Notice>
+      {error && !manageError && <Notice onDismiss={() => setError('')}>{error}</Notice>}
+      {loadError && (
+        <Notice>
+          {loadError}{' '}
+          {!connections && (
+            <Button variant="ghost" size="sm" disabled={loading} onClick={() => void refresh()}>
+              Retry
+            </Button>
+          )}
+        </Notice>
       )}
       {!connections ? (
         loading ? (
@@ -481,18 +747,270 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
         ) : null
       ) : (
         <>
-          {connected.length > 0 && (
-            <section className="apps-group" aria-labelledby="apps-connected">
-              <h2 id="apps-connected">Connected apps</h2>
-              {cards(connected)}
-            </section>
+          <div
+            className="apps-views"
+            role="tablist"
+            aria-label="App views"
+            onKeyDown={(event) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              const next =
+                event.key === 'Home'
+                  ? 'all'
+                  : event.key === 'End'
+                    ? 'connected'
+                    : view === 'all'
+                      ? 'connected'
+                      : 'all';
+              setView(next);
+              setVisibleCount(24);
+              event.currentTarget
+                .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
+                ?.focus();
+            }}
+          >
+            {(['all', 'connected'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                id={`${tabsId}-${value}`}
+                data-view={value}
+                role="tab"
+                tabIndex={view === value ? 0 : -1}
+                aria-selected={view === value}
+                aria-controls={`${tabsId}-panel`}
+                onClick={() => {
+                  setView(value);
+                  setVisibleCount(24);
+                }}
+              >
+                {value === 'all' ? 'All apps' : 'Connected'}
+                <span>{value === 'all' ? groups.length : connectedCount}</span>
+              </button>
+            ))}
+          </div>
+          <div className="app-catalog-search">
+            <SearchField
+              inputRef={appSearch}
+              type="search"
+              aria-label="Search apps"
+              placeholder="Search apps"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setVisibleCount(24);
+              }}
+              onClear={() => {
+                setQuery('');
+                setVisibleCount(24);
+              }}
+            />
+            <Popover.Root
+              open={categoriesOpen}
+              onOpenChange={(open) => {
+                setCategoriesOpen(open);
+                setCategoryQuery('');
+              }}
+              modal
+            >
+              <Popover.Trigger
+                type="button"
+                className="button button-outline app-category-trigger"
+                data-filtered={selectedCategories.length > 0 || undefined}
+              >
+                <ListFilter size={16} aria-hidden="true" />
+                Categories
+                {selectedCategories.length > 0 && (
+                  <span className="app-category-count">{selectedCategories.length}</span>
+                )}
+                <ChevronDown size={16} aria-hidden="true" />
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  className="menu app-category-panel"
+                  aria-label="Filter by categories"
+                  align="end"
+                  sideOffset={8}
+                  collisionPadding={12}
+                  onOpenAutoFocus={(event) => {
+                    event.preventDefault();
+                    categorySearch.current?.focus({ preventScroll: true });
+                  }}
+                >
+                  <SearchField
+                    inputRef={categorySearch}
+                    type="search"
+                    aria-label="Search categories"
+                    placeholder="Search categories"
+                    value={categoryQuery}
+                    onChange={(event) => setCategoryQuery(event.target.value)}
+                    onClear={() => setCategoryQuery('')}
+                  />
+                  <div className="app-category-options" role="group" aria-label="App categories">
+                    {categoryMatches.map((name) => (
+                      <label
+                        key={name}
+                        className="app-category-option"
+                        data-selected={selectedCategories.includes(name) || undefined}
+                      >
+                        <Checkbox
+                          checked={selectedCategories.includes(name)}
+                          onChange={() => toggleCategory(name)}
+                        />
+                        <span>{categoryLabel(name)}</span>
+                      </label>
+                    ))}
+                    {!categoryMatches.length && (
+                      <p className="app-category-empty">No matching categories.</p>
+                    )}
+                  </div>
+                  <div className="app-category-actions">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!selectedCategories.length}
+                      onClick={clearCategories}
+                    >
+                      Clear all
+                    </Button>
+                    <Popover.Close asChild>
+                      <Button variant="outline" size="sm">
+                        Done
+                      </Button>
+                    </Popover.Close>
+                  </div>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+          </div>
+          {selectedCategories.length > 0 && (
+            <div className="app-category-filters" aria-label="Selected categories">
+              {selectedCategories.map((name) => (
+                <Button
+                  key={name}
+                  variant="secondary"
+                  size="sm"
+                  className="app-category-chip"
+                  aria-label={`Remove ${categoryLabel(name)} filter`}
+                  onClick={() => toggleCategory(name)}
+                >
+                  <span>{categoryLabel(name)}</span>
+                  <X size={14} aria-hidden="true" />
+                </Button>
+              ))}
+              <Button variant="ghost" size="sm" onClick={clearCategories}>
+                Clear all
+              </Button>
+            </div>
           )}
-          {available.length > 0 && (
-            <section className="apps-group" aria-labelledby="apps-available">
-              <h2 id="apps-available">{connected.length ? 'More apps' : 'Available apps'}</h2>
-              {cards(available)}
-            </section>
-          )}
+          <div
+            className="apps-results"
+            role="tabpanel"
+            id={`${tabsId}-panel`}
+            aria-labelledby={`${tabsId}-${view}`}
+            tabIndex={0}
+          >
+            {view === 'all' && catalogError && (
+              <Notice>
+                More apps could not be loaded. {catalogError}{' '}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={catalogLoading || catalogRefreshing}
+                  onClick={() => void refreshCatalog()}
+                >
+                  Retry
+                </Button>
+              </Notice>
+            )}
+            {connected.length > 0 && (
+              <section className="apps-group" aria-label="Connected apps">
+                {view === 'all' && <h2 id="apps-connected">Connected apps</h2>}
+                {cards(connected)}
+              </section>
+            )}
+            {view === 'all' && available.length > 0 && (
+              <section className="apps-group" aria-labelledby="apps-available">
+                <h2 id="apps-available">{connected.length ? 'More apps' : 'Available apps'}</h2>
+                {cards(available.slice(0, visibleCount), true)}
+                {available.length > visibleCount && (
+                  <div className="app-catalog-end" ref={catalogEnd} aria-hidden="true" />
+                )}
+              </section>
+            )}
+            {view === 'all' && catalogLoading && !available.length && (
+              <Loading label="Loading more apps…" />
+            )}
+            {empty && (
+              <div className="apps-empty">
+                <h2>
+                  {hasFilters
+                    ? view === 'connected'
+                      ? 'No connected apps found'
+                      : 'No apps found'
+                    : view === 'connected'
+                      ? 'No connected apps yet'
+                      : 'No apps available'}
+                </h2>
+                <p>
+                  {hasFilters
+                    ? 'Try a different search or clear your filters.'
+                    : view === 'connected'
+                      ? 'Connect your first app to use it with Otto.'
+                      : 'Reload the catalog to check for available apps.'}
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={view === 'all' && !hasFilters && catalogRefreshing}
+                  onClick={() => {
+                    if (hasFilters) {
+                      setQuery('');
+                      clearCategories();
+                      appSearch.current?.focus();
+                    } else if (view === 'connected') {
+                      setView('all');
+                      setVisibleCount(24);
+                      page.current?.querySelector<HTMLButtonElement>('[data-view="all"]')?.focus();
+                    } else {
+                      void refreshCatalog();
+                      appSearch.current?.focus();
+                    }
+                  }}
+                >
+                  {hasFilters
+                    ? selectedCategories.length
+                      ? 'Clear filters'
+                      : 'Clear search'
+                    : view === 'connected'
+                      ? 'Browse apps'
+                      : catalogRefreshing
+                        ? 'Reloading…'
+                        : 'Reload apps'}
+                </Button>
+              </div>
+            )}
+            {view === 'all' && !catalogLoading && !catalogError && (
+              <div className="app-catalog-footer">
+                <p>
+                  {query.trim()
+                    ? `Explore other ways to connect “${query.trim()}”.`
+                    : 'Explore other ways to connect your tools.'}
+                </p>
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    onAsk(
+                      query.trim()
+                        ? `Help me connect ${query.trim()}. Check available integrations, or help me set up a custom connection.`
+                        : 'Help me connect another app. Find a way to connect based on what I need.',
+                    )
+                  }
+                >
+                  Ask Otto in chat
+                </Button>
+              </div>
+            )}
+          </div>
         </>
       )}
       <Dialog
@@ -503,43 +1021,43 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
       >
         <DialogContent
           className="app-manage-dialog"
+          onKeyDownCapture={(event) => {
+            if (event.key !== 'Escape') manageKeyboard.current = true;
+          }}
           onOpenAutoFocus={(event) => {
+            event.preventDefault();
             const id = dialogTrigger.current?.dataset.disconnectAccount;
             const trigger = Array.from(
               document.querySelectorAll<HTMLButtonElement>('[data-disconnect-account]'),
             ).find((button) => button.dataset.disconnectAccount === id);
-            if (trigger) {
-              event.preventDefault();
-              trigger.focus();
-            } else {
-              event.preventDefault();
-              document.querySelector<HTMLButtonElement>('[data-add-account]')?.focus();
-            }
+            if (trigger) trigger.focus();
+            else manageTitle.current?.focus();
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            const button = page.current?.querySelector<HTMLButtonElement>(
-              `[data-manage-service="${manageService}"]`,
-            );
-            button?.focus();
+            restoreAppFocus();
           }}
         >
           <div className="dialog-heading app-manage-heading">
-            {managed && <ServiceLogo connection={managed.service} />}
+            {managed && <ServiceLogo {...managed.service} />}
             <div>
-              <DialogTitle>{managed?.service.name} accounts</DialogTitle>
+              <DialogTitle ref={manageTitle} tabIndex={-1}>
+                {managed?.service.name} accounts
+              </DialogTitle>
               <DialogDescription>Choose which accounts Otto can use.</DialogDescription>
             </div>
           </div>
+          {manageError && <Notice onDismiss={() => setError('')}>{manageError}</Notice>}
           <div className="app-manage-accounts">
             {managed?.accounts.map((account) => (
               <ConnectedAccount
                 key={account.connectionId}
                 account={account}
                 busy={Boolean(busy)}
+                reconnecting={busy === `reconnect:${account.connectionId}`}
                 onDisconnect={(trigger) => {
                   dialogTrigger.current = trigger;
-                  dialogService.current = account.slug;
+                  dialogService.current = managed.key;
                   setDisconnectError('');
                   setDisconnectAccount(account);
                 }}
@@ -547,18 +1065,22 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
               />
             ))}
           </div>
-          <div className="dialog-actions">
+          <div className="dialog-actions app-manage-actions">
             <Button
+              size="sm"
               data-add-account
-              disabled={Boolean(busy)}
-              onClick={() => managed && void connect(managed.accounts[0], true)}
+              disabled={Boolean(busy) || addAccountConnection?.status === 'not_configured'}
+              onClick={() => addAccountConnection && void connect(addAccountConnection, true)}
             >
-              {busy === `connect:${manageService}` ? (
+              {busy === `connect:${addAccountConnection?.slug}` ? (
                 <LoaderCircle size={16} className="spin" aria-hidden="true" />
               ) : (
                 <Plus size={16} aria-hidden="true" />
               )}
               Add account
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setManageService(null)}>
+              Done
             </Button>
           </div>
         </DialogContent>
@@ -750,6 +1272,9 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
         <DialogContent
           className="app-disconnect-dialog"
           aria-busy={Boolean(busy)}
+          onKeyDownCapture={(event) => {
+            if (event.key !== 'Escape') manageKeyboard.current = true;
+          }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             document.querySelector<HTMLButtonElement>('[data-keep-account]')?.focus();
@@ -758,21 +1283,12 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
             event.preventDefault();
             const trigger = dialogTrigger.current;
             if (trigger?.isConnected) trigger.focus();
-            else
-              Array.from(
-                page.current?.querySelectorAll<HTMLButtonElement>(
-                  '[data-manage-service],[data-connect-service]',
-                ) ?? [],
-              )
-                .find(
-                  (button) =>
-                    button.dataset.manageService === dialogService.current ||
-                    button.dataset.connectService === dialogService.current,
-                )
-                ?.focus();
+            else restoreAppFocus();
           }}
         >
-          <DialogTitle>Disconnect from {disconnectAccount?.name}?</DialogTitle>
+          <DialogTitle>
+            Disconnect from {disconnectAccount?.name.replace(/\s+MCP$/i, '')}?
+          </DialogTitle>
           <DialogDescription>
             {disconnectAccount && accountLabel(disconnectAccount)}
             <span>Otto will lose access to this account. You can connect it again later.</span>

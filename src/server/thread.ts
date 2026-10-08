@@ -129,11 +129,13 @@ export interface ThreadDependencies {
     options: { signal: AbortSignal; checkConnectionId?: string },
   ) => Promise<unknown>;
   connections?: (
-    action: 'list' | 'connect' | 'propose',
+    action: 'list' | 'discover' | 'connect' | 'propose',
     service?: string,
     turn?: TurnRef,
     proposal?: unknown,
     newAccount?: boolean,
+    query?: string,
+    connectionId?: string,
   ) => Promise<unknown>;
   browserConnection?: (
     request: BrowserConnectionRequest,
@@ -1028,8 +1030,8 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         ),
       connections:
         connections &&
-        fenced((action, service, proposal, newAccount) =>
-          connections(action, service, ref, proposal, newAccount),
+        fenced((action, service, proposal, newAccount, query, connectionId) =>
+          connections(action, service, ref, proposal, newAccount, query, connectionId),
         ),
       browserConnection:
         browserConnection &&

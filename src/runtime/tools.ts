@@ -321,10 +321,12 @@ export const toolDefinitions = {
   ),
   manage_apps: defineTool(
     'manage_apps',
-    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. connect {service} starts a native sign-in and pauses, or returns existing native accounts. Use connect {service, newAccount:true} when the user explicitly wants another account, such as personal Gmail alongside work Gmail; it starts a separate sign-in and keeps existing accounts. propose {service, proposal} saves a new MCP, HTTP or CLI path and gives the user a private setup link.',
+    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. discover {query?} searches available integrations, including managed apps and MCP toolkits that can be connected without creating an OAuth app. Search before researching another connection method. connect {service} uses a returned service slug to start sign-in and pause, or returns existing accounts. Use connect {service, connectionId} to reconnect a saved account with canReconnect:true, using its exact saved ID. This preserves the account and its settings. Use connect {service, newAccount:true} when the user explicitly wants another account; it keeps existing accounts. For tools outside the catalog, research an official MCP, HTTP API or installed CLI, then propose {service, proposal} to give the user a private setup link.',
     Type.Object({
-      action: literals(['list', 'connect', 'propose']),
+      action: literals(['list', 'discover', 'connect', 'propose']),
       service: Type.Optional(Type.String({ maxLength: 80 })),
+      query: Type.Optional(Type.String({ maxLength: 200 })),
+      connectionId: Type.Optional(uuid),
       newAccount: Type.Optional(
         Type.Boolean({
           description: 'Only for connect, when the user wants an additional account.',
@@ -610,8 +612,15 @@ export function ottoTools(
     }),
     bind(toolDefinitions.manage_apps, async (p) => {
       if (!context.connections) throw new Error('Apps are unavailable.');
-      const result = await context.connections(p.action, p.service, p.proposal, p.newAccount);
-      if (p.action === 'list') return result;
+      const result = await context.connections(
+        p.action,
+        p.service,
+        p.proposal,
+        p.newAccount,
+        p.query,
+        p.connectionId,
+      );
+      if (p.action === 'list' || p.action === 'discover') return result;
       const { name, url, accounts } = result as {
         name?: unknown;
         url?: unknown;

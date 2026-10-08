@@ -674,6 +674,7 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
   let screenshot: AgentToolResult | undefined;
   let appImage: AgentToolResult | undefined;
   let mcpBlocks: AgentToolResult | undefined;
+  let catalog: AgentToolResult | undefined;
   const text = (result: { content: Array<{ type: string; text?: string }> }) =>
     result.content.map((part) => part.text ?? '').join('');
   const page = (body: string) => async () => ({
@@ -684,6 +685,7 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
       texts.push(text(await call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} })));
       appImage = await call(tools, 'apps', { action: 'SLACK_DOWNLOAD_SLACK_FILE', args: {} });
       mcpBlocks = await call(tools, 'apps', { action: 'CONNECTED_MCP_CALL', args: {} });
+      catalog = await call(tools, 'manage_apps', { action: 'discover', query: 'calendar' });
       texts.push(text(await options.runTool('fetch_content', { urls: [] }, page(injected))));
       texts.push(
         text(
@@ -700,6 +702,11 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
       }));
     },
     {
+      connections: async (action, _service, _proposal, _newAccount, query) => {
+        assert.equal(action, 'discover');
+        assert.equal(query, 'calendar');
+        return { apps: [{ name: 'Calendar', description: injected }] };
+      },
       integration: async (action) =>
         action === 'SLACK_DOWNLOAD_SLACK_FILE'
           ? {
@@ -728,7 +735,10 @@ test('outside results reach Pi in one flagged untrusted block, scripts get them 
     assert.match(texts[index]!, /ignore_instructions/);
   }
   assert.equal(texts[2], injected);
-  assert.equal(flags.length, 3);
+  assert.equal(flags.length, 4);
+  assert.match(text(catalog!), /^<untrusted_tool_result source="manage_apps">/);
+  assert.match(text(catalog!), /ignore_instructions/);
+  assert.equal(text(catalog!).match(/untrusted_tool_result/gi)?.length, 2);
   assert.ok(flags.every((found) => found.includes('ignore_instructions')));
   assert.deepEqual(
     screenshot?.content.map((part) => part.type),
@@ -891,6 +901,30 @@ test('PIN and semantic login identifier requests never reach chat', async () => 
     assert.equal(result.replies.includes(text), false, method);
     assert.equal(result.deltas.join('').includes(text), false, method);
   }
+});
+
+test('reconnecting an app forwards the saved account and pauses at its sign-in link', async () => {
+  const connectionId = randomUUID();
+  const calls: unknown[][] = [];
+  const result = await fixture(
+    async (tools) => {
+      await call(tools, 'manage_apps', {
+        action: 'connect',
+        service: 'gmail',
+        connectionId,
+      });
+    },
+    {
+      connections: async (...args) => {
+        calls.push(args);
+        return { name: 'Gmail', url: '/apps/connect/fixture' };
+      },
+    },
+  );
+  assert.deepEqual(calls, [['connect', 'gmail', undefined, undefined, undefined, connectionId]]);
+  assert.equal(result.result.status, 'waiting_user');
+  assert.equal(result.replies.length, 1);
+  assert.match(result.replies[0]!, /\[Connect Gmail\]\(\/apps\/connect\/fixture\)/);
 });
 
 test('sign-in method questions remain available without requesting credential values', async () => {
@@ -1098,6 +1132,7 @@ test('a read-only turn refuses every outside action with a fixed error and still
           name,
         );
       await call(tools, 'apps', { action: 'GMAIL_FETCH_EMAILS', args: {} });
+      await call(tools, 'manage_apps', { action: 'discover', query: 'calendar' });
       await options.runTool(
         'fetch_content',
         { urls: ['https://example.test/source'] },
@@ -1110,6 +1145,10 @@ test('a read-only turn refuses every outside action with a fixed error and still
     {
       readOnly: true,
       background: true,
+      connections: async (action) => {
+        assert.equal(action, 'discover');
+        return { apps: [] };
+      },
       requestCredential: async () => {
         sideEffects++;
         return {};

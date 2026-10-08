@@ -225,6 +225,22 @@ export async function createDiscoveredConnections(
       })),
     }));
   }
+  async function setupServices(ids: string[]) {
+    const requested = z.array(z.uuid()).max(100).parse(ids);
+    if (!requested.length) return [];
+    const result = await pool.query<{
+      id: string;
+      slug: string;
+      name: string;
+      completed: boolean;
+    }>(
+      `SELECT id,service AS slug,name,oauth_status IS NOT DISTINCT FROM 'connected' AS completed
+       FROM discovered_connection_proposals WHERE owner_id=$1 AND id=ANY($2::uuid[])
+       AND (expires_at>now() OR oauth_status='connected')`,
+      [owner, requested],
+    );
+    return result.rows;
+  }
   async function propose(input: unknown, turn?: TurnRef) {
     const parsed = proposalSchema.parse(input);
     let name = parsed.name;
@@ -856,6 +872,7 @@ export async function createDiscoveredConnections(
   }
   return {
     list,
+    setupServices,
     propose,
     completeOAuth,
     reconnect,

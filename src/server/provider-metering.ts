@@ -170,9 +170,15 @@ export function meterIntegrations(
       ),
     deleteSession: (id) =>
       usage.track({ ...base, operation: 'delete_session' }, () => provider.deleteSession(id)),
-    inspectAccount: (id, owner) =>
+    reconnectAccount: provider.reconnectAccount
+      ? (owner, service, account, callbackUrl) =>
+          usage.track({ ...base, operation: 'reconnect_account' }, () =>
+            provider.reconnectAccount!(owner, service, account, callbackUrl),
+          )
+      : undefined,
+    inspectAccount: (id, owner, options) =>
       usage.track({ ...base, operation: 'inspect_account' }, () =>
-        provider.inspectAccount(id, owner),
+        provider.inspectAccount(id, owner, options),
       ),
     sentEmails: provider.sentEmails
       ? (id, signal) =>
@@ -190,8 +196,10 @@ export function meterIntegrations(
             provider.pollInbox!(id, cursor, signal),
           )
       : undefined,
-    deleteAccount: (id) =>
-      usage.track({ ...base, operation: 'delete_account' }, () => provider.deleteAccount(id)),
+    deleteAccount: (id, ownerId) =>
+      usage.track({ ...base, operation: 'delete_account' }, () =>
+        provider.deleteAccount(id, ownerId),
+      ),
     subscribe: (owner, service, account) =>
       usage.track({ ...base, operation: 'subscribe' }, () =>
         provider.subscribe(owner, service, account),

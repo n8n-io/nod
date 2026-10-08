@@ -106,8 +106,12 @@ export interface CredentialRequest {
   selectedEntryId?: string;
 }
 export interface Connection {
+  canReconnect?: boolean;
+  reconnectRequired?: boolean;
   slug: string;
   name: string;
+  logoUrl?: string;
+  categories?: string[];
   status: 'not_configured' | 'disconnected' | 'connected';
   accountId?: string;
   connectionId?: string;
@@ -123,6 +127,10 @@ export interface Connection {
   browserState?: 'pending' | 'saved' | 'needs_sign_in' | 'disconnecting';
   checkedAt?: string;
   browserUrl?: string;
+}
+export interface AppSetupStatus {
+  completed: string[];
+  apps: Array<{ hash: string; slug: string; name: string; logoUrl?: string }>;
 }
 export interface Configuration {
   provider: string;

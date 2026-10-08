@@ -168,7 +168,14 @@ function Workspace({
     return () => clearTimeout(timer);
   }, [loaded]);
   useEffect(() => {
-    prefetchPageData(['/api/vault', '/api/tasks', '/api/schedules', '/api/apps', '/api/memory']);
+    prefetchPageData([
+      '/api/vault',
+      '/api/tasks',
+      '/api/schedules',
+      '/api/apps',
+      '/api/apps/catalog',
+      '/api/memory',
+    ]);
   }, []);
   useEffect(() => {
     if (path === '/dev') setInspector(true);
@@ -265,7 +272,9 @@ function Workspace({
                 )}
               </div>
               {currentPath === '/vault' && <Vault />}
-              {currentPath === '/apps' && <Apps configuration={state?.configuration} />}
+              {currentPath === '/apps' && (
+                <Apps configuration={state?.configuration} onAsk={askInChat} />
+              )}
               {currentPath === '/channels' && <Channels hosted={session.auth.mode === 'google'} />}
               {currentPath === '/tasks' && <Tasks onAsk={askInChat} />}
               {!sidebarItems.some((item) => item.path === currentPath) && (
@@ -532,7 +541,12 @@ function AccountApp({
   const { session } = sessionState;
   const legacyBrowserLink = /^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/.test(path);
   useEffect(() => {
-    if (sessionState.loading || sessionState.signingOut) return;
+    if (
+      sessionState.loading ||
+      sessionState.signingOut ||
+      (!session?.user && session?.auth.mode !== 'google')
+    )
+      return;
     const secure = /^\/(?:vault|credentials)\/[^/]+\/?$/.test(path) || path === '/browser';
     capturePageview(
       !session?.user
@@ -584,7 +598,7 @@ function AccountApp({
       </main>
     );
   if (sessionState.loading) return <Splash />;
-  if (!session?.user)
+  if (!session?.user && session?.auth.mode === 'google')
     return (
       <SignIn
         available={session?.auth.googleAvailable ?? false}
@@ -597,10 +611,10 @@ function AccountApp({
         onRetry={() => void sessionState.refresh()}
       />
     );
-  if (!session.settings)
+  if (!session?.user || !session.settings)
     return (
       <main className="initial-loading">
-        <Notice>Your account could not be opened.</Notice>
+        <Notice>{sessionState.error || 'Otto could not be opened.'}</Notice>
         <Button variant="outline" onClick={() => void sessionState.refresh()}>
           Try again
         </Button>

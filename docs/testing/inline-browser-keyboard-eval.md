@@ -54,7 +54,15 @@ Review found that the first fix could turn bare Alt shortcuts on Windows/Linux i
 
 The hypothesis predicted both non-Apple cases would fail on commit `9f3f1baf8cedf8021defe49d5b67368c5fa38354`. [The expanded red run](inline-browser-keyboard/platform-red.txt) confirmed both failures while the original three cases passed. Restricting bare Option text to Apple platforms fixed the regression; [the unchanged expanded cases](inline-browser-keyboard/platform-green.txt) then passed all five scenarios (six tests including the parent, zero failures or skips). Runtime remains Linux Chromium; client platform and key events are synthetic.
 
-- Final frozen test SHA-256: `fb8c96f4bdf5ecfc52a3f767daadabb447d52a3d147926527ffbfe91816e4ed7`.
+- Frozen test file SHA-256 before upstream synchronization: `fb8c96f4bdf5ecfc52a3f767daadabb447d52a3d147926527ffbfe91816e4ed7`.
 - Final handler SHA-256: `48eeced2c81cc807d2ae1cf99376930d8b2741b13599f2de28c2a99318c17c76`.
 
 Preserved logs: [original red](inline-browser-keyboard/red.txt), [corrected evaluator red](inline-browser-keyboard/red-v2.txt), [initial fix green](inline-browser-keyboard/green.txt), [platform regression red](inline-browser-keyboard/platform-red.txt), and [platform fix green](inline-browser-keyboard/platform-green.txt).
+
+## Issue attachment review
+
+The attached diagnostic report was inspected privately, and its SHA-256 matches the issue receipt. It confirms a successful browser-session open followed by a user turn waiting for manual sign-in. The four failed turns in its window were earlier interrupted background work. Browser snapshots are redacted, detailed tool capture is disabled, and the saved-session report is truncated; it contains no keyboard events or layout metadata. It supports the handoff context but cannot identify the physical key combination.
+
+The source at the reported release commit, `1fb6efae39411a4c049ac7b892e188c81a43480b`, contains the same blanket `altKey` rejection as the reproduced baseline. Root-cause evidence therefore comes from the reported source plus the preserved Chromium reproduction, rather than inferring keystrokes from the attachment. No private report payload, page content, or account data is committed.
+
+After synchronizing with newer main, the frozen keyboard test block is unchanged (SHA-256 `5492aabe8322f87df79845e6d456747e265d93f6f53342bea9a548e46687f9bf`); only surrounding upstream tests changed.

@@ -19,7 +19,7 @@ Configuration lives in the ignored `.env` (all local settings are listed in `.en
 | Setting                        | Needed for                                                |
 | ------------------------------ | --------------------------------------------------------- |
 | Model connection in **Models** | Chat with a key, ChatGPT plan, or OpenRouter              |
-| `COMPOSIO_API_KEY`             | Gmail, Calendar, Drive, Sheets, Docs, Slack               |
+| `COMPOSIO_API_KEY`             | Managed app integrations and the available-app catalog    |
 | `OTTO_VAULT_KEY`               | Vault encryption on non-macOS hosts (macOS uses Keychain) |
 | `DEV_INSPECTOR=false`          | Disables the Inspector view (on by default locally)       |
 
@@ -36,15 +36,25 @@ In the [Composio Dashboard](https://dashboard.composio.dev), open **Platform →
 | Connected accounts     | Read and write | Check connections and disconnect accounts                                        |
 | Session management     | Read and write | Create, restore and delete sessions; open app sign-in links                      |
 | Session tool execution | Write only     | Find app actions, load their schemas and run them                                |
+| Toolkits               | Read only      | Discover available integrations before connecting an account                     |
+| Auth configs           | Read only      | Select the project's custom Google OAuth config when no explicit override exists |
 | Proxy execute (Legacy) | Write only     | Read account identity, check Gmail updates and retrieve requested sign-in emails |
 
-Leave **Auth configs**, **Tools**, **Toolkits**, **Triggers**, **Webhooks**, **Observability**, **MCP (Legacy)** and **Tool execution (Legacy)** at **No access**. If you configure `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**: the SDK reads trigger definitions before creating subscriptions, and Otto removes subscriptions when disconnected. Otto does not manage Composio webhook endpoints through the API.
+Auth configs read is needed only for automatic Google auth-config selection; explicit overrides and other apps do not use that lookup. The existing alpha Full access key already covers it. Leave **Tools**, **Triggers**, **Webhooks**, **Observability**, **MCP (Legacy)** and **Tool execution (Legacy)** at **No access**. If you configure `COMPOSIO_WEBHOOK_SECRET` for automatic app updates, also grant **Triggers → Read and write**: the SDK reads trigger definitions before creating subscriptions, and Otto removes subscriptions when disconnected. Otto does not manage Composio webhook endpoints through the API.
 
 Paste the key in the onboarding email step of local web Otto, which checks it with Composio and saves it encrypted with the Vault key, or copy it into `COMPOSIO_API_KEY` in the repository's ignored `.env` and restart Otto. Then connect apps from **Apps**. Keep the key on the server. Permissions cannot be edited after creation; create a replacement key if a permission is missing. A valid key with insufficient permissions can produce an “Invalid API key” error. See Composio's [permission route map](https://docs.composio.dev/reference/authenticating-to-composio/project-api-key-permissions) and [permission troubleshooting](https://docs.composio.dev/kb/guide/platform-project-api-key-permissions).
 
-These are permissions on the **Composio project key**. The Google or Slack consent screen separately controls what Otto can read or change in that account. Otto uses Composio's default app OAuth scopes unless you supply a `COMPOSIO_*_AUTH_CONFIG_ID` from `.env.example`. To narrow those grants, configure the required app scopes in that auth config and reconnect existing accounts; changing the project key does not change app consent. See [Controlling scopes](https://docs.composio.dev/docs/authentication/controlling-scopes).
+These are permissions on the **Composio project key**. The Google or Slack consent screen separately controls what Otto can read or change in that account. The selected auth config controls app OAuth scopes; a `COMPOSIO_*_AUTH_CONFIG_ID` from `.env.example` explicitly selects that config. To narrow those grants, configure the required app scopes in that auth config and reconnect existing accounts; changing the project key does not change app consent. See [Controlling scopes](https://docs.composio.dev/docs/authentication/controlling-scopes).
 
-Reviewed on 2026-10-02 against [`@composio/core` 0.21.0 and Otto's adapter](src/providers/composio/integrations.ts). The table covers the calls Otto makes; it has not been exercised with a newly created scoped key.
+The **Apps** page loads a searchable catalog of Composio integrations with managed authentication or dynamic OAuth registration. The agent uses the same catalog through `manage_apps discover`, then offers a private connection link. Catalog access requires **Toolkits → Read**; older keys without it retain their existing connections and featured apps. Notion and Linear continue to prefer their official MCP connections. Native MCP toolkits with managed authentication or dynamic registration work through Composio; other MCP servers, HTTP APIs and installed CLIs use the agent's discovery and secure setup flow.
+
+Active isolated development and the trusted internal alpha share `otto_alpha_release`. Alpha participants enter its project key; they do not need to enter Google auth-config IDs. A desktop operator can recover that key and use its project-wide permissions outside Otto. Sharing it is appropriate only with people trusted to access that Composio project; wider distribution needs customer-owned projects or an authenticated broker. Local encryption and Otto's owner IDs do not isolate a shared project key.
+
+When starting Gmail, Calendar, Drive, Sheets or Docs sign-in without an explicit override, Otto reads that project's auth configs and selects its unique enabled custom OAuth2 config enabled for Tool Router. Explicit overrides win. Multiple eligible configs, or enabled custom OAuth2 configs with none available to Tool Router, stop sign-in with a configuration error. When no enabled custom OAuth2 config exists, Composio's project default remains in effect. This lookup occurs only during authorization and does not change existing accounts or other managed/DCR app flows.
+
+Development uses an isolated profile; the older normal local profile remains on `otto_development` with its existing connections. Do not replace a profile's project key beneath saved account IDs. Prefer managed authentication where it works and retain custom configs where needed. Otto's own Google login configuration is independent and stays in place.
+
+Cloudflare work is deferred for this release; no saved or deployed Cloudflare configuration was changed. Reviewed on 2026-10-07 against [`@composio/core` 0.21.0 and Otto's adapter](src/providers/composio/integrations.ts); the table covers the calls Otto makes.
 
 ### Models
 
