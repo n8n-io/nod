@@ -94,7 +94,8 @@
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
-.schedule-history-more {
+.schedule-history-more,
+.schedule-availability {
   margin-top: 12px;
 }
 .saved-plan {
