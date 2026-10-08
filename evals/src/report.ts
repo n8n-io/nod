@@ -1,4 +1,4 @@
-import { band } from './aggregate.ts';
+import { band, wilson } from './aggregate.ts';
 import { agreement } from './review.ts';
 import type { AttemptResult, Reviews, RunSummary } from './results.ts';
 
@@ -227,13 +227,32 @@ const changedScenario = (runs: Loaded[], id: string) =>
 
 function difference(runs: Loaded[]) {
   if (runs.length !== 2) return undefined;
-  const [a, b] = runs.map((run) => run.summary.regression);
+  const [before, after] = runs.map((run) =>
+    run.summary.scenarios.filter((item) => item.stance === 'regression'),
+  );
+  const same = after
+    .filter((item) =>
+      before.some(
+        (other) =>
+          Boolean(item.fingerprint) &&
+          other.scenario === item.scenario &&
+          other.fingerprint === item.fingerprint,
+      ),
+    )
+    .map((item) => item.scenario);
+  const [a, b] = [before, after].map((items) => {
+    const used = items.filter((item) => same.includes(item.scenario));
+    const passed = used.reduce((count, item) => count + item.passed, 0);
+    const total = used.reduce((count, item) => count + item.attempts, 0);
+    return { percent: total ? passed / total : 0, interval: wilson(passed, total) };
+  });
   if (!a.interval || !b.interval) return undefined;
   const overlap = a.interval.low <= b.interval.high && b.interval.low <= a.interval.high;
-  const delta = Math.round(((b.percent ?? 0) - (a.percent ?? 0)) * 100);
+  const delta = Math.round((b.percent - a.percent) * 100);
+  const left = new Set([...before, ...after].map((item) => item.scenario)).size - same.length;
   return {
     delta,
-    text: `Difference ${delta >= 0 ? '+' : ''}${delta} points. ${overlap ? 'The 95% intervals overlap, so this is within noise at this sample size.' : 'The 95% intervals do not overlap.'}`,
+    text: `Difference ${delta >= 0 ? '+' : ''}${delta} points on the ${same.length} scenario${same.length === 1 ? '' : 's'} unchanged in both runs${left ? ` (${left} new or changed left out)` : ''}. ${overlap ? 'The 95% intervals overlap, so this is within noise at this sample size.' : 'The 95% intervals do not overlap.'}`,
   };
 }
 

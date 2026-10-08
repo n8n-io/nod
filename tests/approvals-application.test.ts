@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import { createIntegrationFixture } from '../scripts/e2e-fixtures.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 test(
   'personal approvals revalidate targets before execution',
@@ -27,6 +29,9 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
+    t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
+    process.env.OTTO_DATA_ROOT = runtimeRoot;
     const { createApplication } = await import('../src/server/composition.ts');
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, ownerId, port } = await import('../src/server/config.ts');
@@ -86,7 +91,11 @@ test(
       { channels: false },
     );
     integrationFixture.register(application.app);
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const request = (method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>) =>
       application.app.inject({ method, url: path, headers, payload });
     async function waitFor(id: string, status: string) {

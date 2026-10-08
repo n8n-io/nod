@@ -1,5 +1,5 @@
 import type { AccountUpdate, SessionResponse } from '../../shared/account';
-import { api, errorMessage, setRequestAccount } from './api';
+import { api, ApiError, apiResponse, errorMessage, setRequestAccount } from './api';
 import { pageDataCache } from './page-data-cache';
 import { applyAccountTheme } from './theme';
 
@@ -8,6 +8,7 @@ export interface SessionSnapshot {
   loading: boolean;
   signingOut: boolean;
   mutating: boolean;
+  locked: boolean;
   error: string;
   epoch: number;
 }
@@ -50,6 +51,7 @@ export function createSessionStore(
     loading: true,
     signingOut: false,
     mutating: false,
+    locked: false,
     error: '',
     epoch: 0,
   };
@@ -73,12 +75,13 @@ export function createSessionStore(
     publish({
       session,
       loading: false,
+      locked: false,
       error: '',
       mutating: Boolean(mutation),
       epoch: snapshot.epoch + Number(changed),
     });
   }
-  function invalidate(error = '') {
+  function invalidate(error = '', locked = false) {
     version++;
     read?.abort();
     mutation?.abort();
@@ -94,6 +97,7 @@ export function createSessionStore(
       loading: false,
       signingOut: false,
       mutating: false,
+      locked,
       error,
       epoch: snapshot.epoch + 1,
     });
@@ -119,7 +123,8 @@ export function createSessionStore(
       accept(session);
     } catch (cause) {
       if (controller.signal.aborted || current !== version) return;
-      publish({ loading: false, error: errorMessage(cause) });
+      if (cause instanceof ApiError && cause.status === 401) invalidate('', true);
+      else publish({ loading: false, error: errorMessage(cause) });
     } finally {
       if (read === controller) read = undefined;
     }
@@ -201,3 +206,19 @@ export const sessionStore = createSessionStore(
     applyAccountTheme(session?.settings?.theme);
   },
 );
+
+export async function claimAccess() {
+  const key = new URLSearchParams(window.location.hash.slice(1)).get('access');
+  if (!key) return false;
+  const response = await apiResponse('/api/access', {
+    method: 'POST',
+    body: JSON.stringify({ key }),
+  }).catch(() => undefined);
+  if (!response?.ok) return false;
+  window.history.replaceState(
+    window.history.state,
+    '',
+    window.location.pathname + window.location.search,
+  );
+  return true;
+}

@@ -42,6 +42,7 @@ const boundarySchema = z
       })
       .strict(),
     workspaceConnectedPrivateDenied: z.literal(5),
+    connectedCliSealed: z.literal(true),
     firewallUnchanged: z.literal(true),
     cleanupComplete: z.literal(true),
   })

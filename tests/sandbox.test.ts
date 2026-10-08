@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter, once } from 'node:events';
 import { existsSync } from 'node:fs';
 import {
@@ -28,6 +28,7 @@ import type { WorkspaceSession } from '../src/ports/computer.ts';
 import { threadIdentity } from '../src/ports/thread-identity.ts';
 import { isPublicAddress, publicUrl } from '../src/providers/agent-browser/network.ts';
 import {
+  cliInstallProgram,
   runWorkspaceCommand,
   WorkspaceCommandError,
   type WorkspaceCommandLauncher,
@@ -392,6 +393,194 @@ test('output overflow and timeout drain the remote command before rejecting', as
     } finally {
       await f.close();
     }
+  }
+});
+
+test('connected CLIs run only their sealed install with a clean environment', async () => {
+  const root = await mkdtemp('/tmp/otto-connected-');
+  const home = join(root, 'home');
+  const node = join(root, 'node');
+  const stolen = join(root, 'stolen');
+  const trap = `#!/bin/sh\nenv > ${stolen}\n`;
+  try {
+    await mkdir(home, { mode: 0o700 });
+    await mkdir(join(node, 'lib', 'node_modules', 'fixturecli'), { recursive: true });
+    await mkdir(join(node, 'bin'));
+    for (const name of ['fixturecli', 'python3', 'sh', 'npm', 'curl'])
+      await writeFile(join(node, 'bin', name), trap, { mode: 0o755 });
+    await writeFile(
+      join(node, 'lib', 'node_modules', 'fixturecli', 'cli.js'),
+      `require('fs').writeFileSync(${JSON.stringify(stolen)}, JSON.stringify(process.env))`,
+    );
+    await writeFile(
+      join(node, 'sitecustomize.py'),
+      `open(${JSON.stringify(stolen)},'w').write('python')`,
+    );
+    const cli = { id: randomUUID(), command: 'fixturecli', source: { npm: 'fixturecli' } };
+    const prefix = join(home, 'cli', cli.id);
+    await mkdir(join(prefix, 'bin'), { recursive: true });
+    await writeFile(join(prefix, 'bin', 'fixturecli'), '#!/bin/sh\nenv\necho "argv $*"\n', {
+      mode: 0o755,
+    });
+    await writeFile(join(prefix, '.installed'), '');
+    const launches: string[][] = [];
+    const run = (args: string[], selected?: typeof cli) =>
+      runWorkspaceCommand({
+        container: 'otto-workspace-fixture',
+        threadId: 'fixture',
+        args,
+        environment: { FIXTURE_TOKEN: 'synthetic-connected-token' },
+        cli: selected,
+        spawn: (_command, dockerArgs, options) => {
+          launches.push(dockerArgs);
+          const argv = dockerArgs.slice(dockerArgs.indexOf('otto-workspace-fixture') + 1);
+          return spawn(argv[0]!, argv.slice(1), {
+            ...options,
+            cwd: home,
+            env: {
+              PATH: `${join(node, 'bin')}:/usr/bin:/bin`,
+              NPM_CONFIG_PREFIX: node,
+              NODE_PATH: join(node, 'lib', 'node_modules'),
+              NODE_OPTIONS: `--require ${join(node, 'lib', 'node_modules', 'fixturecli', 'cli.js')}`,
+              PYTHONPATH: node,
+              PIPX_BIN_DIR: join(node, 'bin'),
+            },
+            stdio: 'pipe',
+          });
+        },
+      });
+    const result = await run(['status', '--json'], cli);
+    assert.equal(result.exitCode, 0, result.stderr.toString());
+    const lines = result.stdout.toString().trim().split('\n');
+    assert.equal(lines.at(-1), 'argv status --json');
+    const environment = Object.fromEntries(
+      lines
+        .slice(0, -1)
+        .map((line) => line.split(/=(.*)/s).slice(0, 2))
+        .filter(([key]) => !['PWD', 'OLDPWD', 'SHLVL', '_'].includes(key!)),
+    );
+    assert.deepEqual(Object.keys(environment).sort(), [
+      'FIXTURE_TOKEN',
+      'HOME',
+      'LANG',
+      'PATH',
+      'XDG_CONFIG_HOME',
+    ]);
+    assert.equal(
+      environment.PATH,
+      `${await realpath(prefix)}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+    );
+    assert.equal(existsSync(environment.HOME!), false);
+    assert.deepEqual(launches[0]!.slice(0, 6), [
+      'exec',
+      '-i',
+      '--user',
+      'otto-connected',
+      '--workdir',
+      '/home/otto-connected',
+    ]);
+    assert.deepEqual(launches[0]!.slice(7, 9), ['/usr/bin/python3', '-I']);
+    await assert.rejects(run(['fixturecli']), WorkspaceCommandError);
+    const shared = join(root, 'shared');
+    await mkdir(shared);
+    await chmod(shared, 0o777);
+    await writeFile(join(shared, 'fixturecli'), trap, { mode: 0o755 });
+    await rm(join(prefix, 'bin', 'fixturecli'));
+    await symlink(join(shared, 'fixturecli'), join(prefix, 'bin', 'fixturecli'));
+    const escaped = await run(['status'], cli);
+    assert.equal(escaped.exitCode, 126);
+    assert.match(escaped.stderr.toString(), /not sealed/);
+    await chmod(root, 0o777);
+    await assert.rejects(run(['status'], cli), WorkspaceCommandError);
+    assert.equal(existsSync(stolen), false);
+  } finally {
+    await chmod(root, 0o700);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a missing sealed install comes from its declared source and a failed install runs nothing', async () => {
+  const home = await mkdtemp('/tmp/otto-connected-');
+  try {
+    const launch: WorkspaceCommandLauncher = (_command, args, options) =>
+      spawn('python3', args.slice(args.indexOf('-I')), { ...options, cwd: home, stdio: 'pipe' });
+    const cli = {
+      id: randomUUID(),
+      command: 'fixturecli',
+      source: { url: 'https://127.0.0.1:9/fixturecli' },
+    };
+    const result = await runWorkspaceCommand({
+      container: 'otto-workspace-fixture',
+      threadId: 'fixture',
+      args: ['status'],
+      environment: { FIXTURE_TOKEN: 'synthetic-connected-token' },
+      cli,
+      spawn: launch,
+    });
+    assert.notEqual(result.exitCode, 0);
+    assert.match(result.stderr.toString(), /Could not install fixturecli/);
+    assert.equal(existsSync(join(home, 'cli', cli.id, '.installed')), false);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('sealed downloads install only the declared bytes and find the program in archives', async () => {
+  const root = await mkdtemp('/tmp/otto-cli-install-');
+  try {
+    const release = join(root, 'release');
+    await mkdir(join(release, 'tool-1.0', 'bin'), { recursive: true });
+    await writeFile(
+      join(release, 'tool-1.0', 'bin', 'fixturecli'),
+      '#!/bin/sh\necho sealed "$@"\n',
+      {
+        mode: 0o755,
+      },
+    );
+    await writeFile(join(release, 'tool-1.0', 'README'), 'synthetic');
+    const archive = join(root, 'release.tar.gz');
+    spawnSync('tar', ['-czf', archive, '-C', release, 'tool-1.0'], {
+      env: { PATH: '/usr/bin:/bin', COPYFILE_DISABLE: '1' },
+    });
+    const tools = join(root, 'tools');
+    await mkdir(tools);
+    await writeFile(
+      join(tools, 'curl'),
+      `#!/bin/sh\nwhile [ "$1" != --output ]; do shift; done\ncp ${archive} "$2"\n`,
+      { mode: 0o755 },
+    );
+    const sha256 = createHash('sha256')
+      .update(await readFile(archive))
+      .digest('hex');
+    const install = (name: string, digest: string) =>
+      spawnSync(
+        'python3',
+        [
+          '-I',
+          '-c',
+          cliInstallProgram,
+          join(root, name),
+          JSON.stringify({
+            id: randomUUID(),
+            command: 'fixturecli',
+            source: { url: 'https://example.test/release.tar.gz', sha256: digest },
+          }),
+        ],
+        { env: { PATH: `${tools}:/usr/bin:/bin` }, encoding: 'utf8' },
+      );
+    const refused = install('refused', 'f'.repeat(64));
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /sha256/);
+    assert.equal(existsSync(join(root, 'refused', 'bin', 'fixturecli')), false);
+    assert.equal(existsSync(join(root, 'refused', '.installed')), false);
+    const installed = install('installed', sha256);
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.equal(
+      spawnSync(join(root, 'installed', 'bin', 'fixturecli'), ['ok'], { encoding: 'utf8' }).stdout,
+      'sealed ok\n',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

@@ -498,6 +498,7 @@ export function Chat({
     setError('');
     stickToBottom.current = true;
     const replyId = reply?.id;
+    const seenMessageId = persistedMessages.findLast((item) => item.role === 'assistant')?.id;
     try {
       if (!(await previous)) {
         failed = true;
@@ -514,6 +515,7 @@ export function Chat({
           text: value,
           attachmentIds: attachments.map((item) => item.id),
           ...(replyId ? { replyToMessageId: replyId } : {}),
+          ...(seenMessageId ? { seenMessageId } : {}),
           ...(verificationRequestId ? { verificationRequestId } : {}),
         }),
       });

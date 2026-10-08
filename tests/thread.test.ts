@@ -23,7 +23,7 @@ import type { ConnectedApp, InboxSnippet } from '../src/ports/integrations.ts';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../src/ports/object-storage.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
-import { injectionFindings } from '../src/runtime/untrusted.ts';
+import { injectionFindings } from '../src/shared/untrusted.ts';
 import { createPreferencesStore, defaultPreferences } from '../src/server/preferences.ts';
 import type { ThreadDependencies } from '../src/server/thread.ts';
 import type { SubmitMessageResponse, Task } from '../src/shared/contracts.ts';
@@ -34,6 +34,7 @@ import { areaEntries, digest } from '../src/server/memory-tree.ts';
 import { createFilesystemObjectStore } from '../src/providers/object-storage/filesystem.ts';
 import type { ProductAnalytics } from '../src/ports/analytics.ts';
 import { createAnalytics } from '../src/server/analytics.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 test(
   'one thread runs every turn in order on the same session and workspace',
@@ -203,7 +204,11 @@ test(
       localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
       start: (_owner, name) => onboarding.complete(name),
     }).register(app);
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const request = (
       method: 'GET' | 'POST' | 'PUT' | 'PATCH',
       path: string,

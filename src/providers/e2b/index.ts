@@ -72,7 +72,7 @@ export function createE2BAdapters(options: {
     workspaceRoot: options.workspaceRoot,
     status: 'Remote Linux workspace is ready.',
     instructions:
-      'Your remote Linux workspace cannot access protected browser profiles or controls. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Internet follows server provider policy. Keep outputs in this workspace.',
+      'Your remote Linux workspace cannot access protected browser profiles or controls. Node, Python (with pdfplumber and pillow_heif), pipx, git, curl, ripgrep, jq, ffmpeg, yt-dlp, poppler-utils, qpdf, Ghostscript and Tesseract OCR are installed. Python also has pypdf, openpyxl, python-docx and python-pptx, and LibreOffice (soffice) converts office files. Install trusted Python libraries with pip install <package>, trusted CLIs with npm install -g <package> or pipx install <package>. A connected app CLI never runs from here: Otto installs its own copy from the source you propose. You run as an unprivileged user without sudo or a graphical display; use a CLI or browser web app. Internet follows server provider policy. Keep outputs in this workspace.',
     runCommand: (id, args, input) => {
       if (draining) return Promise.reject(new Error('The remote computer is paused.'));
       return runSupervisedCommand({
@@ -83,7 +83,7 @@ export function createE2BAdapters(options: {
           launchE2BCommand(
             allocation,
             'workspace',
-            `mkdir -p /workspace/${threadIdentity(id)} && cd /workspace/${threadIdentity(id)} && exec /usr/bin/setpriv --no-new-privs python3 -u /opt/otto/workspace-command.py`,
+            `mkdir -p /workspace/${threadIdentity(id)} && cd /workspace/${threadIdentity(id)} && exec /usr/bin/setpriv --no-new-privs /usr/bin/python3 -I -u /opt/otto/workspace-command.py`,
           ),
       });
     },
@@ -97,7 +97,7 @@ export function createE2BAdapters(options: {
           launchE2BCommand(
             allocation,
             'connected',
-            'cd /home/otto-connected && export HOME=/home/otto-connected XDG_CONFIG_HOME=/home/otto-connected/.config && exec /usr/bin/setpriv --no-new-privs python3 -u /opt/otto/workspace-command.py',
+            'cd /home/otto-connected && exec /usr/bin/setpriv --no-new-privs /usr/bin/python3 -I -u /opt/otto/workspace-command.py',
           ),
       });
     },

@@ -5,7 +5,7 @@ export function useSession() {
   const state = useSyncExternalStore(sessionStore.subscribe, sessionStore.getSnapshot);
   useEffect(() => {
     void sessionStore.refresh();
-    const unauthorized = () => sessionStore.invalidate();
+    const unauthorized = () => void sessionStore.refresh({ conceal: true });
     const focus = () => void sessionStore.refresh();
     const channel =
       typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('otto.auth');

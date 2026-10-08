@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './app';
 import { initializeTheme } from './lib/theme';
 import { captureAnalytics, configureAnalytics } from './lib/analytics-client';
-import { sessionStore } from './lib/session';
+import { claimAccess, sessionStore } from './lib/session';
 import './styles.css';
 import './pages/chat.css';
 import './theme.css';
@@ -73,10 +73,15 @@ sessionStore.subscribe(() => {
   );
 });
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <AppBoundary>
-      <App />
-    </AppBoundary>
-  </StrictMode>,
+window.addEventListener('hashchange', async () => {
+  if (await claimAccess()) await sessionStore.refresh();
+});
+void claimAccess().finally(() =>
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <AppBoundary>
+        <App />
+      </AppBoundary>
+    </StrictMode>,
+  ),
 );

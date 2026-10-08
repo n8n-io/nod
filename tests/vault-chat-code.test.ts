@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import pg from 'pg';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 test(
   'chat verification intercepts owned codes before message routing and plaintext persistence',
@@ -16,11 +20,14 @@ test(
     const url = new URL(process.env.TEST_DATABASE_URL!);
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
+    t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
+    process.env.OTTO_DATA_ROOT = runtimeRoot;
     const db = await import('../src/server/db.ts');
     const { createChatVerification } = await import('../src/server/chat-verification.ts');
     const thread = await import('../src/server/thread.ts');
     const { createApp } = await import('../src/server/app.ts');
-    const { ownerId, port, configuration } = await import('../src/server/config.ts');
+    const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     await db.initializeDatabase();
     await db.pool.query(`CREATE TABLE credential_requests (
     id text PRIMARY KEY,thread_id uuid REFERENCES threads(id),turn_id uuid REFERENCES turns(id),
@@ -58,7 +65,11 @@ test(
         return { threadId: randomUUID(), turnId: randomUUID(), messageId: input!.clientMessageId! };
       },
     });
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const send = (text: string, extra: Record<string, unknown> = {}) =>
       app.inject({
         method: 'POST',

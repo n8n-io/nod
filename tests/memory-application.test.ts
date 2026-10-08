@@ -30,6 +30,7 @@ import { createMemoryService } from '../src/server/memory.ts';
 import { createOnboardingInterview } from '../src/server/onboarding-interview.ts';
 import { learnWritingStyle } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 type Step = {
   tool: string;
@@ -61,6 +62,9 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
+    t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
+    process.env.OTTO_DATA_ROOT = runtimeRoot;
     const { createApplication } = await import('../src/server/composition.ts');
     const { pool } = await import('../src/server/db.ts');
     const { dataRoot, port, ownerId } = await import('../src/server/config.ts');
@@ -148,7 +152,11 @@ test(
       },
       { channels: false },
     );
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const send = async (payload: Record<string, unknown>) => {
       const response = await application.app.inject({
         method: 'POST',

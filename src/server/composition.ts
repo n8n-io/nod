@@ -56,7 +56,7 @@ import { readPiSessionEntries } from '../providers/pi/checkpoint.ts';
 import { createPiMemoryCurator } from '../providers/pi/memory-curator.ts';
 import { createPublicLinkPreviewProvider } from '../providers/public-web/link-preview.ts';
 import { createAgentRuntime } from '../runtime/index.ts';
-import { injectionFindings } from '../runtime/untrusted.ts';
+import { injectionFindings } from '../shared/untrusted.ts';
 import { coreSkills } from '../runtime/prompt.ts';
 import { createApp } from './app.ts';
 import { createWorkAdmission, createWorkConsumers } from './work-admission.ts';
@@ -665,20 +665,14 @@ async function initializeApplication(
     accountReplaced: triage.invalidateActivityCheck,
     oauth: createDiscoveredOAuth(),
     runCli: workspace.connectedCliAvailable
-      ? async (threadId, command, args, envName, token, timeoutSeconds, signal) => {
-          const workspacePath = join(dataRoot, 'workspaces', threadId);
+      ? async (threadId, cli, args, envName, token, timeoutSeconds, signal) => {
           const session = workspace.open({
             threadId,
-            workspacePath,
-            signal: signal
-              ? AbortSignal.any([
-                  signal,
-                  AbortSignal.timeout((timeoutSeconds ?? 30) * 1000 + 20_000),
-                ])
-              : AbortSignal.timeout((timeoutSeconds ?? 30) * 1000 + 20_000),
+            workspacePath: join(dataRoot, 'workspaces', threadId),
+            signal: signal ?? new AbortController().signal,
           });
-          if (!session.executeProgram) throw new Error('Connected CLI commands are unavailable.');
-          return session.executeProgram(command, args, { [envName]: token }, timeoutSeconds);
+          if (!session.runConnectedCli) throw new Error('Connected CLI commands are unavailable.');
+          return session.runConnectedCli(cli, args, { [envName]: token }, timeoutSeconds);
         }
       : undefined,
     resumeConnection: resumeAfterConnection,

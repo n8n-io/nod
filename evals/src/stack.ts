@@ -12,6 +12,7 @@ import { runProcess } from '../../src/providers/process.ts';
 import { agentModels } from '../../src/shared/model-defaults.ts';
 import { ChannelSetupFailure } from '../../src/ports/channel-settings.ts';
 import { integrationDatabaseUrl } from '../../scripts/local-database.ts';
+import { accessCookie, accessKey } from '../../src/server/access.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, '../..');
@@ -68,7 +69,10 @@ export function parseModel(value: string, environment: Record<string, string | u
 }
 
 export interface Stack {
-  baseUrl: string;
+  request(
+    path: string,
+    init?: RequestInit & { headers?: Record<string, string> },
+  ): Promise<Response>;
   directory: string;
   container: string;
   pool: pg.Pool;
@@ -330,8 +334,11 @@ export async function startStack(options: {
       model: { provider: model.provider, name: model.name, configured: true },
     });
     await application.app.listen({ host: '127.0.0.1', port });
+    const baseUrl = `http://localhost:${port}`;
+    const cookie = `${accessCookie(port)}=${await accessKey(join(directory, '.local'))}`;
     return {
-      baseUrl: `http://localhost:${port}`,
+      request: (path, init) =>
+        fetch(new URL(path, baseUrl), { ...init, headers: { ...init?.headers, cookie } }),
       directory,
       container,
       pool,

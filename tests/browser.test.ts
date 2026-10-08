@@ -69,6 +69,7 @@ import { Chat } from '../src/web/pages/chat.tsx';
 import { Composer } from '../src/web/components/composer.tsx';
 import type { AppState, Message } from '../src/shared/contracts.ts';
 import { browserHandoffInputs } from '../src/shared/browser-handoff.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 // Shared helpers
 
@@ -92,10 +93,17 @@ test(
     const url = new URL(process.env.TEST_DATABASE_URL!);
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'otto-test-runtime-'));
+    t.after(() => rm(runtimeRoot, { recursive: true, force: true }));
+    process.env.OTTO_DATA_ROOT = runtimeRoot;
     const db = await import('../src/server/db.ts');
     const { createApp } = await import('../src/server/app.ts');
     const { activeThread } = await import('../src/server/thread.ts');
-    const { ownerId, port, configuration } = await import('../src/server/config.ts');
+    const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
+    const headers = {
+      host: `localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const capturedAt = '2026-09-25T12:00:00.000Z';
     let currentId: string | undefined;
     let locked = false;
@@ -144,8 +152,7 @@ test(
         },
       },
     });
-    const request = (path: string) =>
-      app.inject({ url: path, headers: { host: `localhost:${port}` } });
+    const request = (path: string) => app.inject({ url: path, headers });
     const insertTurn = async (threadId: string, owner: string, prompt: string) => {
       const id = randomUUID();
       await db.pool.query(
@@ -260,12 +267,12 @@ test(
       const click = { type: 'mouse', event: 'down', x: 0.5, y: 0.25, button: 'left' };
       const frames: Buffer[] = [];
       const post = (url: string, payload: object) =>
-        app.inject({ method: 'POST', url, payload, headers: { host: `localhost:${port}` } });
+        app.inject({ method: 'POST', url, payload, headers });
       const handoff = async (input: unknown = click) => {
         const controller = new AbortController();
         const stream = await app.inject({
           url: '/api/browser-handoff/stream',
-          headers: { host: `localhost:${port}` },
+          headers,
           payloadAsStream: true,
           signal: controller.signal,
         });
@@ -340,7 +347,7 @@ test(
         if (reason === 'timeout') t.mock.timers.enable({ apis: ['setTimeout'] });
         const pending = app.inject({
           url: '/api/browser-handoff/stream',
-          headers: { host: `localhost:${port}` },
+          headers,
           signal: controller.signal,
         });
         try {
@@ -393,7 +400,7 @@ test(
       t.mock.timers.enable({ apis: ['setTimeout'] });
       const pending = app.inject({
         url: '/api/browser-handoff/stream',
-        headers: { host: `localhost:${port}` },
+        headers,
         signal: controller.signal,
       });
       try {

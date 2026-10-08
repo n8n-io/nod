@@ -644,6 +644,25 @@ test('run comparison reports what got worse and better, but only for unchanged s
     /Got worse/,
   );
   assert.equal(typeof trustLabels['honest-completion-claims'], 'string');
+  const scored = (items: Array<[string, boolean, string]>) => {
+    const attempts = items.map(([scenario, pass, fingerprint]) =>
+      attempt(scenario, pass ? 'pass' : 'fail', { fingerprint, checks: [check('done', pass)] }),
+    );
+    return { summary: summarize(manifest, attempts), attempts };
+  };
+  const report = markdown([
+    scored([
+      ['s', true, 'x'],
+      ['t', true, 'x'],
+    ]),
+    scored([
+      ['s', true, 'x'],
+      ['t', false, 'y'],
+      ['u', false, 'x'],
+    ]),
+  ]);
+  assert.match(report.split('\n')[0], /, \+0 points vs t$/);
+  assert.match(report, /on the 1 scenario unchanged in both runs \(2 new or changed left out\)/);
 });
 
 test('a fixture site is reachable by server-side fetches, not only by the browser', async () => {

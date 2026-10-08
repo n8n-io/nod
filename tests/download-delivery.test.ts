@@ -14,6 +14,7 @@ import { createAgentRuntime } from '../src/runtime/index.ts';
 import { createChannels } from '../src/server/channels.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 const native = process.env.OTTO_TEST_NATIVE_DOWNLOAD === 'true';
 const pdfHash = createHash('sha256').update(browserDownloadPdf).digest('hex');
@@ -70,7 +71,10 @@ test(
     const { ownerId, port } = await import('../src/server/config.ts');
     const app = await createApp();
     cleanup.push(() => app.close());
-    const headers = { host: `localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     const sent: Array<{ chat: string; name: string; mimeType: string; bytes: Buffer }> = [];
     const fetchLocal = globalThis.fetch.bind(globalThis);
     const captured = new Map<string, Artifact>();

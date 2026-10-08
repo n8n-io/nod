@@ -1236,7 +1236,7 @@ describe('local access', () => {
   test('desktop APIs require the private launch token including streams, files and webhook routes', async () => {
     const app = Fastify();
     const token = randomBytes(32).toString('base64url');
-    registerLocalAccess(app, 4310, { token });
+    registerLocalAccess(app, 4310, { key: token, desktop: true });
     let handled = 0;
     const routes = [
       { method: 'GET' as const, url: '/api/health' },
@@ -1281,7 +1281,7 @@ describe('local access', () => {
             await app.inject({
               ...route,
               url: `${route.url}?token=${token}`,
-              headers: { ...headers, cookie: `x-otto-desktop-token=${token}` },
+              headers: { ...headers, cookie: `otto-access-4310=${token}` },
             })
           ).statusCode,
           401,
@@ -1307,7 +1307,7 @@ describe('local access', () => {
   test('desktop tokens cannot authorize foreign origins, alternate hosts or cross-site API calls', async () => {
     const app = Fastify();
     const token = randomBytes(32).toString('base64url');
-    registerLocalAccess(app, 4310, { token });
+    registerLocalAccess(app, 4310, { key: token, desktop: true });
     let handled = 0;
     app.get('/api/state', async () => {
       handled++;
@@ -1348,7 +1348,7 @@ describe('local access', () => {
     const app = Fastify();
     const token = randomBytes(32).toString('base64url');
     const state = randomBytes(32).toString('base64url');
-    registerLocalAccess(app, 4310, { token });
+    registerLocalAccess(app, 4310, { key: token, desktop: true });
     const callbacks: string[] = [];
     app.get<{ Querystring: { state: string } }>('/api/apps/callback', async (request) => {
       callbacks.push(request.query.state);
@@ -1430,7 +1430,8 @@ describe('local access', () => {
 
   test('OAuth return permits top-level Apps and onboarding navigation and keeps cross-site APIs blocked', async () => {
     const app = Fastify();
-    registerLocalAccess(app, 4310);
+    const key = randomBytes(32).toString('base64url');
+    registerLocalAccess(app, 4310, { key });
     app.get('/apps', async () => 'Application shell');
     app.get('/onboarding', async () => 'Application shell');
     app.get('/tasks', async () => 'Application shell');
@@ -1446,6 +1447,7 @@ describe('local access', () => {
     );
     const headers = {
       host: 'localhost:4310',
+      cookie: `otto-access-4310=${key}`,
       'sec-fetch-site': 'cross-site',
       'sec-fetch-mode': 'navigate',
       'sec-fetch-dest': 'document',
@@ -1461,7 +1463,10 @@ describe('local access', () => {
         ).statusCode,
         403,
       );
-      const callback = await app.inject({ url: '/api/apps/callback', headers });
+      const callback = await app.inject({
+        url: `/api/apps/callback?state=${randomBytes(32).toString('base64url')}`,
+        headers,
+      });
       assert.equal(callback.statusCode, 302);
       assert.equal(
         (await app.inject({ url: callback.headers.location!, headers })).statusCode,

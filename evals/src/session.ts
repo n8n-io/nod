@@ -19,6 +19,7 @@ export interface Session {
   interruptWhen(first: string, ready: () => Promise<boolean>): Promise<void>;
   sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
   upload(name: string, bytes: Buffer, mimeType?: string): Promise<string>;
+  api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>;
   fireSchedules(): Promise<number>;
   event(summary: string): Promise<string>;
   waitForTurn(turnId: string): Promise<void>;
@@ -62,7 +63,7 @@ export function createSession(options: {
   let threadId: string | undefined;
 
   async function post(path: string, body: unknown) {
-    const response = await fetch(new URL(path, stack.baseUrl), {
+    const response = await stack.request(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -75,7 +76,7 @@ export function createSession(options: {
 
   async function thread() {
     if (threadId) return threadId;
-    const state = await (await fetch(new URL('/api/state', stack.baseUrl))).json();
+    const state = await (await stack.request('/api/state')).json();
     threadId = state.threadId as string;
     return threadId;
   }
@@ -146,7 +147,7 @@ export function createSession(options: {
     const text = await lastAssistantText();
     if (approval) return { kind: 'approval' as const, approval, text };
     if (turn.waiting_reason === 'credentials') {
-      const state = await (await fetch(new URL('/api/state', stack.baseUrl))).json();
+      const state = await (await stack.request('/api/state')).json();
       return { kind: 'secret' as const, request: state.verificationRequests?.[0], text };
     }
     return { kind: 'question' as const, text };
@@ -268,12 +269,24 @@ export function createSession(options: {
     async upload(name, bytes, mimeType = 'application/octet-stream') {
       const form = new FormData();
       form.set('file', new Blob([new Uint8Array(bytes)], { type: mimeType }), name);
-      const response = await fetch(new URL('/api/uploads', stack.baseUrl), {
+      const response = await stack.request('/api/uploads', {
         method: 'POST',
         body: form,
       });
       if (!response.ok) throw new Error(`Upload failed (${response.status}).`);
       return (await response.json()).id as string;
+    },
+    async api(method, path, body) {
+      const url = new URL(path, stack.baseUrl);
+      if (url.origin !== new URL(stack.baseUrl).origin)
+        throw new Error('Scenario API calls must stay on the Otto server.');
+      const response = await fetch(url, {
+        method,
+        headers: { 'content-type': 'application/json', origin: new URL(stack.baseUrl).origin },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await response.text();
+      return { status: response.status, body: text ? JSON.parse(text) : {} };
     },
     async fireSchedules() {
       const id = await thread();

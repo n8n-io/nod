@@ -1,9 +1,11 @@
+import base64
 import json
 import os
 import pathlib
 import socket
 import subprocess
 import time
+import uuid
 
 
 class BoundaryFailure(Exception):
@@ -26,6 +28,39 @@ def as_user(uid, args, timeout=15, env=None):
         os.setgid(uid)
         os.setuid(uid)
     return subprocess.run(["/usr/bin/setpriv", "--no-new-privs", *args], capture_output=True, timeout=timeout, preexec_fn=identity, env=user_environment(uid, env))
+
+
+def connected_cli():
+    command = "otto-boundary"
+    plant = "import pathlib\np=pathlib.Path('/workspace/boundary-bin');p.mkdir(mode=0o755)\nfor name in ['otto-boundary','python3','sh','env','npm']:\n f=p/name;f.write_text('#!/bin/sh\\necho otto-planted-binary\\n');f.chmod(0o755)"
+    require(as_user(1000, ["python3", "-c", plant]).returncode == 0, "connected-cli")
+    identity = str(uuid.uuid4())
+    prefix = pathlib.Path("/home/otto-connected/cli", identity)
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "bin" / command).write_text("#!/bin/sh\nenv\n")
+    (prefix / ".installed").write_text("")
+    for path in [prefix.parent, prefix, prefix / "bin", prefix / "bin" / command, prefix / ".installed"]:
+        os.chown(path, 1002, 1002)
+        os.chmod(path, 0o700)
+    def connected():
+        os.setgroups([])
+        os.setgid(1002)
+        os.setuid(1002)
+    request = {"args": ["status"], "environment": {"OTTO_BOUNDARY_TOKEN": "synthetic-boundary"}, "cli": {"id": identity, "command": command, "source": {"npm": command}}, "timeoutMs": 10000, "installTimeoutMs": 10000, "maxBytes": 8192}
+    child = subprocess.Popen(["/usr/bin/setpriv", "--no-new-privs", "/usr/bin/python3", "-I", "-u", "/opt/otto/workspace-command.py"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd="/home/otto-connected", env={"PATH": "/workspace/boundary-bin:/opt/otto-artifacts/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin", "NPM_CONFIG_PREFIX": "/home/node/.local", "PYTHONPATH": "/workspace/boundary-bin", "LANG": "C.UTF-8"}, preexec_fn=connected)
+    child.stdin.write((json.dumps(request) + "\n").encode())
+    child.stdin.flush()
+    output = child.stdout.read()
+    child.stdin.close()
+    errors = child.stderr.read()
+    code = child.wait(timeout=30)
+    require(b"otto-planted-binary" not in output + errors, "connected-cli-planted")
+    frames = [json.loads(line) for line in output.splitlines()]
+    printed = b"".join(base64.b64decode(frame["data"]) for frame in frames if frame["type"] in ["stdout", "stderr"]).decode()
+    require("otto-planted-binary" not in printed, "connected-cli-planted")
+    values = dict(line.split("=", 1) for line in printed.splitlines() if "=" in line)
+    require(code == 0 and not errors and frames[-1] == {"type": "exit", "code": 0, "reason": None}, "connected-cli")
+    require(values.get("OTTO_BOUNDARY_TOKEN") == "synthetic-boundary" and values.get("PATH") == f"{prefix}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" and set(values) <= {"OTTO_BOUNDARY_TOKEN", "PATH", "HOME", "XDG_CONFIG_HOME", "LANG", "PWD", "OLDPWD", "SHLVL", "_"}, "connected-cli")
 
 
 def main():
@@ -85,6 +120,7 @@ def main():
             require(as_user(1002, ["python3", "-c", script]).returncode != 0, f"connected-private-{index}")
         require(as_user(1002, ["python3", "-c", "from pathlib import Path; Path('/home/otto-connected/boundary-token').write_text('synthetic')"]).returncode == 0, "connected-home-write")
         require(as_user(1000, ["python3", "-c", "from pathlib import Path; Path('/home/otto-connected/boundary-token').read_text()"]).returncode != 0, "workspace-connected-home-denied")
+        connected_cli()
         require(as_user(1000, ["nft", "list", "ruleset"]).returncode != 0, "workspace-firewall")
         require(as_user(1000, ["xdotool", "getdisplaygeometry"], env={"DISPLAY": ":107", "XAUTHORITY": authority}).returncode != 0, "workspace-x11")
         safe = as_user(1000, ["python3", "-c", "from pathlib import Path; import socket; s=Path('/proc/self/status').read_text(); assert 'NoNewPrivs:\\t1' in s; assert all(int(line.split()[1],16)==0 for line in s.splitlines() if line.startswith(('CapEff:','CapPrm:','CapAmb:'))); p=Path('/workspace/boundary.txt'); p.write_text('synthetic'); assert p.read_text()=='synthetic'; assert socket.getaddrinfo('example.com',443)"])
@@ -93,7 +129,7 @@ def main():
         require(subprocess.run(["python3", "/opt/otto/computer-guard.py", "check"], capture_output=True, timeout=20).returncode == 0, "unchanged-firewall-readiness")
         subprocess.run(["nft", "delete", "table", "inet", "otto"], check=True, capture_output=True)
         require(subprocess.run(["python3", "/opt/otto/computer-guard.py", "check"], capture_output=True, timeout=20).returncode != 0, "changed-firewall-readiness")
-        print(json.dumps({"browserCdpAndX11": True, "workspaceNetworkDenied": len(targets), "connectedNetworkDenied": len(targets), "workspaceFileAndProcessDenied": len(checks), "connectedFileAndProcessDenied": len(checks), "workspacePrivilegeDenied": True, "workspaceInternetDnsFiles": True, "changedFirewallRejected": True}))
+        print(json.dumps({"browserCdpAndX11": True, "workspaceNetworkDenied": len(targets), "connectedNetworkDenied": len(targets), "workspaceFileAndProcessDenied": len(checks), "connectedFileAndProcessDenied": len(checks), "connectedCliSealed": True, "workspacePrivilegeDenied": True, "workspaceInternetDnsFiles": True, "changedFirewallRejected": True}))
     finally:
         for child in children:
             child.terminate()

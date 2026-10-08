@@ -8,11 +8,49 @@ import type {
   DiscoveredOAuthState,
   DiscoveredTransport,
 } from '../ports/discovered.ts';
+import type { ConnectedCli } from '../ports/computer.ts';
 import type { Connection } from '../shared/contracts.ts';
 import type { createAppGrantVault } from './vault-app-grants.ts';
 import type { TurnRef } from './thread.ts';
 import { isIntegrationFile } from './integration-files.ts';
 
+const remoteSpec = String.raw`(?:https|git\+https):\/\/[^\s]+`;
+const cliSourceSchema = z.union([
+  z
+    .object({
+      npm: z
+        .string()
+        .max(512)
+        .regex(
+          new RegExp(
+            String.raw`^(?:(?:@[A-Za-z0-9][\w.~-]*\/)?[A-Za-z0-9][\w.~-]*(?:@(?!(?:file|link|git\+file):|\.{0,2}\/|~)[^@\s](?:[^@\x00-\x1f]*[^@\s])?)?|[A-Za-z0-9][\w.-]*\/[\w.-]+(?:#[^\s#]+)?|(?:github|gitlab|bitbucket):[^\s]+|${remoteSpec})$`,
+          ),
+        ),
+    })
+    .strict(),
+  z
+    .object({
+      pypi: z
+        .string()
+        .max(512)
+        .regex(
+          new RegExp(
+            String.raw`^(?:[A-Za-z0-9](?:[\w.-]*[A-Za-z0-9])?(?:\[[\w., -]+\])?(?:\s*(?:===|==|!=|~=|>=|<=|>|<)\s*[\w.*+!-]+(?:\s*,\s*(?:===|==|!=|~=|>=|<=|>|<)\s*[\w.*+!-]+)*)?|${remoteSpec})$`,
+          ),
+        ),
+    })
+    .strict(),
+  z
+    .object({
+      url: z.url({ protocol: /^https$/, normalize: true }).max(2048),
+      sha256: z
+        .string()
+        .toLowerCase()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
+    })
+    .strict(),
+]);
 const pathSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('http'),
@@ -35,6 +73,7 @@ const pathSchema = z.discriminatedUnion('kind', [
     command: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
     auth: z.literal('env').default('env'),
     envName: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}(?:TOKEN|API_KEY|SECRET|PASSWORD)$/),
+    source: cliSourceSchema,
   }),
 ]);
 const proposalSchema = z.object({
@@ -149,7 +188,7 @@ export async function createDiscoveredConnections(
     oauth: DiscoveredOAuth;
     runCli?: (
       threadId: string,
-      command: string,
+      cli: ConnectedCli,
       args: string[],
       envName: string,
       token: string,
@@ -654,13 +693,16 @@ export async function createDiscoveredConnections(
       service,
       name: row.name,
       paths: row.paths.map((path) => {
-        if (path.kind === 'cli')
+        if (path.kind === 'cli') {
+          if (!path.source) throw error('Ask Otto to set up this CLI again.', 409);
           return {
             kind: path.kind,
             command: path.command,
             auth: path.auth,
             envName: path.envName,
+            source: path.source,
           };
+        }
         return {
           kind: path.kind,
           endpoint: path.endpoint,
@@ -785,11 +827,13 @@ export async function createDiscoveredConnections(
     if (action === 'CONNECTED_CLI') {
       if (path.kind !== 'cli') throw error('Choose a CLI access path.');
       if (!turn || !options.runCli) throw error('CLI connections are unavailable.', 503);
+      if (!path.source)
+        throw error('Propose this CLI again with its install source and connectionId.', 409);
       const argv = z.array(z.string().min(1).max(1000)).min(1).max(32).parse(args.argv);
       try {
         const result = await options.runCli(
           turn.threadId,
-          path.command,
+          { id: path.id, command: path.command, source: path.source },
           argv,
           path.envName,
           token,
@@ -843,6 +887,7 @@ export async function createDiscoveredConnections(
                 command: path.command,
                 auth: path.auth,
                 envName: path.envName,
+                source: path.source,
               }
             : {
                 kind: path.kind,

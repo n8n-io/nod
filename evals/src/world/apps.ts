@@ -1099,6 +1099,19 @@ export function createApps(
     async restoreSession() {
       return world.provider.createSession('local-development', {});
     },
+    async inboxSnippets(accountId) {
+      if (accounts.get(accountId)?.service !== 'gmail') return [];
+      return (world.gmail?.mails ?? [])
+        .filter(
+          (mail) =>
+            mail.labels.includes('INBOX') &&
+            !mail.labels.some((label) => /^CATEGORY_(PROMOTIONS|SOCIAL|FORUMS)$/.test(label)) &&
+            Date.now() - mail.at < 14 * 86_400_000,
+        )
+        .sort((a, b) => b.at - a.at)
+        .slice(0, 15)
+        .map((mail) => ({ subject: mail.subject, snippet: mail.body.slice(0, 200) }));
+    },
     async deleteSession() {},
     async inspectAccount(accountId) {
       const account = accounts.get(accountId);

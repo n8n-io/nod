@@ -13,6 +13,7 @@ import { createFilesystemObjectStore } from '../src/providers/object-storage/fil
 import { fakeComputer } from './runtime-fixtures.ts';
 import { PostHog } from 'posthog-node';
 import { createPostHogAnalytics } from '../src/providers/posthog/analytics.ts';
+import { accessCookie, accessKey } from '../src/server/access.ts';
 
 test('analytics initializes on capture, flushes once, and cannot restart after shutdown', async (t) => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({ status: 1 }));
@@ -56,9 +57,10 @@ test(
     url.searchParams.set('options', `-c search_path=${schema}`);
     process.env.DATABASE_URL = url.href;
     process.env.PGBOSS_SCHEMA = bossSchema;
+    process.env.OTTO_DATA_ROOT = join(objects, 'runtime');
     const { pool } = await import('../src/server/db.ts');
     const { createApplication } = await import('../src/server/composition.ts');
-    const { port } = await import('../src/server/config.ts');
+    const { dataRoot, port } = await import('../src/server/config.ts');
     const key = randomBytes(32);
     const keyStore = { id: 'fixture', configured: true, getKey: async () => key };
     let verified = 0;
@@ -212,7 +214,11 @@ test(
       },
     };
     const application = await createApplication(adapters, { workers: false });
-    const headers = { host: `localhost:${port}`, origin: `http://localhost:${port}` };
+    const headers = {
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+      cookie: `${accessCookie(port)}=${await accessKey(dataRoot)}`,
+    };
     try {
       let failedAnalyticsClosed = 0;
       const startupFailure = new Error('Synthetic application startup failure.');

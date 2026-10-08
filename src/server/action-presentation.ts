@@ -1,3 +1,4 @@
+import { actionPayload, sentPath } from '../shared/action-effect.ts';
 import type { TrustReason } from './trust.ts';
 
 const labels: Record<string, string> = {
@@ -48,18 +49,94 @@ const reasons: Record<TrustReason, string> = {
     'something I read since your last message looked like instructions aimed at an AI assistant.',
 };
 
-function shown(value: unknown, limit: number): string | undefined {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    return trimmed.length > limit
-      ? `${plain(trimmed.slice(0, limit))}… (${trimmed.length - limit} more characters)`
-      : plain(trimmed);
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value) && value.every((item) => typeof item === 'string'))
-    return shown(value.join(', '), limit);
-  return value === undefined || value === null ? undefined : shown(JSON.stringify(value), 400);
+function abbreviated(value: string, limit: number) {
+  return value.length > limit
+    ? `${value.slice(0, limit)}… (${value.length - limit} more characters)`
+    : value;
+}
+
+function label(key: string) {
+  return key
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replaceAll('_', ' ')
+    .toLowerCase();
+}
+
+function leaves(value: unknown, path: string, found: Array<[string, string]>) {
+  if (typeof value === 'string') found.push([path, value.trim() || '""']);
+  else if (typeof value === 'number' || typeof value === 'boolean')
+    found.push([path, String(value)]);
+  else if (value === null) found.push([path, 'null']);
+  else if (Array.isArray(value)) {
+    if (value.every((item) => ['string', 'number', 'boolean'].includes(typeof item)))
+      found.push([path, value.length ? value.join(', ') : '[]']);
+    else value.forEach((item, index) => leaves(item, `${path} ${index + 1}`, found));
+  } else if (value && typeof value === 'object')
+    for (const [key, item] of Object.entries(value))
+      leaves(item, path ? `${path} › ${label(key)}` : label(key), found);
+  return found;
+}
+
+function argument(value: string) {
+  return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function actionDetails(action: string, args: Record<string, unknown>, limit: number) {
+  const payload = actionPayload(action, args);
+  const fields = leaves(
+    payload === args
+      ? Object.fromEntries(
+          Object.entries(args).filter(([key]) => !['connectionId', 'pathId'].includes(key)),
+        )
+      : payload,
+    payload === args ? '' : action === 'CONNECTED_HTTP' ? 'body' : 'input',
+    [],
+  );
+  const target: Array<[string, string]> =
+    action === 'CONNECTED_HTTP'
+      ? [
+          [
+            'request',
+            `${String(args.method ?? 'GET').toUpperCase()} ${sentPath(String(args.path ?? ''))}`,
+          ],
+        ]
+      : action === 'CONNECTED_MCP_CALL'
+        ? [['tool', String(args.tool ?? '')]]
+        : action === 'CONNECTED_CLI'
+          ? [
+              [
+                'command',
+                (Array.isArray(args.argv) ? args.argv : [])
+                  .map((item) => argument(abbreviated(String(item), limit)))
+                  .join(' '),
+              ],
+            ]
+          : [];
+  return [
+    ...target,
+    ...[
+      ...fields.filter(([, value]) => value.length <= 200),
+      ...fields.filter(([, value]) => value.length > 200),
+    ].map(([name, value]): [string, string] => [name, abbreviated(value, limit)]),
+  ].map(([name, value]): [string, string] => [`${name[0]!.toUpperCase()}${name.slice(1)}`, value]);
+}
+
+function fitted(render: (limit: number) => string[], limits: number[], budget: number) {
+  const size = (lines: string[]) => lines.join('\n\n').length;
+  const lines = render(limits.find((limit) => size(render(limit)) <= budget) ?? limits.at(-1)!);
+  let total = -2;
+  const shown = lines.filter((line, index) => (total += line.length + 2) <= budget || !index);
+  return shown.length < lines.length
+    ? [...shown, `…and ${lines.length - shown.length} more fields`]
+    : shown;
+}
+
+export function reviewedRequest(action: string, args: Record<string, unknown>) {
+  return fitted(
+    (limit) => actionDetails(action, args, limit).map(([name, value]) => `${name}: ${value}`),
+    [300, 100],
+    16_000,
+  );
 }
 
 export function appActionConfirmation(
@@ -71,32 +148,23 @@ export function appActionConfirmation(
   const [app, ...words] = action.split('_');
   const title =
     action === 'CONNECTED_HTTP'
-      ? `Call ${shown(args.method, 10) ?? 'POST'} ${shown(args.path, 200) ?? ''} on a connected API`
+      ? 'Call a connected API'
       : action === 'CONNECTED_MCP_CALL'
-        ? `Run ${shown(args.tool, 100) ?? 'a tool'} on a connected app`
+        ? 'Run a tool on a connected app'
         : action === 'CONNECTED_CLI'
-          ? `Run a connected command line tool`
+          ? 'Run a connected command line tool'
           : `${apps[app!] ?? `${app![0]}${app!.slice(1).toLowerCase()}`}: ${words.join(' ').toLowerCase()}`;
-  const details = Object.entries(args)
-    .filter(([key]) => !['connectionId', 'pathId', 'method', 'path', 'tool'].includes(key))
-    .flatMap(([key, value]) => {
-      const text = shown(value, 1500);
-      if (!text) return [];
-      const label = key
-        .replace(/([a-z])([A-Z])/g, '$1 $2')
-        .replaceAll('_', ' ')
-        .toLowerCase();
-      return [`${label[0]!.toUpperCase()}${label.slice(1)}: ${text}`];
-    });
-  let body = account ? `\n\nAccount: ${shown(account, 300)}` : '';
-  for (const detail of details) {
-    if (body.length + detail.length > 4800) {
-      body += '\n\n…';
-      break;
-    }
-    body += `\n\n${detail}`;
-  }
-  return `${title}?${body}\n\nWhy I'm asking: ${reasons[reason]}\n\nReply yes to go ahead, no to skip it, or tell me what to change.`;
+  const details = fitted(
+    (limit) =>
+      actionDetails(action, args, limit).map(([name, value]) => `${plain(name)}: ${plain(value)}`),
+    [1500, 600, 200, 60],
+    4800,
+  );
+  const body = [
+    ...(account ? [`Account: ${plain(abbreviated(account, 300))}`] : []),
+    ...details,
+  ].join('\n\n');
+  return `${title}?${body ? `\n\n${body}` : ''}\n\nWhy I'm asking: ${reasons[reason]}\n\nReply yes to go ahead, no to skip it, or tell me what to change.`;
 }
 
 export function actionConfirmation(

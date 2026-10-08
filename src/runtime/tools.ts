@@ -321,7 +321,7 @@ export const toolDefinitions = {
   ),
   manage_apps: defineTool(
     'manage_apps',
-    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. discover {query?} searches available integrations, including managed apps and MCP toolkits that can be connected without creating an OAuth app. Search before researching another connection method. connect {service} uses a returned service slug to start sign-in and pause, or returns existing accounts. Use connect {service, connectionId} to reconnect a saved account with canReconnect:true, using its exact saved ID. This preserves the account and its settings. Use connect {service, newAccount:true} when the user explicitly wants another account; it keeps existing accounts. For tools outside the catalog, research an official MCP, HTTP API or installed CLI, then propose {service, proposal} to give the user a private setup link.',
+    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. discover {query?} searches available integrations, including managed apps and MCP toolkits that can be connected without creating an OAuth app. Search before researching another connection method. connect {service} uses a returned service slug to start sign-in and pause, or returns existing accounts. Use connect {service, connectionId} to reconnect a saved account with canReconnect:true, using its exact saved ID. This preserves the account and its settings. Use connect {service, newAccount:true} when the user explicitly wants another account; it keeps existing accounts. For tools outside the catalog, research an official MCP, HTTP API or CLI, then propose {service, proposal} to give the user a private setup link. A CLI path names the source Otto installs privately for it: {npm} package spec, {pypi} package spec (pipx) or {url, sha256?} HTTPS release binary or archive for this workspace architecture.',
     Type.Object({
       action: literals(['list', 'discover', 'connect', 'propose']),
       service: Type.Optional(Type.String({ maxLength: 80 })),
@@ -359,6 +359,14 @@ export const toolDefinitions = {
                 command: Type.String({ minLength: 1, maxLength: 64 }),
                 auth: Type.Optional(Type.Literal('env')),
                 envName: Type.String({ minLength: 3, maxLength: 80 }),
+                source: Type.Union([
+                  Type.Object({ npm: Type.String({ minLength: 1, maxLength: 512 }) }),
+                  Type.Object({ pypi: Type.String({ minLength: 1, maxLength: 512 }) }),
+                  Type.Object({
+                    url: Type.String({ minLength: 1, maxLength: 2048 }),
+                    sha256: Type.Optional(Type.String({ minLength: 64, maxLength: 64 })),
+                  }),
+                ]),
               }),
             ]),
             { minItems: 1, maxItems: 4 },
