@@ -125,7 +125,7 @@ function fitted(render: (limit: number) => string[], limits: number[], budget: n
   const size = (lines: string[]) => lines.join('\n\n').length;
   const lines = render(limits.find((limit) => size(render(limit)) <= budget) ?? limits.at(-1)!);
   let total = -2;
-  const shown = lines.filter((line) => (total += line.length + 2) <= budget);
+  const shown = lines.filter((line, index) => (total += line.length + 2) <= budget || !index);
   return shown.length < lines.length
     ? [...shown, `…and ${lines.length - shown.length} more fields`]
     : shown;
@@ -157,7 +157,7 @@ export function appActionConfirmation(
   const details = fitted(
     (limit) =>
       actionDetails(action, args, limit).map(([name, value]) => `${plain(name)}: ${plain(value)}`),
-    [1500, 600, 200],
+    [1500, 600, 200, 60],
     4800,
   );
   const body = [

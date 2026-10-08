@@ -643,6 +643,15 @@ test(
             appActionConfirmation('CONNECTED_MCP_CALL', hidden, 'background'),
             /C-OUTSIDER/,
           );
+          const command = [
+            ...Array.from({ length: 30 }, () => 'x'.repeat(1000)),
+            '--repo',
+            'outsider/r',
+          ];
+          assert.match(
+            appActionConfirmation('CONNECTED_CLI', { argv: command }, 'background'),
+            /--repo outsider\/r/,
+          );
           await trust.check(turn, 'CONNECTED_MCP_CALL', hidden);
           assert.match(JSON.stringify(reviews.at(-1)?.action.request), /C-OUTSIDER/);
 
