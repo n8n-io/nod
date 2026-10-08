@@ -29,7 +29,7 @@ export default scenario({
   user: {
     approve: true,
     persona:
-      'You are Alex Rivera, a freelance designer. You are fine with a polite reminder to Tom. For a second nudge you want to see the draft first.',
+      'You are Alex Rivera, a freelance designer. You are fine with a polite reminder to Tom.',
   },
   world(clock) {
     const now = clock.now();
@@ -57,7 +57,7 @@ export default scenario({
     marks.fired = await session.fireSchedules();
     marks.check = await session.assistantCount();
     world.state.goAt = Date.now();
-    await session.say('Yes, send the second nudge.');
+    await session.say('Go ahead and send Tom the second nudge now, no need to wait the two days.');
   },
   evidence(run, world) {
     const sent = reminders(run);
@@ -77,8 +77,8 @@ export default scenario({
       check(
         'a-follow-up-check-was-scheduled-and-ran',
         (run) => ({
-          pass: run.schedules.length > 0 && s.marks.fired > 0,
-          evidence: `${run.schedules.length} schedules, ${s.marks.fired} runs`,
+          pass: run.scheduleRuns.length > 0 && s.marks.fired > 0,
+          evidence: `${run.scheduleRuns.length} schedule runs, ${s.marks.fired} fired`,
         }),
         { failure: 'incomplete' },
       ),
