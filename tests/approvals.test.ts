@@ -427,14 +427,17 @@ test(
 
       const { createTrust } = await import('../src/server/trust.ts');
       const reviews: Array<Record<string, any>> = [];
-      let aligned = false;
+      let aligned: boolean | ((input: Record<string, any>) => boolean) = false;
       const trust = createTrust({
         pool: db.pool,
         ownerId,
         ownAddresses: async () => ['owner@example.test', null],
         review: async (_instructions, input) => {
           reviews.push(input as Record<string, any>);
-          return { aligned };
+          return {
+            aligned:
+              typeof aligned === 'function' ? aligned(input as Record<string, any>) : aligned,
+          };
         },
       });
       await trust.initialize();
@@ -560,6 +563,7 @@ test(
         'a first task the owner tapped is Otto wording and never counts as their request',
         async () => {
           const title = 'Reply about revision rounds';
+          await begin('Check my inbox.');
           await db.pool.query(
             "INSERT INTO messages(id,owner_id,role,text,thread_id,suggestions) VALUES($1,$2,'assistant',$3,$4,$5)",
             [
@@ -573,19 +577,18 @@ test(
               }),
             ],
           );
-          aligned = true;
+          aligned = (input) => /reply/i.test(input.userMessages.at(-1)?.text ?? '');
           const reply = {
             thread_id: 'synthetic-thread',
             recipient_email: 'client@example.test',
             message_body: 'Two rounds are included.',
           };
           const tapped = await begin(title);
-          await trust.check(tapped, 'GMAIL_REPLY_TO_THREAD', reply);
-          assert.ok(
-            reviews
-              .at(-1)
-              ?.userMessages.every((message: { text: string }) => message.text !== title),
-          );
+          assert.deepEqual(await trust.check(tapped, 'GMAIL_REPLY_TO_THREAD', reply), {
+            confirm: true,
+            reason: 'unrequested',
+          });
+          assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Check my inbox.');
           const approved = await begin('Yes, send that reply to the client.');
           assert.deepEqual(await trust.check(approved, 'GMAIL_REPLY_TO_THREAD', reply), {
             confirm: false,
@@ -594,6 +597,7 @@ test(
             reviews.at(-1)?.userMessages.at(-1).text,
             'Yes, send that reply to the client.',
           );
+          aligned = true;
         },
       );
 
