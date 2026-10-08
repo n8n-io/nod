@@ -769,29 +769,42 @@ export function slack(
       slug: 'SLACK_SEARCH_MESSAGES',
       description: 'Search messages across the workspace.',
       inputSchema: obj({ query: str('Search query.'), count: num('Maximum results.') }, ['query']),
-      run: (args) => ({
-        ok: true,
-        messages: {
-          matches: conversations.flatMap((conversation) =>
-            conversation.messages
-              .flatMap((message) => [
-                message,
-                ...(message.replies ?? []).map((reply) => ({
-                  ...reply,
-                  ts: reply.ts ?? message.ts,
-                  threadTs: message.ts,
-                })),
-              ])
-              .filter((message) =>
-                message.text.toLowerCase().includes(String(args.query).toLowerCase()),
+      run: (args) => {
+        const terms = String(args.query).toLowerCase().replaceAll('"', '').split(/\s+/);
+        const channel = terms
+          .find((term) => term.startsWith('in:'))
+          ?.slice(3)
+          .replace(/^#/, '');
+        const words = terms.filter((term) => term && !term.includes(':'));
+        return {
+          ok: true,
+          messages: {
+            matches: conversations
+              .filter(
+                (conversation) =>
+                  !channel || [conversation.id, conversation.name].includes(channel),
               )
-              .map((message) => ({
-                ...view(message),
-                channel: { id: conversation.id, name: conversation.name },
-              })),
-          ),
-        },
-      }),
+              .flatMap((conversation) =>
+                conversation.messages
+                  .flatMap((message) => [
+                    message,
+                    ...(message.replies ?? []).map((reply) => ({
+                      ...reply,
+                      ts: reply.ts ?? message.ts,
+                      threadTs: message.ts,
+                    })),
+                  ])
+                  .filter((message) =>
+                    words.every((word) => message.text.toLowerCase().includes(word)),
+                  )
+                  .map((message) => ({
+                    ...view(message),
+                    channel: { id: conversation.id, name: conversation.name },
+                  })),
+              ),
+          },
+        };
+      },
     },
     {
       slug: 'SLACK_DOWNLOAD_SLACK_FILE',
