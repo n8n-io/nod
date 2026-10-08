@@ -4107,6 +4107,95 @@ test('native Settings and feedback preserve the active credential form', async (
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
+for (const surface of ['channels', 'onboarding'])
+  test(`Telegram setup preserves multiline clipboard boundaries in its protected submitted field on ${surface}`, async () => {
+    const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+      timeoutMs: 20_000,
+      input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/channels', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+      });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const submissions = [];
+      globalThis.fetch = async (path, options = {}) => {
+        if (path === '/api/channels') return Response.json({ channels: [], error: null });
+        if (path === '/api/channel-settings') return Response.json({ ready: true, channels: [] });
+        assert.equal(path, '/api/channel-settings/telegram');
+        assert.equal(options.method, 'PUT');
+        submissions.push(JSON.parse(options.body));
+        return Response.json({ error: 'Synthetic retry keeps the form available.' }, { status: 400 });
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { Channels } = await import('./src/web/pages/channels.tsx');
+      const { Telegram } = await import('./src/web/pages/onboarding/steps/telegram.tsx');
+      const root = createRoot(document.querySelector('#root'));
+      try {
+        await act(async () => root.render(${
+          surface === 'channels'
+            ? 'createElement(Channels, { hosted: true })'
+            : "createElement(Telegram, { arrived: 'back', onNext() {}, onBack() {} })"
+        }));
+        await act(async () => document.querySelector('${surface === 'channels' ? '.channel-option button' : '.ob-tg-action'}').click());
+        const input = document.querySelector('input[type="password"]');
+        assert.ok(input);
+        assert.equal(input.autocomplete, 'off');
+        const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        const edit = async value => act(async () => {
+          setValue.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        const paste = async text => {
+          const event = new Event('paste', { bubbles: true, cancelable: true });
+          Object.defineProperty(event, 'clipboardData', { value: {
+            getData: type => type === 'text/plain' ? text : '',
+          } });
+          await act(async () => input.dispatchEvent(event));
+          return event;
+        };
+        const submit = async () => act(async () => input.form.querySelector('button[type="submit"]').click());
+        const token = '777000111:synthetic-channel-fixture';
+        const expected = 'Use this token: ' + token + ' Keep it secure.';
+        for (const newline of ['\\n', '\\r\\n', '\\r']) {
+          await edit('replace-me');
+          input.setSelectionRange(0, input.value.length);
+          const event = await paste('Use this token:' + newline + token + newline + 'Keep it secure.');
+          await submit();
+          assert.equal(submissions.at(-1).botToken, expected);
+          assert.equal(event.defaultPrevented, true);
+          assert.equal(input.type, 'password');
+        }
+        await edit('Prefix replace-me suffix.');
+        input.setSelectionRange(7, 17);
+        await paste('Use this token:\\n' + token + '\\nKeep it secure.');
+        assert.equal(input.selectionStart, 7 + expected.length);
+        assert.equal(input.selectionEnd, input.selectionStart);
+        await submit();
+        assert.equal(submissions.at(-1).botToken, 'Prefix ' + expected + ' suffix.');
+        const rawPaste = await paste(token);
+        assert.equal(rawPaste.defaultPrevented, false);
+        await edit(token);
+        await submit();
+        assert.equal(submissions.at(-1).botToken, token);
+        assert.equal(submissions.length, 5);
+      } finally {
+        await act(async () => root.unmount());
+        dom.window.close();
+      }
+    `,
+    });
+    assert.equal(result.exitCode, 0, result.stderr);
+  });
+
 test('a selected model arriving after settings load keeps the picker closed', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

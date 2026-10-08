@@ -8,9 +8,17 @@ const telegramInput = z
   .object({
     botToken: z
       .string()
-      .trim()
-      .regex(/^\d+:[A-Za-z0-9_-]+$/)
-      .max(512),
+      .max(8192)
+      .transform((value) => {
+        const tokens = value.match(/(?<![\w:-])\d+:[\w-]+(?![\w:-])/g);
+        return tokens?.length === 1 ? tokens[0] : '';
+      })
+      .pipe(
+        z
+          .string()
+          .regex(/^\d+:[A-Za-z0-9_-]+$/)
+          .max(512),
+      ),
     webhookUrl,
   })
   .strict();
