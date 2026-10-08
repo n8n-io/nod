@@ -61,14 +61,22 @@ export function holm(pValues: number[], alpha = 0.05) {
   return rejected;
 }
 
+const studentT = [
+  12.7062, 4.3027, 3.1824, 2.7764, 2.5706, 2.4469, 2.3646, 2.306, 2.2622, 2.2281, 2.201, 2.1788,
+  2.1604, 2.1448, 2.1314, 2.1199, 2.1098, 2.1009, 2.093, 2.086, 2.0796, 2.0739, 2.0687, 2.0639,
+  2.0595, 2.0555, 2.0518, 2.0484, 2.0452, 2.0423,
+];
+
 export function pairedChange(differences: number[]) {
   const n = differences.length;
   if (n < 5) return undefined;
   const mean = differences.reduce((sum, value) => sum + value, 0) / n;
   const sd = Math.sqrt(differences.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (n - 1));
-  const z = 1.959964;
   const df = n - 1;
-  const t = z + (z ** 3 + z) / (4 * df) + (5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df * df);
+  const z = 1.959964;
+  const t =
+    studentT[df - 1] ??
+    z + (z ** 3 + z) / (4 * df) + (5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df * df);
   const half = (t * sd) / Math.sqrt(n);
   return { n, mean, low: Math.max(-1, mean - half), high: Math.min(1, mean + half) };
 }

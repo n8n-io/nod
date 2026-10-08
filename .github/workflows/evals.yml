@@ -121,8 +121,13 @@ jobs:
           base=""
           if [ -n "$BASELINE" ]; then
             if [ "$BASELINE" = latest-release ]; then
-              BASELINE="$(git describe --tags --abbrev=0 --match 'desktop-v*' HEAD^)"
+              BASELINE="$(git describe --tags --abbrev=0 --match 'desktop-v*' HEAD^ 2>/dev/null || true)"
+              if [ -z "$BASELINE" ]; then
+                echo "::notice::There is no earlier desktop release, so this commit is scored alone."
+              fi
             fi
+          fi
+          if [ -n "$BASELINE" ]; then
             case "$BASELINE" in -*) echo "::error::The baseline must be a branch or tag."; exit 1 ;; esac
             git rev-parse --verify --quiet "$BASELINE^{commit}" >/dev/null || BASELINE="origin/$BASELINE"
             base="$(git merge-base HEAD "$BASELINE")"

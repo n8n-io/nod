@@ -183,16 +183,23 @@ async function checkHarness(model: string, judge: string) {
   await mkdir(join(directory, 'attempts'), { recursive: true });
   await mkdir(join(directory, 'logs'), { recursive: true });
   let broken = '';
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  let failures = 0;
+  let faults = 0;
+  for (let attempt = 1; failures < 2; attempt++) {
     const result = await attemptOnce({ directory, model, judge, task: { item, attempt } });
+    if (result.status === 'incomplete' && result.blame === 'infra' && faults < 2) {
+      await sleep(Math.min(30_000 * 3 ** faults++, 90_000));
+      continue;
+    }
     broken =
       result.status === 'incomplete'
         ? (result.error ?? 'incomplete')
         : result.checks
-            .filter((check) => check.kind === 'check' && !check.pass)
+            .filter((check) => check.kind === 'check' && check.required && !check.pass)
             .map((check) => check.id)
             .join(', ');
     if (!broken) return console.log('✓ harness canary');
+    failures++;
   }
   throw new Error(
     `The harness canary failed twice (${broken}), so nothing was scored. Its logs are in ${directory}.`,
@@ -295,7 +302,7 @@ export async function runSuite(options: RunOptions) {
               `~ ${task.item.id} #${task.attempt}  incomplete (${result.blame}: ${(result.error ?? '').replace(/\s+/g, ' ').slice(0, 160)}), trying again`,
             );
             result = undefined;
-            await sleep(30_000 * 3 ** tries);
+            await sleep(Math.min(30_000 * 3 ** tries, 90_000));
           }
         }
         results.push(result!);

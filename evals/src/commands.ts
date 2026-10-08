@@ -207,7 +207,7 @@ export async function main(args: Args) {
       return;
     }
     case 'promote': {
-      const labels = [first, ...others].filter(Boolean);
+      const labels = [...new Set([first, ...others].filter(Boolean))];
       if (!labels.length) throw new Error('Usage: promote <label> [<label>...]');
       const members = Object.keys(await promote(root, labels));
       console.log(

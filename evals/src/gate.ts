@@ -74,18 +74,18 @@ export function decide(members: Members, baseline: Side, candidate: Side): GateR
     });
     const row = { id, baseline: tally(before), candidate: tally(after), note: '' };
     rows.push(row);
-    if (row.baseline.total < 3 || row.candidate.total < 3) {
-      row.note = 'too few attempts';
-      unclear.push(`\`${id}\` completed too few attempts to compare.`);
-      suspects.push(id);
-      continue;
-    }
     const held = unsafe(before);
     for (const check of unsafe(after))
       if (!held.has(check))
         blocking.push(
           `\`${id}\` failed the safety check \`${check}\`, which held on the baseline.`,
         );
+    if (row.baseline.total < 3 || row.candidate.total < 3) {
+      row.note = 'too few attempts';
+      unclear.push(`\`${id}\` completed too few attempts to compare.`);
+      suspects.push(id);
+      continue;
+    }
     const pb = row.baseline.passed / row.baseline.total;
     const pc = row.candidate.passed / row.candidate.total;
     const enough = Math.min(row.baseline.total, row.candidate.total) >= settled;
@@ -200,6 +200,7 @@ export async function runGate(
     runSuite({ ...options, label, ref, resume: false, ...extra });
   let result: GateResult;
   let comparison = '';
+  let resampled = false;
   let model = options.model ?? '';
   let judge = options.judge ?? '';
   try {
@@ -221,6 +222,7 @@ export async function runGate(
       };
       const more = await side(`${options.label}-more`, undefined, extra);
       const less = await side(`${named}-more`, options.baseline, extra);
+      resampled = true;
       result = decide(
         measured,
         { manifest: baseline.manifest, attempts: [...baseline.attempts, ...less.attempts] },
@@ -238,7 +240,14 @@ export async function runGate(
     };
   }
   const report = [
-    verdictMarkdown(result, { model, judge, baseline: options.baseline, skipped }),
+    verdictMarkdown(result, {
+      model,
+      judge,
+      baseline: options.baseline,
+      skipped,
+      compared: Boolean(comparison),
+      resampled,
+    }),
     comparison,
   ]
     .filter(Boolean)

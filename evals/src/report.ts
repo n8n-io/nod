@@ -256,13 +256,21 @@ function difference(runs: Loaded[]) {
 
 export function verdictMarkdown(
   result: GateResult,
-  context: { model: string; judge: string; baseline: string; skipped: string[] },
+  context: {
+    model: string;
+    judge: string;
+    baseline: string;
+    skipped: string[];
+    compared: boolean;
+    resampled: boolean;
+  },
 ) {
-  const lines = [
-    `### ${result.verdict} against \`${context.baseline}\``,
-    '',
-    `Both sides ran in this job with \`${context.model}\` and judge \`${context.judge}\`. The verdict uses the gate scenarios; the comparison below shows every scenario.`,
-  ];
+  const lines = [`### ${result.verdict} against \`${context.baseline}\``];
+  if (context.compared)
+    lines.push(
+      '',
+      `Both sides ran in this job with \`${context.model}\` and judge \`${context.judge}\`. The verdict uses the gate scenarios${context.resampled ? ', counting the extra attempts where the candidate did worse' : ''}; the comparison below shows every scenario at the same number of attempts.`,
+    );
   const reasons = [...result.blocking, ...result.unclear];
   if (reasons.length) lines.push('', ...reasons.map((reason) => `- ${reason}`));
   if (result.scenarios.length)
