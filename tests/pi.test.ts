@@ -1582,10 +1582,10 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
     'cat source.txt && printf done',
   ])
     assert.doesNotMatch(await run('bash', { command }), /Command exited/);
-  assert.match(await run('bash', { command: 'git log' }), /Command exited with code 128/);
   assert.equal(await readFile(join(directory, 'copy.txt'), 'utf8'), 'one\ntwo\nthree\n');
   await writeFile(join(bin, 'git'), '#!/bin/sh\nprintf "exact output\\n"\n', { mode: 0o755 });
   for (const command of [
+    'git log',
     'git status --porcelain',
     'git status --porcelain=v2 -z',
     'git diff --output=changes.patch',
