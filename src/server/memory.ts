@@ -78,7 +78,9 @@ function fail(message: string, statusCode = 400): never {
 }
 
 export async function importMemoryFile(store: PrivateObjectStore, directory: string) {
-  const bytes = await readFile(join(directory, 'MEMORY.md')).catch(() => undefined);
+  const bytes = await readFile(join(directory, 'MEMORY.md')).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  });
   if (bytes)
     await store.write(key, bytes, { expectedVersion: null }).catch((error) => {
       if (!(error instanceof ObjectStoreConflict)) throw error;

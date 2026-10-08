@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -1468,6 +1468,10 @@ test(
     await importMemoryFile(store, join(objects, 'memory'));
     await importMemoryFile(store, join(objects, 'memory'));
     await assert.rejects(readFile(join(objects, 'memory', 'MEMORY.md')), { code: 'ENOENT' });
+    const unreadable = join(objects, 'unreadable');
+    await mkdir(join(unreadable, 'MEMORY.md'), { recursive: true });
+    await assert.rejects(importMemoryFile(store, unreadable));
+    await readdir(join(unreadable, 'MEMORY.md'));
     const memory = createMemoryService({ pool, ownerId: 'import-owner', store });
     const notes = ['Prefers short morning digests.', 'Works from home on Fridays.'];
     await Promise.all(notes.map((text) => memory.add({ area: 'preferences', text })));
