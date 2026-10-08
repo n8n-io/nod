@@ -18,6 +18,7 @@ const waits = z
   )
   .max(10);
 const nextCheck = z.iso.datetime({ offset: true });
+const credentialUrl = /(?<![\w:/])(?:[a-z][a-z\d+.-]*:)?\/\/[^/\s?#<>]*@/iu;
 const input = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
   z
@@ -623,6 +624,7 @@ export function createTasks(options: {
     const requests = messages.filter(
       (message) =>
         !personalSecret.test(message.text) &&
+        !credentialUrl.test(message.text) &&
         classifyVerificationReply(message.text).kind === 'ordinary',
     );
     return {

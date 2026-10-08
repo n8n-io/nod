@@ -420,6 +420,22 @@ test(
         const unfinished = await seed(['Unfinished task content.'], { state: 'open' });
         const longPrompt = `Keep every qualification: ${'synthetic qualification '.repeat(300)}`;
         const long = await seed([longPrompt]);
+        const reusable = [
+          'Read https://reports.example.test/invoices?currency=EUR and summarize the totals.',
+          'Ignore my previous instructions about sending messages; only prepare the summary in Otto.',
+          'Find https://reports.example.test/people/alice@example.test and keep the result here.',
+        ];
+        const credentialLinks = await seed([
+          reusable[0],
+          'Open https://alice:s3cr3t@example.test/invoices.',
+          'Open [the report](https://alice:p%40ss%3Aword@example.test/invoices).',
+          'Open https://alice@example.test/invoices.',
+          'Open http://:p%3Aa%40ss@example.test/invoices.',
+          'Read postgresql://alice:p%40ss@example.test:5432/reports.',
+          'Open //alice:s3cr3t@example.test/invoices.',
+          reusable[1],
+          reusable[2],
+        ]);
         const before = await unchanged();
 
         await t.test(
@@ -432,6 +448,20 @@ test(
               prompt: `${first}\n\n${clarification}`,
               omittedSensitive: true,
               hasAttachments: true,
+            });
+            assert.deepEqual(await unchanged(), before);
+          },
+        );
+        await t.test(
+          'credential URLs are omitted without dropping ordinary links or owner corrections',
+          async () => {
+            const response = await draft(credentialLinks);
+            assert.equal(response.statusCode, 200, response.body);
+            assert.deepEqual(response.json(), {
+              title: 'Synthetic account report',
+              prompt: reusable.join('\n\n'),
+              omittedSensitive: true,
+              hasAttachments: false,
             });
             assert.deepEqual(await unchanged(), before);
           },

@@ -6,7 +6,7 @@ The attached diagnostic report records a browser handoff, a fresh snapshot, a su
 
 ## Frozen cases
 
-These cases exercise the actual renderer with synthetic APIs, and the actual server contracts with disposable PostgreSQL schemas. No live model, connected account or real recipient is used. Each deterministic case runs once per source revision, with a ten-minute limit. Every applicable named check must pass in the same attempt.
+These cases exercise the actual renderer with synthetic APIs, and the actual server contracts with disposable PostgreSQL schemas. No live model, connected account or real recipient is used. Each case has a frozen definition and a ten-minute limit. All attempts, including retries after automation faults, are retained below. Every applicable named check must pass in the same attempt.
 
 | Case   | User task                                                        | Setup and expected result                                                                                               | Checks                                    |
 | ------ | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
@@ -63,3 +63,9 @@ Final browser artifacts are the paired `handoff-before-final.jpg` / `handoff-aft
 Before the rebase, `npm run check`, `npm run test:integration` and `npm run build` exited 0. Integration passed 719 tests, with zero failures, skips, cancellations or TODOs. After rebasing onto `a5b2fdc2`, all three commands also exited 0: 723 integration tests passed with zero failures, skips, cancellations or TODOs. Earlier failures remain in the record.
 
 These results establish synthetic renderer behavior and local integration contracts. They do not establish live-model offer reliability, real account authentication, or delivery to a real recipient.
+
+## PR verification
+
+Static v4 was rebuilt from PR head `f19f5e4e`, including the rebased API/auth code, with unchanged fixture inputs. Browser checks passed for both schedule cases, two separate Vault accounts, cancellation and handoff continuity. The final task session created exactly two schedules (`0 9 * * 1-5` and `30 14 * * 1`, Europe/Lisbon) with the distinct original prompts; the Vault session created exactly two entries. The local snapshot `.local/debug/lab-559/final-head-evidence.json` has SHA-256 `c4d5459648f5b7ccf09286b89809ecb2042c03c71e19c8a399e1053469aaf8e7`. An earlier reload raced the bundle replacement and still loaded v3; its `schedules-v4.jpg` is retained but excluded from v4 proof.
+
+PR review identified URL-embedded credentials missing from draft screening, app-relative Vault links being offered in messaging channels, an unhandled derived promise in the Vault test, and the ambiguous retry description above. The first CI attempt also exposed an inherited eval transport mismatch after the latest main merged. Those attempts remain part of the record; subsequent verification is recorded on the PR.

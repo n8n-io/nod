@@ -3387,7 +3387,7 @@ test(
             });
           })();
           requests.add(request);
-          void request.finally(() => requests.delete(request));
+          void request.catch(() => undefined).finally(() => requests.delete(request));
           return request;
         },
         'http://localhost:4310/vault?add=login',
