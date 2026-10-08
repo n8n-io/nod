@@ -4,6 +4,7 @@ import { turnOrigin } from './approvals.ts';
 import {
   actionEffect,
   actionRecipients,
+  draftAction,
   emailAddress,
   type ActionEffect,
 } from '../shared/action-effect.ts';
@@ -142,7 +143,8 @@ export function createTrust(options: {
       if (effect === 'unknown') return { confirm: false };
       throw new Error('This turn can only read connected apps.');
     }
-    if (effect === 'change') return { confirm: false };
+    if (effect === 'change' && (origin.source !== 'event' || draftAction(action, args)))
+      return { confirm: false };
     if (origin.source === 'event') return { confirm: true, reason: 'background' };
     if (await flagged(turn.threadId)) return { confirm: true, reason: 'injection' };
     const recipients = [...actionRecipients(action, args)];

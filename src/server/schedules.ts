@@ -3,11 +3,12 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
-import type {
-  Schedule,
-  ScheduleObservation,
-  ScheduleRun,
-  TurnStatus,
+import {
+  lateRunMinutes,
+  type Schedule,
+  type ScheduleObservation,
+  type ScheduleRun,
+  type TurnStatus,
 } from '../shared/contracts.ts';
 import { activeThreadSql, type enqueueTurn } from './thread.ts';
 import type { WorkConsumers } from './work-admission.ts';
@@ -253,8 +254,13 @@ export function createSchedules(dependencies: ScheduleDependencies) {
       )
         return false;
       job.signal.throwIfAborted();
+      const late = Math.floor((now().getTime() - Date.parse(job.data.scheduledFor)) / 60_000);
+      const lateness =
+        late >= lateRunMinutes
+          ? `\nThis run was due at ${job.data.scheduledFor} and starts ${late} minutes late because Otto was not running then. Missed runs are not repeated. Do it once now if it is still useful, say in any message that it ran late, and ask before sending or posting anything that was meant for the due time.`
+          : '';
       const turnId = await enqueueTurn(
-        `Scheduled task: ${row.title}\n${row.prompt}\nOnly send a message if there is a useful result, a problem or a necessary question.`,
+        `Scheduled task: ${row.title}\n${row.prompt}\nOnly send a message if there is a useful result, a problem or a necessary question.${lateness}`,
         {
           sourceId: `schedule:${row.id}:${row.revision}:${job.data.scheduledFor}`,
           source: 'schedule',

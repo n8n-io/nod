@@ -1437,3 +1437,17 @@ test('style learning sends only the owner’s own sent text and keeps one replac
     ['preferences', 'writing-style', 'Writing style: my own words.', 'stated'],
   ]);
 });
+
+test('parallel memory saves keep every note', async (t) => {
+  const objects = await mkdtemp(join(tmpdir(), 'memory-parallel-'));
+  t.after(() => rm(objects, { recursive: true, force: true }));
+  const memory = createMemoryService({
+    pool: {} as pg.Pool,
+    ownerId: 'parallel-owner',
+    store: createFilesystemObjectStore(objects),
+  });
+  const notes = ['Prefers short morning digests.', 'Works from Lisbon on Fridays.'];
+  await Promise.all(notes.map((text) => memory.add({ area: 'preferences', text })));
+  const saved = await readFile(join(objects, 'memory', 'MEMORY.md'), 'utf8');
+  for (const text of notes) assert.match(saved, new RegExp(text.replace('.', '\\.')));
+});

@@ -639,6 +639,14 @@ test(
           assert.equal((await runs(schedule.id)).length, 2);
           assert.equal((await runs(schedule.id))[0]!.scheduledFor, '2035-10-28T09:05:00.000Z');
           assert.equal((await saved(schedule.id)).nextRun, '2035-11-03T09:05:00.000Z');
+          const prompts = (
+            await db.pool.query<{ prompt: string }>(
+              'SELECT t.prompt FROM schedule_runs r JOIN turns t ON t.id=r.turn_id WHERE r.schedule_id=$1 ORDER BY r.scheduled_for',
+              [schedule.id],
+            )
+          ).rows.map((row) => row.prompt);
+          assert.doesNotMatch(prompts[0]!, /late/);
+          assert.match(prompts[1]!, /2035-10-28T09:05:00\.000Z.*7375 minutes late/);
         },
       );
       await t.test('edits, pauses and deletions fence already claimed jobs', async () => {

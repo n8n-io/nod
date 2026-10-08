@@ -1,5 +1,6 @@
 import { constants } from 'node:fs';
 import { mkdir, open, realpath, rename, rm } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { ObjectStoreConflict, type PrivateObjectStore } from '../../ports/object-storage.ts';
@@ -9,6 +10,61 @@ import {
   objectKey,
   objectLimit,
 } from '../../ports/object-storage-validation.ts';
+
+const writers = new Map<string, Promise<void>>();
+const staleLockMs = 30_000;
+
+async function serial<T>(target: string, action: () => Promise<T>) {
+  const previous = writers.get(target) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const current = previous.then(() => gate);
+  writers.set(target, current);
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+    if (writers.get(target) === current) writers.delete(target);
+  }
+}
+
+async function abandoned(lock: string) {
+  try {
+    const file = await open(lock, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const [info, { buffer, bytesRead }] = await Promise.all([
+      file.stat(),
+      file.read(Buffer.alloc(16), 0, 16, 0),
+    ]).finally(() => file.close());
+    if (Date.now() - info.mtimeMs > staleLockMs) return true;
+    const pid = Number(buffer.subarray(0, bytesRead).toString());
+    if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+    if (pid === process.pid) return true;
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
+async function claim(lock: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const file = await open(lock, 'wx', 0o600);
+      try {
+        await file.writeFile(String(process.pid));
+        return file;
+      } catch (error) {
+        await file.close().finally(() => rm(lock, { force: true }));
+        throw error;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || attempt === 40) throw error;
+    }
+    if (await abandoned(lock)) await rm(lock, { force: true });
+    else await delay(50);
+  }
+}
 
 export function createFilesystemObjectStore(root: string): PrivateObjectStore {
   const directory = resolve(root);
@@ -52,23 +108,25 @@ export function createFilesystemObjectStore(root: string): PrivateObjectStore {
   }
   async function exclusive<T>(key: string, action: () => Promise<T>) {
     const target = path(key);
-    try {
-      await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-      await verifyDirectory(key);
-      const lock = await open(target + '.lock', 'wx', 0o600);
+    return serial(target, async () => {
       try {
-        return await action();
-      } finally {
+        await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+        await verifyDirectory(key);
+        const lock = await claim(target + '.lock');
         try {
-          await lock.close();
+          return await action();
         } finally {
-          await rm(target + '.lock', { force: true });
+          try {
+            await lock.close();
+          } finally {
+            await rm(target + '.lock', { force: true });
+          }
         }
+      } catch (error) {
+        if (error instanceof ObjectStoreConflict) throw error;
+        throw objectFailure();
       }
-    } catch (error) {
-      if (error instanceof ObjectStoreConflict) throw error;
-      throw objectFailure();
-    }
+    });
   }
   return {
     read,

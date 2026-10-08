@@ -23,7 +23,7 @@ Either way, Otto needs a model connection: an OpenAI, Anthropic or OpenRouter AP
 4. Keep the internet connection on while Otto downloads and prepares its private computer. This takes a few minutes the first time.
 5. Follow the onboarding to connect a model, answer a few questions and try a first task.
 
-Closing the window keeps Otto in the menu bar. Scheduled tasks run only while Otto is open and the Mac is awake, so turn on launch at login in **Settings → General** if you rely on them. See [desktop app](desktop/README.md) for what runs locally, where data is stored and current limits.
+Closing the window keeps Otto in the menu bar. Scheduled tasks run only while Otto is open and the Mac is awake. A task missed while Otto was not running runs once when Otto is back and says that it ran late. Turn on launch at login in **Settings → General** if you rely on them. See [desktop app](desktop/README.md) for what runs locally, where data is stored and current limits.
 
 ### Install from source
 

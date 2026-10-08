@@ -171,6 +171,10 @@ export function actionRecipients(action: string, args: Record<string, unknown>) 
   return found;
 }
 
+export function draftAction(action: string, args: Record<string, unknown>) {
+  return actionWords(action, args).some(draft);
+}
+
 export function actionEffect(action: string, args: Record<string, unknown>): ActionEffect {
   if (action === 'SEARCH_TOOLS') return 'read';
   const words = actionWords(action, args);
