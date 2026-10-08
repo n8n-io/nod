@@ -4,7 +4,7 @@
 
 Related npm packages update together, including Pi, Tiptap, the chat SDK, React and Tailwind. Docker image updates are grouped by dependency across directories. Major updates still get pull requests for manual review. Each ecosystem allows up to ten open version-update pull requests; security updates have a separate GitHub-managed limit.
 
-The [merge workflow](../.github/workflows/dependabot-auto-merge.yml) approves and squash-merges verified Dependabot patch and minor updates once required checks pass. Every dependency in a group must qualify. Pre-1.0 npm versions, prereleases, major updates and unclassified updates require manual review. Version numbers and passing CI reduce risk but do not guarantee compatibility.
+The [merge workflow](../.github/workflows/dependabot-auto-merge.yml) approves and squash-merges verified Dependabot patch and minor updates once required checks pass. Every dependency in a group must qualify. Pre-1.0 npm versions, npm prereleases, major updates and unclassified updates require manual review. Version numbers and passing CI reduce risk but do not guarantee compatibility.
 
 The workflow runs without checking out pull request code and binds the approval and merge to a single signed Dependabot commit. It waits for required CI on a runner, with a 60-minute timeout. Failed checks, changed commits or unsatisfied branch protection leave the pull request open. After fixing or rerunning CI, rerun the merge workflow if needed.
 

@@ -54,14 +54,6 @@ jobs:
             echo "This update needs manual review."
             exit 0
           fi
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" |
-            jq -e --arg sha "$HEAD_SHA" '
-              length == 1 and .[0].sha == $sha and
-              .[0].author.login == "dependabot[bot]" and
-              .[0].commit.verification.verified == true
-            ' > /dev/null
-          gh api --method POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
-            -f event=APPROVE -f commit_id="$HEAD_SHA" > /dev/null
           ready=false
           for ((attempt = 0; attempt < 12; attempt++)); do
             ready=$(gh pr view "$PR_URL" --json statusCheckRollup --jq '
@@ -76,6 +68,14 @@ jobs:
             exit 1
           fi
           gh pr checks "$PR_URL" --required --watch --fail-fast --interval 30
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" |
+            jq -e --arg sha "$HEAD_SHA" '
+              length == 1 and .[0].sha == $sha and
+              .[0].author.login == "dependabot[bot]" and
+              .[0].commit.verification.verified == true
+            ' > /dev/null
+          gh api --method POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            -f event=APPROVE -f commit_id="$HEAD_SHA" > /dev/null
           gh pr merge "$PR_URL" --squash --match-head-commit "$HEAD_SHA"
           test "$(gh pr view "$PR_URL" --json mergedAt --jq '.mergedAt != null')" = true
           gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
