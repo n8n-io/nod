@@ -1594,6 +1594,7 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
     'git diff -ochanges.patch',
     'git log --format=json',
     'git log --json',
+    'git log --zero',
     'git  log',
   ])
     assert.equal(await run('bash', { command }), 'exact output\n');
