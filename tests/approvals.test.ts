@@ -557,6 +557,47 @@ test(
       );
 
       await t.test(
+        'a first task the owner tapped is Otto wording and never counts as their request',
+        async () => {
+          const title = 'Reply about revision rounds';
+          await db.pool.query(
+            "INSERT INTO messages(id,owner_id,role,text,thread_id,suggestions) VALUES($1,$2,'assistant',$3,$4,$5)",
+            [
+              randomUUID(),
+              ownerId,
+              `Here are three things I can start on.\n- ${title}`,
+              (await thread.activeThread()).id,
+              JSON.stringify({
+                intro: 'Here are three things I can start on.',
+                tasks: [{ id: randomUUID(), title, source: 'gmail' }],
+              }),
+            ],
+          );
+          aligned = true;
+          const reply = {
+            thread_id: 'synthetic-thread',
+            recipient_email: 'client@example.test',
+            message_body: 'Two rounds are included.',
+          };
+          const tapped = await begin(title);
+          await trust.check(tapped, 'GMAIL_REPLY_TO_THREAD', reply);
+          assert.ok(
+            reviews
+              .at(-1)
+              ?.userMessages.every((message: { text: string }) => message.text !== title),
+          );
+          const approved = await begin('Yes, send that reply to the client.');
+          assert.deepEqual(await trust.check(approved, 'GMAIL_REPLY_TO_THREAD', reply), {
+            confirm: false,
+          });
+          assert.equal(
+            reviews.at(-1)?.userMessages.at(-1).text,
+            'Yes, send that reply to the client.',
+          );
+        },
+      );
+
+      await t.test(
         'background and read-only turns cannot take outside app actions without the owner',
         async () => {
           aligned = true;
