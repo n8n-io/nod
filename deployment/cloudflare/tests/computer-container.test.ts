@@ -321,19 +321,14 @@ test('connected CLI commands run capability-free as otto-connected in its own ho
     '--inh-caps=-all',
     '--ambient-caps=-all',
     '--',
-    'python3',
+    '/usr/bin/python3',
+    '-I',
     '-u',
     '/opt/otto/workspace-command.py',
   ]);
   assert.deepEqual(
     { ...launched.options, signal: undefined },
-    {
-      user: '1002:1002',
-      cwd: '/home/otto-connected',
-      env: { HOME: '/home/otto-connected', XDG_CONFIG_HOME: '/home/otto-connected/.config' },
-      stdin: 'pipe',
-      signal: undefined,
-    },
+    { user: '1002:1002', cwd: '/home/otto-connected', stdin: 'pipe', signal: undefined },
   );
   assert.equal(
     calls.some((call) => call.args.some((arg) => arg.includes('state/workspace/thread'))),

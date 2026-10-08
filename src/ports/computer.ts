@@ -126,12 +126,18 @@ export interface WorkspaceExecOptions {
   onData?(chunk: Buffer): void;
   notices?: boolean;
 }
+export type CliSource = { npm: string } | { pypi: string } | { url: string; sha256?: string };
+export interface ConnectedCli {
+  id: string;
+  command: string;
+  source: CliSource;
+}
 export interface WorkspaceSession {
   path: string;
   instructions: string;
   exec(command: string, options?: WorkspaceExecOptions): Promise<{ exitCode: number }>;
-  executeProgram?(
-    program: string,
+  runConnectedCli?(
+    cli: ConnectedCli,
     args: string[],
     environment: Record<string, string>,
     timeoutSeconds?: number,

@@ -4212,6 +4212,7 @@ test(
       const grantVault = await createAppGrantVault(pool, { ownerId: owner, keyStore });
       const catalogs: string[] = [];
       let cliCalls = 0;
+      const cliRuns: unknown[] = [];
       let replacementCalls = 0;
       let failReplacement = false;
       let blocked: 'http' | 'listTools' | 'callTool' | 'cli' | undefined;
@@ -4257,8 +4258,9 @@ test(
           },
         },
         oauth: {} as Parameters<typeof createDiscoveredConnections>[1]['oauth'],
-        runCli: async (_thread, _command, _argv, _envName, _token, _timeout, signal) => {
+        runCli: async (_thread, cli, _argv, _envName, _token, _timeout, signal) => {
           cliCalls++;
+          cliRuns.push(cli);
           await waitForAbort('cli', signal);
           throw new Error('The CLI must not run during setup.');
         },
@@ -4271,11 +4273,27 @@ test(
           if (failReplacement) throw new Error('Synthetic replacement failure.');
         },
       });
-      const result = await discovered.propose({
+      const cliProposal = (source?: unknown) => ({
         service: 'fixture-app',
         name: 'Fixture app',
-        paths: [{ kind: 'cli', command: 'fixturecli', envName: 'FIXTURE_API_KEY' }],
+        paths: [{ kind: 'cli', command: 'fixturecli', envName: 'FIXTURE_API_KEY', source }],
       });
+      for (const source of [
+        undefined,
+        { npm: '--registry=https://fixture.example' },
+        { npm: './fixturecli' },
+        { npm: 'file:../fixturecli' },
+        { pypi: 'fixturecli; true' },
+        { url: 'http://fixture.example/fixturecli' },
+        { url: 'https://fixture.example/fixturecli', sha256: 'abc' },
+        { npm: 'fixturecli', pypi: 'fixturecli' },
+      ])
+        await assert.rejects(discovered.propose(cliProposal(source)), { name: 'ZodError' });
+      const cliSource = {
+        url: 'https://fixture.example/releases/fixturecli_linux_amd64.tar.gz',
+        sha256: 'a'.repeat(64),
+      };
+      const result = await discovered.propose(cliProposal(cliSource));
       const id = new URL(result.url, 'http://localhost:4310').searchParams.get('connect');
       const saved = await pool.query<{ paths: Array<{ id: string }> }>(
         'SELECT paths FROM discovered_connection_proposals WHERE id=$1',
@@ -4303,6 +4321,7 @@ test(
           command: 'fixturecli',
           auth: 'env',
           envName: 'FIXTURE_API_KEY',
+          source: { npm: '@fixture/cli@1.2.3' },
         },
       ];
       for (const [accountId, accountOwner, accountPaths] of [
@@ -4365,6 +4384,8 @@ test(
         },
       });
       integrations.registerRoutes(app);
+      const setupPage = await app.inject({ url: `/api/apps/discovery/${id}` });
+      assert.deepEqual(setupPage.json().paths[0].source, cliSource);
       const cliSetup = await app.inject({
         method: 'POST',
         url: `/api/apps/discovery/${id}/complete`,
@@ -4483,6 +4504,43 @@ test(
         await outcome;
       }
       blocked = undefined;
+      assert.deepEqual(cliRuns, [
+        { id: cliPath, command: 'fixturecli', source: { npm: '@fixture/cli@1.2.3' } },
+      ]);
+      const again = await discovered.reconnect('fixture-app', connectionId);
+      const reproposed = await pool.query<{ paths: Array<{ kind: string; source?: unknown }> }>(
+        'SELECT paths FROM discovered_connection_proposals WHERE id=$1',
+        [new URL(again.url, 'http://localhost:4310').searchParams.get('connect')],
+      );
+      assert.deepEqual(reproposed.rows[0].paths.find((path) => path.kind === 'cli')?.source, {
+        npm: '@fixture/cli@1.2.3',
+      });
+      const legacyId = randomUUID();
+      const legacyPath = randomUUID();
+      await pool.query(
+        'INSERT INTO discovered_connections(id,owner_id,service,name,account_name,paths) VALUES($1,$2,$3,$4,$5,$6)',
+        [
+          legacyId,
+          owner,
+          'legacy-cli',
+          'Legacy CLI',
+          'Synthetic account',
+          JSON.stringify([{ ...paths[2], id: legacyPath, source: undefined }]),
+        ],
+      );
+      await grantVault.put(legacyId, 'synthetic-legacy-token');
+      await assert.rejects(
+        discovered.execute(
+          'CONNECTED_CLI',
+          { connectionId: legacyId, pathId: legacyPath, argv: ['list'] },
+          ref,
+          new AbortController().signal,
+        ),
+        /install source/,
+      );
+      await assert.rejects(discovered.reconnect('legacy-cli', legacyId), /set up this CLI again/);
+      assert.equal(cliCalls, 1);
+      await discovered.disconnect(legacyId, 'legacy-cli');
       const replacement = await discovered.propose({
         service: 'fixture-app',
         name: 'Fixture app',

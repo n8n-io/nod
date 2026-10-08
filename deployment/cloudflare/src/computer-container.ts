@@ -39,7 +39,8 @@ const workspaceCommand = [
   '--inh-caps=-all',
   '--ambient-caps=-all',
   '--',
-  'python3',
+  '/usr/bin/python3',
+  '-I',
   '-u',
   '/opt/otto/workspace-command.py',
 ];
@@ -383,16 +384,7 @@ abstract class ComputerContainer extends Container<Bindings> {
             this.exec(
               workspaceCommand,
               connected
-                ? {
-                    user: '1002:1002',
-                    cwd: '/home/otto-connected',
-                    env: {
-                      HOME: '/home/otto-connected',
-                      XDG_CONFIG_HOME: '/home/otto-connected/.config',
-                    },
-                    stdin: 'pipe',
-                    signal,
-                  }
+                ? { user: '1002:1002', cwd: '/home/otto-connected', stdin: 'pipe', signal }
                 : { cwd: `/workspace/${threadId}`, stdin: 'pipe', signal },
             ),
         });

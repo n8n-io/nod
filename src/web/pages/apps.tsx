@@ -38,6 +38,7 @@ type Discovery = {
     command?: string;
     auth: string;
     envName?: string;
+    source?: { npm?: string; pypi?: string; url?: string; sha256?: string };
     testPath?: string;
     scope?: string;
     clientIdRequired?: boolean;
@@ -653,7 +654,13 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
               key={`${path.kind}:${path.endpoint ?? path.command}`}
             >
               <strong>{path.kind.toUpperCase()}</strong>
-              <span>{path.endpoint ?? path.command}</span>
+              <span>
+                {path.source?.npm
+                  ? `npm ${path.source.npm}`
+                  : path.source?.pypi
+                    ? `PyPI ${path.source.pypi}`
+                    : (path.source?.url ?? path.endpoint ?? path.command)}
+              </span>
             </div>
           ))}
           {discovery?.paths.some((path) => path.testPath || path.kind === 'cli' || path.scope) && (
@@ -674,6 +681,7 @@ export function Apps({ configuration }: { configuration?: Configuration }) {
                   {path.kind === 'cli' && (
                     <span>CLI: {path.command} (not checked during setup)</span>
                   )}
+                  {path.source?.sha256 && <span>SHA-256: {path.source.sha256}</span>}
                   {path.scope && <span>Requested access: {path.scope}</span>}
                 </div>
               ))}

@@ -17,6 +17,7 @@ Setup and commands are in [README](README.md); how the system works is in [archi
 - The thread browser has one holder: the conversation, a background turn or the user. Others wait in order. The conversation keeps it while it waits for the user, so a browser handoff is never blocked by background work.
 - Pi-native tools (read, bash, edit, write, find, ls) run inside the sandbox through `WorkspaceSession.exec`. The pinned Pi web extension runs in the server process with its process permissions.
 - Provider keys never enter the sandbox or the browser. The Pi web extension, `create_audio` and apps run server-side.
+- A connected CLI token reaches only a sealed install of the path's declared source, run as `otto-connected` with an environment built from scratch; nothing the sandbox user can write runs with a token.
 - `src/server/composition.ts` is the only place that selects providers and runtime implementations. Capabilities are ports in `src/ports`; vendor SDKs stay in `src/providers`; product policy stays in `src/server`; `src/web` imports only web and shared code.
 - Hosted mode: a gateway authenticates Google sessions and routes to one immutable-owner tenant runtime per user. Never change the owner per request.
 

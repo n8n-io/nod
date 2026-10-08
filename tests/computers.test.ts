@@ -365,6 +365,15 @@ function allocationStore() {
   return { store, records };
 }
 
+async function sealedCli(home: string) {
+  const cli = { id: randomUUID(), command: 'fixturecli', source: { npm: 'fixturecli' } };
+  const prefix = join(home, 'cli', cli.id);
+  await mkdir(join(prefix, 'bin'), { recursive: true });
+  await writeFile(join(prefix, 'bin', 'fixturecli'), '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
+  await writeFile(join(prefix, '.installed'), '');
+  return cli;
+}
+
 async function e2bFixture() {
   const root = await mkdtemp('/tmp/otto-e2b-');
   const socketPath = join(root, 'control.sock');
@@ -592,10 +601,11 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
     });
     assert.equal(await execute(workspace, 'printf "héllo"'), 'héllo');
     assert.equal(first.workspace.connectedCliAvailable, true);
+    const cli = await sealedCli(join(f.root, 'computer-1', 'connected'));
     assert.deepEqual(
-      await workspace.executeProgram?.(
-        'python3',
-        ['-c', 'import os;print(os.environ.get("FIXTURE_TOKEN")=="synthetic-private-token")'],
+      await workspace.runConnectedCli?.(
+        cli,
+        ['sh', '-c', '[ "$FIXTURE_TOKEN" = synthetic-private-token ] && echo True'],
         { FIXTURE_TOKEN: 'synthetic-private-token' },
       ),
       { exitCode: 0, output: 'True\n' },
@@ -606,7 +616,7 @@ test('E2B shares one owned sandbox across private browser and supervised workspa
       workspacePath: join(f.root, 'workspaces/task-one'),
       signal: connectedAbort.signal,
     });
-    const stopped = connected.executeProgram!('python3', ['-c', 'import time;time.sleep(30)'], {
+    const stopped = connected.runConnectedCli!(cli, ['sleep', '30'], {
       FIXTURE_TOKEN: 'synthetic-private-token',
     });
     setTimeout(() => connectedAbort.abort(), 50);
@@ -1141,16 +1151,17 @@ test('Cloudflare connected CLI commands use the connected path with one secret a
       workspacePath: join(f.root, 'roots', ownerA, 'same-task'),
       signal: new AbortController().signal,
     });
-    const result = await session.executeProgram!(
-      'python3',
+    const result = await session.runConnectedCli!(
+      await sealedCli(join(f.root, 'workspaces', ownerA, 'same-task')),
       [
+        'sh',
         '-c',
-        'import os;e=os.environ;print(e["SYNTHETIC_API_KEY"], os.path.samefile(os.getcwd(), e["HOME"]), e["XDG_CONFIG_HOME"] == e["HOME"] + "/.config")',
+        'printf "%s %s %s" "$SYNTHETIC_API_KEY" "$([ "$(pwd -P)" = "$(cd "$HOME" && pwd -P)" ] && echo True)" "$([ "$XDG_CONFIG_HOME" = "$HOME/.config" ] && echo True)"',
       ],
       { SYNTHETIC_API_KEY: 'synthetic-connected-value' },
       5,
     );
-    assert.deepEqual(result, { exitCode: 0, output: 'synthetic-connected-value True True\n' });
+    assert.deepEqual(result, { exitCode: 0, output: 'synthetic-connected-value True True' });
     await execute(session, 'printf model');
     assert.deepEqual(
       f.launches.map((launch) => [launch.connected, launch.session]),
