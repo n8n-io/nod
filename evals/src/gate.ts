@@ -195,7 +195,9 @@ export async function runGate(
     ),
   );
   const skipped = Object.keys(members).filter((id) => !(id in current));
-  const label = options.label.slice(0, 75);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,74}$/.test(options.label))
+    throw new Error('Gate labels must be simple file names of at most 75 characters.');
+  const label = options.label;
   const named = `${slug(options.baseline)}-for-${label}`.slice(0, 75);
   const side = (label: string, ref: string | undefined, extra: Partial<RunOptions> = {}) =>
     runSuite({ ...options, label, ref, resume: false, ...extra });
@@ -254,9 +256,9 @@ export async function runGate(
     .filter(Boolean)
     .join('\n\n');
   await mkdir(options.root, { recursive: true });
-  await writeFile(join(options.root, `${options.label}-gate.md`), `${report}\n`);
+  await writeFile(join(options.root, `${label}-gate.md`), `${report}\n`);
   await writeFile(
-    join(options.root, `${options.label}-gate.json`),
+    join(options.root, `${label}-gate.json`),
     JSON.stringify(
       { verdict: result.verdict, blocking: result.blocking, unclear: result.unclear },
       null,
