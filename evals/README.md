@@ -10,7 +10,7 @@ This is a manual model evaluation. It calls live models and costs money (about $
 
 ```sh
 npm run eval:capability -- doctor --fix      # checks Docker, images, database and keys; sets up what is missing
-npm run eval:capability -- run --tier pr     # the small, stable suite: pass rate, trust profile, what went wrong
+npm run eval:capability -- run              # all 34 controlled cases, three attempts each
 ```
 
 You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in the environment or `.env`). `doctor --fix` starts a throwaway Postgres container for the eval's own `eval_*` schemas if you have no test database (it never touches your normal tables) and builds the two images. Every run builds `otto-eval-workspace` and `otto-eval-browser` from this checkout first (Docker's cache makes an unchanged build quick), so results always measure the current Dockerfiles; set `OTTO_EVAL_WORKSPACE_IMAGE` and `OTTO_EVAL_BROWSER_IMAGE` to pin other images. Set `ANTHROPIC_API_KEY` as well to get an independent judge: the judge defaults to `anthropic/claude-sonnet-5-5` and stays fixed while you change the agent model, so runs stay comparable.
@@ -29,7 +29,7 @@ You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in t
 | Cap the spend          | `run --budget 20`                                                                     |
 | Recover from a crash   | `run --label x --resume` redoes only incomplete attempts; `cleanup` removes leftovers |
 
-All commands are used as `npm run eval:capability -- <command> [options]`; `help` lists every option. A run costs about $0.1 to $0.5 per attempt, so start with `--tier pr --repeat 1`.
+Use `npm run eval:capability -- <command> [options]` for all commands. `help` lists the options. The default run selects all 34 controlled cases, including cases that need calibration, with three attempts per case: 102 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
 
 Results are saved under `.local/capability-evals/<label>/` (`report.html` with every transcript and check, `summary.json`, one JSON per attempt). A label never overwrites an earlier run.
 
@@ -37,55 +37,63 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 The **Evals** workflow runs the suite on a Blacksmith runner with a disposable PostgreSQL and images built from the code under test.
 
-- Every published desktop release starts it on the release tag: the `pr` tier, 3 attempts per scenario. A release is skipped when nothing the evals exercise changed since the previous one (`src` outside the web client, `evals`, the two Dockerfiles, `package.json` and the lockfile).
+- Each published desktop release starts the `full` suite on the release tag: all 34 controlled cases, with three attempts per case. The workflow does not start if the code that the evaluations use has not changed since the previous release (`src` outside the web client, `evals`, the two Dockerfiles, `package.json` and the lockfile).
 - To check a branch for regressions, open Actions → Evals → Run workflow, pick a branch you trust (its code runs with the eval keys) and set **baseline** to `main`. It runs the branch, then the same scenarios on the commit where the branch left main, and puts both side by side.
-- Leave **baseline** empty to score a branch on its own, or pick a tier, model, scenarios and budget.
+- Leave **baseline** empty to score one branch. The default tier is **full** and the default repeat count is **3**. Leave **budget** empty to run all attempts. You can select the small **pr** tier, a model, named cases, or a spend limit. A new run waits for the active run on the same branch; it does not cancel that run.
 
-The scores are on the run's summary page (`markdown <label>` or `markdown <baseline> <candidate>` prints the same locally). Every transcript is in the `capability-evals` artifact; unpack it into `.local/capability-evals/` to use `report`, `compare`, `review` or `rejudge`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`, with keys from the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets. Add `EVALS_OPENROUTER_API_KEY` to try OpenRouter models. It fails only when a run produces no completed attempt, never for a low score.
+Open the run summary in GitHub Actions to see the scores and attempt counts. `markdown <label>` or `markdown <baseline> <candidate>` gives the same report locally. Download the `capability-evals` artifact and open `report.html` for each run to read its transcripts and checks. To use `report`, `compare`, `review` or `rejudge`, extract the artifact into `.local/capability-evals/`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`. Their keys are in the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets. Add `EVALS_OPENROUTER_API_KEY` to use OpenRouter models. The workflow fails if any planned attempt is missing or incomplete, or if no regression attempt completed. A low score alone does not fail it. The full run has a six-hour time limit.
 
 ## The suite
 
-Thirty-three scenarios, each a real task written the way a user would ask, most of them from the Otto capabilities project in Linear. Status tells you how much to trust a number: _scored_ scenarios were calibrated and count toward the pass rate; _calibrating_ ones run only with `--include-pending` or by name until their failures have been classified as agent, scenario or fake; _known gap_ scenarios describe something Otto cannot do yet, so they are expected to fail today and are reported apart from the headline; _live web_ ones use the open internet and are never part of the default run.
+The suite has 37 cases: 34 controlled cases and three live web cases. Most cases come from the Otto capabilities project in Linear. The `full` tier includes controlled cases that still need calibration. The small `pr` tier excludes them unless you use `--include-pending` or select them by name. A _known gap_ case tests a task that Otto cannot complete yet; its score is separate from the main score. _Live web_ cases use the open internet and require `--tier live` or selection by name. They are excluded from the default run.
 
-| Scenario                   | Linear  | What it checks                                                                | Capabilities                             | Status      |
-| -------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
-| `admin-email-approvals`    | LAB-394 | Handle the private admin in my email, ask before paying or sending            | approvals, apps, browser                 | scored      |
-| `bank-statements-download` | LAB-392 | Download bank statements and last year's tax assessment into a folder         | files, vault, browser                    | scored      |
-| `book-dinner`              | LAB-393 | Find an Italian table for Friday and book it only when I say go               | approvals, browser, research             | scored      |
-| `cancel-subscription`      | LAB-397 | Cancel a subscription and get this month's refund, keep going until confirmed | browser, vault, approvals, long-running  | scored      |
-| `cart-from-recipes`        | LAB-395 | Fill a supermarket cart from recipe photos and stop before checkout           | browser, files, vault, approvals         | scored      |
-| `chase-unpaid-invoice`     | LAB-375 | Chase an unpaid invoice, but ask me before the second nudge                   | long-running, schedules, approvals, apps | calibrating |
-| `competitor-digest`        | LAB-377 | Weekly competitor digest with screenshots of what changed                     | browser, schedules, memory, files        | scored      |
-| `finance-sheet`            | LAB-380 | Spending by category vs budget from my sheet, then a daily check              | apps, files, schedules, approvals        | scored      |
-| `gym-data-export`          | LAB-384 | Get my workout history out of a gym site with no export, show my progression  | apps, browser, files, vault, schedules   | calibrating |
-| `health-results-pdf`       | LAB-391 | Get my blood test PDF from email, explain it, remind me to re-test            | files, apps, memory, schedules           | scored      |
-| `invoice-signin-blocker`   | LAB-471 | Explain why an invoice needs sign-in and what to do next                      | browser, vault, progress                 | calibrating |
-| `invoices-overdue`         | LAB-386 | Find who owes me money in my email, keep a sheet, draft reminders             | apps, files, approvals                   | scored      |
-| `login-2fa-metrics`        | LAB-379 | Log in with 2FA and read weekly active users                                  | vault, browser, approvals                | scored      |
-| `memory-across-reset`      | LAB-370 | Remember what I told you and never ask twice                                  | memory, progress                         | scored      |
-| `metrics-week-over-week`   | LAB-385 | What changed in our metrics this week versus last, and what might explain it  | research, browser, vault                 | scored      |
-| `morning-brief`            | LAB-387 | Morning brief: what's on, what's due, what's slipping, top 3 for my goals     | schedules, apps, memory, progress        | calibrating |
-| `pay-bill-bank-transfer`   | LAB-367 | Pay a bill from my bank after I approve, including the phone confirmation     | approvals, vault, browser, long-running  | scored      |
-| `portal-account-choice`    | LAB-444 | Ask which saved login to use when two could apply                             | vault, approvals, browser                | scored      |
-| `portal-nif-signin`        | LAB-444 | Sign in with the method I asked for on a nested login page                    | vault, browser                           | scored      |
-| `price-watch`              | LAB-381 | Watch a booked hotel price and alert only when it really drops                | browser, schedules, memory               | scored      |
-| `prospects-research`       | LAB-378 | Research 10 prospects, find the contact, draft a personal pitch each          | research, files, approvals, apps         | known gap   |
-| `purchase-within-limit`    | LAB-373 | Buy a charger without spending over my limit, shipping included               | approvals, vault, browser                | scored      |
-| `rapid-fire-requests`      | LAB-375 | Three requests sent back to back are all answered once and correctly          | progress, long-running, files            | calibrating |
-| `reply-drafts`             | LAB-382 | Draft replies in my voice to the emails that need one                         | apps, memory, approvals                  | scored      |
-| `saved-card-checkout`      | LAB-367 | Pay with my saved card, but only after I approve                              | vault, approvals, browser                | known gap   |
-| `schedule-meeting-invite`  | LAB-373 | Set up a 30-minute call at a time that works, and send the invite             | apps, approvals                          | scored      |
-| `slack-catchup`            | LAB-376 | Slack catch-up: exclude requests already answered in their threads            | apps, progress                           | scored      |
-| `slack-screenshot-agenda`  | LAB-477 | A scheduled check reads an agenda that exists only in Slack screenshots       | schedules, apps, files                   | calibrating |
-| `steering-mid-task`        | LAB-374 | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
-| `stop-and-continue`        | LAB-445 | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
-| `video-links`              |         | Download videos from X, TikTok, YouTube, Instagram and Reddit links           | files, research                          | calibrating |
-| `video-to-three-platforms` | LAB-396 | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
-| `youtube-topics`           | LAB-383 | Recent YouTube videos on a theme, grouped into topics                         | research, progress, files                | calibrating |
+| Scenario                                | Linear  | What it checks                                                                | Capabilities                             | Status      |
+| --------------------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
+| `admin-email-approvals`                 | LAB-394 | Handle the private admin in my email, ask before paying or sending            | approvals, apps, browser                 | scored      |
+| `background-calendar-isolation`         | LAB-529 | An incoming event does not repeat a pending calendar request                  | apps, progress, long-running             | calibrating |
+| `background-calendar-isolation-holdout` | LAB-529 | An incoming event does not repeat a calendar change in progress               | apps, progress, long-running             | calibrating |
+| `bank-statements-download`              | LAB-392 | Download bank statements and last year's tax assessment into a folder         | files, vault, browser                    | scored      |
+| `book-dinner`                           | LAB-393 | Find an Italian table for Friday and book it only when I say go               | approvals, browser, research             | scored      |
+| `cancel-subscription`                   | LAB-397 | Cancel a subscription and get this month's refund, keep going until confirmed | browser, vault, approvals, long-running  | scored      |
+| `cart-from-recipes`                     | LAB-395 | Fill a supermarket cart from recipe photos and stop before checkout           | browser, files, vault, approvals         | scored      |
+| `chase-unpaid-invoice`                  | LAB-375 | Chase an unpaid invoice, but ask me before the second nudge                   | long-running, schedules, approvals, apps | calibrating |
+| `competitor-digest`                     | LAB-377 | Weekly competitor digest with screenshots of what changed                     | browser, schedules, memory, files        | scored      |
+| `finance-sheet`                         | LAB-380 | Spending by category vs budget from my sheet, then a daily check              | apps, files, schedules, approvals        | scored      |
+| `gym-data-export`                       | LAB-384 | Get my workout history out of a gym site with no export, show my progression  | apps, browser, files, vault, schedules   | calibrating |
+| `health-results-pdf`                    | LAB-391 | Get my blood test PDF from email, explain it, remind me to re-test            | files, apps, memory, schedules           | scored      |
+| `invoice-signin-blocker`                | LAB-471 | Explain why an invoice needs sign-in and what to do next                      | browser, vault, progress                 | calibrating |
+| `invoices-overdue`                      | LAB-386 | Find who owes me money in my email, keep a sheet, draft reminders             | apps, files, approvals                   | scored      |
+| `login-2fa-metrics`                     | LAB-379 | Log in with 2FA and read weekly active users                                  | vault, browser, approvals                | scored      |
+| `memory-across-reset`                   | LAB-370 | Remember what I told you and never ask twice                                  | memory, progress                         | scored      |
+| `memory-routine-silent`                 | LAB-535 | Remember a routine without a memory-save question                             | memory, browser, progress                | calibrating |
+| `memory-routine-silent-holdout`         | LAB-535 | Remember a different routine without a memory-save question                   | memory, browser, progress                | calibrating |
+| `metrics-week-over-week`                | LAB-385 | What changed in our metrics this week versus last, and what might explain it  | research, browser, vault                 | scored      |
+| `morning-brief`                         | LAB-387 | Morning brief: what's on, what's due, what's slipping, top 3 for my goals     | schedules, apps, memory, progress        | calibrating |
+| `pay-bill-bank-transfer`                | LAB-367 | Pay a bill from my bank after I approve, including the phone confirmation     | approvals, vault, browser, long-running  | scored      |
+| `portal-account-choice`                 | LAB-444 | Ask which saved login to use when two could apply                             | vault, approvals, browser                | scored      |
+| `portal-nif-signin`                     | LAB-444 | Sign in with the method I asked for on a nested login page                    | vault, browser                           | scored      |
+| `price-watch`                           | LAB-381 | Watch a booked hotel price and alert only when it really drops                | browser, schedules, memory               | scored      |
+| `prospects-research`                    | LAB-378 | Research 10 prospects, find the contact, draft a personal pitch each          | research, files, approvals, apps         | known gap   |
+| `purchase-within-limit`                 | LAB-373 | Buy a charger without spending over my limit, shipping included               | approvals, vault, browser                | scored      |
+| `rapid-fire-requests`                   | LAB-375 | Three requests sent back to back are all answered once and correctly          | progress, long-running, files            | calibrating |
+| `reply-drafts`                          | LAB-382 | Draft replies in my voice to the emails that need one                         | apps, memory, approvals                  | scored      |
+| `saved-card-checkout`                   | LAB-367 | Pay with my saved card, but only after I approve                              | vault, approvals, browser                | known gap   |
+| `schedule-meeting-invite`               | LAB-373 | Set up a 30-minute call at a time that works, and send the invite             | apps, approvals                          | scored      |
+| `slack-catchup`                         | LAB-376 | Slack catch-up: exclude requests already answered in their threads            | apps, progress                           | scored      |
+| `slack-screenshot-agenda`               | LAB-477 | A scheduled check reads an agenda that exists only in Slack screenshots       | schedules, apps, files                   | calibrating |
+| `steering-mid-task`                     | LAB-374 | Take a new instruction in the middle of a task                                | progress, files                          | calibrating |
+| `stop-and-continue`                     | LAB-445 | Stop it halfway, say continue, and finish without repeating or losing work    | long-running, progress, files            | calibrating |
+| `video-links`                           |         | Download videos from X, TikTok, YouTube, Instagram and Reddit links           | files, research                          | calibrating |
+| `video-to-three-platforms`              | LAB-396 | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
+| `youtube-topics`                        | LAB-383 | Recent YouTube videos on a theme, grouped into topics                         | research, progress, files                | calibrating |
 
 The `slack-catchup` case also covers [LAB-469](https://linear.app/n8n/issue/LAB-469): a request that the owner has already answered in its thread must not need another reply.
 
 The `morning-brief` case also covers [LAB-536](https://linear.app/n8n/issue/LAB-536): an explicit daily digest request must create one enabled schedule and deliver a brief without asking for consent again. A later notification preference correction must preserve that schedule. Remembering the request without scheduling it fails.
+
+The full-suite change sets the daily brief's meetings at fixed local times on the run date. It removes the old daytime restriction. Its moodboard check accepts a follow-up action after the review ends. This changes the case fingerprint; earlier run records retain their original check and data.
+
+The stop case waits for the second file before it sends Stop. Its check requires partial work and a cancelled turn. The steering case waits for a tool to start in an active turn before it sends the new instruction. The rapid-request case submits all three requests in order before it waits for replies. These cases use observed state instead of fixed delays. A missing test condition is a measurement error. Each changed case has a new fingerprint; earlier records remain unchanged.
 
 ## Reading a report
 
@@ -100,6 +108,7 @@ The `morning-brief` case also covers [LAB-536](https://linear.app/n8n/issue/LAB-
 - **checks passed** is the share of required checks that passed over all attempts. It moves less than the strict rate and is useful for small changes.
 - **anchor / discriminator / frontier** is computed from the results (at least 3 attempts): about 100%, in between, never. Difficulty is measured, never tagged.
 - **incomplete** attempts hit a harness, mock or provider fault. They are excluded from the percentage and listed with their blame (`agent`, `mock`, `harness`, `infra`). If 30% or more are infra faults the run is marked contaminated.
+- **Attempt counts** show completed attempts, incomplete attempts, and attempts not run. New manifests save the selected case IDs and repeat count. The report lists each missing attempt. Older manifests did not save the selected case IDs, so their planned count is shown as `?`. A partial score does not establish that the full suite ran.
 - **[gap]** scenarios are known limitations. They are reported separately and do not move the headline.
 - Latency and cost: task time p50 and p90, time to first reply, cost per attempt and per passing attempt, tokens, tool calls and tool-error rate. The judge and simulated user are costed separately.
 

@@ -17,14 +17,11 @@ export default scenario({
   user: { approve: true },
   world: () => ({ apps: createApps(owner, {}) }),
   async play(session) {
-    await session.sayDuring(
+    await session.sayTogether([
       'What is 17% of 2,340?',
       'Also create a file called alpha.txt that contains the single word alpha.',
-      1500,
-    );
-    await session
-      .sayDuring('Third thing: what day of the week is 3 January 2027?', 'Thanks.', 500)
-      .catch(() => undefined);
+      'Third thing: what day of the week is 3 January 2027?',
+    ]);
   },
   expect() {
     return [

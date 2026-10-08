@@ -54,7 +54,6 @@ export default scenario({
     await session.sayDuringWithAttachments(
       'Count the words in each of the notes I attached and give me a table.',
       'Also add the character count of each, and put the longest one first.',
-      4000,
       ids,
     );
   },

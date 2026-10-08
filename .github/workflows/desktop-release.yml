@@ -390,4 +390,4 @@ jobs:
             echo "Nothing the evals exercise changed since $previous."
             exit 0
           fi
-          gh workflow run evals.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          gh workflow run evals.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tier=full -f repeat=3

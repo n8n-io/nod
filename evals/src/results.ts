@@ -61,6 +61,7 @@ export interface RunManifest {
   model: string;
   judge: string;
   repeat: number;
+  scenarioIds?: string[];
   k: number;
   provenance: Record<string, string>;
 }
@@ -149,6 +150,12 @@ export interface WentWrong {
 
 export interface RunSummary {
   manifest: RunManifest;
+  coverage: {
+    expected: number | null;
+    completed: number;
+    incomplete: number;
+    missing: string[];
+  };
   regression: Rates;
   combined: Rates;
   gap: Rates;

@@ -1,6 +1,6 @@
 import { check, judge, scenario } from '../scenario.ts';
 import { calendar, createApps, gmail, type Mail } from '../world/apps.ts';
-import { dayLabel, daysAgo, inDays } from '../world/time.ts';
+import { dayLabel, daysAgo, inDays, localTime } from '../world/time.ts';
 
 const owner = { name: 'Alex Rivera', email: 'alex.rivera@riveradesign.example' };
 
@@ -74,7 +74,6 @@ export default scenario({
   seconds: 900,
   timeZone: 'Europe/Madrid',
   calibration: 'pending',
-  window: { from: 7, to: 18 },
   user: {
     approve: false,
     persona:
@@ -90,8 +89,8 @@ export default scenario({
       });
     const events = meetings.map((meeting) => ({
       summary: meeting.summary,
-      start: now + meeting.offset * 60_000,
-      end: now + (meeting.offset + meeting.minutes) * 60_000,
+      start: localTime(now, 0, 8) + meeting.offset * 60_000,
+      end: localTime(now, 0, 8) + (meeting.offset + meeting.minutes) * 60_000,
     }));
     return {
       apps: createApps(owner, {
@@ -213,7 +212,7 @@ export default scenario({
       ),
       judge(
         'top-three-are-tied-to-the-goals',
-        "The brief names exactly three priorities, each connected to one of the user's goals (the Meridian rebrand, recurring income), in a sensible order. Sending the revised moodboard to Sofia before today's review and answering Harborline's quote request are among them. It does not pad the list with newsletters or promotions.",
+        "The brief names exactly three priorities, each connected to one of the user's goals (the Meridian rebrand, recurring income), in a sensible order. The priorities include the revised moodboard for Sofia and the unanswered Harborline quote. If today's review has ended, a follow-up action for the moodboard is valid. It does not pad the list with newsletters or promotions.",
         { failure: 'reasoning' },
       ),
       judge(

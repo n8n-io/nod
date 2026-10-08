@@ -228,6 +228,13 @@ function rates(summaries: ScenarioSummary[]): Rates {
 }
 
 export function summarize(manifest: RunManifest, attempts: AttemptResult[]): RunSummary {
+  const planned = manifest.scenarioIds?.flatMap((id) =>
+    Array.from({ length: manifest.repeat }, (_, index) => `${id}.${index + 1}`),
+  );
+  const recorded = new Map(
+    attempts.map((item) => [`${item.scenario}.${item.attempt}`, item.status]),
+  );
+  const slots = planned ?? [...recorded.keys()];
   const grouped = new Map<string, AttemptResult[]>();
   for (const attempt of attempts)
     grouped.set(attempt.scenario, [...(grouped.get(attempt.scenario) ?? []), attempt]);
@@ -245,6 +252,12 @@ export function summarize(manifest: RunManifest, attempts: AttemptResult[]): Run
   const infra = attempts.filter((item) => item.status === 'incomplete' && item.blame === 'infra');
   return {
     manifest,
+    coverage: {
+      expected: planned?.length ?? null,
+      completed: slots.filter((id) => recorded.has(id) && recorded.get(id) !== 'incomplete').length,
+      incomplete: slots.filter((id) => recorded.get(id) === 'incomplete').length,
+      missing: slots.filter((id) => !recorded.has(id)),
+    },
     regression: rates(regression),
     combined: rates(combined),
     gap: rates(scenarios.filter((item) => item.stance === 'gap')),
