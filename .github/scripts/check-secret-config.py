@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import random
@@ -67,5 +68,21 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
     code, findings = scan(analytics, filename)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
         raise SystemExit("The public token exception must be limited to its configuration file.")
+
+evidence_path = "docs/research/apps-acceptance-b8e489cb.json"
+digest = hashlib.sha256(b"fixture").hexdigest()
+evidence = f'{{\n  "files": {{\n    "src/server/access.ts": "{digest}",\n    "src/ports/key-store.ts": "{digest}"\n  }}\n}}\n'
+code, findings = scan(evidence, evidence_path)
+if code != 0 or findings:
+    raise SystemExit("Source file hashes in app acceptance evidence must pass secret scanning.")
+
+for content, filename in [
+    (evidence.replace(digest, candidate, 1), evidence_path),
+    (f'{evidence}api_key = "{candidate}"\n', evidence_path),
+    (evidence, "app.json"),
+]:
+    code, findings = scan(content, filename)
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit("The evidence exception must cover only source hashes in evidence files.")
 
 print("Secret scanning configuration regression passed.")
