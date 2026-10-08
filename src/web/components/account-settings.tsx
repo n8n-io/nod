@@ -2,6 +2,7 @@ import { ModelSettings } from './models';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   Brain,
+  ChartColumn,
   Clock3,
   KeyRound,
   Globe,
@@ -680,6 +681,23 @@ export function AccountSettings({
                       onChange={native.save}
                     />
                   )}
+                  <div className="account-preference-row">
+                    <span data-analytics-public>
+                      <ChartColumn size={16} aria-hidden="true" />
+                      Share usage data
+                    </span>
+                    <Switch
+                      checked={account.usageData}
+                      disabled={account.saving}
+                      aria-label="Share usage data"
+                      onCheckedChange={(usageData) => {
+                        setError('');
+                        void account.onUsageData(usageData).catch((cause) => {
+                          if (active.current) setError(errorMessage(cause));
+                        });
+                      }}
+                    />
+                  </div>
                 </>
               )}
               {tab === 'Preferences' && (

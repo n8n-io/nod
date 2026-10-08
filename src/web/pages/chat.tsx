@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, Trash2 } from 'lucide-react';
+import { ArrowDown, Check, LoaderCircle, MessageSquarePlus, Trash2, User } from 'lucide-react';
 import type {
   AppState,
   Artifact,
@@ -9,6 +9,7 @@ import type {
   MessageHistoryPage,
   SubmitMessageResponse,
 } from '../../shared/contracts';
+import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
@@ -38,6 +39,7 @@ import {
   visibleConversationTurns,
 } from '../lib/chat-messages';
 import { formatDayLabel, isSameDay, useDateFormat } from '../lib/date-format';
+import { OttoGlyph, Rise } from './onboarding/motion';
 import { SidebarToggle } from '../components/sidebar-toggle';
 
 function verificationFailure(
@@ -59,6 +61,91 @@ function Welcome() {
       <BrandMark />
       <h2>What’s on your mind?</h2>
     </div>
+  );
+}
+const taskSources = { gmail: 'Gmail', web: 'For you', telegram: 'Telegram' } as const;
+function TaskCards({
+  id,
+  suggestions,
+  status,
+  disabled,
+  onStart,
+}: {
+  id: string;
+  suggestions: TaskSuggestions;
+  status(task: SuggestedTask): 'idle' | 'working' | 'done';
+  disabled: boolean;
+  onStart(task: SuggestedTask): void;
+}) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return (
+    <article
+      className="message message-assistant"
+      aria-label="Otto"
+      data-message-id={id}
+      tabIndex={-1}
+    >
+      <div className="assistant-mark" aria-hidden="true">
+        <BrandMark small />
+      </div>
+      <div className="task-suggestions">
+        <p className="task-bubble" data-analytics-private>
+          {suggestions.intro}
+        </p>
+        <div className="task-cards">
+          {suggestions.tasks.map((task, index) => {
+            const state = status(task);
+            return (
+              <Rise
+                key={task.id}
+                show={shown}
+                index={index}
+                className="task-card"
+                data-analytics-private
+              >
+                <span className="task-source">
+                  {task.source === 'web' ? (
+                    <User size={14} aria-hidden="true" />
+                  ) : (
+                    <span className={`task-source-${task.source}`} aria-hidden="true" />
+                  )}
+                  {taskSources[task.source]}
+                </span>
+                <p className="task-title">{task.title}</p>
+                <div className="task-action" aria-live="polite">
+                  {state === 'idle' ? (
+                    <button
+                      type="button"
+                      className="task-start"
+                      disabled={disabled}
+                      onClick={() => onStart(task)}
+                    >
+                      Do it
+                    </button>
+                  ) : state === 'working' ? (
+                    <span className="task-state">
+                      <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                      On it…
+                    </span>
+                  ) : (
+                    <span className="task-state">
+                      <span className="task-check" aria-hidden="true">
+                        <Check size={13} strokeWidth={3} />
+                      </span>
+                      Done
+                    </span>
+                  )}
+                </div>
+              </Rise>
+            );
+          })}
+        </div>
+      </div>
+    </article>
   );
 }
 export function Chat({
@@ -202,6 +289,18 @@ export function Chat({
       };
     }),
   ]);
+  const planning =
+    state.planningTasks === true && !allMessages.some((message) => message.suggestions);
+  function taskStatus(task: SuggestedTask, after: number) {
+    const sent = allMessages
+      .slice(after + 1)
+      .find((message) => message.role === 'user' && message.text === task.title);
+    if (!sent) return 'idle';
+    const turn = sent.turnId ? state.turns.find((item) => item.id === sent.turnId) : undefined;
+    if (!turn) return persistedIds.has(sent.id) ? 'done' : 'working';
+    if (turn.status === 'succeeded') return 'done';
+    return turn.status === 'failed' || turn.status === 'cancelled' ? 'idle' : 'working';
+  }
   const foregroundTurn = state.turns
     .filter((turn) => turn.showTyping !== false)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
@@ -790,49 +889,76 @@ export function Chat({
                     <span>{formatDayLabel(message.createdAt, dateFormat)}</span>
                   </div>
                 )}
-                <MessageBubble
-                  message={message}
-                  connectedAppIds={connectedAppIds}
-                  streaming={streamIds.has(message.streamId ?? '')}
-                  inspectorEnabled={state.configuration.inspectorEnabled}
-                  grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
-                  onHandoffDone={
-                    message.id === returningHandoff ||
-                    (message.id === handoffMessage?.id &&
-                      message.role === 'assistant' &&
-                      !working &&
-                      !sending)
-                      ? () => finishHandoff(message.id)
-                      : undefined
-                  }
-                  onReply={
-                    message.turnId || persistedIds.has(message.id)
-                      ? () => {
-                          setReplyTo(message);
-                          composer.current?.focus();
-                        }
-                      : undefined
-                  }
-                />
+                {message.suggestions ? (
+                  <TaskCards
+                    id={message.id}
+                    suggestions={message.suggestions}
+                    status={(task) =>
+                      taskStatus(
+                        task,
+                        allMessages.findIndex((item) => item.id === message.id),
+                      )
+                    }
+                    disabled={!state.configuration.llmReady || resetting || welcoming}
+                    onStart={(task) => void send(task.title, [], null)}
+                  />
+                ) : (
+                  <MessageBubble
+                    message={message}
+                    connectedAppIds={connectedAppIds}
+                    streaming={streamIds.has(message.streamId ?? '')}
+                    inspectorEnabled={state.configuration.inspectorEnabled}
+                    grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
+                    onHandoffDone={
+                      message.id === returningHandoff ||
+                      (message.id === handoffMessage?.id &&
+                        message.role === 'assistant' &&
+                        !working &&
+                        !sending)
+                        ? () => finishHandoff(message.id)
+                        : undefined
+                    }
+                    onReply={
+                      message.turnId || persistedIds.has(message.id)
+                        ? () => {
+                            setReplyTo(message);
+                            composer.current?.focus();
+                          }
+                        : undefined
+                    }
+                  />
+                )}
               </Fragment>
             ))}
-            {(sending || resetting || working || welcoming) && streamEntries.length === 0 && (
-              <div
-                className="thinking"
-                role="status"
-                aria-label={
-                  resetting ? 'Starting setup' : sending ? 'Sending message' : 'Otto is typing'
-                }
-              >
-                <div className="assistant-mark">
-                  <BrandMark small />
+            {planning ? (
+              <div className="thinking task-planning" role="status">
+                <div className="assistant-mark" aria-hidden="true">
+                  <OttoGlyph size={24} mode="thinking" />
                 </div>
-                <span className="thinking-dots" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
+                <span className="task-bubble">
+                  Pulling together a few ideas from what you told me…
                 </span>
               </div>
+            ) : (
+              (sending || resetting || working || welcoming) &&
+              streamEntries.length === 0 && (
+                <div
+                  className="thinking"
+                  role="status"
+                  aria-label={
+                    resetting ? 'Starting setup' : sending ? 'Sending message' : 'Otto is typing'
+                  }
+                >
+                  <div className="assistant-mark">
+                    <BrandMark small />
+                  </div>
+                  <span className="thinking-dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </div>
+              )
             )}
           </div>
           <div ref={bottom} />

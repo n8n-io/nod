@@ -23,7 +23,6 @@ import {
   resetThread,
   stopThread,
   submitUserMessage,
-  welcomeSourceId,
 } from './thread.ts';
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
@@ -48,7 +47,7 @@ import type { WorkAdmission } from './work-admission.ts';
 import type { TenantDrain } from '../ports/deployment.ts';
 import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 
-const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",
+const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',left(target.text,1000)) END AS "replyTo"`;
 function messageView(row: Message & { assistantReaction?: MessageReaction | null }): Message {
   const { assistantReaction, ...message } = row;
@@ -88,6 +87,7 @@ export interface AppDependencies {
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;
+  planningTasks?: () => boolean;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -155,17 +155,17 @@ export async function createApp(dependencies: AppDependencies = {}) {
   if (desktopAccess)
     app.get('/api/desktop/status', async () => {
       const result = await pool.query<{ source: string; visible: boolean }>(
-        "SELECT source,(NOT background OR source_id=$2) AS visible FROM turns WHERE owner_id=$1 AND status='running'",
-        [ownerId, welcomeSourceId],
+        "SELECT source,NOT background AS visible FROM turns WHERE owner_id=$1 AND status='running'",
+        [ownerId],
       );
       return { running: result.rows };
     });
-  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",(NOT u.background OR u.source_id=$2) AS "showTyping"`;
+  const turnFields = `u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt",NOT u.background AS "showTyping"`;
   async function messageTurns(threadId: string, ids: string[]): Promise<Turn[]> {
     if (!ids.length) return [];
     const result = await pool.query(
-      `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$3 AND u.id=ANY($4::uuid[])`,
-      [ownerId, welcomeSourceId, threadId, [...new Set(ids)]],
+      `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 AND u.id=ANY($3::uuid[])`,
+      [ownerId, threadId, [...new Set(ids)]],
     );
     return result.rows;
   }
@@ -179,8 +179,8 @@ export async function createApp(dependencies: AppDependencies = {}) {
         [ownerId, thread.id],
       ),
       pool.query(
-        `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$3 ORDER BY u.created_at DESC LIMIT 50`,
-        [ownerId, welcomeSourceId, thread.id],
+        `SELECT ${turnFields} FROM turns u WHERE u.owner_id=$1 AND u.thread_id=$2 ORDER BY u.created_at DESC LIMIT 50`,
+        [ownerId, thread.id],
       ),
       dependencies.verification?.pending() ?? [],
     ]);
@@ -197,6 +197,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       messages: visibleMessages.map(messageView),
       turns: [...turns.rows, ...olderTurns],
       verificationRequests,
+      planningTasks: dependencies.planningTasks?.() ?? false,
       configuration: publicConfiguration(),
     };
   });

@@ -68,6 +68,7 @@ export async function initializeDatabase() {
       stream_id text, reaction text, assistant_reaction text, assistant_reacted_at timestamptz,
       reaction_revision integer NOT NULL DEFAULT 0, reply_to_message_id uuid REFERENCES messages(id)
     );
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS suggestions jsonb;
     CREATE INDEX IF NOT EXISTS messages_owner_agent_reaction_time ON messages(owner_id,assistant_reacted_at DESC) WHERE assistant_reacted_at IS NOT NULL;
     CREATE TABLE IF NOT EXISTS artifacts (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid REFERENCES threads(id), name text NOT NULL,

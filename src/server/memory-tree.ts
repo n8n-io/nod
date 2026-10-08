@@ -42,14 +42,14 @@ const entryFields = z.object({
   slug,
   text: line(600),
   abstract: line(120).optional(),
-  origin: z.enum(['stated', 'inferred']),
+  origin: z.enum(['stated', 'inferred', 'email']),
   updated: timestamp,
   edited: timestamp.optional(),
   sources: z.array(id).max(5),
   expires: z.iso.date().optional(),
 });
 const evidenced = (entry: z.infer<typeof entryFields>) =>
-  entry.sources.length > 0 || !!entry.edited;
+  entry.sources.length > 0 || !!entry.edited || entry.origin === 'email';
 const entrySchema = entryFields.refine(evidenced);
 const archivedSchema = entryFields
   .extend({
@@ -138,7 +138,11 @@ export const abstractOf = (entry: Entry) =>
   entry.abstract ??
   (entry.text.length <= 120 ? entry.text : `${entry.text.slice(0, 119).trimEnd()}…`);
 export const statusOf = (entry: Entry) =>
-  entry.origin === 'stated' ? 'stated' : entry.sources.length > 1 ? 'observed' : 'tentative';
+  entry.origin === 'stated'
+    ? 'stated'
+    : entry.origin === 'email' || entry.sources.length > 1
+      ? 'observed'
+      : 'tentative';
 
 export function freeSlug(tree: Tree, target: Area, base: string) {
   const taken = new Set(tree.entries.filter((entry) => entry.area === target).map((e) => e.slug));
@@ -393,6 +397,7 @@ export function view(
         updated: entry.updated,
         edited: entry.edited ?? null,
         expires: entry.expires ?? null,
+        learnedFrom: entry.origin === 'email' ? ('email' as const) : null,
         sources: entry.sources.map(source),
       })),
     archive: tree.archive.toReversed().map((entry) => ({

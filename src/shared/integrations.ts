@@ -11,6 +11,8 @@ export const integrationServiceIds = [
 
 export type IntegrationService = (typeof integrationServiceIds)[number];
 
+export type IntegrationKeyStatus = { managed: boolean; saved: boolean; suffix: string | null };
+
 export const integrationServices: Record<
   IntegrationService,
   { name: string; description: string }

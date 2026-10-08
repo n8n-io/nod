@@ -227,6 +227,7 @@ export async function createGateway(options: {
       email: session.user.email?.slice(0, 320) || null,
       preferredName:
         (welcomeProfiles.get(session.user.id) ?? account.displayName)?.slice(0, 100) || null,
+      usageData: account.usageData,
     });
     if (syncedProfiles.get(session.user.id) === body) return;
     const response = await options.runtimes.fetch(

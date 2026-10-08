@@ -11,7 +11,7 @@ Otto keeps one selected connection, model, and effort per owner. All channels us
 | Anthropic  | API key                            | Claude Opus 5.5, high   |
 | OpenRouter | API key; browser sign-in with PKCE | GPT-6.1 Sol, high       |
 
-Onboarding shows model connections before app connections. Environment connections appear as connected services without exposing saved keys. A first ChatGPT connection selects GPT-6 Sol automatically when available, without opening the model picker. The model control lets the owner change the default before opening chat. Onboarding continues once a model is selected. An empty chat without a model shows one connection action in place of the message box.
+Onboarding shows model connections before the setup questions and app connections. Environment connections appear as connected services without exposing saved keys. A first ChatGPT connection selects GPT-6 Sol automatically when available, without opening the model picker. The model control lets the owner change the default before opening chat. Onboarding continues once a model is selected. An empty chat without a model shows one connection action in place of the message box.
 
 Use **Models** in the account menu to add, refresh, reconnect, or remove connections. Connect all the services you want. The model control above chat shows one searchable list from all connected services and uses high effort where the model supports it. Each model shows the connection that receives the request. Choosing a model also chooses its connection. Adding a connection keeps an existing choice. For API connections whose default is unavailable, select a listed model.
 

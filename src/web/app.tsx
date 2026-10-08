@@ -38,6 +38,9 @@ import {
   subscribeDesktopSettings,
 } from './lib/desktop';
 
+function replayingOnboarding(path: string) {
+  return import.meta.env?.DEV === true && path === '/onboarding';
+}
 function navigate(path: string) {
   window.history.pushState(null, '', path);
   window.dispatchEvent(new PopStateEvent('popstate'));
@@ -430,16 +433,18 @@ function AuthenticatedApp({
     user: session.user!,
     local: session.auth.mode === 'local',
     theme: session.settings!.theme,
+    usageData: session.settings!.usageData,
     saving,
     canLogout: session.auth.mode === 'google',
     onSettings: openSettings,
     onTheme: (theme) => onAccountUpdate({ theme }),
+    onUsageData: (usageData) => onAccountUpdate({ usageData }),
     onLogout,
   };
   const allowed = !['/browser', '/dev'].includes(path) || session.capabilities.developer;
   const match = /^\/(?:vault|credentials)\/([^/]+)\/?$/.exec(path);
-  const workspace =
-    allowed && path !== '/browser' && !match && session.settings!.onboardingCompleted;
+  const onboarding = !session.settings!.onboardingCompleted || replayingOnboarding(path);
+  const workspace = allowed && path !== '/browser' && !match && !onboarding;
   return (
     <>
       {!allowed ? (
@@ -453,12 +458,20 @@ function AuthenticatedApp({
         <BrowserWindow />
       ) : match ? (
         <Credentials key={match[1]} id={match[1]} />
-      ) : !session.settings!.onboardingCompleted ? (
+      ) : onboarding ? (
         <Onboarding
           user={session.user!}
           canLogout={account.canLogout}
           onLogout={onLogout}
-          onComplete={() => onAccountUpdate({ onboardingCompleted: true })}
+          onFeedback={openFeedback}
+          feedbackOpen={feedbackOpen}
+          usageData={account.usageData}
+          onUsageData={account.onUsageData}
+          onComplete={() =>
+            onAccountUpdate({ onboardingCompleted: true }).then(() => {
+              if (replayingOnboarding(path)) navigate('/');
+            })
+          }
         />
       ) : (
         <Workspace
@@ -541,7 +554,7 @@ function AccountApp({
         ? '/onboarding'
         : legacyBrowserLink
           ? '/apps'
-          : path === '/login' || path === '/onboarding'
+          : path === '/login' || (path === '/onboarding' && !replayingOnboarding(path))
             ? '/'
             : null;
     if (next && next !== path) {
@@ -609,7 +622,13 @@ function AccountApp({
   return (
     <AuthenticatedApp
       key={key}
-      path={legacyBrowserLink ? '/apps' : path === '/login' || path === '/onboarding' ? '/' : path}
+      path={
+        legacyBrowserLink
+          ? '/apps'
+          : path === '/login' || (path === '/onboarding' && !replayingOnboarding(path))
+            ? '/'
+            : path
+      }
       session={session}
       saving={sessionState.mutating}
       onAccountUpdate={sessionState.update}

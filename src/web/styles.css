@@ -122,8 +122,7 @@ body {
   background: transparent;
   box-shadow: none;
 }
-:root[data-desktop='true']
-  :is(.account-onboarding, .sign-in-page, .privacy-page, .browser-window, .credential-page) {
+:root[data-desktop='true'] :is(.sign-in-page, .privacy-page, .browser-window, .credential-page) {
   min-height: calc(100dvh - var(--desktop-titlebar-height));
 }
 button,

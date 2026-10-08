@@ -3,7 +3,15 @@ export interface MemoryCurator {
   configured: boolean;
   curate(
     request: {
-      task: 'reflect' | 'consolidate' | 'search' | 'review' | 'progress';
+      task:
+        | 'reflect'
+        | 'consolidate'
+        | 'search'
+        | 'review'
+        | 'progress'
+        | 'interview'
+        | 'style'
+        | 'plan';
       instructions: string;
       input: object;
     },
