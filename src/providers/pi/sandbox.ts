@@ -335,7 +335,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     ...definition,
     ...(definition.name === 'bash'
       ? {
-          description: `${definition.description}\nBasic git status/diff/log commands use RTK to compress output. Use rtk proxy for exact output, or rtk explicitly for other supported commands.`,
+          description: `${definition.description}\nBasic git status/diff and count-limited git log commands use RTK to compress output. Use rtk proxy for exact output, or rtk explicitly for other supported commands.`,
         }
       : {}),
     execute: (id, params, signal, onUpdate, context) =>
