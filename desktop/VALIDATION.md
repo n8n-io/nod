@@ -203,7 +203,7 @@ Example Domain
 Created in Otto’s local workspace.
 ```
 
-The read-only welcome message is not counted as live model evidence.
+The first-chat greeting and task cards are not counted as live model evidence.
 
 ## Isolated runtime acceptance
 

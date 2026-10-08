@@ -114,16 +114,17 @@ export async function createAnalytics(options: {
     options.provider && options.deployment === 'local'
       ? await installationId(options.dataRoot, options.installationId).catch(() => null)
       : null;
-  const enabled = Boolean(options.provider && (options.deployment === 'hosted' || localId));
+  const available = Boolean(options.provider && (options.deployment === 'hosted' || localId));
+  const usageData = new Map<string, boolean>();
   function configuration(owner: string | null): AnalyticsConfiguration {
+    const enabled = available && !!owner && usageData.get(owner) === true;
     return {
       enabled,
-      distinctId:
-        enabled && owner
-          ? options.deployment === 'hosted'
-            ? `hosted:${owner}`
-            : `local:${localId}`
-          : null,
+      distinctId: enabled
+        ? options.deployment === 'hosted'
+          ? `hosted:${owner}`
+          : `local:${localId}`
+        : null,
       deployment: options.deployment,
       environment: options.environment,
     };
@@ -150,6 +151,9 @@ export async function createAnalytics(options: {
   return {
     configuration,
     capture,
+    setUsageData(owner: string, enabled: boolean) {
+      usageData.set(owner, enabled);
+    },
     forOwner:
       (owner: string): CaptureAnalytics =>
       (event) =>

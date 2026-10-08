@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import {
-  LayoutGrid,
-  Monitor,
-  Moon,
-  MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings,
-  Sun,
-} from 'lucide-react';
+import { LayoutGrid, Monitor, Moon, MoreHorizontal, Settings, Sun } from 'lucide-react';
 import { BrandMark } from './brand';
 import { AccountAvatar, accountInitials } from './account-avatar';
 import { ConnectionMenu } from './connection-menu';
@@ -25,7 +16,6 @@ export function Sidebar({
   path,
   unreadCount = 0,
   unreadPending = false,
-  collapsed,
   onToggle,
   onNavigate,
   development = import.meta.env?.DEV === true,
@@ -37,7 +27,6 @@ export function Sidebar({
   path: string;
   unreadCount?: number;
   unreadPending?: boolean;
-  collapsed: boolean;
   onToggle(): void;
   onNavigate(path: string): void;
   development?: boolean;
@@ -213,22 +202,6 @@ export function Sidebar({
           <BrandMark />
           <span data-analytics-public>otto</span>
         </a>
-        <button
-          type="button"
-          className="button button-ghost button-icon sidebar-toggle"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-expanded={!collapsed}
-          aria-controls="sidebar-navigation"
-          aria-keyshortcuts="Meta+B Control+B"
-          title={`${collapsed ? 'Expand sidebar' : 'Collapse sidebar'} (${shortcutLabel('b', mac)})`}
-          onClick={onToggle}
-        >
-          {collapsed ? (
-            <PanelLeftOpen size={16} aria-hidden="true" />
-          ) : (
-            <PanelLeftClose size={16} aria-hidden="true" />
-          )}
-        </button>
       </div>
       <nav className="main-nav" aria-label="Main navigation" id="sidebar-navigation">
         <ul

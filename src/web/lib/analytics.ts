@@ -4,7 +4,9 @@ import { desktopSettingsAvailable } from './desktop';
 import { analyticsRoute, recordingOptions, sanitizedAnalyticsUrl } from './analytics-privacy';
 
 type AnalyticsEvents = {
-  otto_onboarding_step_viewed: { step: 'models' | 'apps' };
+  otto_onboarding_step_viewed: {
+    step: 'welcome' | 'brain' | 'about' | 'email' | 'telegram' | 'open_source';
+  };
   otto_settings_viewed: {
     tab: 'general' | 'profile' | 'appearance' | 'preferences' | 'models' | 'memory';
   };
@@ -19,7 +21,9 @@ type AnalyticsEvents = {
 };
 
 const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unknown[]>> = {
-  otto_onboarding_step_viewed: { step: ['models', 'apps'] },
+  otto_onboarding_step_viewed: {
+    step: ['welcome', 'brain', 'about', 'email', 'telegram', 'open_source'],
+  },
   otto_settings_viewed: {
     tab: ['general', 'profile', 'appearance', 'preferences', 'models', 'memory'],
   },

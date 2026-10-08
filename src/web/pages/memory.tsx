@@ -268,6 +268,11 @@ function NoteDetail({
           {formatDayLabel(note.edited, format)}
         </p>
       )}
+      {note.learnedFrom === 'email' && (
+        <p className="memory-meta">
+          Learned from your sent email · {formatDayLabel(note.updated, format)}
+        </p>
+      )}
       <Sources sources={note.sources} />
       {history.map((item) => (
         <p key={archivedKey(item)} className="memory-meta">

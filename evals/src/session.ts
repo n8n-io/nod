@@ -15,14 +15,9 @@ export interface Interaction {
 export interface Session {
   followUp(): Promise<void>;
   say(text: string, options?: { attach?: string[] }): Promise<void>;
-  sayDuring(first: string, interjection: string, afterMs: number): Promise<void>;
-  interruptAfter(first: string, afterMs: number): Promise<void>;
-  sayDuringWithAttachments(
-    first: string,
-    interjection: string,
-    afterMs: number,
-    attach: string[],
-  ): Promise<void>;
+  sayTogether(texts: string[]): Promise<void>;
+  interruptWhen(first: string, ready: () => Promise<boolean>): Promise<void>;
+  sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
   upload(name: string, bytes: Buffer, mimeType?: string): Promise<string>;
   fireSchedules(): Promise<number>;
   event(summary: string): Promise<string>;
@@ -41,6 +36,14 @@ export interface Session {
 }
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+export async function waitUntil(ready: () => Promise<boolean>, deadline: number) {
+  while (Date.now() < deadline) {
+    if (await ready()) return;
+    await sleep(250);
+  }
+  throw new Error('The test condition was not reached before the case deadline.');
+}
 
 export function createSession(options: {
   stack: Stack;
@@ -233,20 +236,31 @@ export function createSession(options: {
       await post('/api/messages', { text, attachmentIds: sendOptions?.attach ?? [] });
       await converse();
     },
-    async interruptAfter(first, afterMs) {
+    async sayTogether(texts) {
+      for (const text of texts) {
+        userMessages.push({ at: Date.now(), text });
+        await post('/api/messages', { text, attachmentIds: [] });
+      }
+      await converse();
+    },
+    async interruptWhen(first, ready) {
       userMessages.push({ at: Date.now(), text: first });
       await post('/api/messages', { text: first, attachmentIds: [] });
-      await sleep(afterMs);
+      await waitUntil(ready, deadline);
       await post('/api/thread/stop', {});
       await settle();
     },
-    async sayDuring(first, interjection, afterMs) {
-      return this.sayDuringWithAttachments(first, interjection, afterMs, []);
-    },
-    async sayDuringWithAttachments(first, interjection, afterMs, attach) {
+    async sayDuringWithAttachments(first, interjection, attach) {
       userMessages.push({ at: Date.now(), text: first });
       await post('/api/messages', { text: first, attachmentIds: attach });
-      await sleep(afterMs);
+      const id = await thread();
+      await waitUntil(async () => {
+        const result = await pool.query(
+          "SELECT 1 FROM turn_events e JOIN turns t ON t.id=e.turn_id WHERE t.thread_id=$1 AND NOT t.background AND t.status='running' AND e.type='tool_start' LIMIT 1",
+          [id],
+        );
+        return Boolean(result.rowCount);
+      }, deadline);
       userMessages.push({ at: Date.now(), text: interjection });
       await post('/api/messages', { text: interjection, attachmentIds: [] });
       await converse();

@@ -925,6 +925,7 @@ async function appsFixture(
       | 'validateActivityCheck'
       | 'wake'
       | 'readWorkspaceFile'
+      | 'learnWritingStyle'
     >
   > = {},
 ) {
@@ -1054,6 +1055,106 @@ async function appsFixture(
 }
 
 test(
+  'connecting Gmail starts style learning in the background on that account only',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const reads: string[] = [];
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    t.after(() => release());
+    const jobs: Array<Promise<unknown>> = [];
+    const f = await appsFixture(t, undefined, {
+      learnWritingStyle: async (read) => {
+        await held;
+        jobs.push(read(AbortSignal.timeout(1000)));
+      },
+    });
+    f.provider.sentEmails = async (accountId) => {
+      reads.push(accountId);
+      return [];
+    };
+    await f.connect('slack');
+    const gmail = await f.connect('gmail');
+    assert.deepEqual(reads, []);
+    release();
+    await delay(20);
+    await Promise.all(jobs);
+    assert.deepEqual(reads, [gmail.accountId]);
+  },
+);
+
+test(
+  "first-task inbox snippets read only the owner's active Gmail account",
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const reads: string[] = [];
+    f.provider.inboxSnippets = async (accountId) => {
+      reads.push(accountId);
+      return [{ subject: 'Synthetic subject', snippet: 'Synthetic snippet' }];
+    };
+    await f.pool.query(
+      "INSERT INTO app_connections(owner_id,slug,account_id) VALUES('synthetic-foreign-owner','gmail','foreign-gmail')",
+    );
+    const signal = AbortSignal.timeout(1000);
+    assert.deepEqual(await f.service.inboxSnippets(signal), []);
+    const gmail = await f.connect('gmail');
+    assert.deepEqual(await f.service.inboxSnippets(signal), [
+      { subject: 'Synthetic subject', snippet: 'Synthetic snippet' },
+    ]);
+    assert.deepEqual(reads, [gmail.accountId]);
+  },
+);
+
+test('Composio first-task inbox snippets read at most fifteen subjects and snippets, never bodies', async (t) => {
+  const requests: Array<{ path: string; parameters: unknown }> = [];
+  const snippets = inboxPollFixture(
+    t,
+    (input) => {
+      const path = input.endpoint.replace('https://gmail.googleapis.com/gmail/v1/users/me/', '');
+      requests.push({ path, parameters: input.parameters });
+      if (path === 'messages')
+        return {
+          status: 200,
+          data: { messages: Array.from({ length: 15 }, (_, index) => ({ id: `m${index}` })) },
+        };
+      return {
+        status: 200,
+        data: {
+          snippet: `Synthetic snippet ${path}`,
+          payload: { headers: [{ name: 'Subject', value: `Synthetic ${path}` }] },
+        },
+      };
+    },
+    'inboxSnippets',
+  );
+  const read = await snippets('inbox-account', new AbortController().signal);
+  assert.equal(read.length, 15);
+  assert.deepEqual(read[0], {
+    subject: 'Synthetic messages/m0',
+    snippet: 'Synthetic snippet messages/m0',
+  });
+  assert.equal(requests.length, 16);
+  assert.deepEqual(requests[0].parameters, [
+    {
+      in: 'query',
+      name: 'q',
+      value: 'in:inbox newer_than:14d -category:promotions -category:social -category:forums',
+    },
+    { in: 'query', name: 'maxResults', value: 15 },
+    { in: 'query', name: 'fields', value: 'messages/id' },
+  ]);
+  for (const request of requests.slice(1))
+    assert.deepEqual(request.parameters, [
+      { in: 'query', name: 'format', value: 'metadata' },
+      { in: 'query', name: 'metadataHeaders', value: 'Subject' },
+      { in: 'query', name: 'fields', value: 'snippet,payload/headers' },
+    ]);
+});
+
+test(
   'saved integration keys remain redacted after restart and replacement',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
@@ -1091,6 +1192,92 @@ test(
       createErrorRedactor(lateSecrets)(`Received ${original} and ${replacement}.`),
       'Received [redacted] and [redacted].',
     );
+  },
+);
+
+test(
+  'integration keys are verified before saving and their status stays owner scoped',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const f = await appsFixture(t);
+    const valid = 'synthetic-composio-valid-wxyz';
+    const checked: string[] = [];
+    let reachable = true;
+    const provider: IntegrationProvider = {
+      ...f.provider,
+      configured: false,
+      setApiKey: () => {},
+      verifyApiKey: async (key) => {
+        checked.push(key);
+        if (!reachable) throw new Error('Synthetic network failure.');
+        return key === valid;
+      },
+    };
+    const keyStore = {
+      id: 'fixture',
+      configured: true,
+      getKey: async () => Buffer.alloc(32, 7),
+    };
+    const open = async (ownerId: string) => {
+      const app = Fastify();
+      const service = createIntegrationKeyService({
+        database: f.pool,
+        ownerId,
+        keyStore,
+        provider,
+      });
+      await service.initialize();
+      service.register(app);
+      await app.ready();
+      t.after(() => app.close());
+      return app;
+    };
+    const owner = await open('local-development');
+    const put = (key: unknown) =>
+      owner.inject({ method: 'PUT', url: '/api/integrations/key', payload: { key } });
+    const status = async (app = owner) =>
+      (await app.inject({ url: '/api/integrations/key' })).json();
+    const rejected = await put('synthetic-composio-wrong');
+    assert.equal(rejected.statusCode, 400);
+    assert.equal(
+      rejected.json().error,
+      'That key didn’t work. Copy it again from Composio and paste it here.',
+    );
+    assert.deepEqual(await status(), { managed: false, saved: false, suffix: null });
+    assert.equal((await put('short')).statusCode, 400);
+    reachable = false;
+    const offline = await put(valid);
+    assert.equal(offline.statusCode, 400);
+    assert.equal(offline.json().error, 'Composio could not be reached. Try again.');
+    assert.deepEqual(await status(), { managed: false, saved: false, suffix: null });
+    reachable = true;
+    const saved = await put(valid);
+    assert.equal(saved.statusCode, 200, saved.body);
+    const current = await owner.inject({ url: '/api/integrations/key' });
+    assert.deepEqual(current.json(), { managed: false, saved: true, suffix: 'wxyz' });
+    assert.doesNotMatch(current.body, /synthetic-composio-valid/);
+    const check = await owner.inject({
+      method: 'POST',
+      url: '/api/integrations/key/check',
+      payload: { key: 'synthetic-composio-wrong' },
+    });
+    assert.equal(check.statusCode, 400);
+    assert.deepEqual(await status(await open('local-development')), {
+      managed: false,
+      saved: true,
+      suffix: 'wxyz',
+    });
+    assert.deepEqual(await status(await open('other-owner')), {
+      managed: false,
+      saved: false,
+      suffix: null,
+    });
+    assert.deepEqual(checked, [
+      'synthetic-composio-wrong',
+      valid,
+      valid,
+      'synthetic-composio-wrong',
+    ]);
   },
 );
 
@@ -5542,12 +5729,13 @@ test('metering covers capabilities without recording prompts, arguments, output 
   assert.doesNotMatch(JSON.stringify(rows), /private|secret\.example/);
 });
 
-function inboxPollFixture(
+function inboxPollFixture<M extends 'pollInbox' | 'inboxSnippets' = 'pollInbox'>(
   t: TestContext,
   respond: (
     input: Parameters<Composio['tools']['proxyExecute']>[0],
     signal: AbortSignal,
   ) => unknown,
+  method: M = 'pollInbox' as M,
 ) {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -5569,7 +5757,7 @@ function inboxPollFixture(
       return respond(input, options.signal);
     },
   );
-  return createComposioProvider({ client }).pollInbox!;
+  return createComposioProvider({ client })[method]!;
 }
 
 test('Composio inbox polling establishes an account-bound baseline without replaying mail', async (t) => {
@@ -6700,8 +6888,8 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
         resolvedTheme: 'light',
         notifications: false,
         launchAtLogin: false,
-        hasComposioKey: false,
-        keys: { composioApiKey: { suffix: null } },
+        hasComposioKey: true,
+        keys: { composioApiKey: { suffix: 'wxyz' } },
         restartRequired: false,
       }),
       onPreferences: () => () => {},
@@ -6709,6 +6897,12 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
         opened.push(url);
       },
     },
+    matchMedia: (media: string) => ({
+      matches: true,
+      media,
+      addEventListener() {},
+      removeEventListener() {},
+    }),
   });
   const globals = {
     window: dom.window,
@@ -6756,6 +6950,16 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
           subscriptionAvailable: true,
         });
       if (path === '/api/preferences') return Response.json({ timeZone: 'Europe/Lisbon' });
+      if (path === '/api/configuration')
+        return Response.json({
+          provider: 'fixture',
+          model: 'fixture',
+          llmReady: true,
+          integrationsReady: true,
+          inspectorEnabled: false,
+          localOnly: true,
+          conversationResetEnabled: false,
+        });
       if (path === '/api/account/prepare') return Response.json({ ok: true });
       if (path === '/api/apps/gmail/connect') {
         assert.deepEqual(JSON.parse(String(init.body)), { returnTo: 'window' });
@@ -6811,7 +7015,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   for (const [key, value] of Object.entries(globals))
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   const { Apps } = await import('../src/web/pages/apps.tsx');
-  const { Onboarding } = await import('../src/web/pages/onboarding.tsx');
+  const { Onboarding } = await import('../src/web/pages/onboarding/index.tsx');
   const { pageDataCache } = await import('../src/web/lib/page-data-cache.ts');
   const { createRoot } = await import('react-dom/client');
   const root = createRoot(dom.window.document.getElementById('root')!);
@@ -6908,12 +7112,17 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(timers.size, 0);
     const completedReads = discoveryReads;
     dom.window.history.replaceState(null, '', '/onboarding');
+    dom.window.sessionStorage.setItem(
+      'otto.onboarding.step',
+      JSON.stringify({ owner: id, step: 'email' }),
+    );
     await act(async () =>
       root.render(
         createElement(Onboarding, {
           user: { id, name: 'Fixture', email: null, avatarUrl: null },
           canLogout: false,
           onLogout() {},
+          onFeedback() {},
           async onComplete() {},
         }),
       ),
@@ -6922,39 +7131,22 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
     assert.equal(discoveryReads, completedReads);
+    const gmail = () =>
+      dom.window.document.querySelector<HTMLElement>('[data-gmail]')!.dataset.gmail;
     await act(async () =>
-      dom.window.document
-        .querySelector<HTMLButtonElement>('.account-onboarding-actions .button')!
-        .click(),
+      dom.window.document.querySelector<HTMLButtonElement>('.ob-gmail-connect')!.click(),
     );
-    await act(async () =>
-      dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Connect Gmail"]')!.click(),
-    );
-    assert.ok(
-      dom.window.document
-        .querySelector('#onboarding-gmail')!
-        .closest('article')!
-        .classList.contains('waiting'),
-    );
+    await settle();
+    assert.equal(gmail(), 'waiting');
+    assert.equal(opened.at(-1), 'https://connect.example.test/gmail');
     await act(async () =>
       receive!({ data: { service: 'gmail', connection: 'cancelled', attempt: 'b'.repeat(43) } }),
     );
-    assert.ok(
-      dom.window.document
-        .querySelector('#onboarding-gmail')!
-        .closest('article')!
-        .classList.contains('waiting'),
-    );
+    assert.equal(gmail(), 'waiting');
     await act(async () =>
       receive!({ data: { service: 'gmail', connection: 'cancelled', attempt } }),
     );
-    assert.equal(
-      dom.window.document
-        .querySelector('#onboarding-gmail')!
-        .closest('article')!
-        .classList.contains('waiting'),
-      false,
-    );
+    assert.equal(gmail(), 'idle');
   } finally {
     await act(async () => root.unmount());
     pageDataCache.clear();

@@ -282,24 +282,33 @@ export const toolDefinitions = {
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts. connect opens a new private profile; use opens an existing profile without verifying sign-in. Inspect the current page to determine the outcome. save with signedIn:true records that you observed a successful sign-in on this origin.',
+    'Browser profiles for website accounts. connect {url, label?} opens a new private profile. use {url, connectionId} opens an existing profile without verifying sign-in. Inspect the current page to determine the outcome. save {url, connectionId, signedIn:true} records that you observed a successful sign-in on this origin. Only connect accepts label.',
     Type.Union([
-      Type.Object({
-        action: Type.Literal('connect'),
-        url: Type.String({ minLength: 1, maxLength: 2048 }),
-        label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-      }),
-      Type.Object({
-        action: Type.Literal('use'),
-        url: Type.String({ minLength: 1, maxLength: 2048 }),
-        connectionId: uuid,
-      }),
-      Type.Object({
-        action: Type.Literal('save'),
-        url: Type.String({ minLength: 1, maxLength: 2048 }),
-        connectionId: uuid,
-        signedIn: Type.Literal(true),
-      }),
+      Type.Object(
+        {
+          action: Type.Literal('connect'),
+          url: Type.String({ minLength: 1, maxLength: 2048 }),
+          label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('use'),
+          url: Type.String({ minLength: 1, maxLength: 2048 }),
+          connectionId: uuid,
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          action: Type.Literal('save'),
+          url: Type.String({ minLength: 1, maxLength: 2048 }),
+          connectionId: uuid,
+          signedIn: Type.Literal(true),
+        },
+        { additionalProperties: false },
+      ),
     ]),
   ),
   apps: defineTool(
@@ -566,6 +575,26 @@ export function ottoTools(
     bind(toolDefinitions.browser_session, async (p) => {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');
       const result = (await context.browserConnection(p)) as Record<string, unknown>;
+      if (result.status === 'rejected') {
+        switch (result.code) {
+          case 'invalid_browser_connection_arguments':
+            throw new Error(
+              'Invalid browser session input. Valid forms: connect {url, label?}; use {url, connectionId}; save {url, connectionId, signedIn:true}.',
+            );
+          case 'browser_connection_origin_mismatch':
+            throw new Error(
+              'This browser connection belongs to a different website. Use a saved connection for the current origin.',
+            );
+          case 'browser_connection_unavailable':
+            throw new Error(
+              'This browser connection is unavailable for the current task. List saved connections and inspect the current page before choosing one.',
+            );
+          default:
+            throw new Error(
+              'The browser session request was rejected. Check the current page and saved connection before trying again.',
+            );
+        }
+      }
       if (p.action === 'connect' || result.status === 'needs_sign_in') {
         const { url: _url, ...safe } = result;
         return safe;

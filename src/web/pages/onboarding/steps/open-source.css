@@ -1,0 +1,25 @@
+.ob-open .ob-open-usage {
+  padding: 8px 16px 12px;
+}
+.ob-open-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-control);
+}
+.ob-open-toggle > label {
+  cursor: pointer;
+}
+.ob-open-toggle > .switch:disabled + label {
+  cursor: default;
+}
+.ob-open-error {
+  margin-top: 4px;
+  color: var(--error);
+  font-size: var(--text-control);
+}
+.ob-open .ob-next {
+  min-width: 140px;
+}

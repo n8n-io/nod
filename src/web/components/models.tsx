@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -14,10 +14,7 @@ import type { ModelConnection, ModelProvider, ModelsResponse } from '../../share
 import { modelProviderNames, modelSource } from '../../shared/models';
 import { agentModels } from '../../shared/model-defaults';
 import { BrandMark } from './brand';
-import { usePageData } from '../hooks/use-page-data';
-import { api, errorMessage, post } from '../lib/api';
-import { connectionUrl } from '../lib/connection-url';
-import { desktopLinksAvailable, openConnection } from '../lib/desktop';
+import { modelSelection, useModelSignIn, useModels } from '../hooks/use-models';
 import {
   Button,
   Dialog,
@@ -29,34 +26,6 @@ import {
   Notice,
   SearchField,
 } from './ui';
-
-function useModels() {
-  const page = usePageData<ModelsResponse>('/api/models');
-  const pending = useRef(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  async function change(path: string, method: string, body?: unknown) {
-    if (pending.current) return false;
-    pending.current = true;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api<ModelsResponse>(path, {
-        method,
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      });
-      page.update(() => result);
-      return true;
-    } catch (cause) {
-      setError(errorMessage(cause));
-      return false;
-    } finally {
-      pending.current = false;
-      setBusy(false);
-    }
-  }
-  return { ...page, busy, error: error || page.error, setError, change };
-}
 
 function ModelConnectionAvatar({ connection }: { connection: ModelConnection }) {
   const initials =
@@ -83,136 +52,23 @@ function ModelConnectionAvatar({ connection }: { connection: ModelConnection }) 
 
 export function ModelSettings({
   onDirtyChange,
-  onboarding = false,
 }: {
   onDirtyChange?(dirty: boolean): void;
-  onboarding?: boolean;
 } = {}) {
   const models = useModels();
   const [keyProvider, setKeyProvider] = useState<ModelProvider | null>(null);
   const [key, setKey] = useState('');
-  const [signingIn, setSigningIn] = useState(false);
-  const [signIn, setSignIn] = useState<{ url: string; attempt: string } | null>(null);
-  const activeAttempt = useRef<string | null>(null);
-  const mounted = useRef(true);
+  const flow = useModelSignIn(models);
+  const { signIn, pending: signingIn, connect } = flow;
   const [callback, setCallback] = useState('');
   const dirty = models.busy || signingIn || !!signIn || Boolean(key.trim());
   const available = models.data?.connections.filter(
     (connection) => connection.status === 'connected' && connection.models.length > 0,
   ).length;
   useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      if (activeAttempt.current)
-        void api(`/api/models/oauth/${activeAttempt.current}`, { method: 'DELETE' }).catch(
-          () => {},
-        );
-    };
-  }, []);
-  useEffect(() => {
     onDirtyChange?.(dirty);
     return () => onDirtyChange?.(false);
   }, [dirty, onDirtyChange]);
-  useEffect(() => {
-    if (!signIn) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const expires = Date.now() + 600000;
-    async function check() {
-      try {
-        const result = await api<{ status: 'waiting' | 'connected' | 'failed'; error?: string }>(
-          `/api/models/oauth/status/${signIn!.attempt}`,
-          { signal: controller.signal },
-        );
-        if (controller.signal.aborted) return;
-        if (result.status === 'connected') {
-          await models.refresh();
-          if (!controller.signal.aborted) {
-            models.setError(result.error ?? '');
-            activeAttempt.current = null;
-            setSignIn(null);
-          }
-          return;
-        }
-        if (result.status === 'failed') {
-          models.setError(result.error ?? 'Sign-in failed. Start a new connection.');
-          activeAttempt.current = null;
-          setSignIn(null);
-          return;
-        }
-      } catch (cause) {
-        if (controller.signal.aborted) return;
-        models.setError(errorMessage(cause));
-      }
-      if (Date.now() >= expires) {
-        models.setError('Sign-in expired. Start a new connection.');
-        void api(`/api/models/oauth/${signIn!.attempt}`, { method: 'DELETE' }).catch(() => {});
-        activeAttempt.current = null;
-        setSignIn(null);
-      } else timer = setTimeout(() => void check(), 2000);
-    }
-    void check();
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [signIn, models.refresh]);
-  async function cancelSignIn() {
-    if (!signIn) return;
-    setSigningIn(true);
-    try {
-      await api(`/api/models/oauth/${signIn.attempt}`, { method: 'DELETE' });
-      activeAttempt.current = null;
-      if (mounted.current) {
-        setSignIn(null);
-        setCallback('');
-      }
-    } catch (cause) {
-      if (mounted.current) models.setError(errorMessage(cause));
-    } finally {
-      if (mounted.current) setSigningIn(false);
-    }
-  }
-  async function connect(provider: 'openai' | 'openrouter', connectionId?: string) {
-    if (signingIn || signIn) return;
-    const desktop = desktopLinksAvailable();
-    const popup = desktop ? null : window.open('about:blank', '_blank');
-    if (popup) popup.opener = null;
-    setSigningIn(true);
-    models.setError('');
-    try {
-      const response = await post<{ url: string; attempt: string }>('/api/models/oauth', {
-        provider,
-        connectionId,
-      });
-      activeAttempt.current = response.attempt;
-      if (!mounted.current) {
-        await api(`/api/models/oauth/${response.attempt}`, { method: 'DELETE' });
-        activeAttempt.current = null;
-        popup?.close();
-        return;
-      }
-      const url = connectionUrl(response.url, window.location.origin);
-      setSignIn({ url, attempt: response.attempt });
-      if (desktop) await openConnection(url);
-      else if (popup) popup.location.replace(url);
-    } catch (cause) {
-      popup?.close();
-      if (activeAttempt.current) {
-        await api(`/api/models/oauth/${activeAttempt.current}`, { method: 'DELETE' }).catch(
-          () => {},
-        );
-        activeAttempt.current = null;
-      }
-      if (mounted.current) {
-        setSignIn(null);
-        models.setError(errorMessage(cause));
-      }
-    } finally {
-      if (mounted.current) setSigningIn(false);
-    }
-  }
   if (!models.data) return models.loading ? <Loading /> : <Notice>{models.error}</Notice>;
   const data = models.data;
   const busy = models.busy || signingIn || !!signIn;
@@ -221,7 +77,7 @@ export function ModelSettings({
       <p className="model-intro" data-analytics-public>
         Connect as many services as you want. All their models appear in one list.
       </p>
-      {!onboarding && !!available && (
+      {!!available && (
         <div className="model-current">
           <span>Your model</span>
           <ModelPicker manageConnections={false} />
@@ -405,19 +261,6 @@ export function ModelSettings({
               ))}
           </section>
         ))}
-        {onboarding && !!available && (
-          <section className="model-service model-choice" aria-label="Choose your model">
-            <div className="model-service-heading">
-              <div>
-                <h4>Choose your model</h4>
-                <p>All models from your connected services</p>
-              </div>
-              <div className="model-service-actions">
-                <ModelPicker manageConnections={false} />
-              </div>
-            </div>
-          </section>
-        )}
       </div>
       {signIn && (
         <div className="model-sign-in">
@@ -425,18 +268,7 @@ export function ModelSettings({
             Complete sign-in in the browser, then return to Otto. If the browser ends on a page that
             does not load, copy its full address and paste it below.
           </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (desktopLinksAvailable())
-                void openConnection(signIn.url).catch((cause) =>
-                  models.setError(errorMessage(cause)),
-                );
-              else window.open(signIn.url, '_blank', 'noopener,noreferrer');
-            }}
-          >
+          <Button type="button" variant="outline" size="sm" onClick={flow.reopen}>
             Open sign-in <ExternalLink size={16} />
           </Button>
           <Button
@@ -444,7 +276,7 @@ export function ModelSettings({
             variant="ghost"
             size="sm"
             disabled={signingIn}
-            onClick={() => void cancelSignIn()}
+            onClick={() => void flow.cancel().then((done) => done && setCallback(''))}
           >
             Cancel sign-in
           </Button>
@@ -453,12 +285,7 @@ export function ModelSettings({
               event.preventDefault();
               const url = callback;
               setCallback('');
-              void models.change('/api/models/oauth/complete', 'POST', { url }).then((saved) => {
-                if (saved) {
-                  activeAttempt.current = null;
-                  setSignIn(null);
-                }
-              });
+              void flow.complete(url);
             }}
           >
             <Field label="Callback URL">
@@ -478,25 +305,23 @@ export function ModelSettings({
         </div>
       )}
       {models.error && <Notice>{models.error}</Notice>}
-      {!onboarding && (
-        <details className="model-details">
-          <summary>Connection details</summary>
-          <p className="model-footnote">
-            Claude plans do not support this connection. Use an Anthropic API key or OpenRouter.{' '}
-            <a
-              href="https://code.claude.com/docs/en/legal-and-compliance"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Provider conditions
-            </a>
-          </p>
-          {!data.subscriptionAvailable && (
-            <p className="model-footnote">ChatGPT plan sign-in is available in local Otto.</p>
-          )}
-          <p className="model-footnote">Voice needs an OpenAI API key in server settings.</p>
-        </details>
-      )}
+      <details className="model-details">
+        <summary>Connection details</summary>
+        <p className="model-footnote">
+          Claude plans do not support this connection. Use an Anthropic API key or OpenRouter.{' '}
+          <a
+            href="https://code.claude.com/docs/en/legal-and-compliance"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Provider conditions
+          </a>
+        </p>
+        {!data.subscriptionAvailable && (
+          <p className="model-footnote">ChatGPT plan sign-in is available in local Otto.</p>
+        )}
+        <p className="model-footnote">Voice needs an OpenAI API key in server settings.</p>
+      </details>
     </div>
   );
 }
@@ -540,15 +365,7 @@ export function ModelPicker({
         modelSource(a.source).localeCompare(modelSource(b.source)),
     );
   async function choose(source: ModelConnection, id: string) {
-    const efforts = source.models.find((item) => item.id === id)?.efforts ?? [];
-    const effort = efforts.includes('high') ? 'high' : efforts[0];
-    if (
-      await models.change('/api/models/selection', 'PUT', {
-        connectionId: source.id,
-        modelId: id,
-        effort,
-      })
-    )
+    if (await models.change('/api/models/selection', 'PUT', modelSelection(source, id)))
       setOpen(false);
   }
   return (

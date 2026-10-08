@@ -47,9 +47,10 @@ export const help = `Otto capability evals
   Common options for run, models and refs
     --model <provider/name>    agent model (default from LLM_PROVIDER, LLM_MODEL or the keys you have)
     --judge <provider/name>    judge model (default ${defaultJudge}, kept fixed so runs stay comparable)
-    --tier pr|full|live        pr is small and cheap, full adds the rest, live also uses the open web
+    --tier pr|full|live        default full: all controlled cases, including pending cases; pr is the small suite
+                               live also runs the open web cases
     --scenario a,b             only these scenarios       --capability browser   only this capability
-    --include-pending          also run scenarios whose calibration is still pending
+    --include-pending          include pending cases in the small pr suite
     --repeat 3                 attempts per scenario      --k 3                  k for pass@k and pass^k
     --concurrency 2            attempts at once           --budget 20            stop after about this many dollars
     --parallel 2               (models) run this many models at the same time
@@ -176,6 +177,8 @@ export async function main(args: Args) {
       const result = await runSuite(runOptions(args));
       if (
         !result.summary.regression.total ||
+        result.summary.coverage.missing.length ||
+        result.summary.coverage.incomplete ||
         (minimum !== undefined && (result.summary.regression.percent ?? 0) < minimum)
       )
         process.exitCode = 1;

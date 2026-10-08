@@ -21,6 +21,7 @@ export interface MemoryNote {
   updated: string;
   edited: string | null;
   expires: string | null;
+  learnedFrom: 'email' | null;
   sources: MemorySource[];
 }
 

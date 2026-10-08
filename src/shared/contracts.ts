@@ -1,3 +1,4 @@
+import type { TaskSuggestions } from './onboarding';
 export type TurnStatus = 'queued' | 'running' | 'succeeded' | 'waiting' | 'failed' | 'cancelled';
 export interface Artifact {
   id: string;
@@ -23,6 +24,7 @@ export interface Message {
   reactions?: Array<{ actor: 'user' | 'assistant'; reaction: MessageReaction }>;
   replyToMessageId?: string | null;
   replyTo?: { id: string; role: 'user' | 'assistant'; text: string } | null;
+  suggestions?: TaskSuggestions | null;
 }
 export interface SubmitMessageResponse {
   threadId: string;
@@ -135,6 +137,7 @@ export interface AppState {
   threadId: string;
   hasEarlierMessages?: boolean;
   verificationRequests?: VerificationRequest[];
+  planningTasks?: boolean;
   messages: Message[];
   turns: Turn[];
   configuration: Configuration;

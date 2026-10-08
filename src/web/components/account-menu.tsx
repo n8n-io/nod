@@ -10,10 +10,12 @@ export interface AccountControls {
   user: AccountUser;
   local: boolean;
   theme: AccountTheme;
+  usageData: boolean;
   saving: boolean;
   canLogout: boolean;
   onSettings(tab: AccountTab, trigger?: HTMLElement): void;
   onTheme(theme: AccountTheme): Promise<void>;
+  onUsageData(usageData: boolean): Promise<void>;
   onLogout(): void;
 }
 
