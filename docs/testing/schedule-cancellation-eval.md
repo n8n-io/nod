@@ -6,12 +6,12 @@ The report shows cancellation requests followed by repeated schedule-pause confi
 
 ## Frozen cases
 
-| Case                 | User task and setup                                                                                                                                 | Required outcome                                                                                                                                                               |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| CANCEL-RESUME.v1     | Ask to stop a synthetic recurring check while a confirmed foreground continuation is active. Deliver the new owner message through normal steering. | The existing schedule becomes disabled, its next job is cancelled, and no second confirmation is created. The saved action identifies the actual cancellation message.         |
-| CANCEL-REVISION.v1   | Ask to cancel a schedule after a background run has proposed pausing it.                                                                            | The new owner request disables the schedule directly and supersedes the addressed proposal.                                                                                    |
-| CANCEL-DUPLICATE.v1  | Two background runs propose the same schedule pause before the owner replies.                                                                       | One pending action and one visible confirmation; neither run disables the schedule without the owner.                                                                          |
-| CANCEL-BOUNDARIES.v1 | Change source ownership, thread, turn or role; retain the original confirmation reply; vary the action or arguments and pending state.              | Unrelated messages and the original Yes never become fresh authority. Read-only work stays read-only. Distinct actions and later handled/expired proposals remain independent. |
+| Case                 | User task and setup                                                                                                                                                    | Required outcome                                                                                                                                                               |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CANCEL-RESUME.v1     | “Cancel the synthetic reminder now.” A one-off reminder exists while a confirmed foreground continuation is active; deliver the owner message through normal steering. | The existing schedule becomes disabled, its next job is cancelled, and no second confirmation is created. The saved action identifies the actual cancellation message.         |
+| CANCEL-REVISION.v1   | Ask to cancel a schedule after a background run has proposed pausing it.                                                                                               | The new owner request disables the schedule directly and supersedes the addressed proposal.                                                                                    |
+| CANCEL-DUPLICATE.v1  | Two background runs propose the same schedule pause before the owner replies.                                                                                          | One pending action and one visible confirmation; neither run disables the schedule without the owner.                                                                          |
+| CANCEL-BOUNDARIES.v1 | Change source ownership, thread, turn or role; retain the original confirmation reply; vary the action or arguments and pending state.                                 | Unrelated messages and the original Yes never become fresh authority. Read-only work stays read-only. Distinct actions and later handled/expired proposals remain independent. |
 
 ## Checks and run rule
 
@@ -43,4 +43,20 @@ Before changing this path, add CANCEL-PAUSED.v1: a background event calls `sched
 
 ## Results
 
-Pending the frozen baseline and candidate runs.
+| Case                 | Preserved baseline                                                                                 | Candidate                                                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| CANCEL-RESUME.v1     | Failed: resumed application turn ended Interrupted; lower-level approval used the original message | Passed: real schedule and job cancelled with the fresh message as authority                  |
+| CANCEL-REVISION.v1   | Failed: owner cancellation remained waiting for a replacement confirmation                         | Passed: direct cancellation and addressed proposal expired                                   |
+| CANCEL-DUPLICATE.v1  | Failed: two concurrent background requests created two pending approvals                           | Passed: one pending action and question; no unconfirmed execution                            |
+| CANCEL-BOUNDARIES.v1 | New steering-ID checks were absent                                                                 | Passed: ownership, role, thread, turn, read-only, channel, argument and lifecycle variations |
+| CANCEL-PAUSED.v1     | Failed: an already-paused schedule still created a pending confirmation                            | Passed: saved public state returned; no schedule, job, approval or message mutation          |
+
+The original production baseline is `7c097be7`; frozen regression commit `40c9edba` preserves the first red cases. The added paused-schedule case was run red against `ef35cf63` before its fix. Logs remain separate under `.local/evidence/lab-549/`: `application-red.log`, `approvals-red.log` and `already-paused-red.log`.
+
+The first candidate exposed two existing test fixtures that accidentally reused identical schedule-create arguments across independent source-authority cases. Those fixtures now use distinct synthetic titles so each still checks its own confirmation requirement. Their original failed run remains in `focused-green-1.log`; no required assertion was weakened. Two nullable row-count typing errors in the new tests were also corrected before validation.
+
+On implementation `fca81731`, 140 focused thread/approval/scheduler checks passed, and the 53 approval/application checks passed in all three attempts. The full Linux integration suite passed 677/677 with no failures or skips; `npm run check` and the production build passed.
+
+After rebasing onto main `d783d5ac`, the unchanged cancellation cases passed 53/53 in each of three fresh attempts on `b9355aaa` (100% passed at least once; 100% passed every time). Final integration and CI results are recorded on [PR #178](https://github.com/n8n-io/otto/pull/178). The PR's checks identify the exact final revision. Source review found no actionable findings.
+
+No UI redesign or live-provider acceptance is claimed. The attachment's final disabled state and repeated confirmations are observed facts; which earlier action originally paused that schedule remains unknown.
