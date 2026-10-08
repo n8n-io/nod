@@ -1,0 +1,148 @@
+{
+  "case": "CP05.v2",
+  "freezeId": "CP05.v2-a01",
+  "phase": "metered-actual-service-sdk-worker-fixture",
+  "inputPath": "docs/testing/composio-proxy/cp05.v2.inputs.json",
+  "inputsSha256": "7a5313835559e2083880cdac3fa7c81c7ab683b70449efc82d24d65e6d473780",
+  "runnerSha256": "981c7246f9491ff42de098fb35f136985b1159c4bb38089494d6921e6e57cd64",
+  "proxyRevision": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+  "ottoCommit": "5e38b00a39e9a693e62ed36057e43f193b3e06fd",
+  "runtime": "v24.21.0",
+  "startedAt": "2026-10-08T19:12:27.062Z",
+  "endedAt": "2026-10-08T19:12:27.377Z",
+  "results": [
+    {
+      "variant": "base",
+      "pass": true,
+      "checks": {
+        "BINDING": "pass",
+        "BYTES": "pass",
+        "FILEOWNER": "pass",
+        "IMMUTABLE": "pass",
+        "ACTION": "pass",
+        "SECRET": "pass",
+        "CLEANUP": "pass",
+        "BOUNDED": "pass"
+      },
+      "bytes": [6, 6],
+      "sha256": [
+        "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0",
+        "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0"
+      ],
+      "workspaceReads": 3,
+      "receivingDrafts": 3,
+      "deniedAttacks": [
+        "wrong-action",
+        "wrong-account",
+        "wrong-owner",
+        "raw-key",
+        "foreign-delete",
+        "private-mount"
+      ],
+      "uploadsThroughMetering": 3,
+      "restoredUploads": 1,
+      "distinctSelectedAccounts": 3,
+      "sourceDeletedBeforeExecution": true,
+      "cleanup": {
+        "deletedFiles": 3,
+        "storedFiles": 0,
+        "mounts": 0,
+        "sessions": 0,
+        "schemaAbsent": true
+      },
+      "elapsedMs": 186
+    },
+    {
+      "variant": "holdout",
+      "pass": true,
+      "checks": {
+        "BINDING": "pass",
+        "BYTES": "pass",
+        "FILEOWNER": "pass",
+        "IMMUTABLE": "pass",
+        "ACTION": "pass",
+        "SECRET": "pass",
+        "CLEANUP": "pass",
+        "BOUNDED": "pass"
+      },
+      "bytes": [128, 128],
+      "sha256": [
+        "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98",
+        "b9fef2a8fc93b05e7701e97196fda6c4fbeea25ff8e64fdfee7015eca8fa617d"
+      ],
+      "workspaceReads": 3,
+      "receivingDrafts": 3,
+      "deniedAttacks": [
+        "wrong-action",
+        "wrong-account",
+        "wrong-owner",
+        "raw-key",
+        "foreign-delete",
+        "private-mount"
+      ],
+      "uploadsThroughMetering": 3,
+      "restoredUploads": 1,
+      "distinctSelectedAccounts": 3,
+      "sourceDeletedBeforeExecution": true,
+      "cleanup": {
+        "deletedFiles": 3,
+        "storedFiles": 0,
+        "mounts": 0,
+        "sessions": 0,
+        "schemaAbsent": true
+      },
+      "elapsedMs": 83
+    }
+  ],
+  "inputEvidence": [
+    {
+      "name": "base.bin",
+      "size": 6,
+      "sha256": "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0",
+      "md5": "4f32136a1d917eb7e3dadd749e5854c4"
+    },
+    {
+      "name": "collision-a.bin",
+      "size": 128,
+      "sha256": "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98",
+      "md5": "79054025255fb1a26e4bc422aef54eb4"
+    },
+    {
+      "name": "collision-b.bin",
+      "size": 128,
+      "sha256": "b9fef2a8fc93b05e7701e97196fda6c4fbeea25ff8e64fdfee7015eca8fa617d",
+      "md5": "79054025255fb1a26e4bc422aef54eb4"
+    }
+  ],
+  "sourceBindingBefore": true,
+  "sourceBindingAfter": true,
+  "headerScannerControl": true,
+  "privateIdentitiesScanned": 4,
+  "responseHeadersScanned": 50,
+  "responseBodiesScanned": 50,
+  "publicRequests": 50,
+  "upstreamRequests": 152,
+  "receivingDrafts": 6,
+  "deniedAttacks": 12,
+  "denied": [
+    { "route": "/api/v3.1/tool_router/session/:session/execute", "status": 403 },
+    { "route": "/api/v3.1/tool_router/session/:session/execute", "status": 403 },
+    { "route": "/api/v3.1/tool_router/session/:session/execute", "status": 403 },
+    { "route": "/api/v3.1/tool_router/session/:session/execute", "status": 403 },
+    { "route": "/v1/files/delete", "status": 403 },
+    { "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url", "status": 404 },
+    { "route": "/api/v3.1/tool_router/session/:session/execute", "status": 403 },
+    { "route": "/api/v3.1/tool_router/session/:session/execute", "status": 403 },
+    { "route": "/api/v3.1/tool_router/session/:session/execute", "status": 403 },
+    { "route": "/api/v3.1/tool_router/session/:session/execute", "status": 403 },
+    { "route": "/v1/files/delete", "status": 403 },
+    { "route": "/api/v3.1/tool_router/session/:session/mounts/files/download_url", "status": 404 }
+  ],
+  "cleanupErrors": [],
+  "remainingFixtureObjects": { "files": 0, "mounts": 0, "sessions": 0 },
+  "unexpectedOutbound": 0,
+  "modelCalls": 0,
+  "liveConnectedAccountCalls": 0,
+  "realRecipientCalls": 0,
+  "pass": true
+}

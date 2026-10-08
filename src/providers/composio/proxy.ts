@@ -10,7 +10,8 @@ import {
   sign,
   type KeyObject,
 } from 'node:crypto';
-import { link, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { link, lstat, mkdir, open, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { IntegrationFile } from '../../ports/integrations.ts';
@@ -65,8 +66,22 @@ export function createComposioProxy(options: {
           type: 'pkcs8',
         });
       } else {
-        const directory = join(options.dataRoot, 'integration-identity');
-        await mkdir(directory, { recursive: true, mode: 0o700 });
+        await mkdir(options.dataRoot, { recursive: true, mode: 0o700 });
+        const dataRoot = await realpath(options.dataRoot);
+        const directory = join(dataRoot, 'integration-identity');
+        for (const [path, mask] of [
+          [dataRoot, 0o022],
+          [directory, 0o077],
+        ] as const) {
+          await mkdir(path, { recursive: true, mode: 0o700 });
+          const metadata = await lstat(path);
+          if (
+            !metadata.isDirectory() ||
+            (process.getuid && metadata.uid !== process.getuid()) ||
+            (process.platform !== 'win32' && (metadata.mode & mask) !== 0)
+          )
+            throw new Error('The integration identity directory permissions are unsafe.');
+        }
         const path = join(
           directory,
           `${createHash('sha256').update(options.ownerId).digest('hex')}.pem`,
@@ -87,10 +102,26 @@ export function createComposioProxy(options: {
         } finally {
           await rm(temporary, { force: true });
         }
-        const metadata = await stat(path);
-        if (!metadata.isFile() || (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0))
-          throw new Error('The integration identity file permissions are unsafe.');
-        key = createPrivateKey(await readFile(path));
+        const file = await open(
+          path,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        try {
+          const metadata = await file.stat();
+          const current = await lstat(path);
+          if (
+            !metadata.isFile() ||
+            !current.isFile() ||
+            metadata.dev !== current.dev ||
+            metadata.ino !== current.ino ||
+            (process.getuid && metadata.uid !== process.getuid()) ||
+            (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0)
+          )
+            throw new Error('The integration identity file permissions are unsafe.');
+          key = createPrivateKey(await file.readFile());
+        } finally {
+          await file.close();
+        }
       }
       if (key.asymmetricKeyType !== 'ed25519')
         throw new Error('The integration identity is invalid.');

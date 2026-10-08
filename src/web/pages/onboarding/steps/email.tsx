@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, LoaderCircle } from 'lucide-react';
-import type { Configuration, Connection } from '../../../../shared/contracts';
+import type { AppSetupStatus, Configuration, Connection } from '../../../../shared/contracts';
 import { Button } from '../../../components/ui';
 import { usePageData } from '../../../hooks/use-page-data';
 import { api, errorMessage } from '../../../lib/api';
@@ -72,16 +72,62 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   }, []);
 
   useEffect(() => {
-    if (!signInUrl) return;
-    const timer = window.setTimeout(() => {
+    const currentAttempt = attempt.current;
+    if (!signInUrl || !currentAttempt) return;
+    const controller = new AbortController();
+    const current = () => !controller.signal.aborted && attempt.current === currentAttempt;
+    const settle = (result: 'connected' | 'failed' | 'expired') => {
+      if (!current()) return;
+      controller.abort();
       attempt.current = undefined;
       setPairingCode(undefined);
       setSignInUrl(undefined);
       setPending(undefined);
-      setError(connectionMessage('expired'));
+      setError(connectionMessage(result));
+      void refreshApps();
+    };
+    const check = async () => {
+      try {
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signInUrl));
+        const hash = Array.from(new Uint8Array(digest), (byte) =>
+          byte.toString(16).padStart(2, '0'),
+        ).join('');
+        const result = await api<AppSetupStatus>('/api/apps/setup-status', {
+          method: 'POST',
+          body: JSON.stringify({ hashes: [hash] }),
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        if (!current()) return false;
+        if (result.completed.includes(hash)) {
+          settle('connected');
+          return true;
+        }
+        if (!result.apps.some((app) => app.hash === hash)) {
+          settle('failed');
+          return true;
+        }
+      } catch {}
+      return false;
+    };
+    const visible = () => {
+      if (document.visibilityState === 'visible') void check();
+    };
+    visible();
+    window.addEventListener('focus', visible);
+    document.addEventListener('visibilitychange', visible);
+    const timer = window.setTimeout(() => {
+      void check().then((settled) => {
+        if (!settled) settle('expired');
+      });
     }, 10 * 60_000);
-    return () => window.clearTimeout(timer);
-  }, [signInUrl]);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', visible);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [signInUrl, refreshApps]);
 
   const gmail = apps?.filter((connection) => connection.slug === 'gmail') ?? [];
   const account = gmail.find((connection) => connection.status === 'connected');
@@ -145,7 +191,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     } finally {
       if (next !== 'opening' && request.current === controller) {
         request.current = null;
-        if (active.current) setPending(next);
+        if (active.current) setPending(attempt.current ? next : undefined);
       }
     }
   }

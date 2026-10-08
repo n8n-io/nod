@@ -674,6 +674,31 @@ export function Apps({
       );
       if (request.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
       const url = connectionUrl(result.url, window.location.origin);
+      const proposal = new URL(url);
+      if (
+        proposal.origin === window.location.origin &&
+        proposal.pathname === '/apps' &&
+        proposal.searchParams.has('connect')
+      ) {
+        if (
+          proposal.hash ||
+          proposal.searchParams.size !== 1 ||
+          !/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(
+            proposal.searchParams.get('connect')!,
+          )
+        )
+          throw new Error('The app sign-in could not be opened. Try again.');
+        popup?.close();
+        window.history.pushState(null, '', `${proposal.pathname}${proposal.search}`);
+        setManageService(null);
+        setDiscovery(null);
+        setDiscoveryError('');
+        setDiscoveryLoadError('');
+        setDiscoverySignIn(null);
+        setDiscoveryVersion((value) => value + 1);
+        setBusy('');
+        return;
+      }
       if (result.pairingCode !== undefined) {
         if (
           !/^\d{3}-\d{3}$/.test(result.pairingCode) ||

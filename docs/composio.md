@@ -4,6 +4,8 @@ Otto connects to Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many oth
 
 ## Managed connections
 
+New managed sign-ins are disabled while this candidate awaits the [activation gates](composio-proxy-rollout.md). The instructions below describe the activated release. Source/server operators can continue using an explicitly configured project during preparation.
+
 Desktop and source installs use `https://composio.n8n.cloud` by default. Each local profile has a private signing key under `OTTO_DATA_ROOT/integration-identity`, outside the sandbox. The proxy verifies signed requests and keeps the Composio project key server-side. Composio stores the authorized service connections and refreshes their credentials.
 
 Keep the data folder when backing up or moving an installation. Losing its integration identity requires connecting those apps again. This identity is specific to the installation; it does not provide cross-device account recovery.

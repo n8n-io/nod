@@ -1,0 +1,188 @@
+{
+  "id": "CP05.v2-a01",
+  "case": "CP05.v2",
+  "frozenAt": "2026-10-08T19:12:10.551Z",
+  "prompt": "Attach this workspace file to my draft.",
+  "promptSha256": "d44d1f531382674b03df21d90d173efe64a86c720827fda4a7859235636ffab8",
+  "reason": "Add exact freeze/script/input binding, response-header scans, strict cleanup, and the production metering wrapper including restored-session upload with another selected account. Preserve CP05.v1 unchanged.",
+  "scope": "Actual Otto createIntegrations + meterIntegrations + Composio SDK + Worker against independent stateful storage/provider/draft fixtures and disposable PostgreSQL schemas. No model or real provider call.",
+  "model": "none",
+  "runtime": "v24.21.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "timeLimitSeconds": 600,
+  "repeats": { "base": 1, "holdout": 1 },
+  "ottoCommit": "5e38b00a39e9a693e62ed36057e43f193b3e06fd",
+  "proxyCommit": "994fc6d4142fe26370217b369e99db9a32a18cb9",
+  "sourceHashes": {
+    "otto": {
+      "package-lock.json": "f3e48127fd373f35c5e0ca3f9edf60acf1ebdbe28cd296fdaee0fcf939f0fcfa",
+      "package.json": "73b79d42f439da76d74950dcb822b6ae1cedfc05b495fd0fe45f11ded1af12ee",
+      "src/ports/integrations.ts": "29dcf9b5b765e8220e5d013573363b8a6acbd0343d735f31d1790408a3bb3547",
+      "src/providers/agent-browser/network.ts": "39d5a20593fbfb8adc2c5f78f680be2332e370b4b8b49f67e0e62ff50134990d",
+      "src/providers/app-files.ts": "ddb94a6f8006dd9b9e4cc827f9178b916de33603cd2827d89befb00be6263d5b",
+      "src/providers/composio/downloads.ts": "6708b448db975118ef424854d7e54265d6dc9fa596bbcbb2ea73491dc994bcab",
+      "src/providers/composio/integrations.ts": "36cc855d7dcd1fb9a2afb7fd8a9ad3cf79ad1dfd86181aa8bf57cf25cc32e5f1",
+      "src/providers/composio/proxy.ts": "ed8ffa4bf2bb470903047df8a07544e63b448c921e8670e79fe19a09552b5c76",
+      "src/providers/composio/sent-email.ts": "19eb40f6cd5ddb003a5740ade64c6b3f90c99f50c8b00ee13ecda18626a3e5e7",
+      "src/providers/composio/verification-email.ts": "3613281aa56a5b002435433a5a50a2f8bca5e0599010e58c3ce2b752c1ebe5d8",
+      "src/providers/discovered/remote.ts": "276eba330404d4208e7734d19bfc0acef5c42da523d477e3c41d0a57dd150a8d",
+      "src/providers/public-web/link-preview.ts": "e905780e374f0fd3b6263d2dbbf3b5baca456f66e33c9d22f26b0de21f2b121c",
+      "src/providers/raster-image.ts": "906a666031bb049f27211a42044682a7bb3e8c29f9980106a1ffbd51519d2272",
+      "src/server/artifacts.ts": "09274014fcea2f38c7a99e730f17558e2c1701c5dc75239a5617f39e3868c975",
+      "src/server/browser-connections.ts": "77a2358e4fe49673a06583556cb8a74ceb5ac291cb8b0df678a6deda093c36aa",
+      "src/server/config.ts": "a48cf70684eaf5d363af06baf17db5adaf21bd89970b26de0b0d5df8d3e5bb51",
+      "src/server/db.ts": "905f5ea2dae04ce2821335b2dc3de741d32e73a64e094fd5dbb8ba55242f0152",
+      "src/server/discovered-connections.ts": "c14ad0abc754d6e8453c562949326de339f33e143582fe552b1ba9630693c37d",
+      "src/server/email-code.ts": "166d6719f13ef8a5ea45253ee8fdc9cd248e9932f444aaa542f347598aa3a32e",
+      "src/server/integration-files.ts": "1c03acef51c6fd715fb7943fe56b2190995d1c8cad94cc0ea961a4cf197c6d93",
+      "src/server/integrations.ts": "5a66e5ea3be985e85ab5fb08a4ee0935548b825ec9a9c3ea99ec3f3f8542d5e9",
+      "src/server/preferences.ts": "efbca9cc7eb7c74544cb49ebb62d42278eabbbef76c2666484461f6265b7e098",
+      "src/server/provider-metering.ts": "3e12672a9836bca62e51e125fa3c537b95829586c43cbeade7117445c6dba30e",
+      "src/shared/integrations.ts": "f4c4ad6321456f21bde698eca1107bcda09c34896cbed1cae15ff62344d58014",
+      "src/shared/link-preview.ts": "0dfcc9997e5445580e5f9628c008b01a8a4cba4107429abe73bd481ef83749da",
+      "src/shared/untrusted.ts": "7e8095b3c09a7a6096f3e3c0d5d634a89ee2b84447dc2d7be652774aeb3ba042"
+    },
+    "proxy": {
+      "package-lock.json": "f2c60bad0d3d52904253f8bc12be2ecf72c0ea15bf42aecd0061e7e19e55b3e9",
+      "package.json": "096bbc6538ee10897b42fcf6d8ff9c8a1a957aa5e415686e6f9f2c4e52b205ec",
+      "src/composio.ts": "07a6e32aa2cbb940c69f022a68d39a8c8d965a2e0c5e6ee3502b5277e5004356",
+      "src/connect.ts": "b67496ee5059224c076d8e89dde27c17f6a86d28acf5d37383c7ccbbe6eda4c1",
+      "src/files.ts": "f3bfac3ce69131eb4683a3692ba37ab69d54a09b462b0b99ef36cb0f3d4d2bbb",
+      "src/index.ts": "23a7479ea426083091de298f5f70d61be48be32770604aa01ec7f114d32d4517",
+      "src/security.ts": "90cd0b6482df6afa213551a44e4bd7e07f8e3fa5df309ad78031e5763fa45b45",
+      "src/types.ts": "32eca983b1744f05fcc15186d173c9ad7de5d96e5cfd0db3388029ea08f7fda2"
+    }
+  },
+  "runner": "docs/testing/composio-proxy/cp05.v2.runner.mts",
+  "runnerSha256": "981c7246f9491ff42de098fb35f136985b1159c4bb38089494d6921e6e57cd64",
+  "databaseUrl": "postgresql://otto:otto@127.0.0.1:60516/otto",
+  "databaseScope": "New random schema for each variant. No normal schema reads or writes. Drop every created schema after the variant.",
+  "variants": [
+    { "id": "base", "first": "base.bin", "second": "base.bin" },
+    { "id": "holdout", "first": "collision-a.bin", "second": "collision-b.bin" }
+  ],
+  "files": [
+    {
+      "name": "base.bin",
+      "size": 6,
+      "md5": "4f32136a1d917eb7e3dadd749e5854c4",
+      "sha256": "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0"
+    },
+    {
+      "name": "collision-a.bin",
+      "size": 128,
+      "md5": "79054025255fb1a26e4bc422aef54eb4",
+      "sha256": "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98"
+    },
+    {
+      "name": "collision-b.bin",
+      "size": 128,
+      "md5": "79054025255fb1a26e4bc422aef54eb4",
+      "sha256": "b9fef2a8fc93b05e7701e97196fda6c4fbeea25ff8e64fdfee7015eca8fa617d"
+    }
+  ],
+  "inputContents": {
+    "base.bin": {
+      "name": "base.bin",
+      "size": 6,
+      "md5": "4f32136a1d917eb7e3dadd749e5854c4",
+      "sha256": "b76c03b12cc5f4f4d63357e40e5dce425a7adb4a4d2502d0008ba210271643f0",
+      "hex": "00fffe0a4180"
+    },
+    "collision-a.bin": {
+      "name": "collision-a.bin",
+      "size": 128,
+      "md5": "79054025255fb1a26e4bc422aef54eb4",
+      "sha256": "8d12236e5c4ed9f4e790db4d868fd5c399df267e18ff65c1107c328228cffc98",
+      "hex": "d131dd02c5e6eec4693d9a0698aff95c2fcab58712467eab4004583eb8fb7f8955ad340609f4b30283e488832571415a085125e8f7cdc99fd91dbdf280373c5bd8823e3156348f5bae6dacd436c919c6dd53e2b487da03fd02396306d248cda0e99f33420f577ee8ce54b67080a80d1ec69821bcb6a8839396f9652b6ff72a70"
+    },
+    "collision-b.bin": {
+      "name": "collision-b.bin",
+      "size": 128,
+      "md5": "79054025255fb1a26e4bc422aef54eb4",
+      "sha256": "b9fef2a8fc93b05e7701e97196fda6c4fbeea25ff8e64fdfee7015eca8fa617d",
+      "hex": "d131dd02c5e6eec4693d9a0698aff95c2fcab50712467eab4004583eb8fb7f8955ad340609f4b30283e4888325f1415a085125e8f7cdc99fd91dbd7280373c5bd8823e3156348f5bae6dacd436c919c6dd53e23487da03fd02396306d248cda0e99f33420f577ee8ce54b67080280d1ec69821bcb6a8839396f965ab6ff72a70"
+    }
+  },
+  "expected": {
+    "receivingDraftsPerVariant": 3,
+    "deniedAttacksPerVariant": 6,
+    "workspaceReadsPerVariant": 3,
+    "uploadAccounts": ["owner-a/account-a", "owner-b/account-b", "owner-a/account-a2"],
+    "restoredUploadsPerVariant": 1
+  },
+  "checks": [
+    {
+      "id": "BINDING",
+      "applies": "Every run",
+      "pass": "Exact freeze ID, runner, source closure, lockfiles, Worker revision and every input byte/hash match before and after; collision hashes are equal MD5 and unequal SHA256.",
+      "evidence": "Executable guards and per-file independent hashes",
+      "method": "code"
+    },
+    {
+      "id": "BYTES",
+      "applies": "Every variant",
+      "pass": "Three source files match the independently stored bytes and receiving draft SHA256/length.",
+      "evidence": "Workspace reads, storage map and draft receiver",
+      "method": "code"
+    },
+    {
+      "id": "FILEOWNER",
+      "applies": "Every variant",
+      "pass": "Wrong owner/account/action, raw key, foreign deletion and private mount attacks fail without extra draft or mutation.",
+      "evidence": "Six rejected requests and stable receiving/object counts",
+      "method": "code"
+    },
+    {
+      "id": "IMMUTABLE",
+      "applies": "Every variant",
+      "pass": "Same filenames and equal-content or MD5-collision inputs use distinct object keys; a later upload leaves prior bytes unchanged.",
+      "evidence": "Independent storage map keys and SHA256",
+      "method": "code"
+    },
+    {
+      "id": "ACTION",
+      "applies": "Every variant",
+      "pass": "Real prepare and executeApproved through real meterIntegrations produce three drafts for A, B, A2; A2 uploads from a restored session and prepared capabilities survive original source-session deletion.",
+      "evidence": "Usage operations, signed upload account IDs, authoritative upstream sessions and receiving drafts",
+      "method": "code"
+    },
+    {
+      "id": "SECRET",
+      "applies": "Every public request and response",
+      "pass": "Public request headers/body and response headers/body exclude synthetic project/provider/encryption secrets and task-generated private key encodings; responses also exclude raw object keys/storage host. Storage PUT has no project or authorization header.",
+      "evidence": "Fail-closed scans and injected-header scanner control",
+      "method": "code"
+    },
+    {
+      "id": "CLEANUP",
+      "applies": "Every variant",
+      "pass": "Every explicit file/session deletion succeeds; no stored files, mounts, fixture sessions or owned SQL schemas remain; cleanup failures fail the attempt.",
+      "evidence": "Delete receipts, map counts and SQL catalog absence",
+      "method": "code"
+    },
+    {
+      "id": "BOUNDED",
+      "applies": "Every variant",
+      "pass": "Completes once within 600 seconds and no unexpected fetch, live model, connected-account or recipient call occurs.",
+      "evidence": "Elapsed timer and deny-by-default transports",
+      "method": "code"
+    }
+  ],
+  "historicalEvidence": {
+    "inputs": {
+      "path": "docs/testing/composio-proxy/cp05.v1.inputs.json",
+      "sha256": "6a9eca3f85850f7af6a1f1357e4feb98b81e9422ac3c1041e93f2746e684141a"
+    },
+    "results": {
+      "path": "docs/testing/composio-proxy/cp05.v1.results.json",
+      "sha256": "f9f164f8d33a3df3cb6a3c3e67a2d0a26db8fb706f96d00f5ad9a52ec6c1f263"
+    },
+    "reuse": "The original empty-session real storage prerequisite and 15 MiB workerd run are historical evidence only. They are not rerun here. CP05.v2 scores only the current synthetic metered app path; no new claim about live Gmail delivery, provider cleanup or 24-hour retention."
+  },
+  "commands": {
+    "freeze": "node --experimental-transform-types docs/testing/composio-proxy/cp05.v2.runner.mts --mode freeze --freeze-id CP05.v2-a01 --proxy-root <companion-checkout>",
+    "run": "node --experimental-transform-types docs/testing/composio-proxy/cp05.v2.runner.mts --mode run --freeze-id CP05.v2-a01 --proxy-root <companion-checkout>"
+  }
+}

@@ -1318,9 +1318,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         connectedId = existing.rows[0].id;
         await client.query('DELETE FROM app_connections WHERE id=$1', [row.id]);
         await client.query(
-          `UPDATE app_connections SET revoked=false,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
+          `UPDATE app_connections SET revoked=false,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,configuration_id=$4,
            watch_requested=true,watch_attempted=CASE WHEN trigger_id IS NULL THEN false ELSE watch_attempted END WHERE id=$1`,
-          [connectedId, remote.accountName ?? null, remote.accountEmail ?? null],
+          [
+            connectedId,
+            remote.accountName ?? null,
+            remote.accountEmail ?? null,
+            row.configuration_id,
+          ],
         );
         if (existing.rows[0].revoked || existing.rows[0].inbox_reconnect_required) {
           await client.query(
@@ -2120,13 +2125,12 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           })
           .strict()
           .parse(request.body);
-        const [completed, pending, discovered] = await Promise.all([
-          pool.query<{ link_hash: string }>(
-            'SELECT link_hash FROM app_setup_completions WHERE owner_id=$1 AND link_hash=ANY($2::text[])',
-            [configuredOwner, hashes],
-          ),
-          pool.query<{ hash: string; slug: string }>(
-            `SELECT setup_link_hash AS hash,slug FROM app_connections
+        const [links, discovered] = await Promise.all([
+          pool.query<{ hash: string; slug: string; completed: boolean }>(
+            `SELECT link_hash AS hash,'' AS slug,true AS completed FROM app_setup_completions
+             WHERE owner_id=$1 AND link_hash=ANY($2::text[])
+             UNION ALL
+             SELECT setup_link_hash AS hash,slug,false AS completed FROM app_connections
              WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now()`,
             [configuredOwner, hashes],
           ),
@@ -2136,7 +2140,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           ...service,
           hash: createHash('sha256').update(`/apps?connect=${id}`).digest('hex'),
         }));
-        const apps = [...pending.rows, ...discoveredLinks.filter((link) => !link.completed)]
+        const apps = [...links.rows, ...discoveredLinks]
+          .filter((link) => !link.completed)
           .filter(({ hash }) => hashes.includes(hash))
           .map((row) => {
             const info = serviceInfo(row.slug);
@@ -2149,7 +2154,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           });
         return reply.header('Cache-Control', 'no-store').send({
           completed: [
-            ...completed.rows.map((row) => row.link_hash),
+            ...links.rows.filter((row) => row.completed).map((row) => row.hash),
             ...discoveredLinks
               .filter((link) => link.completed && hashes.includes(link.hash))
               .map((link) => link.hash),

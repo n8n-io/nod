@@ -7,7 +7,7 @@ import {
   randomUUID,
   verify,
 } from 'node:crypto';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -368,6 +368,55 @@ test('managed integration requests bind SDK calls to a private persisted install
       },
     })
     .get('/api/v3.1/toolkits');
+  await chmod(root, 0o755);
+  const existingRoot = createComposioProxy(options);
+  await existingRoot.initialize();
+  assert.equal(existingRoot.userId, proxy.userId);
+  const rootAlias = join(root, 'trusted-data-root');
+  await symlink(root, rootAlias);
+  const linkedRoot = createComposioProxy({ ...options, dataRoot: rootAlias });
+  await linkedRoot.initialize();
+  assert.equal(linkedRoot.userId, proxy.userId);
+  for (const variant of [
+    'symbolic key',
+    'symbolic directory',
+    'permissive directory',
+    'permissive key',
+    'nonregular key',
+    'writable data root',
+    'symbolic writable data root',
+  ]) {
+    await t.test(`installation identity rejects ${variant}`, async () => {
+      const dataRoot = join(root, variant.replaceAll(' ', '-'));
+      const unsafeDirectory = join(dataRoot, 'integration-identity');
+      const source = join(directory, entries[0]);
+      const target = join(unsafeDirectory, entries[0]);
+      if (variant === 'symbolic writable data root') {
+        const writable = join(root, 'writable-target');
+        await mkdir(writable);
+        await chmod(writable, 0o777);
+        await symlink(writable, dataRoot);
+      } else {
+        await mkdir(dataRoot, { mode: 0o700 });
+        if (variant === 'symbolic directory') {
+          await symlink(directory, unsafeDirectory);
+        } else {
+          await mkdir(unsafeDirectory, { mode: 0o700 });
+          if (variant === 'symbolic key') await symlink(source, target);
+          else if (variant === 'nonregular key') await mkdir(target);
+          else {
+            await copyFile(source, target);
+            await chmod(target, variant === 'permissive key' ? 0o644 : 0o600);
+          }
+          if (variant === 'permissive directory') await chmod(unsafeDirectory, 0o755);
+        }
+        if (variant === 'writable data root') await chmod(dataRoot, 0o777);
+      }
+      const invalid = createComposioProxy({ ...options, dataRoot });
+      await assert.rejects(invalid.initialize());
+      assert.throws(() => invalid.userId);
+    });
+  }
 });
 
 test('hosted integration identities survive runtime replacement and remain separated by owner', async (t) => {
@@ -2990,6 +3039,16 @@ test(
     assert.equal(await complete(other.callback), 'http://localhost:4310/apps?connection=expired');
     assert.deepEqual(await status(other.hash), []);
     assert.deepEqual((await setupStatus(other.hash, foreign.hash, '0'.repeat(64))).apps, []);
+    f.provider.configurationId = 'current-configuration';
+    await f.pool.query('UPDATE app_connections SET configuration_id=$1 WHERE id=$2', [
+      'previous-configuration',
+      work.connectionId,
+    ]);
+    assert.equal(
+      (await f.service.list()).find((connection) => connection.connectionId === work.connectionId)
+        ?.status,
+      'disconnected',
+    );
     f.session.authorize = async (_service, callback) => {
       f.callbacks.push(callback);
       return { accountId: work.accountId!, url: 'https://consent.example.com/reconnect-work' };
@@ -3009,6 +3068,23 @@ test(
         ?.connectionId,
       work.connectionId,
     );
+    assert.equal(
+      (await f.service.list()).find((connection) => connection.connectionId === work.connectionId)
+        ?.status,
+      'connected',
+    );
+    assert.equal(
+      (
+        await f.pool.query('SELECT configuration_id FROM app_connections WHERE id=$1', [
+          work.connectionId,
+        ])
+      ).rows[0].configuration_id,
+      f.provider.configurationId,
+    );
+    await f.service.execute('local-development', 'GMAIL_FETCH_EMAILS', {
+      connectionId: work.connectionId,
+    });
+    assert.equal(f.executed.at(-1)?.accountId, work.accountId);
     assert.deepEqual(await status(reconnect.hash), [reconnect.hash]);
     assert.deepEqual((await setupStatus(reconnect.hash)).apps, []);
     assert.equal(
@@ -8734,6 +8810,70 @@ test('metering covers capabilities without recording prompts, arguments, output 
     null,
     new AbortController().signal,
   );
+  const uploads: Array<Record<string, unknown>> = [];
+  const proxy = createComposioProxy({
+    dataRoot: '/unused',
+    ownerId: 'owner',
+    identitySecret: randomBytes(32),
+    url: 'https://proxy.example.test',
+    request: async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      assert.equal(url.origin, 'https://proxy.example.test');
+      assert.ok(request.headers.has('x-otto-signature'));
+      assert.equal(request.headers.has('x-api-key'), false);
+      if (url.pathname === '/api/v3.1/toolkits')
+        return Response.json({ items: [], next_cursor: null });
+      if (
+        url.pathname === '/api/v3.1/tool_router/session' ||
+        url.pathname === '/api/v3.1/tool_router/session/trs_private_metered'
+      )
+        return Response.json({
+          session_id: 'trs_private_metered',
+          mcp: { type: 'http', url: 'https://proxy.example.test/unsupported-mcp' },
+          config: {
+            user_id: proxy.userId,
+            toolkits: { enabled: ['gmail'] },
+            connected_accounts: { gmail: ['ca_private_first', 'ca_private_second'] },
+          },
+          config_version: 1,
+        });
+      assert.equal(url.pathname, '/v1/files/upload');
+      const body = (await request.json()) as Record<string, unknown>;
+      uploads.push(body);
+      assert.equal(body.sessionId, 'trs_private_metered');
+      assert.equal(body.action, 'GMAIL_SEND_EMAIL');
+      assert.equal(body.data, 'AP/+CkGA');
+      return Response.json({
+        name: body.name,
+        mimetype: body.mimeType,
+        s3key: 'otto-file.private-owned-capability',
+      });
+    },
+  });
+  await proxy.initialize();
+  const metered = meterIntegrations(createComposioProvider({ proxy }), usage);
+  const file = {
+    name: 'private-attachment.bin',
+    mimeType: 'application/octet-stream',
+    bytes: Uint8Array.from([0, 255, 254, 10, 65, 128]),
+  };
+  for (const [session, account] of [
+    [await metered.createSession('owner', { gmail: 'ca_private_first' }), 'ca_private_first'],
+    [await metered.restoreSession('trs_private_metered'), 'ca_private_second'],
+  ] as const)
+    assert.deepEqual(
+      await session.upload!('GMAIL_SEND_EMAIL', file, new AbortController().signal, account),
+      {
+        name: file.name,
+        mimetype: file.mimeType,
+        s3key: 'otto-file.private-owned-capability',
+      },
+    );
+  assert.deepEqual(
+    uploads.map((upload) => upload.accountId),
+    ['ca_private_first', 'ca_private_second'],
+  );
   await meterComputer(
     {
       ...fakeComputer(),
@@ -8756,6 +8896,10 @@ test('metering covers capabilities without recording prompts, arguments, output 
       'execute',
       'poll_inbox',
       'current_page',
+      'create_session',
+      'restore_session',
+      'upload_file',
+      'upload_file',
     ].sort(),
   );
   assert.doesNotMatch(JSON.stringify(rows), /private|secret\.example/);
@@ -9898,6 +10042,8 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   let appCatalog: Connection[] = [];
   const appRequests: Array<{ path: string; body: unknown }> = [];
   let appSignInUrl = 'https://connect.example.test/variant';
+  let gmailSignInUrl = 'https://connect.example.test/gmail';
+  const pendingAppLinks = new Set<string>();
   const completedAppLinks = new Set<string>();
   let holdReceipt = false;
   let releaseReceipt: (() => void) | undefined;
@@ -9988,7 +10134,9 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
         assert.equal(hashes.length, 1);
         const response = Response.json({
           completed: hashes.filter((hash) => completedAppLinks.has(hash)),
-          apps: [],
+          apps: hashes
+            .filter((hash) => pendingAppLinks.has(hash) && !completedAppLinks.has(hash))
+            .map((hash) => ({ hash, slug: 'gmail', name: 'Gmail' })),
         });
         if (holdReceipt) {
           holdReceipt = false;
@@ -10009,6 +10157,8 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
             finishAppConnect = resolve;
           });
         }
+        if (appSignInUrl.startsWith('/apps?')) return Response.json({ url: appSignInUrl });
+        pendingAppLinks.add(receiptHash(new URL(appSignInUrl, origin).href));
         return Response.json({ url: appSignInUrl, attempt, pairingCode });
       }
       if (
@@ -10058,7 +10208,8 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       if (path === '/api/account/prepare') return Response.json({ ok: true });
       if (path === '/api/apps/gmail/connect') {
         assert.deepEqual(JSON.parse(String(init.body)), { returnTo: 'window' });
-        return Response.json({ url: 'https://connect.example.test/gmail', attempt, pairingCode });
+        pendingAppLinks.add(receiptHash(gmailSignInUrl));
+        return Response.json({ url: gmailSignInUrl, attempt, pairingCode });
       }
       if (path === `/api/apps/discovery/${id}`) {
         discoveryReads++;
@@ -10205,7 +10356,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(dom.window.document.querySelector('.app-discovery-dialog'), null);
     assert.equal(dom.window.location.search, '');
     assert.equal(timers.size, 0);
-    const completedReads = discoveryReads;
+    let completedReads = discoveryReads;
     const mcpAccount: Connection = {
       slug: 'notion_mcp',
       name: 'Notion MCP',
@@ -10489,6 +10640,24 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     await settle();
     assert.ok(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'));
     assert.equal(dom.window.document.querySelector('.apps-page > [role="alert"]'), null);
+    appInventory = [{ ...nativeAccount, status: 'disconnected', canReconnect: true }];
+    await act(async () => pageDataCache.update('/api/apps', () => appInventory));
+    appSignInUrl = `/apps?connect=${id}`;
+    discoveryStatus = undefined;
+    const openedBeforeProposal = opened.length;
+    await act(async () => reconnectButtons()[0].click());
+    await settle();
+    assert.equal(opened.length, openedBeforeProposal);
+    assert.equal(dom.window.location.search, `?connect=${id}`);
+    assert.equal(dom.window.document.querySelector('.app-manage-dialog'), null);
+    assert.ok(dom.window.document.querySelector('.app-discovery-dialog form'));
+    assert.equal(expiryTimers.size, 0);
+    discoveryStatus = 'connected';
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.equal(dom.window.document.querySelector('.app-discovery-dialog'), null);
+    assert.equal(dom.window.location.search, '');
+    completedReads = discoveryReads;
     appInventory = [
       { slug: 'gmail', name: 'Gmail', status: 'disconnected', triggersEnabled: false },
     ];
@@ -10569,6 +10738,55 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     );
     assert.equal(gmail(), 'idle');
     Object.assign(dom.window, { ottoDesktop: desktopBridge });
+    for (const outcome of ['cancelled', 'failed']) {
+      gmailSignInUrl = `https://connect.example.test/gmail-${outcome}`;
+      await act(async () =>
+        dom.window.document.querySelector<HTMLButtonElement>('.ob-gmail-connect')!.click(),
+      );
+      await settle();
+      assert.equal(gmail(), 'waiting');
+      pendingAppLinks.delete(receiptHash(gmailSignInUrl));
+      await act(async () =>
+        outcome === 'cancelled'
+          ? dom.window.dispatchEvent(new dom.window.Event('focus'))
+          : dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')),
+      );
+      await settle();
+      assert.equal(gmail(), 'idle');
+      assert.equal(
+        dom.window.document.querySelector('[data-gmail] [data-analytics-private]'),
+        null,
+      );
+      assert.ok(dom.window.document.querySelector('.ob-email [role="alert"]'));
+      assert.equal(expiryTimers.size, 0);
+    }
+    gmailSignInUrl = 'https://connect.example.test/gmail-superseded';
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('.ob-gmail-connect')!.click(),
+    );
+    await settle();
+    completedAppLinks.add(receiptHash(gmailSignInUrl));
+    holdReceipt = true;
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('.ob-email-waiting button')!.click(),
+    );
+    assert.equal(gmail(), 'idle');
+    gmailSignInUrl = 'https://connect.example.test/gmail-completed';
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('.ob-gmail-connect')!.click(),
+    );
+    await settle();
+    assert.equal(gmail(), 'waiting');
+    await act(async () => releaseReceipt?.());
+    await settle();
+    assert.equal(gmail(), 'waiting');
+    assert.equal(
+      dom.window.document.querySelector<HTMLAnchorElement>('[data-gmail] a')?.href,
+      gmailSignInUrl,
+    );
+    const expireGmail = expiryTimers.values().next().value!;
     const gmailAccount: Connection = {
       slug: 'gmail',
       name: 'Gmail',
@@ -10580,6 +10798,20 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     appInventory = [gmailAccount];
     await act(async () => pageDataCache.update('/api/apps', () => appInventory));
     assert.equal(gmail(), 'connected');
+    completedAppLinks.add(receiptHash('https://connect.example.test/gmail-unrelated'));
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.equal(expiryTimers.size, 1);
+    completedAppLinks.add(receiptHash(gmailSignInUrl));
+    pendingAppLinks.delete(receiptHash(gmailSignInUrl));
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.equal(gmail(), 'connected');
+    assert.equal(expiryTimers.size, 0);
+    await act(async () => expireGmail());
+    await settle();
+    assert.equal(gmail(), 'connected');
+    assert.equal(dom.window.document.querySelector('.ob-email [role="alert"]'), null);
     const requestsBeforeReplay = appRequests.length;
     const openedBeforeReplay = opened.length;
     await act(async () => root.render(null));

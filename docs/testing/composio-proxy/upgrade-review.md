@@ -19,7 +19,7 @@ Startup checks the authoritative account owner and toolkit before accepting a ch
 
 A reconnect through a changed configuration must replace the selected local binding only after the new account is verified, retain its local ID and watch preference, and leave the old remote grant untouched. Failed or cancelled consent must leave the old entry available for recovery. Obsolete polling cursors and queued work cannot be applied to the new account. This is normal provider-change handling, not a second legacy provider.
 
-The original CP02/CP03 version-one no-reconnect expectations and failed/blocked evidence remain in [cases.v1.json](cases.v1.json). [Version two](cases.v2.json) reflects the user's later decision; it does not relabel historical outcomes as passes. Same-project direct-key preservation has an unchanged [red](CP03-preflight-red.json) and [green](CP03-preflight-green.json) preflight.
+The original CP02/CP03 version-one no-reconnect expectations remain in [cases.v1.json](cases.v1.json). [Version two](cases.v2.json) reflects the user's later decision; it does not relabel historical outcomes as passes. The separate changed-configuration preflight retains its [red](CP03-preflight-red.json) and [green](CP03-preflight-green.json) records; the green record's measurement limits are documented in the [review follow-up](review-followup.md).
 
 ## Release boundary
 

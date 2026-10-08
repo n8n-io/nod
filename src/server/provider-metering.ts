@@ -140,9 +140,9 @@ export function meterIntegrations(
           value.execute(action, args, account, signal, options),
         ),
       upload: value.upload
-        ? (action, file, signal) =>
+        ? (action, file, signal, accountId) =>
             usage.track({ ...base, operation: 'upload_file', bytes: file.bytes.byteLength }, () =>
-              value.upload!(action, file, signal),
+              value.upload!(action, file, signal, accountId),
             )
         : undefined,
     };
