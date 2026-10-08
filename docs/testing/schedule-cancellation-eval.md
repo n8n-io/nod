@@ -35,6 +35,12 @@ These controlled application cases exercise the real HTTP, worker, runtime tool,
 - H2: Revision handling forces another review even for the owner's reversible schedule change. Expect a replacement pending approval instead of a disabled schedule. Direct completion on the baseline would disprove this.
 - H3: Background deduplication searches only one turn's ancestry. Expect concurrent independent turns to create duplicate pending questions. A single shared pending action on the baseline would disprove this.
 
+## Attachment follow-up
+
+The attachment contains 13 pause-confirmation messages. The three captured `schedule_cancel` calls report tool success while returning a confirmation request. Both captured `schedule_list` results already show the target recurring schedule disabled with no next run. This establishes repeated unnecessary confirmation even after the schedule was paused; the attachment does not establish which earlier action paused it.
+
+Before changing this path, add CANCEL-PAUSED.v1: a background event calls `schedule_cancel` for an already-disabled synthetic schedule. C6 requires the event to finish successfully with no new approval, confirmation message, schedule revision or queued job. Score real application and database state. H4 predicts the unchanged implementation creates a pending confirmation despite having no state change to perform; a successful unchanged read would disprove it. This is an added case, not a regrade of the original cases.
+
 ## Results
 
 Pending the frozen baseline and candidate runs.

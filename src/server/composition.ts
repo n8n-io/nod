@@ -870,6 +870,7 @@ async function initializeApplication(
             turn,
             `OTTO_${action}`,
             await personal.validateReview(action, args),
+            provenance,
           );
         if (action === 'memory_save') {
           const input = memory.validate(args);

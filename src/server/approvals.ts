@@ -42,6 +42,8 @@ type TurnRow = {
   message_id: string | null;
   prompt: string;
   read_only: boolean;
+  background: boolean;
+  channel: string;
 };
 
 function conflict(message = 'This confirmation is expired, already handled, or its turn changed.') {
@@ -51,7 +53,7 @@ function conflict(message = 'This confirmation is expired, already handled, or i
 async function turnRow(client: PoolClient, turnId: string) {
   return (
     await client.query<TurnRow>(
-      'SELECT id,thread_id,source,source_id,message_id,prompt,read_only FROM turns WHERE id=$1 AND owner_id=$2',
+      'SELECT id,thread_id,source,source_id,message_id,prompt,read_only,background,channel FROM turns WHERE id=$1 AND owner_id=$2',
       [turnId, ownerId],
     )
   ).rows[0];
@@ -201,7 +203,7 @@ export async function createApprovals(
     turn: TurnRef,
     action: string,
     args: Record<string, unknown>,
-    options: { confirm?: boolean; question?: string } = {},
+    options: { confirm?: boolean; question?: string; sourceMessageId?: string | null } = {},
   ) {
     const encoded = JSON.stringify(args);
     if (!encoded || encoded.length > 32768) throw new Error('The action is too large.');
@@ -217,21 +219,24 @@ export async function createApprovals(
         throw new Error(
           'This action needs a direct request from the user; this turn is read-only.',
         );
-      const background = ['event', 'schedule'].includes(origin.source);
-      const revision =
-        origin.source === 'user' && origin.message_id
-          ? Boolean(
-              (
-                await client.query(
-                  "SELECT 1 FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND confirmation_reply_id=$3 AND status='expired' LIMIT 1",
-                  [ownerId, turn.threadId, origin.message_id],
-                )
-              ).rowCount,
+      let steering: { id: string; text: string } | undefined;
+      if (options.sourceMessageId && options.sourceMessageId !== current.message_id) {
+        if (!current.background)
+          steering = (
+            await client.query<{ id: string; text: string }>(
+              "SELECT id,text FROM messages WHERE id=$1 AND owner_id=$2 AND thread_id=$3 AND turn_id=$4 AND role='user'",
+              [options.sourceMessageId, ownerId, turn.threadId, turn.turnId],
             )
-          : false;
+          ).rows[0];
+        if (!steering) throw new Error('This action needs a direct request from the user.');
+      }
+      const background = !steering && ['event', 'schedule'].includes(origin.source);
       let authorInstruction: string;
       let authorMessageId: string | null;
-      if (origin.source === 'event') {
+      if (steering) {
+        authorInstruction = steering.text;
+        authorMessageId = steering.id;
+      } else if (origin.source === 'event') {
         authorInstruction = '';
         authorMessageId = null;
       } else if (origin.source === 'schedule') {
@@ -252,9 +257,19 @@ export async function createApprovals(
         authorInstruction = author.text;
         authorMessageId = author.id;
       }
-      const review = background || revision;
+      const revision =
+        !background && authorMessageId
+          ? Boolean(
+              (
+                await client.query(
+                  "SELECT 1 FROM approvals WHERE owner_id=$1 AND thread_id=$2 AND confirmation_reply_id=$3 AND status='expired' LIMIT 1",
+                  [ownerId, turn.threadId, authorMessageId],
+                )
+              ).rowCount,
+            )
+          : false;
       const explicit = explicitlyRequestsAction(action, authorInstruction);
-      const currentSource = authorInstruction === current.prompt;
+      const currentSource = Boolean(steering) || authorInstruction === current.prompt;
       const kind = await resumeKind(client, current);
       const resumedSource =
         requestsSchedule(action, authorInstruction) &&
@@ -269,6 +284,10 @@ export async function createApprovals(
       )
         throw new Error('This action needs a direct request from the user.');
       await preflight?.(action, snapshot);
+      if (background)
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+          `approvals:${ownerId}:${turn.threadId}`,
+        ]);
       const previous = (
         background
           ? await client.query(
@@ -285,11 +304,31 @@ export async function createApprovals(
           return { cached: true as const, result: previous.result };
         throw conflict('This exact action already has a pending or uncertain outcome.');
       }
+      if (background) {
+        const pending = (
+          await client.query(
+            `SELECT a.*,m.text AS question FROM approvals a
+             JOIN turns u ON u.id=a.turn_id AND u.owner_id=a.owner_id AND u.thread_id=a.thread_id
+             JOIN messages m ON m.id=a.confirmation_message_id AND m.owner_id=a.owner_id AND m.thread_id=a.thread_id AND m.role='assistant'
+             WHERE a.owner_id=$1 AND a.thread_id=$2 AND a.action=$3 AND a.args=$4::jsonb
+               AND a.status='pending' AND a.expires_at>now() AND u.status IN ('running','waiting') AND u.channel=$5
+             ORDER BY a.id LIMIT 1`,
+            [ownerId, turn.threadId, action, snapshot, current.channel],
+          )
+        ).rows[0];
+        if (pending)
+          return {
+            cached: false as const,
+            approval: pending,
+            question: pending.question as string,
+          };
+      }
       const direct =
         !options.confirm &&
         !options.question &&
-        !review &&
-        (isReversiblePlanAction(action) || explicit);
+        !background &&
+        ((isReversiblePlanAction(action) && (!revision || currentSource)) ||
+          (!revision && explicit));
       const id = randomUUID();
       let targetTitle: string | undefined;
       if (!direct && typeof snapshot.id === 'string') {
