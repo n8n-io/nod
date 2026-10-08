@@ -70,7 +70,6 @@ export function parseModel(value: string, environment: Record<string, string | u
 export interface Stack {
   baseUrl: string;
   directory: string;
-  workspaceRoot: string;
   container: string;
   pool: pg.Pool;
   bossSchema: string;
@@ -334,7 +333,6 @@ export async function startStack(options: {
     return {
       baseUrl: `http://localhost:${port}`,
       directory,
-      workspaceRoot,
       container,
       pool,
       bossSchema,
