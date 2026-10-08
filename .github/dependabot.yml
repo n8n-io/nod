@@ -1,0 +1,89 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /desktop
+      - /deployment/cloudflare
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Lisbon
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      pi:
+        patterns: ['@earendil-works/pi-*']
+      tiptap:
+        patterns: ['@tiptap/*']
+      chat-sdk:
+        patterns: ['chat', '@chat-adapter/*']
+      react:
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom']
+      tailwindcss:
+        patterns: ['tailwindcss', '@tailwindcss/*']
+      security:
+        applies-to: security-updates
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Lisbon
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      actions:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /deployment/cloudflare
+      - /deployment/e2b
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Lisbon
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      images:
+        group-by: dependency-name
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Lisbon
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope

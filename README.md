@@ -85,6 +85,8 @@ npm run build             # types and web bundle
 
 The integration command builds the client and browser image, runs every test in an isolated Docker network, and removes its test containers afterward. It fails on skipped tests and does not use your local database or credentials.
 
+Dependency maintenance: [Dependabot updates and automatic merging](docs/dependency-updates.md).
+
 Hosted deployment: [deployment/cloudflare/README.md](deployment/cloudflare/README.md). Rules for coding agents: [AGENTS.md](AGENTS.md).
 
 ## License
