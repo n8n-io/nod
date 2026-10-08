@@ -70,6 +70,7 @@ const summary = {
     'Each saved tool-output token is sent once as uncached model input.',
     'EUR 1, 3 and 10 per million input tokens are illustrative rates, not current provider prices.',
     'Model output, unchanged instructions, other tools, cache discounts and repeated conversation-history ingestion are excluded.',
+    'Added bash-tool description tokens, rewrite latency, runtime cost and image-build cost are excluded; this is not a net-bill measurement.',
     'This estimates the affected tool-output component, not a percentage reduction in total agent bills.',
   ],
   projections,
@@ -143,7 +144,7 @@ for (let index = 0; index < rows.length; index++) {
   ctx.fillRect(390, y + 23, (row.candidateCharacters / max) * 650, 22);
   text(String(row.baselineCharacters), 1066, y + 9, 23, muted);
   text(String(row.candidateCharacters), 1066, y + 44, 23, teal, 600);
-  text(`−${row.savedCharactersPercent.toFixed(1)}%`, 1210, y + 30, 29, teal, 700);
+  text(`-${row.savedCharactersPercent.toFixed(1)}%`, 1210, y + 30, 29, teal, 700);
 }
 ctx.fillStyle = '#d7e0de';
 ctx.fillRect(64, 802, 1312, 2);
@@ -158,7 +159,7 @@ text(
   700,
 );
 text(
-  `€${projection.costSavedEur['3EURPerMillionInputTokens'].toFixed(2)} at €3 per million uncached input tokens`,
+  `EUR ${projection.costSavedEur['3EURPerMillionInputTokens'].toFixed(2)} at EUR 3/M input tokens`,
   710,
   899,
   28,
