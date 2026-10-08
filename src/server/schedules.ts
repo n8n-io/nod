@@ -517,18 +517,22 @@ export function createSchedules(dependencies: ScheduleDependencies) {
     return next;
   }
 
-  async function validateUpdate(id: string, raw: unknown) {
+  async function read(id: string) {
     z.uuid().parse(id);
-    const input = updateSchema.parse(raw);
-    if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
-    const previous = (
+    const row = (
       await pool.query<ScheduleRow>(
         `SELECT ${columns} FROM schedules WHERE id=$1 AND owner_id=$2`,
         [id, ownerId],
       )
     ).rows[0];
-    if (!previous) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
-    updateValue(previous, input);
+    if (!row) throw Object.assign(new Error('Schedule not found.'), { statusCode: 404 });
+    return row;
+  }
+
+  async function validateUpdate(id: string, raw: unknown) {
+    const input = updateSchema.parse(raw);
+    if (!Object.keys(input).length) throw invalid('Choose a schedule detail to update.');
+    updateValue(await read(id), input);
     return input;
   }
 
@@ -743,6 +747,7 @@ export function createSchedules(dependencies: ScheduleDependencies) {
   return {
     initialize,
     list,
+    get: async (id: string) => value(await read(id)),
     create,
     update,
     remove,

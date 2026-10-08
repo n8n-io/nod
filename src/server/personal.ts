@@ -287,6 +287,7 @@ export function createPersonalService(dependencies: PersonalDependencies) {
     initialize,
     getProfile,
     listSchedules: schedules.list,
+    getSchedule: schedules.get,
     manage,
     validateReview,
     memoryView,

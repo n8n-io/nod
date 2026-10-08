@@ -865,13 +865,14 @@ async function initializeApplication(
             'schedule_update',
             'schedule_cancel',
           ].includes(action)
-        )
-          return approvals.request(
-            turn,
-            `OTTO_${action}`,
-            await personal.validateReview(action, args),
-            provenance,
-          );
+        ) {
+          const input = await personal.validateReview(action, args);
+          if (action === 'schedule_cancel') {
+            const schedule = await personal.getSchedule(String(input.id));
+            if (!schedule.enabled) return schedule;
+          }
+          return approvals.request(turn, `OTTO_${action}`, input, provenance);
+        }
         if (action === 'memory_save') {
           const input = memory.validate(args);
           if (!(await memory.supported(input, { ...provenance, turnId: turn.turnId })))
