@@ -11,7 +11,7 @@ const sofia = 'sofia.almeida@meridiancapital.example.org';
 const answers = [
   'I run a small brand design studio, mostly rebrands for local businesses.',
   'Land two new rebrand clients before the end of the year.',
-  'Client email. I lose hours every week answering the same questions about quotes and revisions.',
+  'Client email. I lose hours every week answering the same questions from clients.',
 ] as const;
 const aboutSofia = /sofia|meridian|proposal|revision/i;
 const aboutSignIn = /code|sign[- ]?in|log[- ]?in|verif|security|password/i;
