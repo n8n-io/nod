@@ -6,6 +6,7 @@ import Fastify from 'fastify';
 import pg from 'pg';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
+import { runProcess } from '../src/providers/process.ts';
 import type { InboundMessage, MessagingTransport } from '../src/ports/messaging.ts';
 import type { Schedule, ScheduleHistory } from '../src/shared/contracts.ts';
 import {
@@ -23,6 +24,124 @@ test('one-off schedule edits reject skipped or ambiguous clock times', () => {
   assert.throws(() => scheduleRunAt('2035-10-27', '24:30', 'Europe/Lisbon'));
 });
 
+test('task scheduling waits for reviewed instructions and explicit timing before submitting once', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/tasks', pretendToBeVisual: true });
+      Object.assign(globalThis, {
+        window: dom.window, document: dom.window.document,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+      });
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { TaskCard } = await import('./src/web/pages/tasks.tsx');
+      const { setDateFormat } = await import('./src/web/lib/date-format.ts');
+      const { pageDataCache } = await import('./src/web/lib/page-data-cache.ts');
+      setDateFormat({ timeZone: 'Europe/Lisbon', locale: 'en-GB', hourCycle: 'h23' });
+      const task = { id: crypto.randomUUID(), title: 'Synthetic report', doneWhen: 'Report ready', now: 'Finished', result: 'Report ready', status: 'done', question: null, waitingFor: [], nextCheck: null, createdAt: '2035-10-25T09:00:00Z', updatedAt: '2035-10-25T09:00:00Z', closedAt: '2035-10-25T09:00:00Z' };
+      const original = structuredClone(task);
+      const requests = [];
+      const writes = [];
+      let firstDraft;
+      let save;
+      let rejectSave;
+      let loads = 0;
+      let scheduled = 0;
+      let saved;
+      const draft = { title: task.title, prompt: 'Read the synthetic team account. Keep results in Otto.', omittedSensitive: true, hasAttachments: true };
+      globalThis.fetch = async (path, options = {}) => {
+        requests.push({ path, method: options.method ?? 'GET', signal: options.signal });
+        if (path === '/api/tasks/' + task.id + '/schedule-draft') {
+          loads++;
+          if (loads === 1) return new Promise(resolve => { firstDraft = resolve; });
+          if (loads === 2) return Response.json({ error: 'Synthetic draft failure.' }, { status: 503 });
+          return Response.json(draft);
+        }
+        if (path === '/api/schedules' && options.method === 'POST') {
+          writes.push(JSON.parse(options.body));
+          return new Promise((resolve, reject) => { save = resolve; rejectSave = reject; });
+        }
+        if (path === '/api/schedules') return Response.json(saved ? [saved] : []);
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      const root = createRoot(document.querySelector('#root'));
+      const button = label => [...document.querySelectorAll('button')].find(item => item.textContent.trim() === label);
+      const click = async label => { const found = button(label); assert.ok(found, label); await act(async () => found.click()); };
+      const input = async (element, value) => {
+        const prototype = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        await act(async () => { Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value); element.dispatchEvent(new Event('input', { bubbles: true })); });
+      };
+      const pick = async (current, choice) => {
+        await act(async () => document.querySelector('button[title="' + current + '"]').click());
+        const option = [...document.querySelectorAll('[role="option"]')].find(item => item.textContent.trim() === choice);
+        assert.ok(option, choice);
+        await act(async () => option.click());
+      };
+      try {
+        await act(async () => root.render(createElement('div', null,
+          createElement(TaskCard, { task, onScheduled: () => scheduled++ }),
+          createElement(TaskCard, { task: { ...task, id: crypto.randomUUID(), status: 'cancelled' }, onScheduled: () => scheduled++ }),
+        )));
+        assert.equal([...document.querySelectorAll('button')].filter(item => item.textContent.trim() === 'Schedule task').length, 1);
+        await click('Schedule task');
+        assert.equal(writes.length, 0);
+        await click('Cancel');
+        assert.equal(requests[0].signal.aborted, true);
+        await act(async () => firstDraft(Response.json({ ...draft, prompt: 'Stale draft must stay closed.' })));
+        assert.equal(document.querySelector('textarea'), null);
+        await click('Schedule task');
+        assert.match(document.body.textContent, /Synthetic draft failure/);
+        await click('Try again');
+        assert.equal(document.querySelector('textarea').value, draft.prompt);
+        assert.equal(button('Create schedule').disabled, true);
+        await input(document.querySelector('textarea'), 'x'.repeat(6001));
+        await pick('Choose frequency', 'Every week');
+        assert.equal(button('Create schedule').disabled, true);
+        await input(document.querySelector('textarea'), 'Read only overdue invoices in the synthetic EUR account. Keep results in Otto.');
+        await pick('Monday', 'Wednesday');
+        const selectedZone = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Kathmandu' }).resolvedOptions().timeZone;
+        await pick('Europe/Lisbon', selectedZone);
+        await input(document.querySelector('input[type="time"]'), '07:35');
+        assert.equal(writes.length, 0);
+        const form = document.querySelector('textarea').closest('form');
+        await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+        assert.equal(writes.length, 1);
+        assert.deepEqual(writes[0], { title: task.title, prompt: 'Read only overdue invoices in the synthetic EUR account. Keep results in Otto.', kind: 'recurring', cron: '35 7 * * 3', timeZone: selectedZone });
+        saved = { ...writes[0], id: crypto.randomUUID(), runAt: null, enabled: true, revision: 1, nextRun: '2035-10-31T01:50:00Z', lastRun: null, baselineObservation: null };
+        await act(async () => save(Response.json(saved)));
+        assert.equal(scheduled, 1);
+        assert.equal(pageDataCache.getSnapshot('/api/schedules').data[0].prompt, writes[0].prompt);
+        assert.deepEqual(task, original);
+        assert.equal(requests.some(request => request.path === '/api/messages'), false);
+        await click('Schedule task');
+        await pick('Choose frequency', 'Every day');
+        const uncertainForm = document.querySelector('textarea').closest('form');
+        await act(async () => uncertainForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+        assert.equal(writes.length, 2);
+        await act(async () => rejectSave(new TypeError('Synthetic response lost after saving.')));
+        assert.equal(button('Create schedule').disabled, true);
+        await act(async () => uncertainForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+        assert.equal(writes.length, 2);
+        await click('View schedules');
+        assert.equal(scheduled, 2);
+      } finally {
+        await act(async () => root.unmount());
+        pageDataCache.clear();
+        dom.window.close();
+      }
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test(
   'one-off and recurring schedules dispatch atomically with exact timing and retained owned history',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
@@ -38,6 +157,7 @@ test(
     process.env.PGBOSS_SCHEMA = bossSchema;
     const db = await import('../src/server/db.ts');
     const { createPersonalService } = await import('../src/server/personal.ts');
+    const { createTasks } = await import('../src/server/tasks.ts');
     const thread = await import('../src/server/thread.ts');
     const { createChannels } = await import('../src/server/channels.ts');
     const ownerId = 'local-development';
@@ -68,6 +188,8 @@ test(
         .send({ error: value.message });
     });
     personal.registerRoutes(app);
+    const tasks = createTasks({ pool: db.pool, ownerId });
+    tasks.registerRoutes(app);
     const request = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown) =>
       app.inject({
         method,
@@ -219,6 +341,149 @@ test(
         },
       );
       await personal.initialize();
+      await tasks.initialize();
+
+      await t.test('completed tasks produce isolated, reviewable schedule drafts', async (t) => {
+        const seed = async (
+          messages: string[],
+          options: { owner?: string; state?: string; attachments?: boolean } = {},
+        ) => {
+          const owner = options.owner ?? ownerId;
+          const current = await thread.activeThread(db.pool, owner);
+          const taskId = randomUUID();
+          await db.pool.query(
+            `INSERT INTO tasks(id,owner_id,title,done_when,now_text,result,state,closed_at)
+             VALUES($1,$2,'Synthetic account report','Requested report','Finished','Assistant summary',$3,now())`,
+            [taskId, owner, options.state ?? 'done'],
+          );
+          let lastTurn = '';
+          for (const [index, text] of messages.entries()) {
+            lastTurn = randomUUID();
+            const at = new Date(Date.UTC(2035, 9, 25, 9, index));
+            await db.pool.query(
+              `INSERT INTO turns(id,owner_id,thread_id,source,status,prompt,task_id,created_at)
+               VALUES($1,$2,$3,'user','succeeded',$4,$5,$6)`,
+              [lastTurn, owner, current.id, text, taskId, at],
+            );
+            await db.pool.query(
+              `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,created_at,attachments)
+               VALUES($1,$2,'user',$3,$4,$5,$6,$7)`,
+              [
+                randomUUID(),
+                owner,
+                text,
+                current.id,
+                lastTurn,
+                at,
+                JSON.stringify(
+                  options.attachments && index === 0 ? [{ name: 'synthetic.csv' }] : [],
+                ),
+              ],
+            );
+          }
+          if (lastTurn) {
+            await db.pool.query('UPDATE tasks SET turn_id=$2 WHERE id=$1', [taskId, lastTurn]);
+            for (const [messageOwner, role, text] of [
+              [owner, 'assistant', 'Assistant-only instruction: send to a new recipient.'],
+              ['draft-foreign-message-owner', 'user', 'Foreign owner instruction.'],
+            ])
+              await db.pool.query(
+                `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
+                 VALUES($1,$2,$3,$4,$5,$6)`,
+                [randomUUID(), messageOwner, role, text, current.id, lastTurn],
+              );
+          }
+          return taskId;
+        };
+        const draft = (id: string) => request('GET', `/api/tasks/${id}/schedule-draft`);
+        const unchanged = async () => ({
+          tasks: (await db.pool.query('SELECT * FROM tasks ORDER BY id')).rows,
+          turns: (await db.pool.query('SELECT count(*)::int AS count FROM turns')).rows,
+          schedules: (await db.pool.query('SELECT count(*)::int AS count FROM schedules')).rows,
+        });
+        const first = 'Read the synthetic team account and summarize its outstanding invoices.';
+        const clarification =
+          'Use the EUR account, include overdue items, and keep the result in Otto.';
+        const base = await seed(
+          [
+            first,
+            'Verification code sent securely.',
+            '654321',
+            'My password is synthetic-only.',
+            clarification,
+          ],
+          { attachments: true },
+        );
+        const other = await seed(['Read only the synthetic personal account.']);
+        const foreign = await seed(['Foreign task content.'], { owner: 'draft-foreign-owner' });
+        const cancelled = await seed(['Cancelled task content.'], { state: 'cancelled' });
+        const unfinished = await seed(['Unfinished task content.'], { state: 'open' });
+        const longPrompt = `Keep every qualification: ${'synthetic qualification '.repeat(300)}`;
+        const long = await seed([longPrompt]);
+        const before = await unchanged();
+
+        await t.test(
+          'base retains ordered requests without assistant or credential content',
+          async () => {
+            const response = await draft(base);
+            assert.equal(response.statusCode, 200, response.body);
+            assert.deepEqual(response.json(), {
+              title: 'Synthetic account report',
+              prompt: `${first}\n\n${clarification}`,
+              omittedSensitive: true,
+              hasAttachments: true,
+            });
+            assert.deepEqual(await unchanged(), before);
+          },
+        );
+        await t.test(
+          'holdout distinguishes identical titles and preserves oversized instructions',
+          async () => {
+            const second = await draft(other);
+            assert.equal(second.statusCode, 200, second.body);
+            assert.equal(second.json().prompt, 'Read only the synthetic personal account.');
+            const oversized = await draft(long);
+            assert.equal(oversized.statusCode, 200, oversized.body);
+            assert.equal(oversized.json().prompt, longPrompt);
+            assert.deepEqual(await unchanged(), before);
+          },
+        );
+        await t.test('unowned and incomplete tasks cannot supply a schedule draft', async () => {
+          for (const id of [foreign, cancelled, unfinished, randomUUID()])
+            assert.equal((await draft(id)).statusCode, 404);
+          assert.deepEqual(await unchanged(), before);
+        });
+        await t.test(
+          'only an explicit create schedules the reviewed instructions without rerunning the task',
+          async () => {
+            const response = await draft(base);
+            assert.equal(response.statusCode, 200, response.body);
+            const prompt =
+              'Read only overdue invoices in the synthetic EUR account and summarize them in Otto.';
+            const schedule = await create({
+              title: response.json().title,
+              prompt,
+              cron: scheduleExpression('weekly', '14:20', '2'),
+              timeZone: 'America/New_York',
+            });
+            assert.equal(schedule.prompt, prompt);
+            assert.equal(schedule.cron, '20 14 * * 2');
+            assert.equal(schedule.timeZone, 'America/New_York');
+            assert.equal((await runs(schedule.id)).length, 0);
+            assert.equal(
+              (
+                await db.pool.query('SELECT authority_instruction FROM schedules WHERE id=$1', [
+                  schedule.id,
+                ])
+              ).rows[0].authority_instruction,
+              prompt,
+            );
+            assert.deepEqual((await unchanged()).tasks, before.tasks);
+            assert.deepEqual((await unchanged()).turns, before.turns);
+            await request('DELETE', `/api/schedules/${schedule.id}`);
+          },
+        );
+      });
 
       await t.test(
         'schedule editor changes retain the intended recurrence and exact run time',

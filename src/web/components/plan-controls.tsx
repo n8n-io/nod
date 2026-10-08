@@ -3,8 +3,9 @@ import { ArrowUp, ChevronDown, LoaderCircle, Sparkles } from 'lucide-react';
 import type { Schedule } from '../../shared/contracts';
 import { Button, Field, Input, Notice, Switch } from './ui';
 import { SearchPicker, TimeZonePicker, type PickerOption } from './time-zone-picker';
-import { api, errorMessage } from '../lib/api';
+import { api, ApiError, errorMessage } from '../lib/api';
 import { pageDataCache } from '../lib/page-data-cache';
+import { useDateFormat } from '../lib/date-format';
 import {
   readSchedule,
   scheduleExpression,
@@ -412,6 +413,278 @@ export function ScheduleTiming({
         </div>
       )}
     </form>
+  );
+}
+
+function TaskScheduleForm({
+  taskId,
+  onClose,
+  onCreated,
+}: {
+  taskId: string;
+  onClose(): void;
+  onCreated(): void;
+}) {
+  const format = useDateFormat();
+  const [draft, setDraft] = useState<{
+    title: string;
+    prompt: string;
+    omittedSensitive: boolean;
+    hasAttachments: boolean;
+  } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [error, setError] = useState('');
+  const [frequency, setFrequency] = useState<ScheduleFrequency | ''>('');
+  const [day, setDay] = useState('1');
+  const [time, setTime] = useState('09:00');
+  const [timeZone, setTimeZone] = useState(format.timeZone);
+  const [busy, setBusy] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const submitting = useRef(false);
+  const mounted = useRef(true);
+  const zoneLabel = useId();
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    setDraft(null);
+    setError('');
+    void api<NonNullable<typeof draft>>(`/api/tasks/${encodeURIComponent(taskId)}/schedule-draft`, {
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+    })
+      .then((value) => {
+        if (!controller.signal.aborted) setDraft(value);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) setError(errorMessage(cause));
+      });
+    return () => controller.abort();
+  }, [taskId, attempt]);
+  const valid = Boolean(
+    !uncertain &&
+    draft?.title.trim() &&
+    draft.title.trim().length <= 100 &&
+    draft.prompt.trim() &&
+    draft.prompt.trim().length <= 6000 &&
+    frequency &&
+    time,
+  );
+  async function submit() {
+    if (!valid || !draft || !frequency || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError('');
+    let unconfirmed = false;
+    try {
+      const saved = await api<Schedule>('/api/schedules', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: draft.title.trim(),
+          prompt: draft.prompt.trim(),
+          kind: 'recurring',
+          cron: scheduleExpression(frequency, time, day),
+          timeZone,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      pageDataCache.update<Schedule[]>('/api/schedules', (items) => [saved, ...(items ?? [])]);
+      void pageDataCache.refresh('/api/schedules', true);
+      if (mounted.current) {
+        showToast({ id: Date.now(), text: `Scheduled ${saved.title}.` });
+        onCreated();
+      }
+    } catch (cause) {
+      unconfirmed = !(cause instanceof ApiError && cause.status >= 400 && cause.status < 500);
+      if (mounted.current) {
+        setUncertain(unconfirmed);
+        setError(
+          unconfirmed
+            ? 'Could not confirm whether the schedule was saved. Check Scheduled before creating another schedule.'
+            : errorMessage(cause),
+        );
+      }
+    } finally {
+      submitting.current = unconfirmed;
+      if (mounted.current) setBusy(false);
+    }
+  }
+  return (
+    <form
+      className="schedule-timing task-schedule-form"
+      aria-label="Schedule completed task"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      {draft ? (
+        <>
+          <p className="field-hint">Review the original requests and adapt them for future runs.</p>
+          <Field label="Name">
+            <Input
+              value={draft.title}
+              disabled={busy}
+              required
+              onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+            />
+          </Field>
+          <Field label="Instructions for each run">
+            <textarea
+              className="input"
+              rows={5}
+              value={draft.prompt}
+              disabled={busy}
+              required
+              onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
+            />
+          </Field>
+          {(draft.title.trim().length > 100 || draft.prompt.trim().length > 6000) && (
+            <Notice>
+              Shorten the name to 100 characters and the instructions to 6,000 characters before
+              scheduling.
+            </Notice>
+          )}
+          {draft.omittedSensitive && (
+            <Notice kind="info">
+              Sign-in codes and messages containing sensitive details were left out. Review the
+              remaining instructions.
+            </Notice>
+          )}
+          {draft.hasAttachments && (
+            <Notice kind="info">
+              Attachments from this task are not added to the schedule. Include the details each run
+              needs.
+            </Notice>
+          )}
+          <div className="schedule-timing-fields">
+            <SchedulePicker
+              label="Repeat"
+              value={frequency}
+              options={[{ value: '', label: 'Choose frequency' }, ...frequencies]}
+              disabled={busy}
+              onChange={(value) => {
+                setFrequency(value as ScheduleFrequency);
+                setDay('1');
+              }}
+            />
+            {(frequency === 'weekly' || frequency === 'monthly') && (
+              <SchedulePicker
+                label={frequency === 'weekly' ? 'Day' : 'Day of month'}
+                value={day}
+                options={
+                  frequency === 'weekly'
+                    ? [1, 2, 3, 4, 5, 6, 0].map((day) => ({
+                        value: String(day),
+                        label: scheduleWeekDays[day],
+                      }))
+                    : Array.from({ length: 31 }, (_, index) => ({
+                        value: String(index + 1),
+                        label: String(index + 1),
+                      }))
+                }
+                disabled={busy}
+                onChange={setDay}
+              />
+            )}
+            <Field label="Time">
+              <Input
+                type="time"
+                value={time}
+                required
+                disabled={busy}
+                onChange={(event) => setTime(event.target.value)}
+              />
+            </Field>
+            <div className="schedule-timing-field schedule-time-zone">
+              <span className="field-label" id={zoneLabel}>
+                Time zone
+              </span>
+              <TimeZonePicker
+                value={timeZone}
+                zones={[
+                  ...new Set([
+                    format.timeZone,
+                    'UTC',
+                    ...(Intl.supportedValuesOf?.('timeZone') ?? []),
+                  ]),
+                ].sort()}
+                disabled={busy}
+                labelledBy={zoneLabel}
+                onChange={setTimeZone}
+              />
+            </div>
+          </div>
+          {frequency === 'monthly' && Number(day) > 28 && (
+            <p className="field-hint">Months without this day are skipped.</p>
+          )}
+        </>
+      ) : !error ? (
+        <p role="status">Loading task instructions…</p>
+      ) : null}
+      {error && (
+        <Notice>
+          {error}
+          {!draft && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setAttempt((value) => value + 1)}
+            >
+              Try again
+            </Button>
+          )}
+        </Notice>
+      )}
+      <div className="schedule-timing-actions">
+        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onClose}>
+          Cancel
+        </Button>
+        {uncertain && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void pageDataCache.refresh('/api/schedules', true);
+              onCreated();
+            }}
+          >
+            View schedules
+          </Button>
+        )}
+        {draft && (
+          <Button type="submit" size="sm" disabled={busy || !valid}>
+            {busy ? 'Creating…' : 'Create schedule'}
+          </Button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+export function ScheduleTask({ taskId, onCreated }: { taskId: string; onCreated?(): void }) {
+  const [open, setOpen] = useState(false);
+  return open ? (
+    <TaskScheduleForm
+      key={taskId}
+      taskId={taskId}
+      onClose={() => setOpen(false)}
+      onCreated={() => {
+        setOpen(false);
+        onCreated?.();
+      }}
+    />
+  ) : (
+    <div className="saved-plan-footer">
+      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        Schedule task
+      </Button>
+    </div>
   );
 }
 

@@ -6,6 +6,9 @@ import { JSDOM } from 'jsdom';
 import { runProcess } from '../src/providers/process.ts';
 import { VaultDetails } from '../src/web/components/vault-details.tsx';
 import { Credentials } from '../src/web/pages/credentials.tsx';
+import { Vault } from '../src/web/pages/vault.tsx';
+import { setRequestAccount } from '../src/web/lib/api.ts';
+import { pageDataCache } from '../src/web/lib/page-data-cache.ts';
 import { Composio } from '@composio/core';
 import Fastify, { type FastifyInstance } from 'fastify';
 import pg from 'pg';
@@ -3295,9 +3298,10 @@ test(
 async function vaultPage(
   element: React.ReactNode,
   response: (path: string, init: RequestInit) => Promise<Response>,
+  url = 'http://localhost:4310/vault/synthetic_credential_request',
 ) {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
-    url: 'http://localhost:4310/vault/synthetic_credential_request',
+    url,
     pretendToBeVisual: true,
   });
   const globals = {
@@ -3333,6 +3337,146 @@ async function vaultPage(
     },
   };
 }
+
+test(
+  'a Vault save link opens an empty secure form and saves only the submitted owned login',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async () => {
+    const schema = `test_vault_link_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    await seedTurns(pool);
+    const key = randomBytes(32);
+    const app = Fastify();
+    const vault = await createVault(pool, {
+      keyStore: { id: 'fixture', configured: true, getKey: async () => key },
+      inject: async () => assert.fail('Saving a manual login must not use the browser.'),
+      resume: async () => assert.fail('Saving a manual login must not resume a task.'),
+      retry: async () => assert.fail('Saving a manual login must not retry a task.'),
+    });
+    vault.registerRoutes(app);
+    const submitted: unknown[] = [];
+    const requests = new Set<Promise<Response>>();
+    const settle = async () => {
+      while (requests.size) await act(async () => void (await Promise.all(requests)));
+    };
+    let view: Awaited<ReturnType<typeof vaultPage>> | undefined;
+    pageDataCache.clear();
+    setRequestAccount('local-development');
+    try {
+      view = await vaultPage(
+        createElement(Vault),
+        (path, init) => {
+          const request = (async () => {
+            assert.equal(new Headers(init.headers).get('X-Otto-Account'), 'local-development');
+            assert.ok(path.startsWith('/api/vault'));
+            if (path === '/api/vault' && init.method === 'POST')
+              submitted.push(JSON.parse(String(init.body)));
+            const response = await app.inject({
+              method: (init.method ?? 'GET') as 'GET' | 'POST',
+              url: path,
+              ...(init.body ? { payload: JSON.parse(String(init.body)) } : {}),
+            });
+            return new Response(response.body, {
+              status: response.statusCode,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          })();
+          requests.add(request);
+          void request.finally(() => requests.delete(request));
+          return request;
+        },
+        'http://localhost:4310/vault?add=login',
+      );
+      await settle();
+      const form = view.document.querySelector<HTMLFormElement>('.vault-add-form');
+      assert.ok(form, 'The save link must open the login form.');
+      assert.equal(submitted.length, 0);
+      assert.deepEqual(await vault.list(), []);
+      assert.equal(view.window.location.search, '');
+      const input = (name: string) => {
+        const field = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+        assert.ok(field);
+        return field;
+      };
+      for (const name of ['origin', 'username', 'password']) assert.equal(input(name).value, '');
+      input('label').value = 'Synthetic manual login';
+      input('origin').value = 'https://identity.example.test';
+      input('username').value = 'owner@example.test';
+      input('password').value = 'synthetic-manual-password';
+      await act(async () => {
+        form.dispatchEvent(new view!.window.Event('submit', { bubbles: true, cancelable: true }));
+      });
+      assert.equal(input('password').value, '');
+      await settle();
+      assert.equal(view.document.querySelector('.vault-add-form'), null);
+      assert.deepEqual(submitted, [
+        {
+          label: 'Synthetic manual login',
+          origin: 'https://identity.example.test',
+          username: 'owner@example.test',
+          password: 'synthetic-manual-password',
+        },
+      ]);
+      const entries = await vault.list();
+      assert.equal(entries.length, 1);
+      const { entry, secret } = await vault.readCredential(entries[0].id);
+      assert.equal(entry.owner_id, 'local-development');
+      assert.equal(entry.origin, 'https://identity.example.test');
+      assert.deepEqual(secret, {
+        username: 'owner@example.test',
+        password: 'synthetic-manual-password',
+      });
+      for (const value of Object.values(secret)) {
+        assert.equal(entry.ciphertext.includes(value), false);
+        assert.equal(view.window.location.href.includes(value), false);
+      }
+      assert.deepEqual(await vault.list('another-owner'), []);
+      assert.equal((await pool.query('SELECT * FROM credential_requests')).rowCount, 0);
+    } finally {
+      await view?.close();
+      await Promise.allSettled(requests);
+      pageDataCache.clear();
+      setRequestAccount(null);
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
+
+test('Vault does not open or prefill a login from arbitrary query data', async () => {
+  for (const query of [
+    '',
+    '?add=card',
+    '?add=login&origin=https%3A%2F%2Fexample.test',
+    '?add=login&password=synthetic',
+    '?add=login&add=login',
+    '?add=login#synthetic',
+  ]) {
+    pageDataCache.clear();
+    const view = await vaultPage(
+      createElement(Vault),
+      async (path, init) => {
+        assert.equal(path, '/api/vault');
+        assert.notEqual(init.method, 'POST');
+        return Response.json([]);
+      },
+      `http://localhost:4310/vault${query}`,
+    );
+    try {
+      assert.equal(view.document.querySelector('.vault-add-form'), null);
+    } finally {
+      await view.close();
+      pageDataCache.clear();
+    }
+  }
+});
 
 test('Vault Escape cancels edits and clears replacement secrets without disabling the selected login', async () => {
   const entry = {

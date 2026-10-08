@@ -49,6 +49,7 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
     !absolute &&
     !localPath.test(value.split(/[?#]/, 1)[0]) &&
     !navigationPaths.has(value) &&
+    value !== '/vault?add=login' &&
     value !== '/browser' &&
     !connectionPath.test(value) &&
     !e2eConsentPath.test(value)
@@ -69,6 +70,10 @@ export function safeMessageLink(value: string, origin: string): SafeLink | null 
     )
       return { href: url.pathname, kind: 'navigation' };
     if (!absolute || url.origin === base.origin) {
+      if (url.pathname === '/vault' && (url.search || url.hash))
+        return url.search === '?add=login' && !url.hash
+          ? { href: '/vault?add=login', kind: 'setup', setup: 'vault' }
+          : null;
       if (url.origin === base.origin && url.pathname === '/browser' && !url.search && !url.hash)
         return { href: '/browser', kind: 'setup', setup: 'browser' };
       if (

@@ -271,6 +271,31 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
 
+test('Vault save links open only the local empty login form without accepting credential query data', () => {
+  const expected = { href: '/vault?add=login', kind: 'setup', setup: 'vault' };
+  assert.deepEqual(safeMessageLink('/vault?add=login', origin), expected);
+  assert.deepEqual(safeMessageLink(`${origin}/vault?add=login`, origin), expected);
+  for (const query of [
+    '?add=card',
+    '?add=login&origin=https%3A%2F%2Fexample.test',
+    '?add=login&username=synthetic',
+    '?add=login&password=synthetic',
+    '?add=login&add=login',
+    '?add=login#synthetic',
+  ]) {
+    assert.equal(safeMessageLink(`/vault${query}`, origin), null);
+    assert.equal(safeMessageLink(`${origin}/vault${query}`, origin), null);
+  }
+  const external = safeMessageLink('https://outside.example/vault?add=login', origin)!;
+  assert.equal(external.kind, 'external');
+  assert.equal(setupLink(external, 'Save login in Vault'), null);
+  assert.equal(safeMessageLink('//outside.example/vault?add=login', origin), null);
+  const result = render('[Save login in Vault](/vault?add=login)');
+  const link = JSDOM.fragment(result).querySelector('a[data-setup="vault"]');
+  assert.equal(link?.getAttribute('href'), '/vault?add=login');
+  assert.equal(link?.getAttribute('rel'), 'noopener noreferrer');
+});
+
 test('an existing native account does not hide authorization for another account', () => {
   const text = '[Connect Gmail](https://connect.composio.dev/link/synthetic-personal-account)';
   const before = render(text);

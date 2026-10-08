@@ -29,7 +29,9 @@ export function Vault() {
   const phone = usePhone();
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState(false);
-  const [adding, setAdding] = useState<'login' | 'card' | null>(null);
+  const [adding, setAdding] = useState<'login' | 'card' | null>(() =>
+    window.location.search === '?add=login' && !window.location.hash ? 'login' : null,
+  );
   const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const [savingNew, setSavingNew] = useState(false);
   const [chosen, setChosen] = useState(false);
@@ -52,6 +54,11 @@ export function Vault() {
     (selectedId === undefined && split && !adding ? visible[0] : undefined);
   const detailOpen = Boolean(adding || selected);
   const pageMode = detailOpen && !split;
+
+  useEffect(() => {
+    if (window.location.search === '?add=login' && !window.location.hash)
+      window.history.replaceState(null, '', '/vault');
+  }, []);
 
   useEffect(() => {
     if (pageMode || !returnTo.current) return;

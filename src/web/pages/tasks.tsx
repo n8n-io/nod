@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import type { Schedule, ScheduleRun, Task, TaskStatus } from '../../shared/contracts';
 import { PageTitle } from '../components/page-title';
-import { NewPlan, PlanToast } from '../components/plan-controls';
+import { NewPlan, PlanToast, ScheduleTask } from '../components/plan-controls';
 import { Button, Loading, Notice } from '../components/ui';
 import { usePageData } from '../hooks/use-page-data';
 import { formatDateTime, useDateFormat } from '../lib/date-format';
@@ -52,7 +52,7 @@ function headline(task: Task) {
   return task.now;
 }
 
-export function TaskCard({ task }: { task: Task }) {
+export function TaskCard({ task, onScheduled }: { task: Task; onScheduled?(): void }) {
   const headingId = useId();
   const format = useDateFormat();
   const Icon = icons[task.status];
@@ -101,6 +101,7 @@ export function TaskCard({ task }: { task: Task }) {
           )}
         </ul>
       )}
+      {task.status === 'done' && <ScheduleTask taskId={task.id} onCreated={onScheduled} />}
     </article>
   );
 }
@@ -298,7 +299,11 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
             <div className="saved-plan-list">
               {previous.map((item) =>
                 'task' in item ? (
-                  <TaskCard key={`task:${item.task.id}`} task={item.task} />
+                  <TaskCard
+                    key={`task:${item.task.id}`}
+                    task={item.task}
+                    onScheduled={() => setView('scheduled')}
+                  />
                 ) : (
                   <ScheduleRunRow key={`run:${item.run.id}`} run={item.run} />
                 ),

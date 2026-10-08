@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Maximize2, Minimize2, RotateCw } from 'lucide-react';
+import { ArrowLeft, KeyRound, Maximize2, Minimize2, RotateCw } from 'lucide-react';
 import type { BrowserHandoffInput } from '../../shared/browser-handoff';
 import { ApiError, apiStream, errorMessage, post } from '../lib/api';
 import { browserFrames } from '../lib/browser-frames';
@@ -412,6 +412,12 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
         </div>
         <span role="status">{status}</span>
         <div className="browser-handoff-actions">
+          <Button variant="ghost" size="sm" asChild>
+            <a href="/vault?add=login" target="_blank" rel="noopener noreferrer">
+              <KeyRound size={16} aria-hidden="true" />
+              Save login
+            </a>
+          </Button>
           {!expanded && sizeToggle}
           <Button onClick={() => void done()} disabled={!shown || busy}>
             {returning ? 'Finishing…' : 'Done'}
