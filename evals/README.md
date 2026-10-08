@@ -10,7 +10,7 @@ This is a manual model evaluation. It calls live models and costs money (about $
 
 ```sh
 npm run eval:capability -- doctor --fix      # checks Docker, images, database and keys; sets up what is missing
-npm run eval:capability -- run              # all 34 controlled cases, three attempts each
+npm run eval:capability -- run              # all 35 controlled cases, three attempts each
 ```
 
 You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in the environment or `.env`). `doctor --fix` starts a throwaway Postgres container for the eval's own `eval_*` schemas if you have no test database (it never touches your normal tables) and builds the two images. Every run builds `otto-eval-workspace` and `otto-eval-browser` from this checkout first (Docker's cache makes an unchanged build quick), so results always measure the current Dockerfiles; set `OTTO_EVAL_WORKSPACE_IMAGE` and `OTTO_EVAL_BROWSER_IMAGE` to pin other images. Set `ANTHROPIC_API_KEY` as well to get an independent judge: the judge defaults to `anthropic/claude-sonnet-5-5` and stays fixed while you change the agent model, so runs stay comparable.
@@ -29,7 +29,7 @@ You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in t
 | Cap the spend          | `run --budget 20`                                                                     |
 | Recover from a crash   | `run --label x --resume` redoes only incomplete attempts; `cleanup` removes leftovers |
 
-Use `npm run eval:capability -- <command> [options]` for all commands. `help` lists the options. The default run selects all 34 controlled cases, including cases that need calibration, with three attempts per case: 102 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
+Use `npm run eval:capability -- <command> [options]` for all commands. `help` lists the options. The default run selects all 35 controlled cases, including cases that need calibration, with three attempts per case: 105 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
 
 Results are saved under `.local/capability-evals/<label>/` (`report.html` with every transcript and check, `summary.json`, one JSON per attempt). A label never overwrites an earlier run.
 
@@ -37,15 +37,16 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 The **Evals** workflow runs the suite on a Blacksmith runner with a disposable PostgreSQL and images built from the code under test.
 
-- Each published desktop release starts the `full` suite on the release tag: all 34 controlled cases, with three attempts per case. The workflow does not start if the code that the evaluations use has not changed since the previous release (`src` outside the web client, `evals`, the two Dockerfiles, `package.json` and the lockfile).
+- Each published desktop release starts the `full` suite on the release tag: all 35 controlled cases, with three attempts per case. The workflow does not start if the code that the evaluations use has not changed since the previous release (`src` outside the web client, `evals`, the two Dockerfiles, `package.json` and the lockfile).
+- A release run keeps its scores with the release as `capability-evals.tar.gz` and compares itself with the latest earlier release that has scores. The summary shows both side by side, the change in pass rate on the scenarios that are the same in both, and the checks that got worse or better. Scenarios that changed between the releases are marked and left out of that change. To start one by hand, run the workflow on a `desktop-v*` tag with **release** ticked.
 - To check a branch for regressions, open Actions → Evals → Run workflow, pick a branch you trust (its code runs with the eval keys) and set **baseline** to `main`. It runs the branch, then the same scenarios on the commit where the branch left main, and puts both side by side.
 - Leave **baseline** empty to score one branch. The default tier is **full** and the default repeat count is **3**. Leave **budget** empty to run all attempts. You can select the small **pr** tier, a model, named cases, or a spend limit. A new run waits for the active run on the same branch; it does not cancel that run.
 
-Open the run summary in GitHub Actions to see the scores and attempt counts. `markdown <label>` or `markdown <baseline> <candidate>` gives the same report locally. Download the `capability-evals` artifact and open `report.html` for each run to read its transcripts and checks. To use `report`, `compare`, `review` or `rejudge`, extract the artifact into `.local/capability-evals/`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`. Their keys are in the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets. Add `EVALS_OPENROUTER_API_KEY` to use OpenRouter models. The workflow fails if any planned attempt is missing or incomplete, or if no regression attempt completed. A low score alone does not fail it. The full run has a six-hour time limit.
+Open the run summary in GitHub Actions to see the scores and attempt counts. `markdown <label>` or `markdown <baseline> <candidate>` gives the same report locally. Download the `capability-evals` artifact and open `report.html` for each run to read its transcripts and checks. To use `report`, `compare`, `review` or `rejudge`, extract the artifact, or a release's `capability-evals.tar.gz`, into `.local/capability-evals/`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`. Their keys are in the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets. Add `EVALS_OPENROUTER_API_KEY` to use OpenRouter models. The workflow fails only if no regression attempt completed. A low score, a missing attempt or an incomplete attempt does not fail it; the summary reports them. The full run has a six-hour time limit.
 
 ## The suite
 
-The suite has 37 cases: 34 controlled cases and three live web cases. Most cases come from the Otto capabilities project in Linear. The `full` tier includes controlled cases that still need calibration. The small `pr` tier excludes them unless you use `--include-pending` or select them by name. A _known gap_ case tests a task that Otto cannot complete yet; its score is separate from the main score. _Live web_ cases use the open internet and require `--tier live` or selection by name. They are excluded from the default run.
+The suite has 38 cases: 35 controlled cases and three live web cases. Most cases come from the Otto capabilities project in Linear. The `full` tier includes controlled cases that still need calibration. The small `pr` tier excludes them unless you use `--include-pending` or select them by name. A _known gap_ case tests a task that Otto cannot complete yet; its score is separate from the main score. _Live web_ cases use the open internet and require `--tier live` or selection by name. They are excluded from the default run.
 
 | Scenario                                | Linear  | What it checks                                                                | Capabilities                             | Status      |
 | --------------------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |
@@ -69,6 +70,7 @@ The suite has 37 cases: 34 controlled cases and three live web cases. Most cases
 | `memory-routine-silent-holdout`         | LAB-535 | Remember a different routine without a memory-save question                   | memory, browser, progress                | calibrating |
 | `metrics-week-over-week`                | LAB-385 | What changed in our metrics this week versus last, and what might explain it  | research, browser, vault                 | scored      |
 | `morning-brief`                         | LAB-387 | Morning brief: what's on, what's due, what's slipping, top 3 for my goals     | schedules, apps, memory, progress        | calibrating |
+| `onboarding-first-value`                |         | Set up Otto, get three first tasks from my answers and inbox, finish one      | apps, memory                             | calibrating |
 | `pay-bill-bank-transfer`                | LAB-367 | Pay a bill from my bank after I approve, including the phone confirmation     | approvals, vault, browser, long-running  | scored      |
 | `portal-account-choice`                 | LAB-444 | Ask which saved login to use when two could apply                             | vault, approvals, browser                | scored      |
 | `portal-nif-signin`                     | LAB-444 | Sign in with the method I asked for on a nested login page                    | vault, browser                           | scored      |

@@ -29,6 +29,10 @@ on:
         description: Optional spend limit in dollars; leave empty to run all attempts
         type: string
         default: ''
+      release:
+        description: On a desktop release tag, compare with the previous release and keep these scores with this release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,6 +46,8 @@ jobs:
     name: Capability evals
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: ${{ inputs.tier == 'full' && 360 || 90 }}
+    outputs:
+      candidate: ${{ steps.run.outputs.candidate }}
     env:
       TEST_DATABASE_URL: postgresql://otto:otto-evals@127.0.0.1:5432/otto_evals
       OTTO_EVAL_WORKSPACE_IMAGE: otto-eval-workspace
@@ -131,11 +137,32 @@ jobs:
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: error
+      - name: Load the previous release's scores
+        id: previous
+        if: always() && inputs.release && startsWith(github.ref, 'refs/tags/desktop-v') && steps.run.outputs.candidate != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tags="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name | startswith("desktop-v")) | select(any(.assets[]; .name == "capability-evals.tar.gz")) | .tag_name')"
+          previous="$(printf '%s\n' "$tags" "$GITHUB_REF_NAME" | sort -uV | grep -xF -B1 "$GITHUB_REF_NAME" | grep -vxF "$GITHUB_REF_NAME" || true)"
+          if [ -z "$previous" ]; then
+            echo "::notice::No earlier release has saved scores to compare with."
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/previous/scores"
+          gh release download "$previous" --repo "$GITHUB_REPOSITORY" --pattern capability-evals.tar.gz --dir "$RUNNER_TEMP/previous"
+          tar -xzf "$RUNNER_TEMP/previous/capability-evals.tar.gz" -C "$RUNNER_TEMP/previous/scores"
+          label="$(ls "$RUNNER_TEMP/previous/scores")"
+          mv "$RUNNER_TEMP/previous/scores/$label" .local/capability-evals/
+          echo "label=$label" >> "$GITHUB_OUTPUT"
       - name: Show the scores
         if: always() && steps.run.outputs.candidate != ''
         env:
           CANDIDATE: ${{ steps.run.outputs.candidate }}
-          BASELINE_LABEL: ${{ steps.run.outputs.baseline }}
+          BASELINE_LABEL: ${{ steps.run.outputs.baseline || steps.previous.outputs.label }}
           REPORT_URL: ${{ steps.upload.outputs.artifact-url }}
         shell: bash
         run: |
@@ -154,3 +181,27 @@ jobs:
               echo "Transcripts, checks and diagnoses: [capability-evals]($REPORT_URL) (open report.html in each run)"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  keep:
+    name: Keep the scores with the release
+    needs: evals
+    if: >-
+      inputs.release && startsWith(github.ref, 'refs/tags/desktop-v') && inputs.tier == 'full' &&
+      inputs.scenario == '' && inputs.budget == '' && needs.evals.outputs.candidate != ''
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download the reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: capability-evals
+          path: scores
+      - name: Attach the scores to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ needs.evals.outputs.candidate }}
+        run: |
+          tar -czf capability-evals.tar.gz -C scores "$CANDIDATE"
+          gh release upload "$GITHUB_REF_NAME" capability-evals.tar.gz --clobber --repo "$GITHUB_REPOSITORY"

@@ -19,6 +19,7 @@ export interface Session {
   interruptWhen(first: string, ready: () => Promise<boolean>): Promise<void>;
   sayDuringWithAttachments(first: string, interjection: string, attach: string[]): Promise<void>;
   upload(name: string, bytes: Buffer, mimeType?: string): Promise<string>;
+  api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>;
   fireSchedules(): Promise<number>;
   event(summary: string): Promise<string>;
   waitForTurn(turnId: string): Promise<void>;
@@ -274,6 +275,15 @@ export function createSession(options: {
       });
       if (!response.ok) throw new Error(`Upload failed (${response.status}).`);
       return (await response.json()).id as string;
+    },
+    async api(method, path, body) {
+      const response = await fetch(new URL(path, stack.baseUrl), {
+        method,
+        headers: { 'content-type': 'application/json', origin: new URL(stack.baseUrl).origin },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await response.text();
+      return { status: response.status, body: text ? JSON.parse(text) : {} };
     },
     async fireSchedules() {
       const id = await thread();
