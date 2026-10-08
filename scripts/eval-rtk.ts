@@ -448,10 +448,25 @@ try {
             : 'invoice';
       const session = sessions.get(variant)!;
       if (caseVersion >= 6 && /^ls(?: |$)/.test(definition.command)) {
-        assert.equal(
-          (await exec(session, 'find . -maxdepth 1 -exec touch -t 202601010000 -- {} +')).exitCode,
-          0,
-        );
+        command('docker', [
+          'exec',
+          '--user',
+          'root',
+          '--workdir',
+          `/workspace/${variant}`,
+          container,
+          'find',
+          '.',
+          '-maxdepth',
+          '1',
+          '-exec',
+          'touch',
+          '-t',
+          '202601010000',
+          '--',
+          '{}',
+          '+',
+        ]);
       }
       const began = new Date().toISOString();
       const raw = await exec(session, definition.command);
