@@ -105,7 +105,7 @@ import { createPersonalService } from './personal.ts';
 import { createOnboardingInterview } from './onboarding-interview.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
-import { createMemoryService } from './memory.ts';
+import { createMemoryService, importMemoryFile } from './memory.ts';
 import { createSpeech } from './speech.ts';
 import {
   activeThread,
@@ -625,12 +625,14 @@ async function initializeApplication(
     redactError: createErrorRedactor(inspectorSecrets),
   });
   const speech = createSpeech(speechProvider);
-  const memory = createMemoryService({
-    pool,
-    ownerId,
-    store: adapters.objectStore ?? createFilesystemObjectStore(join(dataRoot, 'objects')),
-    curator,
-  });
+  let memoryStore = adapters.objectStore;
+  if (!memoryStore) {
+    const objects = createPostgresObjectStore({ database: pool, ownerId });
+    await objects.initialize();
+    await importMemoryFile(objects, join(dataRoot, 'objects', 'memory'));
+    memoryStore = objects;
+  }
+  const memory = createMemoryService({ pool, ownerId, store: memoryStore, curator });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
   const personal = createPersonalService({
     analytics: captureAnalytics,

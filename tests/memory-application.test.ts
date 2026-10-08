@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -26,7 +26,8 @@ import {
 } from '../src/server/memory-tree.ts';
 import Fastify from 'fastify';
 import type { MemoryCurator } from '../src/ports/memory-curator.ts';
-import { createMemoryService } from '../src/server/memory.ts';
+import { createMemoryService, importMemoryFile } from '../src/server/memory.ts';
+import { createPostgresObjectStore } from '../src/server/object-storage.ts';
 import { createOnboardingInterview } from '../src/server/onboarding-interview.ts';
 import { learnWritingStyle } from '../src/server/writing-style.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
@@ -1437,3 +1438,44 @@ test('style learning sends only the owner’s own sent text and keeps one replac
     ['preferences', 'writing-style', 'Writing style: my own words.', 'stated'],
   ]);
 });
+
+test(
+  'local memory moves from its old file into the database once and keeps parallel saves',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    const schema = `test_memory_store_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.searchParams.set('options', `-c search_path=${schema}`);
+    const pool = new pg.Pool({ connectionString: url.href });
+    const objects = await mkdtemp(join(tmpdir(), 'memory-import-'));
+    t.after(async () => {
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+      await rm(objects, { recursive: true, force: true });
+    });
+    const old = createMemoryService({
+      pool,
+      ownerId: 'import-owner',
+      store: createFilesystemObjectStore(objects),
+    });
+    await old.add({ area: 'about', text: 'Lives in Lisbon.' });
+    await writeFile(join(objects, 'memory', 'MEMORY.md.lock'), '');
+    const store = createPostgresObjectStore({ database: pool, ownerId: 'import-owner' });
+    await store.initialize();
+    await importMemoryFile(store, join(objects, 'memory'));
+    await importMemoryFile(store, join(objects, 'memory'));
+    await assert.rejects(readFile(join(objects, 'memory', 'MEMORY.md')), { code: 'ENOENT' });
+    const unreadable = join(objects, 'unreadable');
+    await mkdir(join(unreadable, 'MEMORY.md'), { recursive: true });
+    await assert.rejects(importMemoryFile(store, unreadable));
+    await readdir(join(unreadable, 'MEMORY.md'));
+    const memory = createMemoryService({ pool, ownerId: 'import-owner', store });
+    const notes = ['Prefers short morning digests.', 'Works from home on Fridays.'];
+    await Promise.all(notes.map((text) => memory.add({ area: 'preferences', text })));
+    const saved = (await store.read('memory/MEMORY.md', 1_000_000))!.bytes.toString();
+    for (const text of ['Lives in Lisbon.', ...notes]) assert.ok(saved.includes(text), text);
+  },
+);
