@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
-import { chmod, copyFile, mkdir, mkdtemp, realpath } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -98,10 +98,9 @@ export async function startStack(options: {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'otto-eval-')));
   const workspaceRoot = join(directory, '.local', 'workspaces');
   const toolsRoot = join(directory, 'workspace-tools');
+  process.umask(0);
   await mkdir(workspaceRoot, { recursive: true });
   await mkdir(toolsRoot);
-  await chmod(workspaceRoot, 0o777);
-  await chmod(toolsRoot, 0o777);
   const baseDatabase = new URL(await integrationDatabaseUrl(repository, environment));
   if (!['127.0.0.1', 'localhost'].includes(baseDatabase.hostname))
     throw new Error('The evaluation requires a local PostgreSQL test database.');
