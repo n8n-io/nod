@@ -10,7 +10,7 @@ This is a manual model evaluation. It calls live models and costs money (about $
 
 ```sh
 npm run eval:capability -- doctor --fix      # checks Docker, images, database and keys; sets up what is missing
-npm run eval:capability -- run              # all 35 controlled cases, three attempts each
+npm run eval:capability -- run              # all 39 controlled cases, three attempts each
 ```
 
 You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in the environment or `.env`). `doctor --fix` starts a throwaway Postgres container for the eval's own `eval_*` schemas if you have no test database (it never touches your normal tables) and builds the two images. Every run builds `otto-eval-workspace` and `otto-eval-browser` from this checkout first (Docker's cache makes an unchanged build quick), so results always measure the current Dockerfiles; set `OTTO_EVAL_WORKSPACE_IMAGE` and `OTTO_EVAL_BROWSER_IMAGE` to pin other images. Set `ANTHROPIC_API_KEY` as well to get an independent judge: the judge defaults to `anthropic/claude-sonnet-5-5` and stays fixed while you change the agent model, so runs stay comparable.
@@ -28,8 +28,10 @@ You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in t
 | Try another judge      | `rejudge <label> --label <new> --judge openai/gpt-6.1-sol`                            |
 | Cap the spend          | `run --budget 20`                                                                     |
 | Recover from a crash   | `run --label x --resume` redoes only incomplete attempts; `cleanup` removes leftovers |
+| Compare with a release | `gate --baseline desktop-v0.1.10`: side by side, with a verdict                       |
+| Prove gate scenarios   | `promote <label>` after a run with `--repeat 5` or more                               |
 
-Use `npm run eval:capability -- <command> [options]` for all commands. `help` lists the options. The default run selects all 35 controlled cases, including cases that need calibration, with three attempts per case: 105 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
+Use `npm run eval:capability -- <command> [options]` for all commands. `help` lists the options. The default run selects all 39 controlled cases, including cases that need calibration, with three attempts per case: 117 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
 
 Results are saved under `.local/capability-evals/<label>/` (`report.html` with every transcript and check, `summary.json`, one JSON per attempt). A label never overwrites an earlier run.
 
@@ -37,16 +39,25 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 The **Evals** workflow runs the suite on a Blacksmith runner with a disposable PostgreSQL and images built from the code under test.
 
-- Each published desktop release starts the `full` suite on the release tag: all 35 controlled cases, with three attempts per case. The workflow does not start if the code that the evaluations use has not changed since the previous release (`src` outside the web client, `evals`, the two Dockerfiles, `package.json` and the lockfile).
-- A release run keeps its scores with the release as `capability-evals.tar.gz` and compares itself with the latest earlier release that has scores. The summary shows both side by side, the change in pass rate on the scenarios that are the same in both, and the checks that got worse or better. Scenarios that changed between the releases are marked and left out of that change. To start one by hand, run the workflow on a `desktop-v*` tag with **release** ticked.
-- To check a branch for regressions, open Actions → Evals → Run workflow, pick a branch you trust (its code runs with the eval keys) and set **baseline** to `main`. It runs the branch, then the same scenarios on the commit where the branch left main, and puts both side by side.
-- Leave **baseline** empty to score one branch. The default tier is **full** and the default repeat count is **3**. Leave **budget** empty to run all attempts. You can select the small **pr** tier, a model, named cases, or a spend limit. A new run waits for the active run on the same branch; it does not cancel that run.
+- **Every release.** Before it publishes, the desktop release workflow runs the full suite on the release commit and on the previous desktop release in the same job, and puts them side by side under a GO, NO-GO or INCONCLUSIVE verdict. It reports only: publishing does not wait for the verdict yet. When nothing under `src` outside the web client, `package.json` or the lockfile changed since the previous release, it reports GO without running.
+- **On demand.** Open Actions → Evals → Run workflow and pick a branch you trust (its code runs with the eval keys). Set **baseline** to `main`, another branch, a tag or `latest-release` to compare with it from where your branch left it; leave it empty to score the branch alone. The default tier is **full**, with three attempts per case; you can pick the small **pr** tier, a model, named cases or a spend limit. A new run waits for the active run on the same branch.
 
-Open the run summary in GitHub Actions to see the scores and attempt counts. `markdown <label>` or `markdown <baseline> <candidate>` gives the same report locally. Download the `capability-evals` artifact and open `report.html` for each run to read its transcripts and checks. To use `report`, `compare`, `review` or `rejudge`, extract the artifact, or a release's `capability-evals.tar.gz`, into `.local/capability-evals/`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`. Their keys are in the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets. Add `EVALS_OPENROUTER_API_KEY` to use OpenRouter models. The workflow fails only if no regression attempt completed. A low score, a missing attempt or an incomplete attempt does not fail it; the summary reports them. The full run has a six-hour time limit.
+Open the run summary to see the verdict and the side-by-side scores. Download the `capability-evals` artifact and open `report.html` for each side to read its transcripts and checks; extract it into `.local/capability-evals/` to use `report`, `compare`, `review` or `rejudge`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`, with keys in the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets (`EVALS_OPENROUTER_API_KEY` for OpenRouter models). A low score or an incomplete attempt does not fail the workflow; it fails only when nothing could be scored. The full run has a six-hour time limit.
+
+### What the verdict means
+
+Both sides run in one job with the same harness, scenarios, images, model and judge, so only the app code differs and model drift or harness changes affect both alike. The verdict uses only the gate scenarios, which are built to stay quiet on noise; the side-by-side table below it shows every scenario.
+
+- A scenario earns a place in the gate (`evals/gate.json`) with `promote <label>` after a run of at least five attempts in which it passed every one. Only calibrated regression scenarios qualify. A later proving run in which it fails removes it, and editing the scenario takes it out until it is proven again.
+- Gate scenarios where the candidate did worse, or that completed too few attempts, get seven more attempts on both sides, so a drop is judged on at least ten.
+- **NO-GO** when a gate scenario that passed at least 70% of the time on the baseline drops by 30 points or more and a one-sided Fisher exact test stays below 0.05 after Holm correction across the gate scenarios; when a coded safety check fails on the candidate but held on the baseline; or when the pass rate across at least five gate scenarios, paired by scenario, falls by 5 points or more with a 95% interval entirely below zero.
+- **INCONCLUSIVE** when none of the scenarios run has a gate place, a gate scenario dropped but has fewer than ten completed attempts on either side, the harness canary fails, or the judge is the agent model. Otherwise **GO**. More failures of one class than before are listed but do not block.
+- Every run starts with `harness-canary`: an attachment, a workspace file, a website and an email. If it fails twice nothing is scored, because a broken harness would otherwise look like a regression. Provider and infrastructure faults are retried twice, after 30 and 90 seconds, and never count against the agent.
+- Both sides use the candidate's Dockerfiles, so image changes are not compared.
 
 ## The suite
 
-The suite has 38 cases: 35 controlled cases and three live web cases. Most cases come from the Otto capabilities project in Linear. The `full` tier includes controlled cases that still need calibration. The small `pr` tier excludes them unless you use `--include-pending` or select them by name. A _known gap_ case tests a task that Otto cannot complete yet; its score is separate from the main score. _Live web_ cases use the open internet and require `--tier live` or selection by name. They are excluded from the default run.
+The suite has 42 cases: 39 controlled cases and three live web cases, plus the harness canary. Most cases come from the Otto capabilities project in Linear. The `full` tier includes controlled cases that still need calibration. The small `pr` tier excludes them unless you use `--include-pending` or select them by name. A _known gap_ case tests a task that Otto cannot complete yet; its score is separate from the main score. _Live web_ cases use the open internet and require `--tier live` or selection by name. They are excluded from the default run.
 
 | Scenario                                | Linear  | What it checks                                                                | Capabilities                             | Status      |
 | --------------------------------------- | ------- | ----------------------------------------------------------------------------- | ---------------------------------------- | ----------- |

@@ -4,6 +4,8 @@ const booleans = new Set([
   'include-pending',
   'fix',
   'no-diagnose',
+  'no-canary',
+  'enforce',
   'open',
   'desktop',
   'markdown',

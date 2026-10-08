@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { lookup } from 'node:dns/promises';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,9 +15,10 @@ import { accessCookie, registerLocalAccess } from '../../src/server/access.ts';
 import { createAccountSession } from '../../src/server/account.ts';
 import type { StoredAccount } from '../../src/server/account-store.ts';
 import { fakeComputer, fakeWorkspace } from '../../tests/runtime-fixtures.ts';
-import { band, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
+import { band, fisherLower, holm, passAtK, passPowK, summarize, wilson } from '../src/aggregate.ts';
 import { amounts, asksForSecret, finished, mentions, urlsGrounded } from '../src/checks.ts';
 import { createSimulator, judgeCriteria, simulatorFailure, withFallback } from '../src/judge.ts';
+import { decide, promote } from '../src/gate.ts';
 import { grade } from '../src/grade.ts';
 import { check, type Scenario } from '../src/scenario.ts';
 import { insights } from '../src/insights.ts';
@@ -28,7 +29,7 @@ import { agreement, kappa } from '../src/review.ts';
 import { choice, number, parseArgs, text, whole } from '../src/options.ts';
 import { changes, html, markdown, terminal, trustLabels } from '../src/report.ts';
 import { select } from '../src/run.ts';
-import { scenarios } from '../src/scenarios/index.ts';
+import { fingerprint, scenarios } from '../src/scenarios/index.ts';
 import { createSession, waitUntil } from '../src/session.ts';
 import { createStackRequest, type Stack } from '../src/stack.ts';
 import { createApps, gmail, sheets, slack } from '../src/world/apps.ts';
@@ -370,7 +371,7 @@ test('the full suite includes pending cases and excludes live web cases at night
   const selected = select({ tier: 'full', ignoreWindow: false });
   assert.deepEqual(
     selected,
-    scenarios.filter((item) => item.tier !== 'live'),
+    scenarios.filter((item) => item.tier !== 'live' && item.tier !== 'canary'),
   );
   assert.ok(selected.some((item) => item.calibration === 'pending'));
   assert.ok(selected.some((item) => item.id === 'morning-brief'));
@@ -1318,4 +1319,102 @@ test('fake calendar updates preserve identity and reject invalid times without m
   );
   assert.deepEqual(world.calendar!.events, before);
   assert.equal(world.writes.length, 1);
+});
+
+test('the release gate blocks a clear regression on a proven scenario, never noise or a flaky baseline', () => {
+  const members = { a: { fingerprint: 'x', proof: '' }, b: { fingerprint: 'x', proof: '' } };
+  const side = (results: Record<string, number[]>) => ({
+    manifest: { model: 'm', judge: 'j' },
+    attempts: Object.entries(results).flatMap(([scenario, [passes, total]]) =>
+      Array.from({ length: total }, (_, index) =>
+        attempt(scenario, index < passes ? 'pass' : 'fail', { attempt: index + 1 }),
+      ),
+    ),
+  });
+  const early = decide(members, side({ a: [5, 5], b: [5, 5] }), side({ a: [4, 5], b: [5, 5] }));
+  assert.equal(early.verdict, 'INCONCLUSIVE');
+  assert.deepEqual(early.suspects, ['a']);
+  assert.equal(
+    decide(members, side({ a: [10, 10], b: [10, 10] }), side({ a: [9, 10], b: [10, 10] })).verdict,
+    'GO',
+  );
+  const dropped = decide(
+    members,
+    side({ a: [10, 10], b: [10, 10] }),
+    side({ a: [4, 10], b: [10, 10] }),
+  );
+  assert.equal(dropped.verdict, 'NO-GO');
+  assert.match(dropped.blocking[0], /`a` dropped from 10\/10 to 4\/10/);
+  assert.equal(
+    decide(members, side({ a: [5, 10], b: [10, 10] }), side({ a: [0, 10], b: [10, 10] })).verdict,
+    'GO',
+  );
+  assert.ok(Math.abs(fisherLower(0, 5, 5, 5) - 1 / 252) < 1e-12);
+  assert.deepEqual([...holm([0.01, 0.04, 0.9])], [0]);
+});
+
+test('the release gate is inconclusive without measurements and blocks only a new coded safety failure', () => {
+  const members = { a: { fingerprint: 'x', proof: '' } };
+  const unsafe = (kind: 'check' | 'judge') => ({
+    id: 'no-send',
+    kind,
+    group: 'task' as const,
+    aspect: 'process' as const,
+    failure: 'unsafe' as const,
+    required: true,
+    pass: false,
+  });
+  const run = (
+    statuses: AttemptResult['status'][],
+    extra: Partial<AttemptResult> = {},
+    manifest = { model: 'm', judge: 'j' },
+  ) => ({
+    manifest,
+    attempts: statuses.map((status, index) =>
+      attempt('a', status, { attempt: index + 1, ...(status === 'fail' ? extra : {}) }),
+    ),
+  });
+  const held = run(['pass', 'pass', 'pass']);
+  assert.equal(decide({}, held, held).verdict, 'INCONCLUSIVE');
+  assert.equal(
+    decide(members, held, run(['pass', 'incomplete', 'incomplete'])).verdict,
+    'INCONCLUSIVE',
+  );
+  assert.equal(
+    decide(members, held, run(['pass', 'pass', 'pass'], {}, { model: 'j', judge: 'j' })).verdict,
+    'INCONCLUSIVE',
+  );
+  const sent = decide(members, held, run(['pass', 'pass', 'fail'], { checks: [unsafe('check')] }));
+  assert.equal(sent.verdict, 'NO-GO');
+  assert.match(sent.blocking[0], /safety check `no-send`/);
+  const judged = decide(
+    members,
+    held,
+    run(['pass', 'pass', 'fail'], { checks: [unsafe('judge')] }),
+  );
+  assert.deepEqual(judged.blocking, []);
+});
+
+test('only calibrated scenarios that passed every one of at least five attempts earn a gate place', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'otto-gate-'));
+  const file = join(root, 'gate.json');
+  const write = async (label: string, id: string, statuses: AttemptResult['status'][]) => {
+    await mkdir(join(root, label, 'attempts'), { recursive: true });
+    for (const [index, status] of statuses.entries())
+      await writeFile(
+        join(root, label, 'attempts', `${id}.${index + 1}.json`),
+        JSON.stringify(attempt(id, status, { attempt: index + 1, fingerprint: fingerprint(id) })),
+      );
+  };
+  const calibrated = scenarios.find(
+    (item) =>
+      item.stance === 'regression' && item.calibration !== 'pending' && item.tier !== 'canary',
+  )!.id;
+  const pending = scenarios.find((item) => item.calibration === 'pending')!.id;
+  await write('proof', calibrated, ['pass', 'pass', 'pass', 'pass', 'pass']);
+  await write('proof', pending, ['pass', 'pass', 'pass', 'pass', 'pass']);
+  assert.deepEqual(Object.keys(await promote(root, ['proof'], file)), [calibrated]);
+  await write('again', calibrated, ['pass', 'pass', 'pass', 'pass', 'fail']);
+  assert.deepEqual(Object.keys(await promote(root, ['again'], file)), []);
+  await rm(root, { recursive: true, force: true });
 });

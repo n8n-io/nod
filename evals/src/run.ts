@@ -32,6 +32,7 @@ export interface RunOptions {
   ignoreWindow: boolean;
   includePending?: boolean;
   retries: number;
+  canary?: boolean;
   budget?: number;
   diagnose: boolean;
   quiet?: boolean;
@@ -76,7 +77,8 @@ export function select(
     (item) =>
       (options.scenarioIds
         ? options.scenarioIds.includes(item.id)
-        : (options.tier === 'live' || item.tier !== 'live') &&
+        : item.tier !== 'canary' &&
+          (options.tier === 'live' || item.tier !== 'live') &&
           (options.tier !== 'pr' ||
             options.includePending ||
             item.calibration !== 'pending' ||
@@ -175,6 +177,28 @@ async function attemptOnce(options: {
     });
 }
 
+async function checkHarness(model: string, judge: string) {
+  const item = scenarios.find((entry) => entry.id === 'harness-canary')!;
+  const directory = join(tmpdir(), `otto-eval-canary-${randomUUID()}`);
+  await mkdir(join(directory, 'attempts'), { recursive: true });
+  await mkdir(join(directory, 'logs'), { recursive: true });
+  let broken = '';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const result = await attemptOnce({ directory, model, judge, task: { item, attempt } });
+    broken =
+      result.status === 'incomplete'
+        ? (result.error ?? 'incomplete')
+        : result.checks
+            .filter((check) => check.kind === 'check' && !check.pass)
+            .map((check) => check.id)
+            .join(', ');
+    if (!broken) return console.log('✓ harness canary');
+  }
+  throw new Error(
+    `The harness canary failed twice (${broken}), so nothing was scored. Its logs are in ${directory}.`,
+  );
+}
+
 export async function runSuite(options: RunOptions) {
   const environment = await prepare(options.root);
   const model = options.model ?? defaultModel(environment);
@@ -204,6 +228,8 @@ export async function runSuite(options: RunOptions) {
     process.env.OTTO_EVAL_SOURCE = source;
   } else delete process.env.OTTO_EVAL_SOURCE;
   try {
+    if (options.canary !== false && selected.some((item) => item.tier !== 'canary'))
+      await checkHarness(model, judge);
     const digest = async (image: string) =>
       (await runProcess('docker', ['image', 'inspect', image, '--format', '{{.Id}}'])).stdout
         .trim()
@@ -269,7 +295,7 @@ export async function runSuite(options: RunOptions) {
               `~ ${task.item.id} #${task.attempt}  incomplete (${result.blame}: ${(result.error ?? '').replace(/\s+/g, ' ').slice(0, 160)}), trying again`,
             );
             result = undefined;
-            await sleep(15_000 * (tries + 1));
+            await sleep(30_000 * 3 ** tries);
           }
         }
         results.push(result!);

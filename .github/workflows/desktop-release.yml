@@ -365,29 +365,10 @@ jobs:
         run: node .github/scripts/desktop-release.mjs draft
 
   evals:
-    name: Start the capability evals for the published release
-    needs: [plan, release]
-    if: github.event_name == 'schedule' || inputs.publish
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - name: Check out the release history
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ needs.plan.outputs.source }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Run the Evals workflow on the release tag when the evaluated code changed
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: desktop-v${{ needs.plan.outputs.version }}
-        run: |
-          previous="$(git describe --tags --abbrev=0 --match 'desktop-v*' --exclude "$TAG" HEAD 2>/dev/null || true)"
-          if [ -n "$previous" ] && git diff --quiet "$previous" HEAD -- src ':(exclude)src/web' evals Dockerfile.workspace Dockerfile.browser package.json package-lock.json; then
-            echo "Nothing the evals exercise changed since $previous."
-            exit 0
-          fi
-          gh workflow run evals.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tier=full -f repeat=3 -f release=true
+    name: Capability evals against the previous release
+    needs: plan
+    if: needs.plan.outputs.release_needed == 'true' && (github.event_name == 'schedule' || inputs.publish)
+    uses: ./.github/workflows/evals.yml
+    with:
+      ref: ${{ needs.plan.outputs.source }}
+    secrets: inherit

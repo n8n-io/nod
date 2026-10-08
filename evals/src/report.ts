@@ -1,4 +1,5 @@
-import { band, wilson } from './aggregate.ts';
+import { band, pairedChange } from './aggregate.ts';
+import type { GateResult } from './gate.ts';
 import { agreement } from './review.ts';
 import type { AttemptResult, Reviews, RunSummary } from './results.ts';
 
@@ -225,35 +226,67 @@ const changedScenario = (runs: Loaded[], id: string) =>
     ),
   ).size > 1;
 
+const points = (value: number) =>
+  `${value >= 0 ? '+' : ''}${Math.round(value * 100)} point${Math.abs(Math.round(value * 100)) === 1 ? '' : 's'}`;
+
 function difference(runs: Loaded[]) {
   if (runs.length !== 2) return undefined;
   const [before, after] = runs.map((run) =>
-    run.summary.scenarios.filter((item) => item.stance === 'regression'),
+    run.summary.scenarios.filter((item) => item.stance === 'regression' && item.attempts > 0),
   );
-  const same = after
-    .filter((item) =>
-      before.some(
-        (other) =>
-          Boolean(item.fingerprint) &&
-          other.scenario === item.scenario &&
-          other.fingerprint === item.fingerprint,
-      ),
-    )
-    .map((item) => item.scenario);
-  const [a, b] = [before, after].map((items) => {
-    const used = items.filter((item) => same.includes(item.scenario));
-    const passed = used.reduce((count, item) => count + item.passed, 0);
-    const total = used.reduce((count, item) => count + item.attempts, 0);
-    return { percent: total ? passed / total : 0, interval: wilson(passed, total) };
+  const differences = after.flatMap((item) => {
+    const other = before.find(
+      (entry) =>
+        Boolean(item.fingerprint) &&
+        entry.scenario === item.scenario &&
+        entry.fingerprint === item.fingerprint,
+    );
+    return other ? [item.passed / item.attempts - other.passed / other.attempts] : [];
   });
-  if (!a.interval || !b.interval) return undefined;
-  const overlap = a.interval.low <= b.interval.high && b.interval.low <= a.interval.high;
-  const delta = Math.round((b.percent - a.percent) * 100);
-  const left = new Set([...before, ...after].map((item) => item.scenario)).size - same.length;
+  if (!differences.length) return undefined;
+  const mean = differences.reduce((sum, value) => sum + value, 0) / differences.length;
+  const change = pairedChange(differences);
+  const left =
+    new Set([...before, ...after].map((item) => item.scenario)).size - differences.length;
   return {
-    delta,
-    text: `Difference ${delta >= 0 ? '+' : ''}${delta} points on the ${same.length} scenario${same.length === 1 ? '' : 's'} unchanged in both runs${left ? ` (${left} new or changed left out)` : ''}. ${overlap ? 'The 95% intervals overlap, so this is within noise at this sample size.' : 'The 95% intervals do not overlap.'}`,
+    delta: Math.round(mean * 100),
+    text: `Difference ${points(mean)} on the ${differences.length} scenario${differences.length === 1 ? '' : 's'} unchanged in both runs${left ? ` (${left} new or changed left out)` : ''}${change ? `, paired by scenario: 95% interval ${points(change.low)} to ${points(change.high)}, ${change.low <= 0 && change.high >= 0 ? 'so within noise' : 'beyond noise'}` : ''}.`,
   };
+}
+
+export function verdictMarkdown(
+  result: GateResult,
+  context: { model: string; judge: string; baseline: string; skipped: string[] },
+) {
+  const lines = [
+    `### ${result.verdict} against \`${context.baseline}\``,
+    '',
+    `Both sides ran in this job with \`${context.model}\` and judge \`${context.judge}\`. The verdict uses the gate scenarios; the comparison below shows every scenario.`,
+  ];
+  const reasons = [...result.blocking, ...result.unclear];
+  if (reasons.length) lines.push('', ...reasons.map((reason) => `- ${reason}`));
+  if (result.scenarios.length)
+    lines.push(
+      '',
+      '| Gate scenario | Baseline | Candidate | |',
+      '| --- | --- | --- | --- |',
+      ...result.scenarios.map(
+        (row) =>
+          `| \`${row.id}\` | ${row.baseline.passed}/${row.baseline.total} | ${row.candidate.passed}/${row.candidate.total} | ${row.note} |`,
+      ),
+    );
+  if (result.change)
+    lines.push(
+      '',
+      `Across the gate scenarios, paired by scenario: ${points(result.change.mean)} (95% interval ${points(result.change.low)} to ${points(result.change.high)}).`,
+    );
+  if (result.drift.length) lines.push('', ...result.drift.map((line) => `- ${line}`));
+  if (context.skipped.length)
+    lines.push(
+      '',
+      `Out of the gate until proven again because they changed: ${context.skipped.map((id) => `\`${id}\``).join(', ')}.`,
+    );
+  return lines.join('\n');
 }
 
 export function compareTable(runs: Loaded[]) {

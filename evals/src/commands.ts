@@ -12,6 +12,7 @@ import { choice, has, number, text, whole, type Args } from './options.ts';
 import { compareTable, html, markdown, runsTable, terminal } from './report.ts';
 import { rejudge } from './rejudge.ts';
 import { reviewRun } from './review.ts';
+import { promote, runGate } from './gate.ts';
 import { fallbackLlm } from './judge.ts';
 import { defaultJudge, runSuite, slug, type RunOptions } from './run.ts';
 import { scenarios } from './scenarios/index.ts';
@@ -30,6 +31,12 @@ export const help = `Otto capability evals
                                (providers: openai/<model>, anthropic/<model>, openrouter/<vendor>/<model>)
     refs <a> <b> [...]         run the same suite on several git revisions (a PR against main)
     compare <label> <label>    compare saved runs: pass rate, cost, latency, what got better or worse
+    gate --baseline <git ref>  run the suite on this code and on <ref> in one job and show them side by side, with
+                               a GO, NO-GO or INCONCLUSIVE verdict from the proven gate scenarios; gate
+                               scenarios where this code did worse get 7 more attempts on both sides
+                               (--resample 7, --enforce exits with an error unless GO)
+    promote <label>...         give calibrated scenarios that passed all of at least 5 attempts a place in the
+                               gate, and remove the ones that did not (writes evals/gate.json)
     runs                       list saved runs
     charts <label>... | --prefix <p> [--desktop]   render the comparison as sleek PNG images
     slack <label>... | --prefix <p>                 draft the Slack summary with the leaderboard
@@ -57,7 +64,8 @@ export const help = `Otto capability evals
     --ref <git ref>            test another revision of the app code with these scenarios
     --open                     open the HTML report or chart when it is ready
     --label <name>             name the run               --resume               redo only incomplete attempts
-    --no-diagnose              skip the failure analysis  --retries 1            retries for provider or infrastructure faults
+    --no-diagnose              skip the failure analysis  --retries 2            retries for provider or infrastructure faults
+    --no-canary                skip the harness canary that runs before the suite
     --min-pass 0.8             exit with an error if the pass rate is lower
 
   Examples
@@ -84,7 +92,8 @@ function runOptions(args: Args): RunOptions {
     resume: has(args, 'resume'),
     ignoreWindow: has(args, 'ignore-window'),
     includePending: has(args, 'include-pending'),
-    retries: Math.trunc(number(args, 'retries', 0, 10) ?? 1),
+    retries: Math.trunc(number(args, 'retries', 0, 10) ?? 2),
+    canary: !has(args, 'no-canary'),
     budget: number(args, 'budget', 0),
     diagnose: !has(args, 'no-diagnose'),
   };
@@ -180,6 +189,30 @@ export async function main(args: Args) {
         (minimum !== undefined && (result.summary.regression.percent ?? 0) < minimum)
       )
         process.exitCode = 1;
+      return;
+    }
+    case 'gate': {
+      const baseline = text(args, 'baseline');
+      if (!baseline) throw new Error('Usage: gate --baseline <git ref> [run options]');
+      const options = runOptions(args);
+      const result = await runGate({
+        ...options,
+        baseline,
+        resample: Math.trunc(number(args, 'resample', 0, 20) ?? 7),
+        label:
+          options.label ?? `gate-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`,
+      });
+      console.log(result.report);
+      if (has(args, 'enforce') && result.verdict !== 'GO') process.exitCode = 1;
+      return;
+    }
+    case 'promote': {
+      const labels = [first, ...others].filter(Boolean);
+      if (!labels.length) throw new Error('Usage: promote <label> [<label>...]');
+      const members = Object.keys(await promote(root, labels));
+      console.log(
+        `${members.length} scenarios have a place in the gate: ${members.join(', ') || 'none'}. Commit evals/gate.json.`,
+      );
       return;
     }
     case 'models':

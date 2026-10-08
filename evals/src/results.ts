@@ -28,7 +28,7 @@ export interface AttemptResult {
   scenario: string;
   title: string;
   capabilities: Capability[];
-  tier: 'pr' | 'full' | 'live';
+  tier: 'pr' | 'full' | 'live' | 'canary';
   complexity: 'simple' | 'medium' | 'complex';
   stance: 'regression' | 'gap';
   fingerprint: string;
