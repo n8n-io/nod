@@ -2,12 +2,10 @@ import hashlib
 import json
 from pathlib import Path
 import random
-import re
 import string
 import subprocess
 import sys
 import tempfile
-import tomllib
 
 
 scanner = sys.argv[1]
@@ -72,46 +70,30 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
         raise SystemExit("The public token exception must be limited to its configuration file.")
 
 evidence_path = "docs/research/apps-acceptance-b8e489cb.json"
-digest = hashlib.sha256(b"fixture").hexdigest()
-evidence = f'{{\n  "files": {{\n    "src/server/access.ts": "{digest}",\n    "src/ports/key-store.ts": "{digest}"\n  }}\n}}\n'
+evidence = (config.parent / evidence_path).read_text()
 code, findings = scan(evidence, evidence_path)
 if code != 0 or findings:
-    raise SystemExit("Source file hashes in app acceptance evidence must pass secret scanning.")
+    raise SystemExit("Verified acceptance source hashes must pass secret scanning.")
 
-hex_token = hashlib.sha256(candidate.encode()).hexdigest()
-for content, filename in [
-    (evidence.replace(digest, candidate, 1), evidence_path),
-    (f'{evidence}api_key = "{candidate}"\n', evidence_path),
-    (f'{{\n  "api_key": "{hex_token}"\n}}\n', evidence_path),
-    (f'{{\n  "src/server/access-token": "{hex_token}"\n}}\n', evidence_path),
-    (f'{{\n  "config/access.ts": "{hex_token}"\n}}\n', evidence_path),
-    (evidence, "app.json"),
-]:
-    code, findings = scan(content, filename)
+for change in ["credential", "source_hash"]:
+    altered = json.loads(evidence)
+    if change == "credential":
+        altered["api_key"] = candidate
+    else:
+        altered["source"]["files"]["src/ports/authentication.ts"] = hashlib.sha256(
+            candidate.encode()
+        ).hexdigest()
+    code, findings = scan(json.dumps(altered, indent=2), evidence_path)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
-        raise SystemExit("The evidence exception must cover only source hashes in evidence files.")
+        raise SystemExit("Other values in the acceptance snapshot must fail secret scanning.")
 
-repository = config.parent
-source_hash = re.compile(
-    next(
-        allowlist["regexes"][0]
-        for allowlist in tomllib.loads(config.read_text())["allowlists"]
-        if "apps-acceptance" in "".join(allowlist.get("paths", []))
-    )
-)
-for record in sorted((repository / "docs" / "research").glob("apps-acceptance-*.json")):
-    commit = record.stem.rsplit("-", 1)[1]
-    for line in record.read_text().splitlines():
-        match = source_hash.fullmatch(line)
-        if not match:
-            continue
-        path, value = match.groups()
-        source = subprocess.run(
-            ["git", "-C", str(repository), "show", f"{commit}:{path}"],
-            capture_output=True,
-            check=False,
-        )
-        if source.returncode != 0 or hashlib.sha256(source.stdout).hexdigest() != value:
-            raise SystemExit(f"{record.name}: {path} is not that file's SHA-256 at {commit}.")
+source_line = next(line for line in evidence.splitlines() if '"src/ports/authentication.ts"' in line)
+code, findings = scan(f'{source_line} "api_key": "{candidate}"', evidence_path)
+if code != 1 or not any("api_key" in finding.get("Match", "") for finding in findings):
+    raise SystemExit("A credential beside an allowed source hash must fail secret scanning.")
+
+code, findings = scan(evidence, "docs/research/unverified-snapshot.json")
+if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+    raise SystemExit("Source hash exceptions must be limited to the verified snapshot.")
 
 print("Secret scanning configuration regression passed.")

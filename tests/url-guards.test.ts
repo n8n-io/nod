@@ -15,9 +15,10 @@ import {
 import { previewableUrl } from '../src/shared/link-preview.ts';
 import { artifactImage, artifactPreview } from '../src/web/components/attachment-images.tsx';
 import { MessageText } from '../src/web/components/message.tsx';
-import type { Artifact } from '../src/shared/contracts.ts';
+import type { Artifact, Connection } from '../src/shared/contracts.ts';
 import { connectionUrl } from '../src/web/lib/connection-url.ts';
 import { messageSetupLinks, safeMessageLink, setupLink } from '../src/web/lib/message-links.ts';
+import { connectionGroups, connectionIssue } from '../src/web/lib/secondary-pages.ts';
 
 const origin = 'http://localhost:4310';
 const render = (text: string) => renderToStaticMarkup(createElement(MessageText, { text }));
@@ -264,7 +265,8 @@ test('setup links omit tokens and fragments and approval paths never become link
   assert.ok(external);
   assert.match(external, /\brel="noopener noreferrer"/);
   assert.match(external, /\breferrerPolicy="no-referrer"/);
-  assert.match(result, /<button[^>]*data-setup="app"[^>]*>.*Connect Calendar<\/button>/);
+  const action = JSDOM.fragment(result).querySelector('button[data-setup="app"]');
+  assert.equal(action?.textContent, 'Connect Calendar');
   assert.doesNotMatch(result, /href="https:\/\/outside\.example\/connect"/);
   assert.doesNotMatch(result, /private-token|private-fragment/);
 });
@@ -298,16 +300,20 @@ test('an app setup action hides only after its exact connection is connected', (
   assert.equal(JSDOM.fragment(connected).querySelectorAll('button[data-setup="app"]').length, 0);
 });
 
-test('native setup actions hide only completed links and retain other account requests across refreshes', async () => {
+test('setup actions match canonical owned links and retain other account requests across refreshes', async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     url: origin,
     pretendToBeVisual: true,
   });
+  const discoveryId = 'abcdef01-abcd-4000-8000-abcdef000003';
   const links = [
     'https://connect.composio.dev/link/synthetic-work',
     'https://connect.composio.dev/link/synthetic-personal',
+    `/apps?connect=${discoveryId.toUpperCase()}`,
   ];
-  const hashes = links.map((href) => createHash('sha256').update(href).digest('hex'));
+  const hashes = [links[0], links[1], `/apps?connect=${discoveryId}`].map((href) =>
+    createHash('sha256').update(href).digest('hex'),
+  );
   const requests: string[][] = [];
   let completed: string[] = [];
   let failing = false;
@@ -322,12 +328,23 @@ test('native setup actions hide only completed links and retain other account re
       assert.equal(path, '/api/apps/setup-status');
       assert.equal(init.method, 'POST');
       const body = JSON.parse(String(init.body));
-      assert.deepEqual(Object.keys(body), ['hashes']);
+      assert.deepEqual(Object.keys(body), ['hashes', 'connectionIds']);
       assert.deepEqual(body.hashes, hashes);
+      assert.deepEqual(body.connectionIds, [discoveryId]);
       requests.push(body.hashes);
-      return Response.json(failing ? { error: 'Unavailable' } : completed, {
-        status: failing ? 503 : 200,
-      });
+      return Response.json(
+        failing
+          ? { error: 'Unavailable' }
+          : {
+              completed,
+              apps: [
+                { hash: hashes[0], slug: 'gmail', name: 'Gmail' },
+                { hash: hashes[2], slug: 'notion_mcp', name: 'Notion' },
+                { hash: '0'.repeat(64), slug: 'slack', name: 'Slack' },
+              ],
+            },
+        { status: failing ? 503 : 200 },
+      );
     },
   };
   const originals = new Map(
@@ -348,7 +365,7 @@ test('native setup actions hide only completed links and retain other account re
       root.render(
         createElement(MessageText, {
           key,
-          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]})`,
+          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]}) and [Connect custom app](${links[2]})`,
           connectedAppIds: new Set(['gmail']),
         }),
       ),
@@ -356,18 +373,26 @@ test('native setup actions hide only completed links and retain other account re
   try {
     await render('initial');
     await waitFor(() => requests.length === 1);
-    assert.equal(buttons().length, 2);
+    await waitFor(() => Boolean(buttons()[0]?.querySelector('img')));
+    assert.equal(buttons().length, 3);
+    assert.equal(buttons()[0].querySelector('img')?.getAttribute('src'), '/logos/gmail.svg');
+    assert.equal(buttons()[1].querySelector('img'), null);
+    assert.equal(buttons()[2].querySelector('img')?.getAttribute('src'), '/logos/notion.svg');
     completed = [hashes[0]];
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
-    await waitFor(() => buttons().length === 1);
+    await waitFor(() => buttons().length === 2);
     assert.ok(buttons()[0].textContent?.includes('personal'));
     failing = true;
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await waitFor(() => requests.length === 3);
-    assert.equal(buttons().length, 1);
+    assert.equal(buttons().length, 2);
     failing = false;
     await render('reload');
-    await waitFor(() => requests.length === 4 && buttons().length === 1);
+    await waitFor(() => requests.length === 4 && buttons().length === 2);
+    assert.ok(buttons()[0].textContent?.includes('personal'));
+    completed = [hashes[0], hashes[2]];
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await waitFor(() => buttons().length === 1);
     assert.ok(buttons()[0].textContent?.includes('personal'));
     assert.doesNotMatch(dom.window.document.body.innerHTML, /synthetic-work|synthetic-personal/);
   } finally {
@@ -377,6 +402,57 @@ test('native setup actions hide only completed links and retain other account re
       if (value) Object.defineProperty(globalThis, key, value);
       else Reflect.deleteProperty(globalThis, key);
   }
+});
+
+test('app groups separate catalog metadata from saved account state and keep available routing', () => {
+  const account: Connection = {
+    slug: 'gmail',
+    name: 'Gmail',
+    status: 'connected',
+    connectionId: 'owned-gmail',
+    accountId: 'provider-account',
+    accountEmail: 'synthetic@example.test',
+    description: 'Account authorization expired',
+    reconnectRequired: true,
+    triggersEnabled: true,
+  };
+  const catalog: Connection[] = [
+    {
+      slug: 'gmail',
+      name: 'Gmail',
+      status: 'disconnected',
+      description: 'Mail integration',
+      categories: ['Communication'],
+      triggersEnabled: false,
+    },
+    {
+      slug: 'gmail_mcp',
+      name: 'Gmail MCP',
+      status: 'disconnected',
+      categories: ['Productivity'],
+      triggersEnabled: false,
+    },
+  ];
+  const [group] = connectionGroups([account], catalog);
+  assert.equal(group.service.description, catalog[0].description);
+  assert.deepEqual(group.service.categories, ['Communication', 'Productivity']);
+  assert.equal(group.service.slug, account.slug);
+  assert.equal(group.accounts[0], account);
+  assert.ok(connectionIssue(group.accounts[0]));
+  assert.equal(connectionGroups([account])[0].service.description, undefined);
+  const [available] = connectionGroups(
+    [{ ...catalog[0], status: 'not_configured' }],
+    catalog.map((service) =>
+      service.slug === 'gmail' ? { ...service, status: 'not_configured' } : service,
+    ),
+  );
+  assert.equal(available.service.slug, 'gmail_mcp');
+  assert.equal(available.service.status, 'disconnected');
+  assert.deepEqual(available.accounts, []);
+  assert.equal(
+    connectionGroups([{ ...catalog[0], status: 'not_configured' }], catalog)[0].service.status,
+    'disconnected',
+  );
 });
 
 test('underlined messages preserve nested formatting without admitting unsafe markup', () => {

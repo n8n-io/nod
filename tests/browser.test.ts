@@ -3913,6 +3913,105 @@ test('automatic feedback captures exclude remote handoffs and unsent editable co
   assert.equal(result.exitCode, 0, result.stderr);
 });
 
+test('session failures retry local bootstrap without offering hosted sign-in or exposing private views', async () => {
+  const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
+    timeoutMs: 20_000,
+    input: `
+      import assert from 'node:assert/strict';
+      import { JSDOM } from 'jsdom';
+      const dom = new JSDOM('<div id="root"></div>', {
+        url: 'http://localhost/credentials/synthetic-form',
+        pretendToBeVisual: true,
+      });
+      Object.assign(globalThis, {
+        window: dom.window,
+        document: dom.window.document,
+        getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+        requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+        cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+        IS_REACT_ACT_ENVIRONMENT: true,
+        ...Object.fromEntries(['Node', 'NodeFilter', 'Event', 'CustomEvent', 'Element', 'HTMLElement', 'HTMLInputElement', 'MutationObserver'].map(name => [name, dom.window[name]])),
+      });
+      let state = 'error';
+      const requests = [];
+      globalThis.fetch = async path => {
+        requests.push(path);
+        if (path === '/api/session') {
+          if (state === 'error') return Response.json({ error: 'Synthetic service unavailable' }, { status: 500 });
+          return Response.json({
+            auth: { mode: state === 'google' ? 'google' : 'local', googleAvailable: state === 'google' },
+            user: state === 'local' ? { id: 'synthetic-owner', name: 'Fixture', email: null, avatarUrl: null } : null,
+            settings: state === 'local' ? { theme: 'system', onboardingCompleted: true, usageData: false } : null,
+            capabilities: { developer: false },
+          });
+        }
+        if (path === '/api/credential-requests/synthetic-form') return Response.json({
+          kind: 'password', status: 'pending', origin: 'https://fixture.example.invalid',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(), fields: [], savedEntries: [],
+        });
+        throw new Error('Unexpected fixture request: ' + path);
+      };
+      const { act, createElement } = await import('react');
+      const { createRoot } = await import('react-dom/client');
+      const { App } = await import('./src/web/app.tsx');
+      const { sessionStore } = await import('./src/web/lib/session.ts');
+      const { configureAnalytics, setAnalyticsClient } = await import('./src/web/lib/analytics.ts');
+      const pages = [];
+      setAnalyticsClient({
+        init() {}, reset() {}, set_config() {}, startSessionRecording() {}, stopSessionRecording() {},
+        capture(event, properties) { if (event === '$pageview') pages.push(properties.route); },
+      });
+      configureAnalytics({ enabled: true, distinctId: 'synthetic-analytics', deployment: 'local', environment: 'development' });
+      const root = createRoot(document.querySelector('#root'));
+      const retry = () => document.querySelector('main.initial-loading button');
+      const password = () => document.querySelector('input[name="password"]');
+      try {
+        await act(async () => root.render(createElement(App)));
+        assert.ok(retry());
+        assert.equal(document.querySelector('.sign-in-page'), null);
+        assert.equal(password(), null);
+        assert.deepEqual(requests, ['/api/session']);
+        assert.deepEqual(pages, []);
+        state = 'local';
+        await act(async () => retry().click());
+        assert.ok(password());
+        assert.equal(sessionStore.getSnapshot().session.user.id, 'synthetic-owner');
+        assert.equal(window.location.pathname, '/credentials/synthetic-form');
+        state = 'error';
+        await act(async () => {
+          sessionStore.invalidate();
+          await sessionStore.refresh();
+        });
+        assert.ok(retry());
+        assert.equal(document.querySelector('.sign-in-page'), null);
+        assert.equal(password(), null);
+        assert.equal(pages.includes('/login'), false);
+        state = 'local';
+        await act(async () => retry().click());
+        assert.ok(password());
+        assert.equal(sessionStore.getSnapshot().session.user.id, 'synthetic-owner');
+        state = 'google';
+        await act(async () => sessionStore.refresh({ conceal: true }));
+        assert.ok(document.querySelector('.google-sign-in'));
+        assert.equal(password(), null);
+        assert.equal(pages.at(-1), '/login');
+        state = 'local-unavailable';
+        await act(async () => sessionStore.refresh());
+        assert.ok(retry());
+        assert.equal(document.querySelector('.sign-in-page'), null);
+        assert.equal(password(), null);
+        assert.equal(requests.includes('/api/login'), false);
+      } finally {
+        await act(async () => root.unmount());
+        configureAnalytics(undefined);
+        dom.window.close();
+      }
+      process.exit(0);
+    `,
+  });
+  assert.equal(result.exitCode, 0, result.stderr);
+});
+
 test('native Settings and feedback preserve the active credential form', async () => {
   const result = await runProcess(process.execPath, ['--import', 'tsx', '--input-type=module'], {
     timeoutMs: 20_000,

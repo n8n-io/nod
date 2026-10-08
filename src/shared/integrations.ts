@@ -1,15 +1,12 @@
-export const integrationServiceIds = [
-  'gmail',
-  'googlecalendar',
-  'googledrive',
-  'googlesheets',
-  'googledocs',
-  'slack',
-  'notion',
-  'linear',
-] as const;
+export type IntegrationService = string;
 
-export type IntegrationService = (typeof integrationServiceIds)[number];
+export interface IntegrationServiceInfo {
+  slug: string;
+  name: string;
+  description: string;
+  logoUrl?: string;
+  categories?: string[];
+}
 
 export type IntegrationKeyStatus = { managed: boolean; saved: boolean; suffix: string | null };
 
@@ -32,3 +29,5 @@ export const integrationServices: Record<
   notion: { name: 'Notion', description: 'Find and work with your pages and databases.' },
   linear: { name: 'Linear', description: 'Find projects and issues in your workspace.' },
 };
+
+export const integrationServiceIds = Object.keys(integrationServices);

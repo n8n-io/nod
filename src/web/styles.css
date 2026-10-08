@@ -993,9 +993,11 @@ input[type='range']:disabled {
 .message-text .setup-group a,
 .message-text .setup-group button {
   display: inline-flex;
-  flex: 1 0 auto;
+  flex: 1 1 auto;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 32px;
   padding: 4px 12px 4px 8px;
   color: var(--accent);
@@ -1025,8 +1027,14 @@ input[type='range']:disabled {
 .message-text .setup-group button:focus-visible {
   outline-offset: -2px;
 }
-.message-text .setup-group svg {
+.message-text .setup-group :is(svg, img) {
+  flex: none;
   margin: 0;
+  border-radius: 0;
+}
+.message-text .setup-group button > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .message-text blockquote {
   border-left: 3px solid var(--border);

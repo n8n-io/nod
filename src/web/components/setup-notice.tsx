@@ -23,6 +23,7 @@ function KeyForm() {
             Promise.all([
               pageDataCache.refresh('/api/configuration', true),
               pageDataCache.refresh('/api/apps', true),
+              pageDataCache.refresh('/api/apps/catalog', true),
             ]),
           )
           .catch((cause) => setError(errorMessage(cause)))

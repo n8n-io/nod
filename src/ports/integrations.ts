@@ -1,6 +1,6 @@
-import type { IntegrationService } from '../shared/integrations.ts';
+import type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
 import type { Connection } from '../shared/contracts.ts';
-export type { IntegrationService } from '../shared/integrations.ts';
+export type { IntegrationService, IntegrationServiceInfo } from '../shared/integrations.ts';
 export type ConnectedApp = Pick<
   Connection,
   | 'slug'
@@ -65,6 +65,22 @@ export interface IntegrationInboxPoll {
   }>;
 }
 export class IntegrationInboxCursorExpired extends Error {}
+export class IntegrationCatalogAccessDenied extends Error {
+  constructor() {
+    super('App discovery requires Toolkit read access on the Composio project key.');
+  }
+}
+export class IntegrationAuthConfigurationError extends Error {
+  constructor(reason: 'permission' | 'ambiguous' | 'unavailable') {
+    super(
+      reason === 'permission'
+        ? 'Connecting Google apps requires Auth configs read access on the Composio project key. Ask your Otto administrator to update the key.'
+        : reason === 'ambiguous'
+          ? 'This app has multiple custom sign-in configurations. Ask your Otto administrator to select one.'
+          : "This app's custom sign-in configuration is unavailable. Ask your Otto administrator to enable it for sessions.",
+    );
+  }
+}
 export interface VerificationEmailQuery {
   recipient: string;
   senderDomain: string;
@@ -95,6 +111,7 @@ export interface IntegrationProvider {
   setApiKey?(apiKey?: string): void;
   verifyApiKey?(apiKey: string): Promise<boolean>;
   supportedServices?: readonly IntegrationService[];
+  listServices?(): Promise<IntegrationServiceInfo[]>;
   webhooksConfigured: boolean;
   supportsSubscriptions: readonly IntegrationService[];
   createSession(
@@ -104,16 +121,24 @@ export interface IntegrationProvider {
   ): Promise<IntegrationSession>;
   restoreSession(id: string, signal?: AbortSignal): Promise<IntegrationSession>;
   deleteSession(id: string): Promise<void>;
+  reconnectAccount?(
+    ownerId: string,
+    service: IntegrationService,
+    accountId: string,
+    callbackUrl: string,
+  ): Promise<{ accountId: string; url: string; authConfigId: string }>;
   inspectAccount(
     id: string,
     ownerId: string,
+    options?: { verifyOwner?: boolean },
   ): Promise<{
     active: boolean;
     service: string;
     accountName?: string;
     accountEmail?: string;
+    authConfigId?: string;
   }>;
-  deleteAccount(id: string): Promise<void>;
+  deleteAccount(id: string, ownerId?: string): Promise<void>;
   verificationEmails?(
     accountId: string,
     query: VerificationEmailQuery,

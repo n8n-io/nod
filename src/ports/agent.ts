@@ -105,10 +105,12 @@ export interface RuntimeContext {
     reaction: MessageReaction | null,
   ): Promise<AgentReactionResult>;
   connections?(
-    action: 'list' | 'connect' | 'propose',
+    action: 'list' | 'discover' | 'connect' | 'propose',
     service?: string,
     proposal?: unknown,
     newAccount?: boolean,
+    query?: string,
+    connectionId?: string,
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
   waitForUser?(question: string): Promise<void>;
