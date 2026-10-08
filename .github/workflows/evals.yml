@@ -137,6 +137,7 @@ jobs:
             fi
           fi
           if [ -z "$base" ]; then
+            echo "verdict=INCONCLUSIVE" >> "$GITHUB_OUTPUT"
             npm run eval:capability -- run "${args[@]}" --label "$candidate"
             exit 0
           fi

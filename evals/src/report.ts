@@ -276,7 +276,7 @@ export function verdictMarkdown(
   if (result.scenarios.length)
     lines.push(
       '',
-      '| Gate scenario | Baseline | Candidate | |',
+      '| Gate scenario | Baseline | Candidate | Note |',
       '| --- | --- | --- | --- |',
       ...result.scenarios.map(
         (row) =>

@@ -195,7 +195,8 @@ export async function runGate(
     ),
   );
   const skipped = Object.keys(members).filter((id) => !(id in current));
-  const named = `${slug(options.baseline)}-for-${options.label}`;
+  const label = options.label.slice(0, 75);
+  const named = `${slug(options.baseline)}-for-${label}`.slice(0, 75);
   const side = (label: string, ref: string | undefined, extra: Partial<RunOptions> = {}) =>
     runSuite({ ...options, label, ref, resume: false, ...extra });
   let result: GateResult;
@@ -204,7 +205,7 @@ export async function runGate(
   let model = options.model ?? '';
   let judge = options.judge ?? '';
   try {
-    const candidate = await side(options.label, undefined);
+    const candidate = await side(label, undefined);
     const baseline = await side(named, options.baseline);
     model = candidate.manifest.model;
     judge = candidate.manifest.judge;
@@ -220,7 +221,7 @@ export async function runGate(
         k: options.resample,
         canary: false,
       };
-      const more = await side(`${options.label}-more`, undefined, extra);
+      const more = await side(`${label}-more`, undefined, extra);
       const less = await side(`${named}-more`, options.baseline, extra);
       resampled = true;
       result = decide(
