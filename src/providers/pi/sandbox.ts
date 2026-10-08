@@ -15,8 +15,10 @@ import {
 import type { WorkspaceSession } from '../../ports/computer.ts';
 
 const streamBytes = 1024 * 1024;
-const compactCommand =
-  /^(?:git status|git diff(?: --(?:cached|staged))?|git log(?: -(?:\d+|n \d+)| --max-count(?:=| )\d+))$/;
+const rawCommand =
+  /[|&;<>\n\r`$\\]|^\s*[\w]+=[^\s]*|(?:^|\s)(?:--(?:json|porcelain|raw|format|output|outfile|output-file|null|null-data)(?:[=\s]|$)|-(?:0|z|o|O|print0)(?:\s|$))/;
+const invocationWrapper =
+  /^\s*(?:\S*\/)?(?:npm|pnpm|yarn|bun|npx|bunx|python[\d.]*|uv|poetry|pipenv|pipx|env|command|exec|sudo|doas)(?:\s|$)/;
 const imageTypes: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -208,12 +210,12 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       ...(timeZone ? [`export TZ=${quote(timeZone)}`] : []),
       'export RTK_TELEMETRY_DISABLED=1',
       `otto_command=${quote(command)}`,
-      ...(compactCommand.test(command.trim())
+      ...(!rawCommand.test(command) && command.trim() !== 'git log'
         ? [
             'otto_rewrite=$(timeout -k 1 2 rtk rewrite "$otto_command" 2>/dev/null)',
             'otto_rewrite_code=$?',
             'if [ "$otto_rewrite_code" -eq 2 ]; then printf "%s\\n" "Command denied by workspace RTK policy."; exit 126; fi',
-            'if { [ "$otto_rewrite_code" -eq 0 ] || [ "$otto_rewrite_code" -eq 3 ]; } && [ -n "$otto_rewrite" ]; then otto_command=$otto_rewrite; fi',
+            `if { [ "$otto_rewrite_code" -eq 0 ] || [ "$otto_rewrite_code" -eq 3 ]; } && [ -n "$otto_rewrite" ]${invocationWrapper.test(command) ? ' && [ "$otto_rewrite" = "rtk $otto_command" ]' : ''}; then otto_command=$otto_rewrite; fi`,
           ]
         : []),
       'start=$(date +%s)',
@@ -335,7 +337,7 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
     ...definition,
     ...(definition.name === 'bash'
       ? {
-          description: `${definition.description}\nBasic git status/diff and count-limited git log commands use RTK to compress output. Use rtk proxy for exact output, or rtk explicitly for other supported commands.`,
+          description: `${definition.description}\nSupported simple commands automatically use RTK for compact output. Prefer bash with rtk ls, rtk read, rtk grep and rtk find for exploration; use native read for exact edit context. Use rtk test or rtk err around scripts to compact their output, and rtk proxy for unfiltered output. Shell data flows and explicit machine-output formats stay raw.`,
         }
       : {}),
     execute: (id, params, signal, onUpdate, context) =>

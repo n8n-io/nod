@@ -1524,7 +1524,7 @@ test('bash rewrites inside the workspace and never retries an executed command',
   await writeFile(join(bin, 'git'), '#!/bin/sh\nbash job.sh original\n', { mode: 0o755 });
   await writeFile(
     join(bin, 'rtk'),
-    '#!/bin/sh\n[ "$1" = rewrite ] || exit 99\ncat rewrite-output\nexit "$(cat rewrite-code)"\n',
+    '#!/bin/sh\n[ "$1" = rewrite ] || exec bash job.sh filtered\ncat rewrite-output\nexit "$(cat rewrite-code)"\n',
     { mode: 0o755 },
   );
   for (const { code, replacement, expected } of [
@@ -1542,6 +1542,24 @@ test('bash rewrites inside the workspace and never retries an executed command',
     assert.match(output, new RegExp(expected));
     assert.match(output, new RegExp(`Command exited with code ${code === 2 ? 126 : 7}`));
     assert.equal(await readFile(join(directory, 'executions'), 'utf8'), code === 2 ? '' : 'run\n');
+  }
+  for (const name of ['npm', 'python3'])
+    await writeFile(join(bin, name), '#!/bin/sh\nbash job.sh original\n', { mode: 0o755 });
+  await writeFile(join(directory, 'rewrite-code'), '0');
+  for (const { command, replacement, expected } of [
+    { command: 'ls -la', replacement: 'bash job.sh filtered', expected: 'filtered' },
+    { command: 'rg invoice src', replacement: 'bash job.sh filtered', expected: 'filtered' },
+    { command: 'cat source.txt', replacement: 'bash job.sh filtered', expected: 'filtered' },
+    { command: 'npm run lint', replacement: 'rtk lint', expected: 'original' },
+    { command: 'npm run lint', replacement: 'rtk npm run lint', expected: 'filtered' },
+    { command: 'python3 -m pytest', replacement: 'rtk pytest', expected: 'original' },
+  ]) {
+    await writeFile(join(directory, 'rewrite-output'), replacement);
+    await writeFile(join(directory, 'executions'), '');
+    const output = await run('bash', { command });
+    assert.match(output, new RegExp(expected));
+    assert.match(output, /Command exited with code 7/);
+    assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
   }
   await rm(join(bin, 'rtk'));
   await writeFile(join(directory, 'executions'), '');
@@ -1566,6 +1584,15 @@ test('bash preserves shell data flows and bounds unavailable RTK before executin
     assert.doesNotMatch(await run('bash', { command }), /Command exited/);
   assert.match(await run('bash', { command: 'git log' }), /Command exited with code 128/);
   assert.equal(await readFile(join(directory, 'copy.txt'), 'utf8'), 'one\ntwo\nthree\n');
+  await writeFile(join(bin, 'git'), '#!/bin/sh\nprintf "exact output\\n"\n', { mode: 0o755 });
+  for (const command of [
+    'git status --porcelain',
+    'git status --porcelain=v2 -z',
+    'git diff --output=changes.patch',
+    'git log --format=json',
+    'git log --json',
+  ])
+    assert.equal(await run('bash', { command }), 'exact output\n');
   assert.equal(existsSync(join(directory, 'rewrites')), false);
   await writeFile(join(directory, 'job.sh'), 'printf "run\\n" >> executions\nexit 124\n');
   await writeFile(join(bin, 'git'), '#!/bin/sh\nbash job.sh\n', { mode: 0o755 });
