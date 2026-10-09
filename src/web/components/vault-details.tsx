@@ -89,6 +89,7 @@ export function VaultDetails({
   const saveRequest = useRef<AbortController | null>(null);
   const actionGeneration = useRef(0);
   const isCard = entry.kind === 'card';
+  const unreadable = 'unreadable' in entry && entry.unreadable === true;
   const item = isCard ? 'card' : 'login';
   const identityName =
     details?.kind === 'login'
@@ -145,7 +146,8 @@ export function VaultDetails({
 
   useEffect(() => {
     active.current = true;
-    void loadDetails();
+    if (unreadable) setDetailsError(true);
+    else void loadDetails();
     const clear = () => hideSecretsRef.current();
     const hidden = () => {
       if (document.hidden) clear();
@@ -535,10 +537,16 @@ export function VaultDetails({
       {!details ? (
         detailsError ? (
           <div className="vault-inset-note">
-            <Notice>This {item} could not be opened. Try again.</Notice>
-            <Button variant="outline" onClick={() => void loadDetails()}>
-              Try again
-            </Button>
+            <Notice>
+              {unreadable
+                ? 'The current Vault key can’t open this login. Restore the key or delete it.'
+                : `This ${item} could not be opened. Try again.`}
+            </Notice>
+            {!unreadable && (
+              <Button variant="outline" onClick={() => void loadDetails()}>
+                Try again
+              </Button>
+            )}
           </div>
         ) : (
           <Loading label={`Opening ${item}…`} />
