@@ -14,6 +14,8 @@ export const rebaseAt = 8 * 1024 * 1024;
 export const keptImages = 4;
 export const removedImage =
   'An earlier image was removed from context. Take a new screenshot or read the file again if you need it.';
+export const removedCredential =
+  'An earlier saved login was removed from context. Use sign_in if you need to sign in again.';
 const failure = () =>
   new Error(
     'The assistant session could not be saved. Stop and restore storage before continuing.',
@@ -124,6 +126,20 @@ export async function readPiSessionEntries(options: {
   return entries(await readFile(latest.path)).slice(1);
 }
 
+function legacyCredential(message: { role: string; toolName?: string; content?: unknown }) {
+  return (
+    message.role === 'toolResult' &&
+    message.toolName === 'get_credential' &&
+    JSON.stringify(message.content) !== JSON.stringify([{ type: 'text', text: removedCredential }])
+  );
+}
+
+export function holdsCredentials(manager: SessionManager) {
+  return manager
+    .buildContextEntries()
+    .some((entry) => entry.type === 'message' && legacyCredential(entry.message));
+}
+
 export function rebaseSession(source: SessionManager, next: SessionManager) {
   const context = source.buildContextEntries();
   let images = context.reduce(
@@ -139,16 +155,18 @@ export function rebaseSession(source: SessionManager, next: SessionManager) {
     else if (entry.type === 'message') {
       const message = entry.message;
       next.appendMessage(
-        (message.role === 'toolResult'
-          ? {
-              ...message,
-              content: message.content.map((part) =>
-                part.type === 'image' && images-- > keptImages
-                  ? { type: 'text' as const, text: removedImage }
-                  : part,
-              ),
-            }
-          : message) as Parameters<typeof next.appendMessage>[0],
+        (legacyCredential(message)
+          ? { ...message, content: [{ type: 'text' as const, text: removedCredential }] }
+          : message.role === 'toolResult'
+            ? {
+                ...message,
+                content: message.content.map((part) =>
+                  part.type === 'image' && images-- > keptImages
+                    ? { type: 'text' as const, text: removedImage }
+                    : part,
+                ),
+              }
+            : message) as Parameters<typeof next.appendMessage>[0],
       );
     }
   }
@@ -200,7 +218,7 @@ export async function createPiCheckpoint(options: {
   );
   let parts = saved?.parts ?? [];
   let stored = saved?.bytes.byteLength ?? 0;
-  if (stored > rebaseAt) {
+  if (stored > rebaseAt || holdsCredentials(manager)) {
     manager = rebaseSession(manager, SessionManager.inMemory(options.directory));
     parts = [];
   }

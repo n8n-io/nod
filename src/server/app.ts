@@ -88,6 +88,7 @@ export interface AppDependencies {
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;
   planningTasks?: () => boolean;
+  browserInput?: (threadId: string) => Promise<void>;
   messageCosts?: (
     turnIds: string[],
   ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
@@ -605,8 +606,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
     if (!control) return reply.code(404).send({ error: 'The browser is unavailable.' });
     const thread = await activeThread(pool);
     if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
+    const acting = body.data.inputs.some(
+      (input) => input.type !== 'wheel' && (input.type !== 'mouse' || input.event === 'down'),
+    );
+    if (acting) await dependencies.browserInput?.(thread.id);
     try {
       for (const input of body.data.inputs) await control(thread.id, input);
+      if (acting) await dependencies.browserInput?.(thread.id);
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply

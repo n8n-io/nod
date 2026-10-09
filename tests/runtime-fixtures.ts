@@ -8,6 +8,7 @@ export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
     currentPage: async () => ({ origin: 'https://example.com', url: 'https://example.com' }),
     hold: async () => {},
     close: async () => {},
+    signOut: async () => {},
     dispose: async () => {},
     status: () => 'fixture computer',
     ...overrides,

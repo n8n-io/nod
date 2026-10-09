@@ -32,6 +32,7 @@ import {
   createPiCheckpoint,
   readPiSessionEntries,
   rebaseAt,
+  removedCredential,
 } from '../src/providers/pi/checkpoint.ts';
 import { createPiAgent } from '../src/providers/pi/index.ts';
 import { createPiMemoryCurator } from '../src/providers/pi/memory-curator.ts';
@@ -671,6 +672,66 @@ test('a durable saved session above the rebase size is rebased on load with the 
     const rewritten = Buffer.byteLength(await savedText(f));
     assert.ok(rewritten < saved);
     assert.ok(rewritten < rebaseAt);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a saved session loses old plaintext login results from model context when it loads', async () => {
+  const f = await fixture();
+  try {
+    const original = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: join(f.directory, 'old'),
+    });
+    original.manager.appendMessage({
+      role: 'user',
+      content: 'Sign in to the fixture site.',
+      timestamp: 1,
+    });
+    original.manager.appendMessage({
+      role: 'assistant',
+      api: 'openai-responses',
+      provider: 'openai',
+      model: 'fixture',
+      timestamp: 2,
+      stopReason: 'toolUse',
+      content: [{ type: 'toolCall', id: 'legacy', name: 'get_credential', arguments: {} }],
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    });
+    original.manager.appendMessage({
+      role: 'toolResult',
+      toolCallId: 'legacy',
+      toolName: 'get_credential',
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ username: 'fixture-user', password: 'synthetic-legacy-password' }),
+        },
+      ],
+      details: {},
+      isError: false,
+      timestamp: 3,
+    });
+    await original.checkpoint();
+    const restored = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: join(f.directory, 'new'),
+    });
+    const context = JSON.stringify(restored.manager.buildSessionContext().messages);
+    assert.equal(context.includes('synthetic-legacy-password'), false);
+    assert.ok(context.includes(removedCredential));
+    await restored.checkpoint();
+    assert.equal((await savedText(f)).includes('synthetic-legacy-password'), false);
   } finally {
     await f.close();
   }

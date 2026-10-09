@@ -14,7 +14,7 @@ export function WebsiteSessionDialog({
   const [label, setLabel] = useState('');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="app-website-dialog">
+      <DialogContent className="vault-website-dialog">
         <DialogTitle>Sign in to a website</DialogTitle>
         <DialogDescription>
           Otto opens the site in its private browser. Sign in once and later tasks reuse the

@@ -114,6 +114,9 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
     case 'discard':
       if (!computer.discard) throw new Error();
       return computer.discard(request.threadId);
+    case 'signOut':
+      if (!computer.signOut) throw new Error();
+      return computer.signOut(request.threadId);
     case 'status':
       return null;
     case 'view':
@@ -305,9 +308,13 @@ export async function startContainerBrowserWorker(
                     : error instanceof BrowserActionError &&
                         error.code === 'browser_observation_failed'
                       ? 'observation'
-                      : error instanceof Error && 'statusCode' in error && error.statusCode === 423
-                        ? 'locked'
-                        : 'unavailable',
+                      : error instanceof BrowserActionError && error.code === 'browser_not_open'
+                        ? 'not_open'
+                        : error instanceof Error &&
+                            'statusCode' in error &&
+                            error.statusCode === 423
+                          ? 'locked'
+                          : 'unavailable',
           metadata: metadata(await entry?.computer.catch(() => undefined), input),
         };
       } finally {

@@ -600,13 +600,12 @@ async function initializeApplication(
     icon,
     securityCodes: runtimeMode === 'local',
     onUse: (use) =>
-      vaultAccess.record(
+      vaultAccess.used(
         { threadId: use.threadId, turnId: use.turnId },
         {
-          action: 'sign_in',
           origin: use.origin,
           reason: use.reason,
-          ...(use.entryId ? { itemId: use.entryId, itemKind: 'login' as const } : {}),
+          ...(use.entryId ? { itemId: use.entryId } : {}),
         },
       ),
   });
@@ -754,10 +753,10 @@ async function initializeApplication(
       holdBrowser: adapters.holdWaitingBrowser,
       connections: integrations.manageConnections,
       prepareBrowser: async (turn) => {
-        const origin = await browserConnections.bound(turn.threadId);
-        if (!origin || (await vaultAccess.permitted(turn, origin))) return;
-        await computer.close(turn.threadId);
+        if (await vaultAccess.keeps(turn)) return;
+        await computer.signOut(turn.threadId);
         await browserConnections.release(turn.threadId);
+        await vaultAccess.signedOut(turn.threadId);
       },
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
@@ -828,7 +827,14 @@ async function initializeApplication(
               : undefined;
         const access = await permitVault(turn, {
           origin,
-          kind: chosen && request.kind !== 'otp' ? 'sign_in' : 'form',
+          kind:
+            request.kind === 'otp'
+              ? request.emailCode
+                ? 'sign_in'
+                : 'form'
+              : chosen
+                ? 'sign_in'
+                : 'form',
           ...(chosen?.usernameHint ? { account: chosen.usernameHint } : {}),
         });
         if ('question' in access) return { [appConfirmation]: access.question };
@@ -920,6 +926,10 @@ async function initializeApplication(
     startOnboarding: welcome,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
+    browserInput: async (threadId) => {
+      const page = await computer.currentPage(threadId).catch(() => undefined);
+      if (page?.origin) await vaultAccess.touched(threadId, page.origin);
+    },
     computer,
     runtime,
     configuration: () =>

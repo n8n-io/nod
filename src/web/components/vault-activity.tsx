@@ -113,12 +113,14 @@ export function VaultActivityList({
   );
 }
 
-export function VaultStatement({
+export function VaultActivityPages({
   activity,
+  origin,
   opener,
 }: {
   activity: VaultActivity;
-  opener(entry: VaultActivityEntry): (() => void) | undefined;
+  origin?: string;
+  opener?(entry: VaultActivityEntry): (() => void) | undefined;
 }) {
   const [more, setMore] = useState<VaultActivityEntry[]>([]);
   const [next, setNext] = useState(activity.next);
@@ -128,13 +130,15 @@ export function VaultStatement({
     setMore([]);
     setNext(activity.next);
   }, [activity]);
-  const { signIns, held } = activity.week;
   async function load() {
     if (!next) return;
     setLoading(true);
+    setError('');
     try {
       const page = await api<VaultActivity>(
-        `/api/vault/activity?at=${encodeURIComponent(next.at)}&id=${next.id}`,
+        `/api/vault/activity?at=${encodeURIComponent(next.at)}&id=${next.id}${
+          origin ? `&origin=${encodeURIComponent(origin)}` : ''
+        }`,
       );
       setMore((current) => [...current, ...page.entries]);
       setNext(page.next);
@@ -144,7 +148,27 @@ export function VaultStatement({
       setLoading(false);
     }
   }
-  const entries = [...activity.entries, ...more];
+  return (
+    <>
+      <VaultActivityList entries={[...activity.entries, ...more]} opener={opener} />
+      {error && <Notice>{error}</Notice>}
+      {next && (
+        <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>
+          Show earlier
+        </Button>
+      )}
+    </>
+  );
+}
+
+export function VaultStatement({
+  activity,
+  opener,
+}: {
+  activity: VaultActivity;
+  opener(entry: VaultActivityEntry): (() => void) | undefined;
+}) {
+  const { signIns, held } = activity.week;
   return (
     <div className="vault-statement">
       <p className="statement-summary">
@@ -162,15 +186,9 @@ export function VaultStatement({
           </>
         )}
       </p>
-      {entries.length ? (
+      {activity.entries.length ? (
         <section className="statement" aria-label="Activity">
-          <VaultActivityList entries={entries} opener={opener} />
-          {error && <Notice>{error}</Notice>}
-          {next && (
-            <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load()}>
-              Show earlier
-            </Button>
-          )}
+          <VaultActivityPages activity={activity} opener={opener} />
         </section>
       ) : (
         <p className="statement-empty">Sign-ins and saved sessions Otto uses will show up here.</p>

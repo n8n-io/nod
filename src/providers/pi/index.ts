@@ -26,6 +26,7 @@ import {
   closeInterruptedCalls,
   createPiCheckpoint,
   keptImages,
+  holdsCredentials,
   rebaseAt,
   rebaseSession,
   removedImage,
@@ -207,7 +208,7 @@ export function createPiAgent(options: {
           ? SessionManager.inMemory(directory)
           : SessionManager.continueRecent(directory, directory));
       const file = durable ? undefined : manager.getSessionFile();
-      if (file && existsSync(file) && statSync(file).size > rebaseAt)
+      if (file && existsSync(file) && (statSync(file).size > rebaseAt || holdsCredentials(manager)))
         manager = rebaseSession(manager, SessionManager.create(directory, directory));
       closeInterruptedCalls(manager);
       const completedEvents: AgentEvent[] = [];

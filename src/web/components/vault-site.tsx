@@ -3,7 +3,7 @@ import { Globe } from 'lucide-react';
 import type { VaultActivity, VaultPermission, VaultSession } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { originLabel } from '../lib/vault-name';
-import { VaultActivityList } from './vault-activity';
+import { VaultActivityPages } from './vault-activity';
 import { VaultBackButton, VaultSurface, VaultTitle } from './vault-surface';
 import { Button, Notice, Switch } from './ui';
 
@@ -16,12 +16,12 @@ const sessionStates: Record<VaultSession['state'], string> = {
 
 export function VaultSiteAccess({
   origin,
-  session,
+  sessions,
   onSessionRemoved,
   onAsk,
 }: {
   origin: string;
-  session?: VaultSession;
+  sessions: VaultSession[];
   onSessionRemoved(id: string): void;
   onAsk?(text: string): void;
 }) {
@@ -67,8 +67,7 @@ export function VaultSiteAccess({
     }
   }
 
-  async function signOut() {
-    if (!session) return;
+  async function signOut(session: VaultSession) {
     setBusy(true);
     setError('');
     try {
@@ -76,6 +75,7 @@ export function VaultSiteAccess({
       onSessionRemoved(session.id);
     } catch (cause) {
       setError(errorMessage(cause));
+    } finally {
       setBusy(false);
     }
   }
@@ -83,9 +83,11 @@ export function VaultSiteAccess({
   return (
     <>
       <div className="vault-inset">
-        {session && (
-          <div className="vault-inset-row">
-            <span className="vault-inset-label">Saved session</span>
+        {sessions.map((session) => (
+          <div key={session.id} className="vault-inset-row">
+            <span className="vault-inset-label">
+              {sessions.length > 1 ? session.label : 'Saved session'}
+            </span>
             <div className="vault-inset-value">
               <span className="vault-detail-value">{sessionStates[session.state]}</span>
               <div className="vault-detail-actions">
@@ -107,14 +109,14 @@ export function VaultSiteAccess({
                   variant="ghost"
                   size="sm"
                   disabled={busy || session.state === 'disconnecting'}
-                  onClick={() => void signOut()}
+                  onClick={() => void signOut(session)}
                 >
                   Sign out
                 </Button>
               </div>
             </div>
           </div>
-        )}
+        ))}
         <div className="vault-inset-row vault-switch-row">
           <span className="vault-detail-value">Sign in without asking</span>
           <Switch
@@ -130,7 +132,7 @@ export function VaultSiteAccess({
         <h3>Activity</h3>
         {!activity ? null : activity.entries.length ? (
           <div className="statement">
-            <VaultActivityList entries={activity.entries} />
+            <VaultActivityPages activity={activity} origin={origin} />
           </div>
         ) : (
           <p className="statement-empty">Otto hasn’t used this yet.</p>
@@ -168,7 +170,7 @@ export function VaultSessionDetails({
       </div>
       <VaultSiteAccess
         origin={session.origin}
-        session={session}
+        sessions={[session]}
         onSessionRemoved={onRemoved}
         onAsk={onAsk}
       />

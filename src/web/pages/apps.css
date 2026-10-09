@@ -385,9 +385,6 @@
   color: var(--error);
   background: var(--error-soft);
 }
-.app-website-dialog {
-  width: min(480px, calc(100vw - 32px));
-}
 .app-manage-dialog .app-account-actions {
   justify-content: flex-end;
   flex-direction: column;
@@ -402,13 +399,11 @@
 .app-discovery-dialog > h2:focus-visible {
   outline: none;
 }
-.app-website-dialog form,
 .app-discovery-dialog form {
   display: grid;
   gap: 16px;
   margin-top: 24px;
 }
-.app-website-dialog form > .button,
 .app-discovery-dialog form > .button {
   justify-self: end;
   margin-top: 8px;

@@ -177,7 +177,7 @@ test(
       assert.equal(
         (await service.request({ action: 'use', url: 'https://other.test/', connectionId }, second))
           .status,
-        'session_opened',
+        'rejected',
       );
       assert.equal((await service.list())[0].browserState, 'needs_sign_in');
       assert.equal(

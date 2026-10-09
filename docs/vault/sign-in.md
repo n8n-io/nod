@@ -8,24 +8,26 @@ This covers how Otto gets permission to use a secret, how a login reaches a webs
 | --------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `manage_apps list`    | —                                                                                                          | References: login IDs, labels, origins, username hints, saved sessions |
 | `sign_in`             | `origin`, `fields: {username?, password?, code?}` with an `@eN` ref or CSS selector each, optional `login` | "Filled", a question to the owner, or a secure form                    |
-| `browser_session use` | `url`, `connectionId`                                                                                      | Opens a saved session after the same grant check                       |
+| `browser_session use` | `url`, `connectionId`                                                                                      | Opens a saved session on its own site after the same grant check       |
 
 `get_credential` is removed. No tool returns a value.
 
 ## Grants
 
-| Source   | Created when                                                                                | Scope                                          |
-| -------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Named    | The site's name, its registrable domain without the suffix, appears in the owner's messages | The conversation's turn chain                  |
-| Reviewed | The review model matches the release to the owner's request                                 | The conversation's turn chain                  |
-| Answer   | The owner answers yes                                                                       | The conversation's turn chain                  |
-| Standing | The owner turns on Sign in without asking                                                   | Conversation and schedule turns, until removed |
-| Schedule | The check runs against the instruction that created the schedule                            | That schedule                                  |
+| Source   | Created when                                                                                                   | Scope                                                          |
+| -------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Named    | The site's host name or registrable domain appears in one of the owner's last five messages of the day         | The task: its turn chain                                       |
+| Reviewed | The review model matches the sign-in to the owner's request; a business name instead of the site is left to it | The task                                                       |
+| Answer   | The owner answers yes, in Otto, Telegram or WhatsApp                                                           | In a conversation, the rest of the day; in a schedule, its run |
+| Entered  | The owner types or picks a login in a secure form, or uses Otto's live browser on the site                     | In a conversation, the rest of the day; in a schedule, its run |
+| Standing | The owner turns on Sign in without asking                                                                      | Conversation and schedule turns, until removed                 |
+| Schedule | The check runs against the instruction that created the schedule                                               | That run                                                       |
 
-- The review model is the existing trust review. It sees the owner's recent messages, the message they answered and the requested release, never page content or tool results.
+- The review model is the existing trust review. It sees only the owner's recent messages and the requested sign-in, never assistant text, page content or tool results.
 - A miss becomes a question, never a silent release.
+- Asking for a secure form creates no grant; the owner's entry does.
 - Event, read-only and onboarding turns hold no grants.
-- A tripwire flag sets `suspended_at` on every grant until the owner's next message.
+- A tripwire flag suspends every grant until the owner's next message.
 - A question raised by a schedule expires after 30 minutes, with the browser hold.
 
 ## Release
@@ -107,7 +109,13 @@ stateDiagram-v2
 
 ## Saved sessions
 
-A saved browser session signs Otto in as the owner, so opening one needs the same grant as signing in. Event turns cannot open one. Forgetting a website removes its login, its session and its grants together.
+A saved browser session signs Otto in as the owner, so opening one needs the same grant as signing in. Event turns cannot open one, and a session opens pages only on its own site. Forgetting a website removes its login, its session and its grants together.
+
+## The signed-in browser
+
+Otto's browser keeps its cookies between turns. The server tracks each site the browser has been signed in to since it last signed out: logins it typed, codes, saved sessions it opened and sites the owner used in the live browser. When a turn first takes the browser, every one of those sites must pass the same check as a sign-in, without asking. If one fails, the browser signs out first: it closes, its own profile is deleted, a saved session it had open is released, and the turn starts signed out. Saved sessions stay in Vault.
+
+So background work, read-only turns and schedules that do not name a site never see that site signed in, and a conversation keeps a site only while the owner's say-so lasts.
 
 ## Connected-app secrets
 

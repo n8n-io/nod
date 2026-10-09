@@ -11,12 +11,13 @@ import type {
 import type { SignInVerdict } from './trust.ts';
 import type { TurnRef } from './thread.ts';
 import { parentTurnSql } from './turn-chain.ts';
-import { credentialOrigin } from './vault.ts';
+import { credentialOrigin, VaultError } from './vault.ts';
 
 type Kind = 'sign_in' | 'session' | 'form';
 type Row = {
   id: string;
   at: Date;
+  cursor: string;
   action: VaultActivityEntry['action'];
   origin: string;
   item_id: string | null;
@@ -44,6 +45,10 @@ function host(origin: string) {
   return new URL(origin).host;
 }
 
+type Chain = { id: string; task: string; conversation: boolean };
+
+const ownerSays = new Set<VaultActivityReason>(['allowed', 'entered', 'picked']);
+
 export async function createVaultAccess(
   pool: Pool,
   options: {
@@ -51,7 +56,7 @@ export async function createVaultAccess(
     check(
       turn: TurnRef,
       target: { origin: string; account?: string },
-      granted: boolean,
+      granted?: VaultActivityReason,
     ): Promise<SignInVerdict>;
     refresh?(): void;
   },
@@ -59,12 +64,12 @@ export async function createVaultAccess(
   const { ownerId } = options;
   await pool.query(`
     CREATE TABLE IF NOT EXISTS vault_grants (
-      id uuid PRIMARY KEY, owner_id text NOT NULL, origin text NOT NULL,
-      root_turn_id uuid, standing boolean NOT NULL DEFAULT false,
-      source text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+      id uuid PRIMARY KEY, owner_id text NOT NULL, origin text NOT NULL, scope text NOT NULL,
+      root_turn_id uuid, source text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS vault_grants_standing ON vault_grants(owner_id,origin) WHERE standing;
-    CREATE UNIQUE INDEX IF NOT EXISTS vault_grants_turn ON vault_grants(owner_id,root_turn_id,origin) WHERE NOT standing;
+    CREATE UNIQUE INDEX IF NOT EXISTS vault_grants_standing ON vault_grants(owner_id,origin) WHERE scope='standing';
+    CREATE UNIQUE INDEX IF NOT EXISTS vault_grants_conversation ON vault_grants(owner_id,origin) WHERE scope='conversation';
+    CREATE UNIQUE INDEX IF NOT EXISTS vault_grants_task ON vault_grants(owner_id,root_turn_id,origin) WHERE scope='task';
     CREATE TABLE IF NOT EXISTS vault_activity (
       id uuid PRIMARY KEY, owner_id text NOT NULL, at timestamptz NOT NULL DEFAULT now(),
       action text NOT NULL, origin text NOT NULL, item_id uuid, item_kind text,
@@ -72,19 +77,24 @@ export async function createVaultAccess(
     );
     CREATE INDEX IF NOT EXISTS vault_activity_owner_time ON vault_activity(owner_id,at DESC,id DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_once ON vault_activity(owner_id,root_turn_id,origin,action);
+    CREATE TABLE IF NOT EXISTS vault_browser (
+      owner_id text NOT NULL, thread_id uuid NOT NULL, origin text NOT NULL,
+      PRIMARY KEY(owner_id,thread_id,origin)
+    );
     DELETE FROM vault_activity WHERE at<now()-interval '90 days';
-    DELETE FROM vault_grants WHERE NOT standing AND created_at<now()-interval '7 days';
+    DELETE FROM vault_grants WHERE scope='conversation' AND created_at<now()-interval '1 day';
+    DELETE FROM vault_grants WHERE scope='task' AND created_at<now()-interval '7 days';
   `);
 
-  async function root(turn: TurnRef) {
+  async function root(turn: TurnRef): Promise<Chain> {
     const link = parentTurnSql('u');
-    const { rows } = await pool.query<{ id: string; prompt: string }>(
+    const { rows } = await pool.query<{ id: string; prompt: string; source: string }>(
       `WITH RECURSIVE chain(id,next) AS (
          SELECT u.id,${link} FROM turns u WHERE u.id=$1 AND u.owner_id=$2 AND u.thread_id=$3
          UNION
          SELECT u.id,${link} FROM chain c JOIN turns u ON u.id=c.next AND u.owner_id=$2
        )
-       SELECT u.id,u.prompt FROM chain c JOIN turns u ON u.id=c.id AND u.owner_id=$2
+       SELECT u.id,u.prompt,u.source FROM chain c JOIN turns u ON u.id=c.id AND u.owner_id=$2
        WHERE NOT EXISTS (SELECT 1 FROM chain p WHERE p.id=c.next) LIMIT 1`,
       [turn.turnId, ownerId, turn.threadId],
     );
@@ -97,22 +107,56 @@ export async function createVaultAccess(
       .replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, '$1')
       .replace(/\s+/g, ' ')
       .trim();
-    return { id: row.id, task: task.length > 120 ? `${task.slice(0, 119)}…` : task };
+    return {
+      id: row.id,
+      task: task.length > 120 ? `${task.slice(0, 119)}…` : task,
+      conversation: row.source === 'user',
+    };
   }
 
-  async function grant(rootTurnId: string, origin: string) {
-    const { rows } = await pool.query<{ source: string; standing: boolean }>(
-      `SELECT source,standing FROM vault_grants WHERE owner_id=$1 AND origin=$2
-       AND (standing OR root_turn_id=$3) ORDER BY standing LIMIT 1`,
-      [ownerId, origin, rootTurnId],
+  async function grant(chain: Chain, origin: string) {
+    const { rows } = await pool.query<{ source: VaultActivityReason; scope: string }>(
+      `SELECT source,scope FROM vault_grants WHERE owner_id=$1 AND origin=$2 AND (scope='standing'
+         OR (scope='conversation' AND $4 AND created_at>now()-interval '1 day')
+         OR (scope='task' AND root_turn_id=$3))
+       ORDER BY scope='standing' DESC LIMIT 1`,
+      [ownerId, origin, chain.id, chain.conversation],
     );
     const row = rows[0];
     if (!row) return undefined;
-    return (row.standing ? 'always' : row.source) as VaultActivityReason;
+    return row.scope === 'standing' ? ('always' as const) : row.source;
   }
 
-  async function record(
+  async function remember(
+    chain: Pick<Chain, 'id' | 'conversation'>,
+    origin: string,
+    source: VaultActivityReason,
+  ) {
+    if (chain.conversation && ownerSays.has(source))
+      await pool.query(
+        `INSERT INTO vault_grants(id,owner_id,origin,scope,source) VALUES($1,$2,$3,'conversation',$4)
+         ON CONFLICT (owner_id,origin) WHERE scope='conversation' DO UPDATE
+         SET source=excluded.source,created_at=now() WHERE vault_grants.created_at<now()-interval '1 day'`,
+        [randomUUID(), ownerId, origin, source],
+      );
+    else
+      await pool.query(
+        `INSERT INTO vault_grants(id,owner_id,origin,scope,root_turn_id,source) VALUES($1,$2,$3,'task',$4,$5)
+         ON CONFLICT (owner_id,root_turn_id,origin) WHERE scope='task' DO NOTHING`,
+        [randomUUID(), ownerId, origin, chain.id, source],
+      );
+  }
+
+  async function track(threadId: string, origin: string) {
+    await pool.query(
+      'INSERT INTO vault_browser(owner_id,thread_id,origin) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',
+      [ownerId, threadId, origin],
+    );
+  }
+
+  async function log(
     turn: TurnRef,
+    chain: Chain,
     entry: {
       action: VaultActivityEntry['action'];
       origin: string;
@@ -121,7 +165,6 @@ export async function createVaultAccess(
       itemKind?: 'login' | 'session';
     },
   ) {
-    const chain = await root(turn);
     await pool.query(
       `INSERT INTO vault_activity(id,owner_id,action,origin,item_id,item_kind,turn_id,root_turn_id,task,reason)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -140,7 +183,26 @@ export async function createVaultAccess(
         entry.reason,
       ],
     );
+    if (!['held', 'asked'].includes(entry.action)) await track(turn.threadId, entry.origin);
     options.refresh?.();
+  }
+
+  async function record(turn: TurnRef, entry: Parameters<typeof log>[2]) {
+    await log(turn, await root(turn), entry);
+  }
+
+  async function used(
+    turn: TurnRef,
+    entry: { origin: string; reason: 'entered' | 'picked'; itemId?: string },
+  ) {
+    const chain = await root(turn);
+    await remember(chain, entry.origin, entry.reason);
+    await log(turn, chain, {
+      action: 'sign_in',
+      origin: entry.origin,
+      reason: entry.reason,
+      ...(entry.itemId ? { itemId: entry.itemId, itemKind: 'login' as const } : {}),
+    });
   }
 
   async function authorize(
@@ -149,33 +211,25 @@ export async function createVaultAccess(
   ): Promise<VaultAccessVerdict> {
     const origin = credentialOrigin(target.origin);
     const chain = await root(turn);
-    const granted = await grant(chain.id, origin);
+    const granted = await grant(chain, origin);
     const verdict = await options.check(
       turn,
       { origin, ...(target.account ? { account: target.account } : {}) },
-      Boolean(granted),
+      granted,
     );
     const itemKind = target.kind === 'session' ? { itemKind: 'session' as const } : {};
-    const pass = async (reason: VaultActivityReason) => {
-      if (!granted)
-        await pool.query(
-          `INSERT INTO vault_grants(id,owner_id,origin,root_turn_id,source) VALUES($1,$2,$3,$4,$5)
-           ON CONFLICT (owner_id,root_turn_id,origin) WHERE NOT standing DO NOTHING`,
-          [randomUUID(), ownerId, origin, chain.id, reason],
-        );
-      return { ok: true as const, reason };
-    };
     const hold = async (reason: 'readonly' | 'background' | 'injection') => {
-      await record(turn, { action: 'held', origin, reason, ...itemKind });
+      await log(turn, chain, { action: 'held', origin, reason, ...itemKind });
       return { ok: false as const, message: heldMessages[reason] };
     };
     if ('allowed' in verdict) {
       if (!verdict.allowed) return hold(verdict.reason);
-      return pass(verdict.reason === 'granted' ? (granted ?? 'allowed') : verdict.reason);
+      if (!granted) await remember(chain, origin, verdict.reason);
+      return { ok: true, reason: verdict.reason };
     }
     if (target.kind === 'form')
-      return verdict.reason === 'injection' ? hold('injection') : pass('entered');
-    await record(turn, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
+      return verdict.reason === 'injection' ? hold('injection') : { ok: true, reason: 'entered' };
+    await log(turn, chain, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
     const site = host(origin);
     return {
       ok: false,
@@ -188,12 +242,38 @@ export async function createVaultAccess(
     };
   }
 
-  async function permitted(turn: TurnRef, rawOrigin: string) {
-    const origin = credentialOrigin(rawOrigin);
-    const granted = await grant((await root(turn)).id, origin);
-    if (!granted) return false;
-    const verdict = await options.check(turn, { origin }, true);
-    return 'allowed' in verdict && verdict.allowed;
+  async function keeps(turn: TurnRef) {
+    const { rows } = await pool.query<{ origin: string }>(
+      'SELECT origin FROM vault_browser WHERE owner_id=$1 AND thread_id=$2',
+      [ownerId, turn.threadId],
+    );
+    if (!rows.length) return true;
+    const chain = await root(turn);
+    for (const { origin } of rows) {
+      const granted = await grant(chain, origin);
+      const verdict = await options.check(turn, { origin }, granted);
+      if (!('allowed' in verdict) || !verdict.allowed) return false;
+      if (!granted) await remember(chain, origin, verdict.reason);
+    }
+    return true;
+  }
+
+  async function signedOut(threadId: string) {
+    await pool.query('DELETE FROM vault_browser WHERE owner_id=$1 AND thread_id=$2', [
+      ownerId,
+      threadId,
+    ]);
+  }
+
+  async function touched(threadId: string, rawOrigin: string) {
+    let origin: string;
+    try {
+      origin = credentialOrigin(rawOrigin);
+    } catch {
+      return;
+    }
+    await track(threadId, origin);
+    await remember({ id: '', conversation: true }, origin, 'entered');
   }
 
   async function allow(context: { threadId: string; turnId: string }, raw: unknown) {
@@ -202,12 +282,7 @@ export async function createVaultAccess(
       .strict()
       .parse(raw);
     const exact = credentialOrigin(origin);
-    const chain = await root(context);
-    await pool.query(
-      `INSERT INTO vault_grants(id,owner_id,origin,root_turn_id,source) VALUES($1,$2,$3,$4,'allowed')
-       ON CONFLICT (owner_id,root_turn_id,origin) WHERE NOT standing DO UPDATE SET source='allowed'`,
-      [randomUUID(), ownerId, exact, chain.id],
-    );
+    await remember(await root(context), exact, 'allowed');
     return { allowed: true, website: exact, message: `You allowed signing in to ${host(exact)}.` };
   }
 
@@ -216,7 +291,8 @@ export async function createVaultAccess(
     const origin =
       typeof query.origin === 'string' && query.origin ? credentialOrigin(query.origin) : undefined;
     const { rows } = await pool.query<Row>(
-      `SELECT id,at,action,origin,item_id,item_kind,task,reason FROM vault_activity
+      `SELECT id,at,to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
+       action,origin,item_id,item_kind,task,reason FROM vault_activity
        WHERE owner_id=$1 AND ($2::text IS NULL OR origin=$2)
        AND ($3::timestamptz IS NULL OR (at,id)<($3,$4::uuid))
        ORDER BY at DESC,id DESC LIMIT 51`,
@@ -224,17 +300,16 @@ export async function createVaultAccess(
     );
     const page = rows.slice(0, 50);
     const week = (
-      await pool.query<{ signed: number; held: number; asked: number }>(
+      await pool.query<{ signed: number; held: number }>(
         `SELECT count(*) FILTER (WHERE action IN ('sign_in','session'))::int AS signed,
-                count(*) FILTER (WHERE action='held')::int AS held,
-                count(*) FILTER (WHERE action='asked')::int AS asked
+                count(*) FILTER (WHERE action='held')::int AS held
          FROM vault_activity WHERE owner_id=$1 AND at>now()-interval '7 days'`,
         [ownerId],
       )
     ).rows[0]!;
     const last = page.at(-1);
     return {
-      week: { signIns: week.signed, held: week.held, asked: week.asked },
+      week: { signIns: week.signed, held: week.held },
       entries: page.map((row) => ({
         id: row.id,
         at: row.at.toISOString(),
@@ -245,13 +320,13 @@ export async function createVaultAccess(
         task: row.task,
         reason: row.reason,
       })),
-      ...(rows.length > 50 && last ? { next: { at: last.at.toISOString(), id: last.id } } : {}),
+      ...(rows.length > 50 && last ? { next: { at: last.cursor, id: last.id } } : {}),
     };
   }
 
   async function permissions(): Promise<VaultPermission[]> {
     const { rows } = await pool.query<{ id: string; origin: string; created_at: Date }>(
-      'SELECT id,origin,created_at FROM vault_grants WHERE owner_id=$1 AND standing ORDER BY origin',
+      "SELECT id,origin,created_at FROM vault_grants WHERE owner_id=$1 AND scope='standing' ORDER BY origin",
       [ownerId],
     );
     return rows.map((row) => ({
@@ -268,8 +343,8 @@ export async function createVaultAccess(
       .parse(raw);
     const exact = credentialOrigin(origin);
     await pool.query(
-      `INSERT INTO vault_grants(id,owner_id,origin,standing,source) VALUES($1,$2,$3,true,'always')
-       ON CONFLICT (owner_id,origin) WHERE standing DO NOTHING`,
+      `INSERT INTO vault_grants(id,owner_id,origin,scope,source) VALUES($1,$2,$3,'standing','always')
+       ON CONFLICT (owner_id,origin) WHERE scope='standing' DO NOTHING`,
       [randomUUID(), ownerId, exact],
     );
     options.refresh?.();
@@ -277,10 +352,10 @@ export async function createVaultAccess(
   }
 
   async function revoke(origin: string) {
-    await pool.query('DELETE FROM vault_grants WHERE owner_id=$1 AND origin=$2 AND standing', [
-      ownerId,
-      credentialOrigin(origin),
-    ]);
+    await pool.query(
+      "DELETE FROM vault_grants WHERE owner_id=$1 AND origin=$2 AND scope='standing'",
+      [ownerId, credentialOrigin(origin)],
+    );
     options.refresh?.();
   }
 
@@ -291,9 +366,15 @@ export async function createVaultAccess(
         return payload;
       });
       scope.setErrorHandler((error, _request, reply) => {
-        const status = error instanceof z.ZodError ? 400 : 500;
+        const status =
+          error instanceof VaultError ? error.statusCode : error instanceof z.ZodError ? 400 : 500;
         reply.code(status).send({
-          error: status === 400 ? 'Check the request.' : 'The Vault activity is unavailable.',
+          error:
+            error instanceof VaultError
+              ? error.message
+              : status === 400
+                ? 'Check the request.'
+                : 'The Vault activity is unavailable.',
         });
       });
       scope.get<{ Querystring: { at?: string; id?: string; origin?: string } }>(
@@ -322,8 +403,11 @@ export async function createVaultAccess(
 
   return {
     authorize,
-    permitted,
+    keeps,
+    signedOut,
+    touched,
     record,
+    used,
     allow,
     activity,
     permissions,

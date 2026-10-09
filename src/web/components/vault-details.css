@@ -353,3 +353,15 @@
 .vault-site-activity .statement-empty {
   padding: 0 12px;
 }
+.vault-website-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+.vault-website-dialog form {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+.vault-website-dialog form > .button {
+  justify-self: end;
+  margin-top: 8px;
+}

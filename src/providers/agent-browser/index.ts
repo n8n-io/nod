@@ -960,7 +960,7 @@ export function createAgentBrowserComputer(options: {
             url: state.saved.url,
           };
         }
-        if (!state.started) throw new Error('Open a website first.');
+        if (!state.started) throw new BrowserActionError('browser_not_open');
         markActivity(id);
         if (!['snapshot', 'accept_dialog', 'dismiss_dialog'].includes(input.action))
           await currentUrl(state, signal);
@@ -1615,6 +1615,23 @@ export function createAgentBrowserComputer(options: {
     });
   }
 
+  async function signOut(rawId: string): Promise<void> {
+    const id = threadIdentity(rawId);
+    assertNotDiscarded(id);
+    await allocate(async () => {
+      const state = browsers.get(id) ?? (await recoverBrowser(id, true));
+      if (state?.injecting) throw new BrowserLockedError();
+      if (state) await closeBrowser(id);
+      await rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true });
+      await screens.clearImage(id);
+      screenStatuses.delete(id);
+      const fresh = stateFor(id);
+      fresh.saved = { version: 1, url: '', sensitive: false, active: false };
+      await saveState(fresh);
+      browsers.delete(id);
+    });
+  }
+
   async function discard(rawId: string): Promise<void> {
     const id = threadIdentity(rawId);
     discarded.add(id);
@@ -1675,6 +1692,7 @@ export function createAgentBrowserComputer(options: {
     hold: tracked(hold),
     close: tracked(closeBrowser),
     discard: tracked(discard),
+    signOut: tracked(signOut),
     status: browserStatus,
     dispose: async () => {
       disposed = true;

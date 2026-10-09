@@ -51,6 +51,7 @@ stateDiagram-v2
 - The keeper creates a Keychain item or a data key only when `vault_keys` is empty.
 - When locked, every Vault route and release returns 503, and the owner sees one banner. Restoring the old outer key opens the Vault again.
 - A temporary key-store error never creates a key.
+- Built today: `vault_key_check` holds one value sealed with the current key. While sealed items exist, a key that cannot open it gets 503 on every Vault read and write, so nothing is sealed beside the old items.
 
 ## Ciphertext
 
@@ -86,12 +87,12 @@ Unique indexes: `vault_items(owner_id, kind, lookup)` and `vault_uses(root_turn_
 
 | Kind     | Encrypted                                                                             | Hint in clear                        | Destinations                                          | Lookup                      |
 | -------- | ------------------------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------- | --------------------------- |
-| `login`  | username, password, previous password, authenticator seed                             | first two characters of the username | exact origins                                         | HMAC of origin and username |
+| `login`  | username, password, authenticator seed                                                | first two characters of the username | exact origins                                         | HMAC of origin and username |
 | `card`   | number, cardholder, expiry, and the security code when the owner chose to remember it | brand, last four digits, expiry      | none; each mandate names its merchant                 | HMAC of the number          |
 | `secret` | value                                                                                 | provider or connection name          | provider, HTTPS base URL and path prefix, or CLI path | none                        |
 
 - **Lookups** are HMAC-SHA-256 under the lookup key. Logins use the origin and the trimmed username, with email addresses lowercased. Cards use the digits of the number.
-- **No duplicates.** Saving a login for an existing account updates it and keeps the old password as `previous` for one change, so a mistyped new password loses nothing. The same card cannot be saved twice.
+- **No duplicates.** Saving a login for an existing account updates its password. The same card cannot be saved twice.
 - **Cards** never store the first six digits or an unkeyed hash of the number. The security code is stored only on own installs, only when the owner chose to remember it for that card, and never in hosted mode.
 - **Authenticator seeds** are added only by the owner.
 - **Secrets** replace `vault_app_grants` and the ciphertext in `channel_settings`. Model connections, discovered connections, direct OAuth accounts and channel settings keep their own tables and point to an item. They stay where they are managed today; the Vault page lists logins and cards.

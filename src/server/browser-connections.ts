@@ -221,6 +221,8 @@ export async function createBrowserConnections(
       }
       if (!['saved', 'needs_sign_in', 'pending'].includes(row.state) || !browser.bindProfile)
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
+      if (name(address.origin) !== name(row.origin))
+        return { status: 'rejected' as const, code: 'browser_connection_origin_mismatch' };
       await browser.bindProfile(turn.threadId, row.profile_id);
       const observation = await browser.act(
         turn.threadId,
@@ -373,16 +375,6 @@ export async function createBrowserConnections(
     });
   }
 
-  async function bound(threadId: string) {
-    return (
-      await pool.query<Pick<Row, 'origin'>>(
-        `SELECT origin FROM browser_connections WHERE owner_id=$1 AND thread_id=$2
-         AND state IN ('pending','saved','needs_sign_in') ORDER BY updated_at DESC LIMIT 1`,
-        [options.ownerId, threadId],
-      )
-    ).rows[0]?.origin;
-  }
-
   async function release(threadId: string) {
     await pool.query(
       'UPDATE browser_connections SET thread_id=NULL WHERE owner_id=$1 AND thread_id=$2',
@@ -390,5 +382,5 @@ export async function createBrowserConnections(
     );
   }
 
-  return { request, list, sessions, target, bound, release, disconnect, registerRoutes };
+  return { request, list, sessions, target, release, disconnect, registerRoutes };
 }

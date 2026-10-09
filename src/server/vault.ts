@@ -188,7 +188,8 @@ export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
     )
   ).rows.map((row) => row.name);
   for (const table of tables)
-    if ((await pool.query(`SELECT 1 FROM ${table} LIMIT 1`)).rowCount) return true;
+    if ((await pool.query(`SELECT 1 FROM ${table} WHERE ciphertext IS NOT NULL LIMIT 1`)).rowCount)
+      return true;
   return false;
 }
 
@@ -198,7 +199,7 @@ export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question
     AND NOT EXISTS(SELECT 1 FROM turns wn WHERE wn.thread_id=${alias}.thread_id AND wn.id<>${alias}.id AND NOT wn.background AND wn.started_at>=${alias}.started_at)`;
 }
 
-class VaultError extends Error {
+export class VaultError extends Error {
   constructor(
     message: string,
     readonly statusCode = 400,
@@ -255,20 +256,13 @@ function binding(entry: Pick<EntryRow, 'id' | 'owner_id' | 'origin'>) {
 export function sealCredential(
   key: Buffer,
   entry: Pick<EntryRow, 'id' | 'owner_id' | 'origin'>,
-  secret: { username: string; password: string; previous?: string },
+  secret: { username: string; password: string },
 ) {
   const nonce = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
   cipher.setAAD(binding(entry));
   const ciphertext = Buffer.concat([
-    cipher.update(
-      JSON.stringify({
-        username: secret.username,
-        password: secret.password,
-        ...(secret.previous ? { previous: secret.previous } : {}),
-      }),
-      'utf8',
-    ),
+    cipher.update(JSON.stringify({ username: secret.username, password: secret.password }), 'utf8'),
     cipher.final(),
   ]);
   return Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString('base64');
@@ -286,7 +280,6 @@ export function openCredential(
     .object({
       username: z.string().max(320),
       password: z.string().max(8192),
-      previous: z.string().max(8192).optional(),
     })
     .strict()
     .parse(
@@ -425,17 +418,40 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     CREATE INDEX IF NOT EXISTS credential_requests_turn ON credential_requests(turn_id);
     CREATE INDEX IF NOT EXISTS credential_requests_root_turn ON credential_requests(root_turn_id,owner_id,origin,kind);
     CREATE INDEX IF NOT EXISTS vault_entries_owner ON vault_entries(owner_id);
+    CREATE TABLE IF NOT EXISTS vault_key_check (owner_id text PRIMARY KEY, ciphertext text NOT NULL);
   `);
   const identifiers = new Map<string, { value: string; expiresAt: number }>();
   const identifierKey = (rootTurnId: string, ownerId: string, origin: string) =>
     JSON.stringify([rootTurnId, ownerId, origin]);
+  const keyCheck = { id: 'key-check', owner_id: owner, origin: 'otto:vault' };
+  async function verifyKey(value: Buffer) {
+    const row = (
+      await pool.query<{ ciphertext: string }>(
+        'SELECT ciphertext FROM vault_key_check WHERE owner_id=$1',
+        [owner],
+      )
+    ).rows[0];
+    if (row) {
+      try {
+        openCredential(value, { ...keyCheck, ciphertext: row.ciphertext });
+        return;
+      } catch {}
+      if (await sealedDataExists(pool)) throw new Error('The Vault key does not match.');
+    }
+    await pool.query(
+      `INSERT INTO vault_key_check(owner_id,ciphertext) VALUES($1,$2)
+       ON CONFLICT (owner_id) DO UPDATE SET ciphertext=excluded.ciphertext`,
+      [owner, sealCredential(value, keyCheck, { username: '', password: '' })],
+    );
+  }
   let keyPromise: Promise<Buffer> | undefined;
   const key = () => {
     keyPromise ??= options.keyStore
       .getKey()
-      .then((value) => {
+      .then(async (value) => {
         if (!Buffer.isBuffer(value) || value.length !== 32)
           throw new Error('Invalid credential key.');
+        await verifyKey(value);
         return value;
       })
       .catch(() => {
@@ -575,7 +591,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           sealCredential(credentialKey, entry, {
             username: input.username,
             password: input.password,
-            ...(secret.password ? { previous: secret.password } : {}),
           }),
           entry.ciphertext,
         ],
@@ -1842,7 +1857,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             return {
               ...cardMetadata(entry),
               cardholder: secret.cardholder,
-              hasSecurityCode: Boolean(secret.securityCode),
+              hasSecurityCode: options.securityCodes !== false && Boolean(secret.securityCode),
             };
           }
           const { entry, secret } = await readCredential(request.params.id);
@@ -1870,7 +1885,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             .strict()
             .parse(request.body ?? {});
           const { secret } = await readCard(request.params.id);
-          if (!secret.securityCode)
+          if (options.securityCodes === false || !secret.securityCode)
             throw new VaultError('This card has no saved security code.', 404);
           return { securityCode: secret.securityCode };
         },

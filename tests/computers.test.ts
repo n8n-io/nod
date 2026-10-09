@@ -423,6 +423,7 @@ async function e2bFixture() {
         }),
         hold: async () => {},
         close: async () => {},
+        signOut: async () => {},
         dispose: async () => {
           await browserDisposal?.();
         },
@@ -983,6 +984,7 @@ async function cloudflareFixture() {
           calls.push({ namespace: selected, method: 'hold', input: { threadId, until } });
         },
         close: async () => {},
+        signOut: async () => {},
         dispose: async () => {
           calls.push({ namespace: selected, method: 'dispose' });
           if (failedDisposals > 0) {

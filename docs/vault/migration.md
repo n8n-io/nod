@@ -19,7 +19,10 @@ Assessed on 9 October 2026 from the code.
 | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------- |
 | `get_credential {id, origin}` returns the password to Pi, with no turn, page or tripwire check, and puts it in the Pi session | `src/server/composition.ts:762-770`                                   | Fixed: `sign_in`                   |
 | Event turns can use credentials                                                                                               | `src/server/triage.ts:425-432`                                        | Fixed: no grants                   |
-| Saved sessions are usable by event turns, which are not read-only                                                             | `src/runtime/index.ts:42`, `src/server/browser-connections.ts`        | Fixed: grants and `prepareBrowser` |
+| Saved sessions are usable by event turns, which are not read-only                                                             | `src/runtime/index.ts:42`, `src/server/browser-connections.ts`        | Fixed: grants and browser sign-out |
+| The thread browser stays signed in for any later turn, background work included                                               | agent-browser thread profiles                                         | Fixed: browser sign-out            |
+| Old saved Pi sessions hold plaintext `get_credential` results                                                                 | Saved Pi sessions                                                     | Fixed: removed on load             |
+| A wrong key opens nothing, then seals new items beside the old ones                                                           | `src/server/vault.ts`                                                 | Fixed: key check                   |
 | Security codes are stored without a choice, in hosted mode too                                                                | `src/server/vault.ts:81-85`                                           | Fixed                              |
 | A missing Keychain item silently creates a new key                                                                            | `src/providers/keychain/key-store.ts:33-48`                           | Fixed                              |
 | One unreadable login fails the whole Vault list                                                                               | `src/server/vault.ts:484-490`                                         | Fixed                              |
@@ -40,8 +43,8 @@ Assessed on 9 October 2026 from the code.
 
 Each step ships on its own.
 
-1. **`sign_in`.** Built. `get_credential` is replaced by `sign_in`, which never returns a value. Grants (`vault_grants`) come from the owner's words, the schedule instruction, a yes, or Sign in without asking; event, read-only and onboarding turns hold none, and the tripwire suspends them. Saved sessions need a grant, and a turn that takes the browser closes a saved session it has no grant for. Each sign-in, session use, question and held attempt is recorded in `vault_activity`.
-2. **Secrets.** Add `secrets.ts`, `vault_keys` and fail-closed startup. Re-encrypt existing rows in one transaction. Move app grants and channel settings onto it.
+1. **`sign_in`.** Built. `get_credential` is replaced by `sign_in`, which never returns a value, and old results are removed from saved Pi sessions when they load. Grants (`vault_grants`) come from the owner's words, the schedule instruction, a yes, the owner's own entry, or Sign in without asking; event, read-only and onboarding turns hold none, and the tripwire suspends them. Saved sessions need a grant and open only their own site. When a turn first takes the browser, the browser signs out unless the turn may use every site it is signed in to. Each sign-in, session use, question and held attempt is recorded in `vault_activity`.
+2. **Secrets.** A key check already fails closed on a wrong key. Add `secrets.ts`, `vault_keys` and key IDs. Re-encrypt existing rows in one transaction. Move app grants and channel settings onto it.
 3. **Items and uses.**
    - Add `vault_items` with lookups, `release` and `vault_uses`.
    - Delete the three sign-in tables and the identifier map.
@@ -78,7 +81,7 @@ The current Vault tests keep their invariants and become the acceptance suite: s
 | 13        | A saved session cannot be opened without a grant                                                                              |
 | 15        | A released value in a message or URL is blocked                                                                               |
 
-Also: saving the same account updates it and keeps the previous password; the same card cannot be saved twice.
+Also: saving the same account updates its password; the same card cannot be saved twice.
 
 ## Evals
 

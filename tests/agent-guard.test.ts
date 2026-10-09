@@ -1132,17 +1132,22 @@ test('sign_in never returns a saved value to Pi and pauses for the owner when Ot
   assert.deepEqual(asked.replies, []);
 });
 
-test('a turn prepares the shared browser once before its first browser action', async () => {
+test('a turn prepares the shared browser before its first browser action and again after a failed preparation', async () => {
   const events: string[] = [];
   await fixture(
     async (tools) => {
       await call(tools, 'send_message', { text: 'Opening the site.' });
+      await assert.rejects(
+        call(tools, 'browser', { action: 'open', url: 'https://example.test/' }),
+        /sign-out failed/,
+      );
       await call(tools, 'browser', { action: 'open', url: 'https://example.test/' });
       await call(tools, 'browser', { action: 'snapshot' });
     },
     {
       prepareBrowser: async () => {
         events.push('prepare');
+        if (events.length === 1) throw new Error('Synthetic sign-out failed.');
       },
     },
     {
@@ -1154,7 +1159,7 @@ test('a turn prepares the shared browser once before its first browser action', 
       }),
     },
   );
-  assert.deepEqual(events, ['prepare', 'open', 'snapshot']);
+  assert.deepEqual(events, ['prepare', 'prepare', 'open', 'snapshot']);
 });
 
 const refusal = 'This turn can only read. Use app reads, and browser open, snapshot or scroll.';

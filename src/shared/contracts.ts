@@ -118,7 +118,7 @@ export interface VaultActivityEntry {
   reason: VaultActivityReason;
 }
 export interface VaultActivity {
-  week: { signIns: number; held: number; asked: number };
+  week: { signIns: number; held: number };
   entries: VaultActivityEntry[];
   next?: { at: string; id: string };
 }

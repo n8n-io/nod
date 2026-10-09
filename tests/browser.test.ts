@@ -12,7 +12,7 @@ import { mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/
 import { connect, createServer, type Socket } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
@@ -114,8 +114,12 @@ test(
     let onCapture: (() => Promise<void>) | undefined;
     const captures: string[] = [];
     const controls: unknown[] = [];
+    const touched: string[] = [];
     const app = await createApp({
       configuration: () => configuration(),
+      browserInput: async (id) => {
+        touched.push(id);
+      },
       runtime: {
         status: () => ({ browser: 'Ready', workspace: 'Ready' }),
         holdBrowserForUser: () => !browserHeld,
@@ -301,6 +305,10 @@ test(
         [next.id, click],
         [next.id, { action: 'back' }],
       ]);
+      assert.deepEqual(touched, [next.id, next.id]);
+      const scroll = { type: 'wheel', deltaX: 0, deltaY: 120 };
+      assert.equal((await post('/api/browser-handoff', { inputs: [scroll] })).statusCode, 200);
+      assert.deepEqual(touched, [next.id, next.id]);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
       pageShown = false;
       assert.equal((await request('/api/browser-handoff/stream')).statusCode, 409);
@@ -314,7 +322,7 @@ test(
       assert.deepEqual(await handoff(), [423, 423, 423]);
       browserHeld = false;
       assert.deepEqual(await handoff(), [200, 200, 200]);
-      assert.equal(controls.length, 7);
+      assert.equal(controls.length, 8);
       for (const reason of ['timeout', 'revoked', 'archived', 'cancelled']) {
         const started = deferred<AbortSignal>();
         const aborted = deferred();
@@ -410,7 +418,7 @@ test(
         assert.ok(response.body.includes('synthetic-live-frame'));
         assert.equal(replacement.aborted, true);
         assert.equal(views, 2);
-        assert.equal(controls.length, 7);
+        assert.equal(controls.length, 8);
       } finally {
         deadline.abort();
         controller.abort();
@@ -423,7 +431,7 @@ test(
         [randomUUID(), ownerId, next.id],
       );
       assert.deepEqual(await handoff(), [423, 423, 423]);
-      assert.equal(controls.length, 7);
+      assert.equal(controls.length, 8);
     } finally {
       await app.close();
       await db.pool.end();
@@ -512,6 +520,7 @@ function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
     currentPage: async () => ({ origin: 'https://example.test', url: 'https://example.test/' }),
     hold: async () => {},
     close: async () => {},
+    signOut: async () => {},
     dispose: async () => {},
     status: () => 'Synthetic browser',
     canCheckpoint: () => true,
@@ -942,6 +951,42 @@ for (const action of ['snapshot', 'click'] as const)
       await browser.cleanup();
     }
   });
+
+test('signing out closes the thread browser, clears its own profile and keeps saved sessions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-sign-out-'));
+  const fixture = stagedLoginBrowser();
+  const profiles: string[] = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (executable, args, options) => {
+      profiles.push(basename(args[args.indexOf('--profile') + 1]));
+      return fixture.run(executable, args, options);
+    },
+  });
+  const runtime = join(directory, 'runtime');
+  const savedProfile = randomUUID();
+  try {
+    for (const profile of ['thread', savedProfile]) {
+      await mkdir(join(runtime, 'profiles', profile), { recursive: true });
+      await writeFile(join(runtime, 'profiles', profile, 'Cookies'), 'synthetic-cookie');
+    }
+    await computer.bindProfile!('thread', savedProfile);
+    await computer.act('thread', { action: 'open', url: 'https://1.1.1.1/login' });
+    assert.equal(profiles.at(-1), savedProfile);
+    await computer.signOut('thread');
+    assert.deepEqual(await readdir(join(runtime, 'profiles')), [savedProfile]);
+    assert.equal(computer.screenStatus!('thread').state, 'unavailable');
+    await assert.rejects(
+      computer.act('thread', { action: 'snapshot' }),
+      (error: unknown) => error instanceof BrowserActionError && error.code === 'browser_not_open',
+    );
+    await computer.act('thread', { action: 'open', url: 'https://1.1.1.1/login' });
+    assert.equal(profiles.at(-1), 'thread');
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('discarding a thread closes its browser and deletes only its throwaway data', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-discard-'));
@@ -1430,6 +1475,9 @@ function workerComputer() {
     discard: async (id) => {
       calls.push({ method: 'discard', input: id });
     },
+    signOut: async (id) => {
+      calls.push({ method: 'signOut', input: id });
+    },
     dispose: async () => {
       calls.push({ method: 'dispose' });
     },
@@ -1679,16 +1727,19 @@ test('malformed methods and namespaces never reach a computer or filesystem path
   }
 });
 
-test('discard reaches the namespace computer of the same thread only', async () => {
+test('discard and sign-out reach the namespace computer of the same thread only', async () => {
   const fixture = await harness();
   try {
     const computer = fixture.client('/synthetic/discard');
     await computer.act('task', { action: 'snapshot' });
+    await computer.signOut('task');
     await computer.discard!('task');
     assert.deepEqual(fixture.instance('/synthetic/discard').calls, [
       { method: 'act', input: { action: 'snapshot' } },
+      { method: 'signOut', input: 'task' },
       { method: 'discard', input: 'task' },
     ]);
+    await assert.rejects(computer.signOut('../task'));
     await assert.rejects(computer.discard!('../task'));
   } finally {
     await fixture.close();

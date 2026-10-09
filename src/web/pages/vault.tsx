@@ -60,6 +60,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   const [savingNew, setSavingNew] = useState(false);
   const [chosen, setChosen] = useState(false);
   const returnTo = useRef<string | null>(null);
+  const backTo = useRef<View>('saved');
   const newTrigger = useRef<HTMLButtonElement>(null);
   const openingWebsite = useRef(false);
   const split = !phone;
@@ -108,7 +109,8 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     void refresh();
   }
 
-  function open(item: Item) {
+  function open(item: Item, from: View = 'saved') {
+    backTo.current = from;
     setView('saved');
     setAdding(null);
     setChosen(true);
@@ -119,7 +121,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     const item =
       items.find((value) => value.id === entry.itemId) ??
       items.find((value) => value.kind !== 'card' && value.origin === entry.origin);
-    return item ? () => open(item) : undefined;
+    return item ? () => open(item, 'activity') : undefined;
   }
 
   function closeDetail() {
@@ -127,6 +129,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     returnTo.current = selectedId ?? null;
     setChosen(false);
     setSelectedId(null);
+    setView(backTo.current);
   }
 
   function start(kind: 'login' | 'card') {
@@ -179,8 +182,9 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     );
   }
 
-  const session = (origin: string) =>
-    sessions.data?.find((value) => value.origin === origin && value.state !== 'disconnecting');
+  const sessionsFor = (origin: string) =>
+    sessions.data?.filter((value) => value.origin === origin && value.state !== 'disconnecting') ??
+    [];
 
   const detail = adding ? (
     <VaultSurface
@@ -227,7 +231,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
       {selected.kind === 'login' && (
         <VaultSiteAccess
           origin={selected.origin}
-          session={session(selected.origin)}
+          sessions={sessionsFor(selected.origin)}
           onSessionRemoved={(id) =>
             sessions.update((current) => current?.filter((value) => value.id !== id) ?? current)
           }

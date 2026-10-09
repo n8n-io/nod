@@ -211,6 +211,8 @@ export function createBridgeComputer(options: {
           return reject(new BrowserActionError('browser_action_failed'));
         if (response.error === 'observation')
           return reject(new BrowserActionError('browser_observation_failed'));
+        if (response.error === 'not_open')
+          return reject(new BrowserActionError('browser_not_open'));
         if (response.error === 'locked') {
           const error = new Error('Browser observations are paused during credential entry.');
           return reject(Object.assign(error, { statusCode: 423 }));
@@ -420,6 +422,10 @@ export function createBridgeComputer(options: {
     },
     discard: async (id) => {
       await call({ method: 'discard', threadId: threadIdentity(id) });
+      screens.delete(threadIdentity(id));
+    },
+    signOut: async (id) => {
+      await call({ method: 'signOut', threadId: threadIdentity(id) });
       screens.delete(threadIdentity(id));
     },
     dispose: () => {

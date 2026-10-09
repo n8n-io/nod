@@ -410,7 +410,6 @@ test(
       assert.deepEqual((await vault.readCredential(saved.json().id)).secret, {
         username: 'person',
         password: 'replacement-password',
-        previous: 'old-password',
       });
       assert.equal((await vault.list()).length, 1);
       const interrupted = await vault.request(taskInterrupted, 'local-development', input);
@@ -1447,6 +1446,11 @@ test(
           })
         ).registerRoutes(hosted);
         try {
+          assert.equal(
+            (await read(remembered.id, 'details', hosted)).json().hasSecurityCode,
+            false,
+          );
+          assert.equal((await read(remembered.id, 'security-code', hosted)).statusCode, 404);
           const created = await hosted.inject({
             method: 'POST',
             url: '/api/vault',
@@ -1723,6 +1727,35 @@ test(
               .some((entry) => entry.id === broken.id),
             false,
           );
+        },
+      );
+
+      await t.test(
+        'a different Vault key fails closed instead of sealing beside the old one',
+        async () => {
+          const kept = await save('Kept');
+          const count = async () =>
+            (await pool.query('SELECT count(*)::int AS n FROM vault_entries')).rows[0].n;
+          const before = await count();
+          await app.close();
+          app = await start(async () => randomBytes(32));
+          assert.equal((await read(kept.id, 'details')).statusCode, 503);
+          const refused = await app.inject({
+            method: 'POST',
+            url: '/api/vault',
+            headers,
+            payload: {
+              label: 'Wrong key',
+              origin: 'https://accounts.example.test:8443',
+              username: 'wrong-key@example.test',
+              password: 'wrong-key-secret',
+            },
+          });
+          assert.equal(refused.statusCode, 503);
+          assert.equal(await count(), before);
+          await app.close();
+          app = await start();
+          assert.equal((await read(kept.id, 'password')).json().password, 'Kept-secret');
         },
       );
     } finally {

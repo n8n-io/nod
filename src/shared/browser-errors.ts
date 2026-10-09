@@ -7,6 +7,7 @@ const browserErrors = {
     'The page did not accept that browser action. Take a fresh snapshot and use a current control.',
   browser_dialog_open:
     'A JavaScript dialog blocks the page, so the action did not run. Take a snapshot to read it, then use accept_dialog or dismiss_dialog.',
+  browser_not_open: 'No page is open in the browser. Open the website first.',
   browser_observation_failed:
     'The browser could not read the updated page. Take a fresh screenshot before requesting another snapshot. Keep the current page open and check its state before repeating any click or submission.',
 } as const;

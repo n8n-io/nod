@@ -116,6 +116,7 @@ export interface Computer {
   hold(threadId: string, until: number | null): Promise<void>;
   close(threadId: string): Promise<void>;
   discard?(threadId: string): Promise<void>;
+  signOut(threadId: string): Promise<void>;
   dispose(): Promise<void>;
   status(): string;
 }
