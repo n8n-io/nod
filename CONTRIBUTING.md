@@ -98,7 +98,7 @@ Require `Conventional PR title` in the status checks for `main`. In the reposito
 
 ## From merge to release
 
-Merged changes go into the next desktop release. A release from `main` is scheduled every day and is published only after it builds, signs and passes its checks; installed apps then update automatically. See [desktop releases](desktop/RELEASING.md). Source installs pick up changes with `git pull`.
+Merged changes go into the next desktop release. Run **Release desktop** in GitHub Actions to open a version PR. After that PR is merged and CI passes, the binary is built, signed, checked and published as a GitHub release; installed apps then update automatically. See [desktop releases](desktop/RELEASING.md). Source installs pick up changes with `git pull`.
 
 ## Coding agents
 

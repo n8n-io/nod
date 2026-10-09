@@ -5,12 +5,13 @@ import { execFileSync } from 'node:child_process';
 import { basename, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { verifyRuntimeDownload } from '../../desktop/scripts/release-tools.mjs';
-import { automaticRelease, configuredRelease } from './prepare-desktop-release.mjs';
+import { automaticRelease, configuredRelease, isReleaseMerge } from './prepare-desktop-release.mjs';
 
 const root = process.cwd();
 const runtimeDirectory = join(root, '.local/desktop-runtime-release');
 const output = join(root, 'dist/desktop');
 const sourceRepository = process.env.GITHUB_REPOSITORY;
+const sourceRevision = process.env.OTTO_RELEASE_SOURCE || process.env.GITHUB_SHA;
 const releaseRepository = sourceRepository;
 const runtimeRepository = process.env.OTTO_RUNTIME_REPO || releaseRepository;
 const signingMode = process.env.OTTO_SIGNING_MODE || 'self-signed';
@@ -161,8 +162,18 @@ async function plan() {
   if (!['self-signed', 'developer-id'].includes(signingMode))
     throw new Error('Invalid signing mode.');
   const source = run('git', ['rev-parse', 'HEAD']);
-  if (!shaPattern.test(source) || source !== process.env.GITHUB_SHA)
+  if (!shaPattern.test(source) || source !== sourceRevision)
     throw new Error('Release checkout does not match the workflow revision.');
+  if (process.env.GITHUB_EVENT_NAME === 'workflow_run') {
+    const pulls = api(`repos/${sourceRepository}/commits/${source}/pulls`);
+    if (
+      !Array.isArray(pulls) ||
+      !pulls.some((pull) => isReleaseMerge(pull, source, sourceRepository))
+    ) {
+      await outputValues({ release_needed: 'false' });
+      return;
+    }
+  }
   const automatic = process.env.OTTO_AUTOMATIC_RELEASE === 'true';
   const release = automatic
     ? automaticRelease(
@@ -207,7 +218,13 @@ async function plan() {
     throw new Error('Developer ID releases require a public runtime download destination.');
   const tag = `desktop-v${release.version}`;
   const existing = releaseByTag(releaseRepository, tag);
-  if (existing && !existing.draft) throw new Error('This desktop version is already published.');
+  if (existing && !existing.draft) {
+    if (process.env.GITHUB_EVENT_NAME === 'workflow_run') {
+      await outputValues({ release_needed: 'false' });
+      return;
+    }
+    throw new Error('This desktop version is already published.');
+  }
   let metadataSha256 = '';
   if (automatic) {
     const path = join(root, '.local/desktop-release-plan.json');
@@ -253,8 +270,7 @@ async function plan() {
 }
 
 function releaseTarget(repository, release) {
-  const target =
-    repository === sourceRepository ? process.env.GITHUB_SHA : release?.target_commitish;
+  const target = repository === sourceRepository ? sourceRevision : release?.target_commitish;
   const source = shaPattern.test(target)
     ? target
     : typeof target === 'string' && target
@@ -284,7 +300,7 @@ async function uploadDraft({ repository, tag, title, notes, marker, files }) {
         '--draft',
         '--prerelease',
         '--latest=false',
-        ...(repository === sourceRepository ? ['--target', process.env.GITHUB_SHA] : []),
+        ...(repository === sourceRepository ? ['--target', sourceRevision] : []),
         '--title',
         title,
         '--notes-file',
@@ -429,7 +445,7 @@ async function draftApp() {
   const prepared = await configuredRelease(root);
   const version = prepared.version;
   const tag = `desktop-v${version}`;
-  const source = process.env.GITHUB_SHA;
+  const source = sourceRevision;
   if (!shaPattern.test(source) || run('git', ['rev-parse', 'HEAD']) !== source)
     throw new Error('Invalid source revision.');
   const appRepo = api(`repos/${releaseRepository}`, releaseRepository);
@@ -567,7 +583,7 @@ async function draftApp() {
         : `Download the [matching runtime pack](${runtimeLink})${runtimeRelease.draft ? ' from the draft release assets' : ''}, leave it compressed, and select it when Otto asks. GitHub access is required for these internal downloads.`,
       'Otto keeps keys and conversations in its local profile between updates.',
     ].join('\n\n');
-    return `${changes}\n\n${installation}\n\n${marker}\n`;
+    return `${changes}\n\n### Install\n\n[Download Otto for Apple Silicon](https://github.com/${releaseRepository}/releases/download/${tag}/${disk}).\n\n${installation}\n\n${marker}\n`;
   };
   let release = await uploadDraft({
     repository: releaseRepository,

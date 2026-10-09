@@ -72,7 +72,7 @@ The app and DMG contain no provider keys. A local, one-time development import c
 
 ## Release automation
 
-GitHub Actions starts a new patch release daily at **07:00 Europe/Lisbon**, including days without source changes. Publication follows successful building, signing and verification. The [release guide](RELEASING.md) covers scheduling delays, manual release preparation, the required GitHub environment, runtime reuse, and acceptance gates. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The historical development measurements below used ad-hoc signing.
+Run **Release desktop** in GitHub Actions to open a version PR. After merge and successful CI, the signed Mac binary is published as a GitHub release. The [release guide](RELEASING.md) covers release notes, the required GitHub environment, runtime reuse, and acceptance checks. Internal CI previews use a stable self-signed certificate; they still require macOS first-launch approval. The historical development measurements below used ad-hoc signing.
 
 The updater verifies the matching runtime before staging the signed application, and asks before a restart would stop running work. Private downloads use the [n8n release workflow](../deployment/n8n/README.md); its GitHub credential stays on the server.
 
