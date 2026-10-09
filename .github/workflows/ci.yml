@@ -46,7 +46,7 @@ jobs:
   checks:
     name: Checks, tests and build
     needs: scope
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     services:
