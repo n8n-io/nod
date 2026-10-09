@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -37,6 +38,7 @@ function describe(row: Record<string, any>): Pick<TrustEntry, 'title' | 'source'
 }
 
 export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string }) {
+  const activeTurn = new AsyncLocalStorage<string>();
   async function initialize() {
     await pool.query(`DROP TABLE IF EXISTS provider_usage;
     CREATE TABLE IF NOT EXISTS model_usage (
@@ -64,20 +66,29 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     );
   }
 
+  const pendingUsage = new Set<Promise<void>>();
+  function flushUsage() {
+    return Promise.all([...pendingUsage]);
+  }
+
   function usage(id: string, turnId: string | null, model: string | undefined, costUsd: unknown) {
-    void save(
+    const attributedTurn = turnId ?? activeTurn.getStore() ?? null;
+    const write = save(
       `INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd)
        SELECT $1,$2,$3,$4,$5 WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
        ON CONFLICT(id) DO NOTHING`,
-      [id, ownerId, turnId, model?.slice(0, 200) ?? null, cost(costUsd as number)],
+      [id, ownerId, attributedTurn, model?.slice(0, 200) ?? null, cost(costUsd as number)],
     );
+    pendingUsage.add(write);
+    void write.then(() => pendingUsage.delete(write));
   }
 
   function agent(base: Agent): Agent {
     return {
       ...base,
-      open: (session) =>
-        base.open({
+      open: async (session) => {
+        if (await limitReached()) throw new Error(spendingLimitReached);
+        const opened = await base.open({
           ...session,
           onEvent(event) {
             if (event.type === 'model_usage')
@@ -90,7 +101,18 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
               event.usage.costUsd,
             );
           },
-        }),
+        });
+        return {
+          ...opened,
+          async prompt(text, images) {
+            try {
+              await opened.prompt(text, images);
+            } finally {
+              await flushUsage();
+            }
+          },
+        };
+      },
     };
   }
 
@@ -100,11 +122,17 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
       get configured() {
         return base.configured;
       },
-      curate: (request, signal, report) =>
-        base.curate(request, signal, (value) => {
-          usage(crypto.randomUUID(), null, value.model, value.costUsd);
-          report?.(value);
-        }),
+      curate: async (request, signal, report) => {
+        if (await limitReached()) throw new Error(spendingLimitReached);
+        try {
+          return await base.curate(request, signal, (value) => {
+            usage(crypto.randomUUID(), null, value.model, value.costUsd);
+            report?.(value);
+          });
+        } finally {
+          await flushUsage();
+        }
+      },
     };
   }
 
@@ -126,6 +154,29 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
       )
     ).rows[0];
     return row ? { monthlyUsd: row.monthly_usd, reached: row.spent >= row.monthly_usd } : null;
+  }
+
+  async function limitReached() {
+    return Boolean((await limit())?.reached);
+  }
+
+  async function messageCosts(turnIds: string[]) {
+    if (!turnIds.length) return {};
+    const { rows } = await pool.query<{
+      turnId: string;
+      messageId: string | null;
+      costUsd: number | null;
+    }>(
+      `SELECT turn_id AS "turnId",
+         (SELECT id FROM messages m WHERE m.owner_id=$1 AND m.turn_id=model_usage.turn_id
+           AND m.role='assistant' ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS "messageId",
+         CASE WHEN count(cost_usd)=count(*) THEN sum(cost_usd)::float8 END AS "costUsd"
+       FROM model_usage WHERE owner_id=$1 AND turn_id=ANY($2::uuid[]) GROUP BY turn_id`,
+      [ownerId, [...new Set(turnIds)]],
+    );
+    return Object.fromEntries(
+      rows.map(({ turnId, messageId, costUsd }) => [turnId, { messageId, costUsd }]),
+    );
   }
 
   async function entries(before?: { at: string; id: string }) {
@@ -261,7 +312,9 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     agent,
     curator,
     action,
-    limitReached: async () => Boolean((await limit())?.reached),
+    limitReached,
+    messageCosts,
+    withTurn: <T>(turnId: string, run: () => T) => activeTurn.run(turnId, run),
     read,
     report,
     registerRoutes,

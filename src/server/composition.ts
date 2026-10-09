@@ -700,7 +700,7 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact?.bind(workspace),
       executeConfirmation: approvals.executeConfirmed,
       reactToMessage: reactions.react,
-      runTurn: (context) => runtime.runTurn(context),
+      runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
       spendingLimitReached: ledger.limitReached,
       observe: adapters.observe,
       inspectPrompt: adapters.inspectPrompt,
@@ -856,6 +856,7 @@ async function initializeApplication(
     },
     startOnboarding: welcome,
     planningTasks: onboardingSuggestions.planning,
+    messageCosts: ledger.messageCosts,
     computer,
     runtime,
     configuration: () =>

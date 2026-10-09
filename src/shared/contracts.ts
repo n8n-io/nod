@@ -19,6 +19,7 @@ export interface Message {
   turnId: string | null;
   createdAt: string;
   attachments: Artifact[];
+  modelCostUsd?: number | null;
   streamId?: string | null;
   reaction?: MessageReaction | null;
   reactions?: Array<{ actor: 'user' | 'assistant'; reaction: MessageReaction }>;

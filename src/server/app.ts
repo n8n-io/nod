@@ -47,10 +47,14 @@ import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 
 const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',left(target.text,1000)) END AS "replyTo"`;
-function messageView(row: Message & { assistantReaction?: MessageReaction | null }): Message {
+function messageView(
+  row: Message & { assistantReaction?: MessageReaction | null },
+  modelCostUsd?: number | null,
+): Message {
   const { assistantReaction, ...message } = row;
   return {
     ...message,
+    ...(modelCostUsd !== undefined ? { modelCostUsd } : {}),
     reactions: [
       ...(message.reaction ? [{ actor: 'user' as const, reaction: message.reaction }] : []),
       ...(assistantReaction ? [{ actor: 'assistant' as const, reaction: assistantReaction }] : []),
@@ -84,6 +88,9 @@ export interface AppDependencies {
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;
   planningTasks?: () => boolean;
+  messageCosts?: (
+    turnIds: string[],
+  ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -182,6 +189,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
     ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
+    const modelCosts = await dependencies.messageCosts?.(
+      visibleMessages.map((message) => message.turnId).filter((id): id is string => !!id),
+    );
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
     const olderTurns = await messageTurns(
       thread.id,
@@ -190,7 +200,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return {
       threadId: thread.id,
       hasEarlierMessages,
-      messages: visibleMessages.map(messageView),
+      messages: visibleMessages.map((message) => {
+        const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;
+        return messageView(
+          message,
+          cost && cost.messageId === message.id ? cost.costUsd : undefined,
+        );
+      }),
       turns: [...turns.rows, ...olderTurns],
       verificationRequests,
       planningTasks: dependencies.planningTasks?.() ?? false,
@@ -219,8 +235,17 @@ export async function createApp(dependencies: AppDependencies = {}) {
       [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
     );
     const page = rows.rows.slice(0, 60);
+    const modelCosts = await dependencies.messageCosts?.(
+      page.map((message) => message.turnId).filter((id): id is string => !!id),
+    );
     return {
-      messages: page.reverse().map(messageView),
+      messages: page.reverse().map((message) => {
+        const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;
+        return messageView(
+          message,
+          cost && cost.messageId === message.id ? cost.costUsd : undefined,
+        );
+      }),
       hasMore: rows.rows.length > 60,
     } satisfies MessageHistoryPage;
   });

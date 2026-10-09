@@ -31,7 +31,7 @@ function month({ view, timeZone, locale }: UsageReport) {
   const { limit } = view;
   const spent = `${name}: ${dollars(view.month.spentUsd)}${limit ? ` of a ${dollars(limit.monthlyUsd)} limit` : ''}.`;
   if (limit?.reached)
-    return `${spent} The limit is reached, so schedules and email or app wake-ups are paused until next month. Chat keeps working.`;
+    return `${spent} The limit is reached, so new chat and background requests pause until next month. Work in progress can finish.`;
   const over = limit && view.month.forecastUsd > limit.monthlyUsd ? ', above your limit' : '';
   return `${spent} On track for ${dollars(view.month.forecastUsd)}${over}.`;
 }

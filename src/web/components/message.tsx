@@ -22,7 +22,7 @@ import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
-import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
+import { formatFullDateTime, formatNumber, formatTime, useDateFormat } from '../lib/date-format';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
 const messageSchema = {
@@ -131,6 +131,24 @@ export function MessageBubble({
   onHandoffDone?(): Promise<void>;
 }) {
   const dateFormat = useDateFormat();
+  const modelCost =
+    message.modelCostUsd === undefined
+      ? undefined
+      : message.modelCostUsd === null
+        ? 'Price unavailable'
+        : message.modelCostUsd > 0 && message.modelCostUsd < 0.000001
+          ? '<$0.000001'
+          : formatNumber(
+              message.modelCostUsd,
+              {
+                style: 'currency',
+                currency: 'USD',
+                currencyDisplay: 'narrowSymbol',
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 6,
+              },
+              dateFormat,
+            );
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [reaction, setReaction] = useState(message.reaction ?? null);
@@ -372,6 +390,19 @@ export function MessageBubble({
               >
                 {formatTime(message.createdAt, dateFormat)}
               </time>
+              {message.role === 'assistant' && modelCost !== undefined && (
+                <span
+                  className="message-cost"
+                  title={
+                    message.modelCostUsd === null
+                      ? 'Price unavailable'
+                      : 'Estimated model cost for this request'
+                  }
+                  aria-label={`Request cost: ${modelCost}`}
+                >
+                  {modelCost}
+                </span>
+              )}
               <div className="message-actions" aria-label="Message actions">
                 {onReply && (
                   <Button

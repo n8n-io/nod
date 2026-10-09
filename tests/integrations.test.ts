@@ -7422,7 +7422,7 @@ test(
           message_id uuid,prompt text NOT NULL,channel text NOT NULL DEFAULT 'web',status text NOT NULL DEFAULT 'succeeded',
           read_only boolean NOT NULL DEFAULT false,error text,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE turn_events(turn_id uuid,type text,created_at timestamptz NOT NULL DEFAULT now());
-        CREATE TABLE messages(id uuid,owner_id text,text text);
+        CREATE TABLE messages(id uuid,owner_id text,role text,text text,turn_id uuid,created_at timestamptz DEFAULT now());
         CREATE TABLE preferences(owner_id text PRIMARY KEY,time_zone text,locale text,hour_cycle text);
         CREATE TABLE schedules(id uuid,owner_id text,title text);
         CREATE TABLE notifications(owner_id text,turn_id uuid,summary text)`);
@@ -7434,6 +7434,12 @@ test(
         [chat, scheduled, foreign, `schedule:${schedule}:1:now`],
       );
       await pool.query("INSERT INTO schedules VALUES($1,'owner','Morning brief')", [schedule]);
+      const chatAnswer = randomUUID();
+      const scheduledAnswer = randomUUID();
+      await pool.query(
+        "INSERT INTO messages(id,owner_id,role,text,turn_id) VALUES($1,'owner','assistant','Chat reply',$3),($2,'owner','assistant','Scheduled reply',$4)",
+        [chatAnswer, scheduledAnswer, chat, scheduled],
+      );
       await pool.query(
         "INSERT INTO turn_events(turn_id,type) VALUES($1,'tool_complete'),($1,'tool_complete'),($2,'tool_complete'),($3,'tool_complete')",
         [chat, scheduled, foreign],
@@ -7502,16 +7508,18 @@ test(
         forwarded.map((event) => event.type),
         ['model_usage', 'model_usage', 'model_usage'],
       );
-      await ledger
-        .curator({
-          id: 'fixture',
-          configured: true,
-          curate: async (_request, _signal, report) => {
-            report?.({ model: 'fixture-small', costUsd: 0.05 });
-            return {};
-          },
-        })
-        .curate({ task: 'review', instructions: 'Synthetic', input: {} });
+      await ledger.withTurn(chat, () =>
+        ledger
+          .curator({
+            id: 'fixture',
+            configured: true,
+            curate: async (_request, _signal, report) => {
+              report?.({ model: 'fixture-small', costUsd: 0.05 });
+              return {};
+            },
+          })
+          .curate({ task: 'review', instructions: 'Synthetic', input: {} }),
+      );
       await ledger.action(chat, 'GMAIL_FETCH_EMAILS', { query: 'from:sam' });
       await ledger.action(chat, 'GMAIL_SEND_EMAIL', { recipient_email: 'sam@example.test' });
       await ledger.action(foreign, 'GMAIL_SEND_EMAIL', { recipient_email: 'x@example.test' });
@@ -7523,6 +7531,10 @@ test(
       assert.deepEqual((await pool.query('SELECT DISTINCT owner_id FROM model_usage')).rows, [
         { owner_id: 'owner' },
       ]);
+      const costs = await ledger.messageCosts([chat, scheduled, foreign]);
+      assert.deepEqual(costs[chat], { messageId: chatAnswer, costUsd: 0.55 });
+      assert.deepEqual(costs[scheduled], { messageId: scheduledAnswer, costUsd: null });
+      assert.equal(Object.hasOwn(costs, foreign), false);
       assert.deepEqual((await pool.query('SELECT action,effect FROM app_actions')).rows, [
         { action: 'GMAIL_SEND_EMAIL', effect: 'outbound' },
       ]);
@@ -7536,7 +7548,7 @@ test(
         view.entries.map((entry: TrustEntry) => [entry.title, entry.source, entry.costUsd]),
         [
           ['Morning brief', 'schedule', 0.1],
-          ['Tell Sam we take the quote', 'chat', 0.5],
+          ['Tell Sam we take the quote', 'chat', 0.55],
         ],
       );
       assert.deepEqual(view.entries[1].actions, ['Gmail: send email']);

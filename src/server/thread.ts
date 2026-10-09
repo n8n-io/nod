@@ -1001,11 +1001,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       refresh();
     };
     const { reactToMessage, connections, browserConnection, observe, inspectPrompt } = dependencies;
-    if (
-      turn.background &&
-      turn.source !== 'resume' &&
-      (await dependencies.spendingLimitReached?.())
-    ) {
+    if (await dependencies.spendingLimitReached?.()) {
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
       );

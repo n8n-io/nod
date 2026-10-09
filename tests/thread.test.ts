@@ -1049,7 +1049,7 @@ test(
         },
       );
 
-      await t.test('a reached spending limit pauses background turns but not chat', async (t) => {
+      await t.test('a reached spending limit pauses chat and background turns', async (t) => {
         limitReached = true;
         t.after(() => {
           limitReached = false;
@@ -1066,15 +1066,13 @@ test(
         ];
         const chat = await thread.submitUserMessage('limit chat fixture', [], { channel: 'web' });
         for (const turnId of [...background, chat.turnId]) await waitFor(settled(turnId));
-        for (const turnId of background) {
+        for (const turnId of [...background, chat.turnId]) {
           assert.equal(ran(turnId), undefined);
           const row = (await db.pool.query('SELECT status,error FROM turns WHERE id=$1', [turnId]))
             .rows[0];
           assert.equal(row.status, 'failed');
           assert.match(row.error, /spending limit was reached/);
         }
-        assert.ok(ran(chat.turnId));
-        assert.equal(await turnStatus(chat.turnId), 'succeeded');
       });
 
       await t.test(

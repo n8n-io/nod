@@ -183,14 +183,14 @@ function Limit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
       )}
       {view.limit?.reached ? (
         <Notice kind="info">
-          Limit reached. Schedules and email or app wake-ups are paused until {resets}. Chat keeps
-          working.
+          Limit reached. New chat and background requests pause until {resets}. Work in progress can
+          finish. Raise your limit to resume.
         </Notice>
       ) : (
         (view.limit || draft !== undefined) && (
           <p className="trust-limit-note">
-            {amount ? `At ${money(amount)}` : 'At the limit'}, schedules and email or app wake-ups
-            pause until {resets}. Chat keeps working.
+            {amount ? `At ${money(amount)}` : 'At the limit'}, new chat and background requests
+            pause until {resets}.
           </p>
         )
       )}
