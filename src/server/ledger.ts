@@ -66,21 +66,34 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     );
   }
 
-  const pendingUsage = new Set<Promise<void>>();
-  function flushUsage() {
-    return Promise.all([...pendingUsage]);
+  const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd)
+    SELECT $1,$2,$3,$4,$5 WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
+    ON CONFLICT(id) DO NOTHING`;
+  const pendingUsage = new Map<string, { values: unknown[]; pending: Promise<void> }>();
+  async function flushUsage() {
+    await Promise.all([...pendingUsage.values()].map(({ pending }) => pending));
+    for (const [id, { values }] of pendingUsage) {
+      await pool.query(usageSql, values);
+      pendingUsage.delete(id);
+    }
   }
 
   function usage(id: string, turnId: string | null, model: string | undefined, costUsd: unknown) {
     const attributedTurn = turnId ?? activeTurn.getStore() ?? null;
-    const write = save(
-      `INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd)
-       SELECT $1,$2,$3,$4,$5 WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
-       ON CONFLICT(id) DO NOTHING`,
-      [id, ownerId, attributedTurn, model?.slice(0, 200) ?? null, cost(costUsd as number)],
+    const values = [
+      id,
+      ownerId,
+      attributedTurn,
+      model?.slice(0, 200) ?? null,
+      cost(costUsd as number),
+    ];
+    const pending = pool.query(usageSql, values).then(
+      () => {
+        pendingUsage.delete(id);
+      },
+      (error) => console.error(`The ledger could not save usage: ${error?.name ?? 'error'}`),
     );
-    pendingUsage.add(write);
-    void write.then(() => pendingUsage.delete(write));
+    pendingUsage.set(id, { values, pending });
   }
 
   function agent(base: Agent): Agent {
@@ -157,6 +170,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
   }
 
   async function limitReached() {
+    await flushUsage();
     return Boolean((await limit())?.reached);
   }
 

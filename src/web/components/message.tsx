@@ -35,11 +35,13 @@ export const MessageText = memo(function MessageText({
   previews = false,
   connectedAppIds,
   onHandoffDone,
+  handoffPaused,
 }: {
   text: string;
   previews?: boolean;
   connectedAppIds?: ReadonlySet<string>;
   onHandoffDone?: () => Promise<void>;
+  handoffPaused?: boolean;
 }) {
   const content = useRef<HTMLDivElement>(null);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
@@ -99,7 +101,7 @@ export const MessageText = memo(function MessageText({
           )}
         />
         {onHandoffDone && actions.some((action) => action.setup === 'browser') && (
-          <BrowserHandoff onDone={onHandoffDone} />
+          <BrowserHandoff onDone={onHandoffDone} paused={handoffPaused} />
         )}
       </div>
       {previews && <MessageLinkPreviews content={content} text={text} />}
@@ -122,6 +124,7 @@ export function MessageBubble({
   streaming = false,
   onReply,
   onHandoffDone,
+  handoffPaused,
 }: {
   message: Message;
   connectedAppIds?: ReadonlySet<string>;
@@ -129,26 +132,29 @@ export function MessageBubble({
   streaming?: boolean;
   onReply?(): void;
   onHandoffDone?(): Promise<void>;
+  handoffPaused?: boolean;
 }) {
   const dateFormat = useDateFormat();
+  const smallCost =
+    typeof message.modelCostUsd === 'number' &&
+    message.modelCostUsd > 0 &&
+    message.modelCostUsd < 0.000001;
   const modelCost =
     message.modelCostUsd === undefined
       ? undefined
       : message.modelCostUsd === null
         ? 'Price unavailable'
-        : message.modelCostUsd > 0 && message.modelCostUsd < 0.000001
-          ? '<$0.000001'
-          : formatNumber(
-              message.modelCostUsd,
-              {
-                style: 'currency',
-                currency: 'USD',
-                currencyDisplay: 'narrowSymbol',
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 6,
-              },
-              dateFormat,
-            );
+        : `${smallCost ? '<' : ''}${formatNumber(
+            smallCost ? 0.000001 : message.modelCostUsd,
+            {
+              style: 'currency',
+              currency: 'USD',
+              currencyDisplay: 'narrowSymbol',
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 6,
+            },
+            dateFormat,
+          )}`;
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [reaction, setReaction] = useState(message.reaction ?? null);
@@ -378,6 +384,7 @@ export function MessageBubble({
                 previews={!streaming}
                 connectedAppIds={connectedAppIds}
                 onHandoffDone={streaming ? undefined : onHandoffDone}
+                handoffPaused={handoffPaused}
               />
             )}
           </div>

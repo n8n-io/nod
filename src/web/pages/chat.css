@@ -719,6 +719,11 @@
     opacity: 1;
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .chat-page :is(.message-time, .message-cost) {
+    transition: none;
+  }
+}
 @media (min-width: 1500px) {
   .chat-page .message .message-text {
     font-size: 16px;

@@ -183,7 +183,7 @@ function Limit({ view, onSaved }: { view: TrustView; onSaved(): void }) {
       )}
       {view.limit?.reached ? (
         <Notice kind="info">
-          Limit reached. New chat and background requests pause until {resets}. Work in progress can
+          Limit reached. New chat and background requests pause until {resets}. Running turns can
           finish. Raise your limit to resume.
         </Notice>
       ) : (

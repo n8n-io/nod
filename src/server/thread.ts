@@ -1143,7 +1143,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       return;
     }
     if (signal.aborted) outcome = 'cancelled';
-    if (await interruptTurn(turnId))
+    if (!signal.aborted && error instanceof Error && error.message === spendingLimitReached)
+      await current((client) =>
+        finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
+      );
+    else if (await interruptTurn(turnId))
       console.error(`Turn ${turnId} failed: ${describeFailure(error)}`);
   } finally {
     unwatch?.();

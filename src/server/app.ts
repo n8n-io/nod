@@ -189,9 +189,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
-    const modelCosts = await dependencies.messageCosts?.(
-      visibleMessages.map((message) => message.turnId).filter((id): id is string => !!id),
-    );
+    const modelCosts = await dependencies
+      .messageCosts?.(
+        visibleMessages.map((message) => message.turnId).filter((id): id is string => !!id),
+      )
+      .catch(() => undefined);
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
     const olderTurns = await messageTurns(
       thread.id,
@@ -235,9 +237,9 @@ export async function createApp(dependencies: AppDependencies = {}) {
       [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
     );
     const page = rows.rows.slice(0, 60);
-    const modelCosts = await dependencies.messageCosts?.(
-      page.map((message) => message.turnId).filter((id): id is string => !!id),
-    );
+    const modelCosts = await dependencies
+      .messageCosts?.(page.map((message) => message.turnId).filter((id): id is string => !!id))
+      .catch(() => undefined);
     return {
       messages: page.reverse().map((message) => {
         const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;

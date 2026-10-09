@@ -25,7 +25,13 @@ const namedKeys = new Set([
 const buttons = ['left', 'middle', 'right'] as const;
 const clamp = (value: number) => Math.max(-2000, Math.min(2000, Math.round(value)));
 
-export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
+export function BrowserHandoff({
+  onDone,
+  paused = false,
+}: {
+  onDone: () => Promise<void>;
+  paused?: boolean;
+}) {
   const screen = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const pending = useRef<BrowserHandoffInput[]>([]);
@@ -179,6 +185,7 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
   }
 
   async function done() {
+    if (paused) return;
     setReturning(true);
     try {
       await flush();
@@ -426,7 +433,11 @@ export function BrowserHandoff({ onDone }: { onDone: () => Promise<void> }) {
             </a>
           </Button>
           {!expanded && sizeToggle}
-          <Button onClick={() => void done()} disabled={!shown || busy}>
+          <Button
+            onClick={() => void done()}
+            disabled={!shown || busy || paused}
+            title={paused ? 'Paused at the spending limit.' : undefined}
+          >
             {returning ? 'Finishing…' : 'Done'}
           </Button>
         </div>

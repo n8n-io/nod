@@ -7588,6 +7588,31 @@ test(
         (await pool.query('SELECT count(*)::int AS n FROM spending_limits')).rows[0].n,
         0,
       );
+      await limit(1.16);
+      await pool.query(`
+        CREATE FUNCTION refuse_usage() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'Synthetic usage write failure.'; END;
+        $$;
+        CREATE TRIGGER refuse_usage BEFORE INSERT ON model_usage FOR EACH ROW EXECUTE FUNCTION refuse_usage()`);
+      let modelRequests = 0;
+      const curator = ledger.curator({
+        id: 'fixture',
+        configured: true,
+        curate: async (_request, _signal, report) => {
+          modelRequests++;
+          report?.({ model: 'fixture-small', costUsd: 0.05 });
+          return {};
+        },
+      });
+      const request = { task: 'review' as const, instructions: 'Synthetic', input: {} };
+      await assert.rejects(curator.curate(request), /Synthetic usage write failure/);
+      await assert.rejects(curator.curate(request), /Synthetic usage write failure/);
+      assert.equal(modelRequests, 1);
+      await pool.query('DROP TRIGGER refuse_usage ON model_usage');
+      assert.equal(await ledger.limitReached(), true);
+      await assert.rejects(curator.curate(request), /spending limit was reached/);
+      assert.equal(modelRequests, 1);
+      assert.equal((await app.inject('/api/trust')).json().month.spentUsd, 1.2);
     } finally {
       await app.close();
       await pool.end();

@@ -183,7 +183,10 @@ export function Chat({
   const spendingPaused = trust?.limit?.reached === true;
   useEffect(() => {
     void refreshTrust();
-  }, [refreshTrust, trustRefreshKey]);
+    if (!spendingPaused) return;
+    const timer = window.setInterval(() => void refreshTrust(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [refreshTrust, spendingPaused, trustRefreshKey]);
   const connectedAppIds = useMemo(
     () =>
       new Set(
@@ -914,6 +917,7 @@ export function Chat({
                 ) : (
                   <MessageBubble
                     message={message}
+                    handoffPaused={spendingPaused}
                     connectedAppIds={connectedAppIds}
                     streaming={streamIds.has(message.streamId ?? '')}
                     grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
