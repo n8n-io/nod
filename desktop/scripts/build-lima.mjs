@@ -8,9 +8,9 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const lock = JSON.parse(await readFile(join(directory, 'runtime-build-lock.json'), 'utf8'));
 
 export async function buildLima(sourceArchive, goArchive, cache, output) {
-  if (process.platform !== 'darwin' || process.arch !== 'arm64')
-    throw new Error('Lima host builds require an Apple Silicon Mac.');
-  const source = join(cache, `lima-source-${lock.limaVersion}-arm64`);
+  if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch))
+    throw new Error('Lima host builds require an Intel or Apple Silicon Mac.');
+  const source = join(cache, `lima-source-${lock.limaVersion}-${process.arch}`);
   const compiler = join(cache, basename(goArchive, '.tar.gz'));
   const stamp = join(source, '.otto-build.json');
   const fingerprint = createHash('sha256')
@@ -46,11 +46,11 @@ export async function buildLima(sourceArchive, goArchive, cache, output) {
       GOCACHE: join(cache, 'go-build'),
       GOMODCACHE: join(cache, 'go-modules'),
       GOOS: 'darwin',
-      GOARCH: 'arm64',
+      GOARCH: process.arch === 'x64' ? 'amd64' : 'arm64',
       CGO_ENABLED: '1',
       MACOSX_DEPLOYMENT_TARGET: lock.minimumSystemVersion,
-      CGO_CFLAGS: `-arch arm64 -mmacosx-version-min=${lock.minimumSystemVersion}`,
-      CGO_LDFLAGS: `-arch arm64 -mmacosx-version-min=${lock.minimumSystemVersion}`,
+      CGO_CFLAGS: `-arch ${process.arch === 'x64' ? 'x86_64' : 'arm64'} -mmacosx-version-min=${lock.minimumSystemVersion}`,
+      CGO_LDFLAGS: `-arch ${process.arch === 'x64' ? 'x86_64' : 'arm64'} -mmacosx-version-min=${lock.minimumSystemVersion}`,
     };
     await run(
       '/usr/bin/make',

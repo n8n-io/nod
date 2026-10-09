@@ -240,9 +240,6 @@
   font-weight: 500;
   letter-spacing: -0.4px;
 }
-.account-settings-body:not(.is-wide) > * {
-  max-width: 640px;
-}
 .account-settings-body:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: -4px;

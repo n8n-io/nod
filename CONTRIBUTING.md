@@ -74,7 +74,7 @@ Changes in some areas need extra checks:
 | `evals/`                 | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                  |
 | `deployment/cloudflare/` | `pnpm --dir deployment/cloudflare run check`, `pnpm --dir deployment/cloudflare test` and the [dry runs](deployment/cloudflare/README.md) |
 
-The capability evals call live models, so maintainers run them on releases and on request. See [evals](evals/README.md).
+The capability evals call live models. They run nightly on `main` and on request. They do not gate releases. See [evals](evals/README.md).
 
 ## Tests
 
@@ -124,3 +124,11 @@ Coding agents follow [AGENTS.md](AGENTS.md), and so does everyone else. The same
 ## License
 
 Otto is licensed under the [Apache License 2.0](LICENSE). Contributions you submit are licensed under the same terms, as section 5 of the license describes.
+
+## CI scope
+
+CI always checks formatting and secrets. The required **Checks, tests and build** result stays present for every PR. A failed change-scope check fails that result.
+
+Version-only release PRs check their release metadata and source. They do not build installers or run integration tests before merge. Documentation changes also use the light path. Server, desktop, n8n, Cloudflare, eval and isolation checks run when their source or dependencies change. Mac update acceptance and Windows build acceptance are called from CI only when needed. Unknown file types use all checks. A manual CI run uses all checks, except a dispatch for `release/desktop`, which compares that release branch with `main`.
+
+The official release workflow still builds and verifies Mac Intel, Mac ARM and Windows after the version PR is merged. Its publication checks are not reduced by CI scope selection.

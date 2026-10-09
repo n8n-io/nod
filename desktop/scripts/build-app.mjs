@@ -63,8 +63,8 @@ const stageOnly = process.argv.includes('--stage-only');
 if (signed && (full || stageOnly))
   throw new Error('Signed releases require the lean complete application build.');
 if (full && skipArchive) throw new Error('Full builds cannot omit their runtime assets.');
-if (process.platform !== 'darwin' || process.arch !== 'arm64')
-  throw new Error('This desktop build requires an Apple Silicon Mac.');
+if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch))
+  throw new Error('This desktop build requires an Intel or Apple Silicon Mac.');
 if (basename(runtimeRelease) !== 'runtime-release.json')
   throw new Error('The runtime descriptor must be named runtime-release.json.');
 
@@ -146,7 +146,7 @@ for (const path of [
   await mkdir(dirname(join(engine, path)), { recursive: true });
   await copy(join(root, path), join(engine, path));
 }
-await copyEngineDependencies({ root, target: engine });
+await copyEngineDependencies({ root, target: engine, arch: process.arch });
 for (const path of ['main', 'preload']) await copy(join(desktop, path), join(appSource, path));
 await buildDesktopUI(join(appSource, 'ui'));
 if (full)
@@ -203,7 +203,7 @@ const paths = await packager({
   appCopyright: 'Copyright © 2026 n8n GmbH',
   electronVersion,
   platform: 'darwin',
-  arch: 'arm64',
+  arch: process.arch,
   asar: false,
   prune: false,
   overwrite: true,
@@ -256,7 +256,10 @@ console.log(`Application ready: ${application}`);
 for (const entry of await readdir(output, { withFileTypes: true }))
   if (entry.isFile() && /\.(?:dmg|zip)(?:\.sha256)?$/.test(entry.name))
     await rm(join(output, entry.name));
-const updateArchive = join(output, full ? 'Otto-full-arm64.zip' : 'Otto-arm64.zip');
+const updateArchive = join(
+  output,
+  full ? `Otto-full-${process.arch}.zip` : `Otto-${process.arch}.zip`,
+);
 await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', application, updateArchive], {
   timeout: 10 * 60_000,
 });
@@ -272,7 +275,7 @@ const diskStage = join(stage, 'disk');
 await mkdir(diskStage, { recursive: true });
 await run('/bin/cp', ['-cR', application, join(diskStage, `${configuration.productName}.app`)]);
 await run('/bin/ln', ['-s', '/Applications', join(diskStage, 'Applications')]);
-const diskImage = join(output, full ? 'Otto-full-arm64.dmg' : 'Otto-arm64.dmg');
+const diskImage = join(output, full ? `Otto-full-${process.arch}.dmg` : `Otto-${process.arch}.dmg`);
 await run(
   '/usr/bin/hdiutil',
   [
@@ -342,7 +345,7 @@ await writeFile(
   JSON.stringify(
     {
       version,
-      platform: 'darwin-arm64',
+      platform: `darwin-${process.arch}`,
       minimumSystemVersion,
       source: await sourceRevision(),
       ...(updateSourceUrl ? { updateSourceUrl } : {}),

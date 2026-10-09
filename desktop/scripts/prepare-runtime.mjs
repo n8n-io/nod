@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { buildLima } from './build-lima.mjs';
-import { runtimeInputs } from './runtime-inputs.mjs';
+import { runtimeInputs, runtimePlatform } from './runtime-inputs.mjs';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const assets = resolve(
@@ -17,12 +17,17 @@ const imagesOnly = process.argv.includes('--images-only');
 const hostOnly = process.argv.includes('--host-only');
 const prebuiltImages = process.argv.includes('--prebuilt-images');
 const imageCompressionLevel = 6;
-const windows = process.env.OTTO_DESKTOP_TARGET === 'win32-x64';
-const architecture = windows ? 'amd64' : 'arm64';
-const nodeArchitecture = windows ? 'x64' : 'arm64';
+const platform = runtimePlatform();
+const nodeArchitecture = platform.endsWith('-x64') ? 'x64' : 'arm64';
+const architecture = nodeArchitecture === 'x64' ? 'amd64' : 'arm64';
 if (imagesOnly && hostOnly) throw new Error('Choose either image preparation or host preparation.');
-if (!imagesOnly && (process.platform !== 'darwin' || process.arch !== 'arm64'))
-  throw new Error('Host runtime preparation requires an Apple Silicon Mac.');
+if (
+  !imagesOnly &&
+  (process.platform !== 'darwin' ||
+    platform !== `darwin-${nodeArchitecture}` ||
+    process.arch !== nodeArchitecture)
+)
+  throw new Error('Host runtime preparation requires a Mac with the selected architecture.');
 if (hostOnly && prebuiltImages)
   throw new Error('Prebuilt image export cannot be combined with host-only preparation.');
 const input = await runtimeInputs();
@@ -32,9 +37,10 @@ const cache = resolve(
 const buildLock = JSON.parse(
   await readFile(join(repository, 'desktop/scripts/runtime-build-lock.json'), 'utf8'),
 );
-const downloads = JSON.parse(
+const pinnedDownloads = JSON.parse(
   await readFile(join(repository, 'desktop/runtime/downloads.json'), 'utf8'),
 );
+const downloads = nodeArchitecture === 'x64' ? pinnedDownloads.x64 : pinnedDownloads;
 await mkdir(assets, { recursive: true });
 await mkdir(cache, { recursive: true });
 await mkdir(join(assets, 'images'), { recursive: true });
@@ -257,7 +263,7 @@ if (!imagesOnly) {
   await extract(dockerHost, 'docker-host');
   await chmod(join(assets, 'docker-host/docker/docker'), 0o755);
   dockerGuest = await download('Docker guest 28.5.1', downloads.dockerGuest, 'docker-guest.tar.gz');
-  guest = await download('Ubuntu 24.04 arm64', downloads.guest, 'guest.img');
+  guest = await download(`Ubuntu 24.04 ${nodeArchitecture}`, downloads.guest, 'guest.img');
 
   const sourceArchive = await download(
     'Lima source',
@@ -266,8 +272,8 @@ if (!imagesOnly) {
   );
   const goArchive = await download(
     'Pinned Go compiler',
-    buildLock.go,
-    basename(new URL(buildLock.go.url).pathname),
+    nodeArchitecture === 'x64' ? buildLock.goX64 : buildLock.go,
+    basename(new URL((nodeArchitecture === 'x64' ? buildLock.goX64 : buildLock.go).url).pathname),
   );
   await buildLima(sourceArchive, goArchive, join(cache, 'build'), join(assets, 'lima'));
   await cp(dockerGuest, join(assets, 'docker-guest.tar.gz'), { mode: constants.COPYFILE_FICLONE });
@@ -305,7 +311,7 @@ await writeFile(
   JSON.stringify(
     {
       version: 1,
-      platform: 'darwin-arm64',
+      platform,
       limaVersion: buildLock.limaVersion,
       minimumSystemVersion: buildLock.minimumSystemVersion,
       fingerprint: input.fingerprint,

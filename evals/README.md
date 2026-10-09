@@ -4,7 +4,7 @@ Runs real tasks against the real Otto harness and reports how often it gets them
 
 Each scenario boots an isolated Otto: its own database schema, a Docker workspace, a Chromium browser, the real server and Pi, and a real model. The user is simulated. Only the outside world is faked: connected apps (Gmail, Calendar, Sheets, Slack) are stateful fakes behind the same port as Composio, and websites are lookalike sites that the real browser visits under made-up hostnames. Everything else is real. The result is graded by what actually happened (the state of the fake world, the workspace files, the trace) and by an independent judge model for the parts that need judgement.
 
-This is a manual model evaluation. It calls live models and costs money (about $0.1 to $0.5 per attempt). The unit tests never call it.
+These model evaluations run nightly and on request. They call live models and cost money (about $0.1 to $0.5 per attempt). The unit tests never call them.
 
 ## Run it
 
@@ -39,7 +39,7 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 The **Evals** workflow runs the suite on a Blacksmith runner with a disposable PostgreSQL and images built from the code under test.
 
-- **Every release.** After publication, the desktop release workflow starts a separate **Evals** workflow on the exact published tag, with the previous desktop tag as its baseline. It runs both versions in the same job and puts them side by side under a GO, NO-GO or INCONCLUSIVE verdict. It reports only and does not hold the release build queue. When nothing under `src` outside the web client, `package.json`, `pnpm-lock.yaml` or `pnpm-workspace.yaml` changed since the previous release, it reports GO without running.
+- **Nightly.** The full controlled suite runs on `main` each day at 01:23 UTC, with three attempts per case. It uses a disposable database and synthetic accounts. It reports scores and does not gate CI, deployments or releases. Releases do not start a separate eval run.
 - **On demand.** Open Actions → Evals → Run workflow and pick a branch you trust (its code runs with the eval keys). Set **baseline** to `main`, another branch, a tag or `latest-release` to compare with it from where your branch left it; leave it empty to score the branch alone. The default tier is **full**, with three attempts per case; you can pick the small **pr** tier, a model, named cases or a spend limit. A new run waits for the active run on the same branch.
 
 Open the run summary to see the verdict and the side-by-side scores. Download the `capability-evals` artifact and open `report.html` for each side to read its transcripts and checks; extract it into `.local/capability-evals/` to use `report`, `compare`, `review` or `rejudge`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`, with keys in the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets (`EVALS_OPENROUTER_API_KEY` for OpenRouter models). A low score or an incomplete attempt does not fail the workflow; it fails only when nothing could be scored. The full run has a six-hour time limit.

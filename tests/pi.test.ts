@@ -1994,6 +1994,7 @@ test('turn tool limits fence custom and native execution through the same budget
 
 test('turn deadlines release stalled model, provider, native and disposal operations', async (t) => {
   for (const stalledAt of ['model', 'provider', 'native', 'dispose'] as const) {
+    const timeoutMs = stalledAt === 'dispose' ? 300 : 30;
     await t.test(stalledAt, { timeout: 1500 }, async (t) => {
       const directory = await mkdtemp(join(tmpdir(), 'otto-time-budget-'));
       let aborted = false;
@@ -2042,7 +2043,7 @@ test('turn deadlines release stalled model, provider, native and disposal operat
       try {
         const running = runtime.runTurn({
           ...context(directory),
-          limits: { maxToolCalls: 8, timeoutMs: 30 },
+          limits: { maxToolCalls: 8, timeoutMs },
           integration: async (_action, _args, signal) => {
             providerSignal = signal;
             return stall();
@@ -2051,7 +2052,7 @@ test('turn deadlines release stalled model, provider, native and disposal operat
         const completion =
           stalledAt === 'dispose' ? running : assert.rejects(running, /time limit/);
         await ready;
-        t.mock.timers.tick(29);
+        t.mock.timers.tick(timeoutMs - 1);
         assert.equal(runtime.status().activeTurns, 1);
         assert.equal(workspaceSignal?.aborted, false);
         if (stalledAt === 'provider') assert.equal(providerSignal?.aborted, false);

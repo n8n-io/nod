@@ -69,6 +69,9 @@ manifest.transport = {
   sha256: await assetHash(join(runtime, 'bin/docker.exe')),
 };
 await writeFile(join(runtime, 'manifest.json'), JSON.stringify(manifest, null, 2));
+configuration.version = process.env.OTTO_DESKTOP_VERSION || configuration.version;
+if (!/^\d+\.\d+\.\d+$/.test(configuration.version))
+  throw new Error('The Windows release version is invalid.');
 const electronVersion = configuration.devDependencies.electron;
 configuration.ottoBuild = {
   source: await run('git', ['-C', root, 'rev-parse', 'HEAD'], { output: 'stdout' }),
@@ -115,3 +118,28 @@ await writeFile(
   `${await assetHash(installer)}  Otto-Setup-x64.exe\n${await assetHash(join(output, 'Otto-Runtime-win32-x64.tar.gz'))}  Otto-Runtime-win32-x64.tar.gz\n`,
 );
 console.log(`Windows installer ready: ${installer}`);
+
+const guest = join(output, 'Otto-Runtime-win32-x64.tar.gz');
+await writeFile(
+  join(output, 'release-win32-x64.json'),
+  JSON.stringify(
+    {
+      version: configuration.version,
+      source: configuration.ottoBuild.source,
+      platform: 'win32-x64',
+      signing: { mode: 'unsigned' },
+      installer: {
+        file: 'Otto-Setup-x64.exe',
+        bytes: (await stat(installer)).size,
+        sha256: await assetHash(installer),
+      },
+      runtime: {
+        file: 'Otto-Runtime-win32-x64.tar.gz',
+        bytes: (await stat(guest)).size,
+        sha256: await assetHash(guest),
+      },
+    },
+    null,
+    2,
+  ) + '\n',
+);

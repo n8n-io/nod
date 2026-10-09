@@ -18,5 +18,27 @@
   "guest": {
     "url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261001/ubuntu-24.04-minimal-cloudimg-arm64.img",
     "sha256": "fbf6b15c50c474dc6dee5b3c74da212bb687a2625e877227828e6492d88dc151"
+  },
+  "x64": {
+    "lima": {
+      "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-2.2.0-Darwin-x86_64.tar.gz",
+      "sha256": "0d6f99c19f6e4bc3c92730c4c29d929e6927f0cb0a0ba1a84383367135a8ff31"
+    },
+    "guestagents": {
+      "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-additional-guestagents-2.2.0-Darwin-x86_64.tar.gz",
+      "sha256": "d710253c44c5b46116c08cabd784b0e75ea8e7c494d0f75dfa55ee6ea6c5720c"
+    },
+    "dockerHost": {
+      "url": "https://download.docker.com/mac/static/stable/x86_64/docker-28.5.1.tgz",
+      "sha256": "a3827a07da2f3a5b0229f85f54a7d025735cb7c05d457502d8b78dc6f1dc531d"
+    },
+    "dockerGuest": {
+      "url": "https://download.docker.com/linux/static/stable/x86_64/docker-28.5.1.tgz",
+      "sha256": "5c0d19f31fece1accd0358bb8cff591fe25d7b6cba19f0fd412cbfdc07f75ff6"
+    },
+    "guest": {
+      "url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20261001/ubuntu-24.04-minimal-cloudimg-amd64.img",
+      "sha256": "a8eb6570f87a941f3de2e000c046b9367f8ab1423756a94830d454fae8ad80ff"
+    }
   }
 }

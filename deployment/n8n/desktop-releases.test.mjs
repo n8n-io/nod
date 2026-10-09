@@ -52,10 +52,12 @@ test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request sh
   );
   assert.equal(
     read(
-      release({
-        tag_name: tag,
-        assets: [asset(104, `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`)],
-      }),
+      [
+        release({
+          tag_name: tag,
+          assets: [asset(104, `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`)],
+        }),
+      ],
       { params: { tag } },
     ).status,
     200,
@@ -73,7 +75,7 @@ test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request sh
     { params: { tag: 'desktop-v01.2.0' } },
     {
       params: { releaseId: '42', assetId: '102' },
-      query: { version: '0.1.0', platform: 'darwin-x64' },
+      query: { version: '0.1.0', platform: 'linux-x64' },
     },
   ])
     assert.equal(checkRequest(input).status, 400);
@@ -392,7 +394,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
     bytes: 1234,
     sha256: 'a'.repeat(64),
   };
-  const runtime = { id: 'c'.repeat(64), fingerprint, archive };
+  const runtime = { platform: 'darwin-arm64', id: 'c'.repeat(64), fingerprint, archive };
   const appRelease = release({
     assets: [
       asset(101, 'release.json'),
@@ -451,7 +453,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
     const pages =
       checked.operation === 'list'
         ? [list.slice(0, 100), list.slice(100)].map((body) => ({ statusCode: 200, body }))
-        : [{ statusCode: 200, body: checked.tag ? runtimeRelease : appRelease }];
+        : [{ statusCode: 200, body: checked.tag ? [runtimeRelease] : appRelease }];
     const result = releaseResponse(pages, checked, base);
     if (result.assetUrl) {
       const redirect = checkRedirect({
@@ -486,7 +488,7 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
     );
   };
   const updater = createDesktopUpdater({
-    source: createUpdateSource({ sourceUrl: base, fetch: request }),
+    source: createUpdateSource({ sourceUrl: base, arch: 'arm64', fetch: request }),
     currentVersion: '0.1.0',
     native,
     prepareRuntime: async (candidate) => {
@@ -505,4 +507,94 @@ test('N8ND-ADAPTER: real updater reads broker routes, a long release list and an
   );
   assert.equal(candidate.downloadUrl, `${base}/releases/70/assets/105/${archive.file}`);
   assert.equal(candidate.runtime.id, runtime.id);
+});
+
+test('runtime aliases keep old clients on verified Otto assets after runtime release removal', async () => {
+  const tag = `runtime-darwin-arm64-${'b'.repeat(64)}`;
+  const archived = release({
+    assets: [
+      asset(110, `${tag}.json`),
+      asset(111, `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`),
+    ],
+  });
+  const checked = checkRequest({ params: { tag } });
+  const result = releaseResponse([{ statusCode: 200, body: [archived] }], checked, base);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.tag_name, tag);
+  assert.equal(result.body.id, archived.id);
+  assert.equal(
+    result.body.assets.find((asset) => asset.id === 111).url,
+    `${base}/releases/42/assets/111/Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`,
+  );
+  assert.equal(
+    releaseResponse(
+      [{ statusCode: 200, body: [{ ...archived, assets: [archived.assets[0]] }] }],
+      checked,
+      base,
+    ).status,
+    404,
+  );
+});
+
+test('Intel installers and feeds resolve only Intel assets from the same Otto release', () => {
+  const dual = release({
+    assets: [
+      asset(101, 'release.json'),
+      asset(103, 'Otto-arm64.dmg'),
+      asset(104, 'release-darwin-x64.json'),
+      asset(105, 'Otto-x64.dmg'),
+      asset(106, 'Otto-x64.zip'),
+    ],
+  });
+  const result = releaseResponse(
+    [{ statusCode: 200, body: [dual] }],
+    checkRequest({ query: { installer: 'true', platform: 'darwin-x64' } }),
+    base,
+  );
+  assert.equal(result.status, 200);
+  assert(result.body.disk.url.endsWith('/Otto-x64.dmg'));
+  assert(result.body.manifestUrl.endsWith('/release-darwin-x64.json'));
+  const feed = checkRequest({
+    params: { releaseId: '42', assetId: '106' },
+    query: { version: '0.1.0', platform: 'darwin-x64' },
+  });
+  assert(
+    releaseResponse([{ statusCode: 200, body: dual }], feed, base).body.url.endsWith(
+      '/Otto-x64.zip',
+    ),
+  );
+  assert.equal(
+    releaseResponse([{ statusCode: 200, body: dual }], { ...feed, platform: 'darwin-arm64' }, base)
+      .status,
+    404,
+  );
+});
+
+test('legacy runtime tag lookup stays exact and only a missing release starts alias lookup', () => {
+  const tag = `runtime-darwin-arm64-${'b'.repeat(64)}`;
+  const request = checkRequest({ params: { tag } });
+  assert(request.apiUrl.endsWith(`/tags/${tag}`));
+  const legacy = release({ tag_name: tag });
+  assert.equal(
+    releaseResponse([{ statusCode: 200, body: legacy }], request, base).body.tag_name,
+    tag,
+  );
+  assert.deepEqual(releaseResponse([{ statusCode: 404 }], request, base), {
+    aliasApiUrl: 'https://api.github.com/repos/n8n-io/otto/releases?per_page=100',
+  });
+  assert.equal(releaseResponse([{ statusCode: 403 }], request, base).status, 503);
+  const node = workflowNodes().find((entry) => entry.name === 'Build runtime alias response');
+  const migrated = release({
+    assets: [
+      asset(110, `${tag}.json`),
+      asset(111, `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`),
+    ],
+  });
+  const result = new Function('$input', '$', node.parameters.jsCode)(
+    { all: () => [{ json: { statusCode: 200, body: [migrated] } }] },
+    () => ({ first: () => ({ json: request }) }),
+  )[0].json;
+  assert.equal(result.status, 200);
+  assert.equal(result.body.tag_name, tag);
+  assert.equal(result.body.id, migrated.id);
 });

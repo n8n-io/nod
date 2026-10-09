@@ -28,7 +28,6 @@ const criticalFiles = [
   'lima/bin/limactl',
   'docker-host/docker/docker',
   'docker-guest.tar.gz',
-  'lima/share/lima/lima-guestagent.Linux-aarch64.gz',
 ];
 
 export async function assetHash(path, signal) {
@@ -62,7 +61,7 @@ export function validateRuntimeRelease(release) {
   if (
     !release ||
     release.version !== 1 ||
-    release.platform !== 'darwin-arm64' ||
+    !['darwin-arm64', 'darwin-x64'].includes(release.platform) ||
     !hashPattern.test(release.id) ||
     !hashPattern.test(release.archive?.sha256) ||
     !Number.isSafeInteger(release.archive.bytes) ||
@@ -88,7 +87,13 @@ export function validateRuntimeRelease(release) {
     paths.add(file.path);
     total += file.bytes;
   }
-  if (total > maximumBytes || criticalFiles.some((path) => !paths.has(path)))
+  if (
+    total > maximumBytes ||
+    [
+      ...criticalFiles,
+      `lima/share/lima/lima-guestagent.Linux-${release.platform === 'darwin-x64' ? 'x86_64' : 'aarch64'}.gz`,
+    ].some((path) => !paths.has(path))
+  )
     throw new Error('The Otto runtime file manifest is incomplete.');
   if (createHash('sha256').update(JSON.stringify(release.files)).digest('hex') !== release.id)
     throw new Error('The Otto runtime content identifier does not match its files.');

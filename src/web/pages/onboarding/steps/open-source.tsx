@@ -52,8 +52,8 @@ export function OpenSource({ arrived, onNext, onBack, busy, usage }: StepProps) 
             and your feedback shapes what I become.
           </Bubble>,
           <Bubble>
-            If something breaks or you have an idea, tap <strong>Feedback</strong> up top. A
-            screenshot helps a lot, and we read every message.
+            If something breaks or you have an idea, send us feedback. There’s a button for it in
+            the app. A screenshot helps a lot, and we read every message.
           </Bubble>,
           <Bubble className="ob-open-usage">
             <p>

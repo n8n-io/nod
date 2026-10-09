@@ -14,13 +14,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    name: Select checks for changed files
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      core: ${{ steps.scope.outputs.core }}
+      desktop: ${{ steps.scope.outputs.desktop }}
+      n8n: ${{ steps.scope.outputs.n8n }}
+      cloudflare: ${{ steps.scope.outputs.cloudflare }}
+      evals: ${{ steps.scope.outputs.evals }}
+      images: ${{ steps.scope.outputs.images }}
+      network: ${{ steps.scope.outputs.network }}
+      e2b: ${{ steps.scope.outputs.e2b }}
+      mac: ${{ steps.scope.outputs.mac }}
+      windows: ${{ steps.scope.outputs.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+      - name: Read the changed paths
+        id: scope
+        env:
+          CI_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+        run: node .github/scripts/ci-scope.mjs
+
   checks:
     name: Checks, tests and build
+    needs: scope
+    if: ${{ !cancelled() }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     services:
       postgres:
-        image: postgres:17-alpine
+        image: ${{ needs.scope.outputs.core == 'true' && 'postgres:17-alpine' || '' }}
         env:
           POSTGRES_USER: otto
           POSTGRES_PASSWORD: otto-ci
@@ -36,6 +67,10 @@ jobs:
       CI: 'true'
       TEST_DATABASE_URL: postgresql://otto:otto-ci@127.0.0.1:5432/otto_ci
     steps:
+      - name: Require a valid change scope
+        env:
+          CI_SCOPE_RESULT: ${{ needs.scope.result }}
+        run: test "$CI_SCOPE_RESULT" = success
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -61,33 +96,46 @@ jobs:
           github.ref == 'refs/heads/release/desktop'
         run: node .github/scripts/prepare-desktop-release.mjs --check
       - name: Install desktop build tooling without downloading Electron
+        if: needs.scope.outputs.desktop == 'true'
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: pnpm --dir desktop install --frozen-lockfile
       - name: Check desktop lifecycle, storage and release contracts
+        if: needs.scope.outputs.desktop == 'true'
         run: pnpm run desktop:test
       - name: Check n8n delivery contracts
+        if: needs.scope.outputs.n8n == 'true'
         run: node --test deployment/n8n/*.test.mjs
       - name: Check desktop network isolation during restart
+        if: needs.scope.outputs.network == 'true'
         run: >-
           sudo env OTTO_TEST_RUNTIME_NETWORK=1 "$(command -v node)"
           --test --test-name-pattern='workload firewall refresh'
           desktop/test/runtime-assets.test.mjs
       - name: Check types, boundaries and formatting
+        if: needs.scope.outputs.core == 'true'
         run: pnpm run check
+      - name: Check formatting without a full type check
+        if: needs.scope.outputs.core != 'true'
+        run: pnpm run format:check
       - name: Build the client
+        if: needs.scope.outputs.core == 'true' || needs.scope.outputs.cloudflare == 'true' || needs.scope.outputs.images == 'true'
         run: pnpm run build
       - name: Install Cloudflare adapter dependencies
+        if: needs.scope.outputs.cloudflare == 'true'
         run: pnpm --dir deployment/cloudflare install --frozen-lockfile
       - name: Check Cloudflare adapter types and fixtures
+        if: needs.scope.outputs.cloudflare == 'true'
         run: |
           pnpm --dir deployment/cloudflare run check
           pnpm --dir deployment/cloudflare test
       - name: Check the capability eval harness
+        if: needs.scope.outputs.evals == 'true'
         run: |
           pnpm --dir evals run check
           pnpm --dir evals test
       - name: Validate both Cloudflare deployment bundles
+        if: needs.scope.outputs.cloudflare == 'true'
         working-directory: deployment/cloudflare
         env:
           WRANGLER_SEND_METRICS: 'false'
@@ -95,16 +143,20 @@ jobs:
           pnpm exec wrangler deploy --env development --dry-run --containers-rollout=none
           pnpm exec wrangler deploy --env production --dry-run --containers-rollout=none
       - name: Build the runtime and separate computer images
+        if: needs.scope.outputs.images == 'true'
         run: |
           docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile --tag otto-ci .
           docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile.browser --tag otto-ci-browser .
           docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile.workspace --tag otto-ci-workspace .
           docker build --platform linux/amd64 --file Dockerfile.browser --tag otto-ci-local-browser .
       - name: Verify the shared local and desktop browser image
+        if: needs.scope.outputs.images == 'true'
         run: node --import tsx desktop/scripts/check-browser-image.mjs otto-ci-local-browser
       - name: Verify automatic RTK savings and unfiltered exports
+        if: needs.scope.outputs.images == 'true'
         run: node --import tsx scripts/eval-rtk.ts --smoke --image otto-ci-workspace
       - name: Run all integration tests with PostgreSQL and Chromium
+        if: needs.scope.outputs.core == 'true'
         run: >-
           docker run --rm --network host --shm-size=1g
           --env TEST_DATABASE_URL
@@ -121,10 +173,12 @@ jobs:
           --entrypoint /usr/bin/tini otto-ci-browser
           -- node scripts/test-integration.mjs --run
       - name: Verify the runtime filesystem and user
+        if: needs.scope.outputs.images == 'true'
         run: >-
           docker run --rm --network none --entrypoint node otto-ci
           -e 'const fs=require("node:fs");if(process.getuid()===0||fs.existsSync("/app/.env")||fs.existsSync("/app/.local")||!fs.existsSync("/app/dist/web/index.html"))process.exit(1)'
       - name: Verify computer image boundaries, readiness and graceful shutdown
+        if: needs.scope.outputs.images == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -200,6 +254,8 @@ jobs:
 
   e2b-computer:
     name: Combined E2B computer isolation
+    needs: scope
+    if: needs.scope.outputs.e2b == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 25
     steps:
@@ -228,6 +284,18 @@ jobs:
             process.stdout.write(image);
           ')"
           node deployment/e2b/validate-computer.mjs "$image"
+
+  mac-updates:
+    name: Mac update acceptance
+    needs: scope
+    if: needs.scope.outputs.mac == 'true'
+    uses: ./.github/workflows/desktop-updates.yml
+
+  windows-preview:
+    name: Windows build acceptance
+    needs: scope
+    if: needs.scope.outputs.windows == 'true'
+    uses: ./.github/workflows/windows-preview.yml
 
   secrets:
     name: Secret scanning

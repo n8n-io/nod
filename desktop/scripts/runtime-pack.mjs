@@ -55,7 +55,10 @@ function included(path) {
     return true;
   if (/^images\/(workspace|browser|postgres)\.tar\.gz$/.test(path)) return true;
   if (!path.startsWith('lima/share/')) return false;
-  if (/lima-guestagent\./.test(path)) return path.endsWith('lima-guestagent.Linux-aarch64.gz');
+  if (/lima-guestagent\./.test(path))
+    return path.endsWith(
+      `lima-guestagent.Linux-${inputs.platform.endsWith('-x64') ? 'x86_64' : 'aarch64'}.gz`,
+    );
   return true;
 }
 
@@ -134,7 +137,7 @@ for (const path of (await entries(assets)).sort()) {
   });
 }
 const id = createHash('sha256').update(JSON.stringify(files)).digest('hex');
-const file = `Otto-Runtime-darwin-arm64-${id.slice(0, 12)}.tar.gz`;
+const file = `Otto-Runtime-${inputs.platform}-${id.slice(0, 12)}.tar.gz`;
 const path = join(output, file);
 let archive;
 try {
@@ -162,7 +165,10 @@ const configured = baseUrl ? `${baseUrl.replace(/\/$/, '')}/${file}` : exactUrl;
 if (configured) runtimeUrl(configured, file);
 const release = {
   version: 1,
-  platform: 'darwin-arm64',
+  platform: inputs.platform,
+  ...(process.env.OTTO_RUNTIME_RELEASE_TAG
+    ? { releaseTag: process.env.OTTO_RUNTIME_RELEASE_TAG }
+    : {}),
   id,
   archive,
   files,

@@ -413,7 +413,6 @@ function AuthenticatedApp({
           canLogout={account.canLogout}
           onLogout={onLogout}
           onFeedback={openFeedback}
-          feedbackOpen={feedbackOpen}
           usageData={account.usageData}
           onUsageData={account.onUsageData}
           onComplete={async () => {
