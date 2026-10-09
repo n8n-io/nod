@@ -270,10 +270,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         ) ?? provider
     );
   }
-  function providerForRow(row: ConnectionRow) {
+  function providerForRow(row: Pick<ConnectionRow, 'slug' | 'provider_id'>) {
     return providerFor(row.slug, row.provider_id);
   }
-  function configurationMatches(row: ConnectionRow) {
+  function configurationMatches(row: Pick<ConnectionRow, 'provider_id' | 'configuration_id'>) {
     const selected = providers.find((item) => item.id === row.provider_id);
     return Boolean(
       selected?.configured &&
@@ -2134,13 +2134,14 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       scope.get('/api/apps', async () => list());
       scope.get('/api/apps/catalog', async () => catalog());
       scope.post('/api/apps/setup-status', async (request, reply) => {
-        const { hashes, connectionIds } = z
+        const { hashes, connectionIds, pairingUrl } = z
           .object({
             hashes: z
               .array(z.string().regex(/^[a-f0-9]{64}$/))
               .min(1)
               .max(100),
             connectionIds: z.array(z.uuid()).max(100).default([]),
+            pairingUrl: z.string().url().max(16_000).optional(),
           })
           .strict()
           .parse(request.body);
@@ -2150,16 +2151,32 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             slug: string;
             completed: boolean;
             pairing_code: string | null;
+            provider_id: string;
+            configuration_id: string | null;
           }>(
-            `SELECT link_hash AS hash,'' AS slug,true AS completed,NULL AS pairing_code FROM app_setup_completions
+            `SELECT link_hash AS hash,'' AS slug,true AS completed,NULL AS pairing_code,NULL AS provider_id,NULL AS configuration_id FROM app_setup_completions
              WHERE owner_id=$1 AND link_hash=ANY($2::text[])
              UNION ALL
-             SELECT setup_link_hash AS hash,slug,false AS completed,pairing_code FROM app_connections
+             SELECT setup_link_hash AS hash,slug,false AS completed,pairing_code,provider_id,configuration_id FROM app_connections
              WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now() AND NOT revoked`,
             [configuredOwner, hashes],
           ),
           options.discovered?.setupServices(connectionIds) ?? [],
         ]);
+        const pairingHash = pairingUrl
+          ? createHash('sha256').update(pairingUrl).digest('hex')
+          : undefined;
+        const pendingPairing = links.rows.find(
+          (row) => !row.completed && row.pairing_code && row.hash === pairingHash,
+        );
+        const pairingConfirmed = Boolean(
+          pairingUrl &&
+          pendingPairing &&
+          configurationMatches(pendingPairing) &&
+          (await providerForRow(pendingPairing)
+            .pairingConfirmed?.(configuredOwner, pairingUrl)
+            .catch(() => false)),
+        );
         const discoveredLinks = discovered.map(({ id, ...service }) => ({
           ...service,
           hash: createHash('sha256').update(`/apps?connect=${id}`).digest('hex'),
@@ -2177,6 +2194,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               ...('pairing_code' in row && row.pairing_code
                 ? { pairingCode: row.pairing_code }
                 : {}),
+              ...(pairingConfirmed && row.hash === pairingHash ? { pairingConfirmed: true } : {}),
             };
           });
         return reply.header('Cache-Control', 'no-store').send({

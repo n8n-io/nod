@@ -438,6 +438,7 @@ export function Apps({
     const controller = new AbortController();
     let checking: Promise<boolean> | undefined;
     let poll: number | undefined;
+    let pairingConfirmed = signIn.pairingConfirmed === true;
     const read = async () => {
       try {
         const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
@@ -446,13 +447,27 @@ export function Apps({
         ).join('');
         const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
-          body: JSON.stringify({ hashes: [hash] }),
+          body: JSON.stringify({ hashes: [hash], pairingUrl: url }),
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
           cache: 'no-store',
         });
         if (controller.signal.aborted) return false;
         if (!result.completed.includes(hash)) {
-          if (result.apps.some((app) => app.hash === hash)) return false;
+          const app = result.apps.find((app) => app.hash === hash);
+          if (app) {
+            if (app.pairingConfirmed === true && !pairingConfirmed) {
+              pairingConfirmed = true;
+              setSignIn((current) =>
+                !controller.signal.aborted &&
+                current?.url === url &&
+                current.service === signIn.service &&
+                current.attempt === signIn.attempt
+                  ? { ...current, pairingConfirmed: true }
+                  : current,
+              );
+            }
+            return false;
+          }
           setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
           setError('Sign-in wasn’t completed. Try connecting again.');
         }
@@ -472,11 +487,14 @@ export function Apps({
       return checking;
     };
     const schedule = () => {
-      poll = window.setTimeout(() => {
-        void check().finally(() => {
-          if (!controller.signal.aborted) schedule();
-        });
-      }, 5000);
+      poll = window.setTimeout(
+        () => {
+          void check().finally(() => {
+            if (!controller.signal.aborted) schedule();
+          });
+        },
+        signIn.code && !pairingConfirmed ? 1000 : 5000,
+      );
     };
     const visible = () => {
       if (document.visibilityState === 'visible') void check();
@@ -766,7 +784,13 @@ export function Apps({
         opened = true;
       }
       if (request.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
-      setSignIn((current) => (current === pending ? { ...current, opened } : current));
+      setSignIn((current) =>
+        !request.signal.aborted &&
+        current?.url === pending.url &&
+        current.attempt === pending.attempt
+          ? { ...current, opened }
+          : current,
+      );
       setBusy('');
     } catch (cause) {
       popup?.close();

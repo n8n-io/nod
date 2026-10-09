@@ -12,7 +12,7 @@ const icons = { vault: KeyRound, website: Globe2, app: Link2, browser: MonitorSm
 const vaultLink = /^\/(?:vault|credentials)\/([A-Za-z0-9_-]+)\/?$/;
 const appLink = /^\/apps\?connect=([a-f0-9-]{36})$/i;
 
-async function readAppLinks(links: string[], signal: AbortSignal) {
+async function readAppLinks(links: string[], signal: AbortSignal, pairingUrl?: string) {
   const fingerprints = await Promise.all(
     links.map(async (href) => {
       const connectionId = appLink.exec(href)?.[1].toLowerCase();
@@ -31,6 +31,7 @@ async function readAppLinks(links: string[], signal: AbortSignal) {
     body: JSON.stringify({
       hashes: fingerprints.map((link) => link.hash),
       connectionIds: fingerprints.flatMap((link) => link.connectionId ?? []),
+      ...(pairingUrl ? { pairingUrl } : {}),
     }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
     cache: 'no-store',
@@ -236,6 +237,9 @@ export function SetupActions({
     setOpening(true);
     setError('');
     const deadline = Date.now() + 10 * 60_000;
+    let pairingConfirmed = false;
+    let pairingCode: string | undefined;
+    const pollDelay = () => (pairingCode && !pairingConfirmed ? 1000 : 5000);
     const fail = (message: string) => {
       if (!current()) return;
       controller.abort();
@@ -247,16 +251,25 @@ export function SetupActions({
     const check = async () => {
       if (!current()) return;
       try {
-        const result = await readAppLinks([href], controller.signal);
+        const result = await readAppLinks([href], controller.signal, href);
         if (!current()) return;
         if (result.completed.includes(href)) {
           complete(href);
           close();
           return;
         }
-        if (!result.apps.has(href)) {
+        const app = result.apps.get(href);
+        if (!app) {
           fail('This sign-in link is no longer available. Ask Otto to connect again.');
           return;
+        }
+        if (app.pairingConfirmed === true) {
+          pairingConfirmed = true;
+          setSignIn((value) =>
+            current() && value?.url === href && !value.pairingConfirmed
+              ? { ...value, pairingConfirmed: true }
+              : value,
+          );
         }
       } catch {
         if (!current()) return;
@@ -265,10 +278,10 @@ export function SetupActions({
         fail('The sign-in link expired. Ask Otto to connect again.');
         return;
       }
-      timer.current = window.setTimeout(() => void check(), 5000);
+      timer.current = window.setTimeout(() => void check(), pollDelay());
     };
     try {
-      const result = await readAppLinks([href], controller.signal);
+      const result = await readAppLinks([href], controller.signal, href);
       if (!current()) return;
       if (result.completed.includes(href)) {
         popup?.close();
@@ -279,6 +292,12 @@ export function SetupActions({
       const app = result.apps.get(href);
       if (!app || (app.pairingCode !== undefined && !/^\d{3}-\d{3}$/.test(app.pairingCode)))
         throw new Error('The sign-in link is unavailable.');
+      pairingConfirmed = app.pairingConfirmed === true;
+      pairingCode = app.pairingCode;
+      if (pairingConfirmed) {
+        popup?.close();
+        opened.current.add(href);
+      }
       const pending = {
         service: app.slug,
         name: app.name,
@@ -287,9 +306,10 @@ export function SetupActions({
         code: app.pairingCode,
         opened: opened.current.has(href),
         reopened: opened.current.has(href),
+        pairingConfirmed,
       };
       flushSync(() => setSignIn(pending));
-      timer.current = window.setTimeout(() => void check(), 5000);
+      timer.current = window.setTimeout(() => void check(), pollDelay());
       if (!pending.opened) {
         if (external) {
           await openConnection(href);
@@ -302,7 +322,7 @@ export function SetupActions({
       }
       if (!current()) return;
       setSignIn((value) =>
-        value === pending ? { ...value, opened: opened.current.has(href) } : value,
+        current() && value?.url === href ? { ...value, opened: opened.current.has(href) } : value,
       );
       setOpening(false);
     } catch {

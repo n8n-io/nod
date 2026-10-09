@@ -90,6 +90,7 @@ test('managed integration requests bind SDK calls to a private persisted install
   let uploadResponse = 'otto-file.synthetic-owned-capability';
   let uploadName = 'synthetic.bin';
   let failUpload = false;
+  let pairingStatus: unknown = { pairingConfirmed: false };
   let expectedUser = '';
   let expectedCallback: Record<string, unknown> = {
     type: 'loopback',
@@ -169,10 +170,15 @@ test('managed integration requests bind SDK calls to a private persisted install
       assert.equal('callbackUrl' in body, false);
       assert.match(String(body.challenge), /^[A-Za-z0-9_-]{43}$/);
       return Response.json({
-        redirectUrl: 'https://proxy.example.test/v1/connect/browser?ticket=synthetic',
+        redirectUrl: 'https://proxy.example.test/v1/connect/pair?ticket=synthetic',
         transactionId: body.transactionId,
         pairingCode: '123-456',
       });
+    }
+    if (url.pathname === '/v1/connect/status') {
+      assert.equal(value.method, 'POST');
+      assert.deepEqual(body, { ticket: 'synthetic' });
+      return Response.json(pairingStatus);
     }
     if (url.pathname === '/v1/connect/complete') {
       assert.equal(body.completionToken, 'synthetic-completion');
@@ -234,6 +240,39 @@ test('managed integration requests bind SDK calls to a private persisted install
     /owner/,
   );
   assert.equal(calls.length, afterAuthorization);
+  assert.equal(await provider.pairingConfirmed!('fixture-owner', directAttempt.url), false);
+  pairingStatus = { pairingConfirmed: true };
+  assert.equal(await provider.pairingConfirmed!('fixture-owner', directAttempt.url), true);
+  assert.deepEqual(
+    calls.slice(afterAuthorization).map((call) => call.path),
+    ['/v1/connect/status', '/v1/connect/status'],
+  );
+  const beforeInvalidPairing = calls.length;
+  await assert.rejects(provider.pairingConfirmed!('another-owner', directAttempt.url), /owner/);
+  for (const url of [
+    'https://other.example.test/v1/connect/pair?ticket=synthetic',
+    'https://proxy.example.test/v1/connect/complete?ticket=synthetic',
+    'https://user@proxy.example.test/v1/connect/pair?ticket=synthetic',
+    `${directAttempt.url}#fragment`,
+    `${directAttempt.url}&ticket=another`,
+    `${directAttempt.url}&unrelated=1`,
+    'https://proxy.example.test/v1/connect/pair?ticket=',
+  ])
+    await assert.rejects(provider.pairingConfirmed!('fixture-owner', url), /link is invalid/);
+  assert.equal(calls.length, beforeInvalidPairing);
+  pairingStatus = { pairingConfirmed: 'true' };
+  await assert.rejects(provider.pairingConfirmed!('fixture-owner', directAttempt.url));
+  const abortedPairing = calls.length;
+  await assert.rejects(
+    provider.pairingConfirmed!(
+      'fixture-owner',
+      directAttempt.url,
+      AbortSignal.abort(new Error('Pairing cancelled.')),
+    ),
+    /Pairing cancelled/,
+  );
+  assert.equal(calls.length, abortedPairing);
+  assert.equal(createComposioProvider({ apiKey: 'synthetic' }).pairingConfirmed, undefined);
   const session = await provider.createSession('fixture-owner', {});
   const attempt = directAttempt;
   assert.equal(attempt.accountId, `pending_${state}`);
@@ -667,6 +706,8 @@ test(
     let state = '';
     let completions = 0;
     let refreshes = 0;
+    let pairingConfirmed = false;
+    let pairingUnavailable = false;
     const provider = fakeProvider({
       id: 'fixture-deferred-session',
       authorize: async (_service, nextCallback) => {
@@ -691,6 +732,13 @@ test(
       throw new Error('Starting sign-in must not create a tool session.');
     };
     provider.configurationId = 'proxy-fixture';
+    const pairingChecks = t.mock.fn(async (owner: string, url: string) => {
+      assert.equal(owner, 'fixture-owner');
+      assert.equal(url, 'https://proxy.example.test/v1/connect/browser?ticket=fixture');
+      if (pairingUnavailable) throw new Error('Synthetic pairing status unavailable.');
+      return pairingConfirmed;
+    });
+    provider.pairingConfirmed = pairingChecks;
     provider.supportsSubscriptions = [];
     provider.webhooksConfigured = false;
     provider.parseCallback = async (query, pending) => {
@@ -727,11 +775,11 @@ test(
     assert.equal(begin.json().pairingCode, '123-456');
     assert.equal(begin.body.includes(secret), false);
     const linkHash = createHash('sha256').update(begin.json().url).digest('hex');
-    const status = () =>
+    const status = (pairingUrl?: string) =>
       app.inject({
         method: 'POST',
         url: '/api/apps/setup-status',
-        payload: { hashes: [linkHash, '0'.repeat(64)] },
+        payload: { hashes: [linkHash, '0'.repeat(64)], ...(pairingUrl ? { pairingUrl } : {}) },
       });
     const pending = await status();
     assert.equal(pending.statusCode, 200);
@@ -742,13 +790,44 @@ test(
     assert.equal(pending.json().apps[0].pairingCode, '123-456');
     assert.equal(pending.body.includes(secret), false);
     assert.equal(pending.body.includes(state), false);
+    assert.equal(pairingChecks.mock.callCount(), 0);
+    assert.equal((await status(begin.json().url)).json().apps[0].pairingConfirmed, undefined);
+    assert.equal(pairingChecks.mock.callCount(), 1);
+    pairingConfirmed = true;
+    const paired = await status(begin.json().url);
+    assert.equal(paired.json().apps[0].pairingConfirmed, true);
+    assert.deepEqual(paired.json().completed, []);
+    assert.equal(
+      (await database.pool.query('SELECT account_id FROM app_connections')).rows[0].account_id,
+      null,
+    );
+    assert.equal(completions, 0);
+    assert.equal(refreshes, 0);
+    pairingUnavailable = true;
+    const unavailable = await status(begin.json().url);
+    assert.equal(unavailable.statusCode, 200);
+    assert.equal(unavailable.json().apps[0].pairingConfirmed, undefined);
+    pairingUnavailable = false;
+    const pairingReads = pairingChecks.mock.callCount();
+    await status('https://proxy.example.test/v1/connect/browser?ticket=foreign');
+    assert.equal(pairingChecks.mock.callCount(), pairingReads);
     await database.pool.query('UPDATE app_connections SET owner_id=$1', ['another-owner']);
-    assert.deepEqual((await status()).json(), { completed: [], apps: [] });
+    assert.deepEqual((await status(begin.json().url)).json(), { completed: [], apps: [] });
     await database.pool.query('UPDATE app_connections SET owner_id=$1,revoked=true', [
       'fixture-owner',
     ]);
-    assert.deepEqual((await status()).json(), { completed: [], apps: [] });
+    assert.deepEqual((await status(begin.json().url)).json(), { completed: [], apps: [] });
     await database.pool.query('UPDATE app_connections SET revoked=false');
+    await database.pool.query("UPDATE app_connections SET configuration_id='retired-proxy'");
+    assert.equal((await status(begin.json().url)).json().apps[0].pairingConfirmed, undefined);
+    await database.pool.query(
+      "UPDATE app_connections SET configuration_id='proxy-fixture',callback_expires=now()-interval '1 minute'",
+    );
+    assert.deepEqual((await status(begin.json().url)).json(), { completed: [], apps: [] });
+    assert.equal(pairingChecks.mock.callCount(), pairingReads);
+    await database.pool.query(
+      "UPDATE app_connections SET callback_expires=now()+interval '10 minutes'",
+    );
     const before = await app.inject({
       url: `/api/apps/callback?state=${randomBytes(32).toString('base64url')}&completion_token=sealed-fixture`,
     });
@@ -10356,6 +10435,8 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   let gmailSignInUrl = 'https://connect.example.test/gmail';
   const pendingAppLinks = new Set<string>();
   const completedAppLinks = new Set<string>();
+  const pairedAppLinks = new Set<string>();
+  const pairingUrls: string[] = [];
   let holdReceipt = false;
   let releaseReceipt: (() => void) | undefined;
   const receiptHash = (url: string) => createHash('sha256').update(url).digest('hex');
@@ -10374,6 +10455,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   let releaseStatusRead: (() => void) | undefined;
   const timers = new Map<number, () => void>();
   const expiryTimers = new Map<number, () => void>();
+  const pollDelays = new Map<number, number>();
   let timerId = 100_000;
   const schedule = dom.window.setTimeout.bind(dom.window);
   const cancel = dom.window.clearTimeout.bind(dom.window);
@@ -10382,8 +10464,9 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       expiryTimers.set(++timerId, callback);
       return timerId;
     }
-    if (milliseconds !== 5000) return schedule(callback, milliseconds, ...args);
-    timers.set(++timerId, callback);
+    if (![1000, 5000].includes(milliseconds)) return schedule(callback, milliseconds, ...args);
+    pollDelays.set(++timerId, milliseconds);
+    timers.set(timerId, callback);
     return timerId;
   }) as typeof dom.window.setTimeout;
   dom.window.clearTimeout = (id) => {
@@ -10455,13 +10538,28 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       if (path === '/api/apps/catalog') return Response.json(appCatalog);
       if (path === '/api/apps/setup-status') {
         assert.equal(init.method, 'POST');
-        const { hashes } = JSON.parse(String(init.body)) as { hashes: string[] };
+        const { hashes, pairingUrl } = JSON.parse(String(init.body)) as {
+          hashes: string[];
+          pairingUrl?: string;
+        };
         assert.equal(hashes.length, 1);
+        if (pairingUrl) {
+          assert.equal(receiptHash(pairingUrl), hashes[0]);
+          pairingUrls.push(pairingUrl);
+        }
         const response = Response.json({
           completed: hashes.filter((hash) => completedAppLinks.has(hash)),
           apps: hashes
             .filter((hash) => pendingAppLinks.has(hash) && !completedAppLinks.has(hash))
-            .map((hash) => ({ hash, slug: 'gmail', name: 'Gmail' })),
+            .map((hash) => ({
+              hash,
+              slug: 'gmail',
+              name: 'Gmail',
+              pairingConfirmed: pairedAppLinks.has(hash),
+            }))
+            .concat([
+              { hash: '0'.repeat(64), slug: 'gmail', name: 'Gmail', pairingConfirmed: true },
+            ]),
         });
         if (holdReceipt) {
           holdReceipt = false;
@@ -10596,7 +10694,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.ok(dialog);
     await act(async () => dialog.querySelector<HTMLButtonElement>('.dialog-close')!.click());
     await settle();
-    assert.equal(pairingDialog(), null);
+    assert.equal(Boolean(pairingDialog()), false);
   };
   const poll = async () => {
     const [id, callback] = timers.entries().next().value!;
@@ -10731,12 +10829,13 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(calendarDialog.querySelectorAll('a').length, 0);
     assert.equal(codeAtLaunch, pairingCode);
     assert.equal(opened.at(-1), appSignInUrl);
+    assert.equal(pollDelays.get(timers.keys().next().value!), 1000);
     const expiryDuringLaunch = [...expiryTimers.entries()];
     assert.equal(expiryDuringLaunch.length, 1);
     await act(async () => finishExternalLaunch!());
     await settle();
     assert.deepEqual([...expiryTimers.entries()], expiryDuringLaunch);
-    assert.equal(dom.window.document.querySelector('.app-manage-dialog'), null);
+    assert.equal(Boolean(dom.window.document.querySelector('.app-manage-dialog')), false);
     assert.deepEqual(appRequests.at(-1), {
       path: '/api/apps/googlecalendar/connect',
       body: { returnTo: 'window' },
@@ -10745,15 +10844,32 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       receive!({ data: { service: 'gmail', connection: 'connected', attempt } }),
     );
     assert.equal(pairingDialog(), calendarDialog);
-    completedAppLinks.add(receiptHash(appSignInUrl));
+    pairedAppLinks.add(receiptHash(appSignInUrl));
     Object.defineProperty(dom.window.document, 'visibilityState', {
       configurable: true,
       value: 'hidden',
     });
     await poll();
+    assert.ok(
+      pairingDialog() === calendarDialog,
+      'Confirmed pairing must retain the waiting dialog.',
+    );
+    assert.equal(pairingDialog()!.querySelector('[data-analytics-private]'), null);
+    assert.ok(pairingDialog()!.contains(dom.window.document.activeElement));
+    assert.deepEqual([...expiryTimers.entries()], expiryDuringLaunch);
+    assert.equal(pairingUrls.at(-1), appSignInUrl);
+    assert.equal(timers.size, 1);
+    assert.equal(pollDelays.get(timers.keys().next().value!), 5000);
+    assert.ok(pendingAppLinks.has(receiptHash(appSignInUrl)));
+    assert.ok(!completedAppLinks.has(receiptHash(appSignInUrl)));
+    completedAppLinks.add(receiptHash(appSignInUrl));
+    await poll();
     await settle();
-    assert.equal(pairingDialog(), null);
-    assert.equal(dom.window.document.activeElement, calendarConnect);
+    assert.equal(Boolean(pairingDialog()), false);
+    assert.ok(
+      dom.window.document.activeElement === calendarConnect,
+      'Focus must return to the app tile.',
+    );
     assert.equal(expiryTimers.size, 0);
     assert.equal(timers.size, 0);
     Object.defineProperty(dom.window.document, 'visibilityState', {
@@ -10847,8 +10963,21 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       receive!({ data: { service: 'googlecalendar', connection: 'connected', attempt } }),
     );
     await settle();
-    assert.equal(pairingDialog(), null);
+    assert.equal(Boolean(pairingDialog()), false);
     assert.equal(expiryTimers.size, 0);
+    appSignInUrl = 'https://connect.example.test/calendar-confirmed-elsewhere';
+    await act(async () => calendarConnect.click());
+    await settle();
+    assert.ok(pairingDialog()?.querySelector('a'));
+    pairedAppLinks.add(receiptHash(appSignInUrl));
+    await poll();
+    assert.ok(pairingDialog());
+    assert.equal(pairingDialog()!.querySelector('[data-analytics-private]'), null);
+    assert.equal(pairingDialog()!.querySelector('a'), null);
+    completedAppLinks.add(receiptHash(appSignInUrl));
+    await poll();
+    assert.equal(Boolean(pairingDialog()), false);
+    assert.equal(timers.size, 0);
     Object.assign(dom.window, { ottoDesktop: appsDesktopBridge });
     dom.window.open = originalOpen;
     appSignInUrl = 'https://connect.example.test/variant';
@@ -10901,7 +11030,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
         ?.textContent,
       pairingCode,
     );
-    assert.equal(dom.window.document.querySelector('.app-manage-dialog'), null);
+    assert.equal(Boolean(dom.window.document.querySelector('.app-manage-dialog')), false);
     assert.equal(pairingDialog()?.contains(dom.window.document.activeElement), true);
     await act(async () =>
       receive!({
@@ -10916,7 +11045,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     await act(async () =>
       receive!({ data: { service: 'notion_mcp', connection: 'connected', attempt } }),
     );
-    assert.equal(pairingDialog(), null);
+    assert.equal(Boolean(pairingDialog()), false);
     await settle();
     assert.equal(
       dom.window.document
@@ -10946,7 +11075,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     await settle();
     assert.equal(visiblePairingCode(), firstCode);
     assert.equal(appInventory[0].status, 'connected');
-    completedAppLinks.add(receiptHash(firstLink));
+    pairedAppLinks.add(receiptHash(firstLink));
     holdReceipt = true;
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
@@ -10963,22 +11092,35 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')),
     );
     await settle();
-    assert.equal(pairingDialog(), null);
+    assert.equal(Boolean(pairingDialog()), false);
     assert.equal(expiryTimers.size, 0);
     const focusedLink = 'https://connect.example.test/completed-before-focus';
     await startAnotherAccount(focusedLink);
     completedAppLinks.add(receiptHash(focusedLink));
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
-    assert.equal(pairingDialog(), null);
+    assert.equal(Boolean(pairingDialog()), false);
     assert.equal(expiryTimers.size, 0);
+    const pairedFailureLink = 'https://connect.example.test/paired-before-failure';
+    await startAnotherAccount(pairedFailureLink);
+    pairedAppLinks.add(receiptHash(pairedFailureLink));
+    await poll();
+    assert.ok(pairingDialog());
+    assert.equal(pairingDialog()!.querySelector('[data-analytics-private]'), null);
+    assert.equal(Boolean(dom.window.document.querySelector('.app-manage-dialog')), false);
+    assert.equal(expiryTimers.size, 1);
+    pendingAppLinks.delete(receiptHash(pairedFailureLink));
+    await poll();
+    assert.ok(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'));
+    assert.equal(expiryTimers.size, 0);
+    assert.equal(timers.size, 0);
     const finalLink = 'https://connect.example.test/completed-before-timeout';
     await startAnotherAccount(finalLink);
     completedAppLinks.add(receiptHash(finalLink));
     const expire = expiryTimers.values().next().value!;
     await act(async () => expire());
     await settle();
-    assert.equal(pairingDialog(), null);
+    assert.equal(Boolean(pairingDialog()), false);
     assert.equal(expiryTimers.size, 0);
     assert.equal(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'), null);
     for (const outcome of ['cancelled', 'failed']) {
@@ -10992,7 +11134,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
           : dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')),
       );
       await settle();
-      assert.equal(pairingDialog(), null);
+      assert.equal(Boolean(pairingDialog()), false);
       assert.ok(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'));
       assert.equal(expiryTimers.size, 0);
     }
@@ -11029,12 +11171,15 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       body: { connectionId: mcpAccount.connectionId, returnTo: 'window' },
     });
     assert.ok(pairingDialog());
-    assert.equal(dom.window.document.querySelector('.app-manage-dialog'), null);
+    assert.equal(Boolean(dom.window.document.querySelector('.app-manage-dialog')), false);
     pendingAppLinks.add(receiptHash('https://connect.example.test/reconnect'));
     await act(async () =>
       finishAppConnect!(Response.json({ url: 'https://connect.example.test/reconnect' })),
     );
     await settle();
+    assert.equal(pollDelays.get(timers.keys().next().value!), 5000);
+    await poll();
+    assert.ok(pairingDialog());
     await closePairing();
     appInventory = [
       { ...mcpAccount, status: 'disconnected', canReconnect: false },
@@ -11192,7 +11337,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     await settle();
     assert.equal(opened.length, openedBeforeProposal);
     assert.equal(dom.window.location.search, `?connect=${id}`);
-    assert.equal(dom.window.document.querySelector('.app-manage-dialog'), null);
+    assert.equal(Boolean(dom.window.document.querySelector('.app-manage-dialog')), false);
     assert.ok(dom.window.document.querySelector('.app-discovery-dialog form'));
     assert.equal(expiryTimers.size, 0);
     discoveryStatus = 'connected';
@@ -11427,6 +11572,7 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     createHash('sha256').update(href).digest('hex'),
   );
   const requests: string[][] = [];
+  const pairingRequests: string[] = [];
   const opened: string[] = [];
   let codeAtLaunch: string | null | undefined;
   let pauseLaunch = false;
@@ -11434,14 +11580,17 @@ test('chat app setup shows owned pairing codes before handoff and completes with
   let holdRead = false;
   let releaseRead: (() => void) | undefined;
   const pending = new Set([hashes[0], hashes[2]]);
+  const paired = new Set<string>();
   let personalCode = '234-567';
   const timers = new Map<number, () => void>();
+  const pollDelays = new Map<number, number>();
   let timerId = 100_000;
   const schedule = dom.window.setTimeout.bind(dom.window);
   const cancel = dom.window.clearTimeout.bind(dom.window);
   dom.window.setTimeout = ((callback: () => void, milliseconds: number, ...args: unknown[]) => {
-    if (milliseconds !== 5000) return schedule(callback, milliseconds, ...args);
-    timers.set(++timerId, callback);
+    if (![1000, 5000].includes(milliseconds)) return schedule(callback, milliseconds, ...args);
+    pollDelays.set(++timerId, milliseconds);
+    timers.set(timerId, callback);
     return timerId;
   }) as typeof dom.window.setTimeout;
   dom.window.clearTimeout = (id) => {
@@ -11489,7 +11638,15 @@ test('chat app setup shows owned pairing codes before handoff and completes with
       assert.equal(path, '/api/apps/setup-status');
       assert.equal(init.method, 'POST');
       const body = JSON.parse(String(init.body));
-      assert.deepEqual(Object.keys(body), ['hashes', 'connectionIds']);
+      assert.deepEqual(
+        Object.keys(body),
+        body.pairingUrl ? ['hashes', 'connectionIds', 'pairingUrl'] : ['hashes', 'connectionIds'],
+      );
+      if (body.pairingUrl) {
+        assert.ok(links.includes(body.pairingUrl));
+        pairingRequests.push(body.pairingUrl);
+        assert.deepEqual(body.hashes, [createHash('sha256').update(body.pairingUrl).digest('hex')]);
+      }
       assert.ok(body.hashes.every((hash: string) => hashes.includes(hash)));
       assert.deepEqual(body.connectionIds, body.hashes.includes(hashes[2]) ? [discoveryId] : []);
       requests.push(body.hashes);
@@ -11499,10 +11656,22 @@ test('chat app setup shows owned pairing codes before handoff and completes with
           : {
               completed,
               apps: [
-                { hash: hashes[0], slug: 'gmail', name: 'Gmail', pairingCode: '123-456' },
-                { hash: hashes[1], slug: 'gmail', name: 'Gmail', pairingCode: personalCode },
+                {
+                  hash: hashes[0],
+                  slug: 'gmail',
+                  name: 'Gmail',
+                  pairingCode: '123-456',
+                  pairingConfirmed: paired.has(hashes[0]),
+                },
+                {
+                  hash: hashes[1],
+                  slug: 'gmail',
+                  name: 'Gmail',
+                  pairingCode: personalCode,
+                  pairingConfirmed: paired.has(hashes[1]),
+                },
                 { hash: hashes[2], slug: 'notion_mcp', name: 'Notion' },
-                { hash: '0'.repeat(64), slug: 'slack', name: 'Slack' },
+                { hash: '0'.repeat(64), slug: 'slack', name: 'Slack', pairingConfirmed: true },
               ].filter((app) => pending.has(app.hash) || app.slug === 'slack'),
             },
         { status: failing ? 503 : 200 },
@@ -11565,6 +11734,7 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     };
     assert.equal(timers.size, 0);
     assert.deepEqual(requests[0], hashes);
+    paired.add(hashes[0]);
     holdRead = true;
     await act(async () => buttons()[0].click());
     await waitFor(() => Boolean(dialog()) && Boolean(releaseRead));
@@ -11572,6 +11742,7 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     assert.equal(code(), undefined);
     assert.deepEqual(opened, []);
     const lateRead = releaseRead!;
+    paired.delete(hashes[0]);
     await close();
     pending.add(hashes[1]);
     await act(async () => buttons()[1].click());
@@ -11588,6 +11759,7 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     await waitFor(() => code() === '123-456' && opened.length === 2);
     assert.equal(codeAtLaunch, '123-456');
     assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    assert.equal(pollDelays.get(timers.keys().next().value!), 1000);
     const timerDuringLaunch = [...timers.entries()];
     await act(async () => finishLaunch!());
     await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
@@ -11605,6 +11777,15 @@ test('chat app setup shows owned pairing codes before handoff and completes with
       configurable: true,
       value: 'hidden',
     });
+    paired.add(hashes[0]);
+    await poll();
+    await waitFor(() => Boolean(dialog()) && code() === undefined);
+    assert.equal(buttons().length, 3);
+    assert.equal(pairingRequests.at(-1), links[0]);
+    assert.equal(timers.size, 1);
+    assert.equal(pollDelays.get(timers.keys().next().value!), 5000);
+    assert.ok(dialog()!.contains(dom.window.document.activeElement));
+    assert.deepEqual(opened, [links[1], links[0]]);
     completed = [hashes[0]];
     await poll();
     await waitFor(() => buttons().length === 2 && !dialog());
@@ -11676,6 +11857,21 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     await waitFor(() => code() === personalCode);
     assert.equal(opened.length, 3);
     assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    paired.add(hashes[1]);
+    await poll();
+    await waitFor(() => Boolean(dialog()) && code() === undefined);
+    assert.equal(buttons().length, 1);
+    assert.equal(timers.size, 1);
+    pending.delete(hashes[1]);
+    await poll();
+    await waitFor(() => Boolean(dialog()?.querySelector('[role="alert"]')));
+    assert.equal(timers.size, 0);
+    assert.equal(opened.length, 3);
+    await close();
+    paired.delete(hashes[1]);
+    pending.add(hashes[1]);
+    await act(async () => buttons()[0].click());
+    await waitFor(() => code() === personalCode);
     completed = [...hashes];
     Object.defineProperty(dom.window.document, 'visibilityState', {
       configurable: true,
@@ -11687,6 +11883,7 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     assert.doesNotMatch(dom.window.document.body.innerHTML, /synthetic-work|synthetic-personal/);
   } finally {
     await act(async () => root.unmount());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
     dom.window.close();
     for (const [key, value] of originals)
       if (value) Object.defineProperty(globalThis, key, value);

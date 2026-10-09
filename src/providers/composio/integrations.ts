@@ -805,6 +805,12 @@ export function createComposioProvider(options: {
           return options.proxy!.authorize(schemaToolkit.parse(service), callbackUrl);
         }
       : undefined,
+    pairingConfirmed: options.proxy
+      ? async (ownerId, url, signal) => {
+          userId(ownerId);
+          return options.proxy!.pairingConfirmed(url, signal);
+        }
+      : undefined,
     verificationEmails: (accountId, query, signal) =>
       readVerificationEmails(required().tools, accountId, query, signal),
     sentEmails: (accountId, signal) => readSentEmails(required().tools, accountId, signal),

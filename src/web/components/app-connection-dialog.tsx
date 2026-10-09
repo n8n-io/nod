@@ -12,6 +12,7 @@ export type AppSignIn = {
   code?: string;
   opened: boolean;
   reopened?: boolean;
+  pairingConfirmed?: boolean;
 };
 
 export function AppConnectionDialog({
@@ -68,7 +69,7 @@ export function AppConnectionDialog({
                   ? 'Sign-in could not continue.'
                   : !signIn.url
                     ? 'Your browser will open when sign-in is ready.'
-                    : signIn.code
+                    : signIn.code && !signIn.pairingConfirmed
                       ? 'Match this code in your browser to continue.'
                       : 'Sign in in your browser and review what Otto can access.'}
               </DialogDescription>
@@ -77,19 +78,21 @@ export function AppConnectionDialog({
               <Notice kind="error">{error}</Notice>
             ) : (
               <>
-                {signIn.code && (
+                {signIn.code && !signIn.pairingConfirmed && (
                   <div className="app-connect-code" data-analytics-private>
                     {signIn.code}
                   </div>
                 )}
                 <p className="app-connect-waiting" role="status">
-                  {signIn.reopened
-                    ? 'Sign-in is already open in your browser. If you closed it, ask Otto for a new sign-in link.'
-                    : signIn.url
-                      ? 'Finish signing in in your browser.'
-                      : 'Preparing secure sign-in…'}
+                  {signIn.pairingConfirmed
+                    ? 'Waiting for you to finish signing in.'
+                    : signIn.reopened
+                      ? 'Sign-in is already open in your browser. If you closed it, ask Otto for a new sign-in link.'
+                      : signIn.url
+                        ? 'Finish signing in in your browser.'
+                        : 'Preparing secure sign-in…'}
                 </p>
-                {signIn.url && !signIn.opened && !opening && (
+                {signIn.url && !signIn.opened && !opening && !signIn.pairingConfirmed && (
                   <div className="app-connect-actions">
                     <Button variant="outline" asChild>
                       <a href={signIn.url} target="_blank" rel="noreferrer" onClick={onOpened}>
@@ -98,7 +101,7 @@ export function AppConnectionDialog({
                     </Button>
                   </div>
                 )}
-                {signIn.code && (
+                {signIn.code && !signIn.pairingConfirmed && (
                   <p className="app-connect-hint">
                     If the codes differ, close the browser window and start again.
                   </p>

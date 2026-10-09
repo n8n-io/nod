@@ -124,6 +124,7 @@ export interface IntegrationProvider {
     service: IntegrationService,
     callbackUrl: string,
   ): Promise<IntegrationAuthorization>;
+  pairingConfirmed?(ownerId: string, url: string, signal?: AbortSignal): Promise<boolean>;
   createSession(
     ownerId: string,
     accounts: Partial<Record<IntegrationService, string | string[]>>,

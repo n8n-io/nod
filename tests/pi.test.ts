@@ -1994,30 +1994,38 @@ test('turn tool limits fence custom and native execution through the same budget
 
 test('turn deadlines release stalled model, provider, native and disposal operations', async (t) => {
   for (const stalledAt of ['model', 'provider', 'native', 'dispose'] as const) {
-    await t.test(stalledAt, { timeout: 1500 }, async () => {
+    await t.test(stalledAt, { timeout: 1500 }, async (t) => {
       const directory = await mkdtemp(join(tmpdir(), 'otto-time-budget-'));
       let aborted = false;
       let providerSignal: AbortSignal | undefined;
       let workspaceSignal: AbortSignal | undefined;
+      let entered!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
       const stalled = new Promise<never>(() => {});
+      const stall = () => {
+        entered();
+        return stalled;
+      };
       const workspace = fakeWorkspace();
       const runtime = createAgentRuntime({
         agent: {
           open: async (options) => ({
             resumed: false,
             prompt: async () => {
-              if (stalledAt === 'model') await stalled;
+              if (stalledAt === 'model') await stall();
               if (stalledAt === 'provider')
                 await options.tools
                   .find((tool) => tool.name === 'apps')!
                   .execute({ action: 'FIXTURE_READ', args: {} });
               if (stalledAt === 'native')
-                await options.runTool('read', { path: 'fixture.txt' }, () => stalled);
+                await options.runTool('read', { path: 'fixture.txt' }, stall);
             },
             abort: () => {
               aborted = true;
             },
-            dispose: () => (stalledAt === 'dispose' ? stalled : undefined),
+            dispose: () => (stalledAt === 'dispose' ? stall() : undefined),
           }),
           dispose: () => {},
         },
@@ -2030,22 +2038,31 @@ test('turn deadlines release stalled model, provider, native and disposal operat
           },
         },
       });
+      t.mock.timers.enable({ apis: ['setTimeout'] });
       try {
         const running = runtime.runTurn({
           ...context(directory),
           limits: { maxToolCalls: 8, timeoutMs: 30 },
           integration: async (_action, _args, signal) => {
             providerSignal = signal;
-            return stalled;
+            return stall();
           },
         });
-        if (stalledAt === 'dispose') await running;
-        else await assert.rejects(running, /time limit/);
+        const completion =
+          stalledAt === 'dispose' ? running : assert.rejects(running, /time limit/);
+        await ready;
+        t.mock.timers.tick(29);
+        assert.equal(runtime.status().activeTurns, 1);
+        assert.equal(workspaceSignal?.aborted, false);
+        if (stalledAt === 'provider') assert.equal(providerSignal?.aborted, false);
+        t.mock.timers.tick(1);
+        await completion;
         assert.equal(runtime.status().activeTurns, 0);
         assert.equal(workspaceSignal?.aborted, true);
         if (stalledAt !== 'dispose') assert.equal(aborted, true);
         if (stalledAt === 'provider') assert.equal(providerSignal?.aborted, true);
       } finally {
+        t.mock.timers.reset();
         await runtime.dispose();
         await rm(directory, { recursive: true, force: true });
       }

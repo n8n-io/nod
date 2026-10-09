@@ -290,6 +290,26 @@ export function createComposioProxy(options: {
       signal?.throwIfAborted();
       return result;
     },
+    async pairingConfirmed(url: string, signal?: AbortSignal) {
+      const pairing = new URL(url);
+      const ticket = pairing.searchParams.get('ticket');
+      if (
+        pairing.origin !== origin ||
+        pairing.pathname !== '/v1/connect/pair' ||
+        pairing.username ||
+        pairing.password ||
+        pairing.hash ||
+        pairing.searchParams.size !== 1 ||
+        !ticket ||
+        ticket.length > 16_000
+      )
+        throw new Error('The integration connection link is invalid.');
+      return z
+        .object({ pairingConfirmed: z.boolean() })
+        .strict()
+        .parse(await rpc('/v1/connect/status', { ticket }, { signal, timeout: 5_000 }))
+        .pairingConfirmed;
+    },
     async authorize(toolkit: string, callbackUrl: string, authConfigId?: string) {
       const callback = new URL(callbackUrl);
       const transactionId = stateSchema.parse(callback.searchParams.get('state'));
