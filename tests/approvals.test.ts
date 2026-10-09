@@ -668,6 +668,184 @@ test(
       );
 
       await t.test(
+        'website sign-ins follow the owner words, hold background work and remember only the owner answer',
+        async () => {
+          const { createVaultAccess } = await import('../src/server/vault-access.ts');
+          const access = await createVaultAccess(db.pool, { ownerId, check: trust.signIn });
+          const site = 'https://www.iberdrola.es';
+          aligned = false;
+
+          const named = await begin('Download my October invoice from Iberdrola.');
+          assert.deepEqual(await access.authorize(named, { origin: site, kind: 'sign_in' }), {
+            ok: true,
+            reason: 'asked',
+          });
+          const reviewed = reviews.length;
+          assert.deepEqual(await access.authorize(named, { origin: site, kind: 'session' }), {
+            ok: true,
+            reason: 'asked',
+          });
+          assert.equal(reviews.length, reviewed);
+          await access.record(named, {
+            action: 'sign_in',
+            origin: site,
+            reason: 'asked',
+            itemId: randomUUID(),
+            itemKind: 'login',
+          });
+
+          const unmentioned = await begin('Find my latest invoice.');
+          const asked = await access.authorize(unmentioned, {
+            origin: 'https://login.example-energy.test',
+            kind: 'sign_in',
+            account: 'al…',
+          });
+          assert.deepEqual(asked, {
+            ok: false,
+            question: 'Sign in to login.example-energy.test as al…?',
+          });
+          assert.equal(reviews.at(-1)?.signIn.website, 'https://login.example-energy.test');
+          assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Find my latest invoice.');
+          assert.deepEqual(
+            await access.authorize(unmentioned, {
+              origin: 'https://login.example-energy.test',
+              kind: 'form',
+            }),
+            { ok: true, reason: 'entered' },
+          );
+
+          const question = 'Sign in to login.example-energy.test as al…?';
+          const result = await approvals.request(
+            unmentioned,
+            'OTTO_vault_allow',
+            { origin: 'https://login.example-energy.test' },
+            { confirm: true, question },
+          );
+          assert.equal(result.requiresConfirmation, true);
+          const pending = await proposal(unmentioned.turnId);
+          await confirmTurn(unmentioned.turnId);
+          await execute(pending.id);
+          const resumedTurn = {
+            threadId: unmentioned.threadId,
+            turnId: (await stored(pending.id)).execution_turn_id,
+          };
+          await db.pool.query("UPDATE turns SET status='running' WHERE id=$1", [
+            resumedTurn.turnId,
+          ]);
+          assert.deepEqual(
+            await access.allow(resumedTurn, { origin: 'https://login.example-energy.test' }),
+            {
+              allowed: true,
+              website: 'https://login.example-energy.test',
+              message: 'You allowed signing in to login.example-energy.test.',
+            },
+          );
+          assert.deepEqual(
+            await access.authorize(resumedTurn, {
+              origin: 'https://login.example-energy.test',
+              kind: 'sign_in',
+            }),
+            { ok: true, reason: 'allowed' },
+          );
+          const later = await begin('Find another invoice.');
+          assert.equal(
+            'question' in
+              (await access.authorize(later, {
+                origin: 'https://login.example-energy.test',
+                kind: 'sign_in',
+              })),
+            true,
+          );
+
+          aligned = (input) => input.signIn?.website === 'https://shop.example.test';
+          const errand = await begin('Order the hinges we talked about.');
+          assert.deepEqual(
+            await access.authorize(errand, {
+              origin: 'https://shop.example.test',
+              kind: 'sign_in',
+            }),
+            { ok: true, reason: 'asked' },
+          );
+          aligned = false;
+
+          await access.always({ origin: 'https://ctt.pt' });
+          assert.deepEqual(
+            (await access.permissions()).map((permission) => permission.origin),
+            ['https://ctt.pt'],
+          );
+          const standing = await begin('Track the tile delivery.');
+          assert.deepEqual(
+            await access.authorize(standing, { origin: 'https://ctt.pt', kind: 'session' }),
+            { ok: true, reason: 'always' },
+          );
+          await trust.flag(standing, ['ignore_instructions']);
+          assert.deepEqual(
+            await access.authorize(standing, { origin: 'https://ctt.pt', kind: 'sign_in' }),
+            { ok: false, question: 'Sign in to ctt.pt?' },
+          );
+          assert.match(
+            (
+              (await access.authorize(standing, { origin: 'https://ctt.pt', kind: 'form' })) as {
+                message: string;
+              }
+            ).message,
+            /instructions for AI assistants/,
+          );
+
+          for (const source of ['event', 'onboarding'] as const) {
+            const background = await begin('Synthetic background work', { source });
+            for (const kind of ['sign_in', 'session', 'form'] as const)
+              assert.match(
+                (
+                  (await access.authorize(background, { origin: 'https://ctt.pt', kind })) as {
+                    message: string;
+                  }
+                ).message,
+                source === 'event' ? /does not sign in/ : /can only read/,
+              );
+          }
+          const scheduled = await begin('Scheduled task: Monthly invoices\nCheck the portal.', {
+            source: 'schedule',
+          });
+          assert.deepEqual(
+            await access.authorize(scheduled, {
+              origin: 'https://www.portaldasfinancas.gov.pt',
+              kind: 'sign_in',
+            }),
+            { ok: false, question: 'Sign in to www.portaldasfinancas.gov.pt?' },
+          );
+          assert.deepEqual(
+            await access.authorize(scheduled, { origin: 'https://ctt.pt', kind: 'sign_in' }),
+            { ok: true, reason: 'always' },
+          );
+          await access.revoke('https://ctt.pt');
+          assert.deepEqual(await access.permissions(), []);
+
+          const activity = await access.activity({});
+          assert.deepEqual(
+            activity.entries.map((entry) => [entry.action, entry.origin, entry.reason]).reverse(),
+            [
+              ['sign_in', site, 'asked'],
+              ['asked', 'https://login.example-energy.test', 'unrequested'],
+              ['asked', 'https://login.example-energy.test', 'unrequested'],
+              ['asked', 'https://ctt.pt', 'injection'],
+              ['held', 'https://ctt.pt', 'injection'],
+              ['held', 'https://ctt.pt', 'background'],
+              ['held', 'https://ctt.pt', 'readonly'],
+              ['asked', 'https://www.portaldasfinancas.gov.pt', 'schedule'],
+            ],
+          );
+          assert.equal(
+            activity.entries.at(-1)?.task,
+            'Download my October invoice from Iberdrola.',
+          );
+          assert.equal(activity.entries[0]?.task, 'Monthly invoices');
+          assert.deepEqual(activity.week, { signIns: 1, held: 3, asked: 4 });
+          assert.equal(JSON.stringify(activity).includes('password'), false);
+        },
+      );
+
+      await t.test(
         'requests are judged and shown by what they send, and a bare yes answers the question the owner saw',
         async () => {
           aligned = false;

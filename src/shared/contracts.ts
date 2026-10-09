@@ -75,7 +75,8 @@ export interface VaultCardEntry {
   updatedAt: string;
 }
 export type VaultEntry = VaultLoginEntry | VaultCardEntry;
-export type VaultListEntry = (VaultLoginEntry & { username: string }) | VaultCardEntry;
+export type VaultListEntry =
+  (VaultLoginEntry & { username: string; unreadable?: true }) | VaultCardEntry;
 export interface VaultLoginDetails extends VaultLoginEntry {
   username: string;
   hasPassword: boolean;
@@ -93,6 +94,47 @@ export interface VaultCardNumber {
 }
 export interface VaultCardSecurityCode {
   securityCode: string;
+}
+export type VaultActivityReason =
+  | 'asked'
+  | 'schedule'
+  | 'always'
+  | 'allowed'
+  | 'entered'
+  | 'picked'
+  | 'mailbox'
+  | 'readonly'
+  | 'background'
+  | 'injection'
+  | 'unrequested';
+export interface VaultActivityEntry {
+  id: string;
+  at: string;
+  action: 'sign_in' | 'session' | 'code' | 'held' | 'asked';
+  origin: string;
+  itemId?: string;
+  itemKind?: 'login' | 'session';
+  task: string;
+  reason: VaultActivityReason;
+}
+export interface VaultActivity {
+  week: { signIns: number; held: number; asked: number };
+  entries: VaultActivityEntry[];
+  next?: { at: string; id: string };
+}
+export interface VaultPermission {
+  id: string;
+  origin: string;
+  createdAt: string;
+}
+export interface VaultSession {
+  kind: 'session';
+  id: string;
+  label: string;
+  origin: string;
+  url: string;
+  state: 'pending' | 'saved' | 'needs_sign_in' | 'disconnecting';
+  checkedAt?: string;
 }
 export interface CredentialRequest {
   id: string;

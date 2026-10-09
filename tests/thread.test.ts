@@ -4961,7 +4961,7 @@ test('feedback diagnostics build bounded private tool activity from the saved se
       true,
     ).map((entry) => ({ ...entry, message: { ...entry.message, timestamp: NaN } })),
     ...activity('fill', 'browser', { action: 'fill', text: 'synthetic-private-fill' }, username),
-    ...activity('login', 'get_credential', { origin: 'synthetic-private-origin' }, 'private-login'),
+    ...activity('login', 'sign_in', { origin: 'synthetic-private-origin' }, 'private-login'),
     ...activity('flow', 'browser_flow', { query: 'synthetic-private-flow' }, 'private-flow-output'),
     ...activity(
       'memory',

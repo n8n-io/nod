@@ -259,27 +259,21 @@ export const toolDefinitions = {
     'Reuse known website routines in the current private browser. list {query?} reads the flow registry and ranks matches. get {id} shows a flow. save {flow} stores a checked flow as a file. run {id, inputs?} replays it and checks expectText or expectUrl after each step. It stops with the current page if a check fails. Files live in the owner flow library and remain available after a conversation reset. Start with open and end with a checked snapshot. Use stable selectors and named inputs for entered text. Never store passwords or codes.',
     browserFlowParameters,
   ),
-  get_credential: defineTool(
-    'get_credential',
-    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and any saved password; a passwordless login has an empty password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault first tries to retrieve email codes privately from a matching connected mailbox, including supported aliases. If it opens a secure form, that form requires the user to enter the value; it does not retrieve mail. Never read verification codes through apps or ask for them in chat. For the form, message is one sentence for the user about this step in their language, and action is the 2-5 word button text, such as "Add authenticator code"; never ask for the value in chat. Submit with browser and inspect the result.',
-    Type.Union([
-      Type.Object({
-        id: uuid,
-        origin: Type.String({ minLength: 1, maxLength: 2048 }),
-      }),
-      Type.Object({
-        origin: Type.String({ minLength: 1, maxLength: 2048 }),
-        label: Type.String({ minLength: 1, maxLength: 100 }),
-        kind: literals(['identifier', 'password', 'otp']),
-        usernameSelector: Type.Optional(Type.String()),
-        passwordSelector: Type.Optional(Type.String()),
-        emailCode: Type.Optional(Type.Boolean()),
-        emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
-        savedLoginId: Type.Optional(uuid),
-        message: Type.String({ minLength: 1, maxLength: 300 }),
-        action: Type.String({ minLength: 1, maxLength: 60 }),
-      }),
-    ]),
+  sign_in: defineTool(
+    'sign_in',
+    'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to choose one saved login; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Submit with browser and inspect the result.',
+    Type.Object({
+      origin: Type.String({ minLength: 1, maxLength: 2048 }),
+      label: Type.String({ minLength: 1, maxLength: 100 }),
+      kind: literals(['identifier', 'password', 'otp']),
+      usernameSelector: Type.Optional(Type.String()),
+      passwordSelector: Type.Optional(Type.String()),
+      emailCode: Type.Optional(Type.Boolean()),
+      emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
+      savedLoginId: Type.Optional(uuid),
+      message: Type.String({ minLength: 1, maxLength: 300 }),
+      action: Type.String({ minLength: 1, maxLength: 60 }),
+    }),
   ),
   browser_session: defineTool(
     'browser_session',
@@ -566,26 +560,27 @@ export function ottoTools(
       return pageText(await computer.act(threadId, { action, ...rest } as BrowserAction, signal));
     }),
     bind(toolDefinitions.browser_flow, browserFlows),
-    bind(toolDefinitions.get_credential, async (input) => {
-      if (!('kind' in input)) {
-        const result = await context.requestCredential(input);
-        if (!result.credential) throw new Error('This saved login is unavailable.');
-        return result.credential;
-      }
-      const { message, action, ...request } = input;
+    bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
-      if (result.filled)
+      if (appConfirmation in result)
+        return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
+      if ('filled' in result)
         return request.kind === 'otp'
           ? 'Verification code entered privately.'
           : 'Saved login entered.';
-      if (!result.url) throw new Error('The secure sign-in request could not be created.');
       await turn.invite(vaultInvitation(request.origin, result.url, message, action));
       await pause('credentials', undefined, { post: false });
       return 'Waiting for secure input.';
     }),
     bind(toolDefinitions.browser_session, async (p) => {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');
-      const result = (await context.browserConnection(p)) as Record<string, unknown>;
+      const outcome = await context.browserConnection(p);
+      if (outcome && typeof outcome === 'object' && appConfirmation in outcome)
+        return confirm({
+          requiresConfirmation: true,
+          question: (outcome as { [appConfirmation]: string })[appConfirmation],
+        });
+      const result = outcome as Record<string, unknown>;
       if (result.status === 'rejected') {
         switch (result.code) {
           case 'invalid_browser_connection_arguments':

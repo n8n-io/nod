@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { getDomain } from 'tldts';
 import { z } from 'zod';
 import type { Computer } from '../ports/computer.ts';
 import type { BrowserConnectionRequest } from '../ports/agent.ts';
-import type { Connection } from '../shared/contracts.ts';
+import type { Connection, VaultSession } from '../shared/contracts.ts';
 import type { TurnRef } from './thread.ts';
 
 const idSchema = z.uuid();
@@ -304,5 +305,73 @@ export async function createBrowserConnections(
     });
   }
 
-  return { request, list, disconnect };
+  async function target(
+    raw: unknown,
+  ): Promise<{ origin: string; kind: 'session' | 'form' } | undefined> {
+    const parsed = requestSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.action === 'save') return undefined;
+    let address: URL;
+    try {
+      address = site(parsed.data.url);
+    } catch {
+      return undefined;
+    }
+    if (parsed.data.action === 'connect') return { origin: address.origin, kind: 'form' };
+    const row = (
+      await pool.query<Pick<Row, 'origin'>>(
+        'SELECT origin FROM browser_connections WHERE id=$1 AND owner_id=$2',
+        [parsed.data.connectionId, options.ownerId],
+      )
+    ).rows[0];
+    return row ? { origin: row.origin, kind: 'session' } : undefined;
+  }
+
+  async function sessions(): Promise<VaultSession[]> {
+    const rows = (
+      await pool.query<Row>(
+        'SELECT * FROM browser_connections WHERE owner_id=$1 ORDER BY created_at DESC',
+        [options.ownerId],
+      )
+    ).rows;
+    return rows.map((row) => ({
+      kind: 'session',
+      id: row.id,
+      label: row.label,
+      origin: row.origin,
+      url: row.start_url,
+      state: row.state,
+      ...(row.checked_at ? { checkedAt: row.checked_at.toISOString() } : {}),
+    }));
+  }
+
+  function registerRoutes(app: FastifyInstance) {
+    app.register(async (scope) => {
+      scope.addHook('onSend', async (_request, reply, payload) => {
+        reply.header('Cache-Control', 'no-store');
+        return payload;
+      });
+      scope.setErrorHandler((error, _request, reply) => {
+        const status =
+          error instanceof BrowserConnectionError
+            ? error.statusCode
+            : error instanceof z.ZodError
+              ? 400
+              : 500;
+        reply.code(status).send({
+          error:
+            error instanceof BrowserConnectionError
+              ? error.message
+              : status === 400
+                ? 'Check the request.'
+                : 'The saved session could not be changed.',
+        });
+      });
+      scope.get('/api/vault/sessions', sessions);
+      scope.delete<{ Params: { id: string } }>('/api/vault/sessions/:id', async (request) =>
+        disconnect(request.params.id),
+      );
+    });
+  }
+
+  return { request, list, sessions, target, disconnect, registerRoutes };
 }

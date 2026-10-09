@@ -191,11 +191,11 @@ export default scenario({
       check(
         'used-the-vault-and-the-secure-form',
         (run) => {
-          const used = run.tools.some((call) => call.name === 'get_credential');
+          const used = run.tools.some((call) => call.name === 'sign_in');
           const secure = run.interactions.some((item) => item.kind === 'secret');
           return {
             pass: used && secure,
-            evidence: `get_credential ${used}, secure form ${secure}`,
+            evidence: `sign_in ${used}, secure form ${secure}`,
           };
         },
         { aspect: 'process', failure: 'tool' },

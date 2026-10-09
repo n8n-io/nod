@@ -1143,7 +1143,7 @@ async function runtimeFixture(
     publish: async () => {
       throw new Error('unused');
     },
-    requestCredential: async () => ({}),
+    requestCredential: async () => ({ filled: true }),
     integration: async () => ({}),
     manage: async () => ({}),
   };
@@ -1209,7 +1209,7 @@ test('the browser has one holder, and the conversation keeps it for the user unt
       publish: async () => {
         throw new Error('unused');
       },
-      requestCredential: async () => ({}),
+      requestCredential: async () => ({ filled: true }),
       integration: async () => ({}),
       manage: async () => ({}),
     });
@@ -1303,7 +1303,7 @@ test('a browser handoff needs an open page, so Pi reopens it instead of handing 
       publish: async () => {
         throw new Error('unused');
       },
-      requestCredential: async () => ({}),
+      requestCredential: async () => ({ filled: true }),
       integration: async () => ({}),
       manage: async () => ({}),
     });

@@ -409,9 +409,10 @@ test(
       assert.equal(attempts, 2);
       assert.deepEqual((await vault.readCredential(saved.json().id)).secret, {
         username: 'person',
-        password: 'old-password',
+        password: 'replacement-password',
+        previous: 'old-password',
       });
-      assert.equal((await vault.list()).length, 2);
+      assert.equal((await vault.list()).length, 1);
       const interrupted = await vault.request(taskInterrupted, 'local-development', input);
       await wait(taskInterrupted);
       await app.close();
@@ -977,7 +978,7 @@ test(
           const alias = await save(
             'Personal alternate',
             'example.com',
-            'same-first@example.test',
+            'alternate-first@example.test',
             'alternate-password',
           );
           for (const state of ['blocked', 'changed']) {
@@ -1430,6 +1431,54 @@ test(
           1,
         );
       });
+
+      await t.test('hosted mode never keeps a security code, even one saved before', async () => {
+        const remembered = await create({ ...input, label: 'Remembered', securityCode: '737' });
+        assert.equal((await read(remembered.id, 'details')).json().hasSecurityCode, true);
+        const hosted = Fastify({ logger: false });
+        registerLocalAccess(hosted, 4310, { key: 'synthetic-local-access' });
+        (
+          await createVault(pool, {
+            keyStore: { id: 'synthetic', configured: true, getKey: async () => key },
+            inject: async () => assert.fail('Cards must never enter a website login.'),
+            resume: async () => assert.fail('Card management must not resume a task.'),
+            retry: async () => assert.fail('Card management must not retry a task.'),
+            securityCodes: false,
+          })
+        ).registerRoutes(hosted);
+        try {
+          const created = await hosted.inject({
+            method: 'POST',
+            url: '/api/vault',
+            headers,
+            payload: { ...input, label: 'Hosted', securityCode: '123' },
+          });
+          assert.equal(created.statusCode, 200);
+          assert.equal(
+            (await read(created.json().id, 'details', hosted)).json().hasSecurityCode,
+            false,
+          );
+          assert.equal((await read(created.json().id, 'security-code', hosted)).statusCode, 404);
+          const edited = await update(
+            remembered.id,
+            {
+              kind: 'card',
+              label: 'Remembered',
+              cardholder: input.cardholder,
+              expiryMonth: 12,
+              expiryYear,
+            },
+            hosted,
+          );
+          assert.equal(edited.statusCode, 200, edited.body);
+          assert.equal(
+            (await read(remembered.id, 'details', hosted)).json().hasSecurityCode,
+            false,
+          );
+        } finally {
+          await hosted.close();
+        }
+      });
     } finally {
       await app.close();
       await pool.end();
@@ -1639,6 +1688,41 @@ test(
               assert.equal((await read(entry.id, 'details')).json().username, 'edited-user');
             }
           }
+        },
+      );
+
+      await t.test(
+        'a login that cannot be opened stays listed and deletable without breaking the Vault',
+        async () => {
+          const readable = await save('Readable');
+          const broken = await save('Broken');
+          await pool.query('UPDATE vault_entries SET ciphertext=$2 WHERE id=$1', [
+            broken.id,
+            sealCredential(
+              randomBytes(32),
+              { id: broken.id, owner_id: 'local-development', origin: broken.origin },
+              { username: 'other-key-user', password: 'other-key-password' },
+            ),
+          ]);
+          const listed = await app.inject({ url: '/api/vault', headers });
+          assert.equal(listed.statusCode, 200);
+          const entries = listed.json<Array<VaultLoginEntry & { unreadable?: true }>>();
+          assert.equal(entries.find((entry) => entry.id === readable.id)?.unreadable, undefined);
+          assert.equal(entries.find((entry) => entry.id === broken.id)?.unreadable, true);
+          assert.equal(JSON.stringify(entries).includes('other-key'), false);
+          assert.equal((await read(broken.id, 'password')).statusCode, 500);
+          const removed = await app.inject({
+            method: 'DELETE',
+            url: `/api/vault/${broken.id}`,
+            headers,
+          });
+          assert.equal(removed.statusCode, 200);
+          assert.equal(
+            (await app.inject({ url: '/api/vault', headers }))
+              .json<VaultLoginEntry[]>()
+              .some((entry) => entry.id === broken.id),
+            false,
+          );
         },
       );
     } finally {

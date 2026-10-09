@@ -1130,6 +1130,26 @@ describe('keychain', () => {
     assert.equal(keys[1].toString('base64'), saved);
     assert.equal((await store.getKey()).toString('base64'), saved);
   });
+
+  test('never creates a replacement Keychain key while sealed data exists', async () => {
+    let adds = 0;
+    let sealed = true;
+    const store = createKeychainKeyStore({
+      platform: 'darwin',
+      canCreate: async () => !sealed,
+      run: async (_command, args) => {
+        if (args[0] === 'find-generic-password')
+          throw Object.assign(new Error('not found'), { code: 44 });
+        adds++;
+        return { stdout: '' };
+      },
+    });
+    await assert.rejects(store.getKey(), /missing/);
+    assert.equal(adds, 0);
+    sealed = false;
+    assert.equal((await store.getKey()).length, 32);
+    assert.equal(adds, 1);
+  });
 });
 
 describe('model connections', { skip: !process.env.TEST_DATABASE_URL }, () => {

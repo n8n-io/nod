@@ -198,6 +198,24 @@ test(
         other.request({ action: 'use', url: 'https://example.test/', connectionId }, foreign),
         /unavailable/,
       );
+      assert.deepEqual(
+        await service.target({ action: 'use', url: 'https://other.test/deep', connectionId }),
+        { origin: 'https://example.test', kind: 'session' },
+      );
+      assert.deepEqual(await service.target({ action: 'connect', url: 'https://new.test/a' }), {
+        origin: 'https://new.test',
+        kind: 'form',
+      });
+      assert.equal(await service.target(save), undefined);
+      assert.equal(
+        await other.target({ action: 'use', url: 'https://example.test/', connectionId }),
+        undefined,
+      );
+      assert.deepEqual(
+        (await service.sessions()).map((session) => [session.kind, session.origin]),
+        [['session', 'https://example.test']],
+      );
+      assert.deepEqual(await other.sessions(), []);
       await pool.query("UPDATE turns SET status='completed' WHERE id=$1", [second.turnId]);
       await assert.rejects(
         service.request({ action: 'use', url: 'https://example.test/', connectionId }, second),

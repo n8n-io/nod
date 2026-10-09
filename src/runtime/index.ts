@@ -39,7 +39,7 @@ const parallelTools = new Set([
   'manage_personal_context',
 ]);
 const mixedTools = new Set(['apps', 'manage_personal_context']);
-const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'get_credential']);
+const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
   /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
@@ -514,9 +514,7 @@ export function createAgentRuntime(dependencies: {
             }
             await end({
               status: 'succeeded',
-              ...(['get_credential', 'browser_flow'].includes(name) || memoryAction
-                ? {}
-                : { output }),
+              ...(['sign_in', 'browser_flow'].includes(name) || memoryAction ? {} : { output }),
             });
           } catch (error) {
             if (reservedRecord) checkRecording = false;

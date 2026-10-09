@@ -112,8 +112,18 @@ export type CredentialInjection = CredentialInput & {
   password?: string;
   code?: string;
 };
+export type VaultUse = {
+  turnId: string;
+  threadId: string;
+  origin: string;
+  entryId?: string;
+  kind: 'sign_in' | 'code';
+  reason: 'entered' | 'picked';
+};
 type VaultOptions = {
   admission?: WorkAdmission;
+  onUse?(use: VaultUse): Promise<void>;
+  securityCodes?: boolean;
   resume(turnId: string): Promise<void>;
   retry(turnId: string): Promise<void>;
   inject(input: CredentialInjection): Promise<CredentialSubmission | void>;
@@ -169,6 +179,19 @@ type SelectionRow = {
   expires_at: Date;
   credential_entered_at: Date | null;
 };
+
+export async function sealedDataExists(pool: Pick<Pool, 'query'>) {
+  const tables = (
+    await pool.query<{ name: string }>(
+      `SELECT c.relname AS name FROM pg_class c WHERE c.relkind='r' AND pg_table_is_visible(c.oid)
+       AND c.relname = ANY($1::text[])`,
+      [['vault_entries', 'vault_cards', 'vault_app_grants', 'channel_settings']],
+    )
+  ).rows.map((row) => row.name);
+  for (const table of tables)
+    if ((await pool.query(`SELECT 1 FROM ${table} LIMIT 1`)).rowCount) return true;
+  return false;
+}
 
 export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question') {
   return `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}
@@ -233,13 +256,20 @@ function binding(entry: Pick<EntryRow, 'id' | 'owner_id' | 'origin'>) {
 export function sealCredential(
   key: Buffer,
   entry: Pick<EntryRow, 'id' | 'owner_id' | 'origin'>,
-  secret: { username: string; password: string },
+  secret: { username: string; password: string; previous?: string },
 ) {
   const nonce = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, nonce);
   cipher.setAAD(binding(entry));
   const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify({ username: secret.username, password: secret.password }), 'utf8'),
+    cipher.update(
+      JSON.stringify({
+        username: secret.username,
+        password: secret.password,
+        ...(secret.previous ? { previous: secret.previous } : {}),
+      }),
+      'utf8',
+    ),
     cipher.final(),
   ]);
   return Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString('base64');
@@ -254,7 +284,11 @@ export function openCredential(
   decipher.setAAD(binding(entry));
   decipher.setAuthTag(data.subarray(12, 28));
   return z
-    .object({ username: z.string().max(320), password: z.string().max(8192) })
+    .object({
+      username: z.string().max(320),
+      password: z.string().max(8192),
+      previous: z.string().max(8192).optional(),
+    })
     .strict()
     .parse(
       JSON.parse(
@@ -461,14 +495,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return rows.map((entry) => metadata(entry));
   }
 
-  async function removeLogin(id: string) {
-    const result = await pool.query('DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2', [
-      z.uuid().parse(id),
-      owner,
-    ]);
-    if (!result.rowCount) throw new VaultError('This saved login could not be found.', 404);
-  }
-
   async function listEntries(): Promise<VaultListEntry[]> {
     let logins = await pool.query<EntryRow>(
       'SELECT * FROM vault_entries WHERE owner_id=$1 ORDER BY updated_at DESC',
@@ -486,7 +512,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           const { username } = openCredential(credentialKey, entry);
           entries.push({ ...metadata(entry, username), username });
         } catch {
-          throw new VaultError('A saved login could not be opened.', 500);
+          entries.push({ ...metadata(entry), username: '', unreadable: true });
         }
       }
     }
@@ -527,20 +553,31 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       'SELECT * FROM vault_entries WHERE owner_id=$1 AND origin=$2 FOR UPDATE',
       [ownerId, origin],
     );
-    const matching = existing.rows.filter((candidate) => {
-      const secret = openCredential(credentialKey, candidate);
-      return secret.username === input.username && (!input.password || !secret.password);
+    const matching = existing.rows.flatMap((candidate) => {
+      try {
+        const secret = openCredential(credentialKey, candidate);
+        return secret.username === input.username ? [{ entry: candidate, secret }] : [];
+      } catch {
+        return [];
+      }
     });
-    if (matching.length === 1) {
-      const entry = matching[0];
-      if (!input.password) return metadata(entry, input.username);
+    const current =
+      matching.find(({ secret }) => secret.password) ?? (matching.length ? matching[0] : undefined);
+    if (current) {
+      const { entry, secret } = current;
+      if (!input.password || input.password === secret.password)
+        return metadata(entry, input.username);
       const { rows } = await database.query<EntryRow>(
         'UPDATE vault_entries SET label=$3,ciphertext=$4,updated_at=now() WHERE id=$1 AND owner_id=$2 AND ciphertext=$5 RETURNING *',
         [
           entry.id,
           ownerId,
           input.label,
-          sealCredential(credentialKey, entry, input),
+          sealCredential(credentialKey, entry, {
+            username: input.username,
+            password: input.password,
+            ...(secret.password ? { previous: secret.password } : {}),
+          }),
           entry.ciphertext,
         ],
       );
@@ -633,7 +670,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       cardNumber: number,
       expiryMonth: input.expiryMonth,
       expiryYear: input.expiryYear,
-      securityCode: input.securityCode || undefined,
+      securityCode: (options.securityCodes !== false && input.securityCode) || undefined,
     });
     const { rows } = await pool.query<CardRow>(
       'INSERT INTO vault_cards(id,owner_id,label,brand,last4,expiry_month,expiry_year,ciphertext) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
@@ -676,7 +713,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         expiryMonth: input.expiryMonth,
         expiryYear: input.expiryYear,
         securityCode:
-          input.securityCode === null ? undefined : input.securityCode || secret.securityCode,
+          options.securityCodes === false || input.securityCode === null
+            ? undefined
+            : input.securityCode || secret.securityCode,
       });
       const result = await client.query<CardRow>(
         'UPDATE vault_cards SET label=$3,brand=$4,last4=$5,expiry_month=$6,expiry_year=$7,ciphertext=$8,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',
@@ -939,7 +978,12 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       savedEntries = [];
       for (const entry of matches) {
         if (row.kind === 'password') {
-          const secret = openCredential(await key(), entry);
+          let secret: ReturnType<typeof openCredential>;
+          try {
+            secret = openCredential(await key(), entry);
+          } catch {
+            continue;
+          }
           if (!secret.password || (username !== undefined && secret.username !== username))
             continue;
         }
@@ -1036,9 +1080,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     return { ok: true };
   }
 
+  async function reportUse(use: VaultUse | undefined) {
+    if (use) await options.onUse?.(use).catch(() => {});
+  }
+
   async function submit(token: string, raw: unknown, hashed = false) {
     const values = submissionInput.parse(raw);
-    return consume(
+    let use: VaultUse | undefined;
+    const result = await consume(
       token,
       async (row, client) => {
         const { input, inspection } = await inspectRequest(row.thread_id, row.selectors);
@@ -1118,16 +1167,27 @@ export async function createVault(pool: Pool, options: VaultOptions) {
             value: username,
             expiresAt: Date.now() + 10 * 60_000,
           });
-        if (row.kind === 'password') {
-          await save(
-            row.owner_id,
-            { label: values.label, origin: row.origin, username, password: values.password },
-            client,
-          );
-        }
+        const saved =
+          row.kind === 'password'
+            ? await save(
+                row.owner_id,
+                { label: values.label, origin: row.origin, username, password: values.password },
+                client,
+              )
+            : entry;
+        use = {
+          turnId: row.turn_id,
+          threadId: row.thread_id,
+          origin: row.origin,
+          ...(saved ? { entryId: saved.id } : {}),
+          kind: row.kind === 'otp' ? 'code' : 'sign_in',
+          reason: 'entered',
+        };
       },
       hashed,
     );
+    if (result.ok) await reportUse(use);
+    return result;
   }
 
   async function selectSaved(token: string, raw: unknown) {
@@ -1135,7 +1195,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .object({ entryId: z.string().min(1).max(100) })
       .strict()
       .parse(raw);
-    return consume(token, async (row, client) => {
+    let use: VaultUse | undefined;
+    const result = await consume(token, async (row, client) => {
       if (row.kind === 'otp') throw new VaultError('Enter the current verification code.', 409);
       const fresh = await inspectRequest(row.thread_id, row.selectors);
       if (fresh.input.kind !== row.kind)
@@ -1198,7 +1259,17 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         blocked: false,
         enteredAt: Date.now(),
       });
+      use = {
+        turnId: row.turn_id,
+        threadId: row.thread_id,
+        origin: row.origin,
+        entryId: entry.id,
+        kind: 'sign_in',
+        reason: 'picked',
+      };
     });
+    if (result.ok) await reportUse(use);
+    return result;
   }
 
   async function retry(token: string) {
@@ -1866,7 +1937,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     request,
     list,
     readCredential,
-    removeLogin,
     fillSaved,
     fillSelected,
     fillEmailCode,

@@ -122,9 +122,7 @@ type IntegrationOptions = {
   refresh?(): void;
   discovered?: Awaited<ReturnType<typeof createDiscoveredConnections>>;
   browserAccounts?: () => Promise<VaultLoginEntry[]>;
-  removeBrowserAccount?: (id: string) => Promise<void>;
   browserConnections?: () => Promise<Connection[]>;
-  removeBrowserConnection?: (id: string) => Promise<unknown>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
 };
 
@@ -1846,7 +1844,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 : 'The connection provider could not complete this request.',
         });
       });
-      scope.get('/api/apps', async () => list());
+      scope.get('/api/apps', async () =>
+        (await list()).filter(
+          (connection) => !connection.accessPaths?.some((path) => path.kind === 'browser'),
+        ),
+      );
       scope.get('/api/apps/catalog', async () => catalog());
       scope.post('/api/apps/setup-status', async (request, reply) => {
         const { hashes, connectionIds } = z
@@ -2004,27 +2006,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         '/api/apps/:slug/accounts/:connectionId/disconnect',
         async (request) => {
           const id = z.uuid().parse(request.params.connectionId);
-          if (
-            (await options.browserConnections?.())?.some(
-              (entry) => entry.connectionId === id && entry.slug === request.params.slug,
-            )
-          ) {
-            if (!options.removeBrowserConnection)
-              throw new IntegrationError('This account is unavailable.', 503);
-            await options.removeBrowserConnection(id);
-            options.refresh?.();
-            return { ok: true };
-          }
-          const browser = ((await options.browserAccounts?.()) ?? []).find(
-            (entry) => entry.id === id && browserService(entry.origin).slug === request.params.slug,
-          );
-          if (browser) {
-            if (!options.removeBrowserAccount)
-              throw new IntegrationError('This account is unavailable.', 503);
-            await options.removeBrowserAccount(id);
-            options.refresh?.();
-            return { ok: true };
-          }
           if (
             (await options.discovered?.list())?.some(
               (entry) => entry.connectionId === id && entry.slug === request.params.slug,

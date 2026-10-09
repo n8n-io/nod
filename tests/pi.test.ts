@@ -208,7 +208,7 @@ test('real Pi sessions persist a credential pause and resume without replaying c
                 {
                   type: 'toolCall',
                   id: 'credential-call',
-                  name: 'get_credential',
+                  name: 'sign_in',
                   arguments: {
                     origin: 'https://example.com',
                     label: 'Example',
@@ -1731,7 +1731,7 @@ function context(directory: string): RuntimeContext {
       size: 1,
       url: '/api/artifacts/fixture',
     }),
-    requestCredential: async () => ({}),
+    requestCredential: async () => ({ filled: true }),
     integration: async () => ({}),
     manage: async () => ({}),
   };

@@ -882,7 +882,7 @@ test('research-only app discovery rejects credential setup even without a connec
     interactions: [],
   } as unknown as Run;
   assert.equal((await expectation.check(run)).pass, true);
-  run.tools.push({ name: 'get_credential', input: {} } as Run['tools'][number]);
+  run.tools.push({ name: 'sign_in', input: {} } as Run['tools'][number]);
   assert.equal((await expectation.check(run)).pass, false);
   run.tools.pop();
   run.interactions.push({ kind: 'secret', text: 'Private connection form', at: 0 });
@@ -1187,7 +1187,7 @@ async function promptCaptureFixture(t: TestContext) {
     publish: async () => {
       throw new Error('Not used');
     },
-    requestCredential: async () => ({}),
+    requestCredential: async () => ({ filled: true }),
     integration: async () => ({}),
     manage: async () => ({}),
   };
