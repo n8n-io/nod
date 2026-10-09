@@ -4806,6 +4806,14 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
   const ownerId = randomUUID();
   const threadId = randomUUID();
   const password = 'synthetic-newly-retrieved-login';
+  const providerKey = 'synthetic-bootstrap/composio-value';
+  const paddedProviderKey = ` \t${providerKey}\r\n`;
+  const echoes = [
+    providerKey,
+    paddedProviderKey,
+    encodeURIComponent(providerKey),
+    encodeURIComponent(paddedProviderKey),
+  ];
   const sampled = new Set<string>();
   let credentialAvailable = false;
   const pool = {
@@ -4816,11 +4824,15 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
       if (sql.includes('FROM messages')) {
         credentialAvailable = true;
         sampled.add('messages');
-        return { rows: [{ role: 'assistant', text: `Diagnostic context ${password}` }] };
+        return {
+          rows: [
+            { role: 'assistant', text: `Diagnostic context ${password}; ${echoes.join('|')}` },
+          ],
+        };
       }
       if (sql.includes('FROM turns')) {
         sampled.add('turns');
-        return { rows: [{ status: 'running' }] };
+        return { rows: [{ status: 'running', error: `Provider failure ${providerKey}` }] };
       }
       assert.fail('Unexpected diagnostic query');
     },
@@ -4828,6 +4840,7 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
   const report = await buildFeedbackReport({
     pool,
     ownerId,
+    secrets: [paddedProviderKey],
     sessionEntries: async (id) => {
       assert.equal(id, threadId);
       assert.equal(sampled.size, 2);
@@ -4856,7 +4869,7 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
                 role: 'toolResult',
                 toolCallId: 'mirror',
                 toolName: 'browser',
-                content: [{ type: 'text', text: `Mirrored ${password}` }],
+                content: [{ type: 'text', text: `Mirrored ${password}; ${echoes.join('|')}` }],
               },
             },
           ]
@@ -4866,6 +4879,8 @@ test('feedback diagnostics redact a credential retrieved while the report rows a
   assert.ok(report.includes('Diagnostic context [redacted]'));
   assert.ok(report.includes('Mirrored [redacted]'));
   assert.ok(!report.includes(password));
+  assert.ok(report.includes('Provider failure [redacted]'));
+  for (const value of echoes) assert.ok(!report.includes(value));
   await assert.rejects(
     buildFeedbackReport({
       pool,

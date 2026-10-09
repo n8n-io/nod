@@ -270,7 +270,8 @@ export function createComposioProvider(options: {
         })
       : undefined;
   }
-  let client = options.proxy?.client ?? options.client ?? connect(options.apiKey);
+  let currentApiKey = options.apiKey;
+  let client = options.proxy?.client ?? options.client ?? connect(currentApiKey);
   function userId(ownerId: string) {
     if (options.proxy && ownerId !== options.proxy.ownerId)
       throw new Error('This connected account owner is unavailable.');
@@ -769,14 +770,15 @@ export function createComposioProvider(options: {
     get configurationId() {
       return (
         options.proxy?.configurationId ??
-        (options.apiKey
-          ? createHash('sha256').update(`direct:${options.apiKey}`).digest('hex')
+        (currentApiKey
+          ? createHash('sha256').update(`direct:${currentApiKey}`).digest('hex')
           : undefined)
       );
     },
     setApiKey(apiKey) {
       if (options.proxy) throw new Error('The integration provider is managed by Otto.');
       client = connect(apiKey);
+      currentApiKey = apiKey;
       catalog = undefined;
       catalogRequest = undefined;
       catalogRetryAfter = 0;

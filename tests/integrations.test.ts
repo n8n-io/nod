@@ -8561,6 +8561,101 @@ test('Composio account identity uses safe display metadata and account-bound pro
   assert.equal(profileSessions, 4);
 });
 
+test('Composio key changes bind configuration identity to the active SDK and fence prior consent sessions', async (t) => {
+  const baseUrl = process.env.COMPOSIO_BASE_URL;
+  process.env.COMPOSIO_BASE_URL = 'https://composio-rotation.example.test';
+  t.after(() => {
+    if (baseUrl === undefined) delete process.env.COMPOSIO_BASE_URL;
+    else process.env.COMPOSIO_BASE_URL = baseUrl;
+  });
+  const keys = ['synthetic-rotation-key-a', 'synthetic-rotation-key-b'];
+  const calls: Array<{ path: string; key: string }> = [];
+  let created = 0;
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.href === 'https://registry.npmjs.org/@composio/core/latest')
+      return Response.json({ version: '0.21.0' });
+    assert.equal(url.origin, 'https://composio-rotation.example.test');
+    const key = request.headers.get('x-api-key')!;
+    assert.ok(keys.includes(key));
+    calls.push({ path: url.pathname, key });
+    if (request.method === 'GET' && url.pathname === '/api/v3.1/toolkits')
+      return Response.json({ items: [], next_cursor: null });
+    if (request.method === 'POST' && url.pathname === '/api/v3.1/tool_router/session') {
+      const body = await request.json();
+      assert.equal(body.user_id, 'fixture-owner');
+      const id = `trs_rotation_${++created}`;
+      return Response.json({
+        session_id: id,
+        mcp: { type: 'http', url: `https://composio-rotation.example.test/mcp/${id}` },
+        config: {
+          user_id: 'fixture-owner',
+          toolkits: { enabled: ['slack'] },
+          connected_accounts: {},
+        },
+        config_version: 1,
+      });
+    }
+    if (
+      request.method === 'POST' &&
+      /^\/api\/v3\.1\/tool_router\/session\/trs_rotation_\d+\/link$/.test(url.pathname)
+    )
+      return Response.json({
+        connected_account_id: 'ca_rotation_fixture',
+        redirect_url: 'https://connect.composio.dev/link/synthetic-rotation',
+      });
+    assert.fail(`Unexpected synthetic request: ${request.method} ${url.pathname}`);
+  });
+  const provider = createComposioProvider({ apiKey: keys[0] });
+  const initialConfiguration = provider.configurationId;
+  assert.ok(initialConfiguration);
+  assert.equal(provider.configured, true);
+  const first = await provider.createSession('fixture-owner', {});
+  assert.equal(calls.at(-1)!.key, keys[0]);
+  provider.setApiKey!(keys[1]);
+  const current = await provider.createSession('fixture-owner', {});
+  assert.equal(calls.at(-1)!.key, keys[1]);
+  assert.notEqual(provider.configurationId, initialConfiguration);
+  assert.equal(
+    provider.configurationId,
+    createComposioProvider({ apiKey: keys[1] }).configurationId,
+  );
+  const callback = 'http://localhost:4310/api/apps/callback';
+  const beforeStale = calls.length;
+  await assert.rejects(first.authorize('slack', callback), /connection provider changed/);
+  assert.equal(calls.length, beforeStale);
+  assert.equal((await current.authorize('slack', callback)).accountId, 'ca_rotation_fixture');
+  assert.equal(calls.at(-1)!.key, keys[1]);
+  provider.setApiKey!();
+  assert.equal(provider.configured, false);
+  assert.equal(provider.configurationId, undefined);
+  const beforeClear = calls.length;
+  await assert.rejects(provider.createSession('fixture-owner', {}), /not configured/);
+  await assert.rejects(current.authorize('slack', callback), /connection provider changed/);
+  assert.equal(calls.length, beforeClear);
+  provider.setApiKey!(keys[0]);
+  assert.equal(provider.configured, true);
+  assert.equal(provider.configurationId, initialConfiguration);
+  await provider.createSession('fixture-owner', {});
+  assert.equal(calls.at(-1)!.key, keys[0]);
+  const proxy = createComposioProxy({
+    ownerId: 'fixture-owner',
+    dataRoot: tmpdir(),
+    identitySecret: Buffer.alloc(32, 7),
+    url: 'https://proxy.example.test',
+    request: async () => assert.fail('Managed key changes must not make a request.'),
+  });
+  await proxy.initialize();
+  const managed = createComposioProvider({ proxy });
+  const managedConfiguration = managed.configurationId;
+  for (const key of [keys[0], undefined]) {
+    assert.throws(() => managed.setApiKey!(key), /managed by Otto/);
+    assert.equal(managed.configured, true);
+    assert.equal(managed.configurationId, managedConfiguration);
+  }
+});
+
 test('Composio Google consent preserves explicit auth, project defaults and provider boundaries', async (t) => {
   const client = new Composio({
     apiKey: 'fixture-key-never-live',
@@ -11628,7 +11723,7 @@ test('chat app setup shows owned pairing codes before handoff and completes with
   });
   const discoveryId = 'abcdef01-abcd-4000-8000-abcdef000003';
   const links = [
-    'https://connect.composio.dev/link/synthetic-work',
+    'https://custom-proxy.example.test/v1/connect/pair?ticket=synthetic-work',
     'https://connect.composio.dev/link/synthetic-personal',
     `/apps?connect=${discoveryId.toUpperCase()}`,
   ];
@@ -11770,7 +11865,7 @@ test('chat app setup shows owned pairing codes before handoff and completes with
       root.render(
         createElement(MessageText, {
           key,
-          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]}) and [Connect custom app](${links[2]})`,
+          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]}) and [Connect custom app](${links[2]}) and [Connect Calendar](https://outside.example/connect)`,
           connectedAppIds: new Set(['gmail']),
         }),
       ),
@@ -11798,6 +11893,38 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     };
     assert.equal(timers.size, 0);
     assert.deepEqual(requests[0], hashes);
+    const ordinary = dom.window.document.querySelector<HTMLAnchorElement>(
+      'a[href="https://outside.example/connect"]',
+    );
+    assert.ok(ordinary);
+    assert.equal(ordinary.target, '_blank');
+    let ordinaryClick = false;
+    ordinary.addEventListener(
+      'click',
+      (event) => {
+        assert.equal(event.defaultPrevented, false);
+        ordinaryClick = true;
+        event.preventDefault();
+      },
+      { once: true },
+    );
+    await act(async () => ordinary.click());
+    assert.equal(ordinaryClick, true);
+    assert.equal(dialog(), null);
+    assert.deepEqual(requests, [hashes]);
+    assert.deepEqual(opened, []);
+    await act(async () => buttons()[1].click());
+    await waitFor(() => Boolean(dialog()?.querySelector('[role="alert"]')));
+    assert.deepEqual(opened, []);
+    assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    await close();
+    pending.delete(hashes[0]);
+    await act(async () => buttons()[0].click());
+    await waitFor(() => Boolean(dialog()?.querySelector('[role="alert"]')));
+    assert.deepEqual(opened, []);
+    assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    await close();
+    pending.add(hashes[0]);
     paired.add(hashes[0]);
     holdRead = true;
     await act(async () => buttons()[0].click());

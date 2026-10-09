@@ -57,7 +57,7 @@ import {
 import { startContainerBrowserWorker } from '../src/providers/container-browser/worker.ts';
 import { createAgentRuntime } from '../src/runtime/index.ts';
 import { toolDefinitions } from '../src/runtime/tools.ts';
-import { createRedactor } from '../src/server/redaction.ts';
+import { createErrorRedactor, createRedactor } from '../src/server/redaction.ts';
 import type { CredentialInjection } from '../src/server/vault.ts';
 import { createBrowserFixture } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
@@ -2674,8 +2674,15 @@ test('a restarted credential session serves only its cached masked image without
 
 test('redaction masks nested credentials, headers and encoded JSON before persistence', () => {
   const secret = 'fixture-provider-secret-with/slash';
-  const secrets = [secret];
+  const padded = ` \t${secret}\r\n`;
+  const paddedShort = '  short  ';
+  const secrets = [padded, paddedShort];
   const redact = createRedactor(secrets);
+  const redactError = createErrorRedactor(secrets);
+  for (const value of [padded, secret, encodeURIComponent(padded), encodeURIComponent(secret)])
+    assert.equal(redactError(`Provider failed for ${value}`), 'Provider failed for [redacted]');
+  assert.equal(redact('short remains useful'), 'short remains useful');
+  assert.equal(redact(`Padded value:${paddedShort}`), 'Padded value:[redacted]');
   const input = {
     query: 'messages after yesterday',
     password: 'private-password',
@@ -2712,7 +2719,7 @@ test('redaction masks nested credentials, headers and encoded JSON before persis
   assert.ok(encoded.includes('Useful result'));
   assert.ok(encoded.includes('messages after yesterday'));
   assert.ok(encoded.includes('q=hello'));
-  secrets.push('fixture-rotated-opaque-token');
+  secrets.push(' \tfixture-rotated-opaque-token\n');
   const rotated = String(redact('fixture-rotated-opaque-token and ' + secret));
   assert.ok(!rotated.includes('fixture-rotated-opaque-token'));
   assert.ok(!rotated.includes(secret));
@@ -2750,7 +2757,7 @@ test('redaction masks secure links, common token strings and secret assignments 
 });
 
 test('short secret masking does not scan replacement markers again', () => {
-  const redact = createRedactor(['a', 'red'], { minimumSecretLength: 1 });
+  const redact = createRedactor([' a ', ' red '], { minimumSecretLength: 1 });
   assert.equal(redact('red a'), '[redacted] [redacted]');
 });
 

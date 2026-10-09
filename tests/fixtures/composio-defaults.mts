@@ -76,8 +76,15 @@ globalThis.fetch = async (resource, options) => {
   try {
     const bytes = Buffer.from(await request.arrayBuffer());
     const body = bytes.length ? JSON.parse(bytes.toString()) : undefined;
-    const wire = JSON.stringify([...request.headers]) + bytes.toString();
+    const wire = [
+      url.href,
+      ...url.searchParams.keys(),
+      ...url.searchParams.values(),
+      JSON.stringify([...request.headers]),
+      bytes.toString(),
+    ].join('\n');
     for (const value of privateValues) assert.equal(wire.includes(value), false);
+    if (managed) for (const key of keys.keys()) assert.equal(wire.includes(key), false);
     assert.equal(request.headers.has('authorization'), false);
     assert.equal(request.headers.has('x-user-api-key'), false);
     assert.equal(request.headers.has('x-org-api-key'), false);
@@ -91,7 +98,6 @@ globalThis.fetch = async (resource, options) => {
     let project: string;
     if (managed) {
       assert.equal(request.headers.has('x-api-key'), false);
-      for (const key of keys.keys()) assert.equal(wire.includes(key), false);
       const publicKey = request.headers.get('x-otto-public-key')!;
       const timestamp = request.headers.get('x-otto-timestamp')!;
       const nonce = request.headers.get('x-otto-request-id')!;
