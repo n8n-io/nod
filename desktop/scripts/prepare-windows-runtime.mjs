@@ -33,6 +33,15 @@ for (const image of images.images)
     (await assetHash(join(assets, image.file))) !== image.sha256
   )
     throw new Error('A Windows workload image failed its integrity check.');
+for (const image of images.images) {
+  image.size = Number(
+    await run('docker', ['image', 'inspect', '--format', '{{.Size}}', image.id], {
+      output: 'stdout',
+    }),
+  );
+  if (!Number.isSafeInteger(image.size) || image.size < 1 || image.size > 24 * 1024 ** 3)
+    throw new Error('A Windows workload image size is invalid.');
+}
 const manifest = { version: 1, platform: 'win32-x64', images: images.images };
 await writeFile(join(context, 'manifest.json'), JSON.stringify(manifest));
 await copyBundleSource(join(assets, 'images'), join(context, 'images'));
@@ -69,8 +78,12 @@ const container = await run('docker', ['create', '--platform', 'linux/amd64', im
   output: 'stdout',
 });
 const file = join(assets, 'guest.tar.gz');
+let expandedBytes = 0;
 try {
   const child = spawn('docker', ['export', container], { stdio: ['ignore', 'pipe', 'inherit'] });
+  child.stdout.on('data', (bytes) => {
+    expandedBytes += bytes.length;
+  });
   const exited = new Promise((accept, reject) => {
     child.once('error', reject);
     child.once('close', (code) =>
@@ -88,6 +101,7 @@ try {
 manifest.guest = {
   file: 'guest.tar.gz',
   bytes: (await stat(file)).size,
+  expandedBytes,
   sha256: await assetHash(file),
 };
 await writeFile(join(assets, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

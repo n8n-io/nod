@@ -711,7 +711,7 @@ async function finishEnginePreparation() {
   if (quitting || !engine) throw new Error('Otto is closing.');
   restartRequired = false;
   await writeDiagnostic('Engine ready.').catch(() => {});
-  update({ phase: 'ready', message: 'Otto is running on this Mac.', progress: undefined });
+  update({ phase: 'ready', message: 'Otto is running on your computer.', progress: undefined });
   synchronizeNotifications();
   if (!replayingOnboarding) {
     if (pendingFeedback || foregroundWindow()) showEngine();

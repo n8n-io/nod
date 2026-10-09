@@ -45,6 +45,7 @@ for (const path of [
   await copyBundleSource(join(root, path), join(engine, path));
 }
 await copyEngineDependencies({ root, target: engine, platform: 'win32', arch: 'x64' });
+console.log('Windows engine files prepared.');
 for (const path of ['main', 'preload'])
   await copyBundleSource(join(root, 'desktop', path), join(source, path));
 await buildDesktopUI(join(source, 'ui'));
@@ -62,6 +63,7 @@ await run(
   ],
   { env: { ...process.env, GOOS: 'windows', GOARCH: 'amd64', CGO_ENABLED: '0' }, timeout: 300_000 },
 );
+console.log('Windows transport built.');
 manifest.transport = {
   file: 'bin/docker.exe',
   sha256: await assetHash(join(runtime, 'bin/docker.exe')),
@@ -90,12 +92,14 @@ const [application] = await packager({
   prune: false,
   overwrite: true,
 });
+console.log('Windows application packaged.');
 await rename(engine, join(application, 'resources/engine'));
 await cp(join(assets, 'guest.tar.gz'), join(output, 'Otto-Runtime-win32-x64.tar.gz'));
 const installer = join(output, 'Otto-Setup-x64.exe');
 const nsis =
   process.env.OTTO_NSIS ||
   join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'NSIS/makensis.exe');
+console.log('Building the Windows installer.');
 await run(
   nsis,
   [

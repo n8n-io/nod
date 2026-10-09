@@ -40,7 +40,12 @@ export function execute(
     let killTimer;
     const stop = () => {
       child.kill('SIGTERM');
-      killTimer ??= setTimeout(() => child.kill('SIGKILL'), 5000);
+      killTimer ??= setTimeout(() => {
+        child.kill('SIGKILL');
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, 5000);
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -586,7 +591,11 @@ exec "$docker" "$@"
         ? path
         : [wrapperRoot, join(assets, 'docker-host/docker'), path].join(delimiter),
     ...(process.platform === 'win32'
-      ? { OTTO_WSL_DISTRIBUTION: dockerEnvironment.OTTO_WSL_DISTRIBUTION }
+      ? {
+          OTTO_WSL_DISTRIBUTION: dockerEnvironment.OTTO_WSL_DISTRIBUTION,
+          TEMP: dockerEnvironment.TEMP,
+          TMP: dockerEnvironment.TMP,
+        }
       : {}),
     DOCKER_HOST: dockerEnvironment.DOCKER_HOST,
     DOCKER_CONFIG: dockerEnvironment.DOCKER_CONFIG,

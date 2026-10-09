@@ -103,13 +103,19 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
     !Number.isSafeInteger(manifest.guest.bytes) ||
     manifest.guest.bytes < 1 ||
     manifest.guest.bytes > 8 * 1024 ** 3 ||
+    !Number.isSafeInteger(manifest.guest.expandedBytes) ||
+    manifest.guest.expandedBytes < manifest.guest.bytes ||
+    manifest.guest.expandedBytes > 12 * 1024 ** 3 ||
     !Array.isArray(manifest.images) ||
     manifest.images.length !== 3 ||
     new Set(manifest.images.map((image) => image.name)).size !== 3 ||
     manifest.images.some(
       (image) =>
         !['workspace', 'browser', 'postgres'].includes(image.name) ||
-        !/^sha256:[a-f0-9]{64}$/.test(image.id),
+        !/^sha256:[a-f0-9]{64}$/.test(image.id) ||
+        !Number.isSafeInteger(image.size) ||
+        image.size < 1 ||
+        image.size > 24 * 1024 ** 3,
     )
   )
     throw new Error('The Windows runtime is incompatible. Reinstall this preview.');
@@ -161,7 +167,11 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   if (!existing || saved.guest !== manifest.guest.sha256) {
     status({ phase: 'installing', message: 'Installing your private computer…' });
     const space = await statfs(controlRoot);
-    if (space.bavail * space.bsize < manifest.guest.bytes * 3 + 2 * 1024 ** 3)
+    const required =
+      manifest.guest.expandedBytes * 2 +
+      manifest.images.reduce((bytes, image) => bytes + image.size, 0) +
+      2 * 1024 ** 3;
+    if (space.bavail * space.bsize < required)
       throw new Error(
         'Otto needs more free disk space to prepare its private computer. Free space, then select Try again.',
       );
@@ -178,10 +188,12 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
       const gunzip = createGunzip();
       gunzip.on('data', (bytes) => {
         expanded += bytes.length;
-        if (expanded > 12 * 1024 ** 3)
+        if (expanded > manifest.guest.expandedBytes)
           gunzip.destroy(new Error('The Windows computer image is too large.'));
       });
       await pipeline(createReadStream(archive), gunzip, createWriteStream(guest), { signal });
+      if (expanded !== manifest.guest.expandedBytes)
+        throw new Error('The Windows computer image has an unexpected size.');
       if (!existing) {
         await mkdir(join(controlRoot, 'wsl'), { recursive: true });
         await execute(
@@ -247,11 +259,14 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   await access(docker);
   const dockerEnvironment = {
     ...hostEnvironment,
+    TEMP: join(controlRoot, 'temp'),
+    TMP: join(controlRoot, 'temp'),
     OTTO_WSL_DISTRIBUTION: distribution,
     DOCKER_CONFIG: join(controlRoot, 'docker-config'),
     DOCKER_HOST: '',
     DOCKER_CONTEXT: '',
   };
+  await mkdir(dockerEnvironment.TEMP, { recursive: true });
   await mkdir(dockerEnvironment.DOCKER_CONFIG, { recursive: true });
   return finishRuntime({
     dataRoot,

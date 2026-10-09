@@ -6,7 +6,7 @@ OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\Otto"
 InstallDirRegKey HKCU "Software\Otto" "InstallDir"
 RequestExecutionLevel user
-SetCompressor /SOLID lzma
+SetCompressor /SOLID zlib
 ShowInstDetails show
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\Otto.exe"
@@ -65,6 +65,14 @@ Section "Otto"
   Call CheckInstallDirectory
   SetShellVarContext current
   SetOutPath "$INSTDIR"
+  FileOpen $0 "$INSTDIR\.otto-installation" w
+  FileWrite $0 "otto-win32-x64"
+  FileClose $0
+  IfErrors 0 directory_marked
+    SetErrorLevel 1
+    Abort
+  directory_marked:
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
   File /r "${APP_DIR}\*"
   SetOutPath "$INSTDIR\resources\engine\windows-runtime"
   CopyFiles /SILENT "$EXEDIR\Otto-Runtime-win32-x64.tar.gz" "$INSTDIR\resources\engine\windows-runtime\guest.tar.gz"
@@ -74,10 +82,6 @@ Section "Otto"
     Abort
   runtime_copied:
   SetOutPath "$INSTDIR"
-  FileOpen $0 "$INSTDIR\.otto-installation" w
-  FileWrite $0 "otto-win32-x64"
-  FileClose $0
-  WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateDirectory "$SMPROGRAMS\Otto"
   CreateShortcut "$SMPROGRAMS\Otto\Otto.lnk" "$INSTDIR\Otto.exe"
   CreateShortcut "$SMPROGRAMS\Otto\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
