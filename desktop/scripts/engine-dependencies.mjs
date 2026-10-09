@@ -27,6 +27,7 @@ export async function copyEngineDependencies({
       (!values.some((value) => !value.startsWith('!')) || values.includes(actual)));
   await copyBundleSource(join(root, 'node_modules'), join(target, 'node_modules'), async (path) => {
     const normalized = path.replaceAll('\\', '/');
+    if (/\/node_modules\/(?:\.bin\/)?lefthook(?:-[^/]+)?$/.test(normalized)) return false;
     if (/\/node_modules\/(?:@[^/]+\/)?[^/]+$/.test(normalized)) {
       const metadata = await readFile(join(path, 'package.json'), 'utf8').catch((error) => {
         if (['ENOENT', 'ENOTDIR'].includes(error.code)) return null;

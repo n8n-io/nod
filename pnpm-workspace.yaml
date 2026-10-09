@@ -4,6 +4,7 @@ allowBuilds:
   agent-browser: true
   esbuild: true
   fsevents: true
+  lefthook: true
   core-js: false
   protobufjs: false
   '@google/genai': false
