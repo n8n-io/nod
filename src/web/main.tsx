@@ -9,6 +9,7 @@ import './pages/chat.css';
 import './theme.css';
 import './pages/secondary-pages.css';
 import './pages/apps.css';
+import './components/app-connection-dialog.css';
 import './pages/channels.css';
 import './pages/tasks.css';
 import './pages/memory.css';

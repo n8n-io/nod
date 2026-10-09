@@ -130,7 +130,7 @@ export interface Connection {
 }
 export interface AppSetupStatus {
   completed: string[];
-  apps: Array<{ hash: string; slug: string; name: string; logoUrl?: string }>;
+  apps: Array<{ hash: string; slug: string; name: string; logoUrl?: string; pairingCode?: string }>;
 }
 export interface Configuration {
   provider: string;

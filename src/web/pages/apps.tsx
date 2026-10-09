@@ -1,5 +1,6 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import * as Popover from '@radix-ui/react-popover';
 import {
   AlertCircle,
@@ -14,6 +15,7 @@ import {
 import type { AppSetupStatus, Configuration, Connection } from '../../shared/contracts';
 import { SetupNotice } from '../components/setup-notice';
 import { ServiceLogo } from '../components/service-logo';
+import { AppConnectionDialog, type AppSignIn } from '../components/app-connection-dialog';
 import { api, ApiError, errorMessage } from '../lib/api';
 import { connectionUrl } from '../lib/connection-url';
 import { desktopLinksAvailable, openConnection } from '../lib/desktop';
@@ -317,12 +319,7 @@ export function Apps({
   const [error, setError] = useState('');
   const [connectErrorService, setConnectErrorService] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
-  const [signIn, setSignIn] = useState<{
-    service: string;
-    url: string;
-    code?: string;
-    attempt?: string;
-  }>();
+  const [signIn, setSignIn] = useState<AppSignIn & { attempt?: string }>();
   const [manageService, setManageService] = useState<string | null>(null);
   const [pointerRestoredService, setPointerRestoredService] = useState<string | null>(null);
   const [disconnectAccount, setDisconnectAccount] = useState<Connection | null>(null);
@@ -396,6 +393,12 @@ export function Apps({
     setSelectedCategories([]);
     setVisibleCount(24);
   }
+  function closeSignIn() {
+    actionRequest.current?.abort();
+    actionRequest.current = null;
+    setBusy('');
+    setSignIn(undefined);
+  }
   useEffect(() => {
     const target = catalogEnd.current;
     if (view !== 'all' || !target || visibleCount >= available.length) return;
@@ -430,39 +433,63 @@ export function Apps({
   }, []);
   useEffect(() => () => actionRequest.current?.abort(), []);
   useEffect(() => {
-    if (!signIn) return;
+    if (!signIn?.url) return;
+    const url = signIn.url;
     const controller = new AbortController();
-    const check = async () => {
+    let checking: Promise<boolean> | undefined;
+    let poll: number | undefined;
+    const read = async () => {
       try {
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signIn.url));
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
         const hash = Array.from(new Uint8Array(digest), (byte) =>
           byte.toString(16).padStart(2, '0'),
         ).join('');
         const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
           body: JSON.stringify({ hashes: [hash] }),
-          signal: controller.signal,
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
           cache: 'no-store',
         });
-        if (controller.signal.aborted || !result.completed.includes(hash)) return false;
+        if (controller.signal.aborted) return false;
+        if (!result.completed.includes(hash)) {
+          if (result.apps.some((app) => app.hash === hash)) return false;
+          setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
+          setError('Sign-in wasn’t completed. Try connecting again.');
+        }
         controller.abort();
-        setSignIn(undefined);
+        closeSignIn();
         void refresh();
         return true;
       } catch {
         return false;
       }
     };
+    const check = () => {
+      if (controller.signal.aborted) return Promise.resolve(false);
+      checking ??= read().finally(() => {
+        checking = undefined;
+      });
+      return checking;
+    };
+    const schedule = () => {
+      poll = window.setTimeout(() => {
+        void check().finally(() => {
+          if (!controller.signal.aborted) schedule();
+        });
+      }, 5000);
+    };
     const visible = () => {
       if (document.visibilityState === 'visible') void check();
     };
     visible();
+    schedule();
     window.addEventListener('focus', visible);
     document.addEventListener('visibilitychange', visible);
     const timeout = window.setTimeout(() => {
       void check().then((completed) => {
         if (completed || controller.signal.aborted) return;
-        setSignIn(undefined);
+        controller.abort();
+        closeSignIn();
         setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
         setError('The sign-in link expired. Try connecting again.');
       });
@@ -481,7 +508,7 @@ export function Apps({
         )
           return;
         controller.abort();
-        setSignIn(undefined);
+        closeSignIn();
         if (event.data.connection !== 'connected') {
           setConnectErrorService(signIn.service.replace(/_mcp$/, ''));
           setError(
@@ -494,12 +521,13 @@ export function Apps({
       };
     return () => {
       controller.abort();
+      window.clearTimeout(poll);
       window.clearTimeout(timeout);
       window.removeEventListener('focus', visible);
       document.removeEventListener('visibilitychange', visible);
       channel?.close();
     };
-  }, [signIn, refresh]);
+  }, [signIn?.url, signIn?.service, signIn?.attempt, refresh]);
   useEffect(() => {
     if (!discoveryId) return;
     let timer: number | undefined;
@@ -648,16 +676,27 @@ export function Apps({
       ? null
       : window.open('', 'otto-connect-app', 'popup,width=520,height=720');
     try {
-      if (popup) popup.opener = null;
+      if (popup) {
+        popup.opener = null;
+        popup.document.title = 'Connect to Otto';
+        popup.document.body.textContent = 'Preparing secure sign-in…';
+      }
     } catch {}
+    request.signal.addEventListener('abort', () => popup?.close(), { once: true });
     actionRequest.current = request;
+    dialogService.current = connection.slug.replace(/_mcp$/, '');
     setBusy(
       !addAccount && connection.connectionId
         ? `reconnect:${connection.connectionId}`
         : `connect:${connection.slug}`,
     );
     setError('');
-    setSignIn(undefined);
+    setSignIn({
+      service: connection.slug,
+      name: connection.name,
+      logoUrl: connection.logoUrl,
+      opened: false,
+    });
     try {
       const result = await api<{ url: string; attempt?: string; pairingCode?: string }>(
         `/api/apps/${encodeURIComponent(connection.slug)}/connect`,
@@ -696,6 +735,7 @@ export function Apps({
         setDiscoveryLoadError('');
         setDiscoverySignIn(null);
         setDiscoveryVersion((value) => value + 1);
+        setSignIn(undefined);
         setBusy('');
         return;
       }
@@ -707,19 +747,31 @@ export function Apps({
         )
           throw new Error('The app sign-in could not be opened. Try again.');
       }
-      setSignIn({
+      const pending = {
         service: connection.slug,
+        name: connection.name,
+        logoUrl: connection.logoUrl,
         url,
         code: result.pairingCode,
         attempt: result.attempt,
-      });
-      if (external) await openConnection(url);
-      else if (popup && !popup.closed) popup.location.href = url;
+        opened: false,
+      };
+      flushSync(() => setSignIn(pending));
+      let opened = false;
+      if (external) {
+        await openConnection(url);
+        opened = true;
+      } else if (popup && !popup.closed) {
+        popup.location.href = url;
+        opened = true;
+      }
+      if (request.signal.aborted) throw new DOMException('Cancelled.', 'AbortError');
+      setSignIn((current) => (current === pending ? { ...current, opened } : current));
       setBusy('');
     } catch (cause) {
       popup?.close();
+      if (request.signal.aborted || actionRequest.current !== request) return;
       setSignIn(undefined);
-      if (request.signal.aborted) return;
       setConnectErrorService(connection.slug.replace(/_mcp$/, ''));
       setError(errorMessage(cause));
       setBusy('');
@@ -727,19 +779,6 @@ export function Apps({
       if (actionRequest.current === request) actionRequest.current = null;
     }
   }
-  const pairing = signIn && (
-    <Notice kind="info" onDismiss={() => setSignIn(undefined)}>
-      {signIn.code && (
-        <>
-          Confirm the same code in your browser:{' '}
-          <strong data-analytics-private>{signIn.code}</strong>.{' '}
-        </>
-      )}
-      <a href={signIn.url} target="_blank" rel="noreferrer">
-        Open sign-in
-      </a>
-    </Notice>
-  );
   async function disconnect() {
     const connection = disconnectAccount;
     if (!connection?.connectionId || actionRequest.current || busy) return;
@@ -872,7 +911,6 @@ export function Apps({
         </div>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
-      {pairing && (!managed || managed.key !== signIn?.service.replace(/_mcp$/, '')) && pairing}
       {error && !manageError && <Notice onDismiss={() => setError('')}>{error}</Notice>}
       {loadError && (
         <Notice>
@@ -1156,8 +1194,22 @@ export function Apps({
           </div>
         </>
       )}
+      <AppConnectionDialog
+        signIn={signIn}
+        opening={Boolean(busy)}
+        onClose={closeSignIn}
+        onOpened={() =>
+          setSignIn((current) =>
+            current && current === signIn ? { ...current, opened: true } : current,
+          )
+        }
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (!managed?.accounts.length) restoreAppFocus();
+        }}
+      />
       <Dialog
-        open={Boolean(managed?.accounts.length) && !disconnectAccount}
+        open={Boolean(managed?.accounts.length) && !disconnectAccount && !signIn}
         onOpenChange={(open) => {
           if (!open && !disconnectAccount) setManageService(null);
         }}
@@ -1178,7 +1230,7 @@ export function Apps({
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            restoreAppFocus();
+            if (!signIn) restoreAppFocus();
           }}
         >
           <div className="dialog-heading app-manage-heading">
@@ -1191,7 +1243,6 @@ export function Apps({
             </div>
           </div>
           {manageError && <Notice onDismiss={() => setError('')}>{manageError}</Notice>}
-          {pairing && managed?.key === signIn?.service.replace(/_mcp$/, '') && pairing}
           <div className="app-manage-accounts">
             {managed?.accounts.map((account) => (
               <ConnectedAccount

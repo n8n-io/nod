@@ -837,7 +837,8 @@ test('native download publication failure offers the completed file for recovery
 
 test('native settings reject foreign windows, subframes, AI credentials, and web onboarding writes', async (t) => {
   const f = await runningDesktop(t, () => assert.fail('Settings must not make an engine request.'));
-  await f.storage.store.environment();
+  const { OTTO_VAULT_KEY: vaultKey } = await f.storage.store.environment();
+  assert.ok(vaultKey);
   f.showEngine();
   const window = f.windows.at(-1);
   const frame = { url: 'http://127.0.0.1:4310/' };
@@ -878,8 +879,14 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   ])
     await assert.rejects(save(value), /not supported/);
   assert.equal(await readFile(f.storage.path, 'utf8'), previous);
-  assert.ok(!JSON.stringify(await get()).includes('synthetic-existing-key'));
-  assert.ok(!JSON.stringify(await analytics()).includes('synthetic-existing-key'));
+  const vaultCiphertext = JSON.parse(previous).secrets.vaultKey;
+  assert.ok(vaultCiphertext);
+  assert.notEqual(vaultCiphertext, vaultKey);
+  for (const returned of [await get(), await analytics()]) {
+    const serialized = JSON.stringify(returned);
+    assert.equal(serialized.includes(vaultKey), false);
+    assert.equal(serialized.includes(vaultCiphertext), false);
+  }
   await save({ theme: 'dark', launchAtLogin: true });
   assert.equal((await f.storage.store.get()).launchAtLogin, true);
   window.destroy();

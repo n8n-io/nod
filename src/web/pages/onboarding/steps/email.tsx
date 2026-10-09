@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Check, LoaderCircle } from 'lucide-react';
 import type { AppSetupStatus, Configuration, Connection } from '../../../../shared/contracts';
 import { Button } from '../../../components/ui';
@@ -170,8 +171,10 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       if (!response.attempt || !/^[A-Za-z0-9_-]{43}$/.test(response.attempt))
         throw new Error('Gmail didn’t connect. Try again?');
       attempt.current = response.attempt;
-      setPairingCode(response.pairingCode);
-      setSignInUrl(url);
+      flushSync(() => {
+        setPairingCode(response.pairingCode);
+        setSignInUrl(url);
+      });
       if (external) {
         await openConnection(url);
         next = 'waiting';
@@ -237,9 +240,11 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         </div>
         <div className="ob-email-step">
           <div className="ob-email-body" data-gmail={gmailState}>
-            <div className="ob-email-label">
-              <p>Sign in to Gmail</p>
-            </div>
+            {!connected && (
+              <div className="ob-email-label">
+                <p>Sign in to Gmail</p>
+              </div>
+            )}
             {pairingCode && !connected && (
               <p className="ob-email-muted">
                 Confirm the same code in your browser:{' '}

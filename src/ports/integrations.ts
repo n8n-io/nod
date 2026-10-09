@@ -119,6 +119,11 @@ export interface IntegrationProvider {
   listServices?(): Promise<IntegrationServiceInfo[]>;
   webhooksConfigured: boolean;
   supportsSubscriptions: readonly IntegrationService[];
+  authorize?(
+    ownerId: string,
+    service: IntegrationService,
+    callbackUrl: string,
+  ): Promise<IntegrationAuthorization>;
   createSession(
     ownerId: string,
     accounts: Partial<Record<IntegrationService, string | string[]>>,

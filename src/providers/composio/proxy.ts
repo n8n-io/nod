@@ -211,9 +211,30 @@ export function createComposioProxy(options: {
         options.failure ?? 'The integration connection could not be completed. Try again.',
       );
     }
-    const text = await response.text();
-    if (text.length > 32_768) throw new Error('The integration response is invalid.');
-    return JSON.parse(text) as unknown;
+    if (!response.body || Number(response.headers.get('content-length')) > 32_768) {
+      await response.body?.cancel();
+      throw new Error('The integration response is invalid.');
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        size += chunk.value.byteLength;
+        if (size > 32_768) throw new Error('The integration response is invalid.');
+        chunks.push(chunk.value);
+      }
+    } finally {
+      await reader.cancel();
+      reader.releaseLock();
+    }
+    signal.throwIfAborted();
+    return JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)),
+    ) as unknown;
   }
   return {
     client,

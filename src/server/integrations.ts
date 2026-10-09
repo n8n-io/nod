@@ -80,6 +80,7 @@ type ConnectionRow = {
   callback_hash: string | null;
   callback_claim_id: string | null;
   callback_verifier: string | null;
+  pairing_code: string | null;
   setup_link_hash: string | null;
   callback_expires: Date | null;
   callback_return_to: ReturnTarget;
@@ -308,6 +309,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     CREATE UNIQUE INDEX IF NOT EXISTS app_connections_account_key ON app_connections(owner_id,provider_id,account_id) WHERE account_id IS NOT NULL;
     ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS inbox_cursor text,
       ADD COLUMN IF NOT EXISTS callback_verifier text,
+      ADD COLUMN IF NOT EXISTS pairing_code text,
       ADD COLUMN IF NOT EXISTS callback_claim_id text,
       ADD COLUMN IF NOT EXISTS configuration_id text,
       ADD COLUMN IF NOT EXISTS setup_link_hash text,
@@ -983,9 +985,18 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     const nonce = randomBytes(32).toString('base64url');
     const callbackUrl = new URL('/api/apps/callback', options.baseUrl);
     callbackUrl.searchParams.set('state', nonce);
-    const session = await selected.createSession(configuredOwner, {});
+    const session = selected.authorize
+      ? undefined
+      : await selected.createSession(configuredOwner, {});
     try {
-      const attempt = await session.authorize(slug, callbackUrl.href);
+      const attempt = selected.authorize
+        ? await selected.authorize(configuredOwner, slug, callbackUrl.href)
+        : await session!.authorize(slug, callbackUrl.href);
+      const pairingCode = z
+        .string()
+        .regex(/^\d{3}-\d{3}$/)
+        .optional()
+        .parse(attempt.pairingCode);
       const redirect = new URL(attempt.url);
       if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
         throw new IntegrationError(
@@ -1022,8 +1033,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           ).rows;
         }
         await client.query(
-          `INSERT INTO app_connections (owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id,callback_return_to,turn_id,setup_link_hash,callback_verifier,configuration_id,replaces_connection_id,pending_account_email)
-           VALUES ($1,$2,$3,$4,now() + interval '10 minutes',$5,$6,$7,$8,$9,$10,$11,$12)`,
+          `INSERT INTO app_connections (owner_id,slug,pending_account_id,callback_hash,callback_expires,provider_id,callback_return_to,turn_id,setup_link_hash,callback_verifier,configuration_id,replaces_connection_id,pending_account_email,pairing_code)
+           VALUES ($1,$2,$3,$4,now() + interval '10 minutes',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
           [
             configuredOwner,
             slug,
@@ -1037,6 +1048,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             selected.configurationId ?? null,
             replacement?.id ?? null,
             replacement ? normalizedEmail(replacement.account_email!) : null,
+            pairingCode ?? null,
           ],
         );
         await client.query('COMMIT');
@@ -1049,11 +1061,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       for (const previous of discarded) await discardReconnect(previous);
       return {
         url: attempt.url,
-        ...(attempt.pairingCode ? { pairingCode: attempt.pairingCode } : {}),
+        ...(pairingCode ? { pairingCode } : {}),
         ...(returnTo === 'window' ? { attempt: nonce } : {}),
       };
     } finally {
-      selected.deleteSession(session.id).catch(() => {});
+      if (session) selected.deleteSession(session.id).catch(() => {});
     }
   }
 
@@ -1084,7 +1096,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
          SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND callback_hash=$3 AND account_id IS NOT NULL
          AND callback_claim_id IS NOT DISTINCT FROM $4 FOR UPDATE
        ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
-       callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL FROM pending
+       callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,callback_expires=NULL,setup_link_hash=NULL FROM pending
        WHERE c.id=pending.id RETURNING pending.*`,
       [id, configuredOwner, hash, claimId ?? null],
     );
@@ -1132,7 +1144,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       `WITH previous AS (
          SELECT * FROM app_connections WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND NOT revoked FOR UPDATE
        ) UPDATE app_connections c SET pending_account_id=NULL,pending_account_email=$6,pending_auth_config_id=NULL,
-       callback_hash=$5,callback_claim_id=NULL,callback_expires=now()+interval '10 minutes',callback_return_to=$7,setup_link_hash=NULL,turn_id=$8
+       callback_hash=$5,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,callback_expires=now()+interval '10 minutes',callback_return_to=$7,setup_link_hash=NULL,turn_id=$8
        FROM previous WHERE c.id=previous.id RETURNING previous.*`,
       [
         row.id,
@@ -1156,6 +1168,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         row.account_id!,
         callbackUrl.href,
       );
+      const pairingCode = z
+        .string()
+        .regex(/^\d{3}-\d{3}$/)
+        .optional()
+        .parse(attempt.pairingCode);
       attemptedId = z.string().min(1).max(200).parse(attempt.accountId);
       const redirect = new URL(attempt.url);
       if (redirect.protocol !== 'https:' || redirect.username || redirect.password)
@@ -1164,7 +1181,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           502,
         );
       const saved = await pool.query(
-        `UPDATE app_connections SET pending_account_id=$6,pending_auth_config_id=$7,setup_link_hash=$8,callback_verifier=$9
+        `UPDATE app_connections SET pending_account_id=$6,pending_auth_config_id=$7,setup_link_hash=$8,callback_verifier=$9,pairing_code=$10
          WHERE id=$1 AND owner_id=$2 AND provider_id=$3 AND account_id=$4 AND callback_hash=$5 AND NOT revoked`,
         [
           row.id,
@@ -1176,6 +1193,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           z.string().min(1).max(200).parse(attempt.authConfigId),
           createHash('sha256').update(redirect.href).digest('hex'),
           attempt.verificationSecret ?? null,
+          pairingCode ?? null,
         ],
       );
       if (!saved.rowCount)
@@ -1185,7 +1203,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         );
       return {
         url: attempt.url,
-        ...(attempt.pairingCode ? { pairingCode: attempt.pairingCode } : {}),
+        ...(pairingCode ? { pairingCode } : {}),
         ...(returnTo === 'window' ? { attempt: nonce } : {}),
       };
     } catch (error) {
@@ -1289,7 +1307,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           throw new IntegrationError('This account is already saved as another connection.', 409);
         await client.query(
           `UPDATE app_connections SET account_id=$4,pending_account_id=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
-           callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL,replaces_connection_id=NULL,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
+           callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,callback_expires=NULL,setup_link_hash=NULL,replaces_connection_id=NULL,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3,
            trigger_id=NULL,triggers_enabled=false,watch_attempted=false,watch_attempted_at=NULL,watch_failures=0,watch_retry_at=NULL,
            watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false,
            provider_id=$5,configuration_id=$6,turn_id=$7 WHERE id=$1 AND owner_id=$8`,
@@ -1340,7 +1358,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         }
       } else {
         await client.query(
-          `UPDATE app_connections SET account_id=$4,pending_account_id=NULL,callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,setup_link_hash=NULL,
+          `UPDATE app_connections SET account_id=$4,pending_account_id=NULL,callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,setup_link_hash=NULL,
            callback_expires=NULL,revoked=false,account_active=true,account_checked_at=now(),account_name=$2,account_email=$3 WHERE id=$1`,
           [row.id, remote.accountName ?? null, remote.accountEmail ?? null, query.accountId],
         );
@@ -1352,6 +1370,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     } finally {
       client.release();
     }
+    options.refresh?.();
     await resetSession(configuredOwner);
     const selected = providerForRow(row);
     if (row.account_id) {
@@ -1391,7 +1410,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       row = current.rows[0];
       await client.query(
         `UPDATE app_connections SET revoked=true,triggers_enabled=false,watch_requested=false,
-         callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,callback_expires=NULL,setup_link_hash=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
+         callback_hash=NULL,callback_claim_id=NULL,callback_verifier=NULL,pairing_code=NULL,callback_expires=NULL,setup_link_hash=NULL,pending_account_email=NULL,pending_auth_config_id=NULL,
          watch_revision=watch_revision+1,inbox_cursor=NULL,inbox_poll_at=NULL,inbox_claim_id=NULL,inbox_checked_at=NULL,inbox_failed=false,inbox_reconnect_required=false
          WHERE id=$1 AND owner_id=$2 AND provider_id=$3`,
         [row.id, configuredOwner, row.provider_id],
@@ -2126,12 +2145,17 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           .strict()
           .parse(request.body);
         const [links, discovered] = await Promise.all([
-          pool.query<{ hash: string; slug: string; completed: boolean }>(
-            `SELECT link_hash AS hash,'' AS slug,true AS completed FROM app_setup_completions
+          pool.query<{
+            hash: string;
+            slug: string;
+            completed: boolean;
+            pairing_code: string | null;
+          }>(
+            `SELECT link_hash AS hash,'' AS slug,true AS completed,NULL AS pairing_code FROM app_setup_completions
              WHERE owner_id=$1 AND link_hash=ANY($2::text[])
              UNION ALL
-             SELECT setup_link_hash AS hash,slug,false AS completed FROM app_connections
-             WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now()`,
+             SELECT setup_link_hash AS hash,slug,false AS completed,pairing_code FROM app_connections
+             WHERE owner_id=$1 AND setup_link_hash=ANY($2::text[]) AND callback_expires>now() AND NOT revoked`,
             [configuredOwner, hashes],
           ),
           options.discovered?.setupServices(connectionIds) ?? [],
@@ -2150,6 +2174,9 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               slug: row.slug,
               name: 'name' in row && typeof row.name === 'string' ? row.name : info.name,
               ...(info.logoUrl ? { logoUrl: info.logoUrl } : {}),
+              ...('pairing_code' in row && row.pairing_code
+                ? { pairingCode: row.pairing_code }
+                : {}),
             };
           });
         return reply.header('Cache-Control', 'no-store').send({
@@ -2225,8 +2252,10 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             returnTo = Object.hasOwn(returnPaths, row.callback_return_to)
               ? row.callback_return_to
               : 'apps';
-            if (!configurationMatches(row)) outcome = 'failed';
-            else if (
+            if (!configurationMatches(row)) {
+              outcome = 'failed';
+              await clearReconnect(row.id, hash, row.callback_claim_id ?? undefined);
+            } else if (
               row.callback_expires &&
               new Date(row.callback_expires).getTime() > Date.now()
             ) {

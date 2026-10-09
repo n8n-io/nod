@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   createHash,
   createHmac,
@@ -12,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { Composio } from '@composio/core';
 import { APIConnectionError, APIConnectionTimeoutError } from '@composio/client';
 import Fastify from 'fastify';
@@ -214,12 +216,31 @@ test('managed integration requests bind SDK calls to a private persisted install
   await other.initialize();
   assert.notEqual(proxy.userId, other.userId);
   const provider = createComposioProvider({ proxy });
-  const session = await provider.createSession('fixture-owner', {});
   const state = randomBytes(32).toString('base64url');
-  const attempt = await session.authorize(
+  assert.equal(typeof provider.authorize, 'function');
+  const beforeAuthorization = calls.length;
+  const directAttempt = await provider.authorize!(
+    'fixture-owner',
     'gmail',
     `http://localhost:4310/api/apps/callback?state=${state}`,
   );
+  assert.equal(directAttempt.accountId, `pending_${state}`);
+  assert.deepEqual(
+    calls.slice(beforeAuthorization).map((call) => call.path),
+    ['/v1/connect/start'],
+  );
+  const afterAuthorization = calls.length;
+  await assert.rejects(
+    provider.authorize!(
+      'another-owner',
+      'gmail',
+      `http://localhost:4310/api/apps/callback?state=${state}`,
+    ),
+    /owner/,
+  );
+  assert.equal(calls.length, afterAuthorization);
+  const session = await provider.createSession('fixture-owner', {});
+  const attempt = directAttempt;
   assert.equal(attempt.accountId, `pending_${state}`);
   assert.equal(attempt.pairingCode, '123-456');
   assert.ok(attempt.verificationSecret);
@@ -386,35 +407,215 @@ test('managed integration requests bind SDK calls to a private persisted install
     'writable data root',
     'symbolic writable data root',
   ]) {
-    await t.test(`installation identity rejects ${variant}`, async () => {
-      const dataRoot = join(root, variant.replaceAll(' ', '-'));
-      const unsafeDirectory = join(dataRoot, 'integration-identity');
-      const source = join(directory, entries[0]);
-      const target = join(unsafeDirectory, entries[0]);
-      if (variant === 'symbolic writable data root') {
-        const writable = join(root, 'writable-target');
-        await mkdir(writable);
-        await chmod(writable, 0o777);
-        await symlink(writable, dataRoot);
-      } else {
-        await mkdir(dataRoot, { mode: 0o700 });
-        if (variant === 'symbolic directory') {
-          await symlink(directory, unsafeDirectory);
+    await t.test(
+      `installation identity rejects ${variant}`,
+      {
+        skip:
+          process.platform === 'win32' &&
+          [
+            'permissive directory',
+            'permissive key',
+            'writable data root',
+            'symbolic writable data root',
+          ].includes(variant),
+      },
+      async () => {
+        const dataRoot = join(root, variant.replaceAll(' ', '-'));
+        const unsafeDirectory = join(dataRoot, 'integration-identity');
+        const source = join(directory, entries[0]);
+        const target = join(unsafeDirectory, entries[0]);
+        if (variant === 'symbolic writable data root') {
+          const writable = join(root, 'writable-target');
+          await mkdir(writable);
+          await chmod(writable, 0o777);
+          await symlink(writable, dataRoot);
         } else {
-          await mkdir(unsafeDirectory, { mode: 0o700 });
-          if (variant === 'symbolic key') await symlink(source, target);
-          else if (variant === 'nonregular key') await mkdir(target);
-          else {
-            await copyFile(source, target);
-            await chmod(target, variant === 'permissive key' ? 0o644 : 0o600);
+          await mkdir(dataRoot, { mode: 0o700 });
+          if (variant === 'symbolic directory') {
+            await symlink(directory, unsafeDirectory);
+          } else {
+            await mkdir(unsafeDirectory, { mode: 0o700 });
+            if (variant === 'symbolic key') await symlink(source, target);
+            else if (variant === 'nonregular key') await mkdir(target);
+            else {
+              await copyFile(source, target);
+              await chmod(target, variant === 'permissive key' ? 0o644 : 0o600);
+            }
+            if (variant === 'permissive directory') await chmod(unsafeDirectory, 0o755);
           }
-          if (variant === 'permissive directory') await chmod(unsafeDirectory, 0o755);
+          if (variant === 'writable data root') await chmod(dataRoot, 0o777);
         }
-        if (variant === 'writable data root') await chmod(dataRoot, 0o777);
+        const invalid = createComposioProxy({ ...options, dataRoot });
+        await assert.rejects(invalid.initialize());
+        assert.throws(() => invalid.userId);
+      },
+    );
+  }
+});
+
+for (const [scenario, name, restart] of [
+  ['fresh-desktop', 'fresh desktop uses managed routing', false],
+  ['keyless-server', 'keyless server uses managed routing', false],
+  ['later-managed-desktop-restart', 'later managed desktop restart preserves its account', true],
+  ['direct-server-key-rotation', 'server key rotation retains same-project accounts', true],
+  ['different-server-project', 'another server project cannot adopt saved accounts', true],
+] as const) {
+  test(
+    `default Composio adapters: ${name}`,
+    { skip: !process.env.TEST_DATABASE_URL },
+    async (t) => {
+      const root = await mkdtemp(join(tmpdir(), 'otto-composio-defaults-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const db = await hostedDatabase();
+      t.after(() => db.close());
+      const schema = (await db.pool.query('SELECT current_schema() AS name')).rows[0].name;
+      const databaseUrl = new URL(process.env.TEST_DATABASE_URL!);
+      databaseUrl.searchParams.set('options', `-c search_path=${schema}`);
+      const desktop = scenario.includes('desktop');
+      const managed = desktop || scenario === 'keyless-server';
+      const connectionId = randomUUID();
+      for (const phase of restart ? ['initial', 'restart'] : ['initial']) {
+        const result = spawnSync(
+          process.execPath,
+          [
+            '--experimental-transform-types',
+            fileURLToPath(new URL('./fixtures/composio-defaults.mts', import.meta.url)),
+          ],
+          {
+            input: JSON.stringify({ scenario, phase, connectionId }),
+            encoding: 'utf8',
+            timeout: 45_000,
+            maxBuffer: 1024 * 1024,
+            env: {
+              PATH: process.env.PATH,
+              USER: 'otto-test',
+              LANG: 'C.UTF-8',
+              TZ: 'UTC',
+              NODE_ENV: 'test',
+              CI: 'true',
+              DOTENV_CONFIG_PATH: '/dev/null',
+              OTTO_DATA_ROOT: root,
+              PI_CODING_AGENT_DIR: join(root, 'pi'),
+              OTTO_VAULT_KEY: Buffer.alloc(32, 11).toString('base64'),
+              OTTO_ANALYTICS_ENABLED: 'false',
+              DATABASE_URL: databaseUrl.href,
+              COMPOSIO_BASE_URL: 'https://backend.composio.dev',
+              PORT: '4310',
+              OTTO_PUBLIC_URL: desktop ? 'http://127.0.0.1:4310' : 'http://localhost:4310',
+              ...(desktop
+                ? {
+                    OTTO_DESKTOP: 'true',
+                    OTTO_DESKTOP_OWNER_ID: '11111111-1111-4111-8111-111111111111',
+                    OTTO_DESKTOP_AUTH_TOKEN: Buffer.alloc(32, 12).toString('base64url'),
+                  }
+                : {}),
+              ...(scenario !== 'keyless-server'
+                ? {
+                    COMPOSIO_API_KEY:
+                      phase === 'restart' && !desktop
+                        ? scenario === 'different-server-project'
+                          ? 'synthetic-project-b-foreign'
+                          : 'synthetic-project-a-rotated'
+                        : 'synthetic-project-a-first',
+                    OTTO_COMPOSIO_PROXY_URL: 'https://unused-proxy.example.test',
+                  }
+                : {}),
+            },
+          },
+        );
+        assert.ifError(result.error);
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        const report = JSON.parse(result.stdout.trim().split('\n').at(-1)!);
+        assert.equal(
+          report.origin,
+          managed ? 'https://composio.n8n.cloud' : 'https://backend.composio.dev',
+        );
+        assert.equal(
+          report.connected,
+          scenario !== 'different-server-project' || phase !== 'restart',
+        );
+        assert.ok(
+          report.calls.every(
+            (call: { method: string; path: string }) =>
+              !call.path.includes('/connect/') &&
+              !call.path.includes('/link') &&
+              !(call.method === 'DELETE' && call.path.includes('/connected_accounts/')),
+          ),
+        );
       }
-      const invalid = createComposioProxy({ ...options, dataRoot });
-      await assert.rejects(invalid.initialize());
-      assert.throws(() => invalid.userId);
+    },
+  );
+}
+
+test('managed authorization bounds streamed response bytes before parsing and cancels oversized bodies', async (t) => {
+  for (const variant of ['streamed', 'declared', 'misreported', 'utf8-overflow', 'utf8-split']) {
+    await t.test(variant, async () => {
+      let pulled = 0;
+      let cancelled = false;
+      let calls = 0;
+      let total = 0;
+      const proxy = createComposioProxy({
+        dataRoot: '/unused-synthetic-identity',
+        ownerId: 'response-limit-owner',
+        identitySecret: randomBytes(32),
+        url: 'https://proxy.example.test',
+        request: async (_input, init) => {
+          calls++;
+          const { transactionId } = JSON.parse(String(init?.body));
+          const bytes = Buffer.from(
+            JSON.stringify({
+              redirectUrl: 'https://proxy.example.test/v1/connect/pair?ticket=synthetic',
+              transactionId,
+              pairingCode: '123-456',
+              padding:
+                variant === 'utf8-split'
+                  ? 'é'
+                  : variant === 'utf8-overflow'
+                    ? 'é'.repeat(20_000)
+                    : 'x'.repeat(50_000),
+            }),
+          );
+          const size = variant === 'utf8-split' ? 1 : 1024;
+          total = Math.ceil(bytes.length / size);
+          return new Response(
+            new ReadableStream<Uint8Array>(
+              {
+                pull(controller) {
+                  if (pulled === total) return controller.close();
+                  controller.enqueue(bytes.subarray(pulled * size, ++pulled * size));
+                },
+                cancel() {
+                  cancelled = true;
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+            {
+              headers:
+                variant === 'declared'
+                  ? { 'Content-Length': String(bytes.length) }
+                  : variant === 'misreported'
+                    ? { 'Content-Length': '20' }
+                    : {},
+            },
+          );
+        },
+      });
+      await proxy.initialize();
+      const result = proxy.authorize(
+        'gmail',
+        `http://localhost:4310/api/apps/callback?state=${randomBytes(32).toString('base64url')}`,
+      );
+      if (variant === 'utf8-split') {
+        assert.equal((await result).pairingCode, '123-456');
+        assert.equal(pulled, total);
+      } else {
+        await assert.rejects(result, /response is invalid/);
+        assert.equal(cancelled, true);
+        assert.ok(pulled < total);
+        if (variant === 'declared') assert.equal(pulled, 0);
+      }
+      assert.equal(calls, 1);
     });
   }
 });
@@ -470,6 +671,7 @@ test(
     let callback = '';
     let state = '';
     let completions = 0;
+    let refreshes = 0;
     const provider = fakeProvider({
       id: 'fixture-deferred-session',
       authorize: async (_service, nextCallback) => {
@@ -485,6 +687,14 @@ test(
       search: async () => ({ tools: {}, suggestions: [] }),
       execute: async () => ({}),
     });
+    const authorization = (await provider.createSession('fixture-owner', {})).authorize;
+    provider.authorize = async (owner, service, callbackUrl) => {
+      assert.equal(owner, 'fixture-owner');
+      return authorization(service, callbackUrl);
+    };
+    provider.createSession = async () => {
+      throw new Error('Starting sign-in must not create a tool session.');
+    };
     provider.configurationId = 'proxy-fixture';
     provider.supportsSubscriptions = [];
     provider.webhooksConfigured = false;
@@ -514,35 +724,64 @@ test(
       provider,
       baseUrl: 'http://localhost:4310',
       wake: async () => {},
+      refresh: () => refreshes++,
     });
     integrations.registerRoutes(app);
     const begin = await app.inject({ method: 'POST', url: '/api/apps/gmail/connect' });
     assert.equal(begin.statusCode, 200, begin.body);
     assert.equal(begin.json().pairingCode, '123-456');
     assert.equal(begin.body.includes(secret), false);
+    const linkHash = createHash('sha256').update(begin.json().url).digest('hex');
+    const status = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/apps/setup-status',
+        payload: { hashes: [linkHash, '0'.repeat(64)] },
+      });
+    const pending = await status();
+    assert.equal(pending.statusCode, 200);
+    assert.equal(pending.headers['cache-control'], 'no-store');
+    assert.deepEqual(pending.json().completed, []);
+    assert.equal(pending.json().apps.length, 1);
+    assert.equal(pending.json().apps[0].hash, linkHash);
+    assert.equal(pending.json().apps[0].pairingCode, '123-456');
+    assert.equal(pending.body.includes(secret), false);
+    assert.equal(pending.body.includes(state), false);
+    await database.pool.query('UPDATE app_connections SET owner_id=$1', ['another-owner']);
+    assert.deepEqual((await status()).json(), { completed: [], apps: [] });
+    await database.pool.query('UPDATE app_connections SET owner_id=$1,revoked=true', [
+      'fixture-owner',
+    ]);
+    assert.deepEqual((await status()).json(), { completed: [], apps: [] });
+    await database.pool.query('UPDATE app_connections SET revoked=false');
     const before = await app.inject({
       url: `/api/apps/callback?state=${randomBytes(32).toString('base64url')}&completion_token=sealed-fixture`,
     });
     assert.match(String(before.headers.location), /connection=expired/);
     assert.equal(completions, 0);
+    assert.equal(refreshes, 0);
     const returned = new URL(callback);
     returned.searchParams.set('completion_token', 'sealed-fixture');
     const complete = await app.inject({ url: `${returned.pathname}${returned.search}` });
     assert.match(String(complete.headers.location), /connection=connected/);
     const row = (
       await database.pool.query(
-        'SELECT account_id,pending_account_id,callback_verifier,configuration_id FROM app_connections',
+        'SELECT account_id,pending_account_id,callback_verifier,pairing_code,configuration_id FROM app_connections',
       )
     ).rows[0];
     assert.deepEqual(row, {
       account_id: 'ca_completed',
       pending_account_id: null,
       callback_verifier: null,
+      pairing_code: null,
       configuration_id: 'proxy-fixture',
     });
+    assert.deepEqual((await status()).json(), { completed: [linkHash], apps: [] });
+    assert.equal(refreshes, 1);
     const replay = await app.inject({ url: `${returned.pathname}${returned.search}` });
     assert.match(String(replay.headers.location), /connection=expired/);
     assert.equal(completions, 1);
+    assert.equal(refreshes, 1);
   },
 );
 
@@ -669,9 +908,11 @@ test(
         await database.pool.query(
           `INSERT INTO app_connections (id,owner_id,provider_id,slug,account_id,configuration_id,
            account_active,account_checked_at,account_name,account_email,watch_requested,inbox_cursor,
-           trigger_id,triggers_enabled,pending_account_id,callback_hash,callback_expires,callback_verifier)
+           trigger_id,triggers_enabled,pending_account_id,callback_hash,callback_expires,callback_verifier,
+           pending_account_email,pending_auth_config_id,setup_link_hash,pairing_code,callback_claim_id)
            VALUES ($1,$2,$3,'gmail',$4,$5,true,now(),'Saved account','owner@example.test',true,'retained-cursor',
-           'retained-trigger',true,'retained-pending',$6,now()+interval '10 minutes','retained-verifier')`,
+           'retained-trigger',true,'retained-pending',$6,now()+$7::interval,'retained-verifier',
+           'owner@example.test','retained-auth-config',$8,'123-456',$9)`,
           [
             connectionId,
             owner,
@@ -679,6 +920,9 @@ test(
             account,
             variant === 'missing-fingerprint' ? null : 'previous-project-key',
             createHash('sha256').update(state).digest('hex'),
+            variant === 'unavailable' ? '-1 minute' : '10 minutes',
+            'a'.repeat(64),
+            variant === 'wrong-service' ? 'retained-claim' : null,
           ],
         );
         await database.pool.query(
@@ -778,13 +1022,34 @@ test(
             data: {},
           },
         });
-        await app.inject({
-          url: `/api/apps/callback?state=${state}&account_ref=${account}&outcome=ok`,
+        const forged = await app.inject({
+          url: `/api/apps/callback?state=${randomBytes(32).toString('base64url')}&account_ref=${account}&outcome=ok`,
         });
+        assert.equal(new URL(forged.headers.location!).searchParams.get('connection'), 'expired');
         assert.deepEqual(
           (await database.pool.query('SELECT * FROM app_connections')).rows[0],
           before,
         );
+        const rejected = await app.inject({
+          url: `/api/apps/callback?state=${state}&account_ref=${account}&outcome=ok`,
+        });
+        assert.equal(new URL(rejected.headers.location!).searchParams.get('connection'), 'failed');
+        assert.deepEqual((await database.pool.query('SELECT * FROM app_connections')).rows[0], {
+          ...before,
+          pending_account_id: null,
+          pending_account_email: null,
+          pending_auth_config_id: null,
+          callback_hash: null,
+          callback_claim_id: null,
+          callback_verifier: null,
+          pairing_code: null,
+          callback_expires: null,
+          setup_link_hash: null,
+        });
+        const replay = await app.inject({
+          url: `/api/apps/callback?state=${state}&account_ref=${account}&outcome=ok`,
+        });
+        assert.equal(new URL(replay.headers.location!).searchParams.get('connection'), 'expired');
         assert.deepEqual(
           (await database.pool.query('SELECT id,state FROM integration_events')).rows,
           [{ id: 'retained-event', state: 'queued' }],
@@ -2520,6 +2785,63 @@ test('Composio first-task inbox snippets read at most fifteen subjects and snipp
       { in: 'query', name: 'metadataHeaders', value: 'Subject' },
       { in: 'query', name: 'fields', value: 'snippet,payload/headers' },
     ]);
+});
+
+test('OAuth completion pages preserve valid service identities and clear callback state before closing', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { JSDOM } = await import('jsdom');
+  const html = await readFile(new URL('../public/connected.html', import.meta.url), 'utf8');
+  const attempt = 'a'.repeat(43);
+  for (const [service, expected] of [
+    ['gmail', 'gmail'],
+    ['notion_mcp', 'notion_mcp'],
+    ['linear_mcp2', 'linear_mcp2'],
+    ['fixture-desktop', 'fixture-desktop'],
+    ['a'.repeat(80), 'a'.repeat(80)],
+    ['a'.repeat(81), null],
+    ['a-'.repeat(21), null],
+    ['invalid_mixed-slug', null],
+    ['9gmail', null],
+    ['Gmail', null],
+    ['<svg onload="alert(1)">', null],
+  ] as const) {
+    const messages: unknown[] = [];
+    const operations: string[] = [];
+    let dispose = () => {};
+    const query = new URLSearchParams({ connection: 'connected', service, attempt });
+    const dom = new JSDOM(html, {
+      url: `http://127.0.0.1:4310/connected.html?${query}`,
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        dispose = window.close.bind(window);
+        Reflect.set(
+          window,
+          'BroadcastChannel',
+          class {
+            constructor(name: string) {
+              assert.equal(name, 'otto.apps');
+              assert.equal(window.location.search, '');
+            }
+            postMessage(message: unknown) {
+              messages.push(JSON.parse(JSON.stringify(message)));
+              operations.push('message');
+            }
+            close() {
+              operations.push('channel-close');
+            }
+          },
+        );
+        window.close = () => {
+          assert.equal(window.location.search, '');
+          operations.push('window-close');
+        };
+      },
+    });
+    assert.deepEqual(messages, [{ connection: 'connected', service: expected, attempt }]);
+    assert.deepEqual(operations, ['message', 'channel-close', 'window-close']);
+    assert.equal(dom.window.document.querySelector('[onload]'), null);
+    dispose();
+  }
 });
 
 test(
@@ -8794,6 +9116,7 @@ test('metering covers capabilities without recording prompts, arguments, output 
   );
   const integration = {
     id: 'composio',
+    authorize: async () => ({ accountId: 'private-account', url: 'https://secret.example' }),
     pollInbox: async () => ({ cursor: 'private-cursor', hasMore: false, messages: [] }),
     restoreSession: async () => ({
       id: 'private-session',
@@ -8805,6 +9128,11 @@ test('metering covers capabilities without recording prompts, arguments, output 
   await (
     await meterIntegrations(integration, usage).restoreSession('private-session')
   ).execute('ACTION', { secret: 'private-credential' }, 'private-account');
+  await meterIntegrations(integration, usage).authorize!(
+    'private-owner',
+    'gmail',
+    'https://secret.example/callback',
+  );
   await meterIntegrations(integration, usage).pollInbox!(
     'private-account',
     null,
@@ -8895,6 +9223,7 @@ test('metering covers capabilities without recording prompts, arguments, output 
       'restore_session',
       'execute',
       'poll_inbox',
+      'authorize',
       'current_page',
       'create_session',
       'restore_session',
@@ -10050,6 +10379,9 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   const receiptHash = (url: string) => createHash('sha256').update(url).digest('hex');
   let pauseAppConnect = false;
   let finishAppConnect: ((response: Response) => void) | undefined;
+  let pauseExternalLaunch = false;
+  let finishExternalLaunch: ((error?: Error) => void) | undefined;
+  let codeAtLaunch: string | null | undefined;
   let launches = 0;
   let discoveryStatus: 'pending' | 'cancelled' | 'failed' | 'connected' | undefined;
   let discoveryReads = 0;
@@ -10078,6 +10410,8 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   };
   const attempt = 'a'.repeat(43);
   const pairingCode = '123-456';
+  let appPairingCode = pairingCode;
+  let nextPairingCode = 123_456;
   let receive: ((event: { data: unknown }) => void) | undefined;
   class Channel {
     set onmessage(value: (event: { data: unknown }) => void) {
@@ -10096,7 +10430,16 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       }),
       onPreferences: () => () => {},
       openExternal: async (url: string) => {
+        codeAtLaunch = dom.window.document.querySelector(
+          '.app-connect-dialog [data-analytics-private], [data-gmail] [data-analytics-private]',
+        )?.textContent;
         opened.push(url);
+        if (pauseExternalLaunch) {
+          pauseExternalLaunch = false;
+          await new Promise<void>((resolve, reject) => {
+            finishExternalLaunch = (error) => (error ? reject(error) : resolve());
+          });
+        }
       },
     },
     matchMedia: (media: string) => ({
@@ -10148,7 +10491,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       }
       if (
         typeof path === 'string' &&
-        /^\/api\/apps\/(?:notion|notion_mcp|linear_mcp)\/connect$/.test(path)
+        /^\/api\/apps\/(?:notion|notion_mcp|linear_mcp|googlecalendar)\/connect$/.test(path)
       ) {
         appRequests.push({ path, body: JSON.parse(String(init.body)) });
         if (pauseAppConnect) {
@@ -10159,7 +10502,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
         }
         if (appSignInUrl.startsWith('/apps?')) return Response.json({ url: appSignInUrl });
         pendingAppLinks.add(receiptHash(new URL(appSignInUrl, origin).href));
-        return Response.json({ url: appSignInUrl, attempt, pairingCode });
+        return Response.json({ url: appSignInUrl, attempt, pairingCode: appPairingCode });
       }
       if (
         typeof path === 'string' &&
@@ -10266,6 +10609,14 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   const { createRoot } = await import('react-dom/client');
   const root = createRoot(dom.window.document.getElementById('root')!);
   const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  const pairingDialog = () => dom.window.document.querySelector('.app-connect-dialog');
+  const closePairing = async () => {
+    const dialog = pairingDialog();
+    assert.ok(dialog);
+    await act(async () => dialog.querySelector<HTMLButtonElement>('.dialog-close')!.click());
+    await settle();
+    assert.equal(pairingDialog(), null);
+  };
   const poll = async () => {
     const [id, callback] = timers.entries().next().value!;
     timers.delete(id);
@@ -10357,6 +10708,169 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(dom.window.location.search, '');
     assert.equal(timers.size, 0);
     let completedReads = discoveryReads;
+    appCatalog = [
+      {
+        slug: 'googlecalendar',
+        name: 'Google Calendar',
+        status: 'disconnected',
+        triggersEnabled: false,
+      },
+    ];
+    appSignInUrl = 'https://connect.example.test/calendar';
+    await act(async () => pageDataCache.update('/api/apps/catalog', () => appCatalog));
+    const calendarConnect = dom.window.document.querySelector<HTMLButtonElement>(
+      '[data-connect-service="googlecalendar"]',
+    )!;
+    calendarConnect.focus();
+    pauseAppConnect = true;
+    const openedBeforeCalendar = opened.length;
+    await act(async () => calendarConnect.click());
+    await settle();
+    assert.ok(pairingDialog());
+    assert.equal(pairingDialog()!.getAttribute('role'), 'dialog');
+    assert.equal(pairingDialog()!.contains(dom.window.document.activeElement), true);
+    assert.equal(pairingDialog()!.querySelector('[data-analytics-private]'), null);
+    assert.equal(pairingDialog()!.querySelectorAll('a').length, 0);
+    assert.equal(opened.length, openedBeforeCalendar);
+    assert.equal(expiryTimers.size, 0);
+    pendingAppLinks.add(receiptHash(appSignInUrl));
+    pauseExternalLaunch = true;
+    await act(async () =>
+      finishAppConnect!(Response.json({ url: appSignInUrl, attempt, pairingCode })),
+    );
+    await settle();
+    const calendarDialog = pairingDialog();
+    assert.ok(calendarDialog);
+    assert.equal(calendarDialog.getAttribute('role'), 'dialog');
+    assert.equal(calendarDialog.contains(dom.window.document.activeElement), true);
+    assert.equal(
+      calendarDialog.querySelector('[data-analytics-private]')?.textContent,
+      pairingCode,
+    );
+    assert.equal(calendarDialog.querySelectorAll('a').length, 0);
+    assert.equal(codeAtLaunch, pairingCode);
+    assert.equal(opened.at(-1), appSignInUrl);
+    const expiryDuringLaunch = [...expiryTimers.entries()];
+    assert.equal(expiryDuringLaunch.length, 1);
+    await act(async () => finishExternalLaunch!());
+    await settle();
+    assert.deepEqual([...expiryTimers.entries()], expiryDuringLaunch);
+    assert.equal(dom.window.document.querySelector('.app-manage-dialog'), null);
+    assert.deepEqual(appRequests.at(-1), {
+      path: '/api/apps/googlecalendar/connect',
+      body: { returnTo: 'window' },
+    });
+    await act(async () =>
+      receive!({ data: { service: 'gmail', connection: 'connected', attempt } }),
+    );
+    assert.equal(pairingDialog(), calendarDialog);
+    completedAppLinks.add(receiptHash(appSignInUrl));
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    await poll();
+    await settle();
+    assert.equal(pairingDialog(), null);
+    assert.equal(dom.window.document.activeElement, calendarConnect);
+    assert.equal(expiryTimers.size, 0);
+    assert.equal(timers.size, 0);
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
+    pauseAppConnect = true;
+    await act(async () => calendarConnect.click());
+    await settle();
+    const cancelledResponse = finishAppConnect!;
+    await closePairing();
+    appSignInUrl = 'https://connect.example.test/calendar-after-cancel';
+    appPairingCode = '234-567';
+    await act(async () => calendarConnect.click());
+    await settle();
+    const replacementDialog = pairingDialog();
+    const openedBeforeCancelledResponse = [...opened];
+    await act(async () =>
+      cancelledResponse(
+        Response.json({
+          url: 'https://connect.example.test/calendar-cancelled',
+          attempt,
+          pairingCode,
+        }),
+      ),
+    );
+    await settle();
+    assert.equal(pairingDialog(), replacementDialog);
+    assert.equal(
+      pairingDialog()!.querySelector('[data-analytics-private]')?.textContent,
+      appPairingCode,
+    );
+    assert.deepEqual(opened, openedBeforeCancelledResponse);
+    await closePairing();
+    for (const launchError of [undefined, new Error('Synthetic late launch failure.')]) {
+      pauseExternalLaunch = true;
+      appSignInUrl = 'https://connect.example.test/calendar-held-launch';
+      await act(async () => calendarConnect.click());
+      await settle();
+      const settleCancelledLaunch = finishExternalLaunch!;
+      await closePairing();
+      appSignInUrl = 'https://connect.example.test/calendar-replacement-launch';
+      appPairingCode = '345-678';
+      await act(async () => calendarConnect.click());
+      await settle();
+      const currentDialog = pairingDialog();
+      const currentExpiry = [...expiryTimers.entries()];
+      await act(async () => settleCancelledLaunch(launchError));
+      await settle();
+      assert.equal(pairingDialog(), currentDialog);
+      assert.equal(
+        pairingDialog()!.querySelector('[data-analytics-private]')?.textContent,
+        appPairingCode,
+      );
+      assert.deepEqual([...expiryTimers.entries()], currentExpiry);
+      assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
+      await closePairing();
+    }
+    appPairingCode = pairingCode;
+    const appsDesktopBridge = (dom.window as unknown as { ottoDesktop?: unknown }).ottoDesktop;
+    const originalOpen = dom.window.open;
+    Reflect.deleteProperty(dom.window, 'ottoDesktop');
+    dom.window.open = () => null;
+    appSignInUrl = 'https://connect.example.test/calendar-blocked-popup';
+    const requestsBeforeFallback = appRequests.length;
+    await act(async () => calendarConnect.click());
+    await settle();
+    const blockedDialog = pairingDialog();
+    assert.ok(blockedDialog);
+    const fallback = blockedDialog.querySelector<HTMLAnchorElement>('a');
+    assert.ok(fallback);
+    assert.equal(fallback.href, appSignInUrl);
+    assert.equal(fallback.target, '_blank');
+    assert.equal(appRequests.length, requestsBeforeFallback + 1);
+    const expiryBeforeFallback = [...expiryTimers.entries()];
+    assert.equal(expiryBeforeFallback.length, 1);
+    fallback.addEventListener('click', (event) => event.preventDefault(), { once: true });
+    await act(async () => fallback.click());
+    await settle();
+    assert.equal(blockedDialog.querySelectorAll('a').length, 0);
+    assert.equal(blockedDialog.querySelector('[data-analytics-private]')?.textContent, pairingCode);
+    assert.deepEqual([...expiryTimers.entries()], expiryBeforeFallback);
+    assert.equal(appRequests.length, requestsBeforeFallback + 1);
+    await act(async () =>
+      receive!({
+        data: { service: 'googlecalendar', connection: 'connected', attempt: 'b'.repeat(43) },
+      }),
+    );
+    assert.equal(pairingDialog(), blockedDialog);
+    await act(async () =>
+      receive!({ data: { service: 'googlecalendar', connection: 'connected', attempt } }),
+    );
+    await settle();
+    assert.equal(pairingDialog(), null);
+    assert.equal(expiryTimers.size, 0);
+    Object.assign(dom.window, { ottoDesktop: appsDesktopBridge });
+    dom.window.open = originalOpen;
+    appSignInUrl = 'https://connect.example.test/variant';
     const mcpAccount: Connection = {
       slug: 'notion_mcp',
       name: 'Notion MCP',
@@ -10402,68 +10916,80 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       body: { returnTo: 'window' },
     });
     assert.equal(
-      dom.window.document.querySelector('.app-manage-dialog [data-analytics-private]')?.textContent,
+      dom.window.document.querySelector('.app-connect-dialog [data-analytics-private]')
+        ?.textContent,
       pairingCode,
     );
+    assert.equal(dom.window.document.querySelector('.app-manage-dialog'), null);
+    assert.equal(pairingDialog()?.contains(dom.window.document.activeElement), true);
     await act(async () =>
       receive!({
         data: { service: 'notion_mcp', connection: 'connected', attempt: 'b'.repeat(43) },
       }),
     );
     assert.equal(
-      dom.window.document.querySelector('.app-manage-dialog [data-analytics-private]')?.textContent,
+      dom.window.document.querySelector('.app-connect-dialog [data-analytics-private]')
+        ?.textContent,
       pairingCode,
     );
     await act(async () =>
       receive!({ data: { service: 'notion_mcp', connection: 'connected', attempt } }),
     );
+    assert.equal(pairingDialog(), null);
+    await settle();
     assert.equal(
-      dom.window.document.querySelector(
-        '.app-manage-dialog .notice a[href="https://connect.example.test/variant"]',
-      ),
-      null,
+      dom.window.document
+        .querySelector('.app-manage-dialog')
+        ?.contains(dom.window.document.activeElement),
+      true,
     );
     const startAnotherAccount = async (url: string) => {
+      if (pairingDialog()) await closePairing();
       appSignInUrl = url;
+      const digits = String(++nextPairingCode);
+      appPairingCode = `${digits.slice(0, 3)}-${digits.slice(3)}`;
       await act(async () =>
         dom.window.document.querySelector<HTMLButtonElement>('[data-add-account]')!.click(),
       );
       await settle();
+      assert.equal(pairingDialog()?.querySelectorAll('a').length, 0);
+      return appPairingCode;
     };
-    const pairingLink = () =>
-      dom.window.document.querySelector<HTMLAnchorElement>('.app-manage-dialog .notice a')?.href;
+    const visiblePairingCode = () =>
+      pairingDialog()?.querySelector('[data-analytics-private]')?.textContent;
     const firstLink = 'https://connect.example.test/first';
     const secondLink = 'https://connect.example.test/second';
-    await startAnotherAccount(firstLink);
+    const firstCode = await startAnotherAccount(firstLink);
     completedAppLinks.add(receiptHash('https://connect.example.test/unrelated'));
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
-    assert.equal(pairingLink(), firstLink);
+    assert.equal(visiblePairingCode(), firstCode);
     assert.equal(appInventory[0].status, 'connected');
     completedAppLinks.add(receiptHash(firstLink));
     holdReceipt = true;
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
-    await startAnotherAccount(secondLink);
+    const secondCode = await startAnotherAccount(secondLink);
+    assert.notEqual(firstCode, secondCode);
     await act(async () => releaseReceipt?.());
     await settle();
-    assert.equal(pairingLink(), secondLink);
+    assert.equal(visiblePairingCode(), secondCode);
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
-    assert.equal(pairingLink(), secondLink);
+    assert.equal(visiblePairingCode(), secondCode);
     completedAppLinks.add(receiptHash(secondLink));
     await act(async () =>
       dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')),
     );
     await settle();
-    assert.equal(pairingLink(), undefined);
+    assert.equal(pairingDialog(), null);
     assert.equal(expiryTimers.size, 0);
     const focusedLink = 'https://connect.example.test/completed-before-focus';
     await startAnotherAccount(focusedLink);
     completedAppLinks.add(receiptHash(focusedLink));
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     await settle();
-    assert.equal(pairingLink(), undefined);
+    assert.equal(pairingDialog(), null);
     assert.equal(expiryTimers.size, 0);
     const finalLink = 'https://connect.example.test/completed-before-timeout';
     await startAnotherAccount(finalLink);
@@ -10471,9 +10997,37 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     const expire = expiryTimers.values().next().value!;
     await act(async () => expire());
     await settle();
-    assert.equal(pairingLink(), undefined);
+    assert.equal(pairingDialog(), null);
     assert.equal(expiryTimers.size, 0);
     assert.equal(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'), null);
+    for (const outcome of ['cancelled', 'failed']) {
+      const link = `https://connect.example.test/app-${outcome}`;
+      const code = await startAnotherAccount(link);
+      assert.equal(visiblePairingCode(), code);
+      pendingAppLinks.delete(receiptHash(link));
+      await act(async () =>
+        outcome === 'cancelled'
+          ? dom.window.dispatchEvent(new dom.window.Event('focus'))
+          : dom.window.document.dispatchEvent(new dom.window.Event('visibilitychange')),
+      );
+      await settle();
+      assert.equal(pairingDialog(), null);
+      assert.ok(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'));
+      assert.equal(expiryTimers.size, 0);
+    }
+    const cancelledLink = 'https://connect.example.test/app-cancelled-late';
+    const replacementLink = 'https://connect.example.test/app-replacement';
+    await startAnotherAccount(cancelledLink);
+    pendingAppLinks.delete(receiptHash(cancelledLink));
+    holdReceipt = true;
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    const replacementCode = await startAnotherAccount(replacementLink);
+    await act(async () => releaseReceipt?.());
+    await settle();
+    assert.equal(visiblePairingCode(), replacementCode);
+    assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
+    await closePairing();
     appSignInUrl = 'https://connect.example.test/variant';
     appInventory = [
       { ...mcpAccount, status: 'disconnected', canReconnect: true },
@@ -10493,11 +11047,14 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       path: '/api/apps/notion_mcp/connect',
       body: { connectionId: mcpAccount.connectionId, returnTo: 'window' },
     });
-    assert.equal(reconnectButtons()[0].getAttribute('aria-busy'), 'true');
+    assert.ok(pairingDialog());
+    assert.equal(dom.window.document.querySelector('.app-manage-dialog'), null);
+    pendingAppLinks.add(receiptHash('https://connect.example.test/reconnect'));
     await act(async () =>
       finishAppConnect!(Response.json({ url: 'https://connect.example.test/reconnect' })),
     );
     await settle();
+    await closePairing();
     appInventory = [
       { ...mcpAccount, status: 'disconnected', canReconnect: false },
       { ...nativeAccount, status: 'connected', canReconnect: true, reconnectRequired: true },
@@ -10510,6 +11067,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       path: '/api/apps/notion/connect',
       body: { connectionId: nativeAccount.connectionId, returnTo: 'window' },
     });
+    await closePairing();
     appInventory = [
       { ...mcpAccount, status: 'disconnected', canReconnect: false },
       { ...nativeAccount, status: 'disconnected' },
@@ -10526,6 +11084,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       path: '/api/apps/notion/connect',
       body: { returnTo: 'window' },
     });
+    await closePairing();
     assert.ok(
       dom.window.document.querySelector(`[data-disconnect-account="${mcpAccount.connectionId}"]`),
     );
@@ -10545,6 +11104,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       path: '/api/apps/notion/connect',
       body: { returnTo: 'window' },
     });
+    await closePairing();
     await act(async () =>
       dom.window.document
         .querySelector<HTMLButtonElement>(`[data-disconnect-account="${mcpAccount.connectionId}"]`)!
@@ -10577,6 +11137,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       path: '/api/apps/linear_mcp/connect',
       body: { returnTo: 'window' },
     });
+    await closePairing();
     appInventory = [
       nativeAccount,
       {
@@ -10599,6 +11160,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       dom.window.document.querySelector<HTMLButtonElement>('[data-add-account]')!.click(),
     );
     await settle();
+    await closePairing();
     await act(async () =>
       dom.window.document
         .querySelector<HTMLButtonElement>('.app-manage-dialog .dialog-close')!
@@ -10616,7 +11178,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     );
     await settle();
     assert.equal(dom.window.document.querySelector('.app-manage-dialog [role="alert"]'), null);
-    assert.ok(dom.window.document.querySelector('.apps-page > [role="alert"]'));
+    assert.equal(dom.window.document.querySelector('.apps-page > [role="alert"]'), null);
     await act(async () =>
       dom.window.document
         .querySelector<HTMLButtonElement>('.app-manage-dialog .dialog-close')!
@@ -10684,9 +11246,18 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
     assert.equal(discoveryReads, completedReads);
     const gmail = () =>
       dom.window.document.querySelector<HTMLElement>('[data-gmail]')!.dataset.gmail;
+    pauseExternalLaunch = true;
     await act(async () =>
       dom.window.document.querySelector<HTMLButtonElement>('.ob-gmail-connect')!.click(),
     );
+    await settle();
+    assert.equal(codeAtLaunch, pairingCode);
+    assert.equal(gmail(), 'opening');
+    assert.equal(
+      dom.window.document.querySelector('[data-gmail] [data-analytics-private]')?.textContent,
+      pairingCode,
+    );
+    await act(async () => finishExternalLaunch!());
     await settle();
     assert.equal(gmail(), 'waiting');
     assert.equal(
@@ -10850,6 +11421,291 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
   } finally {
     await act(async () => root.unmount());
     pageDataCache.clear();
+    dom.window.close();
+    for (const [key, value] of originals)
+      if (value) Object.defineProperty(globalThis, key, value);
+      else Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test('chat app setup shows owned pairing codes before handoff and completes without browser focus', async () => {
+  const { JSDOM } = await import('jsdom');
+  const { act, createElement } = await import('react');
+  const origin = 'http://localhost:4310';
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: origin,
+    pretendToBeVisual: true,
+  });
+  const discoveryId = 'abcdef01-abcd-4000-8000-abcdef000003';
+  const links = [
+    'https://connect.composio.dev/link/synthetic-work',
+    'https://connect.composio.dev/link/synthetic-personal',
+    `/apps?connect=${discoveryId.toUpperCase()}`,
+  ];
+  const hashes = [links[0], links[1], `/apps?connect=${discoveryId}`].map((href) =>
+    createHash('sha256').update(href).digest('hex'),
+  );
+  const requests: string[][] = [];
+  const opened: string[] = [];
+  let codeAtLaunch: string | null | undefined;
+  let pauseLaunch = false;
+  let finishLaunch: ((error?: Error) => void) | undefined;
+  let holdRead = false;
+  let releaseRead: (() => void) | undefined;
+  const pending = new Set([hashes[0], hashes[2]]);
+  let personalCode = '234-567';
+  const timers = new Map<number, () => void>();
+  let timerId = 100_000;
+  const schedule = dom.window.setTimeout.bind(dom.window);
+  const cancel = dom.window.clearTimeout.bind(dom.window);
+  dom.window.setTimeout = ((callback: () => void, milliseconds: number, ...args: unknown[]) => {
+    if (milliseconds !== 5000) return schedule(callback, milliseconds, ...args);
+    timers.set(++timerId, callback);
+    return timerId;
+  }) as typeof dom.window.setTimeout;
+  dom.window.clearTimeout = (id) => {
+    if (id !== undefined && timers.delete(id)) return;
+    cancel(id);
+  };
+  Object.assign(dom.window, {
+    ottoDesktop: {
+      openExternal: async (url: string) => {
+        codeAtLaunch = dom.window.document.querySelector(
+          '.app-connect-dialog [data-analytics-private]',
+        )?.textContent;
+        opened.push(url);
+        if (pauseLaunch) {
+          pauseLaunch = false;
+          await new Promise<void>((resolve, reject) => {
+            finishLaunch = (error) => (error ? reject(error) : resolve());
+          });
+        }
+      },
+    },
+    matchMedia: (media: string) => ({
+      matches: true,
+      media,
+      addEventListener() {},
+      removeEventListener() {},
+    }),
+  });
+  let completed: string[] = [];
+  let failing = false;
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
+    Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    MutationObserver: dom.window.MutationObserver,
+    getComputedStyle: dom.window.getComputedStyle,
+    IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: async (path: unknown, init: RequestInit) => {
+      assert.equal(path, '/api/apps/setup-status');
+      assert.equal(init.method, 'POST');
+      const body = JSON.parse(String(init.body));
+      assert.deepEqual(Object.keys(body), ['hashes', 'connectionIds']);
+      assert.ok(body.hashes.every((hash: string) => hashes.includes(hash)));
+      assert.deepEqual(body.connectionIds, body.hashes.includes(hashes[2]) ? [discoveryId] : []);
+      requests.push(body.hashes);
+      const response = Response.json(
+        failing
+          ? { error: 'Unavailable' }
+          : {
+              completed,
+              apps: [
+                { hash: hashes[0], slug: 'gmail', name: 'Gmail', pairingCode: '123-456' },
+                { hash: hashes[1], slug: 'gmail', name: 'Gmail', pairingCode: personalCode },
+                { hash: hashes[2], slug: 'notion_mcp', name: 'Notion' },
+                { hash: '0'.repeat(64), slug: 'slack', name: 'Slack' },
+              ].filter((app) => pending.has(app.hash) || app.slug === 'slack'),
+            },
+        { status: failing ? 503 : 200 },
+      );
+      if (holdRead) {
+        holdRead = false;
+        return new Promise<Response>((resolve) => {
+          releaseRead = () => resolve(response);
+        });
+      }
+      return response;
+    },
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const { MessageText } = await import('../src/web/components/message.tsx');
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  const buttons = () => [
+    ...dom.window.document.querySelectorAll<HTMLButtonElement>('button[data-setup="app"]'),
+  ];
+  const waitFor = async (ready: () => boolean) => {
+    for (let attempt = 0; attempt < 50 && !ready(); attempt++)
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+    assert.ok(ready());
+  };
+  const render = (key: string) =>
+    act(async () =>
+      root.render(
+        createElement(MessageText, {
+          key,
+          text: `[Connect work Gmail](${links[0]}) and [Connect personal Gmail](${links[1]}) and [Connect custom app](${links[2]})`,
+          connectedAppIds: new Set(['gmail']),
+        }),
+      ),
+    );
+  try {
+    await render('initial');
+    await waitFor(() => requests.length === 1);
+    await waitFor(() => Boolean(buttons()[0]?.querySelector('img')));
+    assert.equal(buttons().length, 3);
+    assert.equal(buttons()[0].querySelector('img')?.getAttribute('src'), '/logos/gmail.svg');
+    assert.equal(buttons()[1].querySelector('img'), null);
+    assert.equal(buttons()[2].querySelector('img')?.getAttribute('src'), '/logos/notion.svg');
+    const dialog = () => dom.window.document.querySelector('.app-connect-dialog');
+    const code = () => dialog()?.querySelector('[data-analytics-private]')?.textContent;
+    const close = async () => {
+      await act(async () => dialog()!.querySelector<HTMLButtonElement>('.dialog-close')!.click());
+      await waitFor(() => !dialog());
+      assert.equal(timers.size, 0);
+    };
+    const poll = async () => {
+      assert.equal(timers.size, 1);
+      const [id, callback] = timers.entries().next().value!;
+      timers.delete(id);
+      await act(async () => callback());
+    };
+    assert.equal(timers.size, 0);
+    assert.deepEqual(requests[0], hashes);
+    holdRead = true;
+    await act(async () => buttons()[0].click());
+    await waitFor(() => Boolean(dialog()) && Boolean(releaseRead));
+    assert.equal(dialog()!.contains(dom.window.document.activeElement), true);
+    assert.equal(code(), undefined);
+    assert.deepEqual(opened, []);
+    const lateRead = releaseRead!;
+    await close();
+    pending.add(hashes[1]);
+    await act(async () => buttons()[1].click());
+    await waitFor(() => code() === personalCode && opened.length === 1);
+    assert.equal(codeAtLaunch, personalCode);
+    assert.deepEqual(opened, [links[1]]);
+    await act(async () => lateRead());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    assert.equal(code(), personalCode);
+    assert.deepEqual(opened, [links[1]]);
+    await close();
+    pauseLaunch = true;
+    await act(async () => buttons()[0].click());
+    await waitFor(() => code() === '123-456' && opened.length === 2);
+    assert.equal(codeAtLaunch, '123-456');
+    assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    const timerDuringLaunch = [...timers.entries()];
+    await act(async () => finishLaunch!());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    assert.deepEqual([...timers.entries()], timerDuringLaunch);
+    await close();
+    await act(async () => buttons()[0].click());
+    await waitFor(() => code() === '123-456');
+    assert.deepEqual(opened, [links[1], links[0]]);
+    assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    assert.match(
+      dialog()!.querySelector('[role="status"]')!.textContent!,
+      /closed.*new sign-in link/,
+    );
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    completed = [hashes[0]];
+    await poll();
+    await waitFor(() => buttons().length === 2 && !dialog());
+    assert.ok(buttons()[0].textContent?.includes('personal'));
+    assert.equal(timers.size, 0);
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
+    failing = true;
+    const beforeFailure = requests.length;
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await waitFor(() => requests.length === beforeFailure + 1);
+    assert.equal(buttons().length, 2);
+    failing = false;
+    pending.delete(hashes[1]);
+    const beforeMissing = [...opened];
+    await act(async () => buttons()[0].click());
+    await waitFor(() => Boolean(dialog()?.querySelector('[role="alert"]')));
+    assert.equal(code(), undefined);
+    assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    assert.deepEqual(opened, beforeMissing);
+    assert.equal(timers.size, 0);
+    await close();
+    await render('reload');
+    await waitFor(() => buttons().length === 2 && Boolean(buttons()[1]?.querySelector('img')));
+    assert.ok(buttons()[0].textContent?.includes('personal'));
+    completed = [hashes[0], hashes[2]];
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await waitFor(() => buttons().length === 1);
+    assert.ok(buttons()[0].textContent?.includes('personal'));
+    pending.add(hashes[1]);
+    personalCode = 'invalid';
+    await act(async () => buttons()[0].click());
+    await waitFor(() => Boolean(dialog()?.querySelector('[role="alert"]')));
+    assert.equal(code(), undefined);
+    assert.deepEqual(opened, beforeMissing);
+    await close();
+    personalCode = '234-567';
+    pauseLaunch = true;
+    await act(async () => buttons()[0].click());
+    await waitFor(() => code() === personalCode && opened.length === 3);
+    holdRead = true;
+    releaseRead = undefined;
+    await poll();
+    await waitFor(() => Boolean(releaseRead) && requests.at(-1)?.length === 1);
+    const latePoll = releaseRead!;
+    await act(async () => finishLaunch!(new Error('Synthetic native launch failure.')));
+    await waitFor(() => Boolean(dialog()?.querySelector('[role="alert"]')));
+    await act(async () => latePoll());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    assert.equal(timers.size, 0);
+    await close();
+    const desktopBridge = (dom.window as unknown as { ottoDesktop?: unknown }).ottoDesktop;
+    Reflect.deleteProperty(dom.window, 'ottoDesktop');
+    dom.window.open = () => null;
+    await act(async () => buttons()[0].click());
+    await waitFor(() => Boolean(dialog()?.querySelector('a')));
+    const fallback = dialog()!.querySelector<HTMLAnchorElement>('a')!;
+    assert.equal(fallback.href, links[1]);
+    const beforeFallback = [...timers.entries()];
+    fallback.addEventListener('click', (event) => event.preventDefault(), { once: true });
+    await act(async () => fallback.click());
+    assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    assert.deepEqual([...timers.entries()], beforeFallback);
+    Object.assign(dom.window, { ottoDesktop: desktopBridge });
+    await close();
+    await act(async () => buttons()[0].click());
+    await waitFor(() => code() === personalCode);
+    assert.equal(opened.length, 3);
+    assert.equal(dialog()!.querySelectorAll('a').length, 0);
+    completed = [...hashes];
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    await poll();
+    await waitFor(() => !dialog() && buttons().length === 0);
+    assert.equal(timers.size, 0);
+    assert.doesNotMatch(dom.window.document.body.innerHTML, /synthetic-work|synthetic-personal/);
+  } finally {
+    await act(async () => root.unmount());
     dom.window.close();
     for (const [key, value] of originals)
       if (value) Object.defineProperty(globalThis, key, value);

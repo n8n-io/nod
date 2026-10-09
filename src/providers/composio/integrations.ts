@@ -799,6 +799,12 @@ export function createComposioProvider(options: {
       return Boolean(client && options.webhookSecret);
     },
     supportsSubscriptions: options.proxy ? [] : ['gmail', 'googlecalendar', 'slack', 'notion'],
+    authorize: options.proxy
+      ? async (ownerId, service, callbackUrl) => {
+          userId(ownerId);
+          return options.proxy!.authorize(schemaToolkit.parse(service), callbackUrl);
+        }
+      : undefined,
     verificationEmails: (accountId, query, signal) =>
       readVerificationEmails(required().tools, accountId, query, signal),
     sentEmails: (accountId, signal) => readSentEmails(required().tools, accountId, signal),

@@ -6,4 +6,3 @@ dist
 package-lock.json
 .wrangler
 scripts/fixtures/*.md
-docs/testing/composio-proxy/cp04.v2.inputs.json

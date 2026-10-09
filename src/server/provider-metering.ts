@@ -156,6 +156,12 @@ export function meterIntegrations(
       return provider.webhooksConfigured;
     },
     setApiKey: provider.setApiKey?.bind(provider),
+    authorize: provider.authorize
+      ? (owner, service, callbackUrl) =>
+          usage.track({ ...base, operation: 'authorize' }, () =>
+            provider.authorize!(owner, service, callbackUrl),
+          )
+      : undefined,
     createSession: async (owner, accounts, signal) =>
       session(
         await usage.track({ ...base, operation: 'create_session' }, () =>

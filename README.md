@@ -13,9 +13,7 @@ Otto is an early preview. Expect rough edges and breaking changes.
 | You need | About 2.7 GB of downloads on first launch | Node.js 24.21.0 or newer, Docker with Compose v2, and Git |
 | Updates  | Automatic                                 | `git pull` and restart                                    |
 
-Either way, Otto needs a model connection: an OpenAI, Anthropic or OpenRouter API key, or a ChatGPT plan. Models don't run on your computer, and the provider bills you for use. Connect Gmail, Calendar, Slack and other apps through Otto's [managed integrations](docs/composio.md), without creating a Composio account or adding a project key.
-
-Managed connections in this release candidate await [coordinated activation](docs/composio-proxy-rollout.md). New managed sign-ins are currently disabled; this branch has not been released to desktop users.
+Either way, Otto needs a model connection: an OpenAI, Anthropic or OpenRouter API key, or a ChatGPT plan. Models don't run on your computer, and the provider bills you for use. See [app connections](docs/composio.md) for integration setup and configuration.
 
 ### Install the desktop app
 

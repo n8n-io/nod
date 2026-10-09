@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'desktop/**'
+      - 'src/providers/composio/proxy.ts'
+      - 'src/server/composition.ts'
       - '.github/scripts/with-apple-signing.mjs'
       - '.github/workflows/desktop-updates.yml'
   workflow_dispatch:

@@ -51,10 +51,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  margin: -12px 0 4px;
+  margin: -12px 0 12px;
   padding: 12px 0;
   background: var(--canvas);
-  box-shadow: 0 1px 0 var(--border);
 }
 .app-catalog-search input::-webkit-search-cancel-button,
 .app-category-panel input::-webkit-search-cancel-button {
