@@ -28,10 +28,9 @@ const inputs = [
   'src',
 ];
 
-export function runtimePlatform() {
+export function runtimePlatform(env = process.env) {
   const target =
-    process.env.OTTO_DESKTOP_TARGET ||
-    `darwin-${process.platform === 'darwin' ? process.arch : 'arm64'}`;
+    env.OTTO_DESKTOP_TARGET || `darwin-${process.platform === 'darwin' ? process.arch : 'arm64'}`;
   if (!['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(target))
     throw new Error('Unsupported desktop target.');
   return target;

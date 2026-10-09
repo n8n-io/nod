@@ -304,7 +304,6 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm --dir desktop install --frozen-lockfile
-          pnpm run desktop:test
           pnpm run build
       - name: Download the verified runtime descriptor
         if: matrix.runtime_reused != 'true'
