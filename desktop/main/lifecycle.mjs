@@ -42,6 +42,7 @@ export function createDesktopLifecycle({
       phase: 'error',
       message: error.message,
       needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
+      needsWsl: error.code === 'OTTO_WSL_REQUIRED',
     });
   }
 

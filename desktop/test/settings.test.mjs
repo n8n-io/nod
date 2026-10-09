@@ -749,6 +749,7 @@ async function runningDesktop(
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:get'"), source.indexOf("      ipcMain.handle('otto:feedback:context'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:feedback:context'"), source.indexOf("      ipcMain.handle('otto:preferences:get'"))}
     ${source.slice(source.indexOf("      ipcMain.handle('otto:settings:save'"), source.indexOf("      ipcMain.handle('otto:prepare'"))}
+    ${source.slice(source.indexOf("      ipcMain.handle('otto:runtime:install-wsl'"), source.indexOf("      ipcMain.handle('otto:chat-read:get'"))}
     globalThis.running = {
       prepare,
       showEngine,
@@ -859,6 +860,7 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     );
     await assert.rejects(reveal('composioApiKey', rejected), /unavailable/);
     await assert.rejects(analytics(rejected), /unavailable/);
+    await assert.rejects(invoke('otto:runtime:install-wsl', rejected), /unavailable/);
   }
   for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/files/synthetic']) {
     frame.url = url;

@@ -19,6 +19,11 @@ export function serviceEnvironment(): NodeJS.ProcessEnv {
       'DOCKER_CONTEXT',
       'DOCKER_CONFIG',
       'SYSTEMROOT',
+      'USERPROFILE',
+      'LOCALAPPDATA',
+      'TEMP',
+      'TMP',
+      'OTTO_WSL_DISTRIBUTION',
     ].flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])),
   );
 }

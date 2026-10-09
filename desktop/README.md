@@ -40,6 +40,24 @@ Otto uses a fresh profile, separate from repository development and earlier desk
 
 ## What runs locally
 
+### Windows test build
+
+Windows 11 x64 test builds are available from the **Build Windows preview** workflow on a pull request. Download the **Otto-Windows-x64** artifact from its completed run. Extract all files into one folder, then open `Otto-Setup-x64.exe`. Keep `Otto-Runtime-win32-x64.tar.gz` beside the installer. The installer copies both parts and adds a Start menu shortcut. Node.js and Docker Desktop are not required.
+
+This preview is unsigned. Windows can show a publisher warning. Check the two files against `SHA256SUMS` before installation. The existing Mac release and its automatic updates continue separately.
+
+Otto needs WSL 2 and hardware virtualization. If WSL is missing, select **Install WSL** in Otto. Approve the Windows administrator request, restart the PC, then open Otto again. A device policy can block WSL installation. Allow at least 20 GB of free disk space for installation and the private computer.
+
+Otto creates one distribution named `Otto-` followed by its profile identifier. It does not change the default WSL distribution or global WSL settings. Host drive mounts and Windows process access are disabled inside this distribution. Workspace and browser containers retain the Mac runtime's network restrictions. The app uses a bundled command transport; the Docker control socket stays inside the private distribution.
+
+The profile is under `%APPDATA%\Otto\profiles\local`. Windows file permissions protect this folder, and Electron protects saved keys with Windows DPAPI. Closing the window keeps Otto in the tray. **Quit Otto** stops only its own distribution. Tasks need Otto to remain open and the PC to remain awake.
+
+Windows updates are manual in this preview. Quit Otto before you run a new installer. The app retains its profile, credentials and container volumes. A runtime update replaces packaged tools and images without resetting the database. Uninstall removes the application but keeps the profile and private distribution.
+
+Test first launch, WSL installation and restart, model setup, a browser task, a file download, stop, quit and reopen. Check that an existing WSL distribution still works. `windows-check.json` in the download records the CI installer and engine checks and states whether WSL could run on that runner. Those checks use synthetic data and no live model or connected account.
+
+To build the runtime, run `pnpm run desktop:windows:prepare` on a Linux x64 Docker builder. On Windows x64, install Go 1.26.8 and NSIS, install the root and desktop dependencies from their lockfiles, run `pnpm run build`, then `pnpm run desktop:windows:build`. The workflow transfers the runtime files between these two builders.
+
 - Electron supplies the application shell and the Node runtime for the existing TypeScript engine.
 - Lima and Apple's Virtualization framework run a private Ubuntu computer.
 - The private computer contains PostgreSQL and separate workspace and browser containers. Docker is an internal implementation detail; Docker Desktop is not a prerequisite.

@@ -128,7 +128,14 @@ test('workspace paths cannot address host files or other task directories', () =
     workspaceFile('task-a', '/workspace/task-a/report.txt'),
     '/workspace/task-a/report.txt',
   );
-  for (const path of ['/etc/passwd', '../task-b/private.txt', '..\\secret', 'file\0name'])
+  for (const path of [
+    '/etc/passwd',
+    '../task-b/private.txt',
+    '..\\secret',
+    'file\0name',
+    'C:\\Users\\owner\\private.txt',
+    '\\\\server\\share\\private.txt',
+  ])
     assert.throws(() => workspaceFile('task-a', path));
   assert.throws(() => threadIdentity('../escape'));
 });

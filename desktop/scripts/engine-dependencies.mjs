@@ -10,29 +10,38 @@ export function copyBundleSource(source, target, filter = () => true) {
     verbatimSymlinks: true,
     filter: async (path) =>
       !/(?:^|\/)\.env(?:[./]|$)|(?:^|\/)(?:\.git|\.local|\.cache|\.DS_Store)(?:\/|$)/.test(
-        relative(root, path) || basename(path),
+        (relative(root, path) || basename(path)).replaceAll('\\', '/'),
       ) && (await filter(path)),
   });
 }
 
-export async function copyEngineDependencies({ root, target }) {
+export async function copyEngineDependencies({
+  root,
+  target,
+  platform = 'darwin',
+  arch = 'arm64',
+}) {
   const supports = (values, actual) =>
     !values ||
     (!values.includes(`!${actual}`) &&
       (!values.some((value) => !value.startsWith('!')) || values.includes(actual)));
   await copyBundleSource(join(root, 'node_modules'), join(target, 'node_modules'), async (path) => {
-    if (/\/node_modules\/(?:@[^/]+\/)?[^/]+$/.test(path)) {
+    const normalized = path.replaceAll('\\', '/');
+    if (/\/node_modules\/(?:@[^/]+\/)?[^/]+$/.test(normalized)) {
       const metadata = await readFile(join(path, 'package.json'), 'utf8').catch((error) => {
         if (['ENOENT', 'ENOTDIR'].includes(error.code)) return null;
         throw error;
       });
       if (metadata) {
         const item = JSON.parse(metadata);
-        if (!supports(item.os, 'darwin') || !supports(item.cpu, 'arm64')) return false;
+        if (!supports(item.os, platform) || !supports(item.cpu, arch)) return false;
       }
     }
-    return !/\/node_modules\/(?:agent-browser\/bin\/agent-browser-darwin-x64$|@earendil-works\/pi-tui\/native\/darwin\/prebuilds\/darwin-x64(?:\/|$))/.test(
-      path,
+    return (
+      platform !== 'darwin' ||
+      !/\/node_modules\/(?:agent-browser\/bin\/agent-browser-darwin-x64$|@earendil-works\/pi-tui\/native\/darwin\/prebuilds\/darwin-x64(?:\/|$))/.test(
+        normalized,
+      )
     );
   });
 }
