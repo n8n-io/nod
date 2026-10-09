@@ -14,6 +14,7 @@
 
 ### Fixes
 
+- **release:** Use release environment and sufficient build storage. [#215](https://github.com/n8n-io/otto/pull/215) (fd7e1a7)
 - **release:** Run capability reports outside the build queue. [#210](https://github.com/n8n-io/otto/pull/210) (b0e0326)
 - Honor schedule cancellation without repeated confirmations. [#178](https://github.com/n8n-io/otto/pull/178) (11f8f4a)
 - Save desktop artifacts to Downloads (LAB-531). [#169](https://github.com/n8n-io/otto/pull/169) (31eeed0)
@@ -59,12 +60,12 @@
 
 </details>
 
-[Full changelog](https://github.com/n8n-io/otto/compare/desktop-v0.1.10...927f9cf87a2b6d31d6a48dc4a2032f41249cdee1)
+[Full changelog](https://github.com/n8n-io/otto/compare/desktop-v0.1.10...fd7e1a73989b83c42d667db6bcab86259ebd25cf)
 
 <details>
 <summary>Build details</summary>
 
-Source: `927f9cf87a2b6d31d6a48dc4a2032f41249cdee1`
+Source: `fd7e1a73989b83c42d667db6bcab86259ebd25cf`
 Previous release: `desktop-v0.1.10`
 
 </details>
