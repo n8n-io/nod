@@ -260,8 +260,8 @@ jobs:
 
   mac:
     name: Package the ${{ matrix.arch }} Mac app
-    needs: [plan, runtime]
-    if: always() && needs.plan.result == 'success' && needs.plan.outputs.release_needed == 'true' && (needs.runtime.result == 'success' || needs.runtime.result == 'skipped')
+    needs: [plan, images, runtime]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.release_needed == 'true' && (needs.images.result == 'success' || needs.images.result == 'skipped') && (needs.runtime.result == 'success' || needs.runtime.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.mac_matrix) }}
