@@ -32,12 +32,19 @@ regexTarget = "secret"
 regexes = ['^phc_tLmmvBasQMKWVJ2BiwhEzVVDD3Rh9qDq2VTmw3qTm6EV$']
 
 [[allowlists]]
-description = "Tests, fixtures, eval worlds and test evidence hold synthetic values and source hashes. Only the keyword and entropy rule is skipped there; provider key formats still fail."
+description = "Tests, fixtures and eval worlds hold synthetic values. Only the keyword and entropy rule is skipped there; provider key formats still fail."
 targetRules = ["generic-api-key"]
 paths = [
     '(^|/)tests?/',
     '(^|/)fixtures?/',
     '[._]test\.[a-z]+$',
     '^evals/src/(scenarios|world)/',
-    '^docs/(research|testing)/',
 ]
+
+[[allowlists]]
+description = "Test evidence records SHA-256 digests of source files and keys, not credentials."
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['^docs/(research|testing)/']
+regexTarget = "line"
+regexes = ['''^\s*"(?:[\w./-]+\.[A-Za-z]+|\w*[Ss]ha256)":\s*"[a-f0-9]{64}",?$''']

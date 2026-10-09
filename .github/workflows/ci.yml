@@ -143,6 +143,7 @@ jobs:
           pnpm exec wrangler deploy --env development --dry-run --containers-rollout=none
           pnpm exec wrangler deploy --env production --dry-run --containers-rollout=none
       - name: Set up the Docker layer cache
+        if: needs.scope.outputs.images == 'true'
         uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
         with:
           cache-key: n8n-io/otto/ci

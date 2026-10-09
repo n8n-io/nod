@@ -83,21 +83,35 @@ for filename in [
     "deployment/n8n/app.test.mjs",
     "tests/fixtures/app.json",
     "evals/src/world/app.ts",
-    "docs/testing/run.json",
 ]:
     code, findings = scan(synthetic, filename)
     if code != 0 or findings:
-        raise SystemExit("Synthetic values in tests and test evidence must pass secret scanning.")
+        raise SystemExit("Synthetic values in tests must pass secret scanning.")
 
-for filename in ["src/app.ts", "src/contests/app.ts", "src/latest.ts", "docs/app.json", "evals/src/app.ts"]:
+for filename in ["src/app.ts", "src/contests/app.ts", "src/latest.ts", "evals/src/app.ts", "docs/testing/run.json"]:
     code, findings = scan(synthetic, filename)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
-        raise SystemExit("The test exception must be limited to tests and test evidence.")
+        raise SystemExit("The test exception must be limited to tests.")
+
+digest = hashlib.sha256(candidate.encode()).hexdigest()
+records = f'{{\n  "src/ports/key-store.ts": "{digest}",\n  "projectKeySha256": "{digest}"\n}}\n'
+code, findings = scan(records, "docs/testing/run.json")
+if code != 0 or findings:
+    raise SystemExit("Source hash records in test evidence must pass secret scanning.")
+
+for content, filename in [
+    (records, "docs/app.json"),
+    (f'{{\n  "api_key": "{digest}"\n}}\n', "docs/testing/run.json"),
+    (f'{{\n  "src/ports/key-store.ts": "{digest}", "api_key": "{candidate}"\n}}\n', "docs/testing/run.json"),
+]:
+    code, findings = scan(content, filename)
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit("The evidence exception must be limited to source hash records in test evidence.")
 
 provider_keys = {
     "github-pat": "ghp_" + candidate[:36],
     "composio-api-key": "ak_" + candidate[:24],
-    "e2b-api-key": "e2b_" + hashlib.sha256(candidate.encode()).hexdigest()[:40],
+    "e2b-api-key": "e2b_" + digest[:40],
 }
 for rule, key in provider_keys.items():
     for filename in ["tests/app.test.ts", "docs/testing/run.json", "src/app.ts"]:
