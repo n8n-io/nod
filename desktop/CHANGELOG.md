@@ -1,5 +1,74 @@
 # Desktop changelog
 
+## 0.1.11 - 2026-10-09
+
+### Features
+
+- **release:** Publish three Otto binaries and select CI checks by changed code. [commit](https://github.com/n8n-io/otto/commit/927f9cf87a2b6d31d6a48dc4a2032f41249cdee1) (927f9cf)
+- **web:** Polish the desktop top bar, sidebar and settings. [#211](https://github.com/n8n-io/otto/pull/211) (991b737)
+- **desktop:** Add an installable Windows preview alongside Mac. [#207](https://github.com/n8n-io/otto/pull/207) (7ce4590)
+- **release:** Publish signed Mac binaries from a reviewed release PR. [#208](https://github.com/n8n-io/otto/pull/208) (a7db12b)
+- Enforce spending limits and show request cost in chat. [#205](https://github.com/n8n-io/otto/pull/205) (a03f2e6)
+- Move the sidebar toggle next to the page title and tint hovered icons. [#161](https://github.com/n8n-io/otto/pull/161) (08b15d7)
+- Make onboarding a three-question chat on the new design with instant first tasks. [commit](https://github.com/n8n-io/otto/commit/954d88145311a74de67d897ef6aa31daac3c0004) (954d881)
+
+### Fixes
+
+- **release:** Run capability reports outside the build queue. [#210](https://github.com/n8n-io/otto/pull/210) (b0e0326)
+- Honor schedule cancellation without repeated confirmations. [#178](https://github.com/n8n-io/otto/pull/178) (11f8f4a)
+- Save desktop artifacts to Downloads (LAB-531). [#169](https://github.com/n8n-io/otto/pull/169) (31eeed0)
+
+### Other changes
+
+- Replace the Inspector with a Trust ledger, spending limit and /usage. [#202](https://github.com/n8n-io/otto/pull/202) (c69a7f9)
+- Bundle RTK for automatic workspace token savings. [#203](https://github.com/n8n-io/otto/pull/203) (c63ee06)
+- Keep desktop memory in Postgres, state schedule availability and confirm Otto-started writes. [#201](https://github.com/n8n-io/otto/pull/201) (fbf8c50)
+- Add security policy, contribution guide and public install docs. [#200](https://github.com/n8n-io/otto/pull/200) (468902c)
+- Compare every release with the previous one and gate on proven scenarios. [#181](https://github.com/n8n-io/otto/pull/181) (521b616)
+- Call Otto's API from catalog scenarios through the authenticated session. [#184](https://github.com/n8n-io/otto/pull/184) (4994fe7)
+- Add Apache 2.0 license. [#182](https://github.com/n8n-io/otto/pull/182) (b56360c)
+- Offer to save browser logins and schedule completed tasks. [#180](https://github.com/n8n-io/otto/pull/180) (31d2341)
+- Fix layout-generated characters in the inline browser. [#176](https://github.com/n8n-io/otto/pull/176) (3dedd52)
+- Never count a tapped first task as the owner's request in the trust check. [#179](https://github.com/n8n-io/otto/pull/179) (2bc71c2)
+- Add an onboarding and first-value eval and compare each release with the previous one. [#177](https://github.com/n8n-io/otto/pull/177) (a5b2fdc)
+- Fix security audit findings without limiting capability. [#172](https://github.com/n8n-io/otto/pull/172) (95358e9)
+- Expand app discovery and reconnect saved accounts safely. [#166](https://github.com/n8n-io/otto/pull/166) (d783d5a)
+- Read eval workspace files as the sandbox user and fix the video and Slack scenarios. [#175](https://github.com/n8n-io/otto/pull/175) (7c097be)
+- Accept BotFather message paste and clarify Telegram pairing. [#168](https://github.com/n8n-io/otto/pull/168) (4056597)
+- Fix eval harness workspace permissions and three scenario flaws. [#174](https://github.com/n8n-io/otto/pull/174) (245f2f4)
+- Pass eval runs with incomplete attempts and report them. [#173](https://github.com/n8n-io/otto/pull/173) (759796e)
+- Run all controlled capability cases by default. [#171](https://github.com/n8n-io/otto/pull/171) (1271511)
+- Rebuild onboarding as a guided conversation. [commit](https://github.com/n8n-io/otto/commit/d0d205a76bbec289de7acbd8e6c4355c228654f7) (d0d205a)
+
+<details>
+<summary>Maintenance (13 changes)</summary>
+
+- Remove archived RTK evaluation reports. [#209](https://github.com/n8n-io/otto/pull/209) (d6db565)
+- **repo:** Use pnpm and check conventional PR titles. [#206](https://github.com/n8n-io/otto/pull/206) (48e0384)
+- **deps:** Bump @modelcontextprotocol/sdk from 1.30.1 to 1.32.1. [#196](https://github.com/n8n-io/otto/pull/196) (f678c34)
+- **deps:** Bump dotenv from 17.4.2 to 18.0.5. [#194](https://github.com/n8n-io/otto/pull/194) (17d997b)
+- **deps:** Bump the chat-sdk group across 1 directory with 4 updates. [#190](https://github.com/n8n-io/otto/pull/190) (437687b)
+- **deps:** Bump docker/build-push-action from 6.19.2 to 7.4.0. [#187](https://github.com/n8n-io/otto/pull/187) (a12bf0c)
+- **deps:** Bump docker/setup-buildx-action from 3.12.0 to 4.4.1. [#188](https://github.com/n8n-io/otto/pull/188) (4c0f047)
+- **deps:** Bump the tiptap group across 1 directory with 10 updates. [#189](https://github.com/n8n-io/otto/pull/189) (c563a4f)
+- **deps:** Bump e2b from 2.51.0 to 2.52.1. [#193](https://github.com/n8n-io/otto/pull/193) (5efdb06)
+- **deps:** Bump pg from 8.23.0 to 8.23.1. [#197](https://github.com/n8n-io/otto/pull/197) (12b2fe0)
+- **deps:** Bump @fastify/static from 10.1.4 to 10.1.5. [#198](https://github.com/n8n-io/otto/pull/198) (2d444a2)
+- **deps:** Bump useblacksmith/setup-docker-builder. [#186](https://github.com/n8n-io/otto/pull/186) (b1497e2)
+- Automate dependency updates with Dependabot. [#183](https://github.com/n8n-io/otto/pull/183) (6c3af62)
+
+</details>
+
+[Full changelog](https://github.com/n8n-io/otto/compare/desktop-v0.1.10...927f9cf87a2b6d31d6a48dc4a2032f41249cdee1)
+
+<details>
+<summary>Build details</summary>
+
+Source: `927f9cf87a2b6d31d6a48dc4a2032f41249cdee1`
+Previous release: `desktop-v0.1.10`
+
+</details>
+
 ## 0.1.9 - 2026-10-07
 
 When Otto hands you its browser, you now see it live, and the app has a softer, rounder look.
