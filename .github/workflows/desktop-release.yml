@@ -1,9 +1,10 @@
 name: Build desktop release
 
 on:
-  schedule:
-    - cron: '0 7 * * *'
-      timezone: Europe/Lisbon
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
   workflow_dispatch:
     inputs:
       automatic:
@@ -17,15 +18,25 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
+
+env:
+  OTTO_RELEASE_SOURCE: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 concurrency:
-  group: desktop-release
+  group: desktop-build-release
   cancel-in-progress: false
+  queue: max
 
 jobs:
   plan:
     name: Check release prerequisites
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.head_repository.full_name == github.repository &&
+         (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment:
@@ -36,11 +47,13 @@ jobs:
     permissions:
       contents: write
       actions: read
+      pull-requests: read
     outputs:
       release_needed: ${{ steps.plan.outputs.release_needed }}
       metadata_sha256: ${{ steps.plan.outputs.metadata_sha256 }}
       source: ${{ steps.plan.outputs.source }}
       version: ${{ steps.plan.outputs.version }}
+      previous_tag: ${{ steps.plan.outputs.previous_tag }}
       runtime_tag: ${{ steps.plan.outputs.runtime_tag }}
       runtime_fingerprint: ${{ steps.plan.outputs.runtime_fingerprint }}
       runtime_base_url: ${{ steps.plan.outputs.runtime_base_url }}
@@ -50,6 +63,7 @@ jobs:
       - name: Check out the requested main revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ env.OTTO_RELEASE_SOURCE }}
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Node.js
@@ -65,7 +79,7 @@ jobs:
           OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
           OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
           APPLE_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && vars.APPLE_SIGNING_IDENTITY != '' && vars.APPLE_CERTIFICATE_SHA256 != '' && ((vars.OTTO_SIGNING_MODE || 'self-signed') == 'self-signed' || (secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && vars.APPLE_TEAM_ID != '')) }}
-          OTTO_AUTOMATIC_RELEASE: ${{ github.event_name == 'schedule' || inputs.automatic }}
+          OTTO_AUTOMATIC_RELEASE: ${{ inputs.automatic || false }}
         run: node .github/scripts/desktop-release.mjs plan
       - name: Save source-bound release metadata
         if: steps.plan.outputs.metadata_sha256 != ''
@@ -169,7 +183,7 @@ jobs:
       OTTO_SIGNING_CERTIFICATE_SHA256: ${{ vars.APPLE_CERTIFICATE_SHA256 }}
       OTTO_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
       OTTO_EXPECTED_RUNTIME_FINGERPRINT: ${{ needs.plan.outputs.runtime_fingerprint }}
-      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ (github.event_name == 'schedule' || inputs.publish) && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_base_url || '' }}
+      OTTO_RUNTIME_RELEASE_BASE_URL: ${{ (github.event_name == 'workflow_run' || inputs.publish) && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_base_url || '' }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -221,7 +235,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
-          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'schedule' || inputs.publish }}
+          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'workflow_run' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft-runtime
       - name: Save the checked runtime descriptor
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -294,7 +308,7 @@ jobs:
         env:
           OTTO_RELEASE_PLAN: ${{ needs.plan.outputs.metadata_sha256 && '.local/desktop-release-plan.json' || '' }}
           OTTO_RELEASE_PLAN_SHA256: ${{ needs.plan.outputs.metadata_sha256 }}
-          OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: ${{ (github.event_name == 'schedule' || inputs.publish) && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_reused != 'true' && needs.runtime.outputs.descriptor_sha256 || '' }}
+          OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: ${{ (github.event_name == 'workflow_run' || inputs.publish) && needs.plan.outputs.runtime_public == 'true' && needs.plan.outputs.runtime_reused != 'true' && needs.runtime.outputs.descriptor_sha256 || '' }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -367,14 +381,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           OTTO_RUNTIME_REPO: ${{ vars.OTTO_RUNTIME_REPO || github.repository }}
-          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'schedule' || inputs.publish }}
+          OTTO_PUBLISH_RELEASE: ${{ github.event_name == 'workflow_run' || inputs.publish }}
         run: node .github/scripts/desktop-release.mjs draft
 
   evals:
-    name: Capability evals against the previous release
-    needs: plan
-    if: needs.plan.outputs.release_needed == 'true' && (github.event_name == 'schedule' || inputs.publish)
-    uses: ./.github/workflows/evals.yml
-    with:
-      ref: ${{ needs.plan.outputs.source }}
-    secrets: inherit
+    name: Start capability evals for the published release
+    needs: [plan, release]
+    if: needs.plan.outputs.release_needed == 'true' && (github.event_name == 'workflow_run' || inputs.publish)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Start the report on the exact published tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: desktop-v${{ needs.plan.outputs.version }}
+          PREVIOUS_TAG: ${{ needs.plan.outputs.previous_tag }}
+        run: |
+          gh workflow run evals.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f baseline="$PREVIOUS_TAG"
+          echo "[Capability eval reports](https://github.com/$GITHUB_REPOSITORY/actions/workflows/evals.yml)" >> "$GITHUB_STEP_SUMMARY"

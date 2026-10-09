@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -39,6 +39,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
@@ -52,6 +53,13 @@ jobs:
             desktop/pnpm-lock.yaml
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Check the release version and source
+        if: >-
+          (github.event_name == 'pull_request' &&
+           github.head_ref == 'release/desktop' &&
+           github.event.pull_request.head.repo.full_name == github.repository) ||
+          github.ref == 'refs/heads/release/desktop'
+        run: node .github/scripts/prepare-desktop-release.mjs --check
       - name: Install desktop build tooling without downloading Electron
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'

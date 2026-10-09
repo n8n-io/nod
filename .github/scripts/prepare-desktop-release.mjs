@@ -56,6 +56,17 @@ function latestTag(root, source) {
   return tags.sort((a, b) => compareVersions(b.slice(9), a.slice(9)))[0] ?? null;
 }
 
+export function isReleaseMerge(pull, source, sourceRepository) {
+  return Boolean(
+    pull.merged_at &&
+    pull.merge_commit_sha === source &&
+    pull.base?.ref === 'main' &&
+    pull.base?.repo?.full_name === sourceRepository &&
+    pull.head?.ref === 'release/desktop' &&
+    pull.head?.repo?.full_name === sourceRepository,
+  );
+}
+
 async function readJson(root, file) {
   try {
     return JSON.parse(await readFile(resolve(root, file), 'utf8'));
@@ -77,18 +88,18 @@ function releaseCommits(root, previousTag, source, allowEmpty = false) {
     'log',
     '--no-merges',
     '--max-count=101',
-    '--format=%H%x00%s%x00',
+    '--format=%H%x00%s%x00%b%x00',
     previousTag ? `${previousTag}..${source}` : source,
     '--',
     ...scope,
   ]).split('\0');
   const commits = [];
-  for (let index = 0; index + 1 < entries.length; index += 2) {
+  for (let index = 0; index + 2 < entries.length; index += 3) {
     const sha = entries[index].trim();
     const subject = entries[index + 1];
     if (!/^[a-f0-9]{40}$/.test(sha) || subject.length > 2000 || /[\r\n\0]/.test(subject))
       throw new Error('Commit history cannot be represented as bounded release notes.');
-    commits.push({ sha, subject });
+    commits.push({ sha, subject, body: entries[index + 2] });
   }
   if (!commits.length && !allowEmpty) throw new Error('There are no desktop changes to release.');
   return commits;
@@ -105,19 +116,84 @@ export function currentNotes(changelog, version) {
   return notes;
 }
 
-function automaticNotes(root, version, previousTag, source, date) {
-  const commits = releaseCommits(root, previousTag, source, true);
+export function releaseNotes(root, version, previousTag, source, date, allowEmpty = false) {
+  const commits = releaseCommits(root, previousTag, source, allowEmpty);
+  const repository = `https://github.com/${process.env.GITHUB_REPOSITORY || 'n8n-io/otto'}`;
+  const groups = new Map(
+    [
+      'Breaking changes',
+      'Features',
+      'Fixes',
+      'Performance',
+      'Documentation',
+      'Other changes',
+      'Maintenance',
+    ].map((name) => [name, []]),
+  );
+  const escape = (value) => value.replace(/[\\`*_~[\]<>]/g, '\\$&');
+  for (const { sha, subject, body } of commits.slice(0, 100)) {
+    const match = /^(\w+)(?:\(([^)]+)\))?(!)?:\s+(.+)$/.exec(subject);
+    if (match?.[1] === 'chore' && match[2] === 'release') continue;
+    const breaking = /(?:^|\n)BREAKING[ -]CHANGE:\s*(.+)/.exec(body);
+    const group =
+      match?.[3] || breaking
+        ? 'Breaking changes'
+        : {
+            feat: 'Features',
+            fix: 'Fixes',
+            perf: 'Performance',
+            docs: 'Documentation',
+            build: 'Maintenance',
+            ci: 'Maintenance',
+            chore: 'Maintenance',
+            refactor: 'Maintenance',
+            test: 'Maintenance',
+            style: 'Maintenance',
+          }[match?.[1]] || 'Other changes';
+    const title = (match?.[4] || subject).replace(/\s*\(#\d+\)$/, '');
+    const scope = match?.[2] ? `**${escape(match[2])}:** ` : '';
+    const pull = /\(#(\d+)\)$/.exec(subject);
+    const link = pull
+      ? `[#${pull[1]}](${repository}/pull/${pull[1]})`
+      : `[commit](${repository}/commit/${sha})`;
+    groups
+      .get(group)
+      .push(
+        `- ${scope}${escape(title.charAt(0).toUpperCase() + title.slice(1))}${breaking ? ` — ${escape(breaking[1])}` : ''}. ${link} (${sha.slice(0, 7)})`,
+      );
+  }
   const notes = [
     `## ${version} - ${date}`,
     '',
-    `Source: \`${source}\``,
-    `Previous release: \`${previousTag}\``,
-    '',
-    ...commits.slice(0, 100).map(({ sha, subject }) => `- ${subject} (${sha.slice(0, 7)})`),
-    ...(!commits.length ? ['- Daily build of the same tested source.'] : []),
+    ...[...groups].flatMap(([name, entries]) =>
+      !entries.length
+        ? []
+        : name === 'Maintenance'
+          ? [
+              '<details>',
+              `<summary>Maintenance (${entries.length} changes)</summary>`,
+              '',
+              ...entries,
+              '',
+              '</details>',
+              '',
+            ]
+          : [`### ${name}`, '', ...entries, ''],
+    ),
+    ...(!commits.length ? ['- Build of the same tested source.', ''] : []),
     ...(commits.length > 100
       ? ['', 'More commits are included; review the full Git history.']
       : []),
+    ...(previousTag
+      ? [`[Full changelog](${repository}/compare/${previousTag}...${source})`, '']
+      : []),
+    '<details>',
+    '<summary>Build details</summary>',
+    '',
+    `Source: \`${source}\``,
+    `Previous release: ${previousTag ? `\`${previousTag}\`` : 'none'}`,
+    '',
+    '</details>',
     '',
   ].join('\n');
   if (Buffer.byteLength(notes) > maximumNotesBytes)
@@ -171,7 +247,7 @@ export function automaticRelease(root, releases, sourceRepository) {
     previousTag,
     source,
     date,
-    notes: automaticNotes(root, version, previousTag, source, date),
+    notes: releaseNotes(root, version, previousTag, source, date, true),
   };
 }
 
@@ -201,7 +277,7 @@ export async function checkReleasePlan(root, input, path, digest) {
     git(root, ['status', '--porcelain', '--untracked-files=no']).trim()
   )
     throw new Error('The release plan does not match the clean tested source.');
-  if (plan.notes !== automaticNotes(root, plan.version, plan.previousTag, source, plan.date))
+  if (plan.notes !== releaseNotes(root, plan.version, plan.previousTag, source, plan.date, true))
     throw new Error('The release plan notes do not match the source changes.');
   if (
     tagExists(root, `desktop-v${plan.version}`) &&
@@ -218,8 +294,12 @@ export async function configuredRelease(root) {
 }
 
 export async function prepareRelease(root, input) {
-  const version = releaseVersion(input);
   const source = repository(root);
+  const previousTag = latestTag(root, source);
+  const [major, minor, patch] = (
+    previousTag?.slice(9) || (await readJson(root, releaseFiles[0])).version
+  ).split('.');
+  const version = releaseVersion(input || `${major}.${minor}.${BigInt(patch) + 1n}`);
   if (
     git(root, ['status', '--porcelain', '--untracked-files=normal', '--', ...releaseFiles]).trim()
   )
@@ -233,7 +313,6 @@ export async function prepareRelease(root, input) {
     readFile(resolve(root, releaseFiles[2]), 'utf8'),
   ]);
   const current = releaseVersion(pkg.version);
-  const previousTag = latestTag(root, source);
   if (
     compareVersions(version, current) < 0 ||
     (previousTag &&
@@ -245,22 +324,14 @@ export async function prepareRelease(root, input) {
     );
   if (new RegExp(`^## ${version.replaceAll('.', '\\.')} - `, 'm').test(changelog))
     throw new Error(`The changelog already contains desktop version ${version}.`);
-  const commits = releaseCommits(root, previousTag, source);
   const manifest = { version, previousTag, source };
-  const notes = [
-    `## ${version} - ${new Date().toISOString().slice(0, 10)}`,
-    '',
-    `Source: \`${source}\``,
-    `Previous release: ${previousTag ? `\`${previousTag}\`` : 'none'}`,
-    '',
-    ...commits.slice(0, 100).map(({ sha, subject }) => `- ${subject} (${sha.slice(0, 7)})`),
-    ...(commits.length > 100
-      ? ['', 'More commits are included; review the full Git history.']
-      : []),
-    '',
-  ].join('\n');
-  if (Buffer.byteLength(notes) > maximumNotesBytes)
-    throw new Error('The desktop release notes exceed 64 KiB.');
+  const notes = releaseNotes(
+    root,
+    version,
+    previousTag,
+    source,
+    new Date().toISOString().slice(0, 10),
+  );
   const firstSection = changelog.search(/^## /m);
   const prefix = (firstSection < 0 ? changelog : changelog.slice(0, firstSection)).trimEnd();
   const history = firstSection < 0 ? '' : changelog.slice(firstSection).trim();
@@ -342,14 +413,20 @@ async function main() {
   )
     throw new Error('Usage: prepare-desktop-release.mjs [--check | --notes [output-file]]');
   const root = process.cwd();
-  const version = releaseVersion(
-    process.env.OTTO_RELEASE_VERSION ??
-      (args.length ? (await configuredRelease(root)).version : undefined),
-  );
+  let version;
   if (!args.length) {
-    const manifest = await prepareRelease(root, version);
+    const manifest = await prepareRelease(root, process.env.OTTO_RELEASE_VERSION);
+    version = manifest.version;
+    if (process.env.OTTO_RELEASE_NOTES_FILE)
+      await writeFile(
+        process.env.OTTO_RELEASE_NOTES_FILE,
+        currentNotes(await readFile(resolve(root, releaseFiles[2]), 'utf8'), version),
+      );
     process.stdout.write(`Prepared desktop-v${version} from ${manifest.source}.\n`);
   } else {
+    version = releaseVersion(
+      process.env.OTTO_RELEASE_VERSION || (await configuredRelease(root)).version,
+    );
     const release = await checkRelease(root, version);
     if (args[0] === '--notes') {
       if (args[1]) await writeFile(resolve(root, args[1]), release.notes);

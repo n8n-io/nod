@@ -1,12 +1,12 @@
-name: Prepare desktop release
+name: Release desktop
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Stable version for the release PR, for example 0.1.0
+        description: Version to release; leave empty for the next patch
         type: string
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -38,7 +38,17 @@ jobs:
         id: version
         env:
           OTTO_RELEASE_VERSION: ${{ inputs.version }}
+          OTTO_RELEASE_NOTES_FILE: ${{ runner.temp }}/release-notes.md
         run: node .github/scripts/prepare-desktop-release.mjs
+      - name: Prepare the release PR description
+        run: |
+          cat > "$RUNNER_TEMP/release-pr.md" <<'TEXT'
+          Merge this PR after review and CI. CI on the merge commit then builds, signs and publishes the GitHub release with the Mac DMG and application ZIP.
+
+          If main changes before merge, run Release desktop again to update this PR.
+
+          TEXT
+          cat "$RUNNER_TEMP/release-notes.md" >> "$RUNNER_TEMP/release-pr.md"
       - name: Open or update the release PR
         id: pr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1
@@ -47,10 +57,7 @@ jobs:
           base: main
           title: 'chore(release): Otto desktop ${{ steps.version.outputs.version }}'
           commit-message: 'chore(release): Otto desktop ${{ steps.version.outputs.version }}'
-          body: |
-            Updates the desktop version and generated changelog for review.
-
-            After merging and passing CI, run Build desktop release from main. It creates a draft release by default and reuses the matching runtime when its inputs have not changed.
+          body-path: ${{ runner.temp }}/release-pr.md
           add-paths: |
             desktop/package.json
             desktop/release.json

@@ -31,6 +31,7 @@ import {
   automaticRelease,
   checkRelease,
   checkReleasePlan,
+  isReleaseMerge,
   prepareRelease,
 } from '../../.github/scripts/prepare-desktop-release.mjs';
 import { cleanupAppleSigning } from '../../.github/scripts/with-apple-signing.mjs';
@@ -115,6 +116,51 @@ test('release gate rejects malformed metadata, uncommitted notes and source drif
     checkRelease(f.root, '0.1.0'),
     /Source changes landed after release preparation/,
   );
+});
+
+test('release publication requires the exact merge of an owned release PR', () => {
+  const source = 'a'.repeat(40);
+  const repository = 'synthetic/otto';
+  const pull = {
+    merged_at: '2026-10-09T10:00:00Z',
+    merge_commit_sha: source,
+    base: { ref: 'main', repo: { full_name: repository } },
+    head: { ref: 'release/desktop', repo: { full_name: repository } },
+  };
+  assert.equal(isReleaseMerge(pull, source, repository), true);
+  for (const candidate of [
+    { ...pull, merged_at: null },
+    { ...pull, merge_commit_sha: 'b'.repeat(40) },
+    { ...pull, head: { ...pull.head, ref: 'feature' } },
+    { ...pull, head: { ...pull.head, repo: { full_name: 'foreign/otto' } } },
+    { ...pull, base: { ...pull.base, ref: 'feature' } },
+    { ...pull, base: { ...pull.base, repo: { full_name: 'foreign/otto' } } },
+  ])
+    assert.equal(isReleaseMerge(candidate, source, repository), false);
+});
+
+test('release preparation selects the next patch and retains all change identities', async (t) => {
+  const f = await releaseRepository(t);
+  await prepareRelease(f.root, '0.1.0');
+  f.commit();
+  f.git('tag', 'desktop-v0.1.0');
+  const changes = [];
+  for (const [index, subject] of [
+    'feat(chat): export tasks (#2)',
+    'fix!: reject unsafe files',
+    'docs: add setup steps',
+  ].entries()) {
+    await writeFile(join(f.root, 'desktop/main.mjs'), `export const revision = ${index};\n`);
+    f.git('add', '.');
+    f.git('commit', '-m', subject);
+    changes.push(f.git('rev-parse', 'HEAD'));
+  }
+  const manifest = await prepareRelease(f.root);
+  assert.equal(manifest.version, '0.1.1');
+  f.commit();
+  const checked = await checkRelease(f.root, manifest.version);
+  for (const sha of changes) assert.equal(checked.notes.includes(sha.slice(0, 7)), true);
+  assert.equal(checked.source, changes.at(-1));
 });
 
 test('automatic patches release unchanged source and bind generated notes across midnight', async (t) => {
@@ -518,6 +564,7 @@ if (args[0] === 'api') {
   if (args[1] === 'repos/synthetic/otto' || args[1] === 'repos/' + state.runtimeRepository) output({ private: state.private });
   if (args[1] === 'repos/' + state.runtimeRepository + '/commits/main') output({ sha: 'f'.repeat(40) });
   if (args[1].includes('/actions/workflows/')) output({ workflow_runs: state.runs });
+  if (args[1].endsWith('/pulls')) output(state.pulls || []);
   if (args[1] === 'repos/synthetic/otto/releases?per_page=100') {
     save();
     process.stdout.write(Object.values(state.releases).map(release => JSON.stringify(release)).join('\n'));
@@ -696,6 +743,44 @@ test('automatic delivery requires current exact-main CI and publishes only its c
   assert.equal(repeated.runtime_reused, 'true');
   assert.deepEqual((await f.readState()).releases, published.releases);
   assert.equal((await f.readState()).created, 2);
+});
+
+test('CI completion publishes only a merged release PR and keeps the tested source when main moves', async (t) => {
+  const f = await releaseFixture(t, { plan: true, publish: true });
+  const environment = {
+    GITHUB_EVENT_NAME: 'workflow_run',
+    GITHUB_SHA: 'b'.repeat(40),
+    OTTO_RELEASE_SOURCE: f.source,
+  };
+  assert.equal(
+    JSON.parse((await f.invoke('plan', true, environment)).stdout).release_needed,
+    'false',
+  );
+  assert.equal((await f.readState()).created, 0);
+  await f.writeState({
+    ...(await f.readState()),
+    pulls: [
+      {
+        merged_at: '2026-10-09T10:00:00Z',
+        merge_commit_sha: f.source,
+        base: { ref: 'main', repo: { full_name: 'synthetic/otto' } },
+        head: { ref: 'release/desktop', repo: { full_name: 'synthetic/otto' } },
+      },
+    ],
+  });
+  const plan = JSON.parse((await f.invoke('plan', true, environment)).stdout);
+  assert.equal(plan.release_needed, 'true');
+  assert.equal(plan.source, f.source);
+  await f.invoke('draft-runtime', true, environment);
+  await f.invoke('draft', true, environment);
+  const state = await f.readState();
+  assert.equal(state.releases[f.appTag].draft, false);
+  assert.equal(state.releases[f.appTag].target_commitish, f.source);
+  assert.equal(
+    JSON.parse((await f.invoke('plan', true, environment)).stdout).release_needed,
+    'false',
+  );
+  assert.equal((await f.readState()).created, state.created);
 });
 
 test('runtime and app drafts handle pending tags and retries without publishing either release', async (t) => {
