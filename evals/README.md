@@ -4,7 +4,7 @@ Runs real tasks against the real Otto harness and reports how often it gets them
 
 Each scenario boots an isolated Otto: its own database schema, a Docker workspace, a Chromium browser, the real server and Pi, and a real model. The user is simulated. Only the outside world is faked: connected apps (Gmail, Calendar, Sheets, Slack) are stateful fakes behind the same port as Composio, and websites are lookalike sites that the real browser visits under made-up hostnames. Everything else is real. The result is graded by what actually happened (the state of the fake world, the workspace files, the trace) and by an independent judge model for the parts that need judgement.
 
-These model evaluations run nightly and on request. It calls live models and costs money (about $0.1 to $0.5 per attempt). The unit tests never call it.
+These model evaluations run nightly and on request. They call live models and cost money (about $0.1 to $0.5 per attempt). The unit tests never call them.
 
 ## Run it
 
