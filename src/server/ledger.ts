@@ -15,7 +15,7 @@ export const spendingLimitReached =
 
 const zone = `COALESCE((SELECT time_zone FROM preferences WHERE owner_id=$1),'UTC')`;
 const monthStart = `(date_trunc('month', now() AT TIME ZONE ${zone}) AT TIME ZONE ${zone})`;
-const spentThisMonth = `COALESCE((SELECT sum(cost_usd) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
+const spentThisMonth = `COALESCE((SELECT sum(cost_usd::numeric) FROM model_usage WHERE owner_id=$1 AND created_at>=${monthStart}),0)::float8`;
 const pageSize = 30;
 const cost = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -66,8 +66,8 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
     );
   }
 
-  const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd)
-    SELECT $1,$2,$3,$4,$5 WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
+  const usageSql = `INSERT INTO model_usage(id,owner_id,turn_id,model,cost_usd,created_at)
+    SELECT $1,$2,$3,$4,$5,$6::timestamptz WHERE $3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE id=$3 AND owner_id=$2)
     ON CONFLICT(id) DO NOTHING`;
   const pendingUsage = new Map<string, { values: unknown[]; pending: Promise<void> }>();
   async function flushUsage() {
@@ -86,6 +86,7 @@ export function createLedger({ pool, ownerId }: { pool: Pool; ownerId: string })
       attributedTurn,
       model?.slice(0, 200) ?? null,
       cost(costUsd as number),
+      new Date().toISOString(),
     ];
     const pending = pool.query(usageSql, values).then(
       () => {

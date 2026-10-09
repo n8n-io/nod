@@ -7606,13 +7606,32 @@ test(
       });
       const request = { task: 'review' as const, instructions: 'Synthetic', input: {} };
       await assert.rejects(curator.curate(request), /Synthetic usage write failure/);
+      const failedAt = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 20));
       await assert.rejects(curator.curate(request), /Synthetic usage write failure/);
       assert.equal(modelRequests, 1);
       await pool.query('DROP TRIGGER refuse_usage ON model_usage');
       assert.equal(await ledger.limitReached(), true);
       await assert.rejects(curator.curate(request), /spending limit was reached/);
       assert.equal(modelRequests, 1);
-      assert.equal((await app.inject('/api/trust')).json().month.spentUsd, 1.2);
+      const recoveredUsage = await pool.query(
+        "SELECT created_at FROM model_usage WHERE owner_id='owner' AND turn_id IS NULL AND model='fixture-small'",
+      );
+      assert.ok(recoveredUsage.rows[0].created_at.getTime() <= failedAt);
+      assert.equal(
+        Math.round((await app.inject('/api/trust')).json().month.spentUsd * 100) / 100,
+        1.2,
+      );
+      const decimalLedger = createLedger({ pool, ownerId: 'decimal-owner' });
+      await pool.query("INSERT INTO spending_limits VALUES('decimal-owner',1)");
+      await pool.query(
+        "INSERT INTO model_usage(id,owner_id,cost_usd) SELECT 'decimal-'||n,'decimal-owner',0.1 FROM generate_series(1,9) n",
+      );
+      assert.equal(await decimalLedger.limitReached(), false);
+      await pool.query(
+        "INSERT INTO model_usage(id,owner_id,cost_usd) VALUES('decimal-10','decimal-owner',0.1)",
+      );
+      assert.equal(await decimalLedger.limitReached(), true);
     } finally {
       await app.close();
       await pool.end();
