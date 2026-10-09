@@ -82,6 +82,23 @@ Add a test when it would catch a real regression in the core harness, sandbox is
 
 Tests use synthetic data and disposable database schemas. They never call a live model, a connected account or a real recipient, and never touch your normal local database.
 
+### RTK workspace check
+
+Build the workspace image and run the 15 synthetic cases once:
+
+```sh
+docker build -f Dockerfile.workspace -t otto-eval-workspace:latest .
+pnpm exec tsx scripts/eval-rtk.ts --smoke
+```
+
+Omit `--smoke` for three repetitions. Results go to `.local/rtk-eval/candidate`. The check uses disposable containers with networking disabled and does not call a model or connected account.
+
+For a comparison, run `--phase baseline --baseline <commit> --image <baseline-image>` with a workspace image built from the baseline without RTK. Use the same case version and repetition count for both runs, then generate the chart and summary:
+
+```sh
+node scripts/eval-rtk-report.mjs
+```
+
 ## Pull requests
 
 - Use a [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) title: `type(scope): description`. The scope is optional. For example, use `fix(backend): handle a missing session` or `feat(web): add keyboard controls`.

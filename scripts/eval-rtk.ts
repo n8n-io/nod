@@ -16,7 +16,7 @@ const option = (name: string, fallback: string) => {
 };
 const image = option('--image', 'otto-eval-workspace:latest');
 const phase = option('--phase', 'candidate');
-const output = resolve(option('--output', `/tmp/otto-rtk-eval-${phase}`));
+const output = resolve(option('--output', join(root, '.local', 'rtk-eval', phase)));
 const baseline = option('--baseline', '437687bb17a3944ce9aa01ac37239e5163515365');
 const sourceRef = option('--source-ref', phase === 'baseline' ? baseline : '');
 const repeatCount = options.includes('--smoke') ? 1 : 3;

@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createCanvas } from '@napi-rs/canvas';
 
-const directory = resolve(process.argv[2] ?? 'docs/testing/rtk-eval');
+const directory = resolve(process.argv[2] ?? '.local/rtk-eval');
 const before = JSON.parse(await readFile(`${directory}/baseline/report.json`, 'utf8'));
 const after = JSON.parse(await readFile(`${directory}/candidate/report.json`, 'utf8'));
 const manifest = JSON.parse(await readFile(`${directory}/candidate/cases.json`, 'utf8'));
