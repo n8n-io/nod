@@ -71,8 +71,9 @@ Stated plainly, so that nothing claims more than it does:
 
 - **Actions inside a granted site.** Once signed in, Otto can act on that site through the browser. The Vault does not judge those actions, and the trust check covers connected apps, not browser clicks. Signed-in turns review new destinations for data leaving the site. A purchase still needs a mandate.
 - **A wrong match by the review model.** It may grant a site the owner did not mean. The release still goes only to the login's own origins, and the activity shows it.
-- **A day's say-so.** A yes, or the owner's own entry, lets conversation turns use that site for the rest of the day, so a page in a later chat could steer Otto there. The tripwire, the question on any other site and the activity view are the backstops.
-- **Sites signed in by hand.** In the live browser, Otto counts the site the owner acted on and the one they landed on. A site that set cookies in between is cleared only when the browser signs out of everything.
+- **A day's say-so.** A yes, or the owner's own entry, lets conversation turns use that site for a day, so a page in a later chat could steer Otto there. The tripwire, the question on any other site and the activity view are the backstops.
+- **Sign-ins Otto cannot see.** Magic links, single sign-on hops through other sites and sessions from before this version are not tracked. Background and read-only work always start signed out, so they cannot use them; a conversation or schedule can, until the browser next signs out.
+- **Old sessions.** Plaintext from the old `get_credential` tool is removed from saved Pi sessions when they load, including passwords Pi later typed. A compaction summary written before that may still paraphrase one.
 - **Values in transit.** A released value passes through the server process on its way to a sink. It is never stored there and never sent to Pi.
 - **Same-user programs on local installs.** Without containers, the keeper runs as the owner's OS user.
 - **Stored-card amounts.** With a stored card, the amount is what the owner approved; only one-time cards enforce it at the issuer.

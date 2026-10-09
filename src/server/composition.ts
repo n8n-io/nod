@@ -126,7 +126,7 @@ import {
 import type { VaultActivityReason } from '../shared/contracts.ts';
 import { createTriage } from './triage.ts';
 import { createTasks } from './tasks.ts';
-import { createVault, credentialOrigin, sealedDataExists } from './vault.ts';
+import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from './vault.ts';
 import { createVaultAccess } from './vault-access.ts';
 import { createBrowserConnections } from './browser-connections.ts';
 import { createLinkPreviews } from './link-previews.ts';
@@ -176,11 +176,14 @@ export function createDefaultAdapters(
   if (!['openai', 'anthropic', 'openrouter'].includes(provider))
     throw new Error('LLM_PROVIDER must be openai, anthropic or openrouter.');
   const model = env.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
-  const keyStore = env.OTTO_VAULT_KEY
-    ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
-    : process.platform === 'darwin'
-      ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
-      : createEnvironmentKeyStore();
+  const keyStore = checkedKeyStore(
+    pool,
+    env.OTTO_VAULT_KEY
+      ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
+      : process.platform === 'darwin'
+        ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
+        : createEnvironmentKeyStore(),
+  );
   const models = createModelService({
     database: pool,
     ownerId,
@@ -608,6 +611,7 @@ async function initializeApplication(
           ...(use.entryId ? { itemId: use.entryId } : {}),
         },
       ),
+    onForget: (origin) => vaultAccess.forget(origin),
   });
   browserConnections = await createBrowserConnections(pool, {
     ownerId,
@@ -763,6 +767,7 @@ async function initializeApplication(
         if (!target) return browserConnections.request(request, turn, signal, launch);
         const access = await permitVault(turn, target);
         if ('question' in access) return { [appConfirmation]: access.question };
+        await vaultAccess.track(turn.threadId, target.origin);
         const result = await browserConnections.request(request, turn, signal, launch);
         if (target.kind === 'session' && result.status === 'session_opened')
           await vaultAccess.record(turn, {
@@ -926,9 +931,18 @@ async function initializeApplication(
     startOnboarding: welcome,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
-    browserInput: async (threadId) => {
-      const page = await computer.currentPage(threadId).catch(() => undefined);
-      if (page?.origin) await vaultAccess.touched(threadId, page.origin);
+    browserInput: async (threadId, apply) => {
+      const page = () =>
+        computer.currentPage(threadId).then(
+          (current) => current.origin,
+          () => undefined,
+        );
+      const acted = await page();
+      try {
+        await apply();
+      } finally {
+        await vaultAccess.touched(threadId, { acted, landed: await page() });
+      }
     },
     computer,
     runtime,

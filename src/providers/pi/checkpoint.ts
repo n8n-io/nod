@@ -1,5 +1,6 @@
 import { SessionManager, type FileEntry } from '@earendil-works/pi-coding-agent';
 import { randomUUID } from 'node:crypto';
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PrivateObjectStore } from '../../ports/object-storage.ts';
@@ -134,14 +135,50 @@ function legacyCredential(message: { role: string; toolName?: string; content?: 
   );
 }
 
-export function holdsCredentials(manager: SessionManager) {
+function holdsCredentials(manager: SessionManager) {
   return manager
     .buildContextEntries()
     .some((entry) => entry.type === 'message' && legacyCredential(entry.message));
 }
 
+function legacySecrets(context: ReturnType<SessionManager['buildContextEntries']>) {
+  const values = new Set<string>();
+  for (const entry of context)
+    if (entry.type === 'message' && legacyCredential(entry.message))
+      for (const part of entry.message.role === 'toolResult' ? entry.message.content : [])
+        if (part.type === 'text')
+          try {
+            const password: unknown = JSON.parse(part.text)?.password;
+            if (typeof password === 'string' && password.length >= 4) values.add(password);
+          } catch {}
+  return [...values].map((value) => JSON.stringify(value).slice(1, -1));
+}
+
+function scrub<T>(value: T, secrets: string[]): T {
+  if (!secrets.length) return value;
+  return JSON.parse(
+    secrets.reduce((text, secret) => text.split(secret).join('[removed]'), JSON.stringify(value)),
+  ) as T;
+}
+
+export function openLocalSession(directory: string) {
+  let manager = SessionManager.continueRecent(directory, directory);
+  const file = manager.getSessionFile();
+  if (!file || !existsSync(file)) return manager;
+  const legacy = holdsCredentials(manager);
+  if (!legacy && statSync(file).size <= rebaseAt) return manager;
+  manager = rebaseSession(manager, SessionManager.create(directory, directory));
+  const current = manager.getSessionFile();
+  if (legacy && current && existsSync(current))
+    for (const name of readdirSync(directory))
+      if (name.endsWith('.jsonl') && join(directory, name) !== current)
+        rmSync(join(directory, name), { force: true });
+  return manager;
+}
+
 export function rebaseSession(source: SessionManager, next: SessionManager) {
   const context = source.buildContextEntries();
+  const secrets = legacySecrets(context);
   let images = context.reduce(
     (count, entry) =>
       entry.type === 'message' && entry.message.role === 'toolResult'
@@ -151,9 +188,14 @@ export function rebaseSession(source: SessionManager, next: SessionManager) {
   );
   for (const entry of context) {
     if (entry.type === 'compaction')
-      next.appendCompaction(entry.summary, null, entry.tokensBefore, entry.details);
+      next.appendCompaction(
+        scrub(entry.summary, secrets),
+        null,
+        entry.tokensBefore,
+        scrub(entry.details, secrets),
+      );
     else if (entry.type === 'message') {
-      const message = entry.message;
+      const message = scrub(entry.message, secrets);
       next.appendMessage(
         (legacyCredential(message)
           ? { ...message, content: [{ type: 'text' as const, text: removedCredential }] }
@@ -218,11 +260,9 @@ export async function createPiCheckpoint(options: {
   );
   let parts = saved?.parts ?? [];
   let stored = saved?.bytes.byteLength ?? 0;
-  if (stored > rebaseAt || holdsCredentials(manager)) {
-    manager = rebaseSession(manager, SessionManager.inMemory(options.directory));
-    parts = [];
-  }
-  let persisted = parts.length ? manager.getEntries().length : 0;
+  let rewrite = stored > rebaseAt || holdsCredentials(manager);
+  if (rewrite) manager = rebaseSession(manager, SessionManager.inMemory(options.directory));
+  let persisted = parts.length && !rewrite ? manager.getEntries().length : 0;
   closeInterruptedCalls(manager);
   let version = saved?.version ?? null;
   let failed = false;
@@ -233,7 +273,7 @@ export async function createPiCheckpoint(options: {
       const written: string[] = [];
       try {
         const all = manager.getEntries();
-        const fresh = !parts.length || parts.length >= maxParts;
+        const fresh = rewrite || !parts.length || parts.length >= maxParts;
         const rows = fresh ? [{ ...manager.getHeader() }, ...all] : all.slice(persisted);
         let size = fresh ? 0 : stored;
         for (const bytes of chunks(rows)) {
@@ -256,9 +296,11 @@ export async function createPiCheckpoint(options: {
           { expectedVersion: version },
         );
         if (fresh)
-          for (const old of parts)
-            void store.remove(`sessions/${threadId}/${old}.jsonl`).catch(() => {});
+          await Promise.all(
+            parts.map((old) => store.remove(`sessions/${threadId}/${old}.jsonl`).catch(() => {})),
+          );
         parts = nextParts;
+        rewrite = false;
         persisted = all.length;
         stored = size;
       } catch {

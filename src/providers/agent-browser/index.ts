@@ -1622,10 +1622,14 @@ export function createAgentBrowserComputer(options: {
       const state = browsers.get(id) ?? (await recoverBrowser(id, true));
       if (state?.injecting) throw new BrowserLockedError();
       if (state) await closeBrowser(id);
-      await rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true });
+      const fresh = stateFor(id);
+      await Promise.all([
+        rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
+        rm(resolve(runtimeRoot, 'downloads', id), { recursive: true, force: true }),
+        rm(cachePath(fresh), { recursive: true, force: true }),
+      ]);
       await screens.clearImage(id);
       screenStatuses.delete(id);
-      const fresh = stateFor(id);
       fresh.saved = { version: 1, url: '', sensitive: false, active: false };
       await saveState(fresh);
       browsers.delete(id);

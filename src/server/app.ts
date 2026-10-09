@@ -88,7 +88,7 @@ export interface AppDependencies {
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;
   planningTasks?: () => boolean;
-  browserInput?: (threadId: string) => Promise<void>;
+  browserInput?: (threadId: string, apply: () => Promise<void>) => Promise<void>;
   messageCosts?: (
     turnIds: string[],
   ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
@@ -609,10 +609,12 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const acting = body.data.inputs.some(
       (input) => input.type !== 'wheel' && (input.type !== 'mouse' || input.event === 'down'),
     );
-    if (acting) await dependencies.browserInput?.(thread.id);
-    try {
+    const apply = async () => {
       for (const input of body.data.inputs) await control(thread.id, input);
-      if (acting) await dependencies.browserInput?.(thread.id);
+    };
+    try {
+      if (acting && dependencies.browserInput) await dependencies.browserInput(thread.id, apply);
+      else await apply();
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply

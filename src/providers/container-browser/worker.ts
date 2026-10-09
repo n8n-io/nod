@@ -115,7 +115,6 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       if (!computer.discard) throw new Error();
       return computer.discard(request.threadId);
     case 'signOut':
-      if (!computer.signOut) throw new Error();
       return computer.signOut(request.threadId);
     case 'status':
       return null;

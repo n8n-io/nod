@@ -33,9 +33,9 @@ export type SignInVerdict =
 
 function siteNames(origin: string) {
   const names = new Set<string>();
-  const hostname = getHostname(origin);
+  const hostname = getHostname(origin)?.toLowerCase();
   const domain = getDomain(origin, { allowPrivateDomains: true });
-  if (hostname) names.add(hostname.toLowerCase().replace(/^www\./, ''));
+  if (hostname) names.add(hostname).add(hostname.replace(/^www\./, ''));
   if (domain) names.add(domain.toLowerCase());
   return [...names];
 }
@@ -43,9 +43,9 @@ function siteNames(origin: string) {
 function mentions(text: string, origin: string) {
   const lower = text.toLowerCase();
   return siteNames(origin).some((name) =>
-    new RegExp(`(^|[^a-z0-9])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(
-      lower,
-    ),
+    new RegExp(
+      `(?:^|[^a-z0-9.-]|www\\.)${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9-]|\\.[a-z0-9])`,
+    ).test(lower),
   );
 }
 

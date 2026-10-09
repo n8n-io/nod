@@ -117,8 +117,10 @@ test(
     const touched: string[] = [];
     const app = await createApp({
       configuration: () => configuration(),
-      browserInput: async (id) => {
-        touched.push(id);
+      browserInput: async (id, apply) => {
+        touched.push(`${id}:before:${controls.length}`);
+        await apply();
+        touched.push(`${id}:after:${controls.length}`);
       },
       runtime: {
         status: () => ({ browser: 'Ready', workspace: 'Ready' }),
@@ -305,10 +307,10 @@ test(
         [next.id, click],
         [next.id, { action: 'back' }],
       ]);
-      assert.deepEqual(touched, [next.id, next.id]);
+      assert.deepEqual(touched, [`${next.id}:before:0`, `${next.id}:after:1`]);
       const scroll = { type: 'wheel', deltaX: 0, deltaY: 120 };
       assert.equal((await post('/api/browser-handoff', { inputs: [scroll] })).statusCode, 200);
-      assert.deepEqual(touched, [next.id, next.id]);
+      assert.equal(touched.length, 2);
       assert.deepEqual(await handoff({ ...click, x: 2 }), [200, 400, 200]);
       pageShown = false;
       assert.equal((await request('/api/browser-handoff/stream')).statusCode, 409);
@@ -970,11 +972,14 @@ test('signing out closes the thread browser, clears its own profile and keeps sa
       await mkdir(join(runtime, 'profiles', profile), { recursive: true });
       await writeFile(join(runtime, 'profiles', profile, 'Cookies'), 'synthetic-cookie');
     }
+    await mkdir(join(runtime, 'downloads', 'thread'), { recursive: true });
+    await writeFile(join(runtime, 'downloads', 'thread', 'statement.pdf'), 'synthetic-statement');
     await computer.bindProfile!('thread', savedProfile);
     await computer.act('thread', { action: 'open', url: 'https://1.1.1.1/login' });
     assert.equal(profiles.at(-1), savedProfile);
     await computer.signOut('thread');
     assert.deepEqual(await readdir(join(runtime, 'profiles')), [savedProfile]);
+    assert.deepEqual(await readdir(join(runtime, 'downloads')), []);
     assert.equal(computer.screenStatus!('thread').state, 'unavailable');
     await assert.rejects(
       computer.act('thread', { action: 'snapshot' }),

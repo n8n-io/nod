@@ -122,6 +122,7 @@ export type VaultUse = {
 type VaultOptions = {
   admission?: WorkAdmission;
   onUse?(use: VaultUse): Promise<void>;
+  onForget?(origin: string): Promise<void>;
   securityCodes?: boolean;
   resume(turnId: string): Promise<void>;
   retry(turnId: string): Promise<void>;
@@ -197,6 +198,53 @@ export function waitingTurnSql(alias: string, reason?: 'credentials' | 'question
   return `${alias}.status='waiting'${reason ? ` AND ${alias}.waiting_reason='${reason}'` : ''}
     AND EXISTS(SELECT 1 FROM threads wt WHERE wt.id=${alias}.thread_id AND wt.owner_id=${alias}.owner_id AND wt.archived_at IS NULL)
     AND NOT EXISTS(SELECT 1 FROM turns wn WHERE wn.thread_id=${alias}.thread_id AND wn.id<>${alias}.id AND NOT wn.background AND wn.started_at>=${alias}.started_at)`;
+}
+
+const keyCheck = { id: 'key-check', owner_id: owner, origin: 'otto:vault' };
+
+async function verifyKey(pool: Pick<Pool, 'query'>, key: Buffer) {
+  await pool.query(
+    'CREATE TABLE IF NOT EXISTS vault_key_check (owner_id text PRIMARY KEY, ciphertext text NOT NULL)',
+  );
+  const row = (
+    await pool.query<{ ciphertext: string }>(
+      'SELECT ciphertext FROM vault_key_check WHERE owner_id=$1',
+      [owner],
+    )
+  ).rows[0];
+  if (row) {
+    try {
+      openCredential(key, { ...keyCheck, ciphertext: row.ciphertext });
+      return;
+    } catch {}
+    if (await sealedDataExists(pool)) throw new Error('The Vault key does not match.');
+  }
+  await pool.query(
+    `INSERT INTO vault_key_check(owner_id,ciphertext) VALUES($1,$2)
+     ON CONFLICT (owner_id) DO UPDATE SET ciphertext=excluded.ciphertext`,
+    [owner, sealCredential(key, keyCheck, { username: '', password: '' })],
+  );
+}
+
+export function checkedKeyStore(
+  pool: Pick<Pool, 'query'>,
+  keyStore: CredentialKeyStore,
+): CredentialKeyStore {
+  let checked: Promise<Buffer> | undefined;
+  return {
+    ...keyStore,
+    getKey: () =>
+      (checked ??= keyStore
+        .getKey()
+        .then(async (key) => {
+          await verifyKey(pool, key);
+          return key;
+        })
+        .catch((error: unknown) => {
+          checked = undefined;
+          throw error;
+        })),
+  };
 }
 
 export class VaultError extends Error {
@@ -418,32 +466,10 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     CREATE INDEX IF NOT EXISTS credential_requests_turn ON credential_requests(turn_id);
     CREATE INDEX IF NOT EXISTS credential_requests_root_turn ON credential_requests(root_turn_id,owner_id,origin,kind);
     CREATE INDEX IF NOT EXISTS vault_entries_owner ON vault_entries(owner_id);
-    CREATE TABLE IF NOT EXISTS vault_key_check (owner_id text PRIMARY KEY, ciphertext text NOT NULL);
   `);
   const identifiers = new Map<string, { value: string; expiresAt: number }>();
   const identifierKey = (rootTurnId: string, ownerId: string, origin: string) =>
     JSON.stringify([rootTurnId, ownerId, origin]);
-  const keyCheck = { id: 'key-check', owner_id: owner, origin: 'otto:vault' };
-  async function verifyKey(value: Buffer) {
-    const row = (
-      await pool.query<{ ciphertext: string }>(
-        'SELECT ciphertext FROM vault_key_check WHERE owner_id=$1',
-        [owner],
-      )
-    ).rows[0];
-    if (row) {
-      try {
-        openCredential(value, { ...keyCheck, ciphertext: row.ciphertext });
-        return;
-      } catch {}
-      if (await sealedDataExists(pool)) throw new Error('The Vault key does not match.');
-    }
-    await pool.query(
-      `INSERT INTO vault_key_check(owner_id,ciphertext) VALUES($1,$2)
-       ON CONFLICT (owner_id) DO UPDATE SET ciphertext=excluded.ciphertext`,
-      [owner, sealCredential(value, keyCheck, { username: '', password: '' })],
-    );
-  }
   let keyPromise: Promise<Buffer> | undefined;
   const key = () => {
     keyPromise ??= options.keyStore
@@ -451,7 +477,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .then(async (value) => {
         if (!Buffer.isBuffer(value) || value.length !== 32)
           throw new Error('Invalid credential key.');
-        await verifyKey(value);
         return value;
       })
       .catch(() => {
@@ -1189,14 +1214,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
                 client,
               )
             : entry;
-        if (row.kind !== 'otp')
-          use = {
-            turnId: row.turn_id,
-            threadId: row.thread_id,
-            origin: row.origin,
-            ...(saved ? { entryId: saved.id } : {}),
-            reason: 'entered',
-          };
+        use = {
+          turnId: row.turn_id,
+          threadId: row.thread_id,
+          origin: row.origin,
+          ...(saved ? { entryId: saved.id } : {}),
+          reason: 'entered',
+        };
       },
       hashed,
     );
@@ -1918,10 +1942,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           .send(Buffer.from(icon.bytes));
       });
       scope.delete<{ Params: { id: string } }>('/api/vault/:id', async (request) => {
-        await pool.query(
-          'WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2 RETURNING id) DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2',
+        const { rows } = await pool.query<{ origin: string; remaining: boolean }>(
+          `WITH login AS (DELETE FROM vault_entries WHERE id=$1 AND owner_id=$2 RETURNING origin),
+           card AS (DELETE FROM vault_cards WHERE id=$1 AND owner_id=$2)
+           SELECT origin,EXISTS(SELECT 1 FROM vault_entries e WHERE e.owner_id=$2 AND e.origin=login.origin AND e.id<>$1) AS remaining FROM login`,
           [z.uuid().parse(request.params.id), owner],
         );
+        for (const row of rows) if (!row.remaining) await options.onForget?.(row.origin);
         return { ok: true };
       });
       scope.get<{ Params: { id: string } }>('/api/credential-requests/:id', async (request) =>

@@ -10,7 +10,9 @@ import type {
 } from '../shared/contracts.ts';
 import type { SignInVerdict } from './trust.ts';
 import type { TurnRef } from './thread.ts';
+import { turnOrigin } from './approvals.ts';
 import { parentTurnSql } from './turn-chain.ts';
+import { getDomain } from 'tldts';
 import { credentialOrigin, VaultError } from './vault.ts';
 
 type Kind = 'sign_in' | 'session' | 'form';
@@ -136,7 +138,7 @@ export async function createVaultAccess(
       await pool.query(
         `INSERT INTO vault_grants(id,owner_id,origin,scope,source) VALUES($1,$2,$3,'conversation',$4)
          ON CONFLICT (owner_id,origin) WHERE scope='conversation' DO UPDATE
-         SET source=excluded.source,created_at=now() WHERE vault_grants.created_at<now()-interval '1 day'`,
+         SET source=excluded.source,created_at=now()`,
         [randomUUID(), ownerId, origin, source],
       );
     else
@@ -243,6 +245,9 @@ export async function createVaultAccess(
   }
 
   async function keeps(turn: TurnRef) {
+    const work = await turnOrigin(turn.turnId);
+    if (!work) throw new Error('This turn is no longer running.');
+    if (work.source === 'event' || work.readOnly) return false;
     const { rows } = await pool.query<{ origin: string }>(
       'SELECT origin FROM vault_browser WHERE owner_id=$1 AND thread_id=$2',
       [ownerId, turn.threadId],
@@ -265,15 +270,23 @@ export async function createVaultAccess(
     ]);
   }
 
-  async function touched(threadId: string, rawOrigin: string) {
-    let origin: string;
-    try {
-      origin = credentialOrigin(rawOrigin);
-    } catch {
-      return;
+  async function touched(threadId: string, page: { acted?: string; landed?: string }) {
+    const exact = (raw?: string) => {
+      try {
+        return raw ? credentialOrigin(raw) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const acted = exact(page.acted);
+    const landed = exact(page.landed);
+    const site = (origin: string) => getDomain(origin, { allowPrivateDomains: true }) ?? origin;
+    for (const origin of new Set([acted, landed])) {
+      if (!origin) continue;
+      await track(threadId, origin);
+      if (acted && site(origin) === site(acted))
+        await remember({ id: '', conversation: true }, origin, 'entered');
     }
-    await track(threadId, origin);
-    await remember({ id: '', conversation: true }, origin, 'entered');
   }
 
   async function allow(context: { threadId: string; turnId: string }, raw: unknown) {
@@ -351,11 +364,11 @@ export async function createVaultAccess(
     return permissions();
   }
 
-  async function revoke(origin: string) {
-    await pool.query(
-      "DELETE FROM vault_grants WHERE owner_id=$1 AND origin=$2 AND scope='standing'",
-      [ownerId, credentialOrigin(origin)],
-    );
+  async function forget(origin: string) {
+    await pool.query('DELETE FROM vault_grants WHERE owner_id=$1 AND origin=$2', [
+      ownerId,
+      credentialOrigin(origin),
+    ]);
     options.refresh?.();
   }
 
@@ -394,7 +407,7 @@ export async function createVaultAccess(
       scope.delete<{ Querystring: { origin?: string } }>(
         '/api/vault/permissions',
         async (request) => {
-          await revoke(z.string().max(2048).parse(request.query.origin));
+          await forget(z.string().max(2048).parse(request.query.origin));
           return permissions();
         },
       );
@@ -404,6 +417,7 @@ export async function createVaultAccess(
   return {
     authorize,
     keeps,
+    track,
     signedOut,
     touched,
     record,
@@ -412,7 +426,7 @@ export async function createVaultAccess(
     activity,
     permissions,
     always,
-    revoke,
+    forget,
     registerRoutes,
   };
 }

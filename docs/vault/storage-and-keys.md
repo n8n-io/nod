@@ -51,7 +51,7 @@ stateDiagram-v2
 - The keeper creates a Keychain item or a data key only when `vault_keys` is empty.
 - When locked, every Vault route and release returns 503, and the owner sees one banner. Restoring the old outer key opens the Vault again.
 - A temporary key-store error never creates a key.
-- Built today: `vault_key_check` holds one value sealed with the current key. While sealed items exist, a key that cannot open it gets 503 on every Vault read and write, so nothing is sealed beside the old items.
+- Built today: `vault_key_check` holds one value sealed with the current key, checked by the one key store every sealed table uses. While sealed data exists, a key that cannot open it is refused, so the Vault returns 503 and nothing is sealed beside the old items.
 
 ## Ciphertext
 
