@@ -130,7 +130,7 @@ export function releaseNotes(root, version, previousTag, source, date, allowEmpt
       'Maintenance',
     ].map((name) => [name, []]),
   );
-  const escape = (value) => value.replace(/[\\`*_[\]<>]/g, '\\$&');
+  const escape = (value) => value.replace(/[\\`*_~[\]<>]/g, '\\$&');
   for (const { sha, subject, body } of commits.slice(0, 100)) {
     const match = /^(\w+)(?:\(([^)]+)\))?(!)?:\s+(.+)$/.exec(subject);
     if (match?.[1] === 'chore' && match[2] === 'release') continue;

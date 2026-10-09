@@ -54,7 +54,11 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
       - name: Check the release version and source
-        if: github.head_ref == 'release/desktop' || github.ref == 'refs/heads/release/desktop'
+        if: >-
+          (github.event_name == 'pull_request' &&
+           github.head_ref == 'release/desktop' &&
+           github.event.pull_request.head.repo.full_name == github.repository) ||
+          github.ref == 'refs/heads/release/desktop'
         run: node .github/scripts/prepare-desktop-release.mjs --check
       - name: Install desktop build tooling without downloading Electron
         env:

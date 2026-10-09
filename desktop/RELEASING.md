@@ -36,7 +36,7 @@ There is no daily release. Normal main merges do not publish a desktop version. 
 
 ## Inspect or recover a build
 
-**Build desktop release** remains available on main for a manual draft or recovery run. Leave **automatic** disabled to use the version and notes from the merged release PR. Leave **publish** disabled to inspect a draft; enable it to publish after verification. **Automatic** selects the next patch from published releases without a version PR and is for recovery only. Release builds are serialized. A failed build can reuse its matching draft. Published assets are never replaced.
+**Build desktop release** remains available on main for a manual draft or recovery run. Leave **automatic** disabled to use the version and notes from the merged release PR. Leave **publish** disabled to inspect a draft; enable it to publish after verification. **Automatic** selects the next patch from published releases without a version PR and is for recovery only. Release builds run one at a time. Up to 100 runs can wait in the queue; later CI runs do not replace a waiting release. A failed build can reuse its matching draft. Published assets are never replaced.
 
 Drafts are excluded from the installer and updater. The app checks at startup, every six hours while open, and after waking if due. Users can check immediately from the Otto menu. Prepared updates offer **Restart / Later**. Restart asks first when it would stop running work or Otto cannot check that work.
 
