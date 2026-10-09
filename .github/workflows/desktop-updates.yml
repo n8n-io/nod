@@ -17,8 +17,16 @@ concurrency:
 
 jobs:
   native-updates:
-    name: Signed update and profile preservation
-    runs-on: blacksmith-6vcpu-macos-15
+    name: Signed ${{ matrix.arch }} update and profile preservation
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
       - name: Check out source
@@ -44,7 +52,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: native-update-acceptance
+          name: native-update-acceptance-${{ matrix.arch }}
           path: .local/native-update-acceptance/*.json
           if-no-files-found: error
           retention-days: 7

@@ -1,9 +1,16 @@
-export function guestConfiguration({ assets, imageDigest, port, memory, cpus }) {
+export function guestConfiguration({
+  assets,
+  imageDigest,
+  port,
+  memory,
+  cpus,
+  arch = process.platform === 'darwin' && process.arch === 'x64' ? 'x86_64' : 'aarch64',
+}) {
   return {
     minimumLimaVersion: '2.2.0',
     vmType: 'vz',
-    arch: 'aarch64',
-    images: [{ location: `${assets}/guest.img`, arch: 'aarch64', digest: `sha256:${imageDigest}` }],
+    arch,
+    images: [{ location: `${assets}/guest.img`, arch, digest: `sha256:${imageDigest}` }],
     cpus,
     memory: `${memory}GiB`,
     disk: '24GiB',

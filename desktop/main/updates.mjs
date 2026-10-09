@@ -81,7 +81,14 @@ async function json(url, request, signal, accept = 'application/json') {
   throw new Error('The desktop update address redirected too many times.');
 }
 
-export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
+export function createUpdateSource({
+  sourceUrl,
+  arch = process.platform === 'darwin' ? process.arch : 'arm64',
+  fetch: request = fetch,
+} = {}) {
+  if (!['arm64', 'x64'].includes(arch)) throw new Error('Unsupported Mac update architecture.');
+  const platform = `darwin-${arch}`;
+  const metadataName = (name) => (arch === 'arm64' ? `${name}.json` : `${name}-darwin-x64.json`);
   const base = sourceUrl
     ? https(sourceUrl).replace(/\/$/, '')
     : `https://api.github.com/repos/${repository}`;
@@ -98,12 +105,18 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
       ![runtime?.fingerprint, runtime?.id, runtime?.archive?.sha256].every(
         (value) => typeof value === 'string' && hash.test(value),
       ) ||
-      runtime.archive.file !== `Otto-Runtime-darwin-arm64-${runtime.id.slice(0, 12)}.tar.gz` ||
+      runtime.archive.file !== `Otto-Runtime-${platform}-${runtime.id.slice(0, 12)}.tar.gz` ||
       !Number.isSafeInteger(runtime.archive.bytes) ||
       runtime.archive.bytes < 1
     )
       throw new Error('The desktop runtime metadata is incompatible.');
-    const runtimeTag = `runtime-darwin-arm64-${runtime.fingerprint}`;
+    if (
+      runtime.platform !== platform ||
+      (runtime.releaseTag !== undefined &&
+        !/^desktop-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(runtime.releaseTag))
+    )
+      throw new Error('The desktop runtime target is incompatible.');
+    const runtimeTag = runtime.releaseTag || `runtime-${platform}-${runtime.fingerprint}`;
     const runtimeRelease = published(
       await json(
         sourceUrl ? `${base}/tags/${runtimeTag}` : `${base}/releases/tags/${runtimeTag}`,
@@ -147,16 +160,16 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
         listed.tag_name,
       );
       if (release.id !== listed.id) throw new Error('The desktop release identity changed.');
-      const manifest = await getAsset(release, 'release.json', signal);
+      const manifest = await getAsset(release, metadataName('release'), signal);
       const version = release.tag_name.slice(9);
       if (
         manifest.version !== version ||
-        manifest.platform !== 'darwin-arm64' ||
+        manifest.platform !== platform ||
         !sourceHash.test(manifest.source) ||
         !['self-signed', 'developer-id'].includes(manifest.signing?.mode) ||
         !hash.test(manifest.runtime?.fingerprint) ||
         !hash.test(manifest.runtime?.id) ||
-        manifest.update?.file !== 'Otto-arm64.zip' ||
+        manifest.update?.file !== `Otto-${arch}.zip` ||
         !hash.test(manifest.update.sha256)
       )
         throw new Error('The desktop update metadata is incompatible.');
@@ -165,7 +178,7 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
         throw new Error('The desktop update archive size does not match.');
       if (zip.digest !== `sha256:${manifest.update.sha256}`)
         throw new Error('The desktop update archive digest does not match.');
-      const runtime = await getAsset(release, 'runtime-release.json', signal);
+      const runtime = await getAsset(release, metadataName('runtime-release'), signal);
       if (
         runtime.id !== manifest.runtime.id ||
         runtime.fingerprint !== manifest.runtime.fingerprint ||
@@ -177,12 +190,12 @@ export function createUpdateSource({ sourceUrl, fetch: request = fetch } = {}) {
       const downloadUrl = await runtimeDownloadUrl(runtime, signal);
       let feedUrl;
       if (sourceUrl)
-        feedUrl = `${releasePath(release.id)}/feed/${zip.id}?version=${currentVersion}&platform=darwin-arm64`;
+        feedUrl = `${releasePath(release.id)}/feed/${zip.id}?version=${currentVersion}&platform=${platform}`;
       else {
-        const feed = await getAsset(release, 'update.json', signal);
+        const feed = await getAsset(release, metadataName('update'), signal);
         const expected = `https://github.com/${repository}/releases/download/${release.tag_name}/${zip.name}`;
         if (feed.url !== expected) throw new Error('The desktop update feed does not match.');
-        feedUrl = `https://github.com/${repository}/releases/download/${release.tag_name}/update.json`;
+        feedUrl = `https://github.com/${repository}/releases/download/${release.tag_name}/${metadataName('update')}`;
       }
       return {
         version,

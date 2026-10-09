@@ -28,6 +28,15 @@ const inputs = [
   'src',
 ];
 
+export function runtimePlatform() {
+  const target =
+    process.env.OTTO_DESKTOP_TARGET ||
+    `darwin-${process.platform === 'darwin' ? process.arch : 'arm64'}`;
+  if (!['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(target))
+    throw new Error('Unsupported desktop target.');
+  return target;
+}
+
 export async function runtimeInputs() {
   const entries = [];
   async function collect(path) {
@@ -67,6 +76,7 @@ export async function runtimeInputs() {
     entries.push(['signing.identity', identity], ['signing.certificateSha256', certificate]);
   }
   entries.push(['signing.mode', signingMode]);
+  entries.push(['target:platform', runtimePlatform()]);
   entries.sort(([left], [right]) => left.localeCompare(right));
   const lock = JSON.parse(
     await readFile(join(repository, 'desktop/scripts/runtime-build-lock.json'), 'utf8'),
@@ -74,7 +84,7 @@ export async function runtimeInputs() {
   const fingerprint = createHash('sha256').update(JSON.stringify(entries)).digest('hex');
   return {
     fingerprint,
-    platform: 'darwin-arm64',
+    platform: runtimePlatform(),
     minimumSystemVersion: lock.minimumSystemVersion,
     inputs: entries.map(([path]) => path),
   };

@@ -24,13 +24,24 @@ export function checkRequest(input) {
   const queryKeys = Object.keys(query).sort().join(',');
   const api = 'https://api.github.com/repos/n8n-io/otto/releases';
   if (!keys && !queryKeys) return { operation: 'list', apiUrl: `${api}?per_page=100` };
-  if (!keys && queryKeys === 'installer' && query.installer === 'true')
-    return { operation: 'installer', apiUrl: `${api}?per_page=100` };
+  if (
+    !keys &&
+    ['installer', 'installer,platform'].includes(queryKeys) &&
+    query.installer === 'true' &&
+    (query.platform === undefined || ['darwin-arm64', 'darwin-x64'].includes(query.platform))
+  )
+    return {
+      operation: 'installer',
+      platform: query.platform || 'darwin-arm64',
+      apiUrl: `${api}?per_page=100`,
+    };
+  if (keys === 'tag' && !queryKeys && /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(params.tag))
+    return { operation: 'runtime', tag: params.tag, apiUrl: `${api}?per_page=100` };
   if (
     keys === 'tag' &&
     !queryKeys &&
     ((params.tag.startsWith('desktop-v') && version.test(params.tag.slice(9))) ||
-      /^runtime-darwin-arm64-[a-f0-9]{64}$/.test(params.tag))
+      /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(params.tag))
   )
     return { operation: 'metadata', tag: params.tag, apiUrl: `${api}/tags/${params.tag}` };
   if (!id(params.releaseId)) return invalid();
@@ -48,10 +59,15 @@ export function checkRequest(input) {
   if (
     keys === 'assetId,releaseId' &&
     queryKeys === 'platform,version' &&
-    query.platform === 'darwin-arm64' &&
+    ['darwin-arm64', 'darwin-x64'].includes(query.platform) &&
     version.test(query.version)
   )
-    return { ...request, operation: 'feed', currentVersion: query.version };
+    return {
+      ...request,
+      operation: 'feed',
+      platform: query.platform,
+      currentVersion: query.version,
+    };
   return invalid();
 }
 
@@ -69,7 +85,7 @@ export function releaseResponse(pages, request, baseUrl) {
     tag.startsWith('desktop-v') &&
     versionPattern.test(tag.slice(9));
   const runtimeTag = (tag) =>
-    typeof tag === 'string' && /^runtime-darwin-arm64-[a-f0-9]{64}$/.test(tag);
+    typeof tag === 'string' && /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(tag);
   const positive = (value) => Number.isSafeInteger(value) && value > 0;
   const allowed = (name, desktop) =>
     desktop
@@ -79,12 +95,24 @@ export function releaseResponse(pages, request, baseUrl) {
           'update.json',
           'Otto-arm64.dmg',
           'Otto-arm64.zip',
+          'Otto-x64.dmg',
+          'Otto-x64.zip',
+          'Otto-Setup-x64.exe',
+          'Otto-Runtime-win32-x64.tar.gz',
+          'release-darwin-x64.json',
+          'runtime-release-darwin-x64.json',
+          'update-darwin-x64.json',
+          'release-win32-x64.json',
+          'SHA256SUMS-darwin-x64',
+          'SHA256SUMS-win32-x64',
           'SHA256SUMS',
           'signing.cer',
           'CHANGELOG.md',
-        ].includes(name)
+        ].includes(name) ||
+        /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}\.json$/.test(name) ||
+        /^Otto-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name)
       : ['runtime-release.json', 'SHA256SUMS', 'signing.cer'].includes(name) ||
-        /^Otto-Runtime-darwin-arm64-[a-f0-9]{12}\.tar\.gz$/.test(name);
+        /^Otto-Runtime-darwin-(arm64|x64)-[a-f0-9]{12}\.tar\.gz$/.test(name);
   const normalize = (release) => {
     if (
       !release ||
@@ -164,10 +192,10 @@ export function releaseResponse(pages, request, baseUrl) {
     if (pages.some((page) => page.statusCode !== 200))
       return pages.length === 1 &&
         pages[0].statusCode === 404 &&
-        !['list', 'installer'].includes(request.operation)
+        !['list', 'installer', 'runtime'].includes(request.operation)
         ? missing()
         : unavailable();
-    if (['list', 'installer'].includes(request.operation)) {
+    if (['list', 'installer', 'runtime'].includes(request.operation)) {
       if (
         pages.some((page) => !Array.isArray(page.body) || page.body.length > 100) ||
         (pages.length === 5 && pages[4].body.length === 100)
@@ -177,13 +205,31 @@ export function releaseResponse(pages, request, baseUrl) {
         .flatMap((page) => page.body)
         .map(normalize)
         .filter(Boolean);
+      if (request.operation === 'runtime') {
+        const platform = request.tag.startsWith('runtime-darwin-x64-')
+          ? 'darwin-x64'
+          : 'darwin-arm64';
+        const found =
+          releases.find(
+            (entry) =>
+              desktopTag(entry.tag_name) &&
+              entry.assets.some((asset) => asset.name === `${request.tag}.json`) &&
+              entry.assets.some((asset) =>
+                new RegExp(`^Otto-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(asset.name),
+              ),
+          ) || releases.find((entry) => entry.tag_name === request.tag);
+        return found ? { status: 200, body: { ...found, tag_name: request.tag } } : missing();
+      }
       if (request.operation === 'list') return { status: 200, body: releases };
       const latest = releases
         .filter((release) => desktopTag(release.tag_name))
         .sort((a, b) => compare(b.tag_name.slice(9), a.tag_name.slice(9)))[0];
       if (!latest) return missing();
-      const disk = latest.assets.find((asset) => asset.name === 'Otto-arm64.dmg');
-      const manifest = latest.assets.find((asset) => asset.name === 'release.json');
+      const arch = request.platform === 'darwin-x64' ? 'x64' : 'arm64';
+      const disk = latest.assets.find((asset) => asset.name === `Otto-${arch}.dmg`);
+      const manifest = latest.assets.find(
+        (asset) => asset.name === (arch === 'x64' ? 'release-darwin-x64.json' : 'release.json'),
+      );
       if (!disk || !manifest || manifest.size > 2 * 1024 * 1024) return unavailable();
       return {
         status: 200,
@@ -212,7 +258,7 @@ export function releaseResponse(pages, request, baseUrl) {
       const result = {
         assetUrl: `https://api.github.com/repos/n8n-io/otto/releases/assets/${asset.id}`,
       };
-      if (['release.json', 'runtime-release.json', 'update.json'].includes(asset.name)) {
+      if (asset.name.endsWith('.json')) {
         if (asset.size > 2 * 1024 * 1024) return unavailable();
         result.metadata = { bytes: asset.size, digest: asset.digest };
       }
@@ -221,7 +267,7 @@ export function releaseResponse(pages, request, baseUrl) {
     if (
       request.operation !== 'feed' ||
       !desktopTag(release.tag_name) ||
-      asset.name !== 'Otto-arm64.zip'
+      asset.name !== `Otto-${request.platform === 'darwin-x64' ? 'x64' : 'arm64'}.zip`
     )
       return missing();
     const version = release.tag_name.slice(9);
@@ -391,7 +437,7 @@ export function workflowNodes() {
               },
               paginationCompleteWhen: 'other',
               completeExpression:
-                "={{ !['list','installer'].includes($('Check desktop request').first().json.operation) || $response.statusCode !== 200 || !Array.isArray($response.body) || $response.body.length < 100 }}",
+                "={{ !['list','installer','runtime'].includes($('Check desktop request').first().json.operation) || $response.statusCode !== 200 || !Array.isArray($response.body) || $response.body.length < 100 }}",
               limitPagesFetched: true,
               maxRequests: 5,
             },

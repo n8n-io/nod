@@ -119,8 +119,8 @@ async function prepare(options, onComputerStart) {
     const { prepareWindowsRuntime } = await import('./windows.mjs');
     return prepareWindowsRuntime(options, onComputerStart);
   }
-  if (process.platform !== 'darwin' || process.arch !== 'arm64')
-    throw new Error('This experimental Otto build requires an Apple Silicon Mac.');
+  if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch))
+    throw new Error('This experimental Otto build requires an Intel or Apple Silicon Mac.');
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const onStatus = options.onStatus || options.onProgress || (() => {});
@@ -139,7 +139,7 @@ async function prepare(options, onComputerStart) {
   const manifest = JSON.parse(await readFile(join(assets, 'manifest.json'), 'utf8'));
   if (
     manifest.version !== 1 ||
-    manifest.platform !== 'darwin-arm64' ||
+    manifest.platform !== `darwin-${process.arch}` ||
     manifest.guest.file !== 'guest.img' ||
     manifest.dockerGuest.file !== 'docker-guest.tar.gz'
   )
@@ -254,7 +254,7 @@ async function prepare(options, onComputerStart) {
       config.images = [
         {
           location: join(assets, 'guest.img'),
-          arch: 'aarch64',
+          arch: process.arch === 'x64' ? 'x86_64' : 'aarch64',
           digest: `sha256:${manifest.guest.sha256}`,
         },
       ];

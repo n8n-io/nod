@@ -108,12 +108,16 @@ check_app() {
   [ "$(field "$package" ottoBuild.source string)" = "$source" ] || fail 'The Otto app source does not match the release.'
   [ "$(field "$package" ottoBuild.modified bool)" = false ] || fail 'The Otto app was not built from a clean release.'
   [ "$(field "$package" ottoBuild.updateSourceUrl string)" = "$base" ] || fail 'The Otto update service does not match.'
-  file -b "$candidate/Contents/MacOS/Otto" | grep -q 'Mach-O 64-bit executable arm64' || fail 'The Otto app does not contain an Apple Silicon executable.'
+  file -b "$candidate/Contents/MacOS/Otto" | grep -q "Mach-O 64-bit executable $machine_arch" || fail 'The Otto app architecture does not match this Mac.'
 }
 
 [ "$#" -eq 0 ] || fail 'This installer takes no arguments and installs to /Applications/Otto.app.'
-[ "$(uname -s)" = Darwin ] || fail 'Otto currently requires macOS 14 or later on Apple Silicon.'
-[ "$(uname -m)" = arm64 ] || fail 'Otto currently requires Apple Silicon. Run Terminal without Rosetta.'
+[ "$(uname -s)" = Darwin ] || fail 'Otto requires macOS 14 or later.'
+case "$(uname -m)" in
+  arm64) arch=arm64; machine_arch=arm64; manifest_name='release\.json'; installer_query='installer=true' ;;
+  x86_64) arch=x64; machine_arch=x86_64; manifest_name='release-darwin-x64\.json'; installer_query='installer=true&platform=darwin-x64' ;;
+  *) fail 'This Mac architecture is unsupported.' ;;
+esac
 [ "$(id -u)" -ne 0 ] || fail 'Run this installer as your normal user, without sudo.'
 os_version=$(sw_vers -productVersion)
 os_major=${os_version%%.*}
@@ -146,7 +150,7 @@ if [ -d "$target" ]; then
 fi
 
 printf 'Finding the latest Otto release…\n'
-download "$base/releases?installer=true" "$temporary/latest.json" 2097152
+download "$base/releases?$installer_query" "$temporary/latest.json" 2097152
 [ "$(field "$temporary/latest.json" schema integer)" = 1 ] || fail 'The installer metadata format is unsupported.'
 version=$(field "$temporary/latest.json" version string)
 valid_version "$version" || fail 'The release version is invalid.'
@@ -160,13 +164,13 @@ manifest_url=$(field "$temporary/latest.json" manifestUrl string)
 printf '%s\n' "$bytes" | grep -Eq '^[1-9][0-9]{0,9}$' || fail 'The download size is invalid.'
 [ "$bytes" -le 2147483648 ] || fail 'The download exceeds the installer limit.'
 printf '%s\n' "$digest" | grep -Eq '^[a-f0-9]{64}$' || fail 'The download hash is invalid.'
-check_asset_url "$disk_url" 'Otto-arm64\.dmg'
-check_asset_url "$manifest_url" 'release\.json'
+check_asset_url "$disk_url" "Otto-$arch\.dmg"
+check_asset_url "$manifest_url" "$manifest_name"
 download "$manifest_url" "$temporary/release.json" 2097152
 manifest="$temporary/release.json"
 [ "$(field "$manifest" version string)" = "$version" ] || fail 'The release versions do not match.'
-[ "$(field "$manifest" platform string)" = darwin-arm64 ] || fail 'The release platform is unsupported.'
-[ "$(field "$manifest" disk.file string)" = Otto-arm64.dmg ] || fail 'The release filename is invalid.'
+[ "$(field "$manifest" platform string)" = "darwin-$arch" ] || fail 'The release platform is unsupported.'
+[ "$(field "$manifest" disk.file string)" = "Otto-$arch.dmg" ] || fail 'The release filename is invalid.'
 [ "$(field "$manifest" disk.bytes integer)" = "$bytes" ] && [ "$(field "$manifest" disk.sha256 string)" = "$digest" ] || fail 'The release download metadata does not match.'
 [ "$(field "$manifest" signing.certificateSha256 string)" = "$certificate" ] || fail 'The release signing identity does not match.'
 source=$(field "$manifest" source string)

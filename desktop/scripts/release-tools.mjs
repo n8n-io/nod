@@ -4,6 +4,7 @@ import { mkdtemp, open, readdir, readFile, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runtimePlatform } from './runtime-inputs.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 export const minimumSystemVersion = JSON.parse(
@@ -205,8 +206,8 @@ export function compatibleVersion(value, maximum = minimumSystemVersion) {
 export async function verifyCompatibility(files) {
   for (const file of files) {
     const arch = await run('/usr/bin/lipo', ['-archs', file]);
-    if (!arch.split(/\s+/).includes('arm64'))
-      throw new Error(`Native code does not support Apple Silicon: ${basename(file)}`);
+    if (!arch.split(/\s+/).includes(process.arch === 'x64' ? 'x86_64' : 'arm64'))
+      throw new Error(`Native code does not support this Mac: ${basename(file)}`);
     const build = await run('/usr/bin/vtool', ['-show-build', file]);
     const pattern = build.includes('LC_BUILD_VERSION')
       ? /\bminos (\d+\.\d+(?:\.\d+)?)\b/g
@@ -355,7 +356,7 @@ export async function verifyApplicationRuntime(application, electronVersion) {
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 assert.equal(process.versions.electron, ${JSON.stringify(electronVersion)});
-assert.equal(process.arch, 'arm64');
+assert.equal(process.arch, ${JSON.stringify(process.arch)});
 await import('@earendil-works/pi-coding-agent');
 await import('pi-web-access/dist/index.js');
 const native = await import(pathToFileURL(resolve('node_modules/@earendil-works/pi-tui/dist/native-platform.js')).href);
@@ -443,7 +444,12 @@ export async function verifyRuntimeRelease(
         !/^[a-f0-9-]{36}$/i.test(release.notarization?.id || '')))
   )
     throw new Error('The runtime release provenance does not match this signed build.');
-  if (!/^Otto-Runtime-darwin-arm64-[a-f0-9]{12}\.tar\.gz$/.test(release.archive?.file || ''))
+  if (
+    release.platform !== runtimePlatform() ||
+    !new RegExp(`^Otto-Runtime-${runtimePlatform()}-[a-f0-9]{12}\\.tar\\.gz$`).test(
+      release.archive?.file || '',
+    )
+  )
     throw new Error('The runtime archive name is invalid.');
   const pendingDescriptor = env.OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256;
   if (

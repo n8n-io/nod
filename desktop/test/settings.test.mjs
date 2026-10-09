@@ -2012,13 +2012,21 @@ test('serialized preference changes preserve independent edits and malformed sto
   assert.equal(await readFile(f.path, 'utf8'), malformed);
 });
 
-function updateReleaseFixture(sourceUrl) {
+function updateReleaseFixture(sourceUrl, arch = 'arm64', official = false) {
+  const platform = `darwin-${arch}`;
+  const name = (kind) => (arch === 'arm64' ? `${kind}.json` : `${kind}-darwin-x64.json`);
   const archive = {
-    file: `Otto-Runtime-darwin-arm64-${'b'.repeat(12)}.tar.gz`,
+    file: `Otto-Runtime-${platform}-${'b'.repeat(12)}.tar.gz`,
     bytes: 180,
     sha256: 'c'.repeat(64),
   };
-  const runtime = { id: 'b'.repeat(64), fingerprint: 'd'.repeat(64), archive };
+  const runtime = {
+    platform,
+    ...(official ? { releaseTag: 'desktop-v0.1.9' } : {}),
+    id: 'b'.repeat(64),
+    fingerprint: 'd'.repeat(64),
+    archive,
+  };
   const item = (id, name, size) => ({
     id,
     name,
@@ -2032,25 +2040,25 @@ function updateReleaseFixture(sourceUrl) {
     draft: false,
     prerelease: true,
     assets: [
-      item(101, 'release.json', 300),
-      item(103, 'Otto-arm64.zip', 1000),
-      item(102, 'runtime-release.json', 500),
-      item(104, 'update.json', 150),
+      item(101, name('release'), 300),
+      item(103, `Otto-${arch}.zip`, 1000),
+      item(102, name('runtime-release'), 500),
+      item(104, name('update'), 150),
     ],
   };
   const pack = {
     id: 18,
-    tag_name: `runtime-darwin-arm64-${runtime.fingerprint}`,
+    tag_name: runtime.releaseTag || `runtime-${platform}-${runtime.fingerprint}`,
     draft: false,
     assets: [item(201, archive.file, archive.bytes)],
   };
   const manifest = {
     version: '0.2.0',
-    platform: 'darwin-arm64',
+    platform,
     source: 'a'.repeat(40),
     signing: { mode: 'self-signed' },
     runtime,
-    update: { file: 'Otto-arm64.zip', bytes: 1000, sha256: 'e'.repeat(64) },
+    update: { file: `Otto-${arch}.zip`, bytes: 1000, sha256: 'e'.repeat(64) },
   };
   const base = sourceUrl || 'https://api.github.com/repos/n8n-io/otto';
   const assetPath = (owner, entry) =>
@@ -2074,7 +2082,7 @@ function updateReleaseFixture(sourceUrl) {
     [
       assetPath(release, release.assets[3]),
       {
-        url: 'https://github.com/n8n-io/otto/releases/download/desktop-v0.2.0/Otto-arm64.zip',
+        url: `https://github.com/n8n-io/otto/releases/download/desktop-v0.2.0/Otto-${arch}.zip`,
         name: 'Otto 0.2.0',
       },
     ],
@@ -2082,6 +2090,7 @@ function updateReleaseFixture(sourceUrl) {
   const calls = [];
   const source = createUpdateSource({
     sourceUrl,
+    arch,
     fetch: async (url, options) => {
       calls.push(url);
       assert.equal(options.headers.authorization, undefined);
@@ -2560,4 +2569,19 @@ test('choosing Later keeps restart available without repeated background prompts
   await context.check();
   assert.equal(prompts, 2);
   assert.equal(restarts, 1);
+});
+
+test('Intel updates use their own app assets and an official Otto runtime release', async () => {
+  const f = updateReleaseFixture('https://updates.example.invalid/otto-desktop', 'x64', true);
+  const candidate = await f.source.latest('0.1.0');
+  assert.equal(candidate.runtime.platform, 'darwin-x64');
+  assert.equal(candidate.runtime.releaseTag, 'desktop-v0.1.9');
+  assert(candidate.feedUrl.endsWith('platform=darwin-x64'));
+  assert(f.calls.some((url) => url.endsWith('/release-darwin-x64.json')));
+  assert(f.calls.some((url) => url.endsWith('/tags/desktop-v0.1.9')));
+  f.manifest.platform = 'darwin-arm64';
+  await assert.rejects(f.source.latest('0.1.0'), /incompatible/);
+  f.manifest.platform = 'darwin-x64';
+  f.runtime.platform = 'darwin-arm64';
+  await assert.rejects(f.source.latest('0.1.0'), /incompatible/);
 });
