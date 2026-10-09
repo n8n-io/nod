@@ -77,13 +77,14 @@ export async function writeWorkspaceFile(
 function hostOutputs(text: string) {
   const root = tmpdir()
     .replaceAll('\\', '/')
-    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    .split('/')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[\\\\/]');
   const pattern = new RegExp(
-    `${root}/(?:pi-(?:bash|codemode)-[a-f0-9]{16}\\.(?:log|txt|png|jpg|gif|webp)|pi-web-pdf/[a-z0-9-]{1,100}\\.md)`,
-    'g',
+    `${root}[\\\\/](?:pi-(?:bash|codemode)-[a-f0-9]{16}\\.(?:log|txt|png|jpg|gif|webp)|pi-web-pdf[\\\\/][a-z0-9-]{1,100}\\.md)`,
+    process.platform === 'win32' ? 'gi' : 'g',
   );
-  const matches = text.replaceAll('\\', '/').match(pattern) ?? [];
-  return process.platform === 'win32' ? matches.map((path) => path.replaceAll('/', '\\')) : matches;
+  return text.match(pattern) ?? [];
 }
 
 async function readHostOutput(path: string, owned: string[]) {

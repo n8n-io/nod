@@ -37,11 +37,12 @@ export async function copyEngineDependencies({
         if (!supports(item.os, platform) || !supports(item.cpu, arch)) return false;
       }
     }
-    return (
-      platform !== 'darwin' ||
-      !/\/node_modules\/(?:agent-browser\/bin\/agent-browser-darwin-x64$|@earendil-works\/pi-tui\/native\/darwin\/prebuilds\/darwin-x64(?:\/|$))/.test(
-        normalized,
-      )
+    const browserBinary = normalized.match(/\/agent-browser\/bin\/agent-browser-([^/]+)$/);
+    if (browserBinary)
+      return browserBinary[1] === `${platform}-${arch}${platform === 'win32' ? '.exe' : ''}`;
+    const tuiBinary = normalized.match(
+      /\/@earendil-works\/pi-tui\/native\/(?:darwin|linux|win32)\/prebuilds\/([^/]+)(?:\/|$)/,
     );
+    return !tuiBinary || tuiBinary[1] === `${platform}-${arch}`;
   });
 }

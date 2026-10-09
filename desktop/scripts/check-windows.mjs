@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,8 +9,15 @@ assert.equal(process.platform, 'win32');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const output = join(root, 'dist/windows');
 const installation = await mkdtemp(join(tmpdir(), 'otto-installed-preview-'));
+const foreign = await mkdtemp(join(tmpdir(), 'otto-foreign-folder-'));
 const receipt = { installed: false, engine: false, wsl: false };
 try {
+  await writeFile(join(foreign, 'keep.txt'), 'synthetic user file');
+  await assert.rejects(
+    run(join(output, 'Otto-Setup-x64.exe'), ['/S', `/D=${foreign}`], { timeout: 60_000 }),
+  );
+  assert.deepEqual(await readdir(foreign), ['keep.txt']);
+  assert.equal(await readFile(join(foreign, 'keep.txt'), 'utf8'), 'synthetic user file');
   await run(join(output, 'Otto-Setup-x64.exe'), ['/S', `/D=${installation}`], { timeout: 600_000 });
   const application = join(installation, 'Otto.exe');
   const engine = join(installation, 'resources/engine');
@@ -32,6 +38,35 @@ const { executeCodemode } = await import(pathToFileURL(resolve('node_modules/@ea
 const result = await executeCodemode('synthetic-windows-check', { code: 'text(6 * 7)' });
 assert.equal(result.isError, undefined);
 assert.match(result.content.map((item) => item.text || '').join('\\n'), /^42$/m);
+if (process.env.WORKSPACE_CONTAINER) {
+  const { register } = await import('tsx/esm/api');
+  register();
+  const { createDockerWorkspace } = await import('./src/providers/docker/index.ts');
+  const { workspaceOutputs } = await import('./src/providers/pi/sandbox.ts');
+  const { access, writeFile } = await import('node:fs/promises');
+  const { randomBytes } = await import('node:crypto');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const provider = createDockerWorkspace({ container: process.env.WORKSPACE_CONTAINER, workspaceRoot: resolve('synthetic-workspaces') });
+  const id = 'synthetic-Windows_check';
+  const workspace = provider.open({ threadId: id, workspacePath: resolve('synthetic-workspaces', id), signal: AbortSignal.timeout(120_000) });
+  try {
+    for (const forward of [false, true]) {
+      const file = join(tmpdir(), 'pi-codemode-' + randomBytes(8).toString('hex') + '.txt');
+      const bytes = 'synthetic full output: π';
+      await writeFile(file, bytes);
+      const reported = forward ? file.replaceAll('\\\\', '/') : file;
+      const moved = await workspaceOutputs(async () => ({ content: [{ type: 'text', text: reported }], details: { fullOutputPath: reported }, structuredContent: { full_output_path: reported } }), workspace);
+      assert.equal(moved.content[0].text, moved.details.fullOutputPath);
+      assert.equal(moved.structuredContent.full_output_path, moved.details.fullOutputPath);
+      assert.match(moved.details.fullOutputPath, /^\\/workspace\\/synthetic-Windows_check\\/\\.otto\\/outputs\\//);
+      assert.equal((await provider.readArtifact(id, moved.details.fullOutputPath, 1024)).toString('utf8'), bytes);
+      await assert.rejects(access(file), { code: 'ENOENT' });
+    }
+  } finally {
+    await provider.dispose();
+  }
+}
 console.log('Windows engine verified.');`;
   const smoke = join(engine, 'windows-smoke.mjs');
   await writeFile(smoke, script, { flag: 'wx' });
@@ -47,7 +82,6 @@ console.log('Windows engine verified.');`;
     },
     timeout: 120_000,
   });
-  await rm(smoke);
   assert.equal(result, 'Windows engine verified.');
   receipt.installed = true;
   receipt.engine = true;
@@ -65,23 +99,29 @@ console.log('Windows engine verified.');`;
         { dataRoot: profile, resourcesPath: engine },
         () => {},
       );
-      const child = spawn(
+      await run(
         join(engine, 'windows-runtime/bin/docker.exe'),
         [
           'exec',
+          '--user',
+          'node',
+          '--workdir',
+          '/workspace/synthetic-windows-check',
           prepared.env.WORKSPACE_CONTAINER,
           'bash',
           '-c',
           'test ! -e /var/run/docker.sock && test ! -e /mnt/c && test ! -e /app/.env',
         ],
-        { env: { ...process.env, ...prepared.env } },
+        { env: { ...process.env, ...prepared.env }, timeout: 120_000 },
       );
-      await new Promise((accept, reject) => {
-        child.once('error', reject);
-        child.once('exit', (code) =>
-          code === 0 ? accept() : reject(new Error('Windows workspace isolation check failed.')),
-        );
-      });
+      assert.equal(
+        await run(application, [smoke], {
+          cwd: engine,
+          env: { ...process.env, ...prepared.env, ELECTRON_RUN_AS_NODE: '1' },
+          timeout: 120_000,
+        }),
+        'Windows engine verified.',
+      );
       receipt.wsl = true;
     } finally {
       await runtime.stopWindowsRuntime({ dataRoot: profile });
@@ -99,4 +139,5 @@ console.log('Windows engine verified.');`;
   console.log(JSON.stringify(receipt));
 } finally {
   await rm(installation, { recursive: true, force: true });
+  await rm(foreign, { recursive: true, force: true });
 }

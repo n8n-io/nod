@@ -1,7 +1,17 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { access, lstat, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  statfs,
+  writeFile,
+} from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
@@ -48,7 +58,7 @@ async function distributions(wsl, env) {
     .filter(Boolean);
 }
 
-export async function installWsl() {
+export async function installWsl({ signal } = {}) {
   const env = windowsEnvironment();
   await execute(
     join(env.SYSTEMROOT, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
@@ -58,7 +68,7 @@ export async function installWsl() {
       '-Command',
       "$ErrorActionPreference='Stop'; $p=Start-Process -FilePath (Join-Path $env:SYSTEMROOT 'System32/wsl.exe') -ArgumentList '--install','--no-distribution','--web-download' -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
     ],
-    { env, timeout: 1_200_000 },
+    { env, signal, timeout: 1_200_000 },
   );
 }
 
@@ -150,6 +160,11 @@ export async function prepareWindowsRuntime(options, onComputerStart) {
   onComputerStart();
   if (!existing || saved.guest !== manifest.guest.sha256) {
     status({ phase: 'installing', message: 'Installing your private computer…' });
+    const space = await statfs(controlRoot);
+    if (space.bavail * space.bsize < manifest.guest.bytes * 3 + 2 * 1024 ** 3)
+      throw new Error(
+        'Otto needs more free disk space to prepare its private computer. Free space, then select Try again.',
+      );
     const archive = join(assets, manifest.guest.file);
     if ((await stat(archive)).size !== manifest.guest.bytes)
       throw new Error('The Windows runtime file is damaged. Extract both download files again.');

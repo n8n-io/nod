@@ -13,7 +13,7 @@ if sys.argv[1] == 'docker':
         index = args.index('--workdir')
         directory = args[index + 1]
         container = args[index + 2]
-        if re.fullmatch(r'/workspace/[a-f0-9-]{36}', directory) and re.fullmatch(r'otto-workspace-[a-f0-9]{12}', container):
+        if re.fullmatch(r'/workspace/[a-zA-Z0-9_-]{1,100}', directory) and re.fullmatch(r'otto-workspace-[a-f0-9]{12}', container):
             subprocess.run([docker, 'exec', '--user', 'node', '--workdir', '/workspace', container, 'mkdir', '-p', '--', directory], check=True, stdout=subprocess.DEVNULL)
     os.execv(docker, [docker, *args])
 

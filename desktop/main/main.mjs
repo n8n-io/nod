@@ -1347,7 +1347,7 @@ else {
         const { installWsl } = await import(
           pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
         );
-        await lifecycle.install(() => installWsl());
+        await lifecycle.install(installWsl, { warmup: false });
         update({
           phase: 'error',
           message: 'Restart your PC, then open Otto again.',

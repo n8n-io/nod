@@ -133,7 +133,10 @@ element('install-wsl').addEventListener('click', async () => {
   try {
     latestStatus = await desktop.installWsl();
   } catch (cause) {
-    error(cause.message || 'Windows could not install WSL. Try again.', true);
+    latestStatus = {
+      ...latestStatus,
+      error: cause.message || 'Windows could not install WSL. Try again.',
+    };
   } finally {
     busy = false;
     render();

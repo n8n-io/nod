@@ -510,6 +510,23 @@ test('runtime import joins startup and quit fences an unfinished archive install
   }
 });
 
+test('a prerequisite install can wait for a reboot without starting the computer', async () => {
+  const statuses = [];
+  const lifecycle = createDesktopLifecycle({
+    prepareRuntime: async () => {
+      throw Object.assign(new Error('Restart required'), { code: 'OTTO_WSL_REQUIRED' });
+    },
+    stopEngine: async () => {},
+    onRuntimeStatus: (value) => statuses.push(value),
+  });
+  await assert.rejects(lifecycle.warmup(), /Restart required/);
+  assert.equal(statuses.at(-1).needsWsl, true);
+  await lifecycle.install(async () => {}, { warmup: false });
+  assert.equal(statuses.at(-1).needsWsl, false);
+  assert.equal(lifecycle.busy, false);
+  await lifecycle.close();
+});
+
 test('failed computer shutdown retains the runtime and permits an explicit retry', async () => {
   let stops = 0;
   const lifecycle = createDesktopLifecycle({
@@ -595,6 +612,7 @@ async function runningDesktop(
   request,
   {
     allowStart = false,
+    platform = 'darwin',
     prompt = () => assert.fail('No restart prompt is needed.'),
     reveal = () => assert.fail('No file should be revealed.'),
   } = {},
@@ -622,7 +640,7 @@ async function runningDesktop(
       },
       quit() {},
     },
-    process: { platform: 'darwin', argv: [], env: {} },
+    process: { platform, argv: [], env: {} },
     ipcMain: ipc,
     dialog: { showMessageBox: async (options) => prompt(options) },
     shell: { showItemInFolder: reveal },
@@ -753,6 +771,7 @@ async function runningDesktop(
     globalThis.running = {
       prepare,
       showEngine,
+      showSettings,
       replayOnboarding,
       showFeedback,
       saveEngineDownload,
@@ -836,7 +855,11 @@ test('native download publication failure offers the completed file for recovery
 });
 
 test('native settings reject foreign windows, subframes, AI credentials, and web onboarding writes', async (t) => {
-  const f = await runningDesktop(t, () => assert.fail('Settings must not make an engine request.'));
+  const f = await runningDesktop(
+    t,
+    () => assert.fail('Settings must not make an engine request.'),
+    { platform: 'win32' },
+  );
   await f.storage.store.save({ composioApiKey: 'synthetic-existing-key' });
   f.showEngine();
   const window = f.windows.at(-1);
@@ -860,7 +883,6 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
     );
     await assert.rejects(reveal('composioApiKey', rejected), /unavailable/);
     await assert.rejects(analytics(rejected), /unavailable/);
-    await assert.rejects(invoke('otto:runtime:install-wsl', rejected), /unavailable/);
   }
   for (const url of ['https://example.test/', 'http://127.0.0.1:4310/api/files/synthetic']) {
     frame.url = url;
@@ -890,6 +912,16 @@ test('native settings reject foreign windows, subframes, AI credentials, and web
   assert.equal(await reveal('composioApiKey'), 'synthetic-replacement-key');
   window.destroy();
   await assert.rejects(reveal('composioApiKey'), /unavailable/);
+  f.setReady(false);
+  f.showSettings();
+  const setup = f.windows.at(-1).webContents;
+  f.status().runtime = { phase: 'error', needsWsl: true };
+  for (const rejected of [
+    { sender: window.webContents, senderFrame: frame },
+    { sender: { mainFrame: setup.mainFrame }, senderFrame: setup.mainFrame },
+    { sender: setup, senderFrame: { url: setup.mainFrame.url } },
+  ])
+    await assert.rejects(invoke('otto:runtime:install-wsl', rejected), /unavailable/);
 });
 
 test('an engine crash retires every stale chat window before recovery opens the new engine', async (t) => {

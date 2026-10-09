@@ -32,6 +32,7 @@ export function createDesktopLifecycle({
       phase: 'preparing',
       progress: undefined,
       needsRuntimeArchive: false,
+      needsWsl: false,
       ...value,
     });
   }
@@ -108,7 +109,7 @@ export function createDesktopLifecycle({
     return starting;
   }
 
-  function install(installer) {
+  function install(installer, { warmup: prepare = true } = {}) {
     checkOpen();
     if (warming || starting || installing || runtime)
       throw new Error('Wait for Otto to finish its current setup step.');
@@ -130,7 +131,7 @@ export function createDesktopLifecycle({
         installing = undefined;
         controllers.delete(controller);
       })
-      .then(() => warmup({ retry: true }));
+      .then(() => (prepare ? warmup({ retry: true }) : undefined));
     return installing;
   }
 

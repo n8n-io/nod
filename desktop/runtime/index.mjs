@@ -47,8 +47,10 @@ export function execute(
       stop();
     }, timeout);
     const collect = (chunk) => {
-      output = (output + chunk.toString(encoding)).slice(-128 * 1024);
+      output = (output + chunk).slice(-128 * 1024);
     };
+    child.stdout.setEncoding(encoding);
+    child.stderr.setEncoding(encoding);
     child.stdout.on('data', collect);
     child.stderr.on('data', collect);
     child.on('error', (error) => {
@@ -566,8 +568,8 @@ if [ "\${1-}" = exec ]; then
     case "$directory" in
       /workspace/*)
         identity="\${directory#/workspace/}"
-        case "$identity" in *[!0-9a-f-]*|'') exit 64 ;; esac
-        [ "\${#identity}" -eq 36 ] || exit 64
+        case "$identity" in *[!0-9a-zA-Z_-]*|'') exit 64 ;; esac
+        [ "\${#identity}" -le 100 ] || exit 64
         "$docker" exec --user node --workdir /workspace "$target" mkdir -p -- "$directory" >/dev/null
         ;;
     esac

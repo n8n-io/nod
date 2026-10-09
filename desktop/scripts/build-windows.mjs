@@ -55,7 +55,7 @@ await run(
   [
     'build',
     '-trimpath',
-    '-ldflags=-s -w',
+    '-ldflags=-s -w -H=windowsgui',
     '-o',
     join(runtime, 'bin/docker.exe'),
     join(root, 'desktop/runtime/wsl-docker_windows.go'),
@@ -85,6 +85,7 @@ const [application] = await packager({
   electronVersion,
   platform: 'win32',
   arch: 'x64',
+  win32metadata: { CompanyName: 'n8n GmbH', ProductName: 'Otto', FileDescription: 'Otto' },
   asar: false,
   prune: false,
   overwrite: true,
