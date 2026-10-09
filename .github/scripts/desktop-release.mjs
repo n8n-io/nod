@@ -234,7 +234,7 @@ async function plan() {
         ...result,
         arch: target,
         platform: `darwin-${target}`,
-        linux_runner: target === 'arm64' ? 'ubuntu-24.04-arm' : 'ubuntu-24.04',
+        linux_runner: target === 'arm64' ? 'ubuntu-24.04-arm' : 'blacksmith-4vcpu-ubuntu-2404',
         mac_runner: target === 'arm64' ? 'macos-15' : 'macos-15-intel',
         docker_arch: target === 'arm64' ? 'arm64' : 'amd64',
       });
@@ -267,9 +267,7 @@ async function plan() {
       )
     : await configuredRelease(root);
   if (process.env.APPLE_CONFIGURED !== 'true')
-    throw new Error(
-      'Configure signing credentials and public certificate metadata in mac-release.',
-    );
+    throw new Error('Configure signing credentials and public certificate metadata in release.');
   const runs = api(
     `repos/${sourceRepository}/actions/workflows/ci.yml/runs?head_sha=${source}&per_page=20`,
   );

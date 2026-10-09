@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment:
-      name: mac-release
+      name: release
       deployment: false
     env:
       OTTO_RELEASE_TARGETS: all
@@ -111,7 +111,7 @@ jobs:
     runs-on: ${{ matrix.linux_runner }}
     timeout-minutes: 40
     environment:
-      name: mac-release
+      name: release
       deployment: false
     env:
       OTTO_DESKTOP_TARGET: ${{ matrix.platform }}
@@ -179,7 +179,7 @@ jobs:
     runs-on: ${{ matrix.mac_runner }}
     timeout-minutes: 40
     environment:
-      name: mac-release
+      name: release
       deployment: false
     permissions:
       contents: write
@@ -268,7 +268,7 @@ jobs:
     runs-on: ${{ matrix.mac_runner }}
     timeout-minutes: 30
     environment:
-      name: mac-release
+      name: release
       deployment: false
     env:
       OTTO_DESKTOP_TARGET: ${{ matrix.platform }}
@@ -370,7 +370,7 @@ jobs:
     name: Build the Windows runtime
     needs: plan
     if: needs.plan.outputs.release_needed == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     env:
       OTTO_DESKTOP_TARGET: win32-x64
@@ -449,7 +449,7 @@ jobs:
     needs: [plan, mac, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: mac-release
+    environment: release
     env:
       OTTO_SIGNING_MODE: ${{ vars.OTTO_SIGNING_MODE || 'self-signed' }}
       OTTO_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
