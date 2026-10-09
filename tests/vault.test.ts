@@ -3547,8 +3547,10 @@ test('Vault does not open or prefill a login from arbitrary query data', async (
     const view = await vaultPage(
       createElement(Vault),
       async (path, init) => {
-        assert.equal(path, '/api/vault');
         assert.notEqual(init.method, 'POST');
+        if (path === '/api/vault/activity')
+          return Response.json({ week: { signIns: 0, held: 0, asked: 0 }, entries: [] });
+        assert.ok(['/api/vault', '/api/vault/sessions'].includes(path), path);
         return Response.json([]);
       },
       `http://localhost:4310/vault${query}`,

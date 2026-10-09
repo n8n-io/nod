@@ -192,7 +192,7 @@ export function Tasks({ onAsk }: { onAsk(text: string): void }) {
         )}
       </header>
       <div
-        className="task-views"
+        className="secondary-tabs"
         role="tablist"
         aria-label="Task views"
         onKeyDown={(event) => {

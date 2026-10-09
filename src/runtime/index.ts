@@ -225,7 +225,10 @@ export function createAgentRuntime(dependencies: {
     });
     const owner = context.background ? context.turnId : conversation;
     let browserReady: Promise<void> | undefined;
-    const takeBrowser = () => (browserReady ??= claims.take(threadId, owner, signal));
+    const takeBrowser = () =>
+      (browserReady ??= claims
+        .take(threadId, owner, signal)
+        .then(() => context.prepareBrowser?.()));
     let session: AgentSession | undefined;
     let status: RuntimeResult['status'] = 'succeeded';
     let waitingForUser = false;

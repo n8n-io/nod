@@ -117,7 +117,6 @@ export type VaultUse = {
   threadId: string;
   origin: string;
   entryId?: string;
-  kind: 'sign_in' | 'code';
   reason: 'entered' | 'picked';
 };
 type VaultOptions = {
@@ -442,7 +441,7 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       .catch(() => {
         keyPromise = undefined;
         throw new VaultError(
-          'The credential key is unavailable. Check the configured key store.',
+          'Otto can’t open your Vault. Restore the Vault key and restart Otto.',
           503,
         );
       });
@@ -1175,14 +1174,14 @@ export async function createVault(pool: Pool, options: VaultOptions) {
                 client,
               )
             : entry;
-        use = {
-          turnId: row.turn_id,
-          threadId: row.thread_id,
-          origin: row.origin,
-          ...(saved ? { entryId: saved.id } : {}),
-          kind: row.kind === 'otp' ? 'code' : 'sign_in',
-          reason: 'entered',
-        };
+        if (row.kind !== 'otp')
+          use = {
+            turnId: row.turn_id,
+            threadId: row.thread_id,
+            origin: row.origin,
+            ...(saved ? { entryId: saved.id } : {}),
+            reason: 'entered',
+          };
       },
       hashed,
     );
@@ -1264,7 +1263,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         threadId: row.thread_id,
         origin: row.origin,
         entryId: entry.id,
-        kind: 'sign_in',
         reason: 'picked',
       };
     });

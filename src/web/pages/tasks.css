@@ -1,54 +1,3 @@
-.task-views {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  min-height: var(--secondary-tab-height);
-  margin-bottom: var(--secondary-section-gap);
-}
-.task-views > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: var(--control-height);
-  padding: 8px 16px;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  cursor: pointer;
-}
-.task-views > button:hover {
-  background: var(--nav-hover);
-  color: var(--foreground);
-}
-.task-views > button[aria-selected='true'] {
-  background: var(--accent-soft);
-  color: var(--foreground);
-  font-weight: 500;
-}
-.task-views > button > span,
-.schedule-inactive > summary > span {
-  min-width: 20px;
-  padding: 0 4px;
-  border-radius: var(--radius-full);
-  background: var(--control);
-  color: var(--muted-foreground);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 20px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.task-views > button[aria-selected='true'] > span {
-  background: var(--surface);
-  color: var(--accent);
-}
-.task-views > button:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
 .tasks-page > [role='tabpanel']:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 4px;
@@ -67,6 +16,18 @@
   font-size: var(--text-control);
   list-style: none;
   cursor: pointer;
+}
+.schedule-inactive > summary > span {
+  min-width: 20px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--control);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .schedule-inactive > summary::-webkit-details-marker {
   display: none;

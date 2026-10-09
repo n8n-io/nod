@@ -1132,6 +1132,31 @@ test('sign_in never returns a saved value to Pi and pauses for the owner when Ot
   assert.deepEqual(asked.replies, []);
 });
 
+test('a turn prepares the shared browser once before its first browser action', async () => {
+  const events: string[] = [];
+  await fixture(
+    async (tools) => {
+      await call(tools, 'send_message', { text: 'Opening the site.' });
+      await call(tools, 'browser', { action: 'open', url: 'https://example.test/' });
+      await call(tools, 'browser', { action: 'snapshot' });
+    },
+    {
+      prepareBrowser: async () => {
+        events.push('prepare');
+      },
+    },
+    {
+      computer: fakeComputer({
+        act: async (_threadId, action) => {
+          events.push(String(action.action));
+          return { text: '', url: 'https://example.test/' };
+        },
+      }),
+    },
+  );
+  assert.deepEqual(events, ['prepare', 'open', 'snapshot']);
+});
+
 const refusal = 'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
 
 const refused: Array<[string, Record<string, unknown>]> = [

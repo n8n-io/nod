@@ -1,24 +1,44 @@
 import { PageTitle } from '../components/page-title';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { ChevronRight, CreditCard, Globe, Plus } from 'lucide-react';
-import type { VaultListEntry } from '../../shared/contracts';
+import type {
+  VaultActivity,
+  VaultActivityEntry,
+  VaultListEntry,
+  VaultSession,
+} from '../../shared/contracts';
 import { usePageData } from '../hooks/use-page-data';
 import { usePhone } from '../hooks/use-phone';
+import { VaultStatement } from '../components/vault-activity';
 import { VaultDetails } from '../components/vault-details';
+import { VaultSessionDetails, VaultSiteAccess } from '../components/vault-site';
 import { VaultEntryIcon, VaultSurface } from '../components/vault-surface';
 import { formatCardExpiry, VaultItemForm } from '../components/vault-item-form';
+import { WebsiteSessionDialog } from '../components/website-session-dialog';
 import { originLabel } from '../lib/vault-name';
 import { cn } from '../lib/utils';
 import { Loading, Notice, SearchField } from '../components/ui';
 
-function subtitle(entry: VaultListEntry) {
-  return entry.kind === 'card'
-    ? `${entry.brand} •••• ${entry.last4} · ${formatCardExpiry(entry.expiryMonth, entry.expiryYear)}`
-    : entry.username || originLabel(entry.origin);
+type Item = VaultListEntry | VaultSession;
+type View = 'activity' | 'saved';
+
+const sessionLabels: Record<VaultSession['state'], string> = {
+  saved: 'Saved session',
+  needs_sign_in: 'Sign-in needed',
+  pending: 'Sign-in not finished',
+  disconnecting: 'Signing out…',
+};
+
+function subtitle(item: Item) {
+  if (item.kind === 'card')
+    return `${item.brand} •••• ${item.last4} · ${formatCardExpiry(item.expiryMonth, item.expiryYear)}`;
+  if (item.kind === 'session') return `${originLabel(item.origin)} · ${sessionLabels[item.state]}`;
+  if (item.unreadable) return 'Can’t be opened';
+  return item.username || originLabel(item.origin);
 }
 
-export function Vault() {
+export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text: string): void }) {
   const {
     data: entries,
     error: loadError,
@@ -26,39 +46,50 @@ export function Vault() {
     refresh,
     update,
   } = usePageData<VaultListEntry[]>('/api/vault');
+  const sessions = usePageData<VaultSession[]>('/api/vault/sessions');
+  const activity = usePageData<VaultActivity>('/api/vault/activity');
   const phone = usePhone();
+  const tabsId = useId();
+  const addRequested = window.location.search === '?add=login' && !window.location.hash;
+  const [view, setView] = useState<View>(addRequested ? 'saved' : 'activity');
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState(false);
-  const [adding, setAdding] = useState<'login' | 'card' | null>(() =>
-    window.location.search === '?add=login' && !window.location.hash ? 'login' : null,
-  );
+  const [website, setWebsite] = useState(false);
+  const [adding, setAdding] = useState<'login' | 'card' | null>(addRequested ? 'login' : null);
   const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const [savingNew, setSavingNew] = useState(false);
   const [chosen, setChosen] = useState(false);
   const returnTo = useRef<string | null>(null);
   const newTrigger = useRef<HTMLButtonElement>(null);
+  const openingWebsite = useRef(false);
   const split = !phone;
+  const logins = new Set(
+    (entries ?? []).flatMap((entry) => (entry.kind === 'login' ? [entry.origin] : [])),
+  );
+  const items: Item[] = [
+    ...(entries ?? []),
+    ...(sessions.data ?? []).filter((session) => !logins.has(session.origin)),
+  ];
   const search = query.trim().toLowerCase();
-  const visible = [...(entries ?? [])]
+  const visible = items
     .filter(
-      (entry) =>
+      (item) =>
         !search ||
-        [entry.label, subtitle(entry), entry.kind === 'login' ? originLabel(entry.origin) : '']
+        [item.label, subtitle(item), item.kind === 'card' ? '' : originLabel(item.origin)]
           .join(' ')
           .toLowerCase()
           .includes(search),
     )
     .sort((a, b) => a.label.localeCompare(b.label));
   const selected =
-    entries?.find((entry) => entry.id === selectedId) ??
+    items.find((item) => item.id === selectedId) ??
     (selectedId === undefined && split && !adding ? visible[0] : undefined);
-  const detailOpen = Boolean(adding || selected);
+  const detailOpen = view === 'saved' && Boolean(adding || selected);
   const pageMode = detailOpen && !split;
 
   useEffect(() => {
-    if (window.location.search === '?add=login' && !window.location.hash)
-      window.history.replaceState(null, '', '/vault');
-  }, []);
+    if (addRequested) window.history.replaceState(null, '', '/vault');
+  }, [addRequested]);
 
   useEffect(() => {
     if (pageMode || !returnTo.current) return;
@@ -77,10 +108,18 @@ export function Vault() {
     void refresh();
   }
 
-  function open(entry: VaultListEntry) {
+  function open(item: Item) {
+    setView('saved');
     setAdding(null);
     setChosen(true);
-    setSelectedId(entry.id);
+    setSelectedId(item.id);
+  }
+
+  function opener(entry: VaultActivityEntry) {
+    const item =
+      items.find((value) => value.id === entry.itemId) ??
+      items.find((value) => value.kind !== 'card' && value.origin === entry.origin);
+    return item ? () => open(item) : undefined;
   }
 
   function closeDetail() {
@@ -92,6 +131,7 @@ export function Vault() {
 
   function start(kind: 'login' | 'card') {
     setMenu(false);
+    setView('saved');
     setChosen(true);
     setAdding(kind);
   }
@@ -103,30 +143,44 @@ export function Vault() {
     setAdding(null);
   }
 
-  function row(entry: VaultListEntry) {
+  function removed(id: string) {
+    update((current) => current?.filter((value) => value.id !== id) ?? current);
+    sessions.update((current) => current?.filter((value) => value.id !== id) ?? current);
+    returnTo.current = 'new';
+    setSelectedId(null);
+    void refresh();
+    void sessions.refresh();
+  }
+
+  function row(item: Item) {
+    const current = split && selected?.id === item.id;
     return (
       <button
-        key={entry.id}
+        key={item.id}
         type="button"
-        className={cn(
-          'button vault-item',
-          split && selected?.id === entry.id ? 'button-secondary' : 'button-ghost',
-        )}
-        data-vault-item={entry.id}
-        aria-current={split && selected?.id === entry.id ? 'true' : undefined}
-        onClick={() => open(entry)}
+        className={cn('button vault-item', current ? 'button-secondary' : 'button-ghost')}
+        data-vault-item={item.id}
+        aria-current={current ? 'true' : undefined}
+        onClick={() => open(item)}
       >
         <span className="vault-item-icon" aria-hidden="true">
-          <VaultEntryIcon entry={entry} size={24} />
+          {item.kind === 'session' ? (
+            <Globe size={24} />
+          ) : (
+            <VaultEntryIcon entry={item} size={24} />
+          )}
         </span>
         <span className="vault-item-text">
-          <strong>{entry.label}</strong>
-          <span>{subtitle(entry)}</span>
+          <strong>{item.label}</strong>
+          <span>{subtitle(item)}</span>
         </span>
         {!split && <ChevronRight className="vault-item-chevron" size={16} aria-hidden="true" />}
       </button>
     );
   }
+
+  const session = (origin: string) =>
+    sessions.data?.find((value) => value.origin === origin && value.state !== 'disconnecting');
 
   const detail = adding ? (
     <VaultSurface
@@ -137,6 +191,7 @@ export function Vault() {
     >
       <VaultItemForm
         kind={adding}
+        hosted={hosted}
         onCancel={closeAdd}
         onSavingChange={setSavingNew}
         onSaved={(entry) => {
@@ -147,97 +202,190 @@ export function Vault() {
         }}
       />
     </VaultSurface>
+  ) : selected?.kind === 'session' ? (
+    <VaultSessionDetails
+      key={selected.id}
+      session={selected}
+      autoFocus={chosen && selectedId === selected.id}
+      onClose={closeDetail}
+      onRemoved={removed}
+      onAsk={onAsk}
+    />
   ) : selected ? (
     <VaultDetails
       key={selected.id}
       entry={selected}
+      hosted={hosted}
       autoFocus={chosen && selectedId === selected.id}
       onClose={closeDetail}
       onSaved={(entry) => {
         save(entry);
         setSelectedId(entry.id);
       }}
-      onDeleted={(id) => {
-        update((current) => current?.filter((value) => value.id !== id) ?? current);
-        returnTo.current = 'new';
-        setSelectedId(null);
-        void refresh();
-      }}
-    />
+      onDeleted={removed}
+    >
+      {selected.kind === 'login' && (
+        <VaultSiteAccess
+          origin={selected.origin}
+          session={session(selected.origin)}
+          onSessionRemoved={(id) =>
+            sessions.update((current) => current?.filter((value) => value.id !== id) ?? current)
+          }
+          onAsk={onAsk}
+        />
+      )}
+    </VaultDetails>
   ) : null;
 
+  const views: View[] = ['activity', 'saved'];
   return (
     <div
       className={cn(
         'content-page secondary-page vault-page',
-        split && 'is-split',
+        split && view === 'saved' && 'is-split',
         pageMode && 'is-detail',
       )}
     >
       {!pageMode && (
-        <header className="page-heading secondary-heading">
-          <div>
-            <PageTitle path="/vault" />
-            <p>Your saved logins and payment cards.</p>
-          </div>
-          <Popover.Root open={menu} onOpenChange={setMenu}>
-            <Popover.Trigger asChild>
+        <>
+          <header className="page-heading secondary-heading">
+            <div>
+              <PageTitle path="/vault" />
+              <p>What Otto keeps for you, and how it signs in.</p>
+            </div>
+            <Popover.Root open={menu} onOpenChange={setMenu}>
+              <Popover.Trigger asChild>
+                <button
+                  ref={newTrigger}
+                  type="button"
+                  className="button button-primary button-sm vault-new"
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  New
+                </button>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  className="connection-menu-options menu vault-new-menu"
+                  align="end"
+                  sideOffset={6}
+                  onCloseAutoFocus={(event) => {
+                    if (!openingWebsite.current) return;
+                    openingWebsite.current = false;
+                    event.preventDefault();
+                  }}
+                >
+                  <button type="button" className="menu-item" onClick={() => start('login')}>
+                    <Globe size={16} aria-hidden="true" />
+                    New login
+                  </button>
+                  <button type="button" className="menu-item" onClick={() => start('card')}>
+                    <CreditCard size={16} aria-hidden="true" />
+                    New payment card
+                  </button>
+                  {onAsk && (
+                    <button
+                      type="button"
+                      className="menu-item"
+                      onClick={() => {
+                        openingWebsite.current = true;
+                        setMenu(false);
+                        setWebsite(true);
+                      }}
+                    >
+                      <Globe size={16} aria-hidden="true" />
+                      Website session
+                    </button>
+                  )}
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+          </header>
+          <div
+            className="secondary-tabs"
+            role="tablist"
+            aria-label="Vault views"
+            onKeyDown={(event) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              const next =
+                event.key === 'Home'
+                  ? 'activity'
+                  : event.key === 'End'
+                    ? 'saved'
+                    : view === 'activity'
+                      ? 'saved'
+                      : 'activity';
+              setView(next);
+              event.currentTarget
+                .querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
+                ?.focus();
+            }}
+          >
+            {views.map((item) => (
               <button
-                ref={newTrigger}
-                type="button"
-                className="button button-primary button-sm vault-new"
+                key={item}
+                id={`${tabsId}-tab-${item}`}
+                data-view={item}
+                role="tab"
+                tabIndex={view === item ? 0 : -1}
+                aria-selected={view === item}
+                aria-controls={`${tabsId}-panel`}
+                onClick={() => setView(item)}
               >
-                <Plus size={16} aria-hidden="true" />
-                New
+                {item === 'activity' ? 'Activity' : 'Saved'}
+                {item === 'saved' && entries && <span>{items.length}</span>}
               </button>
-            </Popover.Trigger>
-            <Popover.Portal>
-              <Popover.Content
-                className="connection-menu-options menu vault-new-menu"
-                align="end"
-                sideOffset={6}
-              >
-                <button type="button" className="menu-item" onClick={() => start('login')}>
-                  <Globe size={16} aria-hidden="true" />
-                  New login
-                </button>
-                <button type="button" className="menu-item" onClick={() => start('card')}>
-                  <CreditCard size={16} aria-hidden="true" />
-                  New payment card
-                </button>
-              </Popover.Content>
-            </Popover.Portal>
-          </Popover.Root>
-        </header>
+            ))}
+          </div>
+        </>
       )}
-      {loadError && <Notice>Could not load your vault.</Notice>}
-      <div className="vault-layout">
-        {!pageMode && (
-          <div className="vault-browser">
-            <SearchField
-              className="vault-search"
-              type="search"
-              value={query}
-              placeholder="Search"
-              aria-label="Search Vault"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            {!entries ? (
-              loading && <Loading label="Opening your vault…" />
-            ) : !entries.length ? (
-              <div className="secondary-empty">
-                <h2>Your vault is empty</h2>
-                <p>Add a login or payment card to your vault.</p>
+      {loadError && <Notice>{loadError}</Notice>}
+      <div
+        role="tabpanel"
+        id={`${tabsId}-panel`}
+        aria-labelledby={`${tabsId}-tab-${view}`}
+        className="vault-panel"
+      >
+        {view === 'activity' ? (
+          activity.data ? (
+            <VaultStatement activity={activity.data} opener={opener} />
+          ) : activity.error ? (
+            <Notice>{activity.error}</Notice>
+          ) : (
+            <Loading label="Opening activity…" />
+          )
+        ) : (
+          <div className="vault-layout">
+            {!pageMode && (
+              <div className="vault-browser">
+                <SearchField
+                  className="vault-search"
+                  type="search"
+                  value={query}
+                  placeholder="Search"
+                  aria-label="Search Vault"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                {!entries ? (
+                  loading && <Loading label="Opening your vault…" />
+                ) : !items.length ? (
+                  <div className="secondary-empty">
+                    <h2>Your vault is empty</h2>
+                    <p>Add a login, a payment card or a website session.</p>
+                  </div>
+                ) : visible.length ? (
+                  <div className="vault-items">{visible.map(row)}</div>
+                ) : (
+                  <p className="vault-no-results">No items match “{query.trim()}”.</p>
+                )}
               </div>
-            ) : visible.length ? (
-              <div className="vault-items">{visible.map(row)}</div>
-            ) : (
-              <p className="vault-no-results">No items match “{query.trim()}”.</p>
             )}
+            {detail && <div className="vault-detail-column">{detail}</div>}
           </div>
         )}
-        {detail && <div className="vault-detail-column">{detail}</div>}
       </div>
+      {onAsk && <WebsiteSessionDialog open={website} onOpenChange={setWebsite} onAsk={onAsk} />}
     </div>
   );
 }

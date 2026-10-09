@@ -144,6 +144,7 @@ export interface ThreadDependencies {
     signal: AbortSignal,
     launch: { timeZone?: string; locale?: string },
   ) => Promise<unknown>;
+  prepareBrowser?: (turn: TurnRef) => Promise<void>;
   reactToMessage?: (
     input: AgentReactionInput,
   ) => ReturnType<NonNullable<RuntimeContext['reactToMessage']>>;
@@ -1000,7 +1001,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await current((client) => insertEvent(client, turnId, type, summary));
       refresh();
     };
-    const { reactToMessage, connections, browserConnection, observe, inspectPrompt } = dependencies;
+    const {
+      reactToMessage,
+      connections,
+      browserConnection,
+      prepareBrowser,
+      observe,
+      inspectPrompt,
+    } = dependencies;
     if (await dependencies.spendingLimitReached?.()) {
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
@@ -1049,6 +1057,7 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             locale: loaded.context.locale,
           }),
         ),
+      prepareBrowser: prepareBrowser && fenced(() => prepareBrowser(ref)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
       integration: fenced(async (action, args, callSignal?: AbortSignal) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;

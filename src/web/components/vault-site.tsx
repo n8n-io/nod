@@ -1,0 +1,177 @@
+import { useEffect, useState } from 'react';
+import { Globe } from 'lucide-react';
+import type { VaultActivity, VaultPermission, VaultSession } from '../../shared/contracts';
+import { api, errorMessage } from '../lib/api';
+import { originLabel } from '../lib/vault-name';
+import { VaultActivityList } from './vault-activity';
+import { VaultBackButton, VaultSurface, VaultTitle } from './vault-surface';
+import { Button, Notice, Switch } from './ui';
+
+const sessionStates: Record<VaultSession['state'], string> = {
+  saved: 'Signed in',
+  needs_sign_in: 'Sign-in needed',
+  pending: 'Sign-in not finished',
+  disconnecting: 'Signing out…',
+};
+
+export function VaultSiteAccess({
+  origin,
+  session,
+  onSessionRemoved,
+  onAsk,
+}: {
+  origin: string;
+  session?: VaultSession;
+  onSessionRemoved(id: string): void;
+  onAsk?(text: string): void;
+}) {
+  const [always, setAlways] = useState<boolean | null>(null);
+  const [activity, setActivity] = useState<VaultActivity | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    setAlways(null);
+    setActivity(null);
+    void Promise.all([
+      api<VaultPermission[]>('/api/vault/permissions', { signal: controller.signal }),
+      api<VaultActivity>(`/api/vault/activity?origin=${encodeURIComponent(origin)}`, {
+        signal: controller.signal,
+      }),
+    ])
+      .then(([permissions, history]) => {
+        setAlways(permissions.some((permission) => permission.origin === origin));
+        setActivity(history);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) setError(errorMessage(cause));
+      });
+    return () => controller.abort();
+  }, [origin]);
+
+  async function permit(next: boolean) {
+    setBusy(true);
+    setError('');
+    try {
+      await api(
+        next
+          ? '/api/vault/permissions'
+          : `/api/vault/permissions?origin=${encodeURIComponent(origin)}`,
+        next ? { method: 'PUT', body: JSON.stringify({ origin }) } : { method: 'DELETE' },
+      );
+      setAlways(next);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function signOut() {
+    if (!session) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/vault/sessions/${encodeURIComponent(session.id)}`, { method: 'DELETE' });
+      onSessionRemoved(session.id);
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="vault-inset">
+        {session && (
+          <div className="vault-inset-row">
+            <span className="vault-inset-label">Saved session</span>
+            <div className="vault-inset-value">
+              <span className="vault-detail-value">{sessionStates[session.state]}</span>
+              <div className="vault-detail-actions">
+                {onAsk && ['needs_sign_in', 'pending'].includes(session.state) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() =>
+                      onAsk(
+                        `Use browser connection ${session.id} to open ${session.url}. Check whether it works. If the session expired, help me sign in through the secure form and save the session.`,
+                      )
+                    }
+                  >
+                    Sign in again
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy || session.state === 'disconnecting'}
+                  onClick={() => void signOut()}
+                >
+                  Sign out
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="vault-inset-row vault-switch-row">
+          <span className="vault-detail-value">Sign in without asking</span>
+          <Switch
+            checked={Boolean(always)}
+            aria-label={`Let Otto sign in to ${originLabel(origin)} without asking`}
+            disabled={always === null || busy}
+            onCheckedChange={(next) => void permit(next)}
+          />
+        </div>
+      </div>
+      {error && <Notice>{error}</Notice>}
+      <section className="vault-site-activity" aria-label="Activity">
+        <h3>Activity</h3>
+        {!activity ? null : activity.entries.length ? (
+          <div className="statement">
+            <VaultActivityList entries={activity.entries} />
+          </div>
+        ) : (
+          <p className="statement-empty">Otto hasn’t used this yet.</p>
+        )}
+      </section>
+    </>
+  );
+}
+
+export function VaultSessionDetails({
+  session,
+  autoFocus,
+  onClose,
+  onRemoved,
+  onAsk,
+}: {
+  session: VaultSession;
+  autoFocus?: boolean;
+  onClose(): void;
+  onRemoved(id: string): void;
+  onAsk?(text: string): void;
+}) {
+  const host = originLabel(session.origin);
+  return (
+    <VaultSurface label={session.label} autoFocus={autoFocus} onClose={onClose}>
+      <div className="vault-bar">
+        <VaultBackButton onClick={onClose} />
+      </div>
+      <div className="vault-hero">
+        <span className="vault-hero-icon" aria-hidden="true">
+          <Globe size={56} />
+        </span>
+        <VaultTitle>{session.label}</VaultTitle>
+        <p>{host}</p>
+      </div>
+      <VaultSiteAccess
+        origin={session.origin}
+        session={session}
+        onSessionRemoved={onRemoved}
+        onAsk={onAsk}
+      />
+    </VaultSurface>
+  );
+}

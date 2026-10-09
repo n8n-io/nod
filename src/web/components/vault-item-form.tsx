@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { CreditCard, Globe } from 'lucide-react';
 import type { VaultEntry, VaultEntryDetails, VaultListEntry } from '../../shared/contracts';
 import { api } from '../lib/api';
-import { Button, Field, Input, Notice } from './ui';
+import { Button, Field, Input, Notice, Switch } from './ui';
 import { suggestLoginName } from '../lib/vault-name';
 import { VaultTitle } from './vault-surface';
 
@@ -113,13 +113,17 @@ export function VaultFields({
   kind,
   details,
   disabled,
+  hosted = false,
   onSecretChange,
 }: {
   kind: 'login' | 'card';
   details?: VaultEntryDetails;
   disabled: boolean;
+  hosted?: boolean;
   onSecretChange?(): void;
 }) {
+  const savedCode = details?.kind === 'card' && details.hasSecurityCode;
+  const [remember, setRemember] = useState(savedCode);
   const identityLabel =
     details?.kind === 'login'
       ? (details.identifierLabel ?? 'Username or email')
@@ -191,14 +195,27 @@ export function VaultFields({
               disabled={disabled}
             />
           </Field>
-          <VaultSecretField
-            name="securityCode"
-            label="Security code"
-            editing={Boolean(details)}
-            saved={details?.kind === 'card' && details.hasSecurityCode}
-            disabled={disabled}
-            onChange={onSecretChange}
-          />
+          {!hosted && !savedCode && (
+            <div className="field vault-switch-row">
+              <span className="field-label">Remember security code on this device</span>
+              <Switch
+                checked={remember}
+                aria-label="Remember security code on this device"
+                disabled={disabled}
+                onCheckedChange={setRemember}
+              />
+            </div>
+          )}
+          {!hosted && remember && (
+            <VaultSecretField
+              name="securityCode"
+              label="Security code"
+              editing={Boolean(details)}
+              saved={savedCode}
+              disabled={disabled}
+              onChange={onSecretChange}
+            />
+          )}
         </>
       )}
     </>
@@ -207,11 +224,13 @@ export function VaultFields({
 
 export function VaultItemForm({
   kind,
+  hosted = false,
   onSaved,
   onCancel,
   onSavingChange,
 }: {
   kind: 'login' | 'card';
+  hosted?: boolean;
   onSaved(entry: VaultListEntry): void;
   onCancel(): void;
   onSavingChange?(saving: boolean): void;
@@ -344,7 +363,7 @@ export function VaultItemForm({
         className="vault-inset vault-add-form"
         autoComplete="off"
       >
-        <VaultFields kind={kind} disabled={saving} />
+        <VaultFields kind={kind} disabled={saving} hosted={hosted} />
       </form>
       {error && <Notice>{error}</Notice>}
     </>

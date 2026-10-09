@@ -603,7 +603,7 @@ async function initializeApplication(
       vaultAccess.record(
         { threadId: use.threadId, turnId: use.turnId },
         {
-          action: use.kind,
+          action: 'sign_in',
           origin: use.origin,
           reason: use.reason,
           ...(use.entryId ? { itemId: use.entryId, itemKind: 'login' as const } : {}),
@@ -753,6 +753,12 @@ async function initializeApplication(
       flagInjection: trust.flag,
       holdBrowser: adapters.holdWaitingBrowser,
       connections: integrations.manageConnections,
+      prepareBrowser: async (turn) => {
+        const origin = await browserConnections.bound(turn.threadId);
+        if (!origin || (await vaultAccess.permitted(turn, origin))) return;
+        await computer.close(turn.threadId);
+        await browserConnections.release(turn.threadId);
+      },
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
         if (!target) return browserConnections.request(request, turn, signal, launch);

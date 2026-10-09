@@ -93,6 +93,9 @@ export async function createVaultAccess(
     const task = row.prompt
       .split('\n')[0]!
       .replace(/^Scheduled task:\s*/, '')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, '$1')
+      .replace(/\s+/g, ' ')
       .trim();
     return { id: row.id, task: task.length > 120 ? `${task.slice(0, 119)}…` : task };
   }
@@ -145,29 +148,34 @@ export async function createVaultAccess(
     target: { origin: string; kind: Kind; account?: string },
   ): Promise<VaultAccessVerdict> {
     const origin = credentialOrigin(target.origin);
-    const form = target.kind === 'form';
     const chain = await root(turn);
-    const granted = form ? undefined : await grant(chain.id, origin);
+    const granted = await grant(chain.id, origin);
     const verdict = await options.check(
       turn,
       { origin, ...(target.account ? { account: target.account } : {}) },
-      form || Boolean(granted),
+      Boolean(granted),
     );
-    if ('allowed' in verdict && verdict.allowed) {
-      if (verdict.reason === 'granted') return { ok: true, reason: granted ?? 'entered' };
-      await pool.query(
-        `INSERT INTO vault_grants(id,owner_id,origin,root_turn_id,source) VALUES($1,$2,$3,$4,$5)
-         ON CONFLICT (owner_id,root_turn_id,origin) WHERE NOT standing DO NOTHING`,
-        [randomUUID(), ownerId, origin, chain.id, verdict.reason],
-      );
-      return { ok: true, reason: verdict.reason };
+    const itemKind = target.kind === 'session' ? { itemKind: 'session' as const } : {};
+    const pass = async (reason: VaultActivityReason) => {
+      if (!granted)
+        await pool.query(
+          `INSERT INTO vault_grants(id,owner_id,origin,root_turn_id,source) VALUES($1,$2,$3,$4,$5)
+           ON CONFLICT (owner_id,root_turn_id,origin) WHERE NOT standing DO NOTHING`,
+          [randomUUID(), ownerId, origin, chain.id, reason],
+        );
+      return { ok: true as const, reason };
+    };
+    const hold = async (reason: 'readonly' | 'background' | 'injection') => {
+      await record(turn, { action: 'held', origin, reason, ...itemKind });
+      return { ok: false as const, message: heldMessages[reason] };
+    };
+    if ('allowed' in verdict) {
+      if (!verdict.allowed) return hold(verdict.reason);
+      return pass(verdict.reason === 'granted' ? (granted ?? 'allowed') : verdict.reason);
     }
-    const held = 'allowed' in verdict ? verdict.reason : form ? 'injection' : undefined;
-    if (held) {
-      await record(turn, { action: 'held', origin, reason: held });
-      return { ok: false, message: heldMessages[held] };
-    }
-    await record(turn, { action: 'asked', origin, reason: verdict.reason });
+    if (target.kind === 'form')
+      return verdict.reason === 'injection' ? hold('injection') : pass('entered');
+    await record(turn, { action: 'asked', origin, reason: verdict.reason, ...itemKind });
     const site = host(origin);
     return {
       ok: false,
@@ -178,6 +186,14 @@ export async function createVaultAccess(
             ? `Sign in to ${site} as ${target.account}?`
             : `Sign in to ${site}?`,
     };
+  }
+
+  async function permitted(turn: TurnRef, rawOrigin: string) {
+    const origin = credentialOrigin(rawOrigin);
+    const granted = await grant((await root(turn)).id, origin);
+    if (!granted) return false;
+    const verdict = await options.check(turn, { origin }, true);
+    return 'allowed' in verdict && verdict.allowed;
   }
 
   async function allow(context: { threadId: string; turnId: string }, raw: unknown) {
@@ -304,5 +320,15 @@ export async function createVaultAccess(
     });
   }
 
-  return { authorize, record, allow, activity, permissions, always, revoke, registerRoutes };
+  return {
+    authorize,
+    permitted,
+    record,
+    allow,
+    activity,
+    permissions,
+    always,
+    revoke,
+    registerRoutes,
+  };
 }

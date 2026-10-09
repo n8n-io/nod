@@ -373,5 +373,22 @@ export async function createBrowserConnections(
     });
   }
 
-  return { request, list, sessions, target, disconnect, registerRoutes };
+  async function bound(threadId: string) {
+    return (
+      await pool.query<Pick<Row, 'origin'>>(
+        `SELECT origin FROM browser_connections WHERE owner_id=$1 AND thread_id=$2
+         AND state IN ('pending','saved','needs_sign_in') ORDER BY updated_at DESC LIMIT 1`,
+        [options.ownerId, threadId],
+      )
+    ).rows[0]?.origin;
+  }
+
+  async function release(threadId: string) {
+    await pool.query(
+      'UPDATE browser_connections SET thread_id=NULL WHERE owner_id=$1 AND thread_id=$2',
+      [options.ownerId, threadId],
+    );
+  }
+
+  return { request, list, sessions, target, bound, release, disconnect, registerRoutes };
 }

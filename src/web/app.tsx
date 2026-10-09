@@ -232,7 +232,9 @@ function Workspace({
                   </div>
                 )}
               </div>
-              {currentPath === '/vault' && <Vault />}
+              {currentPath === '/vault' && (
+                <Vault hosted={session.auth.mode === 'google'} onAsk={askInChat} />
+              )}
               {currentPath === '/apps' && (
                 <Apps configuration={state?.configuration} onAsk={askInChat} />
               )}

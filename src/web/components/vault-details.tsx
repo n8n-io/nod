@@ -51,12 +51,16 @@ export function VaultDetails({
   onClose,
   onSaved,
   onDeleted,
+  hosted = false,
+  children,
 }: {
   entry: VaultEntry;
+  hosted?: boolean;
   autoFocus?: boolean;
   onClose(): void;
   onSaved(entry: VaultListEntry): void;
   onDeleted(id: string): void;
+  children?: React.ReactNode;
 }) {
   const [details, setDetails] = useState<VaultEntryDetails | null>(null);
   const [detailsError, setDetailsError] = useState(false);
@@ -553,6 +557,7 @@ export function VaultDetails({
             kind={entry.kind}
             details={details}
             disabled={saving}
+            hosted={hosted}
             onSecretChange={() => {
               hideRevealed();
               updateDirty();
@@ -612,7 +617,8 @@ export function VaultDetails({
       <p className={notice ? 'vault-detail-status' : 'sr-only'} role="status" aria-live="polite">
         {notice}
       </p>
-      {details && !editing && (
+      {details && !editing && children}
+      {(details || detailsError) && !editing && (
         <div className="vault-inset">
           <button
             ref={deleteTrigger}

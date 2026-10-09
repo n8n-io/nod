@@ -706,6 +706,10 @@ test(
           });
           assert.equal(reviews.at(-1)?.signIn.website, 'https://login.example-energy.test');
           assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Find my latest invoice.');
+          assert.equal(
+            await access.permitted(unmentioned, 'https://login.example-energy.test'),
+            false,
+          );
           assert.deepEqual(
             await access.authorize(unmentioned, {
               origin: 'https://login.example-energy.test',
@@ -713,6 +717,11 @@ test(
             }),
             { ok: true, reason: 'entered' },
           );
+          assert.equal(
+            await access.permitted(unmentioned, 'https://login.example-energy.test'),
+            true,
+          );
+          assert.equal(await access.permitted(unmentioned, 'https://ctt.pt'), false);
 
           const question = 'Sign in to login.example-energy.test as al…?';
           const result = await approvals.request(
@@ -747,6 +756,36 @@ test(
             }),
             { ok: true, reason: 'allowed' },
           );
+          const channel = 'telegram:fixture';
+          const remote = await begin('Grab my energy bill.', { channel });
+          const telegramQuestion = await access.authorize(remote, {
+            origin: 'https://login.example-energy.test',
+            kind: 'sign_in',
+          });
+          assert.ok('question' in telegramQuestion);
+          await approvals.request(
+            remote,
+            'OTTO_vault_allow',
+            { origin: 'https://login.example-energy.test' },
+            { confirm: true, question: telegramQuestion.question },
+          );
+          await finish(remote.turnId);
+          const yes = await messages.submit('Yes', [], { channel });
+          const confirmed = await proposal(remote.turnId);
+          assert.equal(confirmed.status, 'confirmed');
+          assert.equal(confirmed.execution_turn_id, yes.turnId);
+          assert.equal((await row(yes.turnId)).channel, channel);
+          const fromTelegram = await running(yes.turnId);
+          await access.allow(fromTelegram, { origin: 'https://login.example-energy.test' });
+          assert.deepEqual(
+            await access.authorize(fromTelegram, {
+              origin: 'https://login.example-energy.test',
+              kind: 'sign_in',
+            }),
+            { ok: true, reason: 'allowed' },
+          );
+          await finish(yes.turnId, 'succeeded');
+
           const later = await begin('Find another invoice.');
           assert.equal(
             'question' in
@@ -794,6 +833,7 @@ test(
 
           for (const source of ['event', 'onboarding'] as const) {
             const background = await begin('Synthetic background work', { source });
+            assert.equal(await access.permitted(background, 'https://ctt.pt'), false);
             for (const kind of ['sign_in', 'session', 'form'] as const)
               assert.match(
                 (
@@ -828,6 +868,7 @@ test(
               ['sign_in', site, 'asked'],
               ['asked', 'https://login.example-energy.test', 'unrequested'],
               ['asked', 'https://login.example-energy.test', 'unrequested'],
+              ['asked', 'https://login.example-energy.test', 'unrequested'],
               ['asked', 'https://ctt.pt', 'injection'],
               ['held', 'https://ctt.pt', 'injection'],
               ['held', 'https://ctt.pt', 'background'],
@@ -840,7 +881,7 @@ test(
             'Download my October invoice from Iberdrola.',
           );
           assert.equal(activity.entries[0]?.task, 'Monthly invoices');
-          assert.deepEqual(activity.week, { signIns: 1, held: 3, asked: 4 });
+          assert.deepEqual(activity.week, { signIns: 1, held: 3, asked: 5 });
           assert.equal(JSON.stringify(activity).includes('password'), false);
         },
       );

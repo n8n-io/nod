@@ -246,28 +246,18 @@ export function ConnectedAccount({
         </p>
       </div>
       <div className="app-account-actions">
-        {((account.canReconnect &&
-          (account.status === 'disconnected' || account.reconnectRequired)) ||
-          account.browserState === 'needs_sign_in' ||
-          account.browserState === 'pending') &&
+        {account.canReconnect &&
+          (account.status === 'disconnected' || account.reconnectRequired) &&
           onReconnect && (
             <Button
               size="sm"
-              aria-label={
-                account.browserState === 'pending'
-                  ? `Continue signing in to ${account.name} as ${label}`
-                  : `Reconnect ${label} to ${account.name}`
-              }
+              aria-label={`Reconnect ${label} to ${account.name}`}
               aria-busy={reconnecting}
               disabled={busy}
               onClick={onReconnect}
             >
               {reconnecting && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
-              {reconnecting
-                ? 'Opening…'
-                : account.browserState === 'pending'
-                  ? 'Continue sign-in'
-                  : 'Reconnect'}
+              {reconnecting ? 'Opening…' : 'Reconnect'}
             </Button>
           )}
         <Button
@@ -321,12 +311,6 @@ export function Apps({
   const [pointerRestoredService, setPointerRestoredService] = useState<string | null>(null);
   const [disconnectAccount, setDisconnectAccount] = useState<Connection | null>(null);
   const [disconnectError, setDisconnectError] = useState('');
-  const [websiteOpen, setWebsiteOpen] = useState(false);
-  const [websiteUrl, setWebsiteUrl] = useState('');
-  const [websiteLabel, setWebsiteLabel] = useState('');
-  const [websiteConnectionId, setWebsiteConnectionId] = useState<string>();
-  const [websiteError, setWebsiteError] = useState('');
-  const [websiteBusy, setWebsiteBusy] = useState(false);
   const discoveryId = new URLSearchParams(window.location.search).get('connect');
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [discoveryError, setDiscoveryError] = useState('');
@@ -548,23 +532,6 @@ export function Apps({
   }
   async function connect(connection: Connection, addAccount = false) {
     if (actionRequest.current || busy) return;
-    if (connection.accessPaths?.some((path) => path.kind === 'browser')) {
-      if (connection.browserState) {
-        setWebsiteUrl(
-          connection.browserUrl ??
-            connection.accessPaths.find((path) => path.kind === 'browser')?.endpoint ??
-            '',
-        );
-        setWebsiteLabel('');
-        setWebsiteConnectionId(addAccount ? undefined : connection.connectionId);
-        setWebsiteError('');
-        setManageService(null);
-        setWebsiteOpen(true);
-        return;
-      }
-      window.location.assign('/vault');
-      return;
-    }
     const request = new AbortController();
     actionRequest.current = request;
     setBusy(
@@ -580,7 +547,7 @@ export function Apps({
           method: 'POST',
           body: JSON.stringify({
             returnTo: desktopLinksAvailable() ? 'window' : 'apps',
-            ...(!addAccount || connection.accessPaths?.some((path) => path.kind !== 'browser')
+            ...(!addAccount || connection.accessPaths?.length
               ? { connectionId: connection.connectionId }
               : {}),
           }),
@@ -714,20 +681,6 @@ export function Apps({
         <div>
           <PageTitle path="/apps" />
           <p>Your tools, connected to Otto.</p>
-        </div>
-        <div className="secondary-heading-actions">
-          <Button
-            onClick={() => {
-              setWebsiteUrl('');
-              setWebsiteLabel('');
-              setWebsiteConnectionId(undefined);
-              setWebsiteError('');
-              setWebsiteOpen(true);
-            }}
-          >
-            <Plus size={16} aria-hidden="true" />
-            Connect website
-          </Button>
         </div>
       </header>
       {configuration && <SetupNotice configuration={configuration} />}
@@ -1084,60 +1037,6 @@ export function Apps({
               Done
             </Button>
           </div>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={websiteOpen} onOpenChange={(open) => !websiteBusy && setWebsiteOpen(open)}>
-        <DialogContent className="app-website-dialog">
-          <DialogTitle>Connect a website</DialogTitle>
-          <DialogDescription>
-            Otto will open the site in a private browser. Sign in once, then use the saved session
-            in later tasks.
-          </DialogDescription>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (websiteBusy) return;
-              setWebsiteBusy(true);
-              setWebsiteError('');
-              const text = websiteConnectionId
-                ? `Use browser connection ${websiteConnectionId} to open ${websiteUrl}. Check whether it works. If the session expired, help me sign in through the secure form and save the session.`
-                : `Connect to ${websiteUrl} in your private browser${websiteLabel.trim() ? ` as ${websiteLabel.trim()}` : ''}. Help me sign in through the secure form if needed, then save the browser session.`;
-              void api('/api/messages', {
-                method: 'POST',
-                body: JSON.stringify({ text }),
-              })
-                .then(() => window.location.assign('/'))
-                .catch((cause) => {
-                  setWebsiteError(errorMessage(cause));
-                  setWebsiteBusy(false);
-                });
-            }}
-          >
-            <Field label="Website address">
-              <Input
-                type="url"
-                value={websiteUrl}
-                onChange={(event) => setWebsiteUrl(event.target.value)}
-                placeholder="https://example.com/account"
-                autoFocus
-                required
-                disabled={websiteBusy}
-              />
-            </Field>
-            <Field label="Account name">
-              <Input
-                value={websiteLabel}
-                onChange={(event) => setWebsiteLabel(event.target.value)}
-                placeholder="Optional"
-                maxLength={100}
-                disabled={websiteBusy}
-              />
-            </Field>
-            {websiteError && <Notice>{websiteError}</Notice>}
-            <Button type="submit" disabled={websiteBusy}>
-              {websiteBusy ? 'Opening…' : 'Continue in chat'}
-            </Button>
-          </form>
         </DialogContent>
       </Dialog>
       <Dialog
