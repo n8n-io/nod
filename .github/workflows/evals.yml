@@ -2,6 +2,8 @@ name: Evals
 run-name: "Evals · ${{ github.ref_name }}${{ inputs.baseline && format(' vs {0}', inputs.baseline) || '' }}"
 
 on:
+  schedule:
+    - cron: '23 1 * * *'
   workflow_dispatch:
     inputs:
       baseline:
@@ -29,17 +31,6 @@ on:
         description: Optional spend limit in dollars; leave empty to run all attempts
         type: string
         default: ''
-  workflow_call:
-    inputs:
-      ref:
-        type: string
-        required: true
-      baseline:
-        type: string
-        default: latest-release
-    outputs:
-      verdict:
-        value: ${{ jobs.evals.outputs.verdict }}
 
 permissions:
   contents: read
@@ -77,7 +68,6 @@ jobs:
       - name: Check out the code under test
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.ref }}
           fetch-depth: ${{ inputs.baseline != '' && '0' || '1' }}
           persist-credentials: false
       - name: Set up pnpm

@@ -74,7 +74,7 @@ Changes in some areas need extra checks:
 | `evals/`                 | `pnpm --dir evals run check` and `pnpm --dir evals test`                                                                                  |
 | `deployment/cloudflare/` | `pnpm --dir deployment/cloudflare run check`, `pnpm --dir deployment/cloudflare test` and the [dry runs](deployment/cloudflare/README.md) |
 
-The capability evals call live models, so maintainers run them on releases and on request. See [evals](evals/README.md).
+The capability evals call live models. They run nightly on `main` and on request. They do not gate releases. See [evals](evals/README.md).
 
 ## Tests
 

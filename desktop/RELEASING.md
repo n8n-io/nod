@@ -34,7 +34,7 @@ For automatic private runtime downloads and Intel updates, publish and verify th
 
 There is no daily release. Normal main merges do not publish a desktop version. CI completion must belong to the exact merged release PR from this repository. The build stays on that commit even if main moves. Repeated CI completion for a published version does not build it again. Only the final release job records a `mac-release` deployment.
 
-After publication, a separate **Evals** workflow compares the published tag with the previous release. It produces a report without holding the release build queue. Its report does not gate publication.
+The **Evals** workflow runs the full controlled suite nightly on `main` at 01:23 UTC. Live model evals do not run on release publication and do not gate publication. Maintainers can still start a manual comparison with a release tag.
 
 ## Inspect or recover a build
 
