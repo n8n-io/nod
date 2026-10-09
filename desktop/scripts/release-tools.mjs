@@ -20,7 +20,11 @@ export function run(command, args, { output = 'combined', timeout = 120_000, ...
     const timer = setTimeout(() => {
       expired = true;
       child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+      killTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }, 5_000);
     }, timeout);
     child.stdout?.on('data', (value) => {
       stdout = (stdout + value).slice(-8 * 1024 * 1024);

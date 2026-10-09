@@ -1,4 +1,4 @@
-import { relative, resolve } from 'node:path';
+import { posix, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ConnectedCli, Workspace } from '../../ports/computer.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
@@ -12,7 +12,7 @@ export function workspaceFile(id: string, path: string): string {
   const base = `/workspace/${threadIdentity(id)}`;
   if (!path || path.includes('\0') || path.includes('\\'))
     throw new Error('A workspace file path is required.');
-  const full = resolve(base, path);
+  const full = posix.resolve(base, path);
   if (full !== base && !full.startsWith(base + '/'))
     throw new Error('Files must stay within the task workspace.');
   return full;
@@ -189,7 +189,7 @@ export function createCommandWorkspace(options: {
       if (!bytes.byteLength || bytes.byteLength > 15 * 1024 * 1024)
         throw new Error('Files must be between 1 byte and 15 MB.');
       const base = `/workspace/${id}`;
-      const target = relative(base, workspaceFile(id, path));
+      const target = posix.relative(base, workspaceFile(id, path));
       const temporary = `.otto-upload-${randomUUID()}`;
       try {
         for (let offset = 0; offset < bytes.byteLength; offset += 512 * 1024) {
@@ -226,7 +226,7 @@ export function createCommandWorkspace(options: {
       const result = await helper(
         id,
         artifactReadProgram,
-        { base, path: relative(base, workspaceFile(id, path)), maxBytes },
+        { base, path: posix.relative(base, workspaceFile(id, path)), maxBytes },
         { maxBytes },
       );
       return result.stdout;

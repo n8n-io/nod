@@ -1,0 +1,9 @@
+FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+RUN apt-get update && apt-get install -y --no-install-recommends python3 iptables iproute2 ca-certificates procps libseccomp2 && rm -rf /var/lib/apt/lists/*
+COPY docker.tgz /tmp/docker.tgz
+RUN tar -xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin && rm /tmp/docker.tgz && mkdir -p /etc/docker /opt/otto-assets /usr/local/lib/otto /var/lib/otto
+COPY windows-guest.py /usr/local/lib/otto/windows-guest.py
+COPY images /opt/otto-assets/images
+COPY manifest.json /opt/otto-assets/manifest.json
+COPY licenses /opt/otto-assets/licenses
+RUN printf '%s\n' '[automount]' 'enabled=false' 'mountFsTab=false' '[interop]' 'enabled=false' 'appendWindowsPath=false' > /etc/wsl.conf && printf '%s\n' '{"bridge":"none","dns":["1.1.1.1","8.8.8.8"],"storage-driver":"overlay2","userland-proxy":true,"iptables":true,"ip6tables":false,"ipv6":false,"log-driver":"local","log-opts":{"max-size":"10m","max-file":"2"}}' > /etc/docker/daemon.json && printf '%s\n' '#!/bin/sh' 'exec /usr/bin/python3 /usr/local/lib/otto/windows-guest.py docker "$@"' > /usr/local/bin/otto-docker && chmod 555 /usr/local/bin/otto-docker /usr/local/lib/otto/windows-guest.py

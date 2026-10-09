@@ -474,7 +474,7 @@ function showSettings(section = 'general', _mode, reset = false) {
     minHeight: 500,
     title: 'Otto',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1b21' : '#fdfcfe',
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'index.cjs'),
       contextIsolation: true,
@@ -517,8 +517,8 @@ function showEngine() {
     minHeight: 600,
     title: 'Otto',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1b21' : '#fdfcfe',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 17 },
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 16, y: 17 } } : {}),
     webPreferences: {
       preload: join(desktopRoot, 'preload', 'engine.cjs'),
       contextIsolation: true,
@@ -633,7 +633,21 @@ function availablePort() {
 
 function baseEnvironment() {
   return Object.fromEntries(
-    ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'PATH', 'SHELL']
+    [
+      'HOME',
+      'USER',
+      'LOGNAME',
+      'TMPDIR',
+      'LANG',
+      'LC_ALL',
+      'PATH',
+      'SHELL',
+      'SYSTEMROOT',
+      'USERPROFILE',
+      'LOCALAPPDATA',
+      'TEMP',
+      'TMP',
+    ]
       .filter((key) => process.env[key])
       .map((key) => [key, process.env[key]]),
   );
@@ -700,7 +714,7 @@ async function finishEnginePreparation() {
   await appPreferences.sync();
   if (quitting || !engine) throw new Error('Otto is closing.');
   await writeDiagnostic('Engine ready.').catch(() => {});
-  update({ phase: 'ready', message: 'Otto is running on this Mac.', progress: undefined });
+  update({ phase: 'ready', message: 'Otto is running on your computer.', progress: undefined });
   synchronizeNotifications();
   if (!replayingOnboarding) {
     if (pendingFeedback || foregroundWindow()) showEngine();
@@ -1033,6 +1047,7 @@ async function prepare(options = {}) {
         message: bounded(error.message),
         error: bounded(error.message),
         needsRuntimeArchive: error.code === 'RUNTIME_ARCHIVE_REQUIRED',
+        needsWsl: error.code === 'OTTO_WSL_REQUIRED',
       });
       return status;
     })
@@ -1274,6 +1289,33 @@ else {
       ipcMain.handle('otto:runtime:import', (event) => {
         allowSetup(event);
         return importRuntime();
+      });
+      ipcMain.handle('otto:runtime:install-wsl', async (event) => {
+        allowSetup(event);
+        if (process.platform !== 'win32' || lifecycle.busy || quitting || !status.runtime.needsWsl)
+          throw new Error('This setup action is unavailable.');
+        const { response } = await dialog.showMessageBox(setupWindow, {
+          type: 'question',
+          message: 'Install Windows Subsystem for Linux?',
+          detail:
+            'Windows will ask for administrator approval. Restart your PC after installation, then open Otto again.',
+          buttons: ['Install WSL', 'Cancel'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response === 1) return status;
+        const { installWsl } = await import(
+          pathToFileURL(join(engineRoot, 'desktop/runtime/windows.mjs')).href
+        );
+        await lifecycle.install(installWsl, { warmup: false });
+        update({
+          phase: 'error',
+          message: 'Restart your PC, then open Otto again.',
+          error: 'Restart your PC, then open Otto again.',
+          needsWsl: false,
+        });
+        return status;
       });
       ipcMain.handle('otto:chat-read:get', (event, ownerId, threadId) => {
         if (!isEngine(event)) throw new Error('This action is unavailable.');

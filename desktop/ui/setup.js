@@ -64,6 +64,8 @@ function render() {
   progress.style.width = ready ? '100%' : failure ? '0%' : '';
   element('retry').hidden = !failure;
   element('review-setup').hidden = !failure;
+  element('install-wsl').hidden = !failure || !(failure.needsWsl || runtime?.needsWsl);
+  element('install-wsl').disabled = busy;
   element('import-runtime').hidden =
     !failure || !(failure.needsRuntimeArchive || runtime?.needsRuntimeArchive);
   error(failure?.error || failure?.message || '', true);
@@ -124,6 +126,22 @@ for (const field of ['notifications', 'launch-at-login'])
     }
   });
 element('retry').addEventListener('click', () => void prepare({ retry: true }));
+element('install-wsl').addEventListener('click', async () => {
+  if (busy) return;
+  busy = true;
+  render();
+  try {
+    latestStatus = await desktop.installWsl();
+  } catch (cause) {
+    latestStatus = {
+      ...latestStatus,
+      error: cause.message || 'Windows could not install WSL. Try again.',
+    };
+  } finally {
+    busy = false;
+    render();
+  }
+});
 element('review-setup').addEventListener('click', () => {
   loading = false;
   render();

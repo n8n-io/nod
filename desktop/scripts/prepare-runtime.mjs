@@ -17,6 +17,9 @@ const imagesOnly = process.argv.includes('--images-only');
 const hostOnly = process.argv.includes('--host-only');
 const prebuiltImages = process.argv.includes('--prebuilt-images');
 const imageCompressionLevel = 6;
+const windows = process.env.OTTO_DESKTOP_TARGET === 'win32-x64';
+const architecture = windows ? 'amd64' : 'arm64';
+const nodeArchitecture = windows ? 'x64' : 'arm64';
 if (imagesOnly && hostOnly) throw new Error('Choose either image preparation or host preparation.');
 if (!imagesOnly && (process.platform !== 'darwin' || process.arch !== 'arm64'))
   throw new Error('Host runtime preparation requires an Apple Silicon Mac.');
@@ -120,7 +123,7 @@ const images = [];
 if (hostOnly) {
   const saved = JSON.parse(await readFile(join(assets, 'images-manifest.json'), 'utf8'));
   if (
-    saved.platform !== 'linux-arm64' ||
+    saved.platform !== `linux-${nodeArchitecture}` ||
     saved.fingerprint !== input.fingerprint ||
     !Array.isArray(saved.images) ||
     saved.images.length !== imageDefinitions.length
@@ -147,19 +150,30 @@ if (hostOnly) {
     if (item.dockerfile && !prebuiltImages)
       await run(
         'docker',
-        ['build', '--platform', 'linux/arm64', '-f', item.dockerfile, '-t', item.tag, '.'],
+        [
+          'build',
+          '--platform',
+          `linux/${architecture}`,
+          '-f',
+          item.dockerfile,
+          '-t',
+          item.tag,
+          '.',
+        ],
         { stdio: 'inherit' },
       );
     else if (!item.dockerfile) {
       const current = await run('docker', ['image', 'inspect', item.tag])
         .then((output) => JSON.parse(output)[0])
         .catch(() => undefined);
-      if (current?.Architecture !== 'arm64' || current?.Os !== 'linux')
-        await run('docker', ['pull', '--platform', 'linux/arm64', item.tag], { stdio: 'inherit' });
+      if (current?.Architecture !== architecture || current?.Os !== 'linux')
+        await run('docker', ['pull', '--platform', `linux/${architecture}`, item.tag], {
+          stdio: 'inherit',
+        });
     }
     const inspection = JSON.parse(await run('docker', ['image', 'inspect', item.tag]))[0];
-    if (inspection.Architecture !== 'arm64' || inspection.Os !== 'linux')
-      throw new Error(`${item.name} image is not Linux arm64.`);
+    if (inspection.Architecture !== architecture || inspection.Os !== 'linux')
+      throw new Error(`${item.name} image has an incompatible platform.`);
     if (item.name === 'browser')
       await run(
         process.execPath,
@@ -196,9 +210,7 @@ if (hostOnly) {
       await rename(`${target}.tmp`, target);
       await writeFile(stamp, stampValue);
     }
-    const archiveManifest = JSON.parse(
-      await run('/usr/bin/tar', ['-xOzf', target, 'manifest.json']),
-    );
+    const archiveManifest = JSON.parse(await run('tar', ['-xOzf', target, 'manifest.json']));
     const archiveImage = archiveManifest.find((entry) => entry.RepoTags?.includes(item.tag));
     const configurationHash = basename(archiveImage?.Config || '').replace(/\.json$/, '');
     if (!/^[a-f0-9]{64}$/.test(configurationHash))
@@ -215,8 +227,11 @@ if (hostOnly) {
 if (!hostOnly)
   await writeFile(
     join(assets, 'images-manifest.json'),
-    JSON.stringify({ platform: 'linux-arm64', fingerprint: input.fingerprint, images }, null, 2) +
-      '\n',
+    JSON.stringify(
+      { platform: `linux-${nodeArchitecture}`, fingerprint: input.fingerprint, images },
+      null,
+      2,
+    ) + '\n',
   );
 if (imagesOnly) {
   console.log(`Image assets ready: ${assets}`);

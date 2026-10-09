@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { cpus as hostCpus, homedir, totalmem } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { pipeline } from 'node:stream/promises';
 import { guestConfiguration, protectNetworks } from './guest-config.mjs';
 import { ensureRuntimeAssets, findRuntimeAssets } from './assets.mjs';
 
@@ -20,25 +21,41 @@ async function fileHash(path) {
   return hash.digest('hex');
 }
 
-function execute(command, args, { env, signal, timeout = 120_000, input } = {}) {
+export function execute(
+  command,
+  args,
+  { env, signal, timeout = 120_000, input, encoding = 'utf8' } = {},
+) {
   signal?.throwIfAborted();
   return new Promise((resolveRun, reject) => {
-    const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'], shell: false });
+    const child = spawn(command, args, {
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
+      windowsHide: true,
+    });
     let output = '';
     let timedOut = false;
     let spawnError;
     let killTimer;
     const stop = () => {
       child.kill('SIGTERM');
-      killTimer ??= setTimeout(() => child.kill('SIGKILL'), 5000);
+      killTimer ??= setTimeout(() => {
+        child.kill('SIGKILL');
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, 5000);
     };
     const timer = setTimeout(() => {
       timedOut = true;
       stop();
     }, timeout);
     const collect = (chunk) => {
-      output = (output + chunk.toString()).slice(-128 * 1024);
+      output = (output + chunk).slice(-128 * 1024);
     };
+    child.stdout.setEncoding(encoding);
+    child.stderr.setEncoding(encoding);
     child.stdout.on('data', collect);
     child.stderr.on('data', collect);
     child.on('error', (error) => {
@@ -46,7 +63,12 @@ function execute(command, args, { env, signal, timeout = 120_000, input } = {}) 
     });
     signal?.addEventListener('abort', stop, { once: true });
     child.stdin.on('error', () => {});
-    child.stdin.end(input);
+    if (input?.pipe)
+      pipeline(input, child.stdin).catch((error) => {
+        spawnError = error;
+        stop();
+      });
+    else child.stdin.end(input);
     child.on('close', (code) => {
       clearTimeout(timer);
       clearTimeout(killTimer);
@@ -66,7 +88,7 @@ function execute(command, args, { env, signal, timeout = 120_000, input } = {}) 
   });
 }
 
-async function availablePort() {
+export async function availablePort() {
   const server = createServer();
   await new Promise((resolvePort, reject) => {
     server.once('error', reject);
@@ -77,7 +99,7 @@ async function availablePort() {
   return port;
 }
 
-async function waitFor(operation, { signal, attempts = 60, interval = 1000 } = {}) {
+export async function waitFor(operation, { signal, attempts = 60, interval = 1000 } = {}) {
   let failure;
   for (let attempt = 0; attempt < attempts; attempt++) {
     signal?.throwIfAborted();
@@ -93,6 +115,10 @@ async function waitFor(operation, { signal, attempts = 60, interval = 1000 } = {
 }
 
 async function prepare(options, onComputerStart) {
+  if (process.platform === 'win32' && process.arch === 'x64') {
+    const { prepareWindowsRuntime } = await import('./windows.mjs');
+    return prepareWindowsRuntime(options, onComputerStart);
+  }
   if (process.platform !== 'darwin' || process.arch !== 'arm64')
     throw new Error('This experimental Otto build requires an Apple Silicon Mac.');
   const dataRoot = resolve(options.dataRoot || options.root);
@@ -287,8 +313,7 @@ async function prepare(options, onComputerStart) {
     path,
     dockerEnvironment,
     runDocker,
-    runLima,
-    vm,
+    runGuest: (input) => runLima(['shell', vm, 'sudo', 'bash', '-s'], { input }),
     signal,
     status,
   });
@@ -368,7 +393,7 @@ export async function replaceContainer(
   );
 }
 
-async function finishRuntime({
+export async function finishRuntime({
   dataRoot,
   resourcesPath,
   assets,
@@ -380,8 +405,7 @@ async function finishRuntime({
   path,
   dockerEnvironment,
   runDocker,
-  runLima,
-  vm,
+  runGuest,
   signal,
   status,
 }) {
@@ -399,7 +423,7 @@ async function finishRuntime({
     const name = `otto-${role}-${identity}`;
     await ensureNetwork(runDocker, { name, subnet, bridge });
   }
-  await runLima(['shell', vm, 'sudo', 'bash', '-s'], { input: protectNetworks });
+  await runGuest(protectNetworks);
   const volumes = {
     postgres: `otto-postgres-${identity}`,
     browser: `otto-browser-${identity}`,
@@ -416,7 +440,7 @@ async function finishRuntime({
       '--network',
       `otto-control-${identity}`,
       '--publish',
-      '127.0.0.1:54329:5432',
+      `127.0.0.1:${process.platform === 'win32' ? saved.port : 54329}:5432`,
       '--memory',
       '512m',
       '--cpus',
@@ -530,10 +554,11 @@ async function finishRuntime({
     { signal },
   );
   const wrapperRoot = join(controlRoot, 'bin');
-  await mkdir(wrapperRoot, { recursive: true, mode: 0o700 });
-  await writeFile(
-    join(wrapperRoot, 'docker'),
-    `#!/bin/sh
+  if (process.platform !== 'win32') {
+    await mkdir(wrapperRoot, { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(wrapperRoot, 'docker'),
+      `#!/bin/sh
 set -eu
 docker=${shellQuote(docker)}
 if [ "\${1-}" = exec ]; then
@@ -548,8 +573,8 @@ if [ "\${1-}" = exec ]; then
     case "$directory" in
       /workspace/*)
         identity="\${directory#/workspace/}"
-        case "$identity" in *[!0-9a-f-]*|'') exit 64 ;; esac
-        [ "\${#identity}" -eq 36 ] || exit 64
+        case "$identity" in *[!0-9a-zA-Z_-]*|'') exit 64 ;; esac
+        [ "\${#identity}" -le 100 ] || exit 64
         "$docker" exec --user node --workdir /workspace "$target" mkdir -p -- "$directory" >/dev/null
         ;;
     esac
@@ -557,10 +582,21 @@ if [ "\${1-}" = exec ]; then
 fi
 exec "$docker" "$@"
 `,
-    { mode: 0o700 },
-  );
+      { mode: 0o700 },
+    );
+  }
   const env = {
-    PATH: [wrapperRoot, join(assets, 'docker-host/docker'), path].join(delimiter),
+    PATH:
+      process.platform === 'win32'
+        ? path
+        : [wrapperRoot, join(assets, 'docker-host/docker'), path].join(delimiter),
+    ...(process.platform === 'win32'
+      ? {
+          OTTO_WSL_DISTRIBUTION: dockerEnvironment.OTTO_WSL_DISTRIBUTION,
+          TEMP: dockerEnvironment.TEMP,
+          TMP: dockerEnvironment.TMP,
+        }
+      : {}),
     DOCKER_HOST: dockerEnvironment.DOCKER_HOST,
     DOCKER_CONFIG: dockerEnvironment.DOCKER_CONFIG,
     DOCKER_CONTEXT: '',
@@ -594,6 +630,10 @@ export function prepareRuntime(options) {
 }
 
 export async function stopRuntime(options) {
+  if (process.platform === 'win32') {
+    const { stopWindowsRuntime } = await import('./windows.mjs');
+    return stopWindowsRuntime(options);
+  }
   const dataRoot = resolve(options.dataRoot || options.root);
   const resourcesPath = resolve(options.resourcesPath || options.resources);
   const identity = createHash('sha256').update(dataRoot).digest('hex').slice(0, 12);

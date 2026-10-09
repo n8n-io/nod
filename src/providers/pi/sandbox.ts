@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, unlink } from 'node:fs/promises';
+import { lstat, open, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, posix } from 'node:path';
 import {
@@ -75,19 +75,36 @@ export async function writeWorkspaceFile(
 }
 
 function hostOutputs(text: string) {
-  const root = tmpdir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const root = tmpdir()
+    .replaceAll('\\', '/')
+    .split('/')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[\\\\/]');
   const pattern = new RegExp(
-    `${root}/(?:pi-(?:bash|codemode)-[a-f0-9]{16}\\.(?:log|txt|png|jpg|gif|webp)|pi-web-pdf/[a-z0-9-]{1,100}\\.md)`,
-    'g',
+    `${root}[\\\\/](?:pi-(?:bash|codemode)-[a-f0-9]{16}\\.(?:log|txt|png|jpg|gif|webp)|pi-web-pdf[\\\\/][a-z0-9-]{1,100}\\.md)`,
+    process.platform === 'win32' ? 'gi' : 'g',
   );
   return text.match(pattern) ?? [];
 }
 
 async function readHostOutput(path: string, owned: string[]) {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const before = await lstat(path);
+  if (!before.isFile() || before.isSymbolicLink()) throw new Error();
+  const file = await open(
+    path,
+    process.platform === 'win32'
+      ? constants.O_RDONLY
+      : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
   try {
     const info = await file.stat();
-    if (!info.isFile() || info.nlink !== 1 || (process.getuid && info.uid !== process.getuid()))
+    if (
+      !info.isFile() ||
+      info.nlink !== 1 ||
+      info.ino !== before.ino ||
+      info.dev !== before.dev ||
+      (process.getuid && info.uid !== process.getuid())
+    )
       throw new Error();
     owned.push(path);
     if (info.size > 64 * 1024 * 1024) throw new Error();

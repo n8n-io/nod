@@ -1,0 +1,105 @@
+name: Build Windows preview
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-preview.yml'
+      - 'desktop/**'
+      - 'src/**'
+      - 'public/**'
+      - 'Dockerfile.*'
+      - '.dockerignore'
+      - 'vite.config.ts'
+      - 'index.html'
+      - 'tsconfig.json'
+      - 'tests/sandbox.test.ts'
+      - 'tests/pi.test.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: Build the Windows private computer
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    env:
+      OTTO_DESKTOP_TARGET: win32-x64
+      OTTO_RUNTIME_ASSETS: .local/windows-runtime-assets
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build and check the x64 images and root filesystem
+        run: node desktop/scripts/prepare-windows-runtime.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-runtime
+          path: |
+            .local/windows-runtime-assets/guest.tar.gz
+            .local/windows-runtime-assets/manifest.json
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  installer:
+    name: Build and check the Windows installer
+    needs: runtime
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Install locked Windows dependencies and installer tooling
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile
+          choco install nsis --yes --no-progress
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-runtime
+          path: .local/windows-runtime-assets
+      - name: Check Windows workspace paths
+        run: pnpm exec tsx --test --test-name-pattern="workspace paths cannot|workspace artifact reads" tests/sandbox.test.ts
+      - name: Build the client and Windows installer
+        run: |
+          pnpm run build
+          node desktop/scripts/build-windows.mjs
+      - name: Install and check the packaged engine
+        run: node desktop/scripts/check-windows.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Otto-Windows-x64
+          path: |
+            dist/windows/Otto-Setup-x64.exe
+            dist/windows/Otto-Runtime-win32-x64.tar.gz
+            dist/windows/SHA256SUMS
+            dist/windows/windows-check.json
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error

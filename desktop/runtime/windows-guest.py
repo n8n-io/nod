@@ -1,0 +1,47 @@
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+docker = '/usr/local/bin/docker'
+
+if sys.argv[1] == 'docker':
+    args = sys.argv[2:]
+    if args and args[0] == 'exec' and '--workdir' in args:
+        index = args.index('--workdir')
+        directory = args[index + 1]
+        container = args[index + 2]
+        if re.fullmatch(r'/workspace/[a-zA-Z0-9_-]{1,100}', directory) and re.fullmatch(r'otto-workspace-[a-f0-9]{12}', container):
+            subprocess.run([docker, 'exec', '--user', 'node', '--workdir', '/workspace', container, 'mkdir', '-p', '--', directory], check=True, stdout=subprocess.DEVNULL)
+    os.execv(docker, [docker, *args])
+
+config = json.loads(sys.stdin.buffer.read(8193))
+if not re.fullmatch(r'[a-f0-9]{12}', config['identity']):
+    sys.exit(64)
+identity = '/var/lib/otto/identity'
+os.makedirs('/var/lib/otto', mode=0o700, exist_ok=True)
+if os.path.exists(identity):
+    if open(identity).read() != config['identity']:
+        sys.exit(64)
+else:
+    with open(identity, 'x') as file:
+        file.write(config['identity'])
+if subprocess.run([docker, 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+    with open('/var/log/otto-docker.log', 'ab') as log:
+        subprocess.Popen(['/usr/local/bin/dockerd', '--config-file=/etc/docker/daemon.json', '--host=unix:///var/run/docker.sock'], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+for attempt in range(120):
+    if subprocess.run([docker, 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+        break
+    time.sleep(0.5)
+else:
+    sys.exit(1)
+manifest = json.load(open('/opt/otto-assets/manifest.json'))
+for image in manifest['images']:
+    result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], capture_output=True, text=True)
+    if result.returncode or result.stdout.strip() != image['id']:
+        subprocess.run([docker, 'load', '--input', '/opt/otto-assets/' + image['file']], check=True, stdout=subprocess.DEVNULL)
+    result = subprocess.run([docker, 'image', 'inspect', '--format', '{{.Id}}', image['reference']], check=True, capture_output=True, text=True)
+    if result.stdout.strip() != image['id']:
+        sys.exit(1)
