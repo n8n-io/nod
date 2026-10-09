@@ -1064,10 +1064,20 @@ test(
             .error,
           spendingLimitReached,
         );
-        limitReached = true;
         t.after(() => {
           limitReached = false;
+          release('steer-limit');
         });
+        block('steer-limit');
+        const active = await thread.submitUserMessage('steer-limit', [], { channel: 'web' });
+        await waitFor(() => Boolean(ran(active.turnId)));
+        limitReached = true;
+        const chat = await thread.submitUserMessage('limit chat fixture', [], { channel: 'web' });
+        release('steer-limit');
+        await waitFor(settled(active.turnId));
+        await waitFor(settled(chat.turnId));
+        assert.deepEqual(taken.get(active.turnId), []);
+        assert.equal(await turnStatus(active.turnId), 'succeeded');
         const background = [
           await thread.enqueueTurn('limit schedule fixture', {
             source: 'schedule',
@@ -1082,7 +1092,6 @@ test(
             sourceId: `connection:${randomUUID()}`,
           }),
         ];
-        const chat = await thread.submitUserMessage('limit chat fixture', [], { channel: 'web' });
         for (const turnId of [...background, chat.turnId]) await waitFor(settled(turnId));
         for (const turnId of [...background, chat.turnId]) {
           assert.equal(ran(turnId), undefined);
