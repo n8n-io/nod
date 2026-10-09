@@ -2,7 +2,6 @@ import hashlib
 import json
 from pathlib import Path
 import random
-import re
 import string
 import subprocess
 import sys
@@ -71,47 +70,63 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
         raise SystemExit("The public token exception must be limited to its configuration file.")
 
 evidence_path = "docs/research/apps-acceptance-b8e489cb.json"
-evidence = (config.parent / evidence_path).read_text()
-code, findings = scan(evidence, evidence_path)
+code, findings = scan((config.parent / evidence_path).read_text(), evidence_path)
 if code != 0 or findings:
     raise SystemExit("Verified acceptance source hashes must pass secret scanning.")
 
-for change in ["credential", "source_hash"]:
-    altered = json.loads(evidence)
-    if change == "credential":
-        altered["api_key"] = candidate
-    else:
-        altered["source"]["files"]["src/ports/authentication.ts"] = hashlib.sha256(
-            candidate.encode()
-        ).hexdigest()
-    code, findings = scan(json.dumps(altered, indent=2), evidence_path)
+synthetic = f'api_key = "{candidate}"'
+for filename in [
+    "tests/app.test.ts",
+    "desktop/test/app.test.mjs",
+    "deployment/cloudflare/tests/app.ts",
+    "deployment/e2b/live_boundary_test.py",
+    "deployment/n8n/app.test.mjs",
+    "tests/fixtures/app.json",
+    "evals/src/world/app.ts",
+]:
+    code, findings = scan(synthetic, filename)
+    if code != 0 or findings:
+        raise SystemExit("Synthetic values in tests must pass secret scanning.")
+
+for filename in ["src/app.ts", "src/contests/app.ts", "src/latest.ts", "evals/src/app.ts", "docs/testing/run.json"]:
+    code, findings = scan(synthetic, filename)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
-        raise SystemExit("Other values in the acceptance snapshot must fail secret scanning.")
+        raise SystemExit("The test exception must be limited to tests.")
 
-source_line = next(line for line in evidence.splitlines() if '"src/ports/authentication.ts"' in line)
-code, findings = scan(f'{source_line} "api_key": "{candidate}"', evidence_path)
-if code != 1 or not any("api_key" in finding.get("Match", "") for finding in findings):
-    raise SystemExit("A credential beside an allowed source hash must fail secret scanning.")
+digest = hashlib.sha256(candidate.encode()).hexdigest()
+records = f'{{\n  "src/ports/key-store.ts": "{digest}",\n  "projectKeySha256": "{digest}"\n}}\n'
+for filename in ["docs/testing/run.json", "docs/research/run.json"]:
+    code, findings = scan(records, filename)
+    if code != 0 or findings:
+        raise SystemExit("Source hash records in test evidence must pass secret scanning.")
 
-code, findings = scan(evidence, "docs/research/unverified-snapshot.json")
-if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
-    raise SystemExit("Source hash exceptions must be limited to the verified snapshot.")
+for content, filename in [
+    (records, "docs/app.json"),
+    (records, "nested/docs/testing/run.json"),
+    (f'{{\n  "api_key": "{digest}"\n}}\n', "docs/testing/run.json"),
+    (f'{{\n  "src/ports/key-store.ts": "{candidate}"\n}}\n', "docs/testing/run.json"),
+    (f'{{\n  "src/ports/key-store.ts": "{digest}", "api_key": "{candidate}"\n}}\n', "docs/testing/run.json"),
+    (f'{records}api_key = "{candidate}"\n', "docs/testing/run.json"),
+]:
+    code, findings = scan(content, filename)
+    if code != 1 or not any(
+        finding.get("RuleID") == "generic-api-key"
+        and ("api_key" not in content or "api_key" in finding.get("Match", ""))
+        for finding in findings
+    ):
+        raise SystemExit("The evidence exception must be limited to source hash records in test evidence.")
 
-fingerprint_fields = {
-    "projectKeySha256",
-    "src/ports/authentication.ts",
-    "src/ports/key-store.ts",
-    "src/providers/agent-browser/credentials.ts",
-    "src/providers/direct/oauth.ts",
-    "src/providers/discovered/oauth.ts",
-    "src/providers/environment/key-store.ts",
-    "src/providers/keychain/key-store.ts",
-    "src/server/access.ts",
-    "src/server/deployment-auth.ts",
-    "src/server/runtime-auth.ts",
-    "src/web/lib/api.ts",
-    "src/web/pages/credentials.tsx",
+provider_keys = {
+    "github-pat": "ghp_" + candidate[:36],
+    "composio-api-key": "ak_" + candidate[:24],
+    "e2b-api-key": "e2b_" + digest[:40],
 }
+for rule, key in provider_keys.items():
+    for filename in ["tests/app.test.ts", "docs/testing/run.json", "src/app.ts"]:
+        code, findings = scan(f'const value = "{key}";', filename)
+        if code != 1 or not any(finding.get("RuleID") == rule for finding in findings):
+            raise SystemExit("Provider key formats must fail secret scanning everywhere.")
+
 changed_digest = hashlib.sha256(candidate.encode()).hexdigest()
 composio = json.loads(
     (config.parent / ".github/fixtures/composio-secret-scanner.json").read_text()
@@ -122,40 +137,25 @@ for filename in [
     "docs/testing/composio-proxy/cp06.v2.source.json",
     "docs/testing/composio-proxy/cp06.v2.upgrade.a02.source.json",
 ]:
-    snapshot = "".join(
-        f'"{field}": "{digest}"\n' for digest, field in composio["fingerprints"][filename]
-    )
-    code, findings = scan(snapshot, filename)
-    if code != 0 or findings:
-        raise SystemExit("Verified Composio evidence fingerprints must pass secret scanning.")
-    fingerprints = set()
-    for line in snapshot.splitlines():
-        match = re.fullmatch(r'\s*"([^"]+)": "([a-f0-9]{64})",?', line)
-        if match and match[1] in fingerprint_fields:
-            fingerprints.add((match[1], match[2]))
+    fingerprints = composio["fingerprints"][filename]
     if not fingerprints:
         raise SystemExit("The Composio snapshot must exercise a fingerprint exception.")
-    for field, digest in sorted(fingerprints):
-        source_line = f'"{field}": "{digest}"'
-        for altered in [
-            f'"{field}": "{changed_digest}"',
-            f'"api_key": "{digest}"',
-            f'{source_line}, "api_key": "{candidate}"',
-            f'{source_line}\n"api_key": "{candidate}"',
-        ]:
-            code, findings = scan(altered, filename)
-            if code != 1 or not any(
-                finding.get("RuleID") == "generic-api-key"
-                and ("api_key" not in altered or "api_key" in finding.get("Match", ""))
-                for finding in findings
-            ):
-                raise SystemExit("Changed fingerprints and adjacent credentials must fail scanning.")
-    for unverified in ["nested/" + filename, "docs/testing/composio-proxy/unverified.json"]:
-        code, findings = scan(snapshot, unverified)
+    snapshot = "".join(f'"{field}": "{digest}"\n' for digest, field in fingerprints)
+    changed = "".join(f'"{field}": "{changed_digest}"\n' for _, field in fingerprints)
+    for content, target in [
+        (snapshot, filename),
+        (changed, filename),
+        (snapshot, "docs/testing/composio-proxy/new-source.json"),
+    ]:
+        code, findings = scan(content, target)
+        if code != 0 or findings:
+            raise SystemExit("Composio evidence fingerprints must follow the source hash policy.")
+    for outside in ["nested/" + filename, "docs/composio-source.json"]:
+        code, findings = scan(snapshot, outside)
         if code != 1 or not any(
             finding.get("RuleID") == "generic-api-key" for finding in findings
         ):
-            raise SystemExit("Composio fingerprint exceptions must require their exact paths.")
+            raise SystemExit("Composio fingerprint exceptions must require a test evidence path.")
 
 runner_path = "docs/testing/composio-proxy/cp04.v1.results.json"
 property_reference = "const attachment = { " + "".join(composio["propertyReference"]) + "};"

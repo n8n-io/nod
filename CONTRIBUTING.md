@@ -66,6 +66,8 @@ pnpm run build             # types and web bundle
 
 `pnpm run test:integration` runs in an isolated Docker network, removes its containers afterwards and never uses your local database or credentials. `pnpm run format` fixes formatting.
 
+`pnpm install` sets up Git hooks. Each commit formats its staged files and, if [Gitleaks](https://github.com/gitleaks/gitleaks) is installed, scans them for secrets. Each push runs `pnpm run lint`, which is `pnpm run check` without formatting. Secret scanning skips its generic keyword check in tests and fixtures and accepts SHA-256 source hashes in test evidence, but known key formats fail everywhere, so keep test values synthetic.
+
 Changes in some areas need extra checks:
 
 | Area                     | Also run                                                                                                                                  |
