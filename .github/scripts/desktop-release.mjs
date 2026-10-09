@@ -212,6 +212,10 @@ async function plan() {
       const result = JSON.parse(
         run(process.execPath, [fileURLToPath(import.meta.url), 'plan'], { env: environment }),
       );
+      if (result.release_needed === 'false') {
+        await outputValues({ release_needed: 'false' });
+        return;
+      }
       first ||= result;
       if (
         result.release_needed !== 'true' ||

@@ -14,6 +14,8 @@ const pin = sha256(certificate);
 const source = 'a'.repeat(40);
 
 async function fixture(options = {}) {
+  const arch = options.intel ? 'x64' : 'arm64';
+  const manifestName = options.intel ? 'release-darwin-x64.json' : 'release.json';
   const destination = "applications='/Applications'";
   assert.equal(
     installer.split(destination).length,
@@ -71,19 +73,19 @@ async function fixture(options = {}) {
     disk: {
       url: options.hostileUrl
         ? 'https://attacker.invalid/Otto-arm64.dmg'
-        : `${base}/releases/42/assets/103/Otto-arm64.dmg`,
+        : `${base}/releases/42/assets/103/Otto-${arch}.dmg`,
       bytes: disk.length,
       sha256: sha256(disk),
     },
-    manifestUrl: `${base}/releases/42/assets/101/release.json`,
+    manifestUrl: `${base}/releases/42/assets/101/${manifestName}`,
   });
   await write(join(directory, 'release.json'), {
     version,
-    platform: 'darwin-arm64',
+    platform: `darwin-${arch}`,
     source,
     minimumSystemVersion: '14.0',
     signing: { certificateSha256: options.wrongPin ? 'b'.repeat(64) : pin },
-    disk: { file: 'Otto-arm64.dmg', bytes: disk.length, sha256: sha256(disk) },
+    disk: { file: `Otto-${arch}.dmg`, bytes: disk.length, sha256: sha256(disk) },
   });
   const driver = `#!${process.execPath}
 import{readFileSync,writeFileSync,copyFileSync,cpSync,statSync,mkdirSync,renameSync}from'node:fs';
@@ -91,14 +93,14 @@ import{basename,join}from'node:path';
 import{spawnSync}from'node:child_process';
 const command=basename(process.argv[1]),args=process.argv.slice(2),root=process.env.FIXTURE_ROOT,options=JSON.parse(process.env.FIXTURE_OPTIONS);
 const stop=()=>process.exit(1),print=value=>process.stdout.write(String(value)+'\\n');
-if(command==='uname')print(args[0]==='-s'?'Darwin':'arm64');
+if(command==='uname')print(args[0]==='-s'?'Darwin':options.intel?'x86_64':'arm64');
 else if(command==='sw_vers')print('14.7.1');
 else if(command==='id')print('1000');
 else if(command==='stat'){const info=statSync(args[2]);print(args[1]==='%d:%i'?info.dev+':'+info.ino:info.size)}
 else if(command==='pgrep')process.exit(options.running?0:1);
-else if(command==='file')print('Mach-O 64-bit executable arm64');
+else if(command==='file')print('Mach-O 64-bit executable '+(options.intel&&!options.wrongArchitecture?'x86_64':'arm64'));
 else if(command==='plutil'){let value=JSON.parse(readFileSync(args.at(-1),'utf8'));for(const key of args[1].split('.'))value=value?.[key];const type=args[args.indexOf('-expect')+1];if((type==='string'&&typeof value!=='string')||(type==='bool'&&typeof value!=='boolean')||(type==='integer'&&!Number.isInteger(value)))stop();print(value)}
-else if(command==='curl'){if(options.curlConfig){const probe=spawnSync('/usr/bin/curl',[...args,'--version'],{env:{...process.env,CURL_HOME:join(root,'home')},encoding:'utf8'});if(probe.status!==0||probe.stderr.includes('otto-synthetic-unknown-option'))stop()}const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url.endsWith('?installer=true')?'latest.json':url.endsWith('release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(root,'Applications/Otto.app/Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
+else if(command==='curl'){if(options.curlConfig){const probe=spawnSync('/usr/bin/curl',[...args,'--version'],{env:{...process.env,CURL_HOME:join(root,'home')},encoding:'utf8'});if(probe.status!==0||probe.stderr.includes('otto-synthetic-unknown-option'))stop()}const url=args.at(-1);if(!url.startsWith(${JSON.stringify(base + '/')}))stop();const input=url===${JSON.stringify(base + '/releases?installer=true')}+(options.intel?'&platform=darwin-x64':'')?'latest.json':url.endsWith(options.intel?'release-darwin-x64.json':'release.json')?'release.json':'disk';copyFileSync(join(root,input),args[args.indexOf('--output')+1]);if(options.targetChanged&&input==='disk'){const path=join(root,'Applications/Otto.app/Contents/Info.plist');const info=JSON.parse(readFileSync(path,'utf8'));info.CFBundleShortVersionString='0.1.1';writeFileSync(path,JSON.stringify(info))}}
 else if(command==='codesign'){if(options.badSignature&&args.at(-1).includes('mount/'))stop();const extract=args.find(value=>value.startsWith('--extract-certificates='));if(extract)copyFileSync(join(root,'certificate'),extract.split('=')[1]+'0')}
 else if(command==='hdiutil'){if(options.detachFailure&&args[0]==='detach')stop();if(args[0]==='attach')cpSync(join(root,'fixture.app'),join(args[args.indexOf('-mountpoint')+1],'Otto.app'),{recursive:true})}
 else if(command==='ditto'){if(options.copyFailure){mkdirSync(args[1],{recursive:true});writeFileSync(join(args[1],'partial'),'partial copy');stop()}cpSync(args[0],args[1],{recursive:true})}
@@ -319,5 +321,30 @@ test('CLI-INSTALL: stock curl ignores an existing user configuration before proc
     assert.equal(await readFile(state.profile, 'utf8'), 'keep synthetic keys and conversations');
   } finally {
     await state.close();
+  }
+});
+
+test('CLI-INSTALL: Intel metadata, installer and executable use the same architecture', async () => {
+  const f = await fixture({ intel: true });
+  try {
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(await readFile(f.profile, 'utf8'), 'keep synthetic keys and conversations');
+    assert.equal(
+      JSON.parse(await readFile(join(f.target, 'Contents/Info.plist'))).CFBundleShortVersionString,
+      '0.2.0',
+    );
+  } finally {
+    await f.close();
+  }
+  const rejected = await fixture({ intel: true, wrongArchitecture: true });
+  try {
+    const result = rejected.run();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /architecture does not match/);
+    assert.equal(await readFile(join(rejected.target, 'previous'), 'utf8'), 'previous app');
+    assert.equal(await readFile(rejected.profile, 'utf8'), 'keep synthetic keys and conversations');
+  } finally {
+    await rejected.close();
   }
 });

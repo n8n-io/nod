@@ -36,7 +36,7 @@ export function checkRequest(input) {
       apiUrl: `${api}?per_page=100`,
     };
   if (keys === 'tag' && !queryKeys && /^runtime-darwin-(arm64|x64)-[a-f0-9]{64}$/.test(params.tag))
-    return { operation: 'runtime', tag: params.tag, apiUrl: `${api}?per_page=100` };
+    return { operation: 'runtime', tag: params.tag, apiUrl: `${api}/tags/${params.tag}` };
   if (
     keys === 'tag' &&
     !queryKeys &&
@@ -189,6 +189,14 @@ export function releaseResponse(pages, request, baseUrl) {
   };
   try {
     if (!Array.isArray(pages) || !pages.length || pages.length > 5) return unavailable();
+    if (request.operation === 'runtime' && !request.alias && pages.length === 1) {
+      if (pages[0].statusCode === 404)
+        return { aliasApiUrl: 'https://api.github.com/repos/n8n-io/otto/releases?per_page=100' };
+      if (pages[0].statusCode === 200 && !Array.isArray(pages[0].body)) {
+        const legacy = normalize(pages[0].body);
+        return legacy?.tag_name === request.tag ? { status: 200, body: legacy } : missing();
+      }
+    }
     if (pages.some((page) => page.statusCode !== 200))
       return pages.length === 1 &&
         pages[0].statusCode === 404 &&
@@ -455,7 +463,7 @@ export function workflowNodes() {
         language: 'javaScript',
         jsCode: `return [{json:(${releaseResponse.toString()})($input.all().map(item=>item.json),$('Check desktop request').first().json,${JSON.stringify(base)})}];`,
       },
-      output: [{ json: { status: 200, body: [], assetUrl: '', metadata: null } }],
+      output: [{ json: { status: 200, body: [], assetUrl: '', aliasApiUrl: '', metadata: null } }],
     },
     {
       name: 'Resolve asset redirect',
@@ -545,6 +553,56 @@ export function workflowNodes() {
       },
       output: [{ json: {} }],
     },
+    {
+      name: 'Find runtime alias',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 2.3,
+      parameters: condition('={{ !!$json.aliasApiUrl }}'),
+      output: [{ json: {} }],
+    },
+    {
+      name: 'Read runtime aliases',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.5,
+      credentials,
+      onError: 'continueRegularOutput',
+      parameters: {
+        method: 'GET',
+        url: 'https://api.github.com/repos/n8n-io/otto/releases?per_page=100',
+        authentication: 'predefinedCredentialType',
+        nodeCredentialType: 'githubApi',
+        sendHeaders: true,
+        headerParameters: headers,
+        options: {
+          ...options,
+          pagination: {
+            pagination: {
+              paginationMode: 'updateAParameterInEachRequest',
+              parameters: {
+                parameters: [{ type: 'qs', name: 'page', value: '={{ $pageCount + 1 }}' }],
+              },
+              paginationCompleteWhen: 'other',
+              completeExpression:
+                '={{ $response.statusCode !== 200 || !Array.isArray($response.body) || $response.body.length < 100 }}',
+              limitPagesFetched: true,
+              maxRequests: 5,
+            },
+          },
+        },
+      },
+      output: [{ json: { statusCode: 200, body: [] } }],
+    },
+    {
+      name: 'Build runtime alias response',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      parameters: {
+        mode: 'runOnceForAllItems',
+        language: 'javaScript',
+        jsCode: `return [{json:(${releaseResponse.toString()})($input.all().map(item=>item.json),{...$('Check desktop request').first().json,alias:true},${JSON.stringify(base)})}];`,
+      },
+      output: [{ json: { status: 200, body: {} } }],
+    },
   ];
 }
 
@@ -566,5 +624,6 @@ export function workflowCode() {
         `const n${index} = ${index < 5 ? 'trigger' : type === 'n8n-nodes-base.if' ? 'ifElse' : 'node'}(${literal({ ...(type === 'n8n-nodes-base.if' ? {} : { type }), version: typeVersion, config, output })});`,
     )
     .join('\n');
-  return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('otto-desktop-releases','Otto Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))).onFalse(n12))\n.add(n1).to(n5).add(n2).to(n5).add(n3).to(n5).add(n4).to(n5)\n.group('Serve published desktop assets',[n5,n6,n7,n8,n9,n10,n11,n12],{description:'Validate fixed-repository release and asset identities, then return metadata, an exact update feed, or a temporary asset redirect.'});\n`;
+  return `import { workflow, node, trigger, ifElse, expr } from '@n8n/workflow-sdk';\n${declarations}\nexport default workflow('otto-desktop-releases','Otto Desktop Releases')\n.add(n0).to(n5).to(n6.onTrue(n7.to(n8).to(n13.onTrue(n14.to(n15).to(n9)).onFalse(n9))).onFalse(n12))\n.add(n9.onTrue(n10.to(n11).to(n12)).onFalse(n12))
+.add(n1).to(n5).add(n2).to(n5).add(n3).to(n5).add(n4).to(n5)\n.group('Serve published desktop assets',[n5,n6,n7,n8,n9,n10,n11,n12,n13,n14,n15],{description:'Validate fixed-repository release and asset identities, then return metadata, an exact update feed, or a temporary asset redirect.'});\n`;
 }

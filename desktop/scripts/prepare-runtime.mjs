@@ -21,7 +21,12 @@ const platform = runtimePlatform();
 const nodeArchitecture = platform.endsWith('-x64') ? 'x64' : 'arm64';
 const architecture = nodeArchitecture === 'x64' ? 'amd64' : 'arm64';
 if (imagesOnly && hostOnly) throw new Error('Choose either image preparation or host preparation.');
-if (!imagesOnly && (process.platform !== 'darwin' || process.arch !== nodeArchitecture))
+if (
+  !imagesOnly &&
+  (process.platform !== 'darwin' ||
+    platform !== `darwin-${nodeArchitecture}` ||
+    process.arch !== nodeArchitecture)
+)
   throw new Error('Host runtime preparation requires a Mac with the selected architecture.');
 if (hostOnly && prebuiltImages)
   throw new Error('Prebuilt image export cannot be combined with host-only preparation.');

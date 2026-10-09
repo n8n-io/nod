@@ -1,18 +1,14 @@
 name: Desktop update acceptance
 
 on:
-  pull_request:
-    paths:
-      - 'desktop/**'
-      - '.github/scripts/with-apple-signing.mjs'
-      - '.github/workflows/desktop-updates.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: desktop-update-acceptance-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

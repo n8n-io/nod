@@ -1,22 +1,7 @@
 name: Build Windows preview
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/windows-preview.yml'
-      - 'desktop/**'
-      - 'src/**'
-      - 'public/**'
-      - 'Dockerfile.*'
-      - '.dockerignore'
-      - 'vite.config.ts'
-      - 'index.html'
-      - 'tsconfig.json'
-      - 'tests/sandbox.test.ts'
-      - 'tests/pi.test.ts'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:

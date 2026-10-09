@@ -786,6 +786,12 @@ test('CI completion publishes only a merged release PR and keeps the tested sour
     'false',
   );
   assert.equal((await f.readState()).created, state.created);
+  assert.equal(
+    JSON.parse(
+      (await f.invoke('plan', true, { ...environment, OTTO_RELEASE_TARGETS: 'all' })).stdout,
+    ).release_needed,
+    'false',
+  );
 });
 
 test('one Otto draft retains its source and verified bytes across retries', async (t) => {

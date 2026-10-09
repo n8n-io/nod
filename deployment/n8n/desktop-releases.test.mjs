@@ -48,7 +48,7 @@ test('N8ND-REQUEST and N8ND-TAG: only fixed repository URLs and exact request sh
   const tag = `runtime-darwin-arm64-${'b'.repeat(64)}`;
   assert.equal(
     checkRequest({ params: { tag } }).apiUrl,
-    'https://api.github.com/repos/n8n-io/otto/releases?per_page=100',
+    `https://api.github.com/repos/n8n-io/otto/releases/tags/${tag}`,
   );
   assert.equal(
     read(
@@ -568,4 +568,33 @@ test('Intel installers and feeds resolve only Intel assets from the same Otto re
       .status,
     404,
   );
+});
+
+test('legacy runtime tag lookup stays exact and only a missing release starts alias lookup', () => {
+  const tag = `runtime-darwin-arm64-${'b'.repeat(64)}`;
+  const request = checkRequest({ params: { tag } });
+  assert(request.apiUrl.endsWith(`/tags/${tag}`));
+  const legacy = release({ tag_name: tag });
+  assert.equal(
+    releaseResponse([{ statusCode: 200, body: legacy }], request, base).body.tag_name,
+    tag,
+  );
+  assert.deepEqual(releaseResponse([{ statusCode: 404 }], request, base), {
+    aliasApiUrl: 'https://api.github.com/repos/n8n-io/otto/releases?per_page=100',
+  });
+  assert.equal(releaseResponse([{ statusCode: 403 }], request, base).status, 503);
+  const node = workflowNodes().find((entry) => entry.name === 'Build runtime alias response');
+  const migrated = release({
+    assets: [
+      asset(110, `${tag}.json`),
+      asset(111, `Otto-Runtime-darwin-arm64-${'c'.repeat(12)}.tar.gz`),
+    ],
+  });
+  const result = new Function('$input', '$', node.parameters.jsCode)(
+    { all: () => [{ json: { statusCode: 200, body: [migrated] } }] },
+    () => ({ first: () => ({ json: request }) }),
+  )[0].json;
+  assert.equal(result.status, 200);
+  assert.equal(result.body.tag_name, tag);
+  assert.equal(result.body.id, migrated.id);
 });
