@@ -8,31 +8,31 @@ export function copyBundleSource(source, target, filter = () => true) {
     recursive: true,
     mode: constants.COPYFILE_FICLONE,
     verbatimSymlinks: true,
-    filter: (path) =>
+    filter: async (path) =>
       !/(?:^|\/)\.env(?:[./]|$)|(?:^|\/)(?:\.git|\.local|\.cache|\.DS_Store)(?:\/|$)/.test(
         relative(root, path) || basename(path),
-      ) && filter(path),
+      ) && (await filter(path)),
   });
 }
 
 export async function copyEngineDependencies({ root, target }) {
-  const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
   const supports = (values, actual) =>
     !values ||
     (!values.includes(`!${actual}`) &&
       (!values.some((value) => !value.startsWith('!')) || values.includes(actual)));
-  const incompatible = new Set(
-    Object.entries(lock.packages)
-      .filter(([, item]) => !supports(item.os, 'darwin') || !supports(item.cpu, 'arm64'))
-      .map(([path]) => resolve(root, path)),
-  );
-  await copyBundleSource(
-    join(root, 'node_modules'),
-    join(target, 'node_modules'),
-    (path) =>
-      !incompatible.has(path) &&
-      !/\/node_modules\/(?:agent-browser\/bin\/agent-browser-darwin-x64$|@earendil-works\/pi-tui\/native\/darwin\/prebuilds\/darwin-x64(?:\/|$))/.test(
-        path,
-      ),
-  );
+  await copyBundleSource(join(root, 'node_modules'), join(target, 'node_modules'), async (path) => {
+    if (/\/node_modules\/(?:@[^/]+\/)?[^/]+$/.test(path)) {
+      const metadata = await readFile(join(path, 'package.json'), 'utf8').catch((error) => {
+        if (['ENOENT', 'ENOTDIR'].includes(error.code)) return null;
+        throw error;
+      });
+      if (metadata) {
+        const item = JSON.parse(metadata);
+        if (!supports(item.os, 'darwin') || !supports(item.cpu, 'arm64')) return false;
+      }
+    }
+    return !/\/node_modules\/(?:agent-browser\/bin\/agent-browser-darwin-x64$|@earendil-works\/pi-tui\/native\/darwin\/prebuilds\/darwin-x64(?:\/|$))/.test(
+      path,
+    );
+  });
 }

@@ -20,5 +20,6 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "wrangler": "4.141.0"
-  }
+  },
+  "packageManager": "pnpm@10.34.5"
 }

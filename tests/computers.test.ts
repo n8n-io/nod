@@ -183,7 +183,8 @@ test('template contexts reject symlinked source and do not copy unrelated local 
       'FROM node:24.21.0-bookworm-slim\nCOPY src /app/src\n',
     ),
     writeFile(join(root, 'package.json'), '{}'),
-    writeFile(join(root, 'package-lock.json'), '{}'),
+    writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n'),
+    writeFile(join(root, 'pnpm-workspace.yaml'), 'packages: []\n'),
     writeFile(
       join(root, 'src/providers/container-browser/worker.ts'),
       "import './dependency.ts';\n",
@@ -232,7 +233,13 @@ test('template contexts reject symlinked source and do not copy unrelated local 
 test('computer acceptance fingerprints launch assets and rejects substituted files', async (t) => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'otto-acceptance-source-')));
   t.after(() => rm(root, { recursive: true, force: true }));
-  for (const path of ['src', 'deployment/e2b', 'package.json', 'package-lock.json'])
+  for (const path of [
+    'src',
+    'deployment/e2b',
+    'package.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
+  ])
     await cp(new URL(`../${path}`, import.meta.url), join(root, path), { recursive: true });
   const before = await acceptanceSourceHash(root);
   const launcher = join(root, 'src/providers/container-browser/chromium.sh');

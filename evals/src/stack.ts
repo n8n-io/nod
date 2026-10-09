@@ -162,7 +162,7 @@ export async function startStack(options: {
       ]);
       if (inspected.exitCode)
         throw new Error(
-          `Docker image ${image} is missing. Run npm run eval:capability -- doctor --fix, or set OTTO_EVAL_WORKSPACE_IMAGE and OTTO_EVAL_BROWSER_IMAGE.`,
+          `Docker image ${image} is missing. Run pnpm run eval:capability doctor --fix, or set OTTO_EVAL_WORKSPACE_IMAGE and OTTO_EVAL_BROWSER_IMAGE.`,
         );
     }
     const started = await runProcess('docker', [

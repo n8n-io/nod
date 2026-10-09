@@ -1,0 +1,9 @@
+packages: []
+nodeLinker: hoisted
+allowBuilds:
+  agent-browser: true
+  esbuild: true
+  fsevents: true
+  core-js: false
+  protobufjs: false
+  '@google/genai': false

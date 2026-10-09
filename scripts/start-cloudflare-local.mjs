@@ -99,7 +99,9 @@ export async function startCloudflareLocal(
     await access(wrangler);
     await access(resolve(root, 'dist/web/index.html'));
   } catch {
-    throw new Error('Run npm run build and npm --prefix deployment/cloudflare ci first.');
+    throw new Error(
+      'Run pnpm run build and pnpm --dir deployment/cloudflare install --frozen-lockfile first.',
+    );
   }
   const parsed = ts.parseConfigFileTextToJson(
     'wrangler.jsonc',

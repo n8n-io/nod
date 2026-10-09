@@ -8,8 +8,8 @@ RUN sh /tmp/install-rtk.sh prebuilt && install -m 555 /opt/rtk/bin/rtk /usr/loca
 RUN groupadd --gid 1001 otto-browser && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin otto-browser
 RUN groupadd --gid 1002 otto-connected && useradd --uid 1002 --gid 1002 --create-home --shell /usr/sbin/nologin otto-connected && chmod 700 /home/otto-connected
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci && npm cache clean --force
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile && pnpm store prune
 COPY src ./src
 RUN chmod 555 src/providers/container-browser/chromium.sh && install -m 555 src/providers/container-browser/xvfb.sh /usr/local/bin/Xvfb
 COPY deployment/e2b/browser-ready.ts ./deployment/e2b/browser-ready.ts

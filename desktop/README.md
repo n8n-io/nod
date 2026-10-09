@@ -81,23 +81,23 @@ The updater verifies the matching runtime before staging the signed application,
 These are developer commands, not installation steps for users. Use Node satisfying the root `package.json` engine requirement and a local Docker builder to produce the runtime images.
 
 ```sh
-npm ci
-npm --prefix desktop ci
-npm run desktop:prepare
+pnpm install --frozen-lockfile
+pnpm --dir desktop install --frozen-lockfile
+pnpm run desktop:prepare
 node desktop/scripts/runtime-pack.mjs --seed-cache
-npm run build
-npm run desktop:test
-npm run desktop:build
+pnpm run build
+pnpm run desktop:test
+pnpm run desktop:build
 ```
 
-The lean app, DMG, and matching runtime archive are emitted into `dist/desktop`. `--seed-cache` verifies and installs the prepared runtime on the development Mac, using filesystem clones where available; it is optional for distribution. Prepared assets and the generated release descriptor remain under `.local`. Runtime inputs are pinned in `desktop/runtime/downloads.json` and the generated asset manifest. The build copies the root `npm ci` installation and lockfile, including dynamic dependencies, nested packages and assets. It excludes private local files, packages incompatible with macOS arm64, and bundled Intel-only alternatives in Pi and agent-browser. It does not infer dependencies from source imports or maintain a desktop dependency list.
+The lean app, DMG, and matching runtime archive are emitted into `dist/desktop`. `--seed-cache` verifies and installs the prepared runtime on the development Mac, using filesystem clones where available; it is optional for distribution. Prepared assets and the generated release descriptor remain under `.local`. Runtime inputs are pinned in `desktop/runtime/downloads.json` and the generated asset manifest. The build copies the root `pnpm install --frozen-lockfile` installation and lockfile, including dynamic dependencies, nested packages and assets. It excludes private local files, packages incompatible with macOS arm64, and bundled Intel-only alternatives in Pi and agent-browser. It does not infer dependencies from source imports or maintain a desktop dependency list.
 
 Runtime preparation starts a disposable browser container and verifies its control socket, public navigation, screenshot, and credential/mount boundaries before exporting the image. The check uses the same read-only filesystem and resource restrictions as the app. No provider model or connected account is called.
 
 For a full installer that embeds the runtime assets, run:
 
 ```sh
-npm --prefix desktop run build -- --full
+pnpm --dir desktop run build --full
 ```
 
 That emits `Otto-full-arm64.dmg`. It avoids the separate runtime pack, although first provisioning can still need network access. A lean build uses `OTTO_DESKTOP_UPDATE_SOURCE_URL`, set during app packaging, for automatic first-launch downloads and updates. Alternatively, set `OTTO_RUNTIME_RELEASE_URL` to the actual HTTPS URL of its immutable archive while running `runtime-pack.mjs`. Publish and verify the matching archive before distributing the app. Without either source, the picker is the supported first-install path.
@@ -122,8 +122,8 @@ Sizes use decimal units. That DMG is exactly 392,107,107 bytes; its runtime arch
 
 ## Development checks
 
-To inspect the packaged engine without creating or signing an app, run `npm --prefix desktop run build -- --stage-only`. It writes `dist/desktop-staging/engine`; it does not install or launch Otto.
+To inspect the packaged engine without creating or signing an app, run `pnpm --dir desktop run build --stage-only`. It writes `dist/desktop-staging/engine`; it does not install or launch Otto.
 
-For an unpackaged development run, use `npm run desktop:dev` after preparing the assets and building the web UI. The native app's settings and profile persist independently of the checkout.
+For an unpackaged development run, use `pnpm run desktop:dev` after preparing the assets and building the web UI. The native app's settings and profile persist independently of the checkout.
 
-To replay onboarding in development, run `npm --prefix desktop start -- --onboarding`. For a fresh, isolated development profile, set `OTTO_DESKTOP_USER_DATA` to an absolute directory, for example `OTTO_DESKTOP_USER_DATA=/tmp/otto-onboarding-review npm --prefix desktop start -- --onboarding`. That override is development-only; packaged apps retain their stable profile path.
+To replay onboarding in development, run `pnpm --dir desktop start --onboarding`. For a fresh, isolated development profile, set `OTTO_DESKTOP_USER_DATA` to an absolute directory, for example `OTTO_DESKTOP_USER_DATA=/tmp/otto-onboarding-review pnpm --dir desktop start --onboarding`. That override is development-only; packaged apps retain their stable profile path.

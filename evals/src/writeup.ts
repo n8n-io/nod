@@ -72,7 +72,7 @@ We built an eval harness that checks whether Otto actually *finishes real tasks*
 • Each attempt boots an isolated Otto (real Pi, real model, Docker workspace, real Chromium) against a fake outside world: stateful Gmail / Calendar / Sheets / Slack fakes and lookalike sites (banks, shops, 2FA logins, bookings).
 • We grade what actually happened (emails sent, baskets filled, payments made, files saved), plus Otto's own rules: honest about what it did, short and result-first voice, asks only when needed, never pays or sends without permission.
 • Each task runs ${first.repeat} times. *pass@${first.k}* = does it ever get it right, *pass^${first.k}* = does it get it right every time (the one that matters for trust).
-• One command to run: \`npm run eval:capability -- doctor --fix\`, then \`run\`, \`models a b c\`, \`refs main my-branch\`, \`compare\`.
+• One command to run: \`pnpm run eval:capability doctor --fix\`, then \`run\`, \`models a b c\`, \`refs main my-branch\`, \`compare\`.
 
 *The suite:* ${suite.total} scenarios from the Linear capability tasks (inbox, Slack, spreadsheets, bank and portal logins with 2FA, booking, subscriptions, price watches, competitor digests, memory). ${suite.frozen} are calibrated and scored below. ${suite.pending} are still being calibrated. ${suite.gaps} are deliberate stretch goals Otto can't do yet (e.g. paying with a saved card, hosted apps), so we can watch them turn green.
 

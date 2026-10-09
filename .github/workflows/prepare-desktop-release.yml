@@ -53,11 +53,13 @@ jobs:
             After merging and passing CI, run Build desktop release from main. It creates a draft release by default and reuses the matching runtime when its inputs have not changed.
           add-paths: |
             desktop/package.json
-            desktop/package-lock.json
             desktop/release.json
             desktop/CHANGELOG.md
       - name: Run CI for the bot-created release branch
         if: steps.pr.outputs.pull-request-number != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --ref release/desktop
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+        run: |
+          gh workflow run ci.yml --ref release/desktop
+          gh workflow run pr-title.yml --ref release/desktop -f pull_request="$PR_NUMBER"

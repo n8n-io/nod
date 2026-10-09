@@ -10,12 +10,12 @@
   "scripts": {
     "dev": "node scripts/start.mjs",
     "dev:server": "tsx watch src/server/index.ts",
-    "desktop:dev": "node desktop/scripts/build-ui.mjs && npm --prefix desktop start",
+    "desktop:dev": "node desktop/scripts/build-ui.mjs && pnpm --dir desktop start",
     "desktop:prepare": "node desktop/scripts/prepare-runtime.mjs",
-    "desktop:build": "npm --prefix desktop run build",
-    "desktop:test": "npm --prefix desktop test",
+    "desktop:build": "pnpm --dir desktop run build",
+    "desktop:test": "pnpm --dir desktop test",
     "build": "tsc --noEmit && vite build && node desktop/scripts/build-ui.mjs",
-    "check": "tsc --noEmit && node scripts/check-architecture.mjs && node scripts/check-images.mjs && npm run format:check",
+    "check": "tsc --noEmit && node scripts/check-architecture.mjs && node scripts/check-images.mjs && pnpm run format:check",
     "test": "tsx --test tests/*.test.ts",
     "start": "node scripts/start.mjs --production",
     "test:integration": "node scripts/test-integration.mjs",
@@ -102,5 +102,6 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vite": "^7.2.2"
-  }
+  },
+  "packageManager": "pnpm@10.34.5"
 }

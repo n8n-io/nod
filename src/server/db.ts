@@ -28,7 +28,7 @@ export const pool = createPool({ max: poolSize(process.env.DATABASE_POOL_MAX, 12
 
 export async function initializeDatabase() {
   if (!databaseUrl)
-    throw new Error('Run npm run dev to configure the local database, or set DATABASE_URL.');
+    throw new Error('Run pnpm run dev to configure the local database, or set DATABASE_URL.');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS threads (
       id uuid PRIMARY KEY, owner_id text NOT NULL,

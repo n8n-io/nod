@@ -63,10 +63,7 @@ async function releaseRepository(t) {
   const pkg = { name: 'synthetic-desktop', version: '0.1.0' };
   await Promise.all([
     writeFile(join(root, 'desktop/package.json'), JSON.stringify(pkg)),
-    writeFile(
-      join(root, 'desktop/package-lock.json'),
-      JSON.stringify({ ...pkg, packages: { '': pkg } }),
-    ),
+    writeFile(join(root, 'desktop/pnpm-lock.yaml'), 'lockfileVersion: 9.0\n'),
     writeFile(join(root, 'desktop/CHANGELOG.md'), '# Desktop changes\n'),
     writeFile(join(root, 'desktop/main.mjs'), 'export const initial = true;\n'),
   ]);
@@ -363,14 +360,14 @@ async function releaseFixture(
       ...input.inputs.filter(
         (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
       ),
-      'package-lock.json',
+      'pnpm-lock.yaml',
       'desktop/package.json',
-      'desktop/package-lock.json',
+      'desktop/pnpm-lock.yaml',
     ])) {
       await mkdir(dirname(join(root, path)), { recursive: true });
       await copyFile(join(repository, path), join(root, path));
     }
-    for (const path of ['desktop/package.json', 'desktop/package-lock.json']) {
+    for (const path of ['desktop/package.json']) {
       const file = join(root, path);
       const value = JSON.parse(await readFile(file, 'utf8'));
       value.version = '0.1.0';
@@ -1016,7 +1013,7 @@ test('bundle copy includes explicit release assets under .local while excluding 
   ]);
 });
 
-test('packaged engine loads dynamic dependencies, nested assets and npm binary links outside the checkout', async (t) => {
+test('packaged engine loads dynamic dependencies and binary links outside the checkout and excludes other platforms', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'otto-packaged-dependencies-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'checkout');
@@ -1024,10 +1021,6 @@ test('packaged engine loads dynamic dependencies, nested assets and npm binary l
   const dependency = join(source, 'node_modules', 'synthetic-extension');
   await mkdir(join(dependency, 'assets'), { recursive: true });
   await mkdir(join(source, 'node_modules', '.bin'));
-  await writeFile(
-    join(source, 'package-lock.json'),
-    JSON.stringify({ packages: { 'node_modules/synthetic-extension': { version: '1.0.0' } } }),
-  );
   await writeFile(
     join(dependency, 'package.json'),
     JSON.stringify({ name: 'synthetic-extension', type: 'module', exports: './index.mjs' }),
@@ -1042,7 +1035,17 @@ test('packaged engine loads dynamic dependencies, nested assets and npm binary l
     'import value from "./index.mjs"; console.log(value);',
   );
   await symlink('../synthetic-extension/cli.mjs', join(source, 'node_modules', '.bin', 'probe'));
+  for (const name of ['synthetic-linux', '@synthetic/intel']) {
+    const directory = join(source, 'node_modules', name);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, 'package.json'),
+      JSON.stringify({ name, os: name.includes('linux') ? ['linux'] : ['darwin'], cpu: ['x64'] }),
+    );
+  }
   await copyEngineDependencies({ root: source, target });
+  for (const name of ['synthetic-linux', '@synthetic/intel'])
+    await assert.rejects(stat(join(target, 'node_modules', name)), { code: 'ENOENT' });
   await rm(source, { recursive: true });
   await writeFile(
     join(target, 'probe.mjs'),
@@ -1668,9 +1671,9 @@ test('runtime fingerprints include root dependencies and complete source and rej
   );
   for (const path of new Set([
     ...sourcePaths,
-    'package-lock.json',
+    'pnpm-lock.yaml',
     'desktop/package.json',
-    'desktop/package-lock.json',
+    'desktop/pnpm-lock.yaml',
   ])) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await cp(join(repository, path), join(root, path));
@@ -1687,14 +1690,10 @@ test('runtime fingerprints include root dependencies and complete source and rej
   await writeFile(manifestPath, JSON.stringify(manifest));
   assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(manifestPath, manifestSource);
-  const lockPath = join(root, 'package-lock.json');
+  const lockPath = join(root, 'pnpm-lock.yaml');
   const lockSource = await readFile(lockPath, 'utf8');
-  for (const name of ['agent-browser', '@esbuild/darwin-arm64']) {
-    const lock = JSON.parse(lockSource);
-    lock.packages[`node_modules/${name}`].integrity = 'synthetic-dependency-change';
-    await writeFile(lockPath, JSON.stringify(lock));
-    assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
-  }
+  await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
+  assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(lockPath, lockSource);
   for (const path of ['src/server/index.ts', 'src/web/pages/chat.tsx']) {
     const file = join(root, path);
@@ -1728,9 +1727,9 @@ test('image preparation replaces a cached PostgreSQL image from the wrong archit
     ...input.inputs.filter(
       (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
     ),
-    'package-lock.json',
+    'pnpm-lock.yaml',
     'desktop/package.json',
-    'desktop/package-lock.json',
+    'desktop/pnpm-lock.yaml',
   ])) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await cp(join(repository, path), join(root, path));

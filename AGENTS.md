@@ -42,7 +42,7 @@ Setup is in [README](README.md), development and checks are in [CONTRIBUTING](CO
 
 ## Validation
 
-Run focused tests while editing, then `npm run check`, `npm run test:integration` and `npm run build`. For capability eval changes also run `npm --prefix evals run check` and `npm --prefix evals test`. The evals themselves call live models, so run them manually (see [evals](evals/README.md)). For deployment changes also run `npm --prefix deployment/cloudflare run check`, `npm --prefix deployment/cloudflare test` and both Wrangler dry runs (see [Cloudflare](deployment/cloudflare/README.md)). Report fixtures, UI checks and live checks separately.
+Run focused tests while editing, then `pnpm run check`, `pnpm run test:integration` and `pnpm run build`. For capability eval changes also run `pnpm --dir evals run check` and `pnpm --dir evals test`. The evals themselves call live models, so run them manually (see [evals](evals/README.md)). For deployment changes also run `pnpm --dir deployment/cloudflare run check`, `pnpm --dir deployment/cloudflare test` and both Wrangler dry runs (see [Cloudflare](deployment/cloudflare/README.md)). Report fixtures, UI checks and live checks separately.
 
 ## Tests
 

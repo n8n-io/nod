@@ -4,12 +4,7 @@ import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const releaseFiles = [
-  'desktop/package.json',
-  'desktop/package-lock.json',
-  'desktop/release.json',
-  'desktop/CHANGELOG.md',
-];
+const releaseFiles = ['desktop/package.json', 'desktop/release.json', 'desktop/CHANGELOG.md'];
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const maximumNotesBytes = 64 * 1024;
 
@@ -67,15 +62,6 @@ async function readJson(root, file) {
   } catch {
     throw new Error(`Could not read ${file}.`);
   }
-}
-
-function packageVersions(pkg, lock) {
-  const current = releaseVersion(pkg.version);
-  if (lock.version !== current || lock.packages?.['']?.version !== current)
-    throw new Error('Desktop package and lockfile versions do not match.');
-  if (pkg.name !== lock.name || pkg.name !== lock.packages[''].name)
-    throw new Error('Desktop package and lockfile names do not match.');
-  return current;
 }
 
 function releaseCommits(root, previousTag, source, allowEmpty = false) {
@@ -226,7 +212,7 @@ export async function checkReleasePlan(root, input, path, digest) {
 }
 
 export async function configuredRelease(root) {
-  const path = process.env.OTTO_RELEASE_PLAN || releaseFiles[2];
+  const path = process.env.OTTO_RELEASE_PLAN || releaseFiles[1];
   const manifest = await readJson(root, path);
   return checkRelease(root, process.env.OTTO_RELEASE_VERSION || manifest.version);
 }
@@ -242,12 +228,11 @@ export async function prepareRelease(root, input) {
     );
   if (tagExists(root, `desktop-v${version}`))
     throw new Error(`Tag desktop-v${version} already exists.`);
-  const [pkg, lock, changelog] = await Promise.all([
+  const [pkg, changelog] = await Promise.all([
     readJson(root, releaseFiles[0]),
-    readJson(root, releaseFiles[1]),
-    readFile(resolve(root, releaseFiles[3]), 'utf8'),
+    readFile(resolve(root, releaseFiles[2]), 'utf8'),
   ]);
-  const current = packageVersions(pkg, lock);
+  const current = releaseVersion(pkg.version);
   const previousTag = latestTag(root, source);
   if (
     compareVersions(version, current) < 0 ||
@@ -280,11 +265,8 @@ export async function prepareRelease(root, input) {
   const prefix = (firstSection < 0 ? changelog : changelog.slice(0, firstSection)).trimEnd();
   const history = firstSection < 0 ? '' : changelog.slice(firstSection).trim();
   pkg.version = version;
-  lock.version = version;
-  lock.packages[''].version = version;
   const output = [
     JSON.stringify(pkg, null, 2) + '\n',
-    JSON.stringify(lock, null, 2) + '\n',
     JSON.stringify(manifest, null, 2) + '\n',
     `${prefix}\n\n${notes}${history ? `\n${history}\n` : ''}`,
   ];
@@ -311,14 +293,13 @@ export async function checkRelease(root, input) {
     if (committed !== (await readFile(resolve(root, file), 'utf8')))
       throw new Error(`Commit ${file} before validating the release.`);
   }
-  const [pkg, lock, manifest, changelog] = await Promise.all([
+  const [pkg, manifest, changelog] = await Promise.all([
     readJson(root, releaseFiles[0]),
     readJson(root, releaseFiles[1]),
-    readJson(root, releaseFiles[2]),
-    readFile(resolve(root, releaseFiles[3]), 'utf8'),
+    readFile(resolve(root, releaseFiles[2]), 'utf8'),
   ]);
   if (
-    packageVersions(pkg, lock) !== version ||
+    releaseVersion(pkg.version) !== version ||
     manifest.version !== version ||
     Object.keys(manifest).sort().join(',') !== 'previousTag,source,version' ||
     !/^[a-f0-9]{40}$/.test(manifest.source ?? '')

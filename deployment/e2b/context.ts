@@ -62,7 +62,8 @@ export async function prepareE2BContext(options: { role: E2BTemplateRole; root?:
         : `deployment/e2b/Dockerfile.${options.role}`,
     );
     if (options.role !== 'workspace') {
-      for (const name of ['package.json', 'package-lock.json']) await add(name, await read(name));
+      for (const name of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'])
+        await add(name, await read(name));
       for (const launcher of [
         'src/providers/container-browser/chromium.sh',
         'src/providers/container-browser/xvfb.sh',

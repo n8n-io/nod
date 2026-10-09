@@ -105,13 +105,15 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.source }}
           persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24.21.0'
-          cache: npm
+          cache: pnpm
       - name: Install validation dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Set up Docker build cache
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
       - name: Build the workspace image
@@ -174,20 +176,22 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.source }}
           persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24.21.0'
-          cache: npm
+          cache: pnpm
           cache-dependency-path: |
-            package-lock.json
-            desktop/package-lock.json
+            pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
       - name: Install locked dependencies without signing credentials
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: |
-          npm ci
-          npm --prefix desktop ci
+          pnpm install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile
       - name: Download image archives
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -254,25 +258,27 @@ jobs:
           ref: ${{ needs.plan.outputs.source }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24.21.0'
-          cache: npm
+          cache: pnpm
           cache-dependency-path: |
-            package-lock.json
-            desktop/package-lock.json
+            pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
       - name: Cache Electron download
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/Library/Caches/electron
-          key: desktop-electron-arm64-${{ hashFiles('desktop/package-lock.json') }}
+          key: desktop-electron-arm64-${{ hashFiles('desktop/pnpm-lock.yaml') }}
       - name: Install and build without signing credentials
         run: |
-          npm ci
-          npm --prefix desktop ci
-          npm run desktop:test
-          npm run build
+          pnpm install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile
+          pnpm run desktop:test
+          pnpm run build
       - name: Download the verified runtime descriptor
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -298,7 +304,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: >-
           node .github/scripts/with-apple-signing.mjs
-          npm --prefix desktop run build -- --release
+          pnpm --dir desktop run build --release
           --runtime-descriptor "$GITHUB_WORKSPACE/.local/desktop-runtime-release/runtime-release.json" --no-runtime-archive
       - name: Save the release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -58,7 +58,7 @@ export async function prepare(root: string) {
   const environment = await loadEnvironment();
   const daemon = await runProcess('docker', ['info', '--format', '{{.ServerVersion}}']);
   if (daemon.exitCode)
-    throw new Error('Docker is not running. Start it, then run: npm run eval:capability -- doctor');
+    throw new Error('Docker is not running. Start it, then run: pnpm run eval:capability doctor');
   const database = await ensureDatabase(root, environment, true);
   process.env.TEST_DATABASE_URL = database.url;
   const images = await evalImages(environment);
@@ -345,7 +345,7 @@ export async function runSuite(options: RunOptions) {
       console.log(
         `Saved ${join(directory, 'report.html')} (${Math.round((Date.now() - started) / 60_000)} min)`,
       );
-      console.log(`Next: review it as a user would: npm run eval:capability -- review ${label}`);
+      console.log(`Next: review it as a user would: pnpm run eval:capability review ${label}`);
     }
     return { label, directory, manifest, attempts: results, summary };
   } finally {

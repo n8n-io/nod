@@ -318,6 +318,6 @@ export async function integrationDatabaseUrl(
   const value = environment.DATABASE_URL || saved.DATABASE_URL;
   if (value && localDatabaseUrl(value) && new URL(value).password) return value;
   throw new Error(
-    'Run npm run dev to prepare the local database, or set TEST_DATABASE_URL explicitly.',
+    'Run pnpm run dev to prepare the local database, or set TEST_DATABASE_URL explicitly.',
   );
 }

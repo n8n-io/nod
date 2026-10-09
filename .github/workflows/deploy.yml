@@ -61,24 +61,26 @@ jobs:
         with:
           ref: ${{ needs.gate.outputs.sha }}
           persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Set up Node.js 24.21.0
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24.21.0'
-          cache: npm
+          cache: pnpm
           cache-dependency-path: |
-            package-lock.json
-            deployment/cloudflare/package-lock.json
+            pnpm-lock.yaml
+            deployment/cloudflare/pnpm-lock.yaml
       - name: Install locked dependencies without production secrets
         run: |
-          npm ci
-          npm --prefix deployment/cloudflare ci
+          pnpm install --frozen-lockfile
+          pnpm --dir deployment/cloudflare install --frozen-lockfile
       - name: Check and rebuild the release
         run: |
-          npm run check
-          npm run build
-          npm --prefix deployment/cloudflare run check
-          npm --prefix deployment/cloudflare test
+          pnpm run check
+          pnpm run build
+          pnpm --dir deployment/cloudflare run check
+          pnpm --dir deployment/cloudflare test
       - name: Build the verified runtime and computer images
         run: |
           docker build --platform linux/amd64 --build-arg "OTTO_RELEASE=$OTTO_RELEASE" --file deployment/cloudflare/Dockerfile --tag "otto-production:$OTTO_RELEASE" .

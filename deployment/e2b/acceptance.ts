@@ -138,7 +138,8 @@ export async function acceptanceSourceHash(sourceRoot = root) {
     'src/providers/container-browser/chromium.sh',
     'src/providers/container-browser/xvfb.sh',
     'package.json',
-    'package-lock.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
   ];
   const fixed = new Set(queued);
   const files = new Map<string, Buffer>();

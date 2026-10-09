@@ -68,7 +68,7 @@ if (process.argv.includes('--run')) {
     });
   }
   try {
-    await command('npm', ['run', 'build']);
+    await command('pnpm', ['run', 'build']);
     await command('docker', [
       'build',
       '--file',
