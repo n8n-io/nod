@@ -24,7 +24,7 @@ env:
   OTTO_RELEASE_SOURCE: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 concurrency:
-  group: desktop-release
+  group: desktop-build-release
   cancel-in-progress: false
   queue: max
 
@@ -53,6 +53,7 @@ jobs:
       metadata_sha256: ${{ steps.plan.outputs.metadata_sha256 }}
       source: ${{ steps.plan.outputs.source }}
       version: ${{ steps.plan.outputs.version }}
+      previous_tag: ${{ steps.plan.outputs.previous_tag }}
       runtime_tag: ${{ steps.plan.outputs.runtime_tag }}
       runtime_fingerprint: ${{ steps.plan.outputs.runtime_fingerprint }}
       runtime_base_url: ${{ steps.plan.outputs.runtime_base_url }}
@@ -384,10 +385,20 @@ jobs:
         run: node .github/scripts/desktop-release.mjs draft
 
   evals:
-    name: Capability evals against the previous release
-    needs: plan
+    name: Start capability evals for the published release
+    needs: [plan, release]
     if: needs.plan.outputs.release_needed == 'true' && (github.event_name == 'workflow_run' || inputs.publish)
-    uses: ./.github/workflows/evals.yml
-    with:
-      ref: ${{ needs.plan.outputs.source }}
-    secrets: inherit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Start the report on the exact published tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: desktop-v${{ needs.plan.outputs.version }}
+          PREVIOUS_TAG: ${{ needs.plan.outputs.previous_tag }}
+        run: |
+          gh workflow run evals.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f baseline="$PREVIOUS_TAG"
+          echo "[Capability eval reports](https://github.com/$GITHUB_REPOSITORY/actions/workflows/evals.yml)" >> "$GITHUB_STEP_SUMMARY"

@@ -260,6 +260,7 @@ async function plan() {
     release_needed: 'true',
     metadata_sha256: metadataSha256,
     version: release.version,
+    previous_tag: release.previousTag || '',
     tag,
     runtime_tag: runtimeTag,
     runtime_fingerprint: inputs.fingerprint,
