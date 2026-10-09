@@ -148,7 +148,7 @@ The report shows these as a **trust profile**, next to the completion rate. Only
 **Human judgement is the anchor.** Automatic judges are only trusted as far as they agree with a person.
 
 ```sh
-pnpm run eval:capability --review <label>      # failures first, then a sample of passes
+pnpm run eval:capability review <label>      # failures first, then a sample of passes
 ```
 
 For each attempt you see the task, what Otto finally said and every check. You answer one question: would you trust Otto with this task after seeing this? You can also flag the automatic checks that were wrong. Reviews are saved with the run. The report then shows how often you agreed with the automatic verdict (Cohen's kappa) and lists every disagreement. To test a different judge model without re-running the agent, use `--rejudge`: it re-judges the saved attempts and reports how often the new judge matches the old one and, where you reviewed, how often each matches you.

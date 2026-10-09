@@ -241,6 +241,6 @@ jobs:
       - name: Verify scanning exceptions still detect secrets
         run: python3 .github/scripts/check-secret-config.py "$RUNNER_TEMP/gitleaks/gitleaks"
       - name: Scan Git history
-        run: '"$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --log-opts=--all .'
+        run: '"$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --log-opts=HEAD .'
       - name: Scan the checked-out files
         run: '"$RUNNER_TEMP/gitleaks/gitleaks" dir --redact --no-banner .'

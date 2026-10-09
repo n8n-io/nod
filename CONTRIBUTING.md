@@ -94,7 +94,7 @@ Tests use synthetic data and disposable database schemas. They never call a live
 
 CI checks the PR title and the code. Workflows from first-time contributors start after a maintainer approves them. A member of [@n8n-io/n8n-labs](.github/CODEOWNERS) reviews every change. Use a squash merge for a normal PR. Merge commits are also allowed, as in `n8n-io/n8n`. Rebase merges are disabled. Keep the PR title as the commit title when you merge.
 
-After the PR title workflow is on `main`, add `Conventional PR title` to the required status checks for `main`. In the repository merge settings, use the PR title and a blank body for both squash merges and merge commits.
+Require `Conventional PR title` in the status checks for `main`. In the repository merge settings, use the PR title and a blank body for both squash merges and merge commits.
 
 ## From merge to release
 
