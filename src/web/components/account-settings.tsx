@@ -42,7 +42,6 @@ import {
   useBrowserRegion,
 } from '../lib/date-format';
 import { savePreferences } from '../lib/preferences';
-import { exportMemory } from '../lib/memory-export';
 import { localeRegion } from '../../shared/date-locale';
 import { desktopSettingsAvailable } from '../lib/desktop';
 import { ComposioSettings, DesktopOptions, useDesktopSettings } from './desktop-settings';
@@ -339,42 +338,9 @@ function PreferencesForm({ onDirtyChange }: { onDirtyChange(dirty: boolean): voi
   );
 }
 
-function MemoryRow({ onView }: { onView(): void }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  return (
-    <>
-      <div className="account-preference-row account-clock-row">
-        <span data-analytics-public>
-          <Brain size={16} aria-hidden="true" />
-          Memory
-        </span>
-        <div className="account-clock-options">
-          <Button type="button" size="sm" variant="outline" onClick={onView}>
-            View
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              setError('');
-              exportMemory()
-                .catch((cause) => setError(errorMessage(cause)))
-                .finally(() => setBusy(false));
-            }}
-          >
-            Export
-          </Button>
-        </div>
-      </div>
-      {error && <Notice>{error}</Notice>}
-    </>
-  );
+function tabLabel(tab: string) {
+  return tab === 'Trust' ? 'Trust & cost' : tab;
 }
-
 export function AccountSettings({
   account,
   open,
@@ -526,7 +492,7 @@ export function AccountSettings({
                   type="button"
                   role="tab"
                   aria-selected={value === tab}
-                  aria-label={value}
+                  aria-label={tabLabel(value)}
                   aria-keyshortcuts={
                     value === 'Memory'
                       ? 'Meta+Y Control+Y'
@@ -536,7 +502,7 @@ export function AccountSettings({
                   }
                   title={
                     value === 'Memory' || value === 'Trust'
-                      ? `${value} (${shortcutLabel(value === 'Memory' ? 'y' : 'i', /Mac|iPhone|iPad/.test(navigator.platform))})`
+                      ? `${tabLabel(value)} (${shortcutLabel(value === 'Memory' ? 'y' : 'i', /Mac|iPhone|iPad/.test(navigator.platform))})`
                       : value
                   }
                   aria-controls={`${id}-content`}
@@ -560,7 +526,7 @@ export function AccountSettings({
                   }}
                 >
                   <Icon size={24} aria-hidden="true" />
-                  <span>{value}</span>
+                  <span>{tabLabel(value)}</span>
                 </button>
               );
             })}
@@ -572,13 +538,9 @@ export function AccountSettings({
             aria-labelledby={`${id}-${tab}`}
           >
             <header className="account-settings-header" data-analytics-public>
-              <h3>{tab}</h3>
+              <h3>{tabLabel(tab)}</h3>
             </header>
-            <div
-              key={tab}
-              className={`account-settings-body${tab === 'Memory' || tab === 'Trust' ? ' is-wide' : ''}`}
-              tabIndex={0}
-            >
+            <div key={tab} className="account-settings-body" tabIndex={0}>
               {!account.local && tab === 'Profile' && (
                 <form className="account-profile-form" onSubmit={(event) => void saveName(event)}>
                   <div className="account-profile-identity">
@@ -708,16 +670,7 @@ export function AccountSettings({
                   </div>
                 </>
               )}
-              {tab === 'Preferences' && (
-                <>
-                  <PreferencesForm onDirtyChange={setPreferencesDirty} />
-                  <MemoryRow
-                    onView={() => {
-                      if (changeTab('Memory')) document.getElementById(`${id}-Memory`)?.focus();
-                    }}
-                  />
-                </>
-              )}
+              {tab === 'Preferences' && <PreferencesForm onDirtyChange={setPreferencesDirty} />}
               {tab === 'Memory' && <Memory />}
               {tab === 'Trust' && <Trust />}
               {tab === 'Models' && (

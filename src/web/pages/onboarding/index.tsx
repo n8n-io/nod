@@ -6,7 +6,6 @@ import { onboardingSteps, type OnboardingStep } from '../../../shared/onboarding
 import { Button, Notice } from '../../components/ui';
 import { useBrowserTimeZone } from '../../hooks/use-browser-time-zone';
 import { api, errorMessage } from '../../lib/api';
-import { cn } from '../../lib/utils';
 import { analyticsForCurrentSession, captureAnalytics } from '../../lib/analytics';
 import { OttoGlyph } from './motion';
 import { clearStored, readStep, writeStep } from './storage';
@@ -40,7 +39,6 @@ export function Onboarding({
   onLogout,
   onComplete,
   onFeedback,
-  feedbackOpen = false,
   usageData = false,
   onUsageData,
 }: {
@@ -49,7 +47,6 @@ export function Onboarding({
   onLogout(): void;
   onComplete(): Promise<void>;
   onFeedback(): void;
-  feedbackOpen?: boolean;
   usageData?: boolean;
   onUsageData?(enabled: boolean): Promise<void>;
 }) {
@@ -159,7 +156,6 @@ export function Onboarding({
 
   const Screen = screens[step];
   const welcome = step === 'welcome';
-  const nudge = step === 'open' && !feedbackOpen;
   return (
     <div className="ob" data-step={step}>
       <header className="ob-header">
@@ -193,18 +189,13 @@ export function Onboarding({
                 id="feedback-launcher"
                 variant="ghost"
                 size="sm"
-                className={cn('ob-feedback', nudge && 'ob-feedback-nudge')}
+                className="ob-feedback"
                 onClick={onFeedback}
                 aria-label="Feedback"
               >
                 <MessageSquare size={16} aria-hidden="true" />
                 <span className="ob-header-label">Feedback</span>
               </Button>
-              {nudge && (
-                <span className="ob-feedback-pointer" aria-hidden="true">
-                  <span>👆</span>
-                </span>
-              )}
             </span>
           )}
           {canLogout && (

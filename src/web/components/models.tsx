@@ -74,15 +74,18 @@ export function ModelSettings({
   const busy = models.busy || signingIn || !!signIn;
   return (
     <div className="model-settings">
-      <p className="model-intro" data-analytics-public>
-        Connect as many services as you want. All their models appear in one list.
-      </p>
       {!!available && (
         <div className="model-current">
-          <span>Your model</span>
+          <div className="model-current-label" data-analytics-public>
+            <strong>Your model</strong>
+            <span>Otto uses it for every reply</span>
+          </div>
           <ModelPicker manageConnections={false} />
         </div>
       )}
+      <p className="model-intro" data-analytics-public>
+        Connect as many services as you want. All their models appear in one list.
+      </p>
       <div className="model-services">
         {(['openai', 'anthropic', 'openrouter'] as ModelProvider[]).map((provider) => (
           <section

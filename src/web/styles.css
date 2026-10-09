@@ -56,50 +56,80 @@ body {
   position: fixed;
   inset: 0 0 auto;
   height: var(--desktop-titlebar-height);
-  padding-left: 80px;
   z-index: 20;
-  background: var(--sidebar);
   -webkit-app-region: drag;
   user-select: none;
 }
 :root[data-desktop='true'] .app-shell {
   --sidebar-toggle-space: 0px;
-  height: calc(100dvh - var(--desktop-titlebar-height));
+  --desktop-sidebar-width: 84px;
+  height: 100dvh;
+  margin-top: calc(-1 * var(--desktop-titlebar-height));
+}
+:root[data-desktop='true'] .app-shell:not(.sidebar-collapsed) {
+  --desktop-sidebar-width: 224px;
 }
 :root[data-desktop='true'] .sidebar {
-  padding-top: 12px;
+  width: var(--desktop-sidebar-width);
+  padding-top: calc(var(--desktop-titlebar-height) + 4px);
+}
+:root[data-desktop='true'] .sidebar-collapsed .sidebar {
+  padding-inline: 12px;
 }
 :root[data-desktop='true'] :is(.sidebar-header, .startup-shell .sidebar > .brand) {
-  display: none;
+  justify-content: center;
+  align-items: center;
+}
+:root[data-desktop='true'] .sidebar .brand {
+  height: 40px;
+  padding: 0;
+}
+:root[data-desktop='true'] .sidebar .brand-glyph {
+  width: 40px;
+  height: 40px;
 }
 :root[data-desktop='true'] .main-nav {
-  margin-top: 0;
+  position: absolute;
+  top: 50%;
+  inset-inline: 12px;
+  margin: 0;
+  transform: translateY(-50%);
 }
-@media (min-width: 641px) {
-  :root[data-desktop='true'] .app-shell:not(.sidebar-collapsed) .sidebar {
-    width: 224px;
-    padding-inline: 12px;
-  }
-  :root[data-desktop='true'] .app-shell:not(.sidebar-collapsed) .nav-link {
-    justify-content: flex-start;
-    padding-inline: 16px;
-  }
-  :root[data-desktop='true'] .app-shell:not(.sidebar-collapsed) .nav-link > span {
-    display: inline;
-  }
+:root[data-desktop='true'] .sidebar-bottom {
+  margin-top: auto;
+}
+:root[data-desktop='true'] .main-nav .nav-link > svg {
+  width: 28px;
+  height: 28px;
+}
+:root[data-desktop='true'] .main-workspace {
+  padding-top: var(--desktop-titlebar-height);
+}
+:root[data-desktop='true'] .main-workspace:has(> .chat-route:not([hidden])) {
+  padding-top: 0;
+}
+:root[data-desktop='true'] .chat-page .conversation-scroll {
+  padding-top: var(--desktop-titlebar-height);
+}
+:root[data-desktop='true'] .app-shell:not(.sidebar-collapsed) .nav-link {
+  justify-content: flex-start;
+  padding-inline: 16px;
+}
+:root[data-desktop='true'] .app-shell:not(.sidebar-collapsed) .nav-link > span {
+  display: inline;
 }
 .desktop-toolbar {
   position: fixed;
-  inset: 0 0 auto;
+  inset: 0 0 auto var(--desktop-sidebar-width);
   z-index: 21;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
-  height: var(--desktop-titlebar-height);
-  padding: 0 12px 0 88px;
-  background: var(--sidebar);
-  -webkit-app-region: drag;
+  height: calc(var(--desktop-titlebar-height) + 16px);
+  padding: 9px 16px 0;
+  background: linear-gradient(var(--canvas) 50%, transparent);
   user-select: none;
+  pointer-events: none;
 }
 .desktop-toolbar > .button {
   width: 30px;
@@ -111,11 +141,7 @@ body {
 }
 .desktop-toolbar :is(button, .connection-menu-options) {
   -webkit-app-region: no-drag;
-}
-@media (max-width: 640px) {
-  .desktop-toolbar > .button {
-    display: none;
-  }
+  pointer-events: auto;
 }
 :root[data-desktop='true'] .day-divider span {
   border: 0;
@@ -828,7 +854,7 @@ input[type='range']:disabled {
 }
 .browser-handoff-overlay {
   position: fixed;
-  inset: var(--desktop-titlebar-height, 0px) 0 0;
+  inset: 0;
   background: var(--overlay);
   backdrop-filter: blur(3px);
   z-index: 50;
@@ -1464,7 +1490,7 @@ input[type='range']:disabled {
 }
 .dialog-overlay {
   position: fixed;
-  inset: var(--desktop-titlebar-height, 0px) 0 0;
+  inset: 0;
   background: var(--overlay);
   z-index: 50;
   backdrop-filter: blur(3px);

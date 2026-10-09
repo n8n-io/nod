@@ -2033,7 +2033,7 @@ test('turn deadlines release stalled model, provider, native and disposal operat
       try {
         const running = runtime.runTurn({
           ...context(directory),
-          limits: { maxToolCalls: 8, timeoutMs: 30 },
+          limits: { maxToolCalls: 8, timeoutMs: stalledAt === 'dispose' ? 300 : 30 },
           integration: async (_action, _args, signal) => {
             providerSignal = signal;
             return stalled;
