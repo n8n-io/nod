@@ -1,6 +1,6 @@
 # Vault
 
-Status: design, 9 October 2026. The first steps are built: `sign_in` without values, grants from the owner's words, held background work, sessions under grants, Vault activity, the Activity and Saved views, website sessions in Vault, login updates instead of duplicates, fail-closed Keychain key creation and consented security codes. [Migration](migration.md#steps) lists what is built and what remains; [architecture](../architecture.md) describes the system as it runs.
+Status: design, 10 October 2026. The first steps are built: `sign_in` without values, scoped grants from the owner's words and answers, held background work, a browser that signs out before work that may not use a site, sessions under grants, Vault activity, the Activity and Saved views, website sessions in Vault, login updates instead of duplicates, a fail-closed key check and consented security codes. [Migration](migration.md#steps) lists what is built and what remains; [architecture](../architecture.md) describes the system as it runs.
 
 The Vault holds every secret the owner gives Otto: website logins, payment cards, API keys, OAuth grants and channel tokens. Otto can use all of them without the model ever seeing one, and the owner can see everything Otto did with them.
 
