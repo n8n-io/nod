@@ -583,7 +583,7 @@ test(
 );
 
 test(
-  'a memory command gets a digest from the outbox without a turn and only for the paired sender',
+  'memory and usage commands get a digest from the outbox without a turn and only for the paired sender',
   { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
   async () => {
     const schema = `test_channel_memory_${randomUUID().replaceAll('-', '')}`;
@@ -635,10 +635,10 @@ test(
         },
         close: async () => {},
       },
-      memoryReply: async (_client, thread) => ({
-        text: 'Synthetic memory digest',
+      commandReply: async (command, _client, thread) => ({
+        text: `Synthetic ${command} digest`,
         attachments: [
-          { id: fileId, name: 'otto-memory.md', mimeType: 'text/markdown', size: 9, url: '' },
+          { id: fileId, name: `otto-${command}.md`, mimeType: 'text/markdown', size: 9, url: '' },
         ].filter(() => thread === threadId),
       }),
       resolveAttachments: async (thread, ids) => {
@@ -665,17 +665,27 @@ test(
     try {
       assert.equal((await send({ messageId: 'memory', text: '/memory' })).statusCode, 200);
       assert.equal((await send({ messageId: 'memory', text: '/memory' })).statusCode, 200);
+      assert.equal((await send({ messageId: 'usage', text: '/usage' })).statusCode, 200);
       assert.equal(
         (await send({ messageId: 'stranger', text: '/context', senderId: 'stranger' })).statusCode,
         200,
       );
       await channels.drain();
       assert.deepEqual(submitted, []);
-      assert.deepEqual(posted, [{ text: 'Synthetic memory digest', files: ['otto-memory.md'] }]);
-      assert.deepEqual(resolved, [[threadId, fileId]]);
+      assert.deepEqual(posted, [
+        { text: 'Synthetic memory digest', files: ['otto-memory.md'] },
+        { text: 'Synthetic usage digest', files: ['otto-memory.md'] },
+      ]);
+      assert.deepEqual(resolved, [
+        [threadId, fileId],
+        [threadId, fileId],
+      ]);
       assert.deepEqual(
         (await pool.query('SELECT source_id,state FROM channel_inbox ORDER BY source_id')).rows,
-        [{ source_id: 'channel:telegram:fixture-account:memory', state: 'discarded' }],
+        [
+          { source_id: 'channel:telegram:fixture-account:memory', state: 'discarded' },
+          { source_id: 'channel:telegram:fixture-account:usage', state: 'discarded' },
+        ],
       );
     } finally {
       await app.close();

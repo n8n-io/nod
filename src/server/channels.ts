@@ -13,7 +13,7 @@ import type {
   MessagingTransport,
 } from '../ports/messaging.ts';
 
-const memoryCommand = /^\/(?:memory|context)(?:@[A-Za-z0-9_]+)?$/i;
+const replyCommand = /^\/(memory|context|usage)(?:@[A-Za-z0-9_]+)?$/i;
 
 interface ChannelOptions {
   admission?: WorkAdmission;
@@ -41,7 +41,8 @@ interface ChannelOptions {
   appOrigin?: string;
   pair?: (request: ChannelPairingRequest) => Promise<unknown>;
   activeThread?: (client: PoolClient) => Promise<{ id: string }>;
-  memoryReply?: (
+  commandReply?: (
+    command: 'memory' | 'usage',
     client: PoolClient,
     threadId: string | null,
     link: string | null,
@@ -290,11 +291,18 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         if (closed || replacing || !permitted(identity))
           throw new Error('Channel configuration changed.');
       };
-      const memoryReply = options.memoryReply;
-      if (memoryCommand.test(text.trim()) && memoryReply) {
+      const commandReply = options.commandReply;
+      const command = replyCommand.exec(text.trim())?.[1]?.toLowerCase();
+      if (command && commandReply) {
+        const name = command === 'usage' ? 'usage' : 'memory';
         await inTransaction((client) =>
           replyWithoutTurn(client, { ...identity, sourceId, threadId, sentAt, text }, (thread) =>
-            memoryReply(client, thread, appOrigin ? `${appOrigin}/memory` : null),
+            commandReply(
+              name,
+              client,
+              thread,
+              appOrigin ? `${appOrigin}/${name === 'usage' ? 'trust' : 'memory'}` : null,
+            ),
           ),
         );
         options.refresh?.();

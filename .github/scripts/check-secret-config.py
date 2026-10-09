@@ -113,13 +113,18 @@ fingerprint_fields = {
     "src/web/pages/credentials.tsx",
 }
 changed_digest = hashlib.sha256(candidate.encode()).hexdigest()
+composio = json.loads(
+    (config.parent / ".github/fixtures/composio-secret-scanner.json").read_text()
+)
 for filename in [
     "docs/testing/composio-proxy/cp03.v2.inputs.json",
     "docs/testing/composio-proxy/cp03.v2.results.json",
     "docs/testing/composio-proxy/cp06.v2.source.json",
     "docs/testing/composio-proxy/cp06.v2.upgrade.a02.source.json",
 ]:
-    snapshot = (config.parent / filename).read_text()
+    snapshot = "".join(
+        f'"{field}": "{digest}"\n' for digest, field in composio["fingerprints"][filename]
+    )
     code, findings = scan(snapshot, filename)
     if code != 0 or findings:
         raise SystemExit("Verified Composio evidence fingerprints must pass secret scanning.")
@@ -153,11 +158,11 @@ for filename in [
             raise SystemExit("Composio fingerprint exceptions must require their exact paths.")
 
 runner_path = "docs/testing/composio-proxy/cp04.v1.results.json"
-code, findings = scan((config.parent / runner_path).read_text(), runner_path)
+property_reference = "const attachment = { " + "".join(composio["propertyReference"]) + "};"
+code, findings = scan(property_reference, runner_path)
 if code != 0 or findings:
     raise SystemExit("The verified frozen runner source must pass secret scanning.")
 
-property_reference = "const attachment = { s3key: " + "executedAttachment.s3key" + " };"
 for altered in [
     f'const attachment = {{ s3key: "{candidate}" }};',
     f'{property_reference} api_key = "{candidate}"',

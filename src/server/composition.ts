@@ -92,12 +92,12 @@ import { createChannelAccountRegistry } from './channel-account-registry.ts';
 import { createTenantControl, createTenantChannelRegistry } from './tenant-control.ts';
 import { createHostedWebhooks } from './hosted-webhooks.ts';
 import { loadPrivacyNoticeFile, registerPrivacyNotice } from './privacy.ts';
-import { createInspectorPool, createPool, initializeDatabase, pool } from './db.ts';
+import { createPool, initializeDatabase, pool } from './db.ts';
 import { events, refresh } from './events.ts';
 import { createIntegrations } from './integrations.ts';
-import { createInspectorStore } from './inspector.ts';
-import { createPromptInspector } from './inspector-prompts.ts';
-import { createErrorRedactor } from './inspector-redaction.ts';
+import { createErrorRedactor } from './redaction.ts';
+import { createLedger } from './ledger.ts';
+import { usageDigest, usageFileName, usagePdf } from './usage-report.ts';
 import { buildFeedbackReport, type FeedbackReportOptions } from './bug-report.ts';
 import { registerFeedback } from './feedback.ts';
 import { feedbackContext } from './feedback-context.ts';
@@ -105,7 +105,7 @@ import { createPersonalService } from './personal.ts';
 import { createOnboardingInterview } from './onboarding-interview.ts';
 import { createOnboardingSuggestions } from './onboarding-suggestions.ts';
 import { createMemoryLearning, initializeMemoryLearning } from './memory-learning.ts';
-import { createMemoryService } from './memory.ts';
+import { createMemoryService, importMemoryFile } from './memory.ts';
 import { createSpeech } from './speech.ts';
 import {
   activeThread,
@@ -120,27 +120,19 @@ import {
   startThreadWorkers,
   stopThreadWorkers,
   withTurnLock,
+  type ThreadDependencies,
 } from './thread.ts';
 import { createTriage } from './triage.ts';
 import { createTasks } from './tasks.ts';
 import { createVault, credentialOrigin } from './vault.ts';
 import { createBrowserConnections } from './browser-connections.ts';
-import { createProviderUsageStore } from './provider-usage.ts';
 import { createLinkPreviews } from './link-previews.ts';
-import {
-  meterAgent,
-  meterComputer,
-  meterWorkspace,
-  meterIntegrations,
-  meterMemoryCurator,
-  meterRelevance,
-  meterSpeech,
-  meterMessaging,
-} from './provider-metering.ts';
 
 export interface ApplicationAdapters {
   analytics?: ProductAnalytics;
   initialize?(): Promise<void>;
+  observe?: ThreadDependencies['observe'];
+  inspectPrompt?: ThreadDependencies['inspectPrompt'];
   models?: ReturnType<typeof createModelService>;
   prepareComputer?(): Promise<void>;
   computerLifecycle?: { pause(): Promise<void>; resume(): Promise<void> };
@@ -473,8 +465,7 @@ async function initializeApplication(
   const artifacts = adapters.objectStore
     ? createArtifactService({ database: pool, ownerId, store: adapters.objectStore })
     : localArtifacts;
-  const inspectorDatabase = createInspectorPool();
-  const inspectorSecrets = Object.entries(process.env)
+  const secrets = Object.entries(process.env)
     .filter(([key]) =>
       /(?:API_KEY|SECRET|PASSWORD|VAULT_KEY|BOT_TOKEN|ACCESS_TOKEN|DESKTOP_AUTH_TOKEN|FEEDBACK_TOKEN)$/.test(
         key,
@@ -482,158 +473,41 @@ async function initializeApplication(
     )
     .flatMap(([, value]) => (value ? [value] : []));
   if (process.env.DATABASE_URL) {
-    inspectorSecrets.push(process.env.DATABASE_URL);
+    secrets.push(process.env.DATABASE_URL);
     try {
       const password = decodeURIComponent(new URL(process.env.DATABASE_URL).password);
-      if (password) inspectorSecrets.push(password);
+      if (password) secrets.push(password);
     } catch {}
   }
-  adapters.models?.onSecrets((values) => inspectorSecrets.push(...values));
+  adapters.models?.onSecrets((values) => secrets.push(...values));
   const memoryCurator =
     adapters.memoryCurator ?? createPiMemoryCurator({ provider: adapters.model.provider });
-  const inspector = createInspectorStore(inspectorDatabase, {
-    ownerId,
-    enabled: () => configuration().inspectorEnabled,
-    secrets: inspectorSecrets,
-  });
-  const promptInspector = createPromptInspector(inspectorDatabase, {
-    ownerId,
-    enabled: () => configuration().inspectorEnabled,
-    secrets: inspectorSecrets,
-    get provider() {
-      return adapters.model.provider;
-    },
-    get model() {
-      return adapters.model.name;
-    },
-  });
-  await promptInspector.initialize(pool);
-  const providerUsage = createProviderUsageStore(inspectorDatabase, {
-    ownerId,
-    enabled: () => configuration().inspectorEnabled,
-    coverage: [
-      {
-        get provider() {
-          return adapters.model.provider;
-        },
-        category: 'agent',
-        status: 'recorded',
-        note: 'Responses, compaction and cache warming when reported by Pi. Costs are SDK estimates; unreported failed attempts may be missing.',
-      },
-      {
-        get provider() {
-          return adapters.relevance.id;
-        },
-        category: 'relevance',
-        status: 'recorded',
-        note: 'Classification operations and duration. Tokens and prices are not exposed by this adapter.',
-      },
-      {
-        get provider() {
-          return memoryCurator.id;
-        },
-        category: 'memory',
-        status: 'recorded',
-        note: 'Background memory reflection, consolidation and search calls and duration. Tokens and prices are not exposed by this adapter.',
-      },
-      {
-        provider: 'agent-browser',
-        category: 'browser',
-        status: 'recorded',
-        note: 'Local browser operations, screen captures and secure entry. Hosting and visited-site charges are not measured.',
-      },
-      {
-        provider: 'pi-web-access',
-        category: 'browser',
-        status: 'recorded',
-        note: 'Public search and fetch operations and duration. Provider prices and network charges are unavailable.',
-      },
-      ...(adapters.linkPreviews
-        ? [
-            {
-              provider: 'public-web',
-              category: 'browser' as const,
-              status: 'recorded' as const,
-              note: 'Public link preview metadata and image operations. Cache hits are included; network and hosting charges are not measured.',
-            },
-          ]
-        : []),
-      {
-        provider: adapters.integrations.id,
-        category: 'integration',
-        status: 'recorded',
-        note: 'Composio session, account, search, execution and subscription operations; internal SDK requests and Google quotas are not measured.',
-      },
-      ...(adapters.directIntegrations
-        ? [
-            {
-              provider: 'direct',
-              category: 'integration' as const,
-              status: 'recorded' as const,
-              note: 'Direct OAuth, MCP search and read operations. Provider fees are not measured.',
-            },
-          ]
-        : []),
-      {
-        provider: adapters.speech.id,
-        category: 'speech',
-        status: 'recorded',
-        note: 'Transcription bytes and synthesis characters/bytes. Audio duration, tokens and prices are unavailable.',
-      },
-      {
-        provider: 'telegram',
-        category: 'channel',
-        status: 'recorded',
-        note: 'Setup, polling, received messages and sends when configured. Provider fees are unavailable.',
-      },
-      {
-        provider: 'whatsapp',
-        category: 'channel',
-        status: 'recorded',
-        note: 'Setup, webhook messages and sends when configured. Provider fees are unavailable.',
-      },
-      {
-        provider: 'local-workspace',
-        category: 'workspace',
-        status: 'recorded',
-        note: 'Command and file operations; cloud/hosting resource charges are not measured.',
-      },
-      {
-        provider: 'hosting',
-        category: 'workspace',
-        status: 'unsupported',
-        note: 'Database, storage, network and machine billing require a hosting billing integration.',
-      },
-    ],
-  });
-  await providerUsage.initialize(pool);
-  const computer = meterComputer(adapters.computer, providerUsage);
-  const workspace = meterWorkspace(adapters.workspace, providerUsage);
-  const speechProvider = meterSpeech(adapters.speech, providerUsage);
-  const integrationProvider = meterIntegrations(adapters.integrations, providerUsage);
-  const classify = meterRelevance(adapters.relevance, providerUsage);
-  const curator = meterMemoryCurator(memoryCurator, providerUsage);
+  const ledger = createLedger({ pool, ownerId });
+  await ledger.initialize();
+  const { computer, workspace } = adapters;
+  const curator = ledger.curator(memoryCurator);
   const onboardingCurator = adapters.onboardingCurator
-    ? meterMemoryCurator(adapters.onboardingCurator, providerUsage)
+    ? ledger.curator(adapters.onboardingCurator)
     : curator;
   const runtime = createAgentRuntime({
-    agent: meterAgent(adapters.agent, providerUsage),
+    agent: ledger.agent(adapters.agent),
     skills: createSkillLibrary(
       fileURLToPath(new URL('../runtime/skills/', import.meta.url)),
       coreSkills,
     ),
-    withTool: providerUsage.withTool,
     computer,
     workspace,
-    redactError: createErrorRedactor(inspectorSecrets),
+    redactError: createErrorRedactor(secrets),
   });
-  const speech = createSpeech(speechProvider);
-  const memory = createMemoryService({
-    pool,
-    ownerId,
-    store: adapters.objectStore ?? createFilesystemObjectStore(join(dataRoot, 'objects')),
-    curator,
-  });
+  const speech = createSpeech(adapters.speech);
+  let memoryStore = adapters.objectStore;
+  if (!memoryStore) {
+    const objects = createPostgresObjectStore({ database: pool, ownerId });
+    await objects.initialize();
+    await importMemoryFile(objects, join(dataRoot, 'objects', 'memory'));
+    memoryStore = objects;
+  }
+  const memory = createMemoryService({ pool, ownerId, store: memoryStore, curator });
   const learning = createMemoryLearning({ pool, ownerId, memory, curator });
   const personal = createPersonalService({
     analytics: captureAnalytics,
@@ -652,7 +526,7 @@ async function initializeApplication(
   await tasks.initialize();
   const triage = createTriage({
     consumers,
-    classifier: classify,
+    classifier: adapters.relevance,
     getProfile: personal.getProfile,
     connectedApps: () => integrations.connectedApps(),
   });
@@ -684,17 +558,12 @@ async function initializeApplication(
   let vault!: Awaited<ReturnType<typeof createVault>>;
   let browserConnections!: Awaited<ReturnType<typeof createBrowserConnections>>;
   const icon = adapters.linkPreviews?.icon
-    ? (origin: string) =>
-        providerUsage.track(
-          { provider: 'public-web', category: 'browser', operation: 'site_icon' },
-          () => adapters.linkPreviews!.icon!(origin),
-          (value) => ({ bytes: value?.bytes.byteLength ?? 0 }),
-        )
+    ? (origin: string) => adapters.linkPreviews!.icon!(origin)
     : undefined;
   const integrations = await createIntegrations(pool, {
     admission,
     ownerId,
-    provider: integrationProvider,
+    provider: adapters.integrations,
     readWorkspaceFile:
       workspace.readArtifact &&
       ((turn, path, maxBytes) =>
@@ -705,10 +574,7 @@ async function initializeApplication(
     ...(adapters.directIntegrations
       ? {
           additionalProviders: [
-            meterIntegrations(
-              adapters.directIntegrations(pool, adapters.keyStore, grantVault, ownerId),
-              providerUsage,
-            ),
+            adapters.directIntegrations(pool, adapters.keyStore, grantVault, ownerId),
           ],
         }
       : {}),
@@ -751,11 +617,12 @@ async function initializeApplication(
         ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
         : action.startsWith('OTTO_')
           ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-          : providerUsage.withTurn(provenance.turnId, async () => {
+          : (async () => {
               const result = await integrations.executeApproved(ownerId, action, args, {
                 threadId: provenance.threadId,
                 turnId: provenance.turnId,
               });
+              await ledger.action(provenance.turnId, action, args);
               const write = workspace.writeArtifact?.bind(workspace);
               const save =
                 write &&
@@ -765,7 +632,7 @@ async function initializeApplication(
                   return name;
                 });
               return (await saveIntegrationFiles(result, save)).value;
-            }),
+            })(),
     async (action, args) => {
       if (action.startsWith('OTTO_'))
         await personal.validateReview(action.slice('OTTO_'.length), args);
@@ -826,7 +693,6 @@ async function initializeApplication(
   await trust.initialize();
   const userMessages = createUserMessageService({ confirmAction: approvals.acceptChat });
   if (options.workers !== false) {
-    await inspector.recover().catch(() => {});
     await triage.initializeHeartbeat();
     await initializeMemoryLearning({ boss, consumers, run: learning.run });
     await startThreadWorkers({
@@ -837,11 +703,10 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact?.bind(workspace),
       executeConfirmation: approvals.executeConfirmed,
       reactToMessage: reactions.react,
-      runTurn: (context) => providerUsage.withTurn(context.turnId, () => runtime.runTurn(context)),
-      observe: inspector.record,
-      recordFailure: inspector.recordFailure,
-      inspectPrompt: promptInspector.record,
-      finishObservationSegment: inspector.finishSegment,
+      runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
+      spendingLimitReached: ledger.limitReached,
+      observe: adapters.observe,
+      inspectPrompt: adapters.inspectPrompt,
       accountProfile,
       connectedApps: integrations.connectedApps,
       activityCheck: triage.activityCheck,
@@ -894,6 +759,7 @@ async function initializeApplication(
             personal.manage(action, args, { ...provenance, turnId: turn.turnId }),
           );
         }
+        if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
       requestCredential: async (turn, input) => {
@@ -902,7 +768,7 @@ async function initializeApplication(
           if (entry.origin !== credentialOrigin(input.origin))
             throw new Error('This saved login does not match the requested website.');
           for (const value of [secret.username, secret.password])
-            if (value && !inspectorSecrets.includes(value)) inspectorSecrets.push(value);
+            if (value && !secrets.includes(value)) secrets.push(value);
           return { credential: secret };
         }
         const { savedLoginId, ...request } = input;
@@ -964,7 +830,7 @@ async function initializeApplication(
             ? { [appConfirmation]: result.question }
             : result;
         }
-        return integrations.execute(
+        const result = await integrations.execute(
           ownerId,
           action,
           args,
@@ -972,6 +838,8 @@ async function initializeApplication(
           options?.signal,
           options?.checkConnectionId,
         );
+        await ledger.action(turn.turnId, action, args);
+        return result;
       },
     });
   }
@@ -991,9 +859,9 @@ async function initializeApplication(
     },
     startOnboarding: welcome,
     planningTasks: onboardingSuggestions.planning,
+    messageCosts: ledger.messageCosts,
     computer,
     runtime,
-    inspector,
     configuration: () =>
       configuration({
         provider: adapters.model.provider,
@@ -1009,8 +877,7 @@ async function initializeApplication(
   const feedbackReportOptions: FeedbackReportOptions = {
     pool,
     ownerId,
-    captureEnabled: () => configuration().inspectorEnabled,
-    secrets: inspectorSecrets,
+    secrets,
     get provider() {
       return adapters.model.provider;
     },
@@ -1042,7 +909,7 @@ async function initializeApplication(
       accounts: localAccounts,
       origin: publicOrigin,
       localUser: { id: ownerId, name: 'You', email: null, avatarUrl: null },
-      developerIds: configuration().inspectorEnabled ? new Set([ownerId]) : new Set(),
+      developerIds: desktopMode ? new Set() : new Set([ownerId]),
       prepare: async () => adapters.prepareComputer?.(),
       start: (_owner, name) => welcome(name),
     }).register(app);
@@ -1059,22 +926,12 @@ async function initializeApplication(
       return { ok: true };
     });
   }
-  providerUsage.registerRoutes(app);
-  promptInspector.registerRoutes(app);
+  ledger.registerRoutes(app);
   if (adapters.linkPreviews) {
     const previews = adapters.linkPreviews;
     createLinkPreviews({
-      metadata: (url) =>
-        providerUsage.track(
-          { provider: 'public-web', category: 'browser', operation: 'link_metadata' },
-          () => previews.metadata(url),
-        ),
-      image: (url) =>
-        providerUsage.track(
-          { provider: 'public-web', category: 'browser', operation: 'link_image' },
-          () => previews.image(url),
-          (image) => ({ bytes: image?.bytes.byteLength ?? 0 }),
-        ),
+      metadata: (url) => previews.metadata(url),
+      image: (url) => previews.image(url),
     }).registerRoutes(app);
   }
   vault.registerRoutes(app);
@@ -1093,24 +950,10 @@ async function initializeApplication(
         ownerId,
         accounts: adapters.channelAccounts,
         keyStore: adapters.keyStore,
-        verifier: {
-          verify: (provider, input) =>
-            providerUsage.track({ provider, category: 'channel', operation: 'setup' }, () =>
-              setup.verifier.verify(provider, input),
-            ),
-          ...(setup.verifier.register
-            ? {
-                register: (provider, configuration) =>
-                  providerUsage.track(
-                    { provider, category: 'channel', operation: 'register' },
-                    () => setup.verifier.register!(provider, configuration),
-                  ),
-              }
-            : {}),
-        },
+        verifier: setup.verifier,
         apply: async (environment) => {
           if (!channels) throw new Error('Messaging is not ready.');
-          await channels.replaceTransport(meterMessaging(setup.create(environment), providerUsage));
+          await channels.replaceTransport(setup.create(environment));
         },
         paired: async (candidate, client) => {
           if (!channels) throw new Error('Messaging is not ready.');
@@ -1128,12 +971,28 @@ async function initializeApplication(
       appOrigin: runtimeMode === 'tenant' ? publicOrigin : undefined,
       resolveAttachments: artifacts.readThreadArtifacts,
       ...(channelSettings ? { pair: channelSettings.pair } : {}),
-      transport: meterMessaging(messaging, providerUsage),
+      transport: messaging,
       acceptVerification: (text, input) => chatVerification.accept(text, input),
       activeThread: (client) => activeThread(client),
-      memoryReply: async (client, threadId, link) => {
-        const view = await personal.memoryView();
+      commandReply: async (command, client, threadId, link) => {
         const now = new Date();
+        if (command === 'usage') {
+          const report = await ledger.report();
+          const file = threadId
+            ? await artifacts.storeArtifact(
+                usagePdf(report, now),
+                usageFileName(now),
+                'application/pdf',
+                threadId,
+                client,
+              )
+            : null;
+          return {
+            text: usageDigest(report, link),
+            attachments: file ? [file] : [],
+          };
+        }
+        const view = await personal.memoryView();
         const file = threadId
           ? await artifacts.storeArtifact(
               Buffer.from(memoryMarkdown(view, now)),
@@ -1198,10 +1057,6 @@ async function initializeApplication(
         await runtime.dispose();
         await adapters.confirmComputerShutdown?.();
       },
-      () => inspector.close(),
-      () => promptInspector.close(),
-      () => providerUsage.close(),
-      () => inspectorDatabase.end(),
       () => analytics.shutdown(),
     ]) {
       try {
@@ -1292,7 +1147,6 @@ export async function createGatewayApplication(
       transport,
       masterKey,
       environment,
-      developerIds,
       operatorEnvironment: { ...env, OTTO_PUBLIC_URL: origin },
     });
     const app = await createGateway({

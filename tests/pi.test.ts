@@ -1168,7 +1168,7 @@ async function hostSandbox(t: test.TestContext) {
     );
     return result.content.map((part) => (part.type === 'text' ? part.text : part.type)).join('');
   };
-  return { prefix, root, workspace, calls, tools, run };
+  return { prefix, root, bin, workspace, calls, tools, run };
 }
 
 test('native Pi tools run only through workspace exec on sandbox paths that do not exist on the host', async (t) => {
@@ -1512,6 +1512,113 @@ test('bash receives no host environment and small outputs leave no saved file', 
   assert.equal((await run('bash', { command: 'echo "[$OTTO_TEST_PROVIDER_KEY]"' })).trim(), '[]');
   assert.ok(calls.every(({ command }) => !command.includes('sk-test-secret')));
   assert.deepEqual(await readdir(join(root, 'workspace/.otto/outputs')), []);
+});
+
+test('bash rewrites inside the workspace and never retries an executed command', async (t) => {
+  const { root, bin, run } = await hostSandbox(t);
+  const directory = join(root, 'workspace');
+  await writeFile(
+    join(directory, 'job.sh'),
+    'printf "run\\n" >> executions\nprintf "%s\\n" "$1"\nexit 7\n',
+  );
+  await writeFile(join(bin, 'git'), '#!/bin/sh\nbash job.sh original\n', { mode: 0o755 });
+  await writeFile(
+    join(bin, 'rtk'),
+    '#!/bin/sh\n[ "$1" = rewrite ] || exec bash job.sh filtered\ncat rewrite-output\nexit "$(cat rewrite-code)"\n',
+    { mode: 0o755 },
+  );
+  for (const { code, replacement, expected } of [
+    { code: 0, replacement: 'bash job.sh filtered', expected: 'filtered' },
+    { code: 3, replacement: 'bash job.sh filtered', expected: 'filtered' },
+    { code: 1, replacement: '', expected: 'original' },
+    { code: 42, replacement: 'bash job.sh filtered', expected: 'original' },
+    { code: 0, replacement: '', expected: 'original' },
+    { code: 2, replacement: '', expected: 'denied' },
+  ]) {
+    await writeFile(join(directory, 'rewrite-code'), String(code));
+    await writeFile(join(directory, 'rewrite-output'), replacement);
+    await writeFile(join(directory, 'executions'), '');
+    const output = await run('bash', { command: 'git status' });
+    assert.match(output, new RegExp(expected));
+    assert.match(output, new RegExp(`Command exited with code ${code === 2 ? 126 : 7}`));
+    assert.equal(await readFile(join(directory, 'executions'), 'utf8'), code === 2 ? '' : 'run\n');
+  }
+  for (const name of ['npm', 'python3'])
+    await writeFile(join(bin, name), '#!/bin/sh\nbash job.sh original\n', { mode: 0o755 });
+  await writeFile(join(directory, 'rewrite-code'), '0');
+  for (const { command, replacement, expected } of [
+    { command: 'ls -la', replacement: 'bash job.sh filtered', expected: 'filtered' },
+    { command: 'rg invoice src', replacement: 'bash job.sh filtered', expected: 'filtered' },
+    { command: 'cat source.txt', replacement: 'bash job.sh filtered', expected: 'filtered' },
+    { command: 'npm run lint', replacement: 'rtk lint', expected: 'original' },
+    { command: 'npm run lint', replacement: 'rtk npm run lint', expected: 'filtered' },
+    { command: 'python3 -m pytest', replacement: 'rtk pytest', expected: 'original' },
+  ]) {
+    await writeFile(join(directory, 'rewrite-output'), replacement);
+    await writeFile(join(directory, 'executions'), '');
+    const output = await run('bash', { command });
+    assert.match(output, new RegExp(expected));
+    assert.match(output, /Command exited with code 7/);
+    assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
+  }
+  await rm(join(bin, 'rtk'));
+  await writeFile(join(directory, 'executions'), '');
+  assert.match(await run('bash', { command: 'git status' }), /original/);
+  assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
+});
+
+test('bash preserves shell data flows and bounds unavailable RTK before executing once', async (t) => {
+  const { root, bin, run } = await hostSandbox(t);
+  const directory = join(root, 'workspace');
+  await writeFile(join(directory, 'source.txt'), 'one\ntwo\nthree\n');
+  await writeFile(join(bin, 'rtk'), '#!/bin/sh\nprintf "unexpected\\n" >> rewrites\nexit 2\n', {
+    mode: 0o755,
+  });
+  for (const command of [
+    'cat source.txt > copy.txt',
+    'cat source.txt | wc -l',
+    'printf "%s" "$(cat source.txt)"',
+    'cat <<EOF\nsource text\nEOF',
+    'cat source.txt && printf done',
+  ])
+    assert.doesNotMatch(await run('bash', { command }), /Command exited/);
+  assert.equal(await readFile(join(directory, 'copy.txt'), 'utf8'), 'one\ntwo\nthree\n');
+  await writeFile(join(bin, 'git'), '#!/bin/sh\nprintf "exact output\\n"\n', { mode: 0o755 });
+  for (const command of [
+    'git log',
+    'git status --porcelain',
+    'git status --porcelain=v2 -z',
+    'git diff --output=changes.patch',
+    'git diff "--output=changes.patch"',
+    'git diff --output-file changes.patch',
+    'git diff -ochanges.patch',
+    'git log --format=json',
+    'git log --json',
+    'git log --zero',
+    'git  log',
+  ])
+    assert.equal(await run('bash', { command }), 'exact output\n');
+  await writeFile(join(bin, 'git'), '#!/bin/sh\nprintf "first-hash\\nsecond-hash"\n', {
+    mode: 0o755,
+  });
+  for (const command of [
+    'git log --pretty=format:%H',
+    'git log "--pretty=format:%H"',
+    "git log '--pretty=format:%H'",
+  ])
+    assert.equal(await run('bash', { command }), 'first-hash\nsecond-hash');
+  assert.equal(existsSync(join(directory, 'rewrites')), false);
+  await writeFile(join(directory, 'job.sh'), 'printf "run\\n" >> executions\nexit 124\n');
+  await writeFile(join(bin, 'git'), '#!/bin/sh\nbash job.sh\n', { mode: 0o755 });
+  await writeFile(join(bin, 'rtk'), '#!/bin/sh\nsleep 4\nprintf done > rewrite-completed\n', {
+    mode: 0o755,
+  });
+  assert.match(
+    await run('bash', { command: 'git status', timeout: 1 }),
+    /Command exited with code 124/,
+  );
+  assert.equal(await readFile(join(directory, 'executions'), 'utf8'), 'run\n');
+  assert.equal(existsSync(join(directory, 'rewrite-completed')), false);
 });
 
 // Runtime: credential guard in observations, one active turn, stop and shutdown drain.

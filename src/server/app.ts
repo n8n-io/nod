@@ -27,8 +27,6 @@ import {
 import { isMessageReaction } from '../shared/emoji.ts';
 import { accessKey, registerLocalAccess } from './access.ts';
 import { logFailure } from './failure-log.ts';
-import { inspectorPayloadLimit, inspectorRetentionDays, type InspectorStore } from './inspector.ts';
-import type { AgentToolMetadata } from '../ports/agent.ts';
 import { registerRuntimeAccess } from './runtime-auth.ts';
 import { createMultipartReader } from './multipart.ts';
 import { BrowserActionError, type Computer } from '../ports/computer.ts';
@@ -49,10 +47,14 @@ import { registerAnalyticsRoutes, type CaptureAnalytics } from './analytics.ts';
 
 const messageFields = `m.id,m.role,m.text,m.turn_id AS "turnId",m.created_at AS "createdAt",m.attachments,m.stream_id AS "streamId",m.reaction,m.assistant_reaction AS "assistantReaction",m.reply_to_message_id AS "replyToMessageId",m.suggestions,
  CASE WHEN target.id IS NULL THEN NULL ELSE json_build_object('id',target.id,'role',target.role,'text',left(target.text,1000)) END AS "replyTo"`;
-function messageView(row: Message & { assistantReaction?: MessageReaction | null }): Message {
+function messageView(
+  row: Message & { assistantReaction?: MessageReaction | null },
+  modelCostUsd?: number | null,
+): Message {
   const { assistantReaction, ...message } = row;
   return {
     ...message,
+    ...(modelCostUsd !== undefined ? { modelCostUsd } : {}),
     reactions: [
       ...(message.reaction ? [{ actor: 'user' as const, reaction: message.reaction }] : []),
       ...(assistantReaction ? [{ actor: 'assistant' as const, reaction: assistantReaction }] : []),
@@ -80,14 +82,15 @@ export interface AppDependencies {
   >;
   runtime?: {
     status(): { browser: string; workspace: string; activeTurns?: number };
-    inspectTools?(): AgentToolMetadata[];
     holdBrowserForUser?(threadId: string): boolean;
   };
-  inspector?: Pick<InspectorStore, 'read'>;
   configuration?: () => Configuration;
   onboard?: (timeZone?: string, threadId?: string) => Promise<unknown>;
   startOnboarding?: (name?: string) => Promise<unknown>;
   planningTasks?: () => boolean;
+  messageCosts?: (
+    turnIds: string[],
+  ) => Promise<Record<string, { messageId: string | null; costUsd: number | null }>>;
 }
 
 export async function createApp(dependencies: AppDependencies = {}) {
@@ -186,6 +189,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
+    const modelCosts = await dependencies
+      .messageCosts?.(
+        visibleMessages.map((message) => message.turnId).filter((id): id is string => !!id),
+      )
+      .catch(() => undefined);
     const recentIds = new Set(turns.rows.map((turn) => turn.id));
     const olderTurns = await messageTurns(
       thread.id,
@@ -194,7 +202,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return {
       threadId: thread.id,
       hasEarlierMessages,
-      messages: visibleMessages.map(messageView),
+      messages: visibleMessages.map((message) => {
+        const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;
+        return messageView(
+          message,
+          cost && cost.messageId === message.id ? cost.costUsd : undefined,
+        );
+      }),
       turns: [...turns.rows, ...olderTurns],
       verificationRequests,
       planningTasks: dependencies.planningTasks?.() ?? false,
@@ -223,8 +237,17 @@ export async function createApp(dependencies: AppDependencies = {}) {
       [ownerId, query.before ?? null, query.beforeId ?? null, thread.id],
     );
     const page = rows.rows.slice(0, 60);
+    const modelCosts = await dependencies
+      .messageCosts?.(page.map((message) => message.turnId).filter((id): id is string => !!id))
+      .catch(() => undefined);
     return {
-      messages: page.reverse().map(messageView),
+      messages: page.reverse().map((message) => {
+        const cost = message.turnId ? modelCosts?.[message.turnId] : undefined;
+        return messageView(
+          message,
+          cost && cost.messageId === message.id ? cost.costUsd : undefined,
+        );
+      }),
       hasMore: rows.rows.length > 60,
     } satisfies MessageHistoryPage;
   });
@@ -417,31 +440,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
     reply.header('Content-Length', file.size);
     return reply.send(await artifacts.readArtifact(file.id));
   });
-  app.get('/api/inspector/tools', async (_request, reply) => {
-    if (!publicConfiguration().inspectorEnabled)
-      return reply.code(404).send({ error: 'Inspector is disabled.' });
-    return {
-      tools: dependencies.runtime?.inspectTools?.() ?? [],
-      captureEnabled: Boolean(dependencies.inspector),
-      retentionDays: inspectorRetentionDays,
-      payloadLimitBytes: inspectorPayloadLimit,
-    };
-  });
-  app.get('/api/inspector/observations', async (request, reply) => {
-    if (!publicConfiguration().inspectorEnabled)
-      return reply.code(404).send({ error: 'Inspector is disabled.' });
-    const query = z
-      .object({
-        turnId: z.uuid().optional(),
-        before: z.iso.datetime({ offset: true }).optional(),
-        beforeId: z.uuid().optional(),
-        tool: z.string().min(1).max(160).optional(),
-      })
-      .refine((value) => Boolean(value.before) === Boolean(value.beforeId))
-      .parse(request.query);
-    const result = await dependencies.inspector?.read(query.turnId, query);
-    return result ?? reply.code(404).send({ error: 'Turn not found.' });
-  });
   async function readCurrentBrowser() {
     const thread = await activeThread(pool);
     const activeBrowser = dependencies.computer?.currentSession?.();
@@ -464,40 +462,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
     };
   }
   app.get('/api/browser', async () => ({ currentBrowser: (await readCurrentBrowser()) ?? null }));
-  app.get('/api/inspector', async (request, reply) => {
-    if (!publicConfiguration().inspectorEnabled)
-      return reply.code(404).send({ error: 'Inspector is disabled.' });
-    const { turnId } = z.object({ turnId: z.uuid().optional() }).strict().parse(request.query);
-    const thread = await activeThread(pool);
-    const turns = await pool.query(
-      `SELECT u.id,u.status,u.source,u.error,u.created_at AS "createdAt",u.finished_at AS "finishedAt" FROM turns u
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND ($3::uuid IS NULL OR u.id=$3) ORDER BY u.created_at DESC LIMIT 50`,
-      [ownerId, thread.id, turnId ?? null],
-    );
-    if (turnId && !turns.rowCount) return reply.code(404).send({ error: 'Turn not found.' });
-    const events = await pool.query(
-      `SELECT e.id,e.turn_id AS "turnId",e.type,e.summary,e.created_at AS "createdAt" FROM turn_events e JOIN turns u ON u.id=e.turn_id
-       WHERE u.owner_id=$1 AND u.thread_id=$2 AND ($3::uuid IS NULL OR u.id=$3) ORDER BY e.created_at DESC LIMIT 200`,
-      [ownerId, thread.id, turnId ?? null],
-    );
-    const runtime = dependencies.runtime?.status() ?? {
-      browser: dependencies.computer?.status() ?? 'Not configured',
-      workspace: 'Not configured',
-    };
-    const currentBrowser = await readCurrentBrowser();
-    return {
-      turns: turns.rows,
-      events: events.rows,
-      artifacts: (
-        await pool.query(
-          'SELECT * FROM artifacts WHERE owner_id=$1 AND thread_id=$2 ORDER BY created_at DESC LIMIT 50',
-          [ownerId, thread.id],
-        )
-      ).rows.map((row) => ({ ...artifactView(row), threadId: row.thread_id })),
-      runtime: { ...runtime, database: 'PostgreSQL connected' },
-      ...(currentBrowser ? { currentBrowser } : {}),
-    };
-  });
   async function credentialEntryOpen(threadId: string) {
     const latest = await pool.query(
       "SELECT status,waiting_reason FROM turns WHERE owner_id=$1 AND thread_id=$2 AND status<>'queued' ORDER BY created_at DESC,id DESC LIMIT 1",
@@ -546,11 +510,6 @@ export async function createApp(dependencies: AppDependencies = {}) {
     return reply.type('image/png').send(screen);
   }
   app.get('/api/browser/screen', (_request, reply) => readBrowserScreen(reply));
-  app.get('/api/inspector/screen', (_request, reply) => {
-    if (!publicConfiguration().inspectorEnabled)
-      return reply.code(404).send({ error: 'Inspector is disabled.' });
-    return readBrowserScreen(reply);
-  });
   app.get('/api/browser-handoff/stream', async (_request, reply) => {
     const view = dependencies.computer?.view;
     if (!view) return reply.code(404).send({ error: 'The browser is unavailable.' });

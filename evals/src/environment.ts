@@ -65,7 +65,7 @@ async function provisionDatabase(root: string, provision: boolean) {
   const { password } = await passwordFile(root);
   const url = `postgres://otto:${password}@127.0.0.1:${port}/otto`;
   if (await reachable(url)) return { url, provisioned: true };
-  if (!provision) throw new Error('No test database. Run: npm run eval:capability -- doctor --fix');
+  if (!provision) throw new Error('No test database. Run: pnpm run eval:capability doctor --fix');
   const state = (
     await docker('ps', '-a', '--filter', `name=^${container}$`, '--format', '{{.State}}')
   ).stdout.trim();
@@ -174,7 +174,7 @@ export async function doctor(root: string, fix: boolean) {
         name: 'Test database',
         ok: false,
         detail: (error as Error).message,
-        fix: 'Run: npm run eval:capability -- doctor --fix',
+        fix: 'Run: pnpm run eval:capability doctor --fix',
       });
     }
   }

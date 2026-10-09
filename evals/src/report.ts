@@ -89,7 +89,7 @@ export function terminal(summary: RunSummary, attempts: AttemptResult[], reviews
       );
     if (wrong.undiagnosed)
       lines.push(
-        `  ${wrong.undiagnosed} failed attempts are not diagnosed yet: npm run eval:capability -- diagnose ${summary.manifest.label}`,
+        `  ${wrong.undiagnosed} failed attempts are not diagnosed yet: pnpm run eval:capability diagnose ${summary.manifest.label}`,
       );
   }
   const human = agreement(attempts, reviews);
@@ -488,8 +488,7 @@ export function runsTable(
     summary: RunSummary;
   }>,
 ) {
-  if (!runs.length)
-    return 'No saved runs yet. Start with: npm run eval:capability -- run --tier pr';
+  if (!runs.length) return 'No saved runs yet. Start with: pnpm run eval:capability run --tier pr';
   const width = Math.max(...runs.map((run) => run.label.length), 5);
   return [
     `  ${'label'.padEnd(width)}  ${'when'.padEnd(16)}  ${'agent'.padEnd(28)} ${'source'.padEnd(12)} pass rate`,

@@ -15,6 +15,10 @@ import {
 import type { WorkspaceSession } from '../../ports/computer.ts';
 
 const streamBytes = 1024 * 1024;
+const rawCommand =
+  /[|&;<>\n\r`$\\]|^\s*\w+=\S*|(?:^|\s)["']?(?:--(?:json|porcelain|raw|format|pretty|output|outfile|output-file|null|zero)(?:[-=\s"']|$)|-[oO]|-(?:0|z|print0)(?:[\s"']|$))/;
+const invocationWrapper =
+  /^\s*(?:\S*\/)?(?:npm|pnpm|yarn|bun|npx|bunx|python[\d.]*|uv|poetry|pipenv|pipx|env|command|exec|sudo|doas)(?:\s|$)/;
 const imageTypes: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -204,8 +208,18 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
       `cd -- ${quote(cwd)} || exit 1`,
       `mkdir -p ${quote(posix.dirname(file))}`,
       ...(timeZone ? [`export TZ=${quote(timeZone)}`] : []),
+      'export RTK_TELEMETRY_DISABLED=1',
+      `otto_command=${quote(command)}`,
+      ...(!rawCommand.test(command) && !/^\s*git\s+log\s*$/.test(command)
+        ? [
+            'otto_rewrite=$(timeout -k 1 2 rtk rewrite "$otto_command" 2>/dev/null)',
+            'otto_rewrite_code=$?',
+            'if [ "$otto_rewrite_code" -eq 2 ]; then printf "%s\\n" "Command denied by workspace RTK policy."; exit 126; fi',
+            `if { [ "$otto_rewrite_code" -eq 0 ] || [ "$otto_rewrite_code" -eq 3 ]; } && [ -n "$otto_rewrite" ]${invocationWrapper.test(command) ? ' && [ "$otto_rewrite" = "rtk $otto_command" ]' : ''}; then otto_command=$otto_rewrite; fi`,
+          ]
+        : []),
       'start=$(date +%s)',
-      `timeout -k 5 ${seconds} bash -c ${quote(command)} > ${quote(file)} 2>&1 < /dev/null`,
+      `timeout -k 5 ${seconds} bash -c "$otto_command" > ${quote(file)} 2>&1 < /dev/null`,
       'code=$?',
       `size=$(($(wc -c < ${quote(file)})))`,
       `if [ "$size" -gt ${streamBytes} ]; then`,
@@ -321,6 +335,11 @@ export function createSandbox(workspace: WorkspaceSession, timeZone?: string) {
   ] as ToolDefinition[];
   return tools.map((definition): ToolDefinition => ({
     ...definition,
+    ...(definition.name === 'bash'
+      ? {
+          description: `${definition.description}\nSupported simple commands automatically use RTK for compact output. Prefer bash with rtk ls, rtk read, rtk grep and rtk find for exploration; use native read for exact edit context. Use rtk test or rtk err around scripts to compact their output, and rtk proxy for unfiltered output. Shell data flows and explicit machine-output formats stay raw.`,
+        }
+      : {}),
     execute: (id, params, signal, onUpdate, context) =>
       workspaceOutputs(
         () => definition.execute(id, params, signal, onUpdate, context),

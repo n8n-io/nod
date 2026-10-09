@@ -1,0 +1,36 @@
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: PR number for a bot-created branch
+        type: string
+        required: true
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number || inputs.pull_request }}
+  cancel-in-progress: true
+
+jobs:
+  title:
+    name: Conventional PR title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check the PR title
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            const number = context.payload.pull_request?.number ?? Number(context.payload.inputs?.pull_request);
+            if (!Number.isSafeInteger(number) || number < 1) throw new Error('A PR number is required.');
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+            if (context.eventName === 'workflow_dispatch' && pr.head.sha !== context.sha)
+              throw new Error('Run this check on the current PR head.');
+            if (!/^(feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert)(\([^()\r\n]+\))?!?: \S[^\r\n]*$/.test(pr.title))
+              core.setFailed('Use a Conventional Commits PR title, such as fix(backend): handle a missing session.');

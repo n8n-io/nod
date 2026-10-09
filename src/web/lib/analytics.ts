@@ -8,7 +8,7 @@ type AnalyticsEvents = {
     step: 'welcome' | 'brain' | 'about' | 'email' | 'telegram' | 'open_source';
   };
   otto_settings_viewed: {
-    tab: 'general' | 'profile' | 'appearance' | 'preferences' | 'models' | 'memory';
+    tab: 'general' | 'profile' | 'appearance' | 'preferences' | 'models' | 'memory' | 'trust';
   };
   otto_chat_message_sent: { has_attachments: boolean; is_reply: boolean };
   otto_chat_stop_requested: undefined;
@@ -25,7 +25,7 @@ const eventProperties: Record<keyof AnalyticsEvents, Record<string, readonly unk
     step: ['welcome', 'brain', 'about', 'email', 'telegram', 'open_source'],
   },
   otto_settings_viewed: {
-    tab: ['general', 'profile', 'appearance', 'preferences', 'models', 'memory'],
+    tab: ['general', 'profile', 'appearance', 'preferences', 'models', 'memory', 'trust'],
   },
   otto_chat_message_sent: { has_attachments: [true, false], is_reply: [true, false] },
   otto_chat_stop_requested: {},

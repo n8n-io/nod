@@ -4,6 +4,7 @@ import { createPiModelRuntime } from './models.ts';
 import type { ModelAccess } from '../../ports/models.ts';
 import type { MemoryCurator } from '../../ports/memory-curator.ts';
 import { agentModels, memoryModels } from '../../shared/model-defaults.ts';
+import { piUsageMetrics } from './usage.ts';
 
 function json(text: string) {
   const body = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1] ?? text;
@@ -26,7 +27,12 @@ export function createPiMemoryCurator(options: {
   let loaded: ReturnType<typeof load> | undefined;
   async function load() {
     const access = await options.resolve?.();
-    if (access) return { ...(await createPiModelRuntime(access)), effort: access.effort };
+    if (access)
+      return {
+        ...(await createPiModelRuntime(access)),
+        effort: access.effort,
+        subscription: access.method === 'subscription',
+      };
     const runtime =
       options.runtime ??
       (await ModelRuntime.create({
@@ -45,7 +51,7 @@ export function createPiMemoryCurator(options: {
           ]
     ).flatMap((id) => (id ? (runtime.getModel(options.provider, id) ?? []) : []))[0];
     if (!model) throw new Error('The memory model is not present in the installed Pi catalog.');
-    return { runtime, model, effort: undefined };
+    return { runtime, model, effort: undefined, subscription: false };
   }
   return {
     get id() {
@@ -54,14 +60,14 @@ export function createPiMemoryCurator(options: {
     get configured() {
       return options.configured?.() ?? Boolean(options.apiKey);
     },
-    async curate({ instructions, input }, signal) {
+    async curate({ instructions, input }, signal, report) {
       signal?.throwIfAborted();
       if (options.resolve) loaded = undefined;
       loaded ??= load().catch((error) => {
         loaded = undefined;
         throw error;
       });
-      const { runtime, model, effort } = await loaded;
+      const { runtime, model, effort, subscription } = await loaded;
       const reply = await runtime.completeSimple(
         model,
         {
@@ -75,6 +81,11 @@ export function createPiMemoryCurator(options: {
           reasoning: effort === 'off' ? undefined : effort,
         },
       );
+      if (reply.usage?.totalTokens)
+        report?.({
+          model: model.id,
+          costUsd: subscription ? null : (piUsageMetrics(reply.usage).costUsd ?? null),
+        });
       if (reply.stopReason === 'error' || reply.stopReason === 'aborted')
         throw new Error('The memory model is unavailable.');
       return json(

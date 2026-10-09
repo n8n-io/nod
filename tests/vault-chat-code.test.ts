@@ -195,7 +195,6 @@ test(
             );
             assert.ok(!JSON.stringify(persisted.rows).includes(code));
             assert.ok(!JSON.stringify(persisted.rows).includes(text.trim()));
-            assert.equal((await db.pool.query('SELECT * FROM inspector_records')).rowCount, 0);
           }
         },
       );

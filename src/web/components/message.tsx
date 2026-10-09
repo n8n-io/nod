@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Check, CornerUpLeft, SmilePlus, ScanSearch, MoreHorizontal, X } from 'lucide-react';
+import { Copy, Check, CornerUpLeft, SmilePlus, MoreHorizontal, X } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -22,7 +22,7 @@ import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
 import { BrowserHandoff } from './browser-handoff';
 import { MessageAttachments } from './attachment-card';
-import { formatFullDateTime, formatTime, useDateFormat } from '../lib/date-format';
+import { formatFullDateTime, formatNumber, formatTime, useDateFormat } from '../lib/date-format';
 
 const ReactionPicker = lazy(() => import('./emoji-picker'));
 const messageSchema = {
@@ -35,11 +35,13 @@ export const MessageText = memo(function MessageText({
   previews = false,
   connectedAppIds,
   onHandoffDone,
+  handoffPaused,
 }: {
   text: string;
   previews?: boolean;
   connectedAppIds?: ReadonlySet<string>;
   onHandoffDone?: () => Promise<void>;
+  handoffPaused?: boolean;
 }) {
   const content = useRef<HTMLDivElement>(null);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
@@ -99,7 +101,7 @@ export const MessageText = memo(function MessageText({
           )}
         />
         {onHandoffDone && actions.some((action) => action.setup === 'browser') && (
-          <BrowserHandoff onDone={onHandoffDone} />
+          <BrowserHandoff onDone={onHandoffDone} paused={handoffPaused} />
         )}
       </div>
       {previews && <MessageLinkPreviews content={content} text={text} />}
@@ -118,21 +120,41 @@ function ReactionGlyph({ value }: { value: string }) {
 export function MessageBubble({
   message,
   connectedAppIds,
-  inspectorEnabled = false,
   grouped = false,
   streaming = false,
   onReply,
   onHandoffDone,
+  handoffPaused,
 }: {
   message: Message;
   connectedAppIds?: ReadonlySet<string>;
-  inspectorEnabled?: boolean;
   grouped?: boolean;
   streaming?: boolean;
   onReply?(): void;
   onHandoffDone?(): Promise<void>;
+  handoffPaused?: boolean;
 }) {
   const dateFormat = useDateFormat();
+  const smallCost =
+    typeof message.modelCostUsd === 'number' &&
+    message.modelCostUsd > 0 &&
+    message.modelCostUsd < 0.000001;
+  const modelCost =
+    message.modelCostUsd === undefined
+      ? undefined
+      : message.modelCostUsd === null
+        ? 'Price unavailable'
+        : `${smallCost ? '<' : ''}${formatNumber(
+            smallCost ? 0.000001 : message.modelCostUsd,
+            {
+              style: 'currency',
+              currency: 'USD',
+              currencyDisplay: 'narrowSymbol',
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 6,
+            },
+            dateFormat,
+          )}`;
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [reaction, setReaction] = useState(message.reaction ?? null);
@@ -149,7 +171,6 @@ export function MessageBubble({
   const menuTrigger = useRef<HTMLElement | null>(null);
   const pickerTrigger = useRef<HTMLElement | null>(null);
   const pickerElement = useRef<HTMLDivElement>(null);
-  const canInspect = message.role === 'assistant' && inspectorEnabled && Boolean(message.turnId);
   const agentReaction =
     message.role === 'user'
       ? reactionEmoji(message.reactions?.find((item) => item.actor === 'assistant')?.reaction ?? '')
@@ -306,14 +327,6 @@ export function MessageBubble({
       setError('The message could not be copied.');
     }
   }
-  function inspect() {
-    setMenu(null);
-    window.dispatchEvent(
-      new CustomEvent('otto:inspect-message', {
-        detail: { messageId: message.id, turnId: message.turnId },
-      }),
-    );
-  }
   function reply() {
     setMenu(null);
     onReply?.();
@@ -371,6 +384,7 @@ export function MessageBubble({
                 previews={!streaming}
                 connectedAppIds={connectedAppIds}
                 onHandoffDone={streaming ? undefined : onHandoffDone}
+                handoffPaused={handoffPaused}
               />
             )}
           </div>
@@ -383,6 +397,19 @@ export function MessageBubble({
               >
                 {formatTime(message.createdAt, dateFormat)}
               </time>
+              {message.role === 'assistant' && modelCost !== undefined && (
+                <span
+                  className="message-cost"
+                  title={
+                    message.modelCostUsd === null
+                      ? 'Price unavailable'
+                      : 'Estimated model cost for this request'
+                  }
+                  aria-label={`Request cost: ${modelCost}`}
+                >
+                  {modelCost}
+                </span>
+              )}
               <div className="message-actions" aria-label="Message actions">
                 {onReply && (
                   <Button
@@ -417,17 +444,6 @@ export function MessageBubble({
                     }
                   >
                     <SmilePlus size={16} />
-                  </Button>
-                )}
-                {canInspect && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="Inspect message"
-                    title="Inspect"
-                    onClick={inspect}
-                  >
-                    <ScanSearch size={16} />
                   </Button>
                 )}
               </div>
@@ -520,12 +536,6 @@ export function MessageBubble({
               <Copy size={16} />
               Copy
             </button>
-            {canInspect && (
-              <button role="menuitem" onClick={inspect}>
-                <ScanSearch size={16} />
-                Inspect
-              </button>
-            )}
           </div>,
           document.body,
         )}

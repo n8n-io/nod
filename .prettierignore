@@ -3,6 +3,6 @@ node_modules
 .env
 .env.*
 dist
-package-lock.json
+pnpm-lock.yaml
 .wrangler
 scripts/fixtures/*.md

@@ -26,17 +26,9 @@ export function createPool(config: pg.PoolConfig) {
 
 export const pool = createPool({ max: poolSize(process.env.DATABASE_POOL_MAX, 12) });
 
-export function createInspectorPool() {
-  return createPool({
-    max: poolSize(process.env.INSPECTOR_DATABASE_POOL_MAX, 2),
-    statement_timeout: 500,
-    query_timeout: 750,
-  });
-}
-
 export async function initializeDatabase() {
   if (!databaseUrl)
-    throw new Error('Run npm run dev to configure the local database, or set DATABASE_URL.');
+    throw new Error('Run pnpm run dev to configure the local database, or set DATABASE_URL.');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS threads (
       id uuid PRIMARY KEY, owner_id text NOT NULL,
@@ -56,6 +48,7 @@ export async function initializeDatabase() {
     ALTER TABLE turns ADD COLUMN IF NOT EXISTS channel_source_id text;
     CREATE UNIQUE INDEX IF NOT EXISTS turns_owner_source ON turns(owner_id,source_id) WHERE source_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS turns_thread_queue ON turns(thread_id,status,created_at,id);
+    CREATE INDEX IF NOT EXISTS turns_owner_time ON turns(owner_id,created_at,id);
     CREATE TABLE IF NOT EXISTS turn_events (
       id uuid PRIMARY KEY, turn_id uuid NOT NULL REFERENCES turns(id), type text NOT NULL,
       summary text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
@@ -104,16 +97,8 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS messages_owner_time ON messages(owner_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_thread_time ON messages(thread_id,created_at);
     CREATE INDEX IF NOT EXISTS messages_turn_time ON messages(turn_id,created_at);
-    CREATE TABLE IF NOT EXISTS inspector_records (
-      id uuid PRIMARY KEY, owner_id text NOT NULL,
-      thread_id uuid REFERENCES threads(id) ON DELETE CASCADE, turn_id uuid REFERENCES turns(id) ON DELETE CASCADE,
-      kind text NOT NULL, name text NOT NULL, status text NOT NULL,
-      input jsonb, output jsonb, error text, usage jsonb, duration_ms double precision,
-      started_at timestamptz NOT NULL, finished_at timestamptz, recorded_at timestamptz NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS inspector_records_turn_time ON inspector_records(owner_id,turn_id,started_at DESC,id DESC);
-    CREATE INDEX IF NOT EXISTS inspector_records_thread_time ON inspector_records(owner_id,thread_id,started_at DESC,id DESC);
-    CREATE INDEX IF NOT EXISTS inspector_records_retention ON inspector_records(recorded_at);
+    DROP TABLE IF EXISTS inspector_records;
+    DROP TABLE IF EXISTS inspector_prompts;
   `);
   await pool.query('UPDATE preferences SET notification_rule=$1 WHERE notification_rule=$2', [
     defaultPreferences.notificationRule,

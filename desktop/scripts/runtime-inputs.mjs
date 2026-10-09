@@ -9,7 +9,10 @@ const inputs = [
   'Dockerfile.workspace',
   'Dockerfile.browser',
   'package.json',
-  'package-lock.json',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  'desktop/pnpm-lock.yaml',
+  'desktop/pnpm-workspace.yaml',
   'desktop/runtime/downloads.json',
   'desktop/scripts/build-lima.mjs',
   'desktop/scripts/check-browser-image.mjs',
@@ -64,37 +67,6 @@ export async function runtimeInputs() {
     entries.push(['signing.identity', identity], ['signing.certificateSha256', certificate]);
   }
   entries.push(['signing.mode', signingMode]);
-  const lockPath = 'desktop/package-lock.json';
-  const signingLock = JSON.parse(await readFile(join(repository, lockPath), 'utf8'));
-  const seen = new Set();
-  function collectPackage(name, parent = '') {
-    let scope = parent;
-    let path;
-    for (;;) {
-      const candidate = `${scope ? `${scope}/` : ''}node_modules/${name}`;
-      if (signingLock.packages[candidate]) {
-        path = candidate;
-        break;
-      }
-      if (!scope) throw new Error(`A runtime build dependency is absent from ${lockPath}.`);
-      scope = scope.includes('/node_modules/')
-        ? scope.slice(0, scope.lastIndexOf('/node_modules/'))
-        : '';
-    }
-    if (seen.has(path)) return;
-    seen.add(path);
-    const metadata = signingLock.packages[path];
-    entries.push([
-      `${lockPath}:${path}`,
-      createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
-    ]);
-    for (const dependency of Object.keys({
-      ...metadata.dependencies,
-      ...metadata.optionalDependencies,
-    }))
-      collectPackage(dependency, path);
-  }
-  collectPackage('@electron/osx-sign');
   entries.sort(([left], [right]) => left.localeCompare(right));
   const lock = JSON.parse(
     await readFile(join(repository, 'desktop/scripts/runtime-build-lock.json'), 'utf8'),

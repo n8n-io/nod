@@ -16,13 +16,13 @@ Production uses `OTTO_MAX_USERS=100` in `GATEWAY_ENV`. The default remains 8 for
 ## Checks
 
 ```sh
-npm ci && npm run build
-npm --prefix deployment/cloudflare ci
-npm --prefix deployment/cloudflare run check
-npm --prefix deployment/cloudflare test
+pnpm install --frozen-lockfile && pnpm run build
+pnpm --dir deployment/cloudflare install --frozen-lockfile
+pnpm --dir deployment/cloudflare run check
+pnpm --dir deployment/cloudflare test
 cd deployment/cloudflare
-npx wrangler deploy --env development --dry-run --containers-rollout=none
-npx wrangler deploy --env production --dry-run --containers-rollout=none
+pnpm exec wrangler deploy --env development --dry-run --containers-rollout=none
+pnpm exec wrangler deploy --env production --dry-run --containers-rollout=none
 ```
 
 Dry runs validate bundling and configuration only.
@@ -32,8 +32,8 @@ Dry runs validate bundling and configuration only.
 Create a private `.env.hosted.local` (mode 600) with a dedicated development database reachable from Docker, fresh random 32-byte `OTTO_MASTER_KEY` and `BETTER_AUTH_SECRET`, `OTTO_ENVIRONMENT=development`, Google OAuth client ID/secret (redirect `http://localhost:4330/api/auth/callback/google`), and model/Composio keys. See `deployment/hosted.env.example`. Then:
 
 ```sh
-npm run build
-npm --prefix deployment/cloudflare ci
+pnpm run build
+pnpm --dir deployment/cloudflare install --frozen-lockfile
 node scripts/start-hosted.mjs --check
 node scripts/start-hosted.mjs
 ```
@@ -44,7 +44,7 @@ The app runs at `http://localhost:4330` with local R2 emulation. Ctrl-C drains w
 
 `wrangler.jsonc` defines separate `development` and `production` Workers, Durable Objects, EU R2 buckets and container applications. Keep development and production databases, keys, Google clients and Composio projects separate. Use a dedicated PostgreSQL database: provisioning changes default grants.
 
-Each environment has one `GATEWAY_ENV` Worker secret: compact JSON of the gateway's server environment (`DATABASE_URL`, `OTTO_MASTER_KEY`, `COMPUTER_PROVIDER` (`cloudflare`, or `e2b` with `E2B_API_KEY` and `E2B_COMPUTER_TEMPLATE`), `OBJECT_STORAGE_PROVIDER=http`, `OBJECT_STORAGE_ENDPOINT=http://otto.storage/v1/objects/`, `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, model and `COMPOSIO_*` keys, optional `OTTO_MAX_USERS`, `OTTO_DEVELOPER_IDS`, `DEV_INSPECTOR`). It must stay under 5 KiB. Never put secrets in build arguments, Vite variables or Wrangler `vars`. Treat `OTTO_MASTER_KEY` as recovery material: replacing it invalidates tenant credentials and encrypted data. Secret changes take effect only through a new release rollout.
+Each environment has one `GATEWAY_ENV` Worker secret: compact JSON of the gateway's server environment (`DATABASE_URL`, `OTTO_MASTER_KEY`, `COMPUTER_PROVIDER` (`cloudflare`, or `e2b` with `E2B_API_KEY` and `E2B_COMPUTER_TEMPLATE`), `OBJECT_STORAGE_PROVIDER=http`, `OBJECT_STORAGE_ENDPOINT=http://otto.storage/v1/objects/`, `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, model and `COMPOSIO_*` keys, optional `OTTO_MAX_USERS`, `OTTO_DEVELOPER_IDS`). It must stay under 5 KiB. Never put secrets in build arguments, Vite variables or Wrangler `vars`. Treat `OTTO_MASTER_KEY` as recovery material: replacing it invalidates tenant credentials and encrypted data. Secret changes take effect only through a new release rollout.
 
 Privacy notice: operators write their own public Markdown notice to `public/privacy-notice.md` (the build copies it to `dist/web/privacy-notice.md`) and set `OTTO_PRIVACY_NOTICE_FILE=dist/web/privacy-notice.md` in `GATEWAY_ENV`. It is served at `/privacy`. Without the setting there is no notice; an unreadable or invalid file fails startup. Verify `/privacy` signed out and set it as the Google OAuth privacy-policy URL before inviting users.
 
@@ -55,8 +55,8 @@ PostHog product analytics and masked session recordings use the public project k
 Each environment needs exactly one private EU R2 bucket bound as `TENANT_FILES`. Create it once with a separate operator token (`CLOUDFLARE_R2_OPERATOR_TOKEN`, Workers R2 Storage Edit):
 
 ```sh
-npm --prefix deployment/cloudflare run provision:storage -- development
-npm --prefix deployment/cloudflare run provision:storage -- production
+pnpm --dir deployment/cloudflare run provision:storage development
+pnpm --dir deployment/cloudflare run provision:storage production
 ```
 
 ## Workspace users
@@ -90,7 +90,7 @@ A workspace too large to save keeps running with its previous checkpoint, and ev
 4. Publishes Worker code, image references and `GATEWAY_ENV` together with `wrangler deploy --secrets-file`.
 5. Verifies every container application's image and rollout, the R2 binding, and a public smoke test, then reopens admission.
 
-Deploying the SHA already in production is refused; configuration changes need a new release. A manual development deploy uses `npm --prefix deployment/cloudflare run deploy:development` with locally built `linux/amd64` images and development configuration.
+Deploying the SHA already in production is refused; configuration changes need a new release. A manual development deploy uses `pnpm --dir deployment/cloudflare run deploy:development` with locally built `linux/amd64` images and development configuration.
 
 ## Recovery and rollback
 

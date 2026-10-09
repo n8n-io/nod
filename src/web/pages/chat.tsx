@@ -10,6 +10,7 @@ import type {
   SubmitMessageResponse,
 } from '../../shared/contracts';
 import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
+import type { TrustView } from '../../shared/trust';
 import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
@@ -177,6 +178,15 @@ export function Chat({
 }) {
   const dateFormat = useDateFormat();
   const { data: connections } = usePageData<Connection[]>('/api/apps');
+  const { data: trust, refresh: refreshTrust } = usePageData<TrustView>('/api/trust');
+  const trustRefreshKey = state.turns.map((turn) => `${turn.id}:${turn.status}`).join(',');
+  const spendingPaused = trust?.limit?.reached === true;
+  useEffect(() => {
+    void refreshTrust();
+    if (!spendingPaused) return;
+    const timer = window.setInterval(() => void refreshTrust(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [refreshTrust, spendingPaused, trustRefreshKey]);
   const connectedAppIds = useMemo(
     () =>
       new Set(
@@ -441,7 +451,7 @@ export function Chat({
     attachments: Artifact[],
     reply: Message | null = replyTo,
   ): Promise<ComposerSendResult> {
-    if (resetLock.current || welcoming) return { sent: false, restoreText: true };
+    if (resetLock.current || welcoming || spendingPaused) return { sent: false, restoreText: true };
     const captureAnalytics = analyticsForCurrentSession();
     const sentThread = threadId;
     const verificationRequests = (state.verificationRequests ?? []).filter(
@@ -899,15 +909,17 @@ export function Chat({
                         allMessages.findIndex((item) => item.id === message.id),
                       )
                     }
-                    disabled={!state.configuration.llmReady || resetting || welcoming}
+                    disabled={
+                      !state.configuration.llmReady || resetting || welcoming || spendingPaused
+                    }
                     onStart={(task) => void send(task.title, [], null)}
                   />
                 ) : (
                   <MessageBubble
                     message={message}
+                    handoffPaused={spendingPaused}
                     connectedAppIds={connectedAppIds}
                     streaming={streamIds.has(message.streamId ?? '')}
-                    inspectorEnabled={state.configuration.inspectorEnabled}
                     grouped={messagesAreGrouped(visibleMessages[index - 1], message, dateFormat)}
                     onHandoffDone={
                       message.id === returningHandoff ||
@@ -995,12 +1007,18 @@ export function Chat({
             {connectionNotice.text}
           </Notice>
         )}
+        {spendingPaused && (
+          <Notice kind="info">
+            Chat is paused because you reached your spending limit.{' '}
+            <a href="/trust">Raise the limit in Settings › Trust</a> to resume.
+          </Notice>
+        )}
         <div hidden={!state.configuration.llmReady && !working && !sending}>
           <ModelPicker />
           <Composer
             key={threadId}
             ref={composer}
-            ready={state.configuration.llmReady && !resetting && !welcoming}
+            ready={state.configuration.llmReady && !resetting && !welcoming && !spendingPaused}
             text={text}
             setText={setText}
             replyTo={replyTo}

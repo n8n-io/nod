@@ -31,6 +31,7 @@ import {
   automaticRelease,
   checkRelease,
   checkReleasePlan,
+  isReleaseMerge,
   prepareRelease,
 } from '../../.github/scripts/prepare-desktop-release.mjs';
 import { cleanupAppleSigning } from '../../.github/scripts/with-apple-signing.mjs';
@@ -63,10 +64,7 @@ async function releaseRepository(t) {
   const pkg = { name: 'synthetic-desktop', version: '0.1.0' };
   await Promise.all([
     writeFile(join(root, 'desktop/package.json'), JSON.stringify(pkg)),
-    writeFile(
-      join(root, 'desktop/package-lock.json'),
-      JSON.stringify({ ...pkg, packages: { '': pkg } }),
-    ),
+    writeFile(join(root, 'desktop/pnpm-lock.yaml'), 'lockfileVersion: 9.0\n'),
     writeFile(join(root, 'desktop/CHANGELOG.md'), '# Desktop changes\n'),
     writeFile(join(root, 'desktop/main.mjs'), 'export const initial = true;\n'),
   ]);
@@ -118,6 +116,51 @@ test('release gate rejects malformed metadata, uncommitted notes and source drif
     checkRelease(f.root, '0.1.0'),
     /Source changes landed after release preparation/,
   );
+});
+
+test('release publication requires the exact merge of an owned release PR', () => {
+  const source = 'a'.repeat(40);
+  const repository = 'synthetic/otto';
+  const pull = {
+    merged_at: '2026-10-09T10:00:00Z',
+    merge_commit_sha: source,
+    base: { ref: 'main', repo: { full_name: repository } },
+    head: { ref: 'release/desktop', repo: { full_name: repository } },
+  };
+  assert.equal(isReleaseMerge(pull, source, repository), true);
+  for (const candidate of [
+    { ...pull, merged_at: null },
+    { ...pull, merge_commit_sha: 'b'.repeat(40) },
+    { ...pull, head: { ...pull.head, ref: 'feature' } },
+    { ...pull, head: { ...pull.head, repo: { full_name: 'foreign/otto' } } },
+    { ...pull, base: { ...pull.base, ref: 'feature' } },
+    { ...pull, base: { ...pull.base, repo: { full_name: 'foreign/otto' } } },
+  ])
+    assert.equal(isReleaseMerge(candidate, source, repository), false);
+});
+
+test('release preparation selects the next patch and retains all change identities', async (t) => {
+  const f = await releaseRepository(t);
+  await prepareRelease(f.root, '0.1.0');
+  f.commit();
+  f.git('tag', 'desktop-v0.1.0');
+  const changes = [];
+  for (const [index, subject] of [
+    'feat(chat): export tasks (#2)',
+    'fix!: reject unsafe files',
+    'docs: add setup steps',
+  ].entries()) {
+    await writeFile(join(f.root, 'desktop/main.mjs'), `export const revision = ${index};\n`);
+    f.git('add', '.');
+    f.git('commit', '-m', subject);
+    changes.push(f.git('rev-parse', 'HEAD'));
+  }
+  const manifest = await prepareRelease(f.root);
+  assert.equal(manifest.version, '0.1.1');
+  f.commit();
+  const checked = await checkRelease(f.root, manifest.version);
+  for (const sha of changes) assert.equal(checked.notes.includes(sha.slice(0, 7)), true);
+  assert.equal(checked.source, changes.at(-1));
 });
 
 test('automatic patches release unchanged source and bind generated notes across midnight', async (t) => {
@@ -363,14 +406,14 @@ async function releaseFixture(
       ...input.inputs.filter(
         (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
       ),
-      'package-lock.json',
+      'pnpm-lock.yaml',
       'desktop/package.json',
-      'desktop/package-lock.json',
+      'desktop/pnpm-lock.yaml',
     ])) {
       await mkdir(dirname(join(root, path)), { recursive: true });
       await copyFile(join(repository, path), join(root, path));
     }
-    for (const path of ['desktop/package.json', 'desktop/package-lock.json']) {
+    for (const path of ['desktop/package.json']) {
       const file = join(root, path);
       const value = JSON.parse(await readFile(file, 'utf8'));
       value.version = '0.1.0';
@@ -521,6 +564,7 @@ if (args[0] === 'api') {
   if (args[1] === 'repos/synthetic/otto' || args[1] === 'repos/' + state.runtimeRepository) output({ private: state.private });
   if (args[1] === 'repos/' + state.runtimeRepository + '/commits/main') output({ sha: 'f'.repeat(40) });
   if (args[1].includes('/actions/workflows/')) output({ workflow_runs: state.runs });
+  if (args[1].endsWith('/pulls')) output(state.pulls || []);
   if (args[1] === 'repos/synthetic/otto/releases?per_page=100') {
     save();
     process.stdout.write(Object.values(state.releases).map(release => JSON.stringify(release)).join('\n'));
@@ -699,6 +743,44 @@ test('automatic delivery requires current exact-main CI and publishes only its c
   assert.equal(repeated.runtime_reused, 'true');
   assert.deepEqual((await f.readState()).releases, published.releases);
   assert.equal((await f.readState()).created, 2);
+});
+
+test('CI completion publishes only a merged release PR and keeps the tested source when main moves', async (t) => {
+  const f = await releaseFixture(t, { plan: true, publish: true });
+  const environment = {
+    GITHUB_EVENT_NAME: 'workflow_run',
+    GITHUB_SHA: 'b'.repeat(40),
+    OTTO_RELEASE_SOURCE: f.source,
+  };
+  assert.equal(
+    JSON.parse((await f.invoke('plan', true, environment)).stdout).release_needed,
+    'false',
+  );
+  assert.equal((await f.readState()).created, 0);
+  await f.writeState({
+    ...(await f.readState()),
+    pulls: [
+      {
+        merged_at: '2026-10-09T10:00:00Z',
+        merge_commit_sha: f.source,
+        base: { ref: 'main', repo: { full_name: 'synthetic/otto' } },
+        head: { ref: 'release/desktop', repo: { full_name: 'synthetic/otto' } },
+      },
+    ],
+  });
+  const plan = JSON.parse((await f.invoke('plan', true, environment)).stdout);
+  assert.equal(plan.release_needed, 'true');
+  assert.equal(plan.source, f.source);
+  await f.invoke('draft-runtime', true, environment);
+  await f.invoke('draft', true, environment);
+  const state = await f.readState();
+  assert.equal(state.releases[f.appTag].draft, false);
+  assert.equal(state.releases[f.appTag].target_commitish, f.source);
+  assert.equal(
+    JSON.parse((await f.invoke('plan', true, environment)).stdout).release_needed,
+    'false',
+  );
+  assert.equal((await f.readState()).created, state.created);
 });
 
 test('runtime and app drafts handle pending tags and retries without publishing either release', async (t) => {
@@ -1016,7 +1098,7 @@ test('bundle copy includes explicit release assets under .local while excluding 
   ]);
 });
 
-test('packaged engine loads dynamic dependencies, nested assets and npm binary links outside the checkout', async (t) => {
+test('packaged engine loads dynamic dependencies and binary links outside the checkout and excludes other platforms', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'otto-packaged-dependencies-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'checkout');
@@ -1024,10 +1106,6 @@ test('packaged engine loads dynamic dependencies, nested assets and npm binary l
   const dependency = join(source, 'node_modules', 'synthetic-extension');
   await mkdir(join(dependency, 'assets'), { recursive: true });
   await mkdir(join(source, 'node_modules', '.bin'));
-  await writeFile(
-    join(source, 'package-lock.json'),
-    JSON.stringify({ packages: { 'node_modules/synthetic-extension': { version: '1.0.0' } } }),
-  );
   await writeFile(
     join(dependency, 'package.json'),
     JSON.stringify({ name: 'synthetic-extension', type: 'module', exports: './index.mjs' }),
@@ -1042,7 +1120,17 @@ test('packaged engine loads dynamic dependencies, nested assets and npm binary l
     'import value from "./index.mjs"; console.log(value);',
   );
   await symlink('../synthetic-extension/cli.mjs', join(source, 'node_modules', '.bin', 'probe'));
+  for (const name of ['synthetic-linux', '@synthetic/intel']) {
+    const directory = join(source, 'node_modules', name);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, 'package.json'),
+      JSON.stringify({ name, os: name.includes('linux') ? ['linux'] : ['darwin'], cpu: ['x64'] }),
+    );
+  }
   await copyEngineDependencies({ root: source, target });
+  for (const name of ['synthetic-linux', '@synthetic/intel'])
+    await assert.rejects(stat(join(target, 'node_modules', name)), { code: 'ENOENT' });
   await rm(source, { recursive: true });
   await writeFile(
     join(target, 'probe.mjs'),
@@ -1668,9 +1756,9 @@ test('runtime fingerprints include root dependencies and complete source and rej
   );
   for (const path of new Set([
     ...sourcePaths,
-    'package-lock.json',
+    'pnpm-lock.yaml',
     'desktop/package.json',
-    'desktop/package-lock.json',
+    'desktop/pnpm-lock.yaml',
   ])) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await cp(join(repository, path), join(root, path));
@@ -1687,14 +1775,10 @@ test('runtime fingerprints include root dependencies and complete source and rej
   await writeFile(manifestPath, JSON.stringify(manifest));
   assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(manifestPath, manifestSource);
-  const lockPath = join(root, 'package-lock.json');
+  const lockPath = join(root, 'pnpm-lock.yaml');
   const lockSource = await readFile(lockPath, 'utf8');
-  for (const name of ['agent-browser', '@esbuild/darwin-arm64']) {
-    const lock = JSON.parse(lockSource);
-    lock.packages[`node_modules/${name}`].integrity = 'synthetic-dependency-change';
-    await writeFile(lockPath, JSON.stringify(lock));
-    assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
-  }
+  await writeFile(lockPath, `${lockSource}\nsyntheticDependencyChange: true\n`);
+  assert.notEqual(JSON.parse((await run()).stdout).fingerprint, before);
   await writeFile(lockPath, lockSource);
   for (const path of ['src/server/index.ts', 'src/web/pages/chat.tsx']) {
     const file = join(root, path);
@@ -1728,9 +1812,9 @@ test('image preparation replaces a cached PostgreSQL image from the wrong archit
     ...input.inputs.filter(
       (path) => !path.includes(':') && !path.startsWith('@') && !path.startsWith('signing.'),
     ),
-    'package-lock.json',
+    'pnpm-lock.yaml',
     'desktop/package.json',
-    'desktop/package-lock.json',
+    'desktop/pnpm-lock.yaml',
   ])) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await cp(join(repository, path), join(root, path));

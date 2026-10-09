@@ -8,6 +8,7 @@ import pg from 'pg';
 import { parse } from 'dotenv';
 import { readFile } from 'node:fs/promises';
 import type { IntegrationProvider } from '../../src/ports/integrations.ts';
+import type { RuntimeObservation } from '../../src/ports/agent.ts';
 import { runProcess } from '../../src/providers/process.ts';
 import { agentModels } from '../../src/shared/model-defaults.ts';
 import { ChannelSetupFailure } from '../../src/ports/channel-settings.ts';
@@ -79,6 +80,8 @@ export interface Stack {
   pool: pg.Pool;
   bossSchema: string;
   sessionRoot: string;
+  observations: Array<{ turnId: string; event: RuntimeObservation }>;
+  prompts: Array<{ turnId: string; instruction: string }>;
   exec(command: string, timeoutMs?: number): Promise<{ exitCode: number; output: string }>;
   resetConversation(): Promise<void>;
   event(summary: string): Promise<string>;
@@ -159,7 +162,7 @@ export async function startStack(options: {
       ]);
       if (inspected.exitCode)
         throw new Error(
-          `Docker image ${image} is missing. Run npm run eval:capability -- doctor --fix, or set OTTO_EVAL_WORKSPACE_IMAGE and OTTO_EVAL_BROWSER_IMAGE.`,
+          `Docker image ${image} is missing. Run pnpm run eval:capability doctor --fix, or set OTTO_EVAL_WORKSPACE_IMAGE and OTTO_EVAL_BROWSER_IMAGE.`,
         );
     }
     const started = await runProcess('docker', [
@@ -296,7 +299,12 @@ export async function startStack(options: {
       dataRoot: join(directory, '.local'),
       container: browserContainer,
     });
+    const observations: Stack['observations'] = [];
+    const prompts: Stack['prompts'] = [];
     application = await createApplication({
+      observe: (turnId, event) => observations.push({ turnId, event }),
+      inspectPrompt: (turnId, snapshot) =>
+        prompts.push({ turnId, instruction: snapshot.instruction }),
       agent: createPiAgent({
         provider: model.provider,
         model: model.name,
@@ -351,6 +359,8 @@ export async function startStack(options: {
       pool,
       bossSchema,
       sessionRoot,
+      observations,
+      prompts,
       async exec(command, timeoutMs = 120_000) {
         const result = await runProcess(
           'docker',

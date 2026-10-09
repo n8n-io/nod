@@ -1,3 +1,7 @@
+FROM rust:1.91.0-bookworm@sha256:e187887ec511b3d93e45c0231d2f0fd59f1347526c58aa86343aa83c74f3e1a9 AS rtk
+COPY src/providers/docker/install-rtk.sh /tmp/install-rtk.sh
+RUN sh /tmp/install-rtk.sh
+
 FROM node:24.21.0-bookworm-slim AS helpers
 WORKDIR /build
 COPY src/providers/docker/command.ts ./src/providers/docker/command.ts
@@ -12,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/yt-dlp && /opt/yt-dlp/bin/pip install --no-cache-dir "yt-dlp[pin,pin-curl-cffi,pin-deno]==2026.8.19" && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp
 COPY --chmod=555 src/providers/docker/save-video.py /usr/local/bin/save-video
 RUN python3 -m venv --system-site-packages /opt/otto-artifacts && /opt/otto-artifacts/bin/pip install --no-cache-dir reportlab==5.0.1 matplotlib==3.11.2 openpyxl==3.1.5 python-docx==1.2.0 python-pptx==1.0.2 pillow==12.3.0 pandas==3.0.6 pdfplumber==0.11.10 pillow-heif==1.8.0 pypdf==6.19.0 xlrd==2.0.2 odfpy==1.4.1 icalendar==7.3.0
+COPY --from=rtk --chmod=555 /opt/rtk/bin/rtk /usr/local/bin/rtk
+COPY --from=rtk /opt/rtk/LICENSE /usr/share/doc/rtk/LICENSE
 RUN mkdir -p /opt/otto \
     && ln -s /home/node/state/workspace /workspace \
     && ln -s /home/node/state/tools /home/node/.local

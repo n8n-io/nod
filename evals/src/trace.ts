@@ -89,7 +89,7 @@ export function requireBackgroundPrompts(turns: Run['turns'], prompts: Run['prom
   );
   if (missing.length)
     throw new Error(
-      `Inspector prompt capture is missing for completed background turns: ${missing.map((turn) => turn.id).join(', ')}`,
+      `Prompt capture is missing for completed background turns: ${missing.map((turn) => turn.id).join(', ')}`,
     );
 }
 
@@ -110,6 +110,63 @@ async function sessionEvents(sessionRoot: string) {
         if (line.trim()) entries.push(JSON.parse(line));
   }
   return entries;
+}
+
+async function backgroundCapture(stack: Stack, background: Set<string>) {
+  const models: Array<{ tokens: number; cost?: number }> = [];
+  const legacy =
+    !stack.observations.length &&
+    !stack.prompts.length &&
+    (await stack.pool.query("SELECT to_regclass('inspector_records') IS NOT NULL AS found")).rows[0]
+      .found;
+  if (legacy) {
+    const prompts = (
+      await stack.pool.query('SELECT turn_id,payload FROM inspector_prompts ORDER BY created_at,id')
+    ).rows.map((row) => ({ turnId: row.turn_id, instruction: row.payload.instruction }));
+    const records = (
+      await stack.pool.query('SELECT * FROM inspector_records ORDER BY started_at,id')
+    ).rows.filter((record) => background.has(record.turn_id));
+    for (const record of records)
+      if (record.kind === 'model')
+        models.push({ tokens: record.usage?.totalTokens ?? 0, cost: record.usage?.costUsd });
+    const tools = records
+      .filter((record) => record.kind === 'tool')
+      .map((record): ToolCall => ({
+        turnId: record.turn_id,
+        name: record.name,
+        input: record.input,
+        output: JSON.stringify(record.output ?? record.error ?? ''),
+        isError: record.status !== 'succeeded',
+        at: new Date(record.started_at).getTime(),
+        lead: '',
+      }));
+    return { prompts, tools, models };
+  }
+  const tools: ToolCall[] = [];
+  const started = new Map<string, ToolCall>();
+  for (const { turnId, event } of stack.observations) {
+    if (!background.has(turnId)) continue;
+    if (event.type === 'tool_start') {
+      const call: ToolCall = {
+        turnId,
+        name: event.name,
+        input: event.input,
+        output: '',
+        isError: false,
+        at: Date.parse(event.startedAt),
+        lead: '',
+      };
+      started.set(event.id, call);
+      tools.push(call);
+    } else if (event.type === 'tool_end') {
+      const call = started.get(event.id);
+      if (call) {
+        call.output = JSON.stringify(event.output ?? event.error ?? '');
+        call.isError = event.status !== 'succeeded';
+      }
+    } else models.push({ tokens: event.totalTokens, cost: event.costUsd ?? undefined });
+  }
+  return { prompts: stack.prompts, tools, models };
 }
 
 export async function collect(options: {
@@ -207,32 +264,19 @@ export async function collect(options: {
     startedAt: started_at ? new Date(started_at).getTime() : undefined,
     finishedAt: finished_at ? new Date(finished_at).getTime() : undefined,
   }));
-  const prompts = (
-    await stack.pool.query('SELECT turn_id,payload FROM inspector_prompts ORDER BY created_at,id')
-  ).rows.map((row) => ({ turnId: row.turn_id, instruction: row.payload.instruction }));
+  const capture = await backgroundCapture(
+    stack,
+    new Set(turns.filter((turn) => turn.background).map((turn) => turn.id)),
+  );
+  const prompts = capture.prompts;
   requireBackgroundPrompts(turns, prompts);
-  const background = (
-    await stack.pool.query(`SELECT r.* FROM inspector_records r JOIN turns t ON t.id=r.turn_id
-      WHERE t.background ORDER BY r.started_at,r.id`)
-  ).rows;
-  for (const record of background) {
-    if (record.kind === 'tool')
-      tools.push({
-        turnId: record.turn_id,
-        name: record.name,
-        input: record.input,
-        output: JSON.stringify(record.output ?? record.error ?? ''),
-        isError: record.status !== 'succeeded',
-        at: new Date(record.started_at).getTime(),
-        lead: '',
-      });
-    if (record.kind === 'model') {
-      modelCalls++;
-      tokens += record.usage?.totalTokens ?? 0;
-      if (typeof record.usage?.costUsd === 'number') {
-        cost += record.usage.costUsd;
-        costKnown = true;
-      }
+  tools.push(...capture.tools);
+  for (const model of capture.models) {
+    modelCalls++;
+    tokens += model.tokens;
+    if (typeof model.cost === 'number') {
+      cost += model.cost;
+      costKnown = true;
     }
   }
   tools.sort((a, b) => a.at - b.at);

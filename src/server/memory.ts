@@ -1,3 +1,5 @@
+import { readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { MemoryCurator } from '../ports/memory-curator.ts';
@@ -73,6 +75,17 @@ const settingsInput = z
   .refine((input) => Object.keys(input).length > 0);
 function fail(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode });
+}
+
+export async function importMemoryFile(store: PrivateObjectStore, directory: string) {
+  const bytes = await readFile(join(directory, 'MEMORY.md')).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  });
+  if (bytes)
+    await store.write(key, bytes, { expectedVersion: null }).catch((error) => {
+      if (!(error instanceof ObjectStoreConflict)) throw error;
+    });
+  await rm(directory, { recursive: true, force: true });
 }
 
 export function createMemoryService(options: {

@@ -415,12 +415,7 @@ export async function createGateway(options: {
     if (url.pathname === '/api/events' && url.searchParams.get('account') !== session.user.id)
       return reply.code(401).send({ error: 'Sign in to continue.' });
     const developer = options.developerIds?.has(session.user.id) ?? false;
-    if (
-      !developer &&
-      (url.pathname.startsWith('/api/inspector') ||
-        url.pathname === '/api/browser' ||
-        url.pathname.startsWith('/api/browser/'))
-    )
+    if (!developer && (url.pathname === '/api/browser' || url.pathname.startsWith('/api/browser/')))
       return reply.code(404).send({ error: 'Route not found.' });
     const headers = new Headers();
     for (const name of ['content-type', 'accept', 'range']) {

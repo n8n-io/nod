@@ -149,9 +149,9 @@ export async function startHosted(args = process.argv.slice(2)) {
     return;
   }
   try {
-    await access(resolve(repository, 'node_modules/.package-lock.json'));
+    await access(resolve(repository, 'node_modules/.modules.yaml'));
   } catch {
-    throw new Error('Install repository dependencies with npm ci first.');
+    throw new Error('Install repository dependencies with pnpm install --frozen-lockfile first.');
   }
   await mkdir(environment.OTTO_DATA_ROOT, { recursive: true, mode: 0o700 });
   if (environment.COMPUTER_PROVIDER === 'cloudflare') {

@@ -16,5 +16,6 @@ export interface MemoryCurator {
       input: object;
     },
     signal?: AbortSignal,
+    report?: (usage: { model: string; costUsd: number | null }) => void,
   ): Promise<unknown>;
 }

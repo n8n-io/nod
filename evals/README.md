@@ -9,8 +9,8 @@ This is a manual model evaluation. It calls live models and costs money (about $
 ## Run it
 
 ```sh
-npm run eval:capability -- doctor --fix      # checks Docker, images, database and keys; sets up what is missing
-npm run eval:capability -- run              # all 39 controlled cases, three attempts each
+pnpm run eval:capability doctor --fix      # checks Docker, images, database and keys; sets up what is missing
+pnpm run eval:capability run              # all 39 controlled cases, three attempts each
 ```
 
 You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in the environment or `.env`). `doctor --fix` starts a throwaway Postgres container for the eval's own `eval_*` schemas if you have no test database (it never touches your normal tables) and builds the two images. Every run builds `otto-eval-workspace` and `otto-eval-browser` from this checkout first (Docker's cache makes an unchanged build quick), so results always measure the current Dockerfiles; set `OTTO_EVAL_WORKSPACE_IMAGE` and `OTTO_EVAL_BROWSER_IMAGE` to pin other images. Set `ANTHROPIC_API_KEY` as well to get an independent judge: the judge defaults to `anthropic/claude-sonnet-5-5` and stays fixed while you change the agent model, so runs stay comparable.
@@ -31,7 +31,7 @@ You need Docker and one model key (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, in t
 | Compare with a release | `gate --baseline desktop-v0.1.10`: side by side, with a verdict                       |
 | Prove gate scenarios   | `promote <label>` after a run with `--repeat 5` or more                               |
 
-Use `npm run eval:capability -- <command> [options]` for all commands. `help` lists the options. The default run selects all 39 controlled cases, including cases that need calibration, with three attempts per case: 117 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
+Use `pnpm run eval:capability <command> [options]` for all commands. `help` lists the options. The default run selects all 39 controlled cases, including cases that need calibration, with three attempts per case: 117 attempts. Use `--tier pr --repeat 1` for a small run. Use `--budget 20` to set a spend limit. There is no default spend limit.
 
 Results are saved under `.local/capability-evals/<label>/` (`report.html` with every transcript and check, `summary.json`, one JSON per attempt). A label never overwrites an earlier run.
 
@@ -39,7 +39,7 @@ Results are saved under `.local/capability-evals/<label>/` (`report.html` with e
 
 The **Evals** workflow runs the suite on a Blacksmith runner with a disposable PostgreSQL and images built from the code under test.
 
-- **Every release.** Alongside release preparation, the desktop release workflow runs the full suite on the release commit and on the previous desktop release in the same job, and puts them side by side under a GO, NO-GO or INCONCLUSIVE verdict. It reports only: publishing does not wait for the verdict and may finish first. When nothing under `src` outside the web client, `package.json` or the lockfile changed since the previous release, it reports GO without running.
+- **Every release.** After publication, the desktop release workflow starts a separate **Evals** workflow on the exact published tag, with the previous desktop tag as its baseline. It runs both versions in the same job and puts them side by side under a GO, NO-GO or INCONCLUSIVE verdict. It reports only and does not hold the release build queue. When nothing under `src` outside the web client, `package.json`, `pnpm-lock.yaml` or `pnpm-workspace.yaml` changed since the previous release, it reports GO without running.
 - **On demand.** Open Actions → Evals → Run workflow and pick a branch you trust (its code runs with the eval keys). Set **baseline** to `main`, another branch, a tag or `latest-release` to compare with it from where your branch left it; leave it empty to score the branch alone. The default tier is **full**, with three attempts per case; you can pick the small **pr** tier, a model, named cases or a spend limit. A new run waits for the active run on the same branch.
 
 Open the run summary to see the verdict and the side-by-side scores. Download the `capability-evals` artifact and open `report.html` for each side to read its transcripts and checks; extract it into `.local/capability-evals/` to use `report`, `compare`, `review` or `rejudge`. The agent is `openai/gpt-6.1-sol` at high reasoning effort and the judge is `anthropic/claude-sonnet-5-5`, with keys in the `EVALS_OPENAI_API_KEY` and `EVALS_ANTHROPIC_API_KEY` repository secrets (`EVALS_OPENROUTER_API_KEY` for OpenRouter models). A low score or an incomplete attempt does not fail the workflow; it fails only when nothing could be scored. The full run has a six-hour time limit.
@@ -148,7 +148,7 @@ The report shows these as a **trust profile**, next to the completion rate. Only
 **Human judgement is the anchor.** Automatic judges are only trusted as far as they agree with a person.
 
 ```sh
-npm run eval:capability -- --review <label>      # failures first, then a sample of passes
+pnpm run eval:capability review <label>      # failures first, then a sample of passes
 ```
 
 For each attempt you see the task, what Otto finally said and every check. You answer one question: would you trust Otto with this task after seeing this? You can also flag the automatic checks that were wrong. Reviews are saved with the run. The report then shows how often you agreed with the automatic verdict (Cohen's kappa) and lists every disagreement. To test a different judge model without re-running the agent, use `--rejudge`: it re-judges the saved attempts and reports how often the new judge matches the old one and, where you reviewed, how often each matches you.
@@ -250,6 +250,6 @@ tests/               tests for the harness's own logic
 ```
 
 ```sh
-npm --prefix evals run check
-npm --prefix evals test
+pnpm --dir evals run check
+pnpm --dir evals test
 ```

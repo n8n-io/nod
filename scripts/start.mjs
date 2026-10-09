@@ -29,9 +29,9 @@ try {
       ['tsx', 'tsc', 'vite'].map((command) => access(`node_modules/.bin/${command}`)),
     );
   } catch {
-    await run('npm', ['ci', '--include=dev']);
+    await run('pnpm', ['install', '--frozen-lockfile', '--prod=false']);
   }
-  if (production) await run('npm', ['run', 'build']);
+  if (production) await run('pnpm', ['run', 'build']);
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));
     const environment = {
@@ -51,8 +51,8 @@ try {
   });
   console.log('\nOtto is starting. Open the link it prints when it is ready.\n');
   const child = spawn(
-    'npx',
-    ['--no-install', 'tsx', ...(production ? [] : ['watch']), 'src/server/index.ts'],
+    'pnpm',
+    ['exec', 'tsx', ...(production ? [] : ['watch']), 'src/server/index.ts'],
     {
       stdio: 'inherit',
       env: { ...environment, NODE_ENV: production ? 'production' : 'development' },

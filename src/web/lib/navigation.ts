@@ -36,7 +36,7 @@ export function navigationShortcut(
     return null;
   const key = event.key.toLowerCase();
   if (key === 'b') return { type: 'sidebar' } as const;
-  if (key === 'i') return { type: 'inspector' } as const;
+  if (key === 'i') return { type: 'trust' } as const;
   if (key === 'y') return { type: 'memory' } as const;
   const item = sidebarItems.find((entry) => entry.key === key);
   return item ? ({ type: 'navigate', path: item.path } as const) : null;

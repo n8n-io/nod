@@ -1,14 +1,14 @@
 FROM node:24.21.0-bookworm-slim AS dependencies
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
 
 FROM node:24.21.0-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium xvfb xauth xdotool ffmpeg fonts-liberation fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji ca-certificates python3 tini \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=dependencies /app/package.json /app/package-lock.json ./
+COPY --from=dependencies /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY src/ports/computer.ts src/ports/thread-identity.ts ./src/ports/
 COPY src/shared/browser-errors.ts src/shared/browser-handoff.ts ./src/shared/

@@ -46,8 +46,8 @@ body:
       label: How do you run Otto?
       options:
         - Desktop app
-        - From source (npm start)
-        - From source (npm run dev)
+        - From source (pnpm start)
+        - From source (pnpm run dev)
         - Other
     validations:
       required: true

@@ -98,7 +98,6 @@ describe('runtime host', () => {
       environment: 'development',
       heartbeatMs,
       operatorEnvironment: {
-        DEV_INSPECTOR: 'false',
         OTTO_PUBLIC_URL: 'https://otto.example.test',
         OTTO_RUNTIME_URL: 'http://otto.runtime',
         OTTO_MASTER_KEY: 'synthetic-master-key',
@@ -447,7 +446,6 @@ describe('runtime host', () => {
         configuration.environment.OTTO_COMPOSIO_PROXY_URL,
         'https://integrations.example.test',
       );
-      assert.equal(configuration.environment.DEV_INSPECTOR, 'false');
       assert.equal(
         configuration.environment.OBJECT_STORAGE_ROOT,
         `/private/otto-files/${configuration.ownerId}`,

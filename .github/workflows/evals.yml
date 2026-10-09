@@ -80,13 +80,15 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: ${{ inputs.baseline != '' && '0' || '1' }}
           persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - name: Set up Node.js 24.21.0
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '24.21.0'
-          cache: npm
+          cache: pnpm
       - name: Install locked dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Set up the Docker layer cache
         uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
         with:
@@ -138,18 +140,18 @@ jobs:
           fi
           if [ -z "$base" ]; then
             echo "verdict=INCONCLUSIVE" >> "$GITHUB_OUTPUT"
-            npm run eval:capability -- run "${args[@]}" --label "$candidate"
+            pnpm run eval:capability run "${args[@]}" --label "$candidate"
             exit 0
           fi
           ref="$(git rev-parse --short=7 "$base")"
           if [ "$base" = "$(git rev-parse "$BASELINE^{commit}")" ]; then ref="$BASELINE"; fi
           mkdir -p .local/capability-evals
-          if git diff --quiet "$base" HEAD -- src ':(exclude)src/web' package.json package-lock.json; then
+          if git diff --quiet "$base" HEAD -- src ':(exclude)src/web' package.json pnpm-lock.yaml pnpm-workspace.yaml; then
             printf '### GO against %s\n\nNothing the evals exercise changed, so nothing was run.\n' "$ref" > ".local/capability-evals/$candidate-gate.md"
             echo "verdict=GO" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          npm run eval:capability -- gate "${args[@]}" --baseline "$ref" --label "$candidate"
+          pnpm run eval:capability gate "${args[@]}" --baseline "$ref" --label "$candidate"
           echo "verdict=$(node -p "require('./.local/capability-evals/$candidate-gate.json').verdict")" >> "$GITHUB_OUTPUT"
       - name: Save the reports
         id: upload

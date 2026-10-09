@@ -52,10 +52,6 @@ export function configuration(overrides: Partial<Configuration> = {}): Configura
     model: 'Unconfigured',
     llmReady: false,
     integrationsReady: false,
-    inspectorEnabled:
-      runtimeMode === 'local'
-        ? process.env.DEV_INSPECTOR !== 'false'
-        : process.env.DEV_INSPECTOR === 'true',
     localOnly: runtimeMode === 'local',
     conversationResetEnabled:
       runtimeMode === 'local' &&

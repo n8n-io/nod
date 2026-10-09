@@ -69,10 +69,10 @@ export const help = `Otto capability evals
     --min-pass 0.8             exit with an error if the pass rate is lower
 
   Examples
-    npm run eval:capability -- doctor --fix
-    npm run eval:capability -- run --tier pr --repeat 3
-    npm run eval:capability -- models openai/gpt-6.1-sol anthropic/claude-sonnet-5-5 --tier pr
-    npm run eval:capability -- refs main my-branch --tier pr
+    pnpm run eval:capability doctor --fix
+    pnpm run eval:capability run --tier pr --repeat 3
+    pnpm run eval:capability models openai/gpt-6.1-sol anthropic/claude-sonnet-5-5 --tier pr
+    pnpm run eval:capability refs main my-branch --tier pr
 `;
 
 function runOptions(args: Args): RunOptions {
@@ -131,7 +131,7 @@ async function matrix(args: Args, kind: 'model' | 'ref') {
   await writeFile(join(base.root, `${prefix}.compare.txt`), table);
   const chart = join(base.root, `${prefix}.compare.html`);
   await writeFile(chart, comparisonChart(runs, `Otto capability evals: ${items.join(' vs ')}`));
-  console.log(`Saved ${chart}\nDetails: npm run eval:capability -- report <label>`);
+  console.log(`Saved ${chart}\nDetails: pnpm run eval:capability report <label>`);
   if (has(args, 'open')) open(chart);
 }
 
@@ -152,7 +152,7 @@ export async function main(args: Args) {
       return;
     case 'doctor': {
       const ok = printChecks(await doctor(root, has(args, 'fix')));
-      if (ok) console.log('\nAll set. Try: npm run eval:capability -- run --tier pr --repeat 1');
+      if (ok) console.log('\nAll set. Try: pnpm run eval:capability run --tier pr --repeat 1');
       process.exitCode = ok ? 0 : 1;
       return;
     }

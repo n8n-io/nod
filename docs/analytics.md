@@ -39,7 +39,7 @@ UI events retain the SDK's recording status, trigger states, boolean recorder di
 | `$snapshot`                      | Masked full or incremental DOM recording                 | PostHog replay metadata and masked snapshot data                                                                                        |
 | `otto_onboarding_step_viewed`    | An onboarding step appears                               | `step`: `welcome`, `brain`, `about`, `email`, `telegram`, `open_source`                                                                 |
 | `otto_onboarding_completed`      | The server persists the first completed onboarding state | None                                                                                                                                    |
-| `otto_settings_viewed`           | A settings tab appears                                   | `tab`: `general`, `profile`, `appearance`, `preferences`, `models`                                                                      |
+| `otto_settings_viewed`           | A settings tab appears                                   | `tab`: `general`, `profile`, `appearance`, `preferences`, `models`, `memory`, `trust`                                                   |
 | `otto_settings_updated`          | A supported settings mutation succeeds                   | `section`: `account`, `preferences`, `connections`, `channels`, `models`; `operation`: `update`, `connect_started`, `disconnect`        |
 | `otto_chat_message_sent`         | An ordinary UI message is accepted by the server         | `has_attachments`, `is_reply`; secure verification messages excluded                                                                    |
 | `otto_chat_stop_requested`       | The user requests stop in the UI                         | None                                                                                                                                    |
@@ -56,7 +56,7 @@ UI events retain the SDK's recording status, trigger states, boolean recorder di
 
 ## Recording boundaries
 
-Recordings show navigation, layout, controls, scrolling and interactions. Only explicitly marked product labels retain readable text. All input values and other text are masked. Chat message bodies, credential forms, model-key forms, Vault values, Inspector content, remote-browser views, images, media, iframes and canvases are blocked. This is a view of the product flow with private content excluded, not an unredacted screen recording.
+Recordings show navigation, layout, controls, scrolling and interactions. Only explicitly marked product labels retain readable text. All input values and other text are masked. Chat message bodies, credential forms, model-key forms, Vault values, remote-browser views, images, media, iframes and canvases are blocked. This is a view of the product flow with private content excluded, not an unredacted screen recording.
 
 URLs are replaced with fixed `https://otto.invalid` routes; query strings, fragments, credential-request IDs and external destinations are excluded. Arbitrary DOM attributes, console output, request headers, request bodies, network payloads, autocapture, automatic exceptions, feature-flag events and person profiles are not collected. Browser recording code is bundled with the app. The native setup CSP permits the EU ingestion and configuration hosts. Capture and shutdown failures must not interrupt product operations.
 

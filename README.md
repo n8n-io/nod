@@ -6,12 +6,12 @@ Otto is an early preview. Expect rough edges and breaking changes.
 
 ## Install
 
-|          | [Desktop app](#install-the-desktop-app)   | [From source](#install-from-source)                       |
-| -------- | ----------------------------------------- | --------------------------------------------------------- |
-| Best for | Using Otto on a Mac                       | Running Otto on macOS or Linux, or changing its code      |
-| Runs on  | Mac with Apple silicon                    | macOS or Linux                                            |
-| You need | About 2.7 GB of downloads on first launch | Node.js 24.21.0 or newer, Docker with Compose v2, and Git |
-| Updates  | Automatic                                 | `git pull` and restart                                    |
+|          | [Desktop app](#install-the-desktop-app)   | [From source](#install-from-source)                                     |
+| -------- | ----------------------------------------- | ----------------------------------------------------------------------- |
+| Best for | Using Otto on a Mac                       | Running Otto on macOS or Linux, or changing its code                    |
+| Runs on  | Mac with Apple silicon                    | macOS or Linux                                                          |
+| You need | About 2.7 GB of downloads on first launch | Node.js 24.21.0 or newer, pnpm 10.34.5, Docker with Compose v2, and Git |
+| Updates  | Automatic                                 | `git pull` and restart                                                  |
 
 Either way, Otto needs a model connection: an OpenAI, Anthropic or OpenRouter API key, or a ChatGPT plan. Models don't run on your computer, and the provider bills you for use. See [app connections](docs/composio.md) for integration setup and configuration.
 
@@ -40,10 +40,11 @@ chmod 600 .env
 sed -i.bak "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak
 ```
 
-Keep a copy of `OTTO_VAULT_KEY` somewhere safe. Saved credentials can't be read without it. Then start Otto:
+Keep a copy of `OTTO_VAULT_KEY` somewhere safe. Saved credentials can't be read without it. Enable pnpm, then start Otto:
 
 ```sh
-npm start
+corepack enable
+pnpm start
 ```
 
 The first run installs dependencies, creates `.env`, starts PostgreSQL plus the workspace and browser containers, and builds the web app. When the server is ready it prints a link such as `http://localhost:4310/#access=…`. Open it once; your browser keeps the access cookie, so [http://localhost:4310](http://localhost:4310) works from then on. Onboarding then walks you through connecting a model, a few questions about your work and a first task.
@@ -53,7 +54,7 @@ Otto serves one owner on `127.0.0.1` with no account login. Don't expose it to a
 | To             | Do this                                                                                                                                                   |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Stop Otto      | Press Ctrl-C, then run `docker compose stop` to stop the containers.                                                                                      |
-| Update Otto    | Stop it, run `git pull` and `npm ci`, then `npm start`.                                                                                                   |
+| Update Otto    | Stop it, run `git pull` and `pnpm install --frozen-lockfile`, then `pnpm start`.                                                                          |
 | Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. The key otherwise stays the same across restarts.                             |
 | Find your data | `.local/` (or `OTTO_DATA_ROOT`) and the Docker volumes. The Vault key is in `.env`, or in the macOS Keychain item `dev.otto.vault` if you didn't set one. |
 | Back up        | Stop Otto, then copy `.local/`, the Docker volumes and the Vault key. A tested restore procedure doesn't exist yet.                                       |
@@ -62,15 +63,14 @@ Otto serves one owner on `127.0.0.1` with no account login. Don't expose it to a
 
 Settings live in the ignored `.env`. `.env.example` lists the common ones. Shell variables take priority, and you need to restart after editing. The desktop app manages its own settings in **Settings**.
 
-| Setting                        | Needed for                                                                  |
-| ------------------------------ | --------------------------------------------------------------------------- |
-| Model connection in **Models** | Chat with a key, ChatGPT plan, or OpenRouter                                |
-| `COMPOSIO_API_KEY`             | Optional customer-owned Composio project for a source/server install        |
-| `OTTO_COMPOSIO_PROXY_URL`      | Optional custom integration proxy; defaults to `https://composio.n8n.cloud` |
-| `OTTO_VAULT_KEY`               | Vault encryption on non-macOS hosts (macOS uses Keychain)                   |
-| `OTTO_DATA_ROOT`               | Where local data is stored (default `.local`)                               |
-| `PORT`                         | The local port (default `4310`)                                             |
-| `DEV_INSPECTOR=false`          | Disables the Inspector view (on by default locally)                         |
+| Setting                        | Needed for                                                           |
+| ------------------------------ | -------------------------------------------------------------------- |
+| Model connection in **Models** | Chat with a key, ChatGPT plan, or OpenRouter                         |
+| `COMPOSIO_API_KEY`             | Optional customer-owned Composio project for a source/server install |
+| `OTTO_COMPOSIO_PROXY_URL`      | Trusted custom proxy for source/server installs; ignored by desktop  |
+| `OTTO_VAULT_KEY`               | Vault encryption on non-macOS hosts (macOS uses Keychain)            |
+| `OTTO_DATA_ROOT`               | Where local data is stored (default `.local`)                        |
+| `PORT`                         | The local port (default `4310`)                                      |
 
 - **Models.** Add or switch connections in **Models** from the account menu. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY` add server-managed connections. See [model connections](docs/model-connections.md).
 - **Apps.** Connect apps from **Apps**. Notion and Linear use their hosted MCP servers without extra keys. See [connect apps with Composio](docs/composio.md).
@@ -80,10 +80,10 @@ Settings live in the ignored `.env`. `.env.example` lists the common ones. Shell
 
 ## Troubleshooting
 
-- **`Use Node.js 24.21.0 or newer.`** Install a newer Node.js and run `npm start` again.
+- **`Use Node.js 24.21.0 or newer.`** Install a newer Node.js and run `pnpm start` again.
 - **Docker errors on start.** Make sure Docker is running (on a Mac, start Docker Desktop) and that `docker compose version` reports v2.
 - **`Configure OTTO_VAULT_KEY…` when saving a model or key.** Set `OTTO_VAULT_KEY` as shown in [Install from source](#install-from-source) and restart.
-- **Missing modules after `git pull`.** Run `npm ci`, then `npm start`.
+- **Missing modules after `git pull`.** Run `pnpm install --frozen-lockfile`, then `pnpm start`.
 - **The port is in use.** Set another `PORT` in `.env`.
 - **The desktop app is blocked on first launch.** Use **Open Anyway** in **System Settings → Privacy & Security**.
 

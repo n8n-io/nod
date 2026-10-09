@@ -25,7 +25,6 @@ const configuration = {
   model: 'Fixture model',
   llmReady: true,
   integrationsReady: false,
-  inspectorEnabled: true,
   localOnly: false,
   conversationResetEnabled: false,
 };

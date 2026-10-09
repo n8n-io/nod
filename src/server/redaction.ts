@@ -1,4 +1,4 @@
-export const inspectorPayloadLimit = 16_384;
+const payloadDefault = 16_384;
 const hidden = '[redacted]';
 const secretNames =
   'password|passwd|pwd|passphrase|secret|clientsecret|authorization|proxyauthorization|cookie|setcookie|apikey|xapikey|xauthtoken|xcsrftoken|csrftoken|sessiontoken|accesskey|privatekey|signingkey|masterkey|vaultkey|token|accesstoken|refreshtoken|idtoken|bottoken|credential|credentials|otp|otpcode|verificationcode|totp|totpsecret|cvv|cvc|pan|cardnumber';
@@ -11,12 +11,12 @@ const secretAssignment = new RegExp(
   'gi',
 );
 
-function compileInspectorRedactor(
+function compileRedactor(
   secrets: string[] = [],
   limits: { string?: number; payload?: number; minimumSecretLength?: number } = {},
 ) {
   const stringLimit = Math.min(64_000, Math.max(100, limits.string ?? 8000));
-  const payloadLimit = Math.min(160_000, Math.max(1000, limits.payload ?? inspectorPayloadLimit));
+  const payloadLimit = Math.min(160_000, Math.max(1000, limits.payload ?? payloadDefault));
   const values = [
     ...new Set(secrets.filter((value) => value.length >= (limits.minimumSecretLength ?? 8))),
   ].sort((a, b) => b.length - a.length);
@@ -156,15 +156,15 @@ function compileInspectorRedactor(
   };
 }
 
-export function createInspectorRedactor(
+export function createRedactor(
   secrets: string[] = [],
-  limits: Parameters<typeof compileInspectorRedactor>[1] = {},
+  limits: Parameters<typeof compileRedactor>[1] = {},
 ) {
   let size = -1;
-  let redact: ReturnType<typeof compileInspectorRedactor>;
+  let redact: ReturnType<typeof compileRedactor>;
   return (value: unknown) => {
     if (size !== secrets.length) {
-      redact = compileInspectorRedactor(secrets, limits);
+      redact = compileRedactor(secrets, limits);
       size = secrets.length;
     }
     return redact(value);
@@ -172,7 +172,7 @@ export function createInspectorRedactor(
 }
 
 export function createErrorRedactor(secrets: string[]) {
-  const redact = createInspectorRedactor(secrets, { string: 4000 });
+  const redact = createRedactor(secrets, { string: 4000 });
   return (text: string) => {
     const safe = redact(text);
     return typeof safe === 'string' ? safe : JSON.stringify(safe);

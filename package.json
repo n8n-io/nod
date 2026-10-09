@@ -10,12 +10,12 @@
   "scripts": {
     "dev": "node scripts/start.mjs",
     "dev:server": "tsx watch src/server/index.ts",
-    "desktop:dev": "node desktop/scripts/build-ui.mjs && npm --prefix desktop start",
+    "desktop:dev": "node desktop/scripts/build-ui.mjs && pnpm --dir desktop start",
     "desktop:prepare": "node desktop/scripts/prepare-runtime.mjs",
-    "desktop:build": "npm --prefix desktop run build",
-    "desktop:test": "npm --prefix desktop test",
+    "desktop:build": "pnpm --dir desktop run build",
+    "desktop:test": "pnpm --dir desktop test",
     "build": "tsc --noEmit && vite build && node desktop/scripts/build-ui.mjs",
-    "check": "tsc --noEmit && node scripts/check-architecture.mjs && node scripts/check-images.mjs && npm run format:check",
+    "check": "tsc --noEmit && node scripts/check-architecture.mjs && node scripts/check-images.mjs && pnpm run format:check",
     "test": "tsx --test tests/*.test.ts",
     "start": "node scripts/start.mjs --production",
     "test:integration": "node scripts/test-integration.mjs",
@@ -36,7 +36,7 @@
     "@fastify/middie": "^9.3.4",
     "@fastify/multipart": "^9.2.1",
     "@fastify/static": "^10.1.5",
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-popover": "^1.1.23",
     "@radix-ui/react-slot": "^1.2.3",
@@ -56,7 +56,7 @@
     "chat": "^4.41.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "dotenv": "^17.2.3",
+    "dotenv": "^18.0.5",
     "e2b": "2.52.1",
     "emoji-picker-react": "4.22.2",
     "fastify": "^5.6.0",
@@ -86,6 +86,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "1.0.9",
     "@tailwindcss/vite": "^4.1.17",
     "@types/hast": "^3.0.5",
     "@types/jsdom": "21.1.7",
@@ -101,5 +102,6 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vite": "^7.2.2"
-  }
+  },
+  "packageManager": "pnpm@10.34.5"
 }

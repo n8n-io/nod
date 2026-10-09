@@ -379,7 +379,6 @@ describe('gateway', () => {
     try {
       for (const url of [
         '/api/browser/screen',
-        '/api/inspector/screen',
         '/api/auth/get-session',
         '/api/runtime/lease',
         '/api/webhooks/telegram',

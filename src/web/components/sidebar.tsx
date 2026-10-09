@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { LayoutGrid, Monitor, Moon, MoreHorizontal, Settings, Sun } from 'lucide-react';
+import { LayoutGrid, Moon, Settings, Sun } from 'lucide-react';
 import { BrandMark } from './brand';
 import { AccountAvatar, accountInitials } from './account-avatar';
-import { ConnectionMenu } from './connection-menu';
 import { AccountMenu, AccountMenuItems, type AccountControls } from './account-menu';
 import { currentTheme, setTheme, subscribeTheme } from '../lib/theme';
 import {
@@ -18,10 +17,6 @@ export function Sidebar({
   unreadPending = false,
   onToggle,
   onNavigate,
-  development = import.meta.env?.DEV === true,
-  inspectorEnabled = false,
-  inspectorOpen = false,
-  onToggleInspector,
   account,
 }: {
   path: string;
@@ -29,15 +24,10 @@ export function Sidebar({
   unreadPending?: boolean;
   onToggle(): void;
   onNavigate(path: string): void;
-  development?: boolean;
-  inspectorEnabled?: boolean;
-  inspectorOpen?: boolean;
-  onToggleInspector?(): void;
   account?: AccountControls;
 }) {
   const [hints, setHints] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [appMenuOpen, setAppMenuOpen] = useState(false);
   const unreadLabel =
     unreadCount > 99
       ? 'More than 99 unread messages'
@@ -68,8 +58,8 @@ export function Sidebar({
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const navigate = useRef(onNavigate);
   navigate.current = onNavigate;
-  const toggles = useRef({ onToggle, onToggleInspector, inspectorEnabled, account });
-  toggles.current = { onToggle, onToggleInspector, inspectorEnabled, account };
+  const toggles = useRef({ onToggle, account });
+  toggles.current = { onToggle, account };
   const closeMobileMenu = () => {
     setMobileMenuOpen(false);
     (window.innerWidth <= 640
@@ -88,12 +78,10 @@ export function Sidebar({
   }, [mobileMenuOpen]);
   useEffect(() => {
     setMobileMenuOpen(false);
-    setAppMenuOpen(false);
   }, [path]);
   useEffect(() => {
     const resize = () => {
       if (window.innerWidth > 640) setMobileMenuOpen(false);
-      else setAppMenuOpen(false);
     };
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
@@ -131,12 +119,7 @@ export function Sidebar({
       clear();
       const action = navigationShortcut(event);
       if (!action) return;
-      if (
-        (action.type === 'inspector' &&
-          (!toggles.current.inspectorEnabled || !toggles.current.onToggleInspector)) ||
-        (action.type === 'memory' && !toggles.current.account)
-      )
-        return;
+      if ((action.type === 'memory' || action.type === 'trust') && !toggles.current.account) return;
       event.preventDefault();
       event.stopPropagation();
       if (action.type === 'sidebar') {
@@ -144,14 +127,9 @@ export function Sidebar({
         else toggles.current.onToggle();
         return;
       }
-      if (action.type === 'inspector') {
+      if (action.type === 'memory' || action.type === 'trust') {
         setMobileMenuOpen(false);
-        toggles.current.onToggleInspector?.();
-        return;
-      }
-      if (action.type === 'memory') {
-        setMobileMenuOpen(false);
-        toggles.current.account?.onSettings('Memory');
+        toggles.current.account?.onSettings(action.type === 'memory' ? 'Memory' : 'Trust');
         return;
       }
       navigate.current(action.path);
@@ -369,19 +347,6 @@ export function Sidebar({
                   <ThemeIcon size={16} aria-hidden="true" /> {themeLabel}
                 </button>
               )}
-              {inspectorEnabled && (
-                <button
-                  type="button"
-                  aria-expanded={inspectorOpen}
-                  aria-controls="developer-inspector"
-                  onClick={() => {
-                    closeMobileMenu();
-                    onToggleInspector?.();
-                  }}
-                >
-                  <Monitor size={16} aria-hidden="true" /> Inspector
-                </button>
-              )}
             </div>
           </div>
         </dialog>
@@ -398,58 +363,6 @@ export function Sidebar({
             <ThemeIcon size={24} aria-hidden="true" />
             <span className="nav-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
           </button>
-        )}
-        {development && inspectorEnabled && (
-          <button
-            type="button"
-            className={`nav-link ${inspectorOpen ? 'nav-link-active' : ''}`}
-            aria-label="Inspector"
-            aria-expanded={inspectorOpen}
-            aria-controls="developer-inspector"
-            aria-keyshortcuts="Meta+I Control+I"
-            title={`Inspector (${shortcutLabel('i', mac)})`}
-            onClick={onToggleInspector}
-          >
-            <Monitor size={24} aria-hidden="true" />
-            <span className="nav-label">Inspector</span>
-            <kbd className="nav-shortcut" aria-hidden="true">
-              I
-            </kbd>
-          </button>
-        )}
-        {!development && inspectorEnabled && (
-          <div className="sidebar-app-menu">
-            <ConnectionMenu
-              label="App menu"
-              triggerClassName="nav-link"
-              compact
-              open={appMenuOpen}
-              onOpenChange={setAppMenuOpen}
-              trigger={
-                <>
-                  <MoreHorizontal size={24} aria-hidden="true" />
-                  <span className="nav-label">More</span>
-                </>
-              }
-            >
-              {(close) => (
-                <button
-                  type="button"
-                  role="menuitem"
-                  aria-expanded={inspectorOpen}
-                  aria-controls="developer-inspector"
-                  aria-keyshortcuts="Meta+I Control+I"
-                  title={`Inspector (${shortcutLabel('i', mac)})`}
-                  onClick={() => {
-                    close();
-                    onToggleInspector?.();
-                  }}
-                >
-                  <Monitor size={16} aria-hidden="true" /> Inspector
-                </button>
-              )}
-            </ConnectionMenu>
-          </div>
         )}
         {account &&
           (account.canLogout ? (
