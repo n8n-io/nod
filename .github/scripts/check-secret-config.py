@@ -70,30 +70,53 @@ for filename in ["app.ts", "nested/src/shared/analytics.ts"]:
         raise SystemExit("The public token exception must be limited to its configuration file.")
 
 evidence_path = "docs/research/apps-acceptance-b8e489cb.json"
-evidence = (config.parent / evidence_path).read_text()
-code, findings = scan(evidence, evidence_path)
+code, findings = scan((config.parent / evidence_path).read_text(), evidence_path)
 if code != 0 or findings:
     raise SystemExit("Verified acceptance source hashes must pass secret scanning.")
 
-for change in ["credential", "source_hash"]:
-    altered = json.loads(evidence)
-    if change == "credential":
-        altered["api_key"] = candidate
-    else:
-        altered["source"]["files"]["src/ports/authentication.ts"] = hashlib.sha256(
-            candidate.encode()
-        ).hexdigest()
-    code, findings = scan(json.dumps(altered, indent=2), evidence_path)
+synthetic = f'api_key = "{candidate}"'
+for filename in [
+    "tests/app.test.ts",
+    "desktop/test/app.test.mjs",
+    "deployment/cloudflare/tests/app.ts",
+    "deployment/e2b/live_boundary_test.py",
+    "deployment/n8n/app.test.mjs",
+    "tests/fixtures/app.json",
+    "evals/src/world/app.ts",
+]:
+    code, findings = scan(synthetic, filename)
+    if code != 0 or findings:
+        raise SystemExit("Synthetic values in tests must pass secret scanning.")
+
+for filename in ["src/app.ts", "src/contests/app.ts", "src/latest.ts", "evals/src/app.ts", "docs/testing/run.json"]:
+    code, findings = scan(synthetic, filename)
     if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
-        raise SystemExit("Other values in the acceptance snapshot must fail secret scanning.")
+        raise SystemExit("The test exception must be limited to tests.")
 
-source_line = next(line for line in evidence.splitlines() if '"src/ports/authentication.ts"' in line)
-code, findings = scan(f'{source_line} "api_key": "{candidate}"', evidence_path)
-if code != 1 or not any("api_key" in finding.get("Match", "") for finding in findings):
-    raise SystemExit("A credential beside an allowed source hash must fail secret scanning.")
+digest = hashlib.sha256(candidate.encode()).hexdigest()
+records = f'{{\n  "src/ports/key-store.ts": "{digest}",\n  "projectKeySha256": "{digest}"\n}}\n'
+code, findings = scan(records, "docs/testing/run.json")
+if code != 0 or findings:
+    raise SystemExit("Source hash records in test evidence must pass secret scanning.")
 
-code, findings = scan(evidence, "docs/research/unverified-snapshot.json")
-if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
-    raise SystemExit("Source hash exceptions must be limited to the verified snapshot.")
+for content, filename in [
+    (records, "docs/app.json"),
+    (f'{{\n  "api_key": "{digest}"\n}}\n', "docs/testing/run.json"),
+    (f'{{\n  "src/ports/key-store.ts": "{digest}", "api_key": "{candidate}"\n}}\n', "docs/testing/run.json"),
+]:
+    code, findings = scan(content, filename)
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit("The evidence exception must be limited to source hash records in test evidence.")
+
+provider_keys = {
+    "github-pat": "ghp_" + candidate[:36],
+    "composio-api-key": "ak_" + candidate[:24],
+    "e2b-api-key": "e2b_" + digest[:40],
+}
+for rule, key in provider_keys.items():
+    for filename in ["tests/app.test.ts", "docs/testing/run.json", "src/app.ts"]:
+        code, findings = scan(f'const value = "{key}";', filename)
+        if code != 1 or not any(finding.get("RuleID") == rule for finding in findings):
+            raise SystemExit("Provider key formats must fail secret scanning everywhere.")
 
 print("Secret scanning configuration regression passed.")

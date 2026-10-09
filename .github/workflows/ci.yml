@@ -142,13 +142,18 @@ jobs:
         run: |
           pnpm exec wrangler deploy --env development --dry-run --containers-rollout=none
           pnpm exec wrangler deploy --env production --dry-run --containers-rollout=none
+      - name: Set up the Docker layer cache
+        if: needs.scope.outputs.images == 'true'
+        uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
+        with:
+          cache-key: n8n-io/otto/ci
       - name: Build the runtime and separate computer images
         if: needs.scope.outputs.images == 'true'
         run: |
-          docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile --tag otto-ci .
-          docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile.browser --tag otto-ci-browser .
-          docker build --platform linux/amd64 --file deployment/cloudflare/Dockerfile.workspace --tag otto-ci-workspace .
-          docker build --platform linux/amd64 --file Dockerfile.browser --tag otto-ci-local-browser .
+          docker buildx build --load --platform linux/amd64 --file deployment/cloudflare/Dockerfile --tag otto-ci .
+          docker buildx build --load --platform linux/amd64 --file deployment/cloudflare/Dockerfile.browser --tag otto-ci-browser .
+          docker buildx build --load --platform linux/amd64 --file deployment/cloudflare/Dockerfile.workspace --tag otto-ci-workspace .
+          docker buildx build --load --platform linux/amd64 --file Dockerfile.browser --tag otto-ci-local-browser .
       - name: Verify the shared local and desktop browser image
         if: needs.scope.outputs.images == 'true'
         run: node --import tsx desktop/scripts/check-browser-image.mjs otto-ci-local-browser
@@ -271,6 +276,10 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Set up the Docker layer cache
+        uses: useblacksmith/setup-docker-builder@19215110ab936351210feebdfa5b440b4493e184
+        with:
+          cache-key: n8n-io/otto/ci-e2b
       - name: Build and verify the combined computer image
         shell: bash
         run: |
@@ -317,6 +326,6 @@ jobs:
       - name: Verify scanning exceptions still detect secrets
         run: python3 .github/scripts/check-secret-config.py "$RUNNER_TEMP/gitleaks/gitleaks"
       - name: Scan Git history
-        run: '"$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --log-opts=HEAD .'
+        run: '"$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --verbose --log-opts=HEAD .'
       - name: Scan the checked-out files
-        run: '"$RUNNER_TEMP/gitleaks/gitleaks" dir --redact --no-banner .'
+        run: '"$RUNNER_TEMP/gitleaks/gitleaks" dir --redact --no-banner --verbose .'

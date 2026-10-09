@@ -1,0 +1,14 @@
+pre-commit:
+  jobs:
+    - name: format
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+    - name: secrets
+      run: gitleaks git --pre-commit --staged --redact --no-banner --verbose
+      skip:
+        - run: '! command -v gitleaks'
+
+pre-push:
+  jobs:
+    - name: lint
+      run: pnpm run lint
