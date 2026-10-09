@@ -558,7 +558,7 @@ export function workflowNodes() {
       type: 'n8n-nodes-base.if',
       typeVersion: 2.3,
       parameters: condition('={{ !!$json.aliasApiUrl }}'),
-      output: [{ json: {} }],
+      output: [{ json: { status: 200, body: {}, assetUrl: '', metadata: null } }],
     },
     {
       name: 'Read runtime aliases',
@@ -601,7 +601,7 @@ export function workflowNodes() {
         language: 'javaScript',
         jsCode: `return [{json:(${releaseResponse.toString()})($input.all().map(item=>item.json),{...$('Check desktop request').first().json,alias:true},${JSON.stringify(base)})}];`,
       },
-      output: [{ json: { status: 200, body: {} } }],
+      output: [{ json: { status: 200, body: {}, assetUrl: '', metadata: null } }],
     },
   ];
 }
