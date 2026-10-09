@@ -32,6 +32,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
   const { data: apps, refresh: refreshApps } = usePageData<Connection[]>('/api/apps');
   const [pending, setPending] = useState<'opening' | 'waiting'>();
   const [pairingCode, setPairingCode] = useState<string>();
+  const [pairingConfirmed, setPairingConfirmed] = useState(false);
   const [signInUrl, setSignInUrl] = useState<string>();
   const [error, setError] = useState('');
   const request = useRef<AbortController | null>(null);
@@ -76,10 +77,14 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     const currentAttempt = attempt.current;
     if (!signInUrl || !currentAttempt) return;
     const controller = new AbortController();
+    let checking: Promise<boolean> | undefined;
+    let poll: number | undefined;
+    let confirmed = false;
     const current = () => !controller.signal.aborted && attempt.current === currentAttempt;
     const settle = (result: 'connected' | 'failed' | 'expired') => {
       if (!current()) return;
       controller.abort();
+      window.clearTimeout(poll);
       attempt.current = undefined;
       setPairingCode(undefined);
       setSignInUrl(undefined);
@@ -87,7 +92,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
       setError(connectionMessage(result));
       void refreshApps();
     };
-    const check = async () => {
+    const read = async () => {
       try {
         const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signInUrl));
         const hash = Array.from(new Uint8Array(digest), (byte) =>
@@ -95,8 +100,8 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
         ).join('');
         const result = await api<AppSetupStatus>('/api/apps/setup-status', {
           method: 'POST',
-          body: JSON.stringify({ hashes: [hash] }),
-          signal: controller.signal,
+          body: JSON.stringify({ hashes: [hash], pairingUrl: signInUrl }),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
           cache: 'no-store',
         });
         if (!current()) return false;
@@ -104,17 +109,40 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
           settle('connected');
           return true;
         }
-        if (!result.apps.some((app) => app.hash === hash)) {
+        const app = result.apps.find((app) => app.hash === hash);
+        if (!app) {
           settle('failed');
           return true;
         }
+        if (app.pairingConfirmed === true && !confirmed) {
+          confirmed = true;
+          setPairingConfirmed(true);
+        }
       } catch {}
       return false;
+    };
+    const check = () => {
+      if (!current()) return Promise.resolve(false);
+      checking ??= read().finally(() => {
+        checking = undefined;
+      });
+      return checking;
+    };
+    const schedule = () => {
+      poll = window.setTimeout(
+        () => {
+          void check().finally(() => {
+            if (current()) schedule();
+          });
+        },
+        pairingCode && !confirmed ? 1000 : 5000,
+      );
     };
     const visible = () => {
       if (document.visibilityState === 'visible') void check();
     };
     visible();
+    schedule();
     window.addEventListener('focus', visible);
     document.addEventListener('visibilitychange', visible);
     const timer = window.setTimeout(() => {
@@ -124,6 +152,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     }, 10 * 60_000);
     return () => {
       controller.abort();
+      window.clearTimeout(poll);
       window.clearTimeout(timer);
       window.removeEventListener('focus', visible);
       document.removeEventListener('visibilitychange', visible);
@@ -152,6 +181,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
     attempt.current = undefined;
     setPending('opening');
     setPairingCode(undefined);
+    setPairingConfirmed(false);
     setSignInUrl(undefined);
     setError('');
     let next: 'opening' | 'waiting' | undefined;
@@ -245,7 +275,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                 <p>Sign in to Gmail</p>
               </div>
             )}
-            {pairingCode && !connected && (
+            {pairingCode && !pairingConfirmed && !connected && (
               <p className="ob-email-muted">
                 Confirm the same code in your browser:{' '}
                 <strong data-analytics-private>{pairingCode}</strong>.{' '}
@@ -277,7 +307,7 @@ export function Email({ arrived, onNext, onBack }: StepProps) {
                 <LoaderCircle size={18} className="spin" aria-hidden="true" />
                 <p>
                   Finish signing in to Google in your browser.{' '}
-                  {signInUrl && (
+                  {signInUrl && !pairingConfirmed && (
                     <a href={signInUrl} target="_blank" rel="noreferrer">
                       Open sign-in
                     </a>

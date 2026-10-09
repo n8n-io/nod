@@ -10555,7 +10555,7 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
               hash,
               slug: 'gmail',
               name: 'Gmail',
-              pairingConfirmed: pairedAppLinks.has(hash),
+              pairingConfirmed: !!pairingUrl && pairedAppLinks.has(hash),
             }))
             .concat([
               { hash: '0'.repeat(64), slug: 'gmail', name: 'Gmail', pairingConfirmed: true },
@@ -11406,11 +11406,39 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       dom.window.document.querySelector('[data-gmail] [data-analytics-private]')?.textContent,
       pairingCode,
     );
+    const onboardingExpiry = [...expiryTimers.entries()];
+    pairedAppLinks.add(receiptHash(gmailSignInUrl));
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    assert.equal(gmail(), 'waiting');
+    assert.equal(
+      Boolean(dom.window.document.querySelector('[data-gmail] [data-analytics-private]')),
+      false,
+      'Owned browser confirmation must remove the onboarding pairing code without completing OAuth.',
+    );
+    assert.equal(dom.window.document.querySelector('[data-gmail] a'), null);
+    assert.equal(pairingUrls.at(-1), gmailSignInUrl);
+    assert.deepEqual([...expiryTimers.entries()], onboardingExpiry);
+    assert.equal(completedAppLinks.has(receiptHash(gmailSignInUrl)), false);
+    assert.equal(timers.size, 1);
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    await poll();
+    assert.equal(gmail(), 'waiting');
+    assert.equal(pollDelays.get(timers.keys().next().value!), 5000);
     await act(async () =>
       receive!({ data: { service: 'gmail', connection: 'cancelled', attempt } }),
     );
     assert.equal(gmail(), 'idle');
     assert.equal(dom.window.document.querySelector('[data-gmail] [data-analytics-private]'), null);
+    assert.equal(timers.size, 0);
+    pairedAppLinks.delete(receiptHash(gmailSignInUrl));
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
     const desktopBridge = (dom.window as unknown as { ottoDesktop?: unknown }).ottoDesktop;
     Reflect.deleteProperty(dom.window, 'ottoDesktop');
     dom.window.open = () => null;
@@ -11430,10 +11458,26 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       dom.window.document.querySelector<HTMLAnchorElement>('[data-gmail] a')?.href,
       'https://connect.example.test/gmail',
     );
+    assert.equal(pollDelays.get(timers.keys().next().value!), 1000);
+    pairedAppLinks.add(receiptHash(gmailSignInUrl));
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    await poll();
+    assert.equal(gmail(), 'waiting');
+    assert.equal(dom.window.document.querySelector('[data-gmail] [data-analytics-private]'), null);
+    assert.equal(dom.window.document.querySelector('[data-gmail] a'), null);
+    assert.equal(pollDelays.get(timers.keys().next().value!), 5000);
     await act(async () =>
       receive!({ data: { service: 'gmail', connection: 'cancelled', attempt } }),
     );
     assert.equal(gmail(), 'idle');
+    assert.equal(timers.size, 0);
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
     Object.assign(dom.window, { ottoDesktop: desktopBridge });
     for (const outcome of ['cancelled', 'failed']) {
       gmailSignInUrl = `https://connect.example.test/gmail-${outcome}`;
@@ -11457,11 +11501,31 @@ test('desktop OAuth retains pending sign-in links and matches onboarding complet
       assert.ok(dom.window.document.querySelector('.ob-email [role="alert"]'));
       assert.equal(expiryTimers.size, 0);
     }
+    gmailSignInUrl = 'https://connect.example.test/gmail-paired-superseded';
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('.ob-gmail-connect')!.click(),
+    );
+    await settle();
+    pairedAppLinks.add(receiptHash(gmailSignInUrl));
+    holdReceipt = true;
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await settle();
+    await act(async () =>
+      dom.window.document.querySelector<HTMLButtonElement>('.ob-email-waiting button')!.click(),
+    );
     gmailSignInUrl = 'https://connect.example.test/gmail-superseded';
     await act(async () =>
       dom.window.document.querySelector<HTMLButtonElement>('.ob-gmail-connect')!.click(),
     );
     await settle();
+    await act(async () => releaseReceipt?.());
+    await settle();
+    assert.equal(gmail(), 'waiting');
+    assert.equal(
+      dom.window.document.querySelector('[data-gmail] [data-analytics-private]')?.textContent,
+      pairingCode,
+      'A delayed pairing confirmation must not alter a replacement onboarding attempt.',
+    );
     completedAppLinks.add(receiptHash(gmailSignInUrl));
     holdReceipt = true;
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
