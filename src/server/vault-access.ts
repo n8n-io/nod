@@ -374,9 +374,12 @@ export async function createVaultAccess(
       query.item === undefined || query.item === '' ? undefined : z.uuid().parse(query.item);
     const { rows } = await pool.query<Row>(
       `SELECT id,at,to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
-       action,origin,item_id,item_kind,amount_minor,currency,task,reason FROM vault_activity
+       action,origin,item_id,item_kind,amount_minor,currency,task,reason FROM vault_activity a
        WHERE owner_id=$1 AND ($2::text IS NULL OR origin=$2) AND ($5::uuid IS NULL OR item_id=$5)
        AND ($3::timestamptz IS NULL OR (at,id)<($3,$4::uuid))
+       AND NOT (action='asked' AND EXISTS(SELECT 1 FROM vault_activity done
+         WHERE done.owner_id=a.owner_id AND done.origin=a.origin AND done.action<>'asked'
+         AND (done.payment_id=a.payment_id OR (a.payment_id IS NULL AND done.root_turn_id=a.root_turn_id))))
        ORDER BY at DESC,id DESC LIMIT 51`,
       [ownerId, origin ?? null, before?.at ?? null, before?.id ?? null, item ?? null],
     );

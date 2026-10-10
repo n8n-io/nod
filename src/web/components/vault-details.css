@@ -394,11 +394,3 @@
   color: var(--muted-foreground);
   font-size: 13px;
 }
-.vault-card-code {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
-.vault-card-code .field {
-  flex: 1;
-}

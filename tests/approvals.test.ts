@@ -992,18 +992,15 @@ test(
               ['sign_in', site, 'asked'],
               ['asked', 'https://acme.example', 'unrequested'],
               ['asked', energy, 'unrequested'],
-              ['asked', water, 'unrequested'],
               ['sign_in', water, 'entered'],
               ['asked', gas, 'unrequested'],
               ['asked', energy, 'schedule'],
-              ['asked', energy, 'unrequested'],
               ['sign_in', energy, 'entered'],
               ['asked', gas, 'unrequested'],
               ['sign_in', 'https://shop.example.test', 'asked'],
               ['sign_in', energy, 'allowed'],
               ['sign_in', site, 'asked'],
               ['session', 'https://ctt.pt', 'always'],
-              ['asked', 'https://ctt.pt', 'injection'],
               ['held', 'https://ctt.pt', 'injection'],
               ['held', 'https://ctt.pt', 'background'],
               ['held', 'https://ctt.pt', 'readonly'],
@@ -1017,7 +1014,7 @@ test(
           assert.equal(activity.entries[0]?.task, 'Monthly invoices');
           assert.deepEqual(activity.week, { signIns: 7, payments: 0, held: 3 });
           const first = await access.activity({ origin: energy });
-          assert.equal(first.entries.length, 5);
+          assert.equal(first.entries.length, 4);
           await db.pool.query(
             `INSERT INTO vault_activity(id,owner_id,at,action,origin,reason)
              SELECT gen_random_uuid(),$1,date_trunc('milliseconds',now()-interval '30 days')+n*interval '1 microsecond',
