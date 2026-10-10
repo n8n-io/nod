@@ -2442,8 +2442,10 @@ test(
       const resumed: string[] = [];
       const recorded: Array<{ action: string; reason: string; origin: string }> = [];
       const remembered: Array<[string, boolean]> = [];
-      let policy: PaymentPolicy = { allowed: true, flagged: false, channel: 'otto' };
+      let policy: PaymentPolicy = { allowed: true, flagged: false, inOtto: true };
       let url = 'https://shop.fixture.test/checkout';
+      let elsewhere: string | undefined;
+      let captureFails = false;
       let failFill = false;
       const make = (local: boolean) =>
         createPayments(pool, {
@@ -2451,6 +2453,22 @@ test(
           local,
           policy: async () => policy,
           page: async () => ({ origin: new URL(url).origin, url }),
+          destinations: async () => {
+            const origin = new URL(url).origin;
+            return {
+              document: 'loader-1',
+              destinations: {
+                number: elsewhere ?? origin,
+                expiry: origin,
+                securityCode: elsewhere ?? origin,
+                name: origin,
+              },
+            };
+          },
+          capture: async () => {
+            if (captureFails) throw new Error('Synthetic paused page.');
+            return new Uint8Array([255, 216, 255]);
+          },
           cards: vault.paymentCards,
           card: vault.paymentCard,
           remember: async (id, on, securityCode) => {
@@ -2470,52 +2488,56 @@ test(
         });
       const payments = await make(true);
       const expiryYear = new Date().getUTCFullYear() + 3;
-      const saved = await app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        headers,
-        payload: {
-          kind: 'card',
-          label: 'Studio card',
-          cardholder: 'Synthetic Cardholder',
-          cardNumber: '4242 4242 4242 4242',
-          expiryMonth: 8,
-          expiryYear,
-        },
-      });
-      assert.equal(saved.statusCode, 200, saved.body);
-      const card = saved.json<VaultCardEntry>();
+      const save = async (label: string, cardNumber: string) => {
+        const saved = await app.inject({
+          method: 'POST',
+          url: '/api/vault',
+          headers,
+          payload: {
+            kind: 'card',
+            label,
+            cardholder: 'Synthetic Cardholder',
+            cardNumber,
+            expiryMonth: 8,
+            expiryYear,
+          },
+        });
+        assert.equal(saved.statusCode, 200, saved.body);
+        return saved.json<VaultCardEntry>();
+      };
+      const card = await save('Studio card', '4242 4242 4242 4242');
       const turn = { threadId: randomUUID(), turnId: randomUUID() };
       const fields = { number: '@e4', expiry: '@e5', securityCode: '@e6', name: '@e3' };
-      const order = { amount: '43.20', currency: 'eur', description: 'Two brass hinges', fields };
+      const order = { amount: '43.20', currency: 'eur', fields };
       const latest = async () =>
         (
           await pool.query<{ id: string; status: string }>(
             'SELECT id,status FROM vault_payments ORDER BY created_at DESC LIMIT 1',
           )
         ).rows[0]!;
-      const reply = async (code: string, keep = false) =>
-        (await payments.submitCode(turn.turnId, code, (await latest()).id, keep)).status;
-      const choice = async () => (await vault.paymentCards())[0]!;
+      const reply = async (code: string) =>
+        (await payments.submitCode(turn.turnId, code, (await latest()).id)).status;
+      const studio = async () => (await vault.paymentCards()).find((item) => item.id === card.id)!;
+      const shop = 'https://shop.fixture.test';
 
       const first = await payments.request(turn, order);
-      assert.ok(!('paymentId' in first) && 'question' in first);
+      assert.equal(first.paymentId, undefined);
+      assert.deepEqual([...first.image], [255, 216, 255]);
       assert.equal(
         first.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code. Add “keep” and next time a yes in Otto is enough.',
+        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code.',
       );
-      const firstId = (await latest()).id;
       assert.equal(
-        (await payments.submitCode(randomUUID(), '737', firstId, false)).status,
+        (await payments.submitCode(randomUUID(), '737', (await latest()).id)).status,
         'unavailable',
       );
-      assert.equal(fills.length, 0);
       assert.equal(await reply('737'), 'submitted');
       assert.deepEqual(fills, [
         {
           threadId: turn.threadId,
-          origin: 'https://shop.fixture.test',
           fields,
+          document: 'loader-1',
+          destinations: { number: shop, expiry: shop, securityCode: shop, name: shop },
           card: {
             cardholder: 'Synthetic Cardholder',
             cardNumber: '4242424242424242',
@@ -2526,149 +2548,102 @@ test(
         },
       ]);
       assert.match(resumed.at(-1)!, /entered Visa ••4242 for €43\.20 at shop\.fixture\.test/);
-      assert.deepEqual(await choice(), { ...(await choice()), doItForMe: false, choice: false });
+      assert.match(resumed.at(-1)!, /ask the owner once whether a yes should be enough/);
+      assert.equal((await studio()).choice, null);
       assert.equal(await reply('737'), 'unavailable');
-      assert.equal(fills.length, 1);
 
       await payments.request(turn, order);
-      const olderId = (await latest()).id;
+      const older = (await latest()).id;
       await payments.request(turn, order);
-      assert.equal(
-        (await payments.submitCode(turn.turnId, '737', olderId, false)).status,
-        'unavailable',
-      );
-      url = 'https://shop.fixture.test/checkout?step=2';
+      assert.equal((await payments.submitCode(turn.turnId, '737', older)).status, 'unavailable');
+      failFill = true;
       assert.equal(await reply('737'), 'unavailable');
+      failFill = false;
       assert.equal((await latest()).status, 'failed');
-      assert.match(resumed.at(-1)!, /checkout page changed/);
+      assert.match(resumed.at(-1)!, /nothing was entered/);
       assert.equal(fills.length, 1);
 
-      const plain = await payments.request(turn, order);
-      assert.ok('question' in plain && !('paymentId' in plain));
-      assert.equal(
-        plain.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code.',
-      );
-      assert.equal(await reply('737', true), 'submitted');
-      assert.equal((await choice()).doItForMe, true);
-      assert.match(resumed.at(-1)!, /Do it for me is on for Visa ••4242/);
-
-      const asked = await payments.request(turn, order);
-      assert.ok('paymentId' in asked);
-      assert.equal(asked.question, 'Pay €43.20 at shop.fixture.test with Visa ••4242?');
-      const approved = await payments.approve(turn, { paymentId: asked.paymentId });
-      assert.equal(approved.entered, true);
-      assert.equal(fills.at(-1)?.card.securityCode, '737');
       assert.match(
-        (await payments.approve(turn, { paymentId: asked.paymentId })).message,
+        await payments.setting(turn, { doItForMe: true }),
+        /keeps its security code the next time/,
+      );
+      const keep = await payments.request(turn, order);
+      assert.match(keep.question, /Otto will keep it, so next time a yes is enough\.$/);
+      assert.equal(await reply('737'), 'submitted');
+      assert.equal((await studio()).doItForMe, true);
+      assert.doesNotMatch(resumed.at(-1)!, /ask the owner once/);
+
+      elsewhere = 'https://pay.fixture.test';
+      const yes = await payments.request(turn, order);
+      assert.equal(
+        yes.question,
+        'Pay €43.20 at shop.fixture.test with Visa ••4242? Card details go to pay.fixture.test.',
+      );
+      assert.ok(yes.paymentId);
+      assert.equal((await payments.approve(turn, { paymentId: yes.paymentId })).entered, true);
+      assert.equal(fills.at(-1)?.card.securityCode, '737');
+      assert.equal(fills.at(-1)?.destinations.number, 'https://pay.fixture.test');
+      assert.match(
+        (await payments.approve(turn, { paymentId: yes.paymentId })).message,
         /no longer open/,
       );
-
       failFill = true;
-      const stale = await payments.request(turn, order);
-      assert.ok('paymentId' in stale);
-      assert.equal((await payments.approve(turn, { paymentId: stale.paymentId })).entered, false);
+      const broken = await payments.request(turn, order);
+      const failed = await payments.approve(turn, { paymentId: broken.paymentId! });
       failFill = false;
-      url = 'https://other.fixture.test/checkout?step=2';
-      await assert.rejects(
-        payments.request(turn, { ...order, paymentId: stale.paymentId }),
-        /no longer available/,
-      );
-      url = 'https://shop.fixture.test/checkout?step=2';
-      const retried = await payments.request(turn, {
-        ...order,
-        paymentId: stale.paymentId,
-        fields: { ...fields, number: '@e9' },
-      });
-      assert.ok('entered' in retried);
-      assert.equal(fills.at(-1)?.fields.number, '@e9');
+      assert.equal(failed.entered, false);
+      assert.match(failed.message, /nothing was entered/);
+      elsewhere = 'null';
+      await assert.rejects(payments.request(turn, order));
+      elsewhere = undefined;
+      captureFails = true;
+      await assert.rejects(payments.request(turn, order), /Synthetic paused page/);
+      captureFails = false;
 
-      policy = { allowed: true, flagged: true, channel: 'otto' };
-      const flagged = await payments.request(turn, order);
-      assert.ok('question' in flagged && !('paymentId' in flagged));
-      assert.match(flagged.question, /^A page in this task had instructions for AI assistants/);
-      assert.doesNotMatch(flagged.question, /keep/i);
+      policy = { allowed: true, flagged: true, inOtto: true };
+      const steered = await payments.request(turn, order);
+      assert.equal(steered.paymentId, undefined);
+      assert.match(steered.question, /^A page in this task had instructions for AI assistants/);
       assert.equal(
         (await payments.approve(turn, { paymentId: (await latest()).id })).entered,
         false,
       );
       const changes = remembered.length;
-      assert.equal(await reply('1234', true), 'submitted');
+      assert.equal(await reply('1234'), 'submitted');
       assert.equal(fills.at(-1)?.card.securityCode, '1234');
       assert.equal(remembered.length, changes);
-      await assert.rejects(payments.setting(turn, { doItForMe: true }), /Only a message/);
+      await assert.rejects(payments.setting(turn, { doItForMe: true }), /only from a message/);
 
-      policy = { allowed: true, flagged: false, channel: 'otto' };
+      policy = { allowed: true, flagged: false, inOtto: false };
+      await assert.rejects(payments.request(turn, order), /approved only in the Otto app/);
+      await assert.rejects(payments.setting(turn, { doItForMe: true }), /only from a message/);
       assert.match(await payments.setting(turn, { doItForMe: false }), /off for Visa ••4242/);
-      assert.deepEqual(await choice(), { ...(await choice()), doItForMe: false, choice: false });
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
-      assert.match(
-        await payments.setting(turn, { card: '4242', doItForMe: true }),
-        /keeps its security code the next time/,
-      );
-      const again = await payments.request(turn, order);
-      assert.ok('question' in again && !('paymentId' in again));
-      assert.match(again.question, /Otto keeps it, so next time a yes in Otto is enough\.$/);
-      assert.equal(await reply('737'), 'submitted');
-      assert.equal((await choice()).doItForMe, true);
-
       policy = { allowed: false, reason: 'background' };
-      const before = fills.length;
       await assert.rejects(payments.request(turn, order), /never pays/);
-      await assert.rejects(payments.setting(turn, { doItForMe: false }), /Only a message/);
-      assert.equal(fills.length, before);
-      policy = { allowed: true, flagged: false, channel: 'telegram' };
-      const known = await payments.request(turn, order);
-      assert.ok('question' in known && !('paymentId' in known));
-      assert.equal(
-        known.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code.',
-      );
-      url = 'https://new.fixture.test/checkout';
-      await assert.rejects(payments.request(turn, order), /not paid at new\.fixture\.test before/);
-      policy = { allowed: true, flagged: false, channel: 'other' };
-      await assert.rejects(payments.request(turn, order), /cannot be approved from this chat app/);
-      assert.equal(fills.length, before);
-      policy = { allowed: true, flagged: false, channel: 'otto' };
-      assert.ok('question' in (await payments.request(turn, order)));
+      policy = { allowed: true, flagged: false, inOtto: true };
 
-      const second = await app.inject({
-        method: 'POST',
-        url: '/api/vault',
-        headers,
-        payload: {
-          kind: 'card',
-          label: 'Travel card',
-          cardholder: 'Synthetic Cardholder',
-          cardNumber: '5555 5555 5555 4444',
-          expiryMonth: 9,
-          expiryYear,
-        },
-      });
-      assert.equal(second.statusCode, 200, second.body);
-      url = 'https://other.fixture.test/checkout';
+      await save('Travel card', '5555 5555 5555 4444');
       await assert.rejects(payments.request(turn, order), /Ask the owner which card/);
-      const named = await payments.request(turn, { ...order, card: 'travel' });
-      assert.ok('question' in named && !('paymentId' in named));
-      assert.match(named.question, /with Mastercard ••4444\?/);
-      url = 'https://shop.fixture.test/checkout?step=2';
-
+      assert.match(
+        (await payments.request(turn, { ...order, card: 'travel' })).question,
+        /••4444\?/,
+      );
       const yen = await payments.request(turn, {
         ...order,
         card: '4242',
         amount: '1200',
         currency: 'JPY',
       });
-      assert.ok('question' in yen);
       assert.match(yen.question, /^Pay ¥1,200 at shop\.fixture\.test with Visa ••4242\?/);
       await assert.rejects(payments.request(turn, { ...order, amount: '12.5', currency: 'JPY' }));
       await assert.rejects(payments.request(turn, { ...order, currency: 'ZZZ' }));
       await assert.rejects(payments.request(turn, { ...order, fields: { number: '@e4' } }));
+      const asked = recorded.length;
       const hosted = await make(false);
-      const asking = recorded.length;
       await assert.rejects(hosted.request(turn, { ...order, card: '4242' }), /Hosted Otto/);
       await assert.rejects(hosted.setting(turn, { doItForMe: true }), /Hosted Otto/);
-      assert.equal(recorded.length, asking);
+      assert.equal(recorded.length, asked);
 
       assert.deepEqual(
         recorded.map((entry) => [entry.action, entry.reason]),
@@ -2682,16 +2657,10 @@ test(
           ['asked', 'payment'],
           ['paid', 'said_yes'],
           ['asked', 'payment'],
-          ['paid', 'said_yes'],
           ['asked', 'payment'],
           ['paid', 'code_typed'],
-          ['asked', 'payment'],
-          ['paid', 'code_typed'],
-          ['held', 'background'],
-          ['asked', 'payment'],
-          ['held', 'new_shop'],
           ['held', 'chat_app'],
-          ['asked', 'payment'],
+          ['held', 'background'],
           ['asked', 'payment'],
           ['asked', 'payment'],
         ],
@@ -2700,7 +2669,7 @@ test(
         JSON.stringify(
           (
             await pool.query(
-              'SELECT origin,amount_minor,currency,description,fields,status FROM vault_payments',
+              'SELECT origin,amount_minor,currency,fields,destinations,status FROM vault_payments',
             )
           ).rows,
         ),

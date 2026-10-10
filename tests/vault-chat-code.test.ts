@@ -54,11 +54,16 @@ test(
     const payments = await createPayments(db.pool, {
       ownerId,
       local: true,
-      policy: async () => ({ allowed: true, flagged: false, channel: 'otto' as const }),
+      policy: async () => ({ allowed: true, flagged: false, inOtto: true }),
       page: async () => ({
         origin: 'https://shop.fixture.test',
         url: 'https://shop.fixture.test/checkout',
       }),
+      destinations: async () => ({
+        document: 'loader-1',
+        destinations: { number: 'https://shop.fixture.test' },
+      }),
+      capture: async () => new Uint8Array([255, 216, 255]),
       cards: async () => [paymentCard],
       card: async () => ({
         cardholder: 'Synthetic Cardholder',
@@ -78,8 +83,7 @@ test(
     const verification = await createChatVerification(db.pool, {
       ownerId,
       keyStore: { getKey: async () => Buffer.alloc(32, 61) },
-      submitPayment: (turnId, code, paymentId, keep) =>
-        payments.submitCode(turnId, code, paymentId, keep),
+      submitPayment: (turnId, code, paymentId) => payments.submitCode(turnId, code, paymentId),
       refresh() {},
       async submitCode(owner, turnId, code, requestId) {
         injected.push({ owner, turnId, code, requestId });
@@ -239,7 +243,7 @@ test(
         },
       );
       await t.test(
-        'a security code reply pays and saves the keep choice without reaching chat history',
+        'a reply carrying one security code pays in Otto, and any other numbers are held back from the model',
         async () => {
           await reset();
           const threadId = (await thread.activeThread(db.pool, ownerId)).id;
@@ -252,29 +256,35 @@ test(
           const order = {
             amount: '43.20',
             currency: 'EUR',
-            description: 'Two brass hinges',
             fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
           };
           const asked = await payments.request({ threadId, turnId }, order);
           assert.ok('question' in asked && !('paymentId' in asked));
-          assert.match(asked.question, /Reply with its security code\. Add “keep”/);
+          assert.match(asked.question, /Reply with its security code\.$/);
           const state = (await app.inject({ url: '/api/state', headers })).json();
           assert.equal(state.verificationRequests[0].kind, 'payment');
-          assert.equal((await send('73951')).statusCode, 409);
+          await assert.rejects(
+            verification.accept('here you go 7395', {
+              clientMessageId: randomUUID(),
+              channel: 'telegram:synthetic',
+            }),
+            (error: Error & { statusCode?: number }) =>
+              error.statusCode === 409 && /approved only in the Otto app/.test(error.message),
+          );
+          for (const text of ['73951', '2 hinges for 7395', '739 or 740'])
+            assert.equal((await send(text)).statusCode, 409, text);
           assert.deepEqual(entered, []);
-          const response = await send('7395, keep');
+          assert.equal((await send('wait, which card is that?')).statusCode, 200);
+          assert.deepEqual(ordinary, ['wait, which card is that?']);
+          const response = await send('sure, it is 7395');
           assert.equal(response.statusCode, 200, response.body);
           assert.equal(response.json().messageText, 'Security code sent securely.');
           assert.equal(response.json().verificationStatus, 'submitted');
           assert.deepEqual(entered, ['7395']);
-          assert.deepEqual(kept, [[paymentCard.id, true, '7395']]);
-          await payments.request({ threadId, turnId }, order);
-          assert.equal((await send('7395')).statusCode, 200);
-          assert.deepEqual(kept.at(-1), [paymentCard.id, false, undefined]);
-          assert.deepEqual(ordinary, []);
+          assert.deepEqual(kept, []);
           const persisted = await db.pool.query(
             `SELECT text AS value FROM messages UNION ALL SELECT prompt FROM turns
-             UNION ALL SELECT description||fields::text||status FROM vault_payments`,
+             UNION ALL SELECT fields::text||status FROM vault_payments`,
           );
           assert.ok(!JSON.stringify(persisted.rows).includes('7395'));
         },

@@ -220,6 +220,9 @@ export function VaultDetails({
     const hasSecurityCode =
       details.kind === 'card' &&
       (securityCode === null ? false : Boolean(securityCode) || details.hasSecurityCode);
+    const doItForMe =
+      details.kind === 'card' &&
+      (securityCode === null ? false : Boolean(securityCode) || details.doItForMe);
     let body = JSON.stringify(
       isCard
         ? {
@@ -267,7 +270,7 @@ export function VaultDetails({
         throw new Error('Unexpected item');
       setDetails(
         updated.kind === 'card'
-          ? { ...updated, cardholder, hasSecurityCode }
+          ? { ...updated, cardholder, hasSecurityCode, doItForMe }
           : { ...updated, username, hasPassword },
       );
       setFormRevision((value) => value + 1);

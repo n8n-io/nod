@@ -1,3 +1,4 @@
+import { browserErrorMessage, type BrowserErrorCode } from '../../shared/browser-errors.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -201,18 +202,8 @@ export function createBridgeComputer(options: {
         if (cancelling || (!response.ok && response.error === 'cancelled'))
           return reject(new Error('Browser operation cancelled.'));
         if (response.ok) return resolve(response.result);
-        if (response.error === 'navigation')
-          return reject(new BrowserActionError('browser_navigation_failed'));
-        if (response.error === 'click_intercepted')
-          return reject(new BrowserActionError('browser_click_intercepted'));
-        if (response.error === 'dialog')
-          return reject(new BrowserActionError('browser_dialog_open'));
-        if (response.error === 'action')
-          return reject(new BrowserActionError('browser_action_failed'));
-        if (response.error === 'observation')
-          return reject(new BrowserActionError('browser_observation_failed'));
-        if (response.error === 'not_open')
-          return reject(new BrowserActionError('browser_not_open'));
+        if (browserErrorMessage(response.error))
+          return reject(new BrowserActionError(response.error as BrowserErrorCode));
         if (response.error === 'locked') {
           const error = new Error('Browser observations are paused during credential entry.');
           return reject(Object.assign(error, { statusCode: 423 }));
@@ -381,11 +372,33 @@ export function createBridgeComputer(options: {
         .object({ origin: z.string().max(2048), url: z.string().max(8192) })
         .strict()
         .parse(await call({ method: 'currentPage', threadId: threadIdentity(id) })),
-    fillCard: async ({ threadId: id, origin, fields, card }) => {
+    fillCard: async ({ threadId: id, fields, document, destinations, card }) => {
       await call({
         method: 'fillCard',
-        input: { threadId: threadIdentity(id), origin, fields, card },
+        input: { threadId: threadIdentity(id), fields, document, destinations, card },
       });
+    },
+    cardDestinations: async (id, fields) =>
+      z
+        .object({
+          document: z.string().min(1).max(200),
+          destinations: z.partialRecord(
+            z.enum(['number', 'expiry', 'expiryMonth', 'expiryYear', 'securityCode', 'name']),
+            z.string().max(2048),
+          ),
+        })
+        .strict()
+        .parse(await call({ method: 'cardDestinations', threadId: threadIdentity(id), fields })),
+    checkoutImage: async (id) => {
+      const value = await call({ method: 'checkoutImage', threadId: threadIdentity(id) });
+      if (
+        typeof value !== 'string' ||
+        !value ||
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(value) ||
+        value.length > Math.ceil(imageBytes / 3) * 4
+      )
+        throw new Error('The checkout page could not be captured.');
+      return new Uint8Array(Buffer.from(value, 'base64'));
     },
     injectCredentials: async (input) => {
       const {

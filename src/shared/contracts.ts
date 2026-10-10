@@ -85,6 +85,7 @@ export interface VaultLoginDetails extends VaultLoginEntry {
 interface VaultCardDetails extends VaultCardEntry {
   cardholder: string;
   hasSecurityCode: boolean;
+  doItForMe: boolean;
 }
 export type VaultEntryDetails = VaultLoginDetails | VaultCardDetails;
 export interface VaultEntryPassword {
@@ -109,7 +110,6 @@ export type VaultActivityReason =
   | 'injection'
   | 'unrequested'
   | 'payment'
-  | 'new_shop'
   | 'chat_app'
   | 'code_typed'
   | 'said_yes';

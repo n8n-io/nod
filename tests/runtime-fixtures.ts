@@ -10,6 +10,8 @@ export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
     close: async () => {},
     signOut: async () => {},
     fillCard: async () => {},
+    cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
+    checkoutImage: async () => new Uint8Array(),
     dispose: async () => {},
     status: () => 'fixture computer',
     ...overrides,

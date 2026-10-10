@@ -817,19 +817,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     };
   }
 
-  async function rememberSecurityCode(rawId: string, raw: unknown) {
-    const { securityCode } = z
-      .object({
-        securityCode: z
-          .string()
-          .regex(/^\d{3,4}$/)
-          .nullable(),
-      })
-      .strict()
-      .parse(raw);
-    return setDoItForMe(rawId, securityCode !== null, securityCode ?? undefined);
-  }
-
   async function setDoItForMe(rawId: string, on: boolean, securityCode?: string) {
     if (options.securityCodes === false)
       throw new VaultError('Otto never keeps security codes here.', 400);
@@ -2069,6 +2056,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
               ...cardMetadata(entry),
               cardholder: secret.cardholder,
               hasSecurityCode: options.securityCodes !== false && Boolean(secret.securityCode),
+              doItForMe:
+                options.securityCodes !== false &&
+                (entry.do_it_for_me ?? Boolean(secret.securityCode)),
             };
           }
           const { entry, secret } = await readCredential(request.params.id);
@@ -2102,9 +2092,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         },
       );
       scope.put<{ Params: { id: string } }>(
-        '/api/vault/:id/security-code',
+        '/api/vault/:id/do-it-for-me',
         { bodyLimit: 1024 },
-        async (request) => rememberSecurityCode(request.params.id, request.body),
+        async (request) =>
+          setDoItForMe(
+            request.params.id,
+            z.object({ on: z.boolean() }).strict().parse(request.body).on,
+          ),
       );
       scope.post<{ Params: { id: string } }>(
         '/api/vault/:id/card-number',
@@ -2176,7 +2170,6 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     resumePending,
     paymentCards,
     paymentCard,
-    rememberSecurityCode,
     setDoItForMe,
   };
 }

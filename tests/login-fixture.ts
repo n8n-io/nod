@@ -101,7 +101,9 @@ export function stagedLoginBrowser() {
       data =
         command[1] === 'url'
           ? { url: page.location.href }
-          : { value: page.nodes(command[2])[0]?.getAttribute(command[3]) ?? null };
+          : command[1] === 'cdp-url'
+            ? { cdpUrl: 'ws://127.0.0.1:9/devtools/browser/unavailable' }
+            : { value: page.nodes(command[2])[0]?.getAttribute(command[3]) ?? null };
     if (command[0] === 'eval') data = { result: await page.evaluate(options?.input ?? '') };
     if (command[0] === 'click') {
       const node = page.nodes(command[1])[0] as HTMLElement | undefined;

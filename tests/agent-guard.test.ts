@@ -1144,49 +1144,22 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
   const input = {
     amount: '43.20',
     currency: 'EUR',
-    description: 'Two brass hinges',
     fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
   };
   const requests: unknown[] = [];
-  const entered = await fixture(
-    async (tools) => {
-      const result = await call(tools, 'pay', { ...input, paymentId: randomUUID() });
-      assert.deepEqual(result, {
-        content: [
-          { type: 'text', text: 'Otto entered Visa ••4242 for €43.20 at shop.example.test.' },
-        ],
-        details: {},
-      });
-    },
-    {
-      requestPayment: async (request: unknown) => {
-        requests.push(request);
-        return {
-          entered: true as const,
-          message: 'Otto entered Visa ••4242 for €43.20 at shop.example.test.',
-        };
-      },
-    },
-  );
-  assert.equal(entered.result.status, 'succeeded');
-  assert.deepEqual(Object.keys(requests[0] as object).sort(), [
-    'amount',
-    'currency',
-    'description',
-    'fields',
-    'paymentId',
-  ]);
   const asked = await fixture(
     async (tools) => {
       await call(tools, 'pay', input);
     },
     {
-      requestPayment: async () => ({
-        [appConfirmation]: 'Pay €43.20 at shop.example.test with Visa ••4242?',
-      }),
+      requestPayment: async (request: unknown) => {
+        requests.push(request);
+        return { [appConfirmation]: 'Pay €43.20 at shop.example.test with Visa ••4242?' };
+      },
     },
   );
   assert.equal(asked.result.status, 'waiting_user');
+  assert.deepEqual(requests, [input]);
   const question =
     'Pay €43.20 at shop.example.test with Visa ••4242? Reply with its security code.';
   const coded = await fixture(

@@ -425,6 +425,8 @@ async function e2bFixture() {
         close: async () => {},
         signOut: async () => {},
         fillCard: async () => {},
+        cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
+        checkoutImage: async () => new Uint8Array(),
         dispose: async () => {
           await browserDisposal?.();
         },
@@ -987,6 +989,8 @@ async function cloudflareFixture() {
         close: async () => {},
         signOut: async () => {},
         fillCard: async () => {},
+        cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
+        checkoutImage: async () => new Uint8Array(),
         dispose: async () => {
           calls.push({ namespace: selected, method: 'dispose' });
           if (failedDisposals > 0) {

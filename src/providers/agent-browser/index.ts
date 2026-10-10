@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
@@ -10,6 +10,7 @@ import type {
   BrowserObservation,
   Computer,
   CardEntry,
+  CardFields,
   CredentialInput,
   CredentialSubmission,
   BrowserPage,
@@ -20,6 +21,7 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import { runProcess, serviceEnvironment } from '../process.ts';
 import { createBrowserProxy, browserUrl } from './network.ts';
 import { credentialFields } from './credentials.ts';
+import { openDevtools } from './devtools.ts';
 import {
   createScreenStore,
   existingDaemonCommand,
@@ -46,6 +48,7 @@ interface BrowserState {
   pageSize?: [number, number];
   protectedSelectors: Set<string>;
   payment?: string;
+  scripted: Set<string>;
   uploads: Set<string>;
   started: boolean;
   lastUsed: number;
@@ -165,9 +168,11 @@ function daemonRequest(args: string[], input?: string): Record<string, unknown> 
     case 'get':
       return args[1] === 'url'
         ? { action: 'url' }
-        : args[1] === 'attr'
-          ? { action: 'getattribute', selector: args[2], attribute: args[3] }
-          : null;
+        : args[1] === 'cdp-url'
+          ? { action: 'cdp_url' }
+          : args[1] === 'attr'
+            ? { action: 'getattribute', selector: args[2], attribute: args[3] }
+            : null;
     case 'click':
       return { action: 'click', selector: args[1] };
     case 'fill':
@@ -190,7 +195,13 @@ function daemonRequest(args: string[], input?: string): Record<string, unknown> 
         ...(args[4] ? { selector: args[4] } : {}),
       };
     case 'screenshot':
-      return { action: 'screenshot', path: args[1], fullPage: false, annotate: false };
+      return {
+        action: 'screenshot',
+        path: args[1],
+        fullPage: args.includes('--full'),
+        annotate: false,
+        ...(args.includes('jpeg') ? { format: 'jpeg', quality: 70 } : {}),
+      };
     case 'download':
       return { action: 'download', selector: args[1], path: args[2] };
     case 'snapshot':
@@ -372,6 +383,7 @@ export function createAgentBrowserComputer(options: {
         secrets: new Set(),
         secretsByOrigin: new Map(),
         protectedSelectors: new Set(),
+        scripted: new Set(),
         uploads: new Set(),
         started: false,
         lastUsed: Date.now(),
@@ -979,6 +991,11 @@ export function createAgentBrowserComputer(options: {
         }
         if (!state.started) throw new BrowserActionError('browser_not_open');
         markActivity(id);
+        if (
+          ['fill', 'type', 'press', 'drag', 'evaluate'].includes(input.action) &&
+          (await cardOnPage(state, signal))
+        )
+          throw new BrowserActionError('browser_card_paused');
         if (!['snapshot', 'accept_dialog', 'dismiss_dialog'].includes(input.action))
           await currentUrl(state, signal);
         if (input.action === 'tab_list') {
@@ -1011,7 +1028,6 @@ export function createAgentBrowserComputer(options: {
           const autocomplete = await command(state, ['get', 'attr', target, 'autocomplete'], {
             signal,
           });
-          if (/cc-/i.test(String(autocomplete.value))) throw new Error('Use pay for card fields.');
           if (
             /password|one-time-code|username/i.test([type.value, autocomplete.value].join(' ')) ||
             state.protectedSelectors.has(target)
@@ -1122,14 +1138,11 @@ export function createAgentBrowserComputer(options: {
         if (['back', 'forward', 'reload'].includes(input.action))
           await command(state, [input.action], { signal });
         if (input.action === 'evaluate') {
-          if (await cardOnPage(state, signal))
-            throw new Error(
-              'Card details are on this page, so scripts are paused. Use snapshot until the page changes.',
-            );
           const script = input.script ?? '';
           if (!script.trim() || script.length > 20_000)
             throw new Error('Provide a script of at most 20,000 characters.');
           const url = await currentUrl(state, signal);
+          await markScripted(state);
           const value = await evaluate(
             state,
             `Promise.race([Promise.resolve().then(() => (${script})), new Promise((resolve) => setTimeout(() => resolve({ __ottoTimedOut: true }), 5000))])`,
@@ -1139,6 +1152,7 @@ export function createAgentBrowserComputer(options: {
             throw new Error(
               'Card details are on this page, so scripts are paused. Use snapshot until the page changes.',
             );
+          await markScripted(state);
           if (value && typeof value === 'object' && '__ottoTimedOut' in value)
             throw new Error('The script did not finish within 5 seconds.');
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
@@ -1170,6 +1184,7 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
+      if (await cardOnPage(state, signal)) throw new BrowserActionError('browser_card_paused');
       if (state.uploads.size >= 8)
         throw new Error('Close this browser before uploading more files.');
       markActivity(id);
@@ -1352,102 +1367,169 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
-  async function documentId(state: BrowserState, signal?: AbortSignal) {
-    return String(await evaluate(state, 'String(performance.timeOrigin)', signal));
-  }
-
   async function cardOnPage(state: BrowserState, signal?: AbortSignal) {
     if (!state.payment) return false;
-    return (await documentId(state, signal).catch(() => state.payment)) === state.payment;
+    signal?.throwIfAborted();
+    const devtools = await inspector(state).catch(() => undefined);
+    if (!devtools) return true;
+    try {
+      return await devtools.alive(state.payment);
+    } catch {
+      return true;
+    } finally {
+      devtools.close();
+    }
+  }
+
+  async function markScripted(state: BrowserState) {
+    const devtools = await inspector(state).catch(() => undefined);
+    try {
+      state.scripted.add((await devtools?.document().catch(() => undefined)) ?? 'unknown');
+    } finally {
+      devtools?.close();
+    }
+  }
+
+  async function inspector(state: BrowserState) {
+    const { cdpUrl } = z
+      .object({ cdpUrl: z.string() })
+      .passthrough()
+      .parse(await command(state, ['get', 'cdp-url']));
+    const tab = z
+      .array(z.object({ active: z.boolean(), targetId: z.string() }).passthrough())
+      .parse((await command(state, ['tab', 'list'])).tabs)
+      .find((item) => item.active);
+    if (!tab) throw new Error('The checkout tab is no longer open.');
+    return openDevtools(cdpUrl, tab.targetId);
+  }
+
+  async function focusField(
+    state: BrowserState,
+    devtools: Awaited<ReturnType<typeof openDevtools>>,
+    selector: string,
+  ) {
+    await devtools.blur();
+    await command(state, ['focus', selector]).catch(() => {
+      throw new BrowserActionError('browser_card_field');
+    });
+    const field = await devtools.focused();
+    if (!field) throw new BrowserActionError('browser_card_field');
+    return field;
+  }
+
+  async function checkout(state: BrowserState, devtools: Awaited<ReturnType<typeof openDevtools>>) {
+    const document = await devtools.document();
+    if (state.scripted.has(document) || state.scripted.has('unknown'))
+      throw new BrowserActionError('browser_card_reload');
+    return document;
+  }
+
+  async function cardDestinations(
+    id: string,
+    fields: CardFields,
+  ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }> {
+    const state = browsers.get(threadIdentity(id));
+    if (!state?.started) throw new Error('The checkout page is no longer open.');
+    if (state.injecting) throw new BrowserLockedError();
+    return serialize(state, async () => {
+      const devtools = await inspector(state);
+      try {
+        const document = await checkout(state, devtools);
+        const destinations: Partial<Record<keyof CardFields, string>> = {};
+        for (const [name, selector] of Object.entries(fields) as Array<[keyof CardFields, string]>)
+          if (selector) destinations[name] = (await focusField(state, devtools, selector)).origin;
+        await devtools.blur();
+        if ((await devtools.document()) !== document)
+          throw new BrowserActionError('browser_card_changed');
+        return { document, destinations };
+      } finally {
+        devtools.close();
+      }
+    });
+  }
+
+  async function checkoutImage(id: string): Promise<Uint8Array> {
+    const state = browsers.get(threadIdentity(id));
+    if (!state?.started) throw new Error('The checkout page is no longer open.');
+    if (state.injecting) throw new BrowserLockedError();
+    return serialize(state, async () => {
+      if (await cardOnPage(state)) throw new BrowserActionError('browser_card_paused');
+      await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
+      const path = resolve(runtimeRoot, `checkout-${state.id}.jpg`);
+      const devtools = await inspector(state);
+      try {
+        await devtools.mask(true);
+        await observationCommand(
+          state,
+          ['screenshot', path, '--full', '--screenshot-format', 'jpeg'],
+          {},
+        );
+        const bytes = await readFile(path);
+        if (!bytes.byteLength || bytes.byteLength > 12 * 1024 * 1024)
+          throw new Error('The checkout page could not be captured.');
+        return new Uint8Array(bytes);
+      } finally {
+        await devtools.mask(false).catch(() => {});
+        devtools.close();
+        await rm(path, { force: true });
+      }
+    });
   }
 
   async function fillCard(input: CardEntry): Promise<void> {
     const state = browsers.get(threadIdentity(input.threadId));
     if (!state?.started) throw new Error('The checkout page is no longer open.');
     if (state.injecting) throw new BrowserLockedError();
-    if (browserUrl(input.origin).origin !== input.origin)
-      throw new Error('An exact merchant origin is required.');
     const { card, fields } = input;
     if (fields.securityCode && !card.securityCode)
       throw new Error('The security code is needed for this card.');
     const month = String(card.expiryMonth).padStart(2, '0');
     const year = String(card.expiryYear);
-    const steps = [
-      { selector: fields.number, typed: card.cardNumber, secret: true },
-      ...(fields.expiry
-        ? [{ selector: fields.expiry, typed: `${month}/${year.slice(-2)}`, secret: false }]
-        : []),
-      ...(fields.expiryMonth
-        ? [
-            {
-              selector: fields.expiryMonth,
-              choices: [month, String(card.expiryMonth)],
-              secret: false,
-            },
-          ]
-        : []),
-      ...(fields.expiryYear
-        ? [{ selector: fields.expiryYear, choices: [year, year.slice(-2)], secret: false }]
-        : []),
-      ...(fields.securityCode && card.securityCode
-        ? [{ selector: fields.securityCode, typed: card.securityCode, secret: true }]
-        : []),
-      ...(fields.name
-        ? [{ selector: fields.name, choices: [card.cardholder], secret: false }]
-        : []),
+    const plan: Array<{ field: keyof CardFields; values: string[] }> = [
+      { field: 'number', values: [card.cardNumber] },
+      { field: 'expiry', values: [`${month}/${year.slice(-2)}`] },
+      { field: 'expiryMonth', values: [month, String(card.expiryMonth)] },
+      { field: 'expiryYear', values: [year, year.slice(-2)] },
+      { field: 'securityCode', values: card.securityCode ? [card.securityCode] : [] },
+      { field: 'name', values: [card.cardholder] },
     ];
+    const steps = plan.filter((step) => fields[step.field] && step.values.length);
+    for (const step of steps)
+      if (!input.destinations[step.field])
+        throw new Error('The approved card destinations are missing.');
     state.injecting = true;
     markActivity(input.threadId);
     try {
       await serialize(state, async () => {
-        const onOrigin = async () => {
-          if (new URL(await currentUrl(state)).origin !== input.origin)
-            throw new Error(
-              'The page is not on the merchant for this payment. Inspect the page and ask again.',
-            );
-        };
-        await onOrigin();
-        state.payment = await documentId(state);
-        const socket = await daemonSocket(state);
-        state.secrets.add(card.cardNumber);
-        for (const step of steps)
-          if (step.secret && !step.selector.startsWith('@'))
-            state.protectedSelectors.add(step.selector);
-        await saveState(state);
-        for (const step of steps) {
-          await onOrigin();
-          if ('typed' in step && step.typed) {
-            await requestDaemon(socket, { action: 'fill', selector: step.selector, value: '' });
-            for (const key of step.typed) {
-              await onOrigin();
-              await requestDaemon(socket, { action: 'press', key });
-            }
-            continue;
+        const devtools = await inspector(state);
+        try {
+          const document = await checkout(state, devtools);
+          if (document !== input.document) throw new BrowserActionError('browser_card_changed');
+          state.payment = document;
+          state.secrets.add(card.cardNumber);
+          for (const step of steps) {
+            const field = await focusField(state, devtools, fields[step.field]!);
+            if (field.origin !== input.destinations[step.field])
+              throw new BrowserActionError('browser_card_site');
+            const tag = await devtools.arm(field);
+            if (!tag) throw new BrowserActionError('browser_card_field');
+            if (tag === 'SELECT') {
+              if (!(await devtools.choose(field, step.values)))
+                throw new BrowserActionError('browser_card_field');
+            } else
+              for (const character of step.values[0]!) {
+                if ((await devtools.document()) !== document)
+                  throw new BrowserActionError('browser_card_changed');
+                if (!(await devtools.insert(field, character)))
+                  throw new BrowserActionError('browser_card_site');
+              }
           }
-          const choices = 'choices' in step ? (step.choices ?? []) : [];
-          let done = false;
-          for (const choice of choices) {
-            try {
-              await requestDaemon(socket, {
-                action: 'fill',
-                selector: step.selector,
-                value: choice,
-              });
-              done = true;
-              break;
-            } catch {}
-          }
-          for (const choice of done ? [] : choices) {
-            try {
-              await command(state, ['select', step.selector, choice]);
-              done = true;
-              break;
-            } catch {}
-          }
-          if (!done)
-            throw new Error('A card field did not accept its value. Take a fresh snapshot.');
+          await devtools.blur();
+          if ((await devtools.document()) !== document)
+            throw new BrowserActionError('browser_card_changed');
+        } finally {
+          devtools.close();
         }
-        await onOrigin();
       });
     } finally {
       state.injecting = false;
@@ -1829,6 +1911,8 @@ export function createAgentBrowserComputer(options: {
     screenStatus: (id) => screenStatuses.get(threadIdentity(id)) ?? { state: 'unavailable' },
     injectCredentials: tracked(injectCredentials),
     fillCard: tracked(fillCard),
+    cardDestinations: tracked(cardDestinations),
+    checkoutImage: tracked(checkoutImage),
     currentPage: tracked(currentPage),
     hold: tracked(hold),
     close: tracked(closeBrowser),

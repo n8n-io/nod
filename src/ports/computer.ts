@@ -96,8 +96,9 @@ export interface CardFields {
 }
 export interface CardEntry {
   threadId: string;
-  origin: string;
   fields: CardFields;
+  document: string;
+  destinations: Partial<Record<keyof CardFields, string>>;
   card: {
     cardNumber: string;
     expiryMonth: number;
@@ -133,6 +134,11 @@ export interface Computer {
   };
   injectCredentials(input: CredentialInput): Promise<CredentialSubmission | void>;
   fillCard(input: CardEntry): Promise<void>;
+  cardDestinations(
+    threadId: string,
+    fields: CardFields,
+  ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }>;
+  checkoutImage(threadId: string): Promise<Uint8Array>;
   currentPage(threadId: string): Promise<BrowserPage>;
   hold(threadId: string, until: number | null): Promise<void>;
   close(threadId: string): Promise<void>;

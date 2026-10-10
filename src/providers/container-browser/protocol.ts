@@ -1,3 +1,4 @@
+import { browserErrorCodes } from '../../shared/browser-errors.ts';
 import { z } from 'zod';
 import { browserUploadBytes } from '../../ports/computer.ts';
 import { browserHandoffInput } from '../../shared/browser-handoff.ts';
@@ -83,18 +84,30 @@ const credential = z
   })
   .strict();
 
+const cardFields = z
+  .object({
+    number: selector,
+    expiry: selector.optional(),
+    expiryMonth: selector.optional(),
+    expiryYear: selector.optional(),
+    securityCode: selector.optional(),
+    name: selector.optional(),
+  })
+  .strict();
+
 const card = z
   .object({
     threadId: thread,
-    origin: z.string().max(2048),
-    fields: z
+    fields: cardFields,
+    document: z.string().min(1).max(200),
+    destinations: z
       .object({
-        number: selector,
-        expiry: selector.optional(),
-        expiryMonth: selector.optional(),
-        expiryYear: selector.optional(),
-        securityCode: selector.optional(),
-        name: selector.optional(),
+        number: z.string().max(2048).optional(),
+        expiry: z.string().max(2048).optional(),
+        expiryMonth: z.string().max(2048).optional(),
+        expiryYear: z.string().max(2048).optional(),
+        securityCode: z.string().max(2048).optional(),
+        name: z.string().max(2048).optional(),
       })
       .strict(),
     card: z
@@ -162,6 +175,15 @@ export const browserRequest = z.discriminatedUnion('method', [
   z
     .object({
       ...identity,
+      method: z.literal('cardDestinations'),
+      threadId: thread,
+      fields: cardFields,
+    })
+    .strict(),
+  z.object({ ...identity, method: z.literal('checkoutImage'), threadId: thread }).strict(),
+  z
+    .object({
+      ...identity,
       method: z.literal('hold'),
       threadId: thread,
       until: z.number().finite().nullable(),
@@ -222,17 +244,7 @@ export const browserResponse = z.discriminatedUnion('ok', [
     .object({
       id: z.uuid(),
       ok: z.literal(false),
-      error: z.enum([
-        'cancelled',
-        'locked',
-        'navigation',
-        'click_intercepted',
-        'dialog',
-        'action',
-        'observation',
-        'not_open',
-        'unavailable',
-      ]),
+      error: z.union([z.enum(['cancelled', 'locked', 'unavailable']), z.enum(browserErrorCodes)]),
       metadata: browserMetadata,
     })
     .strict(),

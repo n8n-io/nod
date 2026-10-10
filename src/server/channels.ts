@@ -3,7 +3,7 @@ import type { Artifact } from '../shared/contracts.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { classifyVerificationReply } from '../shared/verification-code.ts';
+import { classifyVerificationReply, mayHoldSecurityCode } from '../shared/verification-code.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type {
@@ -291,11 +291,6 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         if (closed || replacing || !permitted(identity))
           throw new Error('Channel configuration changed.');
       };
-      const forget = async () => {
-        await transport
-          .forget?.({ channelId, accountId, threadId, messageId })
-          .catch((cause: unknown) => logFailure('channel_forget_failed', cause));
-      };
       const commandReply = options.commandReply;
       const command = replyCommand.exec(text.trim())?.[1]?.toLowerCase();
       if (command && commandReply) {
@@ -314,7 +309,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         void drain();
         return;
       }
-      if (classifyVerificationReply(text).kind !== 'ordinary' && options.acceptVerification) {
+      if (
+        (classifyVerificationReply(text).kind !== 'ordinary' || mayHoldSecurityCode(text)) &&
+        options.acceptVerification
+      ) {
         try {
           verification = await options.acceptVerification(text, {
             clientMessageId: acceptedMessageId,
@@ -333,18 +331,16 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           await inTransaction((client) =>
             replyWithoutTurn(
               client,
-              { ...identity, sourceId, threadId, sentAt, text: 'Verification code not applied.' },
+              { ...identity, sourceId, threadId, sentAt, text: 'Code not applied.' },
               () => ({
-                text: 'The code could not be matched to a sign-in or payment. Open the conversation in Otto web chat to continue.',
+                text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
               }),
             ),
           );
-          await forget();
           return;
         }
       }
       if (!ordinaryPersisted) await inTransaction(persist);
-      if (verification) await forget();
     } catch (cause) {
       logFailure('channel_accept_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {

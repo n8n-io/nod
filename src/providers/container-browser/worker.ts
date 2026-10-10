@@ -110,6 +110,13 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
     case 'fillCard':
       await computer.fillCard(request.input);
       return null;
+    case 'cardDestinations':
+      return computer.cardDestinations(request.threadId, request.fields);
+    case 'checkoutImage': {
+      const image = await computer.checkoutImage(request.threadId);
+      if (!image.length || image.length > imageBytes) throw new Error();
+      return Buffer.from(image).toString('base64');
+    }
     case 'hold':
       return computer.hold(request.threadId, request.until);
     case 'close':
@@ -299,24 +306,11 @@ export async function startContainerBrowserWorker(
           ok: false,
           error: controller.signal.aborted
             ? 'cancelled'
-            : error instanceof BrowserActionError && error.code === 'browser_click_intercepted'
-              ? 'click_intercepted'
-              : error instanceof BrowserActionError && error.code === 'browser_navigation_failed'
-                ? 'navigation'
-                : error instanceof BrowserActionError && error.code === 'browser_dialog_open'
-                  ? 'dialog'
-                  : error instanceof BrowserActionError && error.code === 'browser_action_failed'
-                    ? 'action'
-                    : error instanceof BrowserActionError &&
-                        error.code === 'browser_observation_failed'
-                      ? 'observation'
-                      : error instanceof BrowserActionError && error.code === 'browser_not_open'
-                        ? 'not_open'
-                        : error instanceof Error &&
-                            'statusCode' in error &&
-                            error.statusCode === 423
-                          ? 'locked'
-                          : 'unavailable',
+            : error instanceof BrowserActionError
+              ? error.code
+              : error instanceof Error && 'statusCode' in error && error.statusCode === 423
+                ? 'locked'
+                : 'unavailable',
           metadata: metadata(await entry?.computer.catch(() => undefined), input),
         };
       } finally {

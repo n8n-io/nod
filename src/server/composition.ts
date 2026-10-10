@@ -625,8 +625,7 @@ async function initializeApplication(
     ownerId,
     keyStore: adapters.keyStore,
     submitCode: vault.submitChatCode,
-    submitPayment: (turnId, code, paymentId, keep) =>
-      payments.submitCode(turnId, code, paymentId, keep),
+    submitPayment: (turnId, code, paymentId) => payments.submitCode(turnId, code, paymentId),
     refresh,
   });
   const approvals = await createApprovals(
@@ -738,6 +737,8 @@ async function initializeApplication(
     local: runtimeMode === 'local',
     policy: trust.payment,
     page: (threadId) => computer.currentPage(threadId),
+    destinations: (threadId, fields) => computer.cardDestinations(threadId, fields),
+    capture: (threadId) => computer.checkoutImage(threadId),
     cards: () => vault.paymentCards(),
     card: (id) => vault.paymentCard(id),
     remember: (id, on, securityCode) => vault.setDoItForMe(id, on, securityCode),
@@ -843,9 +844,10 @@ async function initializeApplication(
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
       paymentSetting: (turn, input) => payments.setting(turn, input),
-      requestPayment: async (turn, input) => {
+      requestPayment: async (turn, input, show) => {
         const result = await payments.request(turn, input);
-        if (!('paymentId' in result)) return result;
+        await show(result.image);
+        if (!result.paymentId) return { question: result.question };
         const confirmation = await approvals.request(
           turn,
           'OTTO_payment_approve',

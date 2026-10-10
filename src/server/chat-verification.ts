@@ -2,7 +2,11 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SubmitMessageResponse, VerificationRequest } from '../shared/contracts.ts';
-import { classifyVerificationReply } from '../shared/verification-code.ts';
+import {
+  classifyVerificationReply,
+  mayHoldSecurityCode,
+  securityCodeIn,
+} from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
 import { waitingTurnSql } from './vault.ts';
 
@@ -53,7 +57,6 @@ export async function createChatVerification(
       turnId: string,
       code: string,
       paymentId: string,
-      keep: boolean,
     ) => Promise<{ status: VerificationStatus }>;
     refresh: () => void;
   },
@@ -105,17 +108,28 @@ export async function createChatVerification(
     input: VerificationInput,
   ): Promise<SubmitMessageResponse | undefined> {
     const reply = classifyVerificationReply(text);
-    const code = reply.kind === 'code' ? reply.code : undefined;
-    if (reply.kind === 'ordinary' && !input.verificationRequestId) return;
-    if (!code && input.verificationRequestId)
-      throw conflict('Send one verification code using 4 to 8 digits.');
+    const codes = {
+      otp: reply.kind === 'code' ? reply.code : undefined,
+      payment: options.submitPayment ? securityCodeIn(text) : undefined,
+    };
+    const paymentLike = Boolean(options.submitPayment) && mayHoldSecurityCode(text);
+    if (reply.kind === 'ordinary' && !paymentLike && !input.verificationRequestId) return;
+    if (!codes.otp && !codes.payment && input.verificationRequestId)
+      throw conflict('Send the code by itself.');
     const incompatible = Boolean(input.attachmentIds?.length || input.forceNew);
     if (incompatible && input.verificationRequestId)
       throw conflict('Send the verification code by itself in the sign-in conversation.');
     const channel = input.channel ?? 'web';
     const client = await pool.connect();
     let reserved:
-      { threadId: string; turnId: string; requestId: string; kind: 'otp' | 'payment' } | undefined;
+      | {
+          threadId: string;
+          turnId: string;
+          requestId: string;
+          kind: 'otp' | 'payment';
+          code: string;
+        }
+      | undefined;
     try {
       await client.query('BEGIN');
       const thread = await lockThread(client, options.ownerId);
@@ -136,7 +150,8 @@ export async function createChatVerification(
           await client.query('COMMIT');
           return;
         }
-        if (!code) throw conflict('Send one verification code using 4 to 8 digits.');
+        const code = codes.otp ?? codes.payment;
+        if (!code) throw conflict('Send the code by itself.');
         const codeFingerprint = await fingerprint(code, input);
         if (
           previous.owner_id !== options.ownerId ||
@@ -189,32 +204,44 @@ export async function createChatVerification(
       );
       if (!requests.rowCount) {
         if (input.verificationRequestId) throw conflict(unavailableMessage);
-        const waiting = await client.query(
-          `SELECT 1 FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
-           WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2 AND r.thread_id=$4
+        const waiting = await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
+          `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
+           WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$4
+             AND (r.kind<>'payment' OR r.status='pending')
              AND (r.expires_at>now() OR $3::uuid IS NOT NULL OR
                NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.owner_id=$1 AND newer.thread_id=$4
                  AND newer.source='user' AND newer.id<>u.id AND newer.started_at>u.started_at))
-             AND ($3::uuid IS NULL OR r.turn_id=$3) LIMIT 1`,
+             AND ($3::uuid IS NULL OR r.turn_id=$3) LIMIT 10`,
           [options.ownerId, channel, turnId ?? null, thread.id],
         );
-        if (waiting.rows[0]) throw conflict(unavailableMessage);
+        const late = waiting.rows.find((row) => (row.kind === 'payment' ? paymentLike : codes.otp));
+        if (late)
+          throw conflict(
+            late.kind === 'payment' && late.channel !== channel
+              ? 'Payments are approved only in the Otto app. Otto did not use this code.'
+              : unavailableMessage,
+          );
+        await input.persistOrdinary?.(client);
+        await client.query('COMMIT');
+        return;
+      }
+      if (requests.rowCount !== 1)
+        throw conflict(
+          'More than one sign-in needs a code. Reply to the verification request you want to complete.',
+        );
+      const request = requests.rows[0]!;
+      const code = codes[request.kind];
+      if (!code && request.kind === 'otp' && reply.kind === 'ordinary') {
         await input.persistOrdinary?.(client);
         await client.query('COMMIT');
         return;
       }
       if (incompatible)
         throw conflict('Send the verification code by itself in the sign-in conversation.');
-      if (!code) throw conflict('Send one verification code using 4 to 8 digits.');
-      if (requests.rowCount !== 1)
-        throw conflict(
-          'More than one sign-in needs a code. Reply to the verification request you want to complete.',
-        );
-      const request = requests.rows[0]!;
-      if (request.kind === 'payment' ? code.length > 4 : code.length < 4)
+      if (!code)
         throw conflict(
           request.kind === 'payment'
-            ? 'Send the card’s security code, 3 or 4 digits.'
+            ? 'Send just the card’s security code.'
             : 'Send one verification code using 4 to 8 digits.',
         );
       const codeFingerprint = await fingerprint(code, input);
@@ -240,6 +267,7 @@ export async function createChatVerification(
         turnId: request.turn_id,
         requestId: request.id,
         kind: request.kind,
+        code,
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -252,13 +280,13 @@ export async function createChatVerification(
     try {
       const result =
         reserved.kind === 'payment'
-          ? await options.submitPayment!(
+          ? await options.submitPayment!(reserved.turnId, reserved.code, reserved.requestId)
+          : await options.submitCode(
+              options.ownerId,
               reserved.turnId,
-              code,
+              reserved.code,
               reserved.requestId,
-              reply.kind === 'code' && reply.keep,
-            )
-          : await options.submitCode(options.ownerId, reserved.turnId, code, reserved.requestId);
+            );
       status = result.status === 'submitted' ? 'submitted' : 'unavailable';
     } catch {
       status = 'unavailable';

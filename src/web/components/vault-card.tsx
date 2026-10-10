@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { VaultActivity, VaultEntryDetails } from '../../shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { VaultActivityPages } from './vault-activity';
-import { Button, Field, Input, Notice, Switch } from './ui';
+import { Notice, Switch } from './ui';
 
 export function VaultCardPayments({
   cardId,
@@ -14,7 +14,6 @@ export function VaultCardPayments({
   onChanged(): void;
 }) {
   const [doItForMe, setDoItForMe] = useState<boolean | null>(null);
-  const [adding, setAdding] = useState(false);
   const [activity, setActivity] = useState<VaultActivity | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -33,7 +32,7 @@ export function VaultCardPayments({
       }),
     ])
       .then(([details, history]) => {
-        setDoItForMe(details?.kind === 'card' ? details.hasSecurityCode : false);
+        setDoItForMe(details?.kind === 'card' ? details.doItForMe : false);
         setActivity(history);
       })
       .catch((cause) => {
@@ -42,16 +41,15 @@ export function VaultCardPayments({
     return () => controller.abort();
   }, [cardId, hosted]);
 
-  async function save(securityCode: string | null) {
+  async function save(on: boolean) {
     setBusy(true);
     setError('');
     try {
-      await api(`/api/vault/${encodeURIComponent(cardId)}/security-code`, {
+      await api(`/api/vault/${encodeURIComponent(cardId)}/do-it-for-me`, {
         method: 'PUT',
-        body: JSON.stringify({ securityCode }),
+        body: JSON.stringify({ on }),
       });
-      setDoItForMe(Boolean(securityCode));
-      setAdding(false);
+      setDoItForMe(on);
       onChanged();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -68,42 +66,16 @@ export function VaultCardPayments({
             <span>
               <span className="vault-detail-value">Do it for me</span>
               <small className="payment-hint">
-                Otto keeps the security code, so your yes is enough to pay.
+                Otto keeps the security code, so your yes in Otto is enough to pay.
               </small>
             </span>
             <Switch
-              checked={Boolean(doItForMe) || adding}
+              checked={Boolean(doItForMe)}
               aria-label="Do it for me"
               disabled={doItForMe === null || busy}
-              onCheckedChange={(next) =>
-                next ? setAdding(true) : adding ? setAdding(false) : void save(null)
-              }
+              onCheckedChange={(next) => void save(next)}
             />
           </div>
-          {adding && (
-            <form
-              className="vault-inset-row vault-card-code"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void save(String(new FormData(event.currentTarget).get('securityCode') ?? ''));
-              }}
-            >
-              <Field label="Security code">
-                <Input
-                  name="securityCode"
-                  inputMode="numeric"
-                  autoComplete="cc-csc"
-                  pattern="[0-9]{3,4}"
-                  maxLength={4}
-                  autoFocus
-                  required
-                />
-              </Field>
-              <Button type="submit" size="sm" disabled={busy}>
-                Save
-              </Button>
-            </form>
-          )}
         </div>
       )}
       {error && <Notice>{error}</Notice>}

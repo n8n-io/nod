@@ -59,7 +59,7 @@ import { createAgentRuntime } from '../src/runtime/index.ts';
 import { toolDefinitions } from '../src/runtime/tools.ts';
 import { createRedactor } from '../src/server/redaction.ts';
 import type { CredentialInjection } from '../src/server/vault.ts';
-import { createBrowserFixture } from './browser-fixture.ts';
+import { createBrowserFixture, fakeDevtools, type DevtoolsModel } from './browser-fixture.ts';
 import { stagedLoginBrowser } from './login-fixture.ts';
 import { fakeComputer, fakeWorkspace } from './runtime-fixtures.ts';
 import { BrowserHandoff } from '../src/web/components/browser-handoff.tsx';
@@ -524,6 +524,8 @@ function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
     close: async () => {},
     signOut: async () => {},
     fillCard: async () => {},
+    cardDestinations: async () => ({ document: 'fixture', destinations: {} }),
+    checkoutImage: async () => new Uint8Array(),
     dispose: async () => {},
     status: () => 'Synthetic browser',
     canCheckpoint: () => true,
@@ -955,14 +957,23 @@ for (const action of ['snapshot', 'click'] as const)
     }
   });
 
-test('a card fill types into the chosen fields on the approved merchant and keeps the card out of what the model sees', async () => {
+test('a card goes only into the approved fields on the approved sites and stays out of what the model sees', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-card-'));
   let url = 'about:blank';
-  let documentId = 0;
-  let commitDuringSnapshot = false;
-  let focused = '';
-  const fields = new Map<string, string>();
+  let maskedShot: boolean | undefined;
   const autocomplete: Record<string, string> = { '@e4': 'cc-number', '@e5': 'cc-csc' };
+  const model: DevtoolsModel = {
+    document: 'loader-0',
+    frames: [
+      { id: 'main', session: 'page', origin: 'https://1.1.1.1' },
+      { id: 'pay', session: 'pay-session', origin: 'https://pay.fixture.test', parent: 'page' },
+      { id: 'ads', session: 'ads-session', origin: 'https://ads.fixture.test', parent: 'page' },
+    ],
+    frameOf: { '@e3': 'main', '#expiry': 'main', '@e4': 'pay', '@e5': 'pay', '@e9': 'ads' },
+    values: new Map(),
+  };
+  let documents = 0;
+  const devtools = await fakeDevtools(model);
   const computer = createBrowserFixture({
     dataRoot: directory,
     run: async (_executable, args, options) => {
@@ -970,48 +981,37 @@ test('a card fill types into the chosen fields on the approved merchant and keep
       let data: Record<string, unknown> = {};
       if (command[0] === 'open') {
         url = command[1]!;
-        documentId++;
-        fields.clear();
+        model.document = `loader-${++documents}`;
+        model.values.clear();
+        model.focused = model.field = model.armed = undefined;
       }
       if (command[0] === 'get' && command[1] === 'url') data = { url };
+      if (command[0] === 'get' && command[1] === 'cdp-url') data = { cdpUrl: devtools.url };
       if (command[0] === 'get' && command[1] === 'attr')
         data = {
           value: command[3] === 'autocomplete' ? (autocomplete[command[2]!] ?? null) : null,
         };
-      if (['fill', 'select'].includes(command[0]!) && command[1] === '#missing')
-        return {
-          stdout: JSON.stringify({ success: false, error: 'Synthetic miss' }),
-          stderr: '',
-          exitCode: 1,
-        };
-      if (command[0] === 'fill') {
-        focused = command[1]!;
-        fields.set(focused, command[2]!);
+      if (command[0] === 'focus') {
+        model.field = command[1]!;
+        model.focused = model.frameOf[command[1]!];
       }
-      if (command[0] === 'press') fields.set(focused, `${fields.get(focused) ?? ''}${command[1]}`);
-      if (command[0] === 'eval')
-        data = {
-          result: options?.input?.includes('timeOrigin')
-            ? String(documentId)
-            : (options?.input?.length ?? 0),
-        };
-      if (command[0] === 'screenshot') await writeFile(command[1]!, 'synthetic-screen');
+      if (command[0] === 'eval') data = { result: options?.input?.length ?? 0 };
+      if (command[0] === 'screenshot') {
+        if (command.includes('--full')) maskedShot = model.masked;
+        await writeFile(command[1]!, command.includes('--full') ? 'synthetic-checkout' : 'screen');
+      }
       if (command[0] === 'snapshot')
         data = {
           snapshot: [
             '- heading "Checkout" [ref=e1]',
             '- StaticText "Total €43.20, order 737-12"',
-            `- textbox "Name" [ref=e3]: ${fields.get('@e3') ?? ''}`,
-            `- textbox "Card" [ref=e4]: ${(fields.get('@e4') ?? '').replace(/(\d{4})(?=\d)/g, '$1 ')}`,
-            `- textbox "Code" [ref=e5]: ${fields.get('@e5') ?? ''}`,
-            `- textbox "Expiry" [ref=e6]: ${fields.get('#expiry') ?? ''}`,
-            `- StaticText "Paying with ${(fields.get('@e4') ?? '').replace(/(\d{4})(?=\d)/g, '$1-')}"`,
+            `- textbox "Name" [ref=e3]: ${model.values.get('@e3') ?? ''}`,
+            `- textbox "Card" [ref=e4]: ${(model.values.get('@e4') ?? '').replace(/(\d{4})(?=\d)/g, '$1 ')}`,
+            `- textbox "Code" [ref=e5]: ${model.values.get('@e5') ?? ''}`,
+            `- textbox "Expiry" [ref=e6]: ${model.values.get('#expiry') ?? ''}`,
+            `- StaticText "Paying with ${(model.values.get('@e4') ?? '').replace(/(\d{4})(?=\d)/g, '$1-')}"`,
           ].join('\n'),
         };
-      if (command[0] === 'snapshot' && commitDuringSnapshot) {
-        commitDuringSnapshot = false;
-        documentId++;
-      }
       return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
     },
   });
@@ -1022,18 +1022,39 @@ test('a card fill types into the chosen fields on the approved merchant and keep
     cardholder: 'Synthetic Cardholder',
     securityCode: '737',
   };
-  const entry = {
-    threadId: 'shop',
-    origin: 'https://1.1.1.1',
-    fields: { number: '@e4', expiry: '#expiry', securityCode: '@e5', name: '@e3' },
-    card,
+  const fields = { number: '@e4', expiry: '#expiry', securityCode: '@e5', name: '@e3' };
+  const destinations = {
+    number: 'https://pay.fixture.test',
+    expiry: 'https://1.1.1.1',
+    securityCode: 'https://pay.fixture.test',
+    name: 'https://1.1.1.1',
   };
   try {
     await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/checkout' });
-    await assert.rejects(computer.fillCard({ ...entry, origin: 'https://1.1.1.2' }), /merchant/);
-    assert.equal(fields.size, 0);
+    const found = await computer.cardDestinations('shop', fields);
+    assert.deepEqual(found, { document: 'loader-1', destinations });
+    assert.equal(model.focused, undefined);
+    assert.equal(
+      Buffer.from(await computer.checkoutImage('shop')).toString(),
+      'synthetic-checkout',
+    );
+    assert.equal(maskedShot, true);
+    assert.equal(model.masked, false);
+    const entry = { threadId: 'shop', fields, card, ...found };
+    await assert.rejects(
+      computer.fillCard({ ...entry, document: 'loader-old' }),
+      /checkout page changed/,
+    );
+    await assert.rejects(
+      computer.fillCard({
+        ...entry,
+        destinations: { ...destinations, number: 'https://1.1.1.1' },
+      }),
+      /not on a site approved/,
+    );
+    assert.equal(model.values.size, 0);
     await computer.fillCard(entry);
-    assert.deepEqual(Object.fromEntries(fields), {
+    assert.deepEqual(Object.fromEntries(model.values), {
       '@e4': '4242424242424242',
       '#expiry': '08/30',
       '@e5': '737',
@@ -1042,50 +1063,163 @@ test('a card fill types into the chosen fields on the approved merchant and keep
     const seen = (await computer.act('shop', { action: 'snapshot' })).text;
     assert.doesNotMatch(seen, /4242|08\/30|Synthetic Cardholder|: 737/);
     assert.match(seen, /\[ref=e5\]: \[redacted\]/);
-    assert.match(seen, /Total €43\.20, order 737-12/);
-    await assert.rejects(
-      computer.act('shop', { action: 'evaluate', script: 'document.title' }),
-      /scripts are paused/,
-    );
+    for (const action of [
+      { action: 'evaluate' as const, script: 'document.title' },
+      { action: 'press' as const, key: 'Control+c' },
+      { action: 'fill' as const, selector: '#notes', text: 'x' },
+    ])
+      await assert.rejects(computer.act('shop', action), /typing, scripts, dragging/);
     await assert.rejects(computer.screenshot('shop'));
-    await assert.rejects(
-      computer.act('shop', { action: 'fill', selector: '@e4', text: '4000' }),
-      /Use pay for card fields/,
-    );
+    await assert.rejects(computer.checkoutImage('shop'), /typing, scripts, dragging/);
     url = 'https://1.1.1.1/checkout#review';
     await assert.rejects(
       computer.act('shop', { action: 'evaluate', script: 'document.title' }),
-      /scripts are paused/,
+      /typing, scripts, dragging/,
     );
     await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/thanks' });
     assert.ok(await computer.screenshot('shop'));
+    await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/checkout' });
+    model.steal = { after: 4, field: '@e9' };
+    const stolen = await computer.cardDestinations('shop', fields);
+    await assert.rejects(computer.fillCard({ ...entry, ...stolen }), /not on a site approved/);
+    assert.equal(model.values.get('@e4'), '4242');
+    assert.equal(model.values.get('@e9'), undefined);
+    model.steal = undefined;
+    await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/checkout' });
     assert.match(
       (await computer.act('shop', { action: 'evaluate', script: 'document.title' })).text,
       /Script result/,
     );
-    await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/checkout' });
     await assert.rejects(
-      computer.fillCard({ ...entry, fields: { ...entry.fields, name: '#missing' } }),
-      /did not accept/,
+      computer.cardDestinations('shop', fields),
+      /script ran on this checkout page/,
     );
-    assert.equal(fields.get('@e4'), '4242424242424242');
-    assert.doesNotMatch((await computer.act('shop', { action: 'snapshot' })).text, /4242|08\/30/);
-    await assert.rejects(computer.screenshot('shop'));
-    await assert.rejects(
-      computer.act('shop', { action: 'evaluate', script: 'document.title' }),
-      /scripts are paused/,
-    );
-    commitDuringSnapshot = true;
-    assert.doesNotMatch(
-      (await computer.act('shop', { action: 'snapshot' })).text,
-      /08\/30|Synthetic Cardholder/,
-    );
-    assert.ok(await computer.screenshot('shop'));
+    await computer.act('shop', { action: 'reload' });
+    model.document = `loader-${++documents}`;
+    const fresh = await computer.cardDestinations('shop', fields);
+    await computer.fillCard({ ...entry, ...fresh });
+    assert.equal(model.values.get('@e4'), '4242424242424242');
   } finally {
     await computer.dispose();
+    await devtools.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test(
+  'in real Chrome a card reaches only the verified fields and never a frame that grabs focus',
+  { timeout: 180_000 },
+  async (t) => {
+    const received: Array<{ frame: string; field: string; value: string }> = [];
+    const page = (body: string) => `<!doctype html><meta charset="utf-8"><body>${body}</body>`;
+    const record = (frame: string) =>
+      `<script>for (const input of document.querySelectorAll('input')) input.addEventListener('input', () => { parent.postMessage('typed', '*'); fetch('/record', { method: 'POST', body: JSON.stringify({ frame: '${frame}', field: input.id, value: input.value }) }); });</script>`;
+    let steal = false;
+    const server = createHttpServer((request, response) => {
+      const { port } = server.address() as { port: number };
+      if (request.method === 'POST' && request.url === '/record') {
+        let body = '';
+        request.on('data', (chunk) => (body += chunk));
+        request.on('end', () => {
+          received.push(JSON.parse(body));
+          response.end();
+        });
+        return;
+      }
+      response.setHeader('content-type', 'text/html');
+      if (request.url === '/pay')
+        return response.end(
+          page(
+            `<input id="number" aria-label="Card number"><input id="cvc" aria-label="Security code">${record('pay')}`,
+          ),
+        );
+      if (request.url === '/ad')
+        return response.end(
+          page(
+            `<input id="ad" aria-label="Ad box">${record('ad')}<script>addEventListener('focus', () => document.getElementById('ad').focus());</script>`,
+          ),
+        );
+      response.end(
+        page(
+          `<h1>Shop</h1><input id="name" aria-label="Name on card"><iframe title="Card" src="http://localhost:${port}/pay"></iframe><iframe title="Ad" src="http://[::1]:${port}/ad"></iframe>${steal ? "<script>addEventListener('message', () => document.querySelector('iframe[title=Ad]').focus());</script>" : ''}`,
+        ),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '::', resolve));
+    const { port } = server.address() as { port: number };
+    const directory = await mkdtemp(join(tmpdir(), 'otto-real-card-'));
+    const computer = createAgentBrowserComputer({ dataRoot: directory });
+    const shop = `http://127.0.0.1:${port}`;
+    const card = {
+      cardNumber: '4242424242424242',
+      expiryMonth: 8,
+      expiryYear: 2030,
+      cardholder: 'Synthetic Cardholder',
+      securityCode: '737',
+    };
+    const refs = async () => {
+      const text = (await computer.act('real', { action: 'snapshot' })).text;
+      const ref = (name: string) => `@${new RegExp(`"${name}"[^\\n]*?ref=(e\\d+)`).exec(text)![1]}`;
+      return {
+        number: ref('Card number'),
+        securityCode: ref('Security code'),
+        name: ref('Name on card'),
+      };
+    };
+    try {
+      try {
+        await computer.act('real', { action: 'open', url: `${shop}/` });
+      } catch {
+        t.skip('Chrome is not available here.');
+        return;
+      }
+      await delay(500);
+      const fields = await refs();
+      const found = await computer.cardDestinations('real', fields);
+      assert.deepEqual(found.destinations, {
+        number: `http://localhost:${port}`,
+        securityCode: `http://localhost:${port}`,
+        name: shop,
+      });
+      const image = await computer.checkoutImage('real');
+      assert.deepEqual([...image.subarray(0, 2)], [0xff, 0xd8]);
+      await computer.fillCard({ threadId: 'real', fields, card, ...found });
+      await delay(300);
+      const last = (field: string) => received.filter((item) => item.field === field).at(-1)?.value;
+      assert.equal(last('number'), '4242424242424242');
+      assert.equal(last('cvc'), '737');
+      assert.equal(
+        received.some((item) => item.frame === 'ad'),
+        false,
+      );
+      const seen = (await computer.act('real', { action: 'snapshot' })).text;
+      assert.doesNotMatch(seen, /4242|737|Synthetic Cardholder/);
+      await assert.rejects(
+        computer.act('real', { action: 'evaluate', script: 'document.title' }),
+        /typing, scripts, dragging/,
+      );
+      steal = true;
+      received.length = 0;
+      await computer.act('real', { action: 'open', url: `${shop}/` });
+      await delay(500);
+      const again = await refs();
+      const verified = await computer.cardDestinations('real', again);
+      await computer
+        .fillCard({ threadId: 'real', fields: again, card, ...verified })
+        .catch(() => {});
+      await delay(300);
+      assert.ok(received.some((item) => item.frame === 'pay' && item.value.startsWith('4')));
+      assert.equal(
+        received.some((item) => item.frame === 'ad'),
+        false,
+      );
+    } finally {
+      await computer.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test('signing out closes the thread browser, clears its own profile and keeps saved sessions', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-sign-out-'));
@@ -1619,6 +1753,14 @@ function workerComputer() {
     fillCard: async (input) => {
       calls.push({ method: 'fillCard', input });
     },
+    cardDestinations: async (id, fields) => {
+      calls.push({ method: 'cardDestinations', input: { id, fields } });
+      return { document: 'loader-1', destinations: { number: 'https://pay.fixture.test' } };
+    },
+    checkoutImage: async (id) => {
+      calls.push({ method: 'checkoutImage', input: id });
+      return new Uint8Array([255, 216, 255]);
+    },
     dispose: async () => {
       calls.push({ method: 'dispose' });
     },
@@ -1882,6 +2024,63 @@ test('discard and sign-out reach the namespace computer of the same thread only'
     ]);
     await assert.rejects(computer.signOut('../task'));
     await assert.rejects(computer.discard!('../task'));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('card destinations, the checkout image and the approved destinations cross the browser bridge intact', async () => {
+  const fixture = await harness();
+  try {
+    const computer = fixture.client('/synthetic/pay');
+    const fields = { number: '@e6', expiry: '@e3', securityCode: '@e7' };
+    assert.deepEqual(await computer.cardDestinations('task', fields), {
+      document: 'loader-1',
+      destinations: { number: 'https://pay.fixture.test' },
+    });
+    assert.deepEqual([...(await computer.checkoutImage('task'))], [255, 216, 255]);
+    const card = {
+      cardNumber: '4242424242424242',
+      expiryMonth: 8,
+      expiryYear: 2030,
+      cardholder: 'Synthetic Cardholder',
+    };
+    const destinations = {
+      number: 'https://pay.fixture.test',
+      expiry: 'https://1.1.1.1',
+      securityCode: 'https://pay.fixture.test',
+    };
+    await computer.fillCard({
+      threadId: 'task',
+      fields,
+      document: 'loader-1',
+      destinations,
+      card,
+    });
+    const calls = fixture.instance('/synthetic/pay').calls;
+    assert.deepEqual(calls.slice(-3), [
+      { method: 'cardDestinations', input: { id: 'task', fields } },
+      { method: 'checkoutImage', input: 'task' },
+      {
+        method: 'fillCard',
+        input: {
+          threadId: 'task',
+          fields,
+          document: 'loader-1',
+          destinations,
+          card,
+        },
+      },
+    ]);
+    await assert.rejects(
+      computer.fillCard({
+        threadId: 'task',
+        fields,
+        document: 'loader-1',
+        destinations: { number: 'x'.repeat(3000) },
+        card,
+      }),
+    );
   } finally {
     await fixture.close();
   }

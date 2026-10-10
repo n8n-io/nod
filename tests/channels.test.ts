@@ -242,7 +242,6 @@ test(
       'succeeded',
     );
     const submitted: string[] = [];
-    const forgotten: string[] = [];
     const app = Fastify();
     const channels = await createChannels(pool, {
       ownerId: 'local-development',
@@ -271,9 +270,6 @@ test(
           ],
         }),
         post: async () => ({ id: 'fixture-reply' }),
-        forget: async (input) => {
-          forgotten.push(input.messageId);
-        },
         close: async () => {},
       },
       acceptVerification: (text, input) => verification.accept(text, input),
@@ -341,13 +337,6 @@ test(
       assert.equal(injections, 1);
       assert.deepEqual(submitted, ['2026']);
       assert.doesNotMatch(await stored(), /481927/);
-      assert.deepEqual(forgotten, [
-        'early-code',
-        'ambiguous-code',
-        'malformed-code',
-        'empty-code',
-        'code',
-      ]);
     } finally {
       await app.close();
       await pool.end();
@@ -519,7 +508,7 @@ test(
           channelId: 'telegram',
           accountId: 'fixture-account',
           threadId: 'fixture-thread',
-          text: 'The code could not be matched to a sign-in or payment. Open the conversation in Otto web chat to continue.',
+          text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
         },
       ]);
       const guidance = (
@@ -528,7 +517,7 @@ test(
         )
       ).rows[0];
       assert.deepEqual(guidance, {
-        text: 'Verification code not applied.',
+        text: 'Code not applied.',
         state: 'discarded',
         turn_id: null,
         role: 'assistant',

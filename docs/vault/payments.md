@@ -32,33 +32,30 @@ Own installs are the desktop app and any server the owner runs for themselves. H
 
 ## Mandates
 
-Built for stored cards. A mandate is one payment: the merchant origin, amount, currency, card and task. It is used once and expires after ten minutes.
+Built for stored cards. A mandate is one payment: the shop, the checkout page, the site of each card field, the amount, the currency and the card. It is used once and expires after ten minutes.
 
 ```mermaid
 sequenceDiagram
   participant Pi
   participant S as Server
-  participant O as Owner, in chat
+  participant O as Owner, in Otto
   participant B as Browser
-  Pi->>S: pay(amount, currency, description, card?, fields)
-  S->>B: read the merchant origin
-  S->>O: Pay €43.20 at shop.example with Visa ••4242?
-  O->>S: a reply with the security code, or yes with Do it for me
-  S->>B: type number, expiry, code and name, re-checking the merchant before each key
-  S-->>Pi: Card entered
+  Pi->>S: pay(amount, currency, card?, fields)
+  S->>B: find each field's real site, capture the checkout
+  S->>O: checkout image, then "Pay €43.20 at shop.example with Visa ••4242?"
+  O->>S: the security code, or yes with Do it for me
+  S->>B: insert the card into the verified fields only
+  S-->>Pi: card entered
   Pi->>B: place the order
 ```
 
-- **Tool.** `pay {amount, currency, description, card?, fields: {number, expiry | expiryMonth and expiryYear, securityCode?, name?}, paymentId?}`. `card` is the card the owner named; with one card, or one used before at the merchant, Otto picks it, and otherwise Pi asks which card.
-- **Merchant.** The server reads the merchant origin from the browser, not from Pi, and checks it again before every keystroke. Fields inside payment frames such as `js.stripe.com` work by their snapshot references.
-- **Approval, in plain text.** Otto asks "Pay €43.20 at shop.example with Visa ••4242? Reply with its security code." in Otto, Telegram or WhatsApp. The reply goes through the same path as sign-in verification codes: it is caught before it is saved or reaches the model, and chat keeps only "Security code sent securely." A "no" or any other reply is an ordinary message, and the payment is no longer accepted.
-- **Chat apps.** A task from Telegram pays only at a shop the owner has already paid at and always needs the security code, even with Do it for me. Otto deletes every code reply it catches from Telegram. WhatsApp cannot delete messages, so a task from WhatsApp never pays. The first payment at a shop, and a yes with Do it for me, happen only in the Otto app, where only the owner's own session can answer. Someone who takes over a chat app cannot send the card to a site of their choosing or pay without the code.
-- **One open payment.** Each request is bound to the checkout page it was made on and replaces any earlier open request in the thread. The card is entered only while the task still waits and the browser is on that same page; otherwise the request fails and Pi asks again.
-- **Do it for me.** A per-card choice on the owner's own installs. On: Otto keeps the card's security code and each payment in the Otto app is approved with a yes. The first payment with a card in Otto asks: "Add “keep” and next time a yes in Otto is enough." A reply of "737 keep" turns it on; a bare "737" saves it as off. The owner can change it by asking Otto (`payment_setting`) or with the switch in Vault; turning it on from chat keeps the code from the next payment.
-- **Steered tasks.** When a page in the task had instructions for AI assistants, a yes is not enough and the question says so; the code reply never changes Do it for me, and Do it for me cannot be turned on from that task.
-- **Fill.** One use. From the first key until that page document is gone, even after a failed fill, snapshots hide every text field value, and screenshots and page scripts pause. The card number is hidden in any spacing everywhere. Pi cannot type into card fields itself.
-- **Order.** Pi places the order. A 3-D Secure challenge goes to the browser handoff.
-- **Turns.** Event and read-only turns never pay. A schedule can ask and waits for the owner.
+- **Tool.** `pay {amount, currency, card?, fields: {number, expiry | expiryMonth and expiryYear, securityCode?, name?}}`. With one card, or the one the owner named, Otto uses it; otherwise Pi asks which.
+- **Where the card goes.** The server focuses each field and asks Chrome DevTools, from an isolated world the page cannot touch, which document holds it. Each field's site and the checkout page's identity (Chrome's loader ID) are bound to the mandate, and a site other than the shop is named in the question ("Card details go to js.stripe.com.").
+- **Entry.** Otto inserts each character inside the verified field's own document, never as global keystrokes, so nothing can reach another frame. If the model ran a script on that checkout page, Otto asks it to reload first.
+- **Approval, in Otto, in plain text.** Otto posts the checkout page (field values hidden) and asks. While the question is open, a message with one three- or four-digit number is the code; it never reaches the model or chat history, which keeps "Security code sent securely." Telegram and WhatsApp can ask for a purchase but never approve one; a code typed there is refused.
+- **Do it for me.** Per card, on own installs. On, Otto keeps the security code and a yes in Otto is enough. After the first payment with a card, Pi asks whether a yes should be enough and saves the answer with `payment_setting`; the owner can ask at any time or use the switch in Vault. It turns on only from the Otto app, and the code is kept from the next payment, whose question says so.
+- **While the card is on a page.** In every tab, until that page is gone, the model can only look and click: snapshots hide field values, and typing, scripts, dragging and screenshots are paused. The card number is hidden in any spacing everywhere, and Otto turns off form restore on the fields it filled.
+- **Limits of the request.** A new request replaces the open one. Event and read-only turns never pay; a schedule can ask and wait. A page that tried to steer the task needs the code. Pi places the order; a 3-D Secure challenge goes to the browser handoff.
 - **Activity.** Each question, payment and held attempt is a Vault activity row with the amount, and the card shows its own history.
 
 ## Card sources
@@ -79,9 +76,7 @@ A one-time card's number is never stored; it is released straight into the field
 
 ## Limits
 
-- With a stored card, Otto cannot check the final total on the page without reading it, so the approved amount is what Pi reported. One-time cards enforce it at the issuer.
-- Someone who controls the owner's Telegram and knows the card's security code can pay at a shop the owner has paid at before.
-- Telegram deletion is best effort: a message older than 48 hours, or a failed call, stays in Telegram.
+- With a stored card, as when the owner pays by hand, the shop decides the final charge. Otto shows the real checkout and the amount it read; only an issuer, with one-time cards, can cap the charge.
+- Otto guarantees which site receives each card detail, not which field on that site; Pi chooses the fields.
 - Hosted mode can still store cards from before this design for the owner to view, but cannot pay with them.
-- The merchant check covers the page's top origin. Fields inside a payment frame are filled by their snapshot reference without checking the frame's own origin, so a merchant page that embeds a hostile frame could receive the card.
 - Agent-specific card tokens from Visa and Mastercard are not generally available yet. They would be another card source.

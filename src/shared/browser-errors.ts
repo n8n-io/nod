@@ -10,9 +10,23 @@ const browserErrors = {
   browser_not_open: 'No page is open in the browser. Open the website first.',
   browser_observation_failed:
     'The browser could not read the updated page. Take a fresh screenshot before requesting another snapshot. Keep the current page open and check its state before repeating any click or submission.',
+  browser_card_paused:
+    'Card details are on a page in this browser, so typing, scripts, dragging and screenshots are paused. Use snapshot and click until that page is gone.',
+  browser_card_reload:
+    'A script ran on this checkout page, so Otto will not enter a card on it. Reload the checkout, take a fresh snapshot and call pay again.',
+  browser_card_field:
+    'Otto could not verify a card field, so nothing more was entered. Take a fresh snapshot and call pay with the current fields.',
+  browser_card_site:
+    'A card field is not on a site approved for this payment, so nothing more was entered. Inspect the page and ask again.',
+  browser_card_changed:
+    'The checkout page changed, so nothing more was entered. Take a fresh snapshot and call pay again.',
 } as const;
 
 export type BrowserErrorCode = keyof typeof browserErrors;
+export const browserErrorCodes = Object.keys(browserErrors) as [
+  BrowserErrorCode,
+  ...BrowserErrorCode[],
+];
 
 export function browserErrorMessage(code: unknown): string | undefined {
   return typeof code === 'string' && Object.hasOwn(browserErrors, code)

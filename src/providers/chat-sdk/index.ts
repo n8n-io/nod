@@ -404,21 +404,6 @@ export function createChatSdkTransport(
       }
       return { id };
     },
-    async forget(input) {
-      if (
-        input.channelId !== 'telegram' ||
-        !telegram ||
-        !channels.some(
-          (channel) =>
-            channel.id === 'telegram' &&
-            channel.status === 'configured' &&
-            channel.accountId === input.accountId,
-        )
-      )
-        return;
-      await bot.initialize();
-      await telegram.deleteMessage(input.threadId, input.messageId);
-    },
     async close() {
       if (!closed) {
         closed = true;
