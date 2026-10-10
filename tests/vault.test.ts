@@ -100,43 +100,49 @@ test('vault encryption binds the secret to its record, owner, and exact origin',
 });
 
 test('password exports from Chrome, 1Password and other managers read the same way', () => {
-  const login = (label: string, url: string, username: string, password: string) => ({
+  const login = (label: string, origin: string, username: string, password: string) => ({
     label,
-    url,
+    origin,
     username,
     password,
   });
   assert.deepEqual(
     parsePasswordCsv(
-      '\uFEFFname,url,username,password,note\r\n' +
-        'Fixture,https://login.fixture.test/signin,ana@example.test,"pa,ss""word\nline",\r\n' +
-        'App,android://key@com.fixture.app/,ana,app-secret,\r\n',
+      '﻿name,url,username,password,note\r\n' +
+        'Old,http://login.fixture.test/,ana@example.test,old-secret,\r\n' +
+        'Fixture,https://login.fixture.test/signin?next=%2F,ana@example.test,"pa,ss""word\nline",\r\n' +
+        'Quote,https://quote.fixture.test,bo,pa"ss,\r\n' +
+        'App,android://key@com.fixture.app/,ana,app-secret,\r\n' +
+        'Short,https://short.fixture.test,cy\r\n',
     ),
-    [
-      login('Fixture', 'https://login.fixture.test/signin', 'ana@example.test', 'pa,ss"word\nline'),
-      login('App', 'android://key@com.fixture.app/', 'ana', 'app-secret'),
-    ],
+    {
+      logins: [
+        login('Fixture', 'https://login.fixture.test', 'ana@example.test', 'pa,ss"word\nline'),
+        login('Quote', 'https://quote.fixture.test', 'bo', 'pa"ss'),
+        login('Old', 'https://login.fixture.test', 'ana@example.test', 'old-secret'),
+      ],
+      unreadable: 2,
+    },
   );
   assert.deepEqual(
     parsePasswordCsv(
       '"Title","Url","Username","Password","OTPAuth","Favorite","Archived","Tags","Notes"\n' +
-        '"Shop","shop.fixture.test","bo","bo-secret","","false","false","",""\n' +
+        '"Shop","shop.fixture.test","bo","bo-secret","otpauth://totp/x?secret=SYNTHETIC","false","false","",""\n' +
         '"Old","old.fixture.test","bo","old-secret","","false","true","",""\n' +
         '"Note","","","","","false","false","","Synthetic note"\n',
-    ),
-    [login('Shop', 'shop.fixture.test', 'bo', 'bo-secret')],
+    ).logins,
+    [login('Shop', 'https://shop.fixture.test', 'bo', 'bo-secret')],
   );
   assert.deepEqual(
-    parsePasswordCsv(
-      'url,username,password,httpRealm,formActionOrigin,guid\nhttps://fox.fixture.test,cy,cy-secret,,,{1}\n',
-    ),
-    [login('', 'https://fox.fixture.test', 'cy', 'cy-secret')],
+    parsePasswordCsv('email,username,url,password\nfox@example.test,,https://fox.fixture.test,cy\n')
+      .logins,
+    [login('', 'https://fox.fixture.test', 'fox@example.test', 'cy')],
   );
   assert.deepEqual(
     parsePasswordCsv(
       'folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n' +
-        ',,login,Warden,,,0,"https://warden.fixture.test,https://alt.fixture.test",di,di-secret,\n',
-    ),
+        ',,login,Warden,,,0,"androidapp://com.fixture,https://warden.fixture.test",di,di-secret,\n',
+    ).logins,
     [login('Warden', 'https://warden.fixture.test', 'di', 'di-secret')],
   );
   assert.throws(() => parsePasswordCsv('date,amount\n2026-10-01,12\n'), /password manager/);
@@ -1823,7 +1829,7 @@ test(
             },
           });
           assert.equal(existing.statusCode, 200);
-          const logins = parsePasswordCsv(
+          const { logins, unreadable } = parsePasswordCsv(
             'name,url,username,password,note\n' +
               'Kept,https://import.fixture.test/login,kept@example.test,kept-changed-secret,\n' +
               'Fresh,http://import.fixture.test/,fresh@example.test,fresh-import-secret,\n' +
@@ -1831,19 +1837,37 @@ test(
               ',https://other.fixture.test,,other-import-secret,\n' +
               'App,android://key@com.fixture.app/,ana,app-import-secret,\n',
           );
+          assert.equal(unreadable, 1);
           const imported = await app.inject({
             method: 'POST',
             url: '/api/vault/import',
             headers,
-            payload: { logins },
+            payload: {
+              logins: [
+                ...logins,
+                {
+                  label: 'Router',
+                  origin: 'https://router',
+                  username: 'admin',
+                  password: 'router-import-secret',
+                },
+                {
+                  label: 'Path',
+                  origin: 'https://path.fixture.test/login',
+                  username: 'path',
+                  password: 'path-import-secret',
+                },
+                { ...logins[0], notes: 'Synthetic note' },
+              ],
+            },
           });
           assert.equal(imported.statusCode, 200);
-          assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 1 });
+          assert.deepEqual(imported.json(), { imported: 2, existing: 2, skipped: 3 });
           assert.equal(imported.body.includes('secret'), false);
           const listed = (await app.inject({ url: '/api/vault', headers })).json<
             VaultLoginEntry[]
           >();
-          const fresh = listed.find((entry) => entry.label === 'Fresh');
+          const fresh = listed.find((entry) => entry.label === 'Fresh again');
           const other = listed.find((entry) => entry.label === 'other.fixture.test');
           assert.equal(fresh?.origin, 'https://import.fixture.test');
           assert.equal(other?.origin, 'https://other.fixture.test');
@@ -1861,10 +1885,10 @@ test(
                 method: 'POST',
                 url: '/api/vault/import',
                 headers,
-                payload: { logins: [{ ...logins[0], notes: 'Synthetic note' }] },
+                payload: { logins: Array.from({ length: 5001 }, () => logins[0]) },
               })
-            ).statusCode,
-            400,
+            ).json().error,
+            'Import at most 5,000 logins at a time.',
           );
         },
       );

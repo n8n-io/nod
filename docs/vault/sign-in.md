@@ -4,11 +4,11 @@ This covers how Otto gets permission to use a secret, how a login reaches a webs
 
 ## Agent tools
 
-| Tool                  | Input                                                                                                      | Result                                                                 |
-| --------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `manage_apps list`    | —                                                                                                          | References: login IDs, labels, origins, username hints, saved sessions |
-| `sign_in`             | `origin`, `fields: {username?, password?, code?}` with an `@eN` ref or CSS selector each, optional `login` | "Filled", a question to the owner, or a secure form                    |
-| `browser_session use` | `url`, `connectionId`                                                                                      | Opens a saved session on its own site after the same grant check       |
+| Tool                  | Input                                                                                                      | Result                                                                |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `manage_apps list`    | `query`: the website or service                                                                            | References: that site's login IDs, labels and origins, saved sessions |
+| `sign_in`             | `origin`, `fields: {username?, password?, code?}` with an `@eN` ref or CSS selector each, optional `login` | "Filled", a question to the owner, or a secure form                   |
+| `browser_session use` | `url`, `connectionId`                                                                                      | Opens a saved session on its own site after the same grant check      |
 
 `get_credential` is removed. No tool returns a value.
 

@@ -2125,8 +2125,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           hasMore: matches.length > 30,
         };
       }
-      if (action === 'list')
-        return (await list())
+      if (action === 'list') {
+        const site = (z.string().trim().max(200).optional().parse(query) ?? '')
+          .toLowerCase()
+          .replace(/^[a-z][a-z\d+.-]*:\/\//, '')
+          .replace(/^www\./, '')
+          .split('/')[0]!;
+        const connections = (await list())
           .filter(
             (connection) =>
               !connection.accessPaths?.some((path) => path.kind === 'browser') ||
@@ -2137,6 +2142,28 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             ...connection,
             ...(connection.browserState ? { browserAccess: 'browser_session' } : {}),
           }));
+        const logins = connections.filter((connection) => connection.savedLogin);
+        const matching = site
+          ? logins.filter((connection) =>
+              [connection.name, connection.accountName, connection.accessPaths?.[0]?.endpoint]
+                .join(' ')
+                .toLowerCase()
+                .includes(site),
+            )
+          : logins.slice(0, 20);
+        return [
+          ...connections.filter((connection) => !connection.savedLogin),
+          ...matching,
+          ...(matching.length < logins.length && !site
+            ? [
+                {
+                  savedLogins: logins.length,
+                  note: 'Call list with query set to the website or service to see its saved logins.',
+                },
+              ]
+            : []),
+        ];
+      }
       if (action === 'propose') {
         if (!options.discovered)
           throw new IntegrationError('Discovered connections are unavailable.', 503);

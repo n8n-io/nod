@@ -639,23 +639,18 @@ export async function createVault(pool: Pool, options: VaultOptions) {
 
   async function importLogins(raw: unknown): Promise<VaultImportResult> {
     const { logins } = z
-      .object({
-        logins: z
-          .array(
-            z
-              .object({
-                label: z.string().max(1000),
-                url: z.string().min(1).max(2048),
-                username: z.string().max(320),
-                password: z.string().min(1).max(8192),
-              })
-              .strict(),
-          )
-          .min(1)
-          .max(5000),
-      })
+      .object({ logins: z.array(z.unknown()).min(1) })
       .strict()
       .parse(raw);
+    if (logins.length > 5000) throw new VaultError('Import at most 5,000 logins at a time.', 400);
+    const row = z
+      .object({
+        label: z.string().max(1000),
+        origin: z.string().max(2048),
+        username: z.string().max(320),
+        password: z.string().min(1).max(8192),
+      })
+      .strict();
     const credentialKey = await key();
     const result = { imported: 0, existing: 0, skipped: 0 };
     const client = await pool.connect();
@@ -674,18 +669,18 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           }
         }),
       );
-      for (const login of logins) {
+      for (const item of logins) {
+        const parsed = row.safeParse(item);
         let origin: string;
         try {
-          const url = new URL(
-            /^[a-z][a-z\d+.-]*:\/\//i.test(login.url) ? login.url : `https://${login.url}`,
-          );
-          if (url.protocol === 'http:' && !localHost(url.hostname)) url.protocol = 'https:';
-          origin = credentialOrigin(url.origin);
+          if (!parsed.success) throw new Error();
+          origin = credentialOrigin(parsed.data.origin);
+          requireFullHost({ origin });
         } catch {
           result.skipped++;
           continue;
         }
+        const login = parsed.data;
         const account = JSON.stringify([origin, login.username]);
         if (known.has(account)) {
           result.existing++;
@@ -1916,7 +1911,13 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       });
       scope.setErrorHandler((error, _request, reply) => {
         const status =
-          error instanceof VaultError ? error.statusCode : error instanceof z.ZodError ? 400 : 500;
+          error instanceof VaultError
+            ? error.statusCode
+            : error instanceof z.ZodError
+              ? 400
+              : (error as { statusCode?: number }).statusCode === 413
+                ? 413
+                : 500;
         if (status >= 500) logFailure('vault_request_failed', error);
         reply.code(status).send({
           error:
@@ -1924,7 +1925,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
               ? error.message
               : status === 400
                 ? 'Check the credential fields.'
-                : 'The vault request could not be completed.',
+                : status === 413
+                  ? 'This is too large. Import fewer logins at a time.'
+                  : 'The vault request could not be completed.',
         });
       });
       scope.get('/api/vault', listEntries);

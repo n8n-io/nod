@@ -99,7 +99,7 @@ Unique indexes: `vault_items(owner_id, kind, lookup)` and `vault_uses(root_turn_
 
 ## Import
 
-Built: the Vault page reads a CSV export from Chrome, 1Password, Apple Passwords, Firefox, Bitwarden and others by its column names. Only each login's name, address, username and password leave the page; notes, tags and authenticator seeds stay behind. The server adds the logins in one transaction, encrypted like any other, keeps accounts already saved and skips addresses Otto cannot sign in to, such as app links. Plain HTTP addresses are saved as HTTPS. A later option reads a dedicated 1Password vault through a read-only service account and fetches each item at release time.
+Built: the Vault page reads a CSV export from Chrome, 1Password, Apple Passwords, Firefox, Bitwarden and others by its column names. Only each login's name, site origin, username and password leave the page; paths, notes, tags and authenticator seeds stay behind, and rows the page cannot read are counted as skipped. Plain HTTP sites are saved as HTTPS, after any HTTPS row for the same account. The server checks each row on its own, adds the logins in one transaction, encrypted like any other, keeps accounts already saved and skips sites Otto cannot sign in to. A later option reads a dedicated 1Password vault through a read-only service account and fetches each item at release time.
 
 ## Rotation
 

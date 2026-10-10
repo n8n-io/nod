@@ -18,7 +18,12 @@ export function VaultImportDialog({
   onOpenChange(open: boolean): void;
   onImported(): void;
 }) {
-  const [file, setFile] = useState<{ name: string; logins: ImportedLogin[] } | null>(null);
+  const [file, setFile] = useState<{
+    name: string;
+    logins: ImportedLogin[];
+    unreadable: number;
+  } | null>(null);
+  const [unreadable, setUnreadable] = useState(0);
   const [result, setResult] = useState<VaultImportResult | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -28,6 +33,7 @@ export function VaultImportDialog({
     if (!next) {
       setFile(null);
       setResult(null);
+      setUnreadable(0);
       setError('');
     }
     onOpenChange(next);
@@ -38,7 +44,7 @@ export function VaultImportDialog({
     setError('');
     if (!chosen) return;
     try {
-      setFile({ name: chosen.name, logins: parsePasswordCsv(await chosen.text()) });
+      setFile({ name: chosen.name, ...parsePasswordCsv(await chosen.text()) });
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -55,6 +61,7 @@ export function VaultImportDialog({
           body: JSON.stringify({ logins: file.logins }),
         }),
       );
+      setUnreadable(file.unreadable);
       setFile(null);
       onImported();
     } catch (cause) {
@@ -74,7 +81,9 @@ export function VaultImportDialog({
               {[
                 `Imported ${logins(result.imported)}`,
                 result.existing ? `${formatNumber(result.existing)} already saved` : '',
-                result.skipped ? `${formatNumber(result.skipped)} skipped` : '',
+                result.skipped + unreadable
+                  ? `${formatNumber(result.skipped + unreadable)} skipped`
+                  : '',
               ]
                 .filter(Boolean)
                 .join(' · ')}
@@ -113,7 +122,14 @@ export function VaultImportDialog({
                 </label>
               </Button>
               {file && (
-                <p>{file.logins.length ? logins(file.logins.length) : 'No logins in this file.'}</p>
+                <p>
+                  {[
+                    file.logins.length ? logins(file.logins.length) : 'No logins in this file',
+                    file.unreadable ? `${formatNumber(file.unreadable)} can’t be read` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
               )}
               {error && <Notice>{error}</Notice>}
               <Button type="submit" disabled={!file?.logins.length || busy}>

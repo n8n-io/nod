@@ -762,12 +762,11 @@ async function initializeApplication(
       flagInjection: trust.flag,
       holdBrowser: adapters.holdWaitingBrowser,
       connections: integrations.manageConnections,
-      prepareBrowser: async (turn) => {
-        if (await vaultAccess.keeps(turn)) return;
-        await computer.signOut(turn.threadId);
-        await browserConnections.release(turn.threadId);
-        await vaultAccess.signedOut(turn.threadId);
-      },
+      prepareBrowser: (turn) =>
+        vaultAccess.prepare(turn, async () => {
+          await computer.signOut(turn.threadId);
+          await browserConnections.release(turn.threadId);
+        }),
       browserConnection: async (request, turn, signal, launch) => {
         const target = await browserConnections.target(request);
         if (!target) return browserConnections.request(request, turn, signal, launch);
