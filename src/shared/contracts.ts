@@ -143,7 +143,7 @@ export interface VaultPaymentRequest {
   cardId?: string;
   flagged: boolean;
   local: boolean;
-  status: 'pending' | 'entered' | 'declined' | 'expired' | 'failed';
+  status: 'pending' | 'approved' | 'entered' | 'declined' | 'expired' | 'failed' | 'superseded';
 }
 export interface VaultImportResult {
   imported: number;
@@ -216,7 +216,6 @@ export interface AppState {
   threadId: string;
   hasEarlierMessages?: boolean;
   verificationRequests?: VerificationRequest[];
-  paymentAwaitingCode?: boolean;
   planningTasks?: boolean;
   messages: Message[];
   turns: Turn[];

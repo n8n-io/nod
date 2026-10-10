@@ -113,7 +113,7 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
     variants.add(value.replace(/%[0-9A-F]{2}/g, (code) => code.toLowerCase()));
   for (const secret of secrets)
     if (/^\d{12,19}$/.test(secret))
-      text = text.replace(new RegExp(secret.split('').join('[\\s.-]?'), 'g'), secret);
+      text = text.replace(new RegExp(secret.split('').join('\\D{0,3}'), 'g'), secret);
   let parts: Array<string | null> = [text];
   for (const value of [...variants].sort((a, b) => b.length - a.length))
     parts = parts.flatMap((part) => {
@@ -127,15 +127,11 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
   );
 }
 
-function redactFields(text: string, selectors: Iterable<string>) {
-  let result = text;
-  for (const selector of selectors)
-    if (/^@e\d+$/.test(selector))
-      result = result.replace(
-        new RegExp(`(\\[ref=${selector.slice(1)}\\][^\\n]*?): [^\\n]*`, 'g'),
-        '$1 [redacted]',
-      );
-  return result;
+function hideFieldValues(text: string) {
+  return text.replace(
+    /^(\s*- (?:textbox|combobox|spinbutton|searchbox)\b[^\n]*?): [^\n]*$/gm,
+    '$1: [redacted]',
+  );
 }
 
 const browserTabList = z
@@ -822,6 +818,7 @@ export function createAgentBrowserComputer(options: {
     const offset = input?.action === 'snapshot' ? (input.offset ?? 0) : 0;
     if (!Number.isInteger(offset) || offset < 0 || offset > 100_000)
       throw new Error('Choose a page offset of at most 100000 characters.');
+    const paused = await cardOnPage(state, signal);
     const snapshot = () =>
       observationCommand(state, scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'], {
         signal,
@@ -832,10 +829,8 @@ export function createAgentBrowserComputer(options: {
       await delay(750, undefined, { signal });
       data = await snapshot();
     }
-    const page = redactFields(
-      redactBrowserText(String(data.snapshot ?? ''), state.secrets),
-      state.protectedSelectors,
-    );
+    const text = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
+    const page = paused || (await cardOnPage(state, signal)) ? hideFieldValues(text) : text;
     return {
       text: `Page (${offset}-${Math.min(offset + 16_000, page.length)} of ${page.length} characters):\n${page.slice(offset, offset + 16_000)}`,
       url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
@@ -1140,6 +1135,10 @@ export function createAgentBrowserComputer(options: {
             `Promise.race([Promise.resolve().then(() => (${script})), new Promise((resolve) => setTimeout(() => resolve({ __ottoTimedOut: true }), 5000))])`,
             signal,
           );
+          if (await cardOnPage(state, signal))
+            throw new Error(
+              'Card details are on this page, so scripts are paused. Use snapshot until the page changes.',
+            );
           if (value && typeof value === 'object' && '__ottoTimedOut' in value)
             throw new Error('The script did not finish within 5 seconds.');
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
@@ -1353,11 +1352,13 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
+  async function documentId(state: BrowserState, signal?: AbortSignal) {
+    return String(await evaluate(state, 'String(performance.timeOrigin)', signal));
+  }
+
   async function cardOnPage(state: BrowserState, signal?: AbortSignal) {
     if (!state.payment) return false;
-    if ((await currentUrl(state, signal)) === state.payment) return true;
-    state.payment = undefined;
-    return false;
+    return (await documentId(state, signal).catch(() => state.payment)) === state.payment;
   }
 
   async function fillCard(input: CardEntry): Promise<void> {
@@ -1406,9 +1407,12 @@ export function createAgentBrowserComputer(options: {
             );
         };
         await onOrigin();
+        state.payment = await documentId(state);
         const socket = await daemonSocket(state);
         state.secrets.add(card.cardNumber);
-        for (const step of steps) if (step.secret) state.protectedSelectors.add(step.selector);
+        for (const step of steps)
+          if (step.secret && !step.selector.startsWith('@'))
+            state.protectedSelectors.add(step.selector);
         await saveState(state);
         for (const step of steps) {
           await onOrigin();
@@ -1444,7 +1448,6 @@ export function createAgentBrowserComputer(options: {
             throw new Error('A card field did not accept its value. Take a fresh snapshot.');
         }
         await onOrigin();
-        state.payment = await currentUrl(state);
       });
     } finally {
       state.injecting = false;
@@ -1475,7 +1478,10 @@ export function createAgentBrowserComputer(options: {
         throw new Error('A valid browser hold expiry is required.');
       state.heldUntil = until === null ? 0 : Math.min(until, Date.now() + 30 * 60_000);
       if (state.heldUntil > Date.now()) await currentUrl(state);
-      if (state.heldUntil > Date.now()) await captureScreen(state);
+      if (state.heldUntil > Date.now())
+        await captureScreen(state).catch((error: unknown) => {
+          if (!(error instanceof BrowserLockedError)) throw error;
+        });
     });
   }
 
@@ -1484,8 +1490,13 @@ export function createAgentBrowserComputer(options: {
     if (state.recovered && state.saved.sensitive && !state.secrets.size)
       throw new Error('Reopen the login page before continuing this browser session.');
     const url = await currentUrl(state, signal);
+    if (await cardOnPage(state, signal)) throw new BrowserLockedError();
     const path = resolve(runtimeRoot, `screen-${state.id}.capture.png`);
     await observationCommand(state, ['screenshot', path], { signal });
+    if (await cardOnPage(state, signal)) {
+      await rm(path, { force: true });
+      throw new BrowserLockedError();
+    }
     const buffer = await screens.accept(state.id, path);
     state.saved.capturedAt = new Date().toISOString();
     await saveState(state);
@@ -1628,12 +1639,11 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
-      if (await cardOnPage(state, signal)) throw new BrowserLockedError();
       try {
         return await captureScreen(state, signal);
       } catch (error) {
         signal?.throwIfAborted();
-        if (!state.recovered) throw error;
+        if (!state.recovered || error instanceof BrowserLockedError) throw error;
         return lastKnownScreen(id);
       }
     });

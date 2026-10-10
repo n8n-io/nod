@@ -7,13 +7,19 @@ import { returnToChat } from '../lib/navigation';
 import { formatMoney } from './vault-activity';
 import { Button, Field, Input, Loading, Notice, Switch } from './ui';
 
+const codeTargets = new Set<(code: string) => Promise<void>>();
+
+export function paymentCodeTarget() {
+  return codeTargets.size === 1 ? [...codeTargets][0] : undefined;
+}
+
 export function PaymentForm({ token, inline = false }: { token: string; inline?: boolean }) {
   const [request, setRequest] = useState<VaultPaymentRequest | null>(null);
   const [cardId, setCardId] = useState<string>();
   const [doItForMe, setDoItForMe] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const settled = Boolean(request) && request?.status !== 'pending';
+  const settled = Boolean(request) && !['pending', 'approved'].includes(request!.status);
   const Heading = inline ? 'h2' : 'h1';
   useEffect(() => {
     if (settled) return;
@@ -33,11 +39,12 @@ export function PaymentForm({ token, inline = false }: { token: string; inline?:
           );
         })
         .catch(() => {
+          window.clearInterval(timer);
           if (!controller.signal.aborted)
             setError('This payment request is unavailable. Ask Otto again.');
         });
-    void load();
     const timer = inline ? window.setInterval(() => void load(), 5000) : undefined;
+    void load();
     return () => {
       controller.abort();
       window.clearInterval(timer);
@@ -46,8 +53,9 @@ export function PaymentForm({ token, inline = false }: { token: string; inline?:
 
   const card = request?.cards.find((item) => item.id === cardId);
   const amount = request ? formatMoney(request.amount) : '';
-  const needsCode = !card?.doItForMe;
+  const needsCode = Boolean(request?.flagged) || !card?.doItForMe;
   const site = request ? originLabel(request.origin) : '';
+  const open = request?.status === 'pending';
 
   async function act(path: string, body?: object) {
     setBusy(true);
@@ -65,14 +73,26 @@ export function PaymentForm({ token, inline = false }: { token: string; inline?:
     }
   }
 
-  function pay(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!card) return;
-    const code = String(new FormData(event.currentTarget).get('securityCode') ?? '');
-    void act(`/api/payments/${encodeURIComponent(token)}`, {
+  function submit(code: string) {
+    if (!card) return Promise.resolve();
+    return act(`/api/payments/${encodeURIComponent(token)}`, {
       cardId: card.id,
       ...(needsCode ? { securityCode: code, doItForMe } : {}),
     });
+  }
+
+  useEffect(() => {
+    if (!inline || !open || !card || !needsCode || busy) return;
+    const target = submit;
+    codeTargets.add(target);
+    return () => {
+      codeTargets.delete(target);
+    };
+  });
+
+  function pay(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submit(String(new FormData(event.currentTarget).get('securityCode') ?? ''));
   }
 
   const back = !inline && (
@@ -92,6 +112,10 @@ export function PaymentForm({ token, inline = false }: { token: string; inline?:
       {!request && !error ? (
         <div className="credential-complete" role="status">
           <Loading label="Opening the payment…" />
+        </div>
+      ) : request?.status === 'approved' ? (
+        <div className="credential-complete" role="status">
+          <Loading label="Entering your card…" />
         </div>
       ) : request?.status === 'entered' ? (
         <div className="credential-complete" role="status">

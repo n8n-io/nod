@@ -15,6 +15,7 @@ import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
+import { paymentCodeTarget } from '../components/payment-form';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-intro';
@@ -454,6 +455,17 @@ export function Chat({
     if (resetLock.current || welcoming || spendingPaused) return { sent: false, restoreText: true };
     const captureAnalytics = analyticsForCurrentSession();
     const sentThread = threadId;
+    const securityCode = paymentCodeTarget();
+    if (
+      securityCode &&
+      !attachments.length &&
+      !state.verificationRequests?.length &&
+      /^\s*\d{3,4}\s*$/.test(value)
+    ) {
+      if (reply) setReplyTo(null);
+      void securityCode(value.trim());
+      return { sent: true };
+    }
     const verificationRequests = (state.verificationRequests ?? []).filter(
       (request) => !reply || request.turnId === reply.turnId,
     );
@@ -464,16 +476,10 @@ export function Chat({
         ? verificationRequests[0].id
         : undefined;
     let verificationStatus: SubmitMessageResponse['verificationStatus'];
-    const privatePayment =
-      !privateVerification &&
-      Boolean(state.paymentAwaitingCode) &&
-      !attachments.length &&
-      /^\s*\d{3,4}\s*$/.test(value);
-    const signature =
-      privateVerification || privatePayment
-        ? null
-        : JSON.stringify([value, attachments.map((item) => item.id), reply?.id ?? null]);
-    if (privateVerification || privatePayment) retry.current = null;
+    const signature = privateVerification
+      ? null
+      : JSON.stringify([value, attachments.map((item) => item.id), reply?.id ?? null]);
+    if (privateVerification) retry.current = null;
     const id =
       signature !== null &&
       retry.current?.threadId === sentThread &&
@@ -493,11 +499,7 @@ export function Chat({
     const message: Message = {
       id,
       role: 'user',
-      text: privateVerification
-        ? 'Verification code sent securely.'
-        : privatePayment
-          ? 'Security code sent securely.'
-          : value,
+      text: privateVerification ? 'Verification code sent securely.' : value,
       attachments,
       turnId: null,
       createdAt: new Date().toISOString(),
@@ -523,7 +525,7 @@ export function Chat({
       if (!(await previous)) {
         failed = true;
         setOptimistic((current) => current.filter((item) => item.message.id !== id));
-        return { sent: false, restoreText: !privateVerification && !privatePayment };
+        return { sent: false, restoreText: !privateVerification };
       }
       const response = await apiResponse('/api/messages', {
         method: 'POST',
@@ -552,7 +554,7 @@ export function Chat({
       if (result.messageId !== id || typeof result.turnId !== 'string')
         throw new Error('The message could not be confirmed. Try sending it again.');
       const turnId = result.turnId;
-      if (!privateVerification && !privatePayment)
+      if (!privateVerification)
         captureAnalytics('otto_chat_message_sent', {
           has_attachments: attachments.length > 0,
           is_reply: Boolean(replyId),
@@ -598,7 +600,7 @@ export function Chat({
           : errorMessage(cause),
       );
       captureAnalytics('otto_ui_error', { area: 'chat', action: 'send' });
-      return { sent: false, restoreText: !privateVerification && !privatePayment };
+      return { sent: false, restoreText: !privateVerification };
     } finally {
       outstandingSends.current--;
       finished(!failed);

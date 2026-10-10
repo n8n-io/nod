@@ -741,7 +741,6 @@ async function initializeApplication(
     remember: (id, securityCode) => vault.rememberSecurityCode(id, { securityCode }),
     fill: (input) => computer.fillCard(input),
     resume: resumeAfterPayment,
-    refresh,
     record: (turn, entry) => vaultAccess.record(turn, entry),
   });
   const userMessages = createUserMessageService({ confirmAction: approvals.acceptChat });
@@ -964,7 +963,6 @@ async function initializeApplication(
     artifacts,
     submitMessage: userMessages.submit,
     verification: chatVerification,
-    payments,
     onboard: async (timeZone, threadId) => {
       if (timeZone) await triage.updatePreferences({ timeZone });
       return restartOnboarding(threadId);

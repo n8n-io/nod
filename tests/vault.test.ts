@@ -2445,14 +2445,14 @@ test(
         allowed: true,
         flagged: false,
       };
-      let page = 'https://shop.fixture.test';
+      let url = 'https://shop.fixture.test/checkout';
       let failFill = false;
       const make = (local: boolean) =>
         createPayments(pool, {
           ownerId: 'local-development',
           local,
           policy: async () => policy,
-          page: async () => ({ origin: page }),
+          page: async () => ({ origin: new URL(url).origin, url }),
           cards: vault.paymentCards,
           card: vault.paymentCard,
           remember: async (id, securityCode) => {
@@ -2489,10 +2489,19 @@ test(
       assert.equal(saved.statusCode, 200, saved.body);
       const card = saved.json<VaultCardEntry>();
       const turn = { threadId: randomUUID(), turnId: randomUUID() };
+      await pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'local-development')", [
+        turn.threadId,
+      ]);
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id,status) VALUES($1,'local-development',$2,'waiting')",
+        [turn.turnId, turn.threadId],
+      );
       const fields = { number: '@e4', expiry: '@e5', securityCode: '@e6', name: '@e3' };
       const order = { amount: '43.20', currency: 'eur', description: 'Two brass hinges', fields };
       const pay = (token: string, payload: object) =>
         app.inject({ method: 'POST', url: `/api/payments/${token}`, headers, payload });
+      const status = async (token: string) =>
+        (await app.inject({ url: `/api/payments/${token}`, headers })).json().status;
 
       const linked = await payments.request(turn, order);
       assert.ok('url' in linked);
@@ -2526,6 +2535,31 @@ test(
       assert.equal(fills.length, 1);
       assert.equal((await vault.paymentCards())[0]?.doItForMe, false);
 
+      const older = await payments.request(turn, order);
+      const newer = await payments.request(turn, order);
+      assert.ok('url' in older && 'url' in newer);
+      const olderToken = older.url.slice('/pay/'.length);
+      assert.equal(await status(olderToken), 'superseded');
+      assert.equal(
+        (await pay(olderToken, { cardId: card.id, securityCode: '737' })).statusCode,
+        409,
+      );
+      assert.equal(fills.length, 1);
+
+      const newerToken = newer.url.slice('/pay/'.length);
+      await pool.query("UPDATE turns SET status='running' WHERE id=$1", [turn.turnId]);
+      assert.equal(
+        (await pay(newerToken, { cardId: card.id, securityCode: '737' })).statusCode,
+        409,
+      );
+      await pool.query("UPDATE turns SET status='waiting' WHERE id=$1", [turn.turnId]);
+      url = 'https://shop.fixture.test/checkout?step=2';
+      const moved = await pay(newerToken, { cardId: card.id, securityCode: '737' });
+      assert.equal(moved.statusCode, 409);
+      assert.equal(await status(newerToken), 'failed');
+      assert.match(resumed.at(-1)!, /checkout page changed/);
+      assert.equal(fills.length, 1);
+
       const kept = await payments.request(turn, order);
       assert.ok('url' in kept);
       const keepToken = kept.url.slice('/pay/'.length);
@@ -2543,7 +2577,10 @@ test(
       const approved = await payments.approve(turn, { paymentId: asked.paymentId });
       assert.equal(approved.entered, true);
       assert.equal(fills.at(-1)?.card.securityCode, '737');
-      await assert.rejects(payments.approve(turn, { paymentId: asked.paymentId }), /no longer/);
+      assert.match(
+        (await payments.approve(turn, { paymentId: asked.paymentId })).message,
+        /no longer open/,
+      );
 
       failFill = true;
       const stale = await payments.request(turn, order);
@@ -2551,12 +2588,12 @@ test(
       const waiting = await payments.approve(turn, { paymentId: stale.paymentId });
       assert.equal(waiting.entered, false);
       failFill = false;
-      page = 'https://other.fixture.test';
+      url = 'https://other.fixture.test/checkout?step=2';
       await assert.rejects(
         payments.request(turn, { ...order, paymentId: stale.paymentId }),
         /no longer available/,
       );
-      page = 'https://shop.fixture.test';
+      url = 'https://shop.fixture.test/checkout?step=2';
       const retried = await payments.request(turn, {
         ...order,
         paymentId: stale.paymentId,
@@ -2572,15 +2609,19 @@ test(
       policy = { allowed: true, flagged: true };
       const flagged = await payments.request(turn, order);
       assert.ok('url' in flagged);
+      const flaggedToken = flagged.url.slice('/pay/'.length);
       const flaggedRow = (
         await pool.query<{ id: string }>(
           'SELECT id FROM vault_payments WHERE flagged ORDER BY created_at DESC LIMIT 1',
         )
       ).rows[0]!;
-      await assert.rejects(payments.approve(turn, { paymentId: flaggedRow.id }), /no longer/);
+      assert.equal((await payments.approve(turn, { paymentId: flaggedRow.id })).entered, false);
+      const tapped = await pay(flaggedToken, { cardId: card.id });
+      assert.equal(tapped.statusCode, 400);
+      assert.match(tapped.json().error, /security code/);
       const declined = await app.inject({
         method: 'POST',
-        url: `${flagged.url.replace('/pay/', '/api/payments/')}/decline`,
+        url: `/api/payments/${flaggedToken}/decline`,
         headers,
       });
       assert.equal(declined.statusCode, 200);
@@ -2608,6 +2649,8 @@ test(
           ['asked', 'payment'],
           ['paid', 'code_typed'],
           ['asked', 'payment'],
+          ['asked', 'payment'],
+          ['asked', 'payment'],
           ['paid', 'code_typed'],
           ['asked', 'payment'],
           ['paid', 'said_yes'],
@@ -2630,45 +2673,6 @@ test(
         ),
         /4242424242424242|737/,
       );
-
-      await pool.query(`
-        ALTER TABLE turns ADD COLUMN channel text NOT NULL DEFAULT 'web';
-        CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text,role text,text text,thread_id uuid,turn_id uuid);
-      `);
-      await vault.rememberSecurityCode(card.id, { securityCode: null });
-      const chat = { threadId: randomUUID(), turnId: randomUUID() };
-      await pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'local-development')", [
-        chat.threadId,
-      ]);
-      await pool.query(
-        "INSERT INTO turns(id,owner_id,thread_id) VALUES($1,'local-development',$2)",
-        [chat.turnId, chat.threadId],
-      );
-      const typed = await payments.request(chat, order);
-      assert.ok('url' in typed);
-      assert.equal(await payments.awaitingCode(), true);
-      const messageId = randomUUID();
-      for (const text of ['yes please', '12345', '7 3 7'])
-        assert.equal(await payments.acceptCode(text, { clientMessageId: messageId }), undefined);
-      const sent = await payments.acceptCode(' 737 ', {
-        clientMessageId: messageId,
-        threadId: chat.threadId,
-      });
-      assert.deepEqual(sent, {
-        threadId: chat.threadId,
-        turnId: chat.turnId,
-        messageId,
-        messageText: 'Security code sent securely.',
-      });
-      assert.equal(fills.at(-1)?.card.securityCode, '737');
-      assert.equal(await payments.awaitingCode(), false);
-      assert.deepEqual((await pool.query('SELECT text FROM messages')).rows, [
-        { text: 'Security code sent securely.' },
-      ]);
-      await payments.request(chat, order);
-      await payments.request(chat, order);
-      assert.equal(await payments.awaitingCode(), false);
-      assert.equal(await payments.acceptCode('737', { clientMessageId: randomUUID() }), undefined);
     } finally {
       await app.close();
       await pool.end();

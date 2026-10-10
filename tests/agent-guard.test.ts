@@ -912,9 +912,17 @@ test('PIN and semantic login identifier requests never reach chat', async () => 
     'Envia-me a chave API.',
     'Qual é a tua chave de API?',
     'Enter the API key to continue.',
+    'What is your card number?',
+    'Send me your card details and the CVC.',
+    "What's your card's expiry date?",
   ];
   for (const text of requests) assert.equal(requestsPrivateInput(text), true, text);
-  for (const text of ['Can you explain what an API key is?', 'How do I rotate an API key?'])
+  for (const text of [
+    'Can you explain what an API key is?',
+    'How do I rotate an API key?',
+    'What is the expiry date of your passport?',
+    'Tell me your preferred delivery date.',
+  ])
     assert.equal(requestsPrivateInput(text), false, text);
   const text = requests[0];
   for (const method of ['ask_user', 'send_message', 'final']) {

@@ -2,14 +2,16 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import type { CardEntry, CardFields } from '../ports/computer.ts';
+import type { BrowserPage, CardEntry, CardFields } from '../ports/computer.ts';
 import type {
   VaultActivityEntry,
   VaultActivityReason,
   VaultPaymentCard,
   VaultPaymentRequest,
 } from '../shared/contracts.ts';
+import { logFailure } from './failure-log.ts';
 import type { TurnRef } from './thread.ts';
+import type { PaymentPolicy } from './trust.ts';
 import { credentialOrigin } from './vault.ts';
 
 export class PaymentError extends Error {
@@ -26,18 +28,16 @@ type Row = {
   thread_id: string;
   turn_id: string;
   origin: string;
+  page_url: string;
   amount_minor: string;
   currency: string;
   description: string;
   card_id: string | null;
   fields: CardFields;
   flagged: boolean;
-  status: 'pending' | 'approved' | 'entered' | 'declined' | 'failed';
+  status: 'pending' | 'approved' | 'entered' | 'declined' | 'failed' | 'superseded';
   expires_at: Date;
 };
-
-type Policy =
-  { allowed: false; reason: 'readonly' | 'background' } | { allowed: true; flagged: boolean };
 
 const selector = z.string().min(1).max(2048);
 const input = z
@@ -63,19 +63,13 @@ const input = z
   })
   .strict();
 
-export type PaymentInput = z.input<typeof input>;
-
 const currencies = new Set(Intl.supportedValuesOf('currency'));
 
 function digits(currency: string) {
   if (!currencies.has(currency))
     throw new PaymentError('Use a three-letter currency code, such as EUR.');
-  try {
-    return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
-      .maximumFractionDigits!;
-  } catch {
-    throw new PaymentError('Use a three-letter currency code, such as EUR.');
-  }
+  return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
+    .maximumFractionDigits!;
 }
 
 export function formatAmount(minor: number, currency: string) {
@@ -91,14 +85,13 @@ export async function createPayments(
   options: {
     ownerId: string;
     local: boolean;
-    policy(turn: TurnRef): Promise<Policy>;
-    page(threadId: string): Promise<{ origin: string }>;
+    policy(turn: TurnRef): Promise<PaymentPolicy>;
+    page(threadId: string): Promise<BrowserPage>;
     cards(): Promise<VaultPaymentCard[]>;
     card(id: string): Promise<CardEntry['card']>;
     remember(id: string, securityCode: string): Promise<unknown>;
     fill(input: CardEntry): Promise<void>;
     resume(turnId: string, prompt: string): Promise<void>;
-    refresh?(): void;
     record(
       turn: TurnRef,
       entry: {
@@ -116,11 +109,10 @@ export async function createPayments(
   await pool.query(`
     CREATE TABLE IF NOT EXISTS vault_payments (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL, turn_id uuid NOT NULL,
-      origin text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL, description text NOT NULL,
-      card_id text, fields jsonb NOT NULL, token_hash text NOT NULL UNIQUE, flagged boolean NOT NULL,
-      approval text NOT NULL,
-      status text NOT NULL DEFAULT 'pending', created_at timestamptz NOT NULL DEFAULT now(),
-      expires_at timestamptz NOT NULL, entered_at timestamptz
+      origin text NOT NULL, page_url text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL,
+      description text NOT NULL, card_id text, fields jsonb NOT NULL, token_hash text NOT NULL UNIQUE,
+      flagged boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
+      created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, entered_at timestamptz
     );
     CREATE INDEX IF NOT EXISTS vault_payments_owner ON vault_payments(owner_id,created_at DESC);
     DELETE FROM vault_payments WHERE created_at<now()-interval '90 days';
@@ -131,15 +123,17 @@ export async function createPayments(
     formatAmount(Number(row.amount_minor), row.currency);
   const cardName = (card: Pick<VaultPaymentCard, 'brand' | 'last4'>) =>
     `${card.brand} ••${card.last4}`;
-  const turnOf = (row: Pick<Row, 'thread_id' | 'turn_id'>) => ({
-    threadId: row.thread_id,
-    turnId: row.turn_id,
-  });
   const payment = (row: Row) => ({
     id: row.id,
     minor: Number(row.amount_minor),
     currency: row.currency,
   });
+
+  async function record(turn: TurnRef, entry: Parameters<typeof options.record>[1]) {
+    await options.record(turn, entry).catch((error: unknown) => {
+      logFailure('vault_payment_activity_failed', error);
+    });
+  }
 
   async function choose(origin: string, hint?: string) {
     const cards = await options.cards();
@@ -151,8 +145,8 @@ export async function createPayments(
             card.last4 === named.replace(/\D/g, '') || card.label.toLowerCase().includes(named),
         )
       : [];
-    if (matches.length === 1) return { cards, chosen: matches[0] };
-    if (cards.length === 1) return { cards, chosen: cards[0] };
+    if (matches.length === 1) return matches[0];
+    if (cards.length === 1) return cards[0];
     const recent = (
       await pool.query<{ card_id: string }>(
         `SELECT card_id FROM vault_payments WHERE owner_id=$1 AND status='entered' AND card_id IS NOT NULL
@@ -160,10 +154,13 @@ export async function createPayments(
         [ownerId, origin],
       )
     ).rows[0]?.card_id;
-    return { cards, chosen: cards.find((card) => card.id === recent) };
+    return cards.find((card) => card.id === recent);
   }
 
   async function enter(row: Row, cardId: string, securityCode?: string) {
+    const page = await options.page(row.thread_id);
+    if (page.url !== row.page_url)
+      throw new PaymentError('The checkout page changed. Otto will ask again.', 409);
     const card = await options.card(cardId);
     await options.fill({
       threadId: row.thread_id,
@@ -177,6 +174,11 @@ export async function createPayments(
     );
   }
 
+  async function entered(row: Row, cardId: string) {
+    const card = (await options.cards()).find((item) => item.id === cardId);
+    return `Otto entered ${card ? cardName(card) : 'the card'} for ${money(row)} at ${site(row.origin)}. Place the order, then check the result.`;
+  }
+
   async function request(
     turn: TurnRef,
     raw: unknown,
@@ -187,14 +189,10 @@ export async function createPayments(
   > {
     const parsed = input.parse(raw);
     const policy = await options.policy(turn);
-    const origin = credentialOrigin((await options.page(turn.threadId)).origin);
+    const page = await options.page(turn.threadId);
+    const origin = credentialOrigin(page.origin);
     if (!policy.allowed) {
-      await options.record(turn, {
-        action: 'held',
-        origin,
-        reason: policy.reason,
-        itemKind: 'card',
-      });
+      await record(turn, { action: 'held', origin, reason: policy.reason, itemKind: 'card' });
       throw new PaymentError(
         policy.reason === 'background'
           ? 'Work Otto starts on its own never pays. Tell the owner what to buy.'
@@ -205,22 +203,23 @@ export async function createPayments(
       const row = (
         await pool.query<Row>(
           `SELECT * FROM vault_payments WHERE id=$1 AND owner_id=$2 AND thread_id=$3
-           AND status='approved' AND expires_at>now()`,
+           AND status='approved' AND expires_at>now() AND NOT flagged`,
           [parsed.paymentId, ownerId, turn.threadId],
         )
       ).rows[0];
-      if (!row || row.origin !== origin || !row.card_id)
+      const card = (await options.cards()).find((item) => item.id === row?.card_id);
+      if (!row || !card?.doItForMe || row.origin !== origin || policy.flagged)
         throw new PaymentError('This payment approval is no longer available. Call pay again.');
-      await enter({ ...row, fields: parsed.fields }, row.card_id);
-      await options.record(turn, {
+      await enter({ ...row, fields: parsed.fields }, card.id);
+      await record(turn, {
         action: 'paid',
         origin,
         reason: 'said_yes',
-        itemId: row.card_id,
+        itemId: card.id,
         itemKind: 'card',
         payment: payment(row),
       });
-      return { entered: true as const, message: await entered(row, row.card_id) };
+      return { entered: true, message: await entered(row, card.id) };
     }
     const currency = parsed.currency.toUpperCase();
     const [whole, fraction = ''] = parsed.amount.split('.');
@@ -228,14 +227,14 @@ export async function createPayments(
     if (fraction.length > places) throw new PaymentError('Check the amount for this currency.');
     const minor = Number(whole) * 10 ** places + Number(fraction.padEnd(places, '0') || '0');
     if (!minor) throw new PaymentError('Check the amount.');
-    const { chosen } = await choose(origin, parsed.card);
-    const approval = options.local && chosen?.doItForMe && !policy.flagged ? 'yes' : 'code';
+    const chosen = await choose(origin, parsed.card);
     const token = randomBytes(32).toString('base64url');
     const row: Row = {
       id: randomUUID(),
       thread_id: turn.threadId,
       turn_id: turn.turnId,
       origin,
+      page_url: page.url,
       amount_minor: String(minor),
       currency,
       description: parsed.description,
@@ -246,7 +245,12 @@ export async function createPayments(
       expires_at: new Date(Date.now() + 10 * 60_000),
     };
     await pool.query(
-      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,amount_minor,currency,description,card_id,fields,token_hash,flagged,expires_at,approval)
+      `UPDATE vault_payments SET status='superseded' WHERE owner_id=$1 AND thread_id=$2
+       AND status IN ('pending','approved')`,
+      [ownerId, turn.threadId],
+    );
+    await pool.query(
+      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,page_url,amount_minor,currency,description,card_id,fields,token_hash,flagged,expires_at)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         row.id,
@@ -254,6 +258,7 @@ export async function createPayments(
         row.thread_id,
         row.turn_id,
         origin,
+        row.page_url,
         minor,
         currency,
         row.description,
@@ -262,10 +267,9 @@ export async function createPayments(
         hash(token),
         row.flagged,
         row.expires_at,
-        approval,
       ],
     );
-    await options.record(turn, {
+    await record(turn, {
       action: 'asked',
       origin,
       reason: 'payment',
@@ -274,38 +278,40 @@ export async function createPayments(
       payment: payment(row),
     });
     const question = `Pay ${money(row)} at ${site(origin)}${chosen ? ` with ${cardName(chosen)}` : ''}?`;
-    if (approval === 'yes') return { paymentId: row.id, question };
+    if (options.local && chosen?.doItForMe && !policy.flagged)
+      return { paymentId: row.id, question };
     return { url: `/pay/${token}`, question };
-  }
-
-  async function entered(row: Row, cardId: string) {
-    const card = (await options.cards()).find((item) => item.id === cardId);
-    return `Otto entered ${card ? cardName(card) : 'the card'} for ${money(row)} at ${site(row.origin)}. Place the order, then check the result.`;
   }
 
   async function approve(context: { threadId: string; turnId: string }, raw: unknown) {
     const { paymentId } = z.object({ paymentId: z.uuid() }).strict().parse(raw);
-    const row = (
+    const found = (
       await pool.query<Row>(
-        `UPDATE vault_payments SET status='approved' WHERE id=$1 AND owner_id=$2 AND thread_id=$3
-         AND status='pending' AND expires_at>now() AND NOT flagged RETURNING *`,
+        `SELECT * FROM vault_payments WHERE id=$1 AND owner_id=$2 AND thread_id=$3
+         AND status='pending' AND expires_at>now() AND NOT flagged`,
         [paymentId, ownerId, context.threadId],
       )
     ).rows[0];
-    if (!row?.card_id) throw new PaymentError('This payment request is no longer available.', 409);
-    const card = (await options.cards()).find((item) => item.id === row.card_id);
-    if (!card?.doItForMe) throw new PaymentError('Enter the security code to pay.', 409);
+    const card = found?.card_id
+      ? (await options.cards()).find((item) => item.id === found.card_id)
+      : undefined;
+    const row = card?.doItForMe
+      ? (
+          await pool.query<Row>(
+            `UPDATE vault_payments SET status='approved' WHERE id=$1 AND owner_id=$2
+             AND status='pending' AND expires_at>now() RETURNING *`,
+            [paymentId, ownerId],
+          )
+        ).rows[0]
+      : undefined;
+    if (!row || !card)
+      return {
+        entered: false,
+        message:
+          'This payment request is no longer open, so nothing was paid. Call pay again if the purchase is still wanted.',
+      };
     try {
       await enter(row, card.id);
-      await options.record(context, {
-        action: 'paid',
-        origin: row.origin,
-        reason: 'said_yes',
-        itemId: card.id,
-        itemKind: 'card',
-        payment: payment(row),
-      });
-      return { entered: true, paymentId: row.id, message: await entered(row, card.id) };
     } catch {
       return {
         entered: false,
@@ -313,9 +319,18 @@ export async function createPayments(
         message: `The owner approved ${money(row)} at ${site(row.origin)}, but the card could not be entered. Take a fresh snapshot and call pay with paymentId ${row.id} and the current card fields.`,
       };
     }
+    await record(context, {
+      action: 'paid',
+      origin: row.origin,
+      reason: 'said_yes',
+      itemId: card.id,
+      itemKind: 'card',
+      payment: payment(row),
+    });
+    return { entered: true, paymentId: row.id, message: await entered(row, card.id) };
   }
 
-  async function pending(token: string) {
+  async function lookup(token: string) {
     const row = (
       await pool.query<Row>('SELECT * FROM vault_payments WHERE token_hash=$1 AND owner_id=$2', [
         hash(z.string().min(20).max(200).parse(token)),
@@ -327,8 +342,7 @@ export async function createPayments(
   }
 
   async function describe(token: string): Promise<VaultPaymentRequest> {
-    const row = await pending(token);
-    const expired = row.status === 'pending' && row.expires_at.getTime() <= Date.now();
+    const row = await lookup(token);
     return {
       origin: row.origin,
       amount: { minor: Number(row.amount_minor), currency: row.currency },
@@ -337,11 +351,8 @@ export async function createPayments(
       ...(row.card_id ? { cardId: row.card_id } : {}),
       flagged: row.flagged,
       local: options.local,
-      status: expired
-        ? 'expired'
-        : row.status === 'approved'
-          ? 'entered'
-          : (row.status as VaultPaymentRequest['status']),
+      status:
+        row.status === 'pending' && row.expires_at.getTime() <= Date.now() ? 'expired' : row.status,
     };
   }
 
@@ -357,29 +368,28 @@ export async function createPayments(
       })
       .strict()
       .parse(raw);
-    return settle((await pending(token)).id, body.cardId, body.securityCode, body.doItForMe);
-  }
-
-  async function settle(
-    paymentId: string,
-    cardId: string,
-    securityCode?: string,
-    doItForMe?: boolean,
-  ) {
-    const card = (await options.cards()).find((item) => item.id === cardId);
+    const found = await lookup(token);
+    const card = (await options.cards()).find((item) => item.id === body.cardId);
     if (!card) throw new PaymentError('This card could not be found.', 404);
-    if (!securityCode && !card.doItForMe) throw new PaymentError('Enter the security code to pay.');
+    if (!body.securityCode && (found.flagged || !card.doItForMe))
+      throw new PaymentError('Enter the security code to pay.');
+    const waiting = await pool.query(
+      "SELECT 1 FROM turns WHERE id=$1 AND owner_id=$2 AND status='waiting'",
+      [found.turn_id, ownerId],
+    );
+    if (!waiting.rowCount) throw new PaymentError('This payment’s task has stopped.', 409);
     const row = (
       await pool.query<Row>(
         `UPDATE vault_payments SET status='approved',card_id=$3 WHERE id=$1 AND owner_id=$2
          AND status='pending' AND expires_at>now() RETURNING *`,
-        [paymentId, ownerId, card.id],
+        [found.id, ownerId, card.id],
       )
     ).rows[0];
     if (!row) throw new PaymentError('This payment request is no longer open.', 409);
-    if (securityCode && doItForMe && options.local) await options.remember(card.id, securityCode);
+    if (body.securityCode && body.doItForMe && options.local)
+      await options.remember(card.id, body.securityCode);
     try {
-      await enter(row, card.id, securityCode);
+      await enter(row, card.id, body.securityCode);
     } catch {
       await pool.query("UPDATE vault_payments SET status='failed' WHERE id=$1 AND owner_id=$2", [
         row.id,
@@ -394,14 +404,17 @@ export async function createPayments(
         409,
       );
     }
-    await options.record(turnOf(row), {
-      action: 'paid',
-      origin: row.origin,
-      reason: securityCode ? 'code_typed' : 'tapped',
-      itemId: card.id,
-      itemKind: 'card',
-      payment: payment(row),
-    });
+    await record(
+      { threadId: row.thread_id, turnId: row.turn_id },
+      {
+        action: 'paid',
+        origin: row.origin,
+        reason: body.securityCode ? 'code_typed' : 'tapped',
+        itemId: card.id,
+        itemKind: 'card',
+        payment: payment(row),
+      },
+    );
     await options.resume(
       row.turn_id,
       `${await entered(row, card.id)} Do not repeat completed external actions.`,
@@ -409,41 +422,8 @@ export async function createPayments(
     return { status: 'entered' as const };
   }
 
-  async function waitingForCode() {
-    return (
-      await pool.query<Row>(
-        `SELECT p.* FROM vault_payments p JOIN turns u ON u.id=p.turn_id AND u.owner_id=p.owner_id
-         WHERE p.owner_id=$1 AND p.status='pending' AND p.expires_at>now() AND p.approval='code'
-         AND p.card_id IS NOT NULL AND u.channel='web' ORDER BY p.created_at DESC LIMIT 2`,
-        [ownerId],
-      )
-    ).rows;
-  }
-
-  async function awaitingCode() {
-    return (await waitingForCode()).length === 1;
-  }
-
-  async function acceptCode(text: string, input: { clientMessageId: string; threadId?: string }) {
-    const code = /^\s*(\d{3,4})\s*$/.exec(text)?.[1];
-    if (!code) return undefined;
-    const rows = await waitingForCode();
-    const row = rows.length === 1 ? rows[0] : undefined;
-    if (!row?.card_id || (input.threadId && input.threadId !== row.thread_id)) return undefined;
-    const messageId = z.uuid().parse(input.clientMessageId);
-    await settle(row.id, row.card_id, code);
-    const messageText = 'Security code sent securely.';
-    await pool.query(
-      `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id) VALUES($1,$2,'user',$3,$4,$5)
-       ON CONFLICT (id) DO NOTHING`,
-      [messageId, ownerId, messageText, row.thread_id, row.turn_id],
-    );
-    options.refresh?.();
-    return { threadId: row.thread_id, turnId: row.turn_id, messageId, messageText };
-  }
-
   async function decline(token: string) {
-    const found = await pending(token);
+    const found = await lookup(token);
     const row = (
       await pool.query<Row>(
         `UPDATE vault_payments SET status='declined' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING *`,
@@ -451,14 +431,17 @@ export async function createPayments(
       )
     ).rows[0];
     if (!row) throw new PaymentError('This payment request is no longer open.', 409);
-    await options.record(turnOf(row), {
-      action: 'declined',
-      origin: row.origin,
-      reason: 'said_no',
-      itemKind: 'card',
-      ...(row.card_id ? { itemId: row.card_id } : {}),
-      payment: payment(row),
-    });
+    await record(
+      { threadId: row.thread_id, turnId: row.turn_id },
+      {
+        action: 'declined',
+        origin: row.origin,
+        reason: 'said_no',
+        itemKind: 'card',
+        ...(row.card_id ? { itemId: row.card_id } : {}),
+        payment: payment(row),
+      },
+    );
     await options.resume(
       row.turn_id,
       `The owner declined paying ${money(row)} at ${site(row.origin)}. Do not pay; tell them what is left to do.`,
@@ -479,6 +462,7 @@ export async function createPayments(
             : error instanceof z.ZodError
               ? 400
               : 500;
+        if (status >= 500) logFailure('vault_payment_failed', error);
         reply.code(status).send({
           error:
             error instanceof PaymentError
@@ -502,5 +486,5 @@ export async function createPayments(
     });
   }
 
-  return { request, approve, awaitingCode, acceptCode, registerRoutes };
+  return { request, approve, registerRoutes };
 }

@@ -958,6 +958,8 @@ for (const action of ['snapshot', 'click'] as const)
 test('a card fill types into the chosen fields on the approved merchant and keeps the card out of what the model sees', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-card-'));
   let url = 'about:blank';
+  let documentId = 0;
+  let commitDuringSnapshot = false;
   let focused = '';
   const fields = new Map<string, string>();
   const autocomplete: Record<string, string> = { '@e4': 'cc-number', '@e5': 'cc-csc' };
@@ -966,18 +968,33 @@ test('a card fill types into the chosen fields on the approved merchant and keep
     run: async (_executable, args, options) => {
       const command = args.slice(args.indexOf('--idle-timeout') + 2);
       let data: Record<string, unknown> = {};
-      if (command[0] === 'open') url = command[1]!;
+      if (command[0] === 'open') {
+        url = command[1]!;
+        documentId++;
+        fields.clear();
+      }
       if (command[0] === 'get' && command[1] === 'url') data = { url };
       if (command[0] === 'get' && command[1] === 'attr')
         data = {
           value: command[3] === 'autocomplete' ? (autocomplete[command[2]!] ?? null) : null,
+        };
+      if (['fill', 'select'].includes(command[0]!) && command[1] === '#missing')
+        return {
+          stdout: JSON.stringify({ success: false, error: 'Synthetic miss' }),
+          stderr: '',
+          exitCode: 1,
         };
       if (command[0] === 'fill') {
         focused = command[1]!;
         fields.set(focused, command[2]!);
       }
       if (command[0] === 'press') fields.set(focused, `${fields.get(focused) ?? ''}${command[1]}`);
-      if (command[0] === 'eval') data = { result: options?.input?.length ?? 0 };
+      if (command[0] === 'eval')
+        data = {
+          result: options?.input?.includes('timeOrigin')
+            ? String(documentId)
+            : (options?.input?.length ?? 0),
+        };
       if (command[0] === 'screenshot') await writeFile(command[1]!, 'synthetic-screen');
       if (command[0] === 'snapshot')
         data = {
@@ -987,9 +1004,14 @@ test('a card fill types into the chosen fields on the approved merchant and keep
             `- textbox "Name" [ref=e3]: ${fields.get('@e3') ?? ''}`,
             `- textbox "Card" [ref=e4]: ${(fields.get('@e4') ?? '').replace(/(\d{4})(?=\d)/g, '$1 ')}`,
             `- textbox "Code" [ref=e5]: ${fields.get('@e5') ?? ''}`,
+            `- textbox "Expiry" [ref=e6]: ${fields.get('#expiry') ?? ''}`,
             `- StaticText "Paying with ${(fields.get('@e4') ?? '').replace(/(\d{4})(?=\d)/g, '$1-')}"`,
           ].join('\n'),
         };
+      if (command[0] === 'snapshot' && commitDuringSnapshot) {
+        commitDuringSnapshot = false;
+        documentId++;
+      }
       return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
     },
   });
@@ -1003,7 +1025,7 @@ test('a card fill types into the chosen fields on the approved merchant and keep
   const entry = {
     threadId: 'shop',
     origin: 'https://1.1.1.1',
-    fields: { number: '@e4', expiry: '@e6', securityCode: '@e5', name: '@e3' },
+    fields: { number: '@e4', expiry: '#expiry', securityCode: '@e5', name: '@e3' },
     card,
   };
   try {
@@ -1013,13 +1035,13 @@ test('a card fill types into the chosen fields on the approved merchant and keep
     await computer.fillCard(entry);
     assert.deepEqual(Object.fromEntries(fields), {
       '@e4': '4242424242424242',
-      '@e6': '08/30',
+      '#expiry': '08/30',
       '@e5': '737',
       '@e3': 'Synthetic Cardholder',
     });
     const seen = (await computer.act('shop', { action: 'snapshot' })).text;
-    assert.doesNotMatch(seen, /4242/);
-    assert.match(seen, /\[ref=e5\] \[redacted\]/);
+    assert.doesNotMatch(seen, /4242|08\/30|Synthetic Cardholder|: 737/);
+    assert.match(seen, /\[ref=e5\]: \[redacted\]/);
     assert.match(seen, /Total €43\.20, order 737-12/);
     await assert.rejects(
       computer.act('shop', { action: 'evaluate', script: 'document.title' }),
@@ -1030,12 +1052,35 @@ test('a card fill types into the chosen fields on the approved merchant and keep
       computer.act('shop', { action: 'fill', selector: '@e4', text: '4000' }),
       /Use pay for card fields/,
     );
+    url = 'https://1.1.1.1/checkout#review';
+    await assert.rejects(
+      computer.act('shop', { action: 'evaluate', script: 'document.title' }),
+      /scripts are paused/,
+    );
     await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/thanks' });
     assert.ok(await computer.screenshot('shop'));
     assert.match(
       (await computer.act('shop', { action: 'evaluate', script: 'document.title' })).text,
       /Script result/,
     );
+    await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/checkout' });
+    await assert.rejects(
+      computer.fillCard({ ...entry, fields: { ...entry.fields, name: '#missing' } }),
+      /did not accept/,
+    );
+    assert.equal(fields.get('@e4'), '4242424242424242');
+    assert.doesNotMatch((await computer.act('shop', { action: 'snapshot' })).text, /4242|08\/30/);
+    await assert.rejects(computer.screenshot('shop'));
+    await assert.rejects(
+      computer.act('shop', { action: 'evaluate', script: 'document.title' }),
+      /scripts are paused/,
+    );
+    commitDuringSnapshot = true;
+    assert.doesNotMatch(
+      (await computer.act('shop', { action: 'snapshot' })).text,
+      /08\/30|Synthetic Cardholder/,
+    );
+    assert.ok(await computer.screenshot('shop'));
   } finally {
     await computer.dispose();
     await rm(directory, { recursive: true, force: true });

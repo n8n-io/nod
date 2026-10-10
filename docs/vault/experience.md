@@ -52,7 +52,7 @@ Usernames are shown as their first two characters followed by an ellipsis. Cards
   - Denied by you
 - **Permissions.** Each login and saved session has a Sign in without asking switch. Schedules use the sites their instruction names.
 - **Add.** Login or card. On the owner's own installs, a card offers Do it for me, which shows the security code field; with it on, a yes is enough to pay. The card's detail has the same switch and its payment history. Hosted mode has no security code field.
-- **Pay.** A payment appears in the chat as a card: amount, shop, card, security code, Do it for me, Pay and Don't pay. Typing the code as a chat message works too, and with Do it for me a yes is enough, also from Telegram or WhatsApp.
+- **Pay.** A payment appears in the chat as a card: amount, shop, card, security code, Do it for me, Pay and Don't pay. Typing the code in the chat box works too, and with Do it for me a yes is enough, also from Telegram or WhatsApp.
 - **Import.** New › Import passwords takes a CSV export from Chrome, 1Password, Apple Passwords, Firefox or Bitwarden, parsed in the page. It shows the count, imports, keeps what is already saved and reminds the owner to delete the file.
 
 ## Apps page
