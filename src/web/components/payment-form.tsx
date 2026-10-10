@@ -120,44 +120,50 @@ export function PaymentForm({ token, inline = false }: { token: string; inline?:
         </div>
       ) : request ? (
         <>
-          <header className="credential-heading">
-            <div className="credential-symbol">
-              <CreditCard size={inline ? 20 : 24} />
-            </div>
-            <div>
-              <Heading>Pay {amount}</Heading>
-              <p className="credential-intro">
-                {site} · {request.description}
-              </p>
-            </div>
-          </header>
+          {inline ? (
+            <p className="credential-intro">{request.description}</p>
+          ) : (
+            <header className="credential-heading">
+              <div className="credential-symbol">
+                <CreditCard size={inline ? 20 : 24} />
+              </div>
+              <div>
+                <Heading>Pay {amount}</Heading>
+                <p className="credential-intro">
+                  {site} · {request.description}
+                </p>
+              </div>
+            </header>
+          )}
           {request.flagged && (
             <Notice>
               A page in this task had instructions for AI assistants. Check the shop and the amount.
             </Notice>
           )}
           <form className="form-stack payment-form" autoComplete="off" onSubmit={pay}>
-            <div className="payment-cards" role="radiogroup" aria-label="Card">
-              {request.cards.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={item.id === cardId}
-                  className="button button-outline payment-card"
-                  disabled={busy}
-                  onClick={() => setCardId(item.id)}
-                >
-                  <CreditCard size={16} aria-hidden="true" />
-                  <span>
-                    <strong>
-                      {item.brand} •••• {item.last4}
-                    </strong>
-                    <small>{item.label}</small>
-                  </span>
-                </button>
-              ))}
-            </div>
+            {(!inline || request.cards.length > 1) && (
+              <div className="payment-cards" role="radiogroup" aria-label="Card">
+                {request.cards.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={item.id === cardId}
+                    className="button button-outline payment-card"
+                    disabled={busy}
+                    onClick={() => setCardId(item.id)}
+                  >
+                    <CreditCard size={16} aria-hidden="true" />
+                    <span>
+                      <strong>
+                        {item.brand} •••• {item.last4}
+                      </strong>
+                      <small>{item.label}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             {card && needsCode && (
               <>
                 <Field label="Security code">
