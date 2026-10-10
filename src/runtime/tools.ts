@@ -6,7 +6,7 @@ import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
-import { paymentInvitation, requestsPrivateInput, vaultInvitation } from './communication.ts';
+import { requestsPrivateInput, vaultInvitation } from './communication.ts';
 import { browserFlowParameters } from './browser-flows.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
 
@@ -277,7 +277,7 @@ export const toolDefinitions = {
   ),
   pay: defineTool(
     'pay',
-    'Pay at the checkout on the current page with a Vault card. You never see the card: Otto types the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; description says what is being bought in a few words; card is the card the user named, by name or last four digits. Every payment needs the user: Otto asks them, or sends a secure link where they enter the security code. Stop and wait. After Otto enters the card, place the order and check the result. With paymentId, Otto enters the card again for a payment the user already approved.',
+    'Pay at the checkout on the current page with a Vault card. You never see the card: Otto types the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; description says what is being bought in a few words; card is the card the user named, by name or last four digits. Every payment needs the user: Otto asks them in the chat for a yes or the card’s security code, which they reply with and you never see. Stop and wait. After Otto enters the card, place the order and check the result. With paymentId, Otto enters the card again for a payment the user already approved.',
     Type.Object({
       amount: Type.String({ pattern: '^\\d{1,9}(\\.\\d{1,3})?$' }),
       currency: Type.String({ minLength: 3, maxLength: 3 }),
@@ -292,6 +292,14 @@ export const toolDefinitions = {
         securityCode: Type.Optional(Type.String({ minLength: 1 })),
         name: Type.Optional(Type.String({ minLength: 1 })),
       }),
+    }),
+  ),
+  payment_setting: defineTool(
+    'payment_setting',
+    "Turn Do it for me on or off for a Vault card when the user asks. On: Otto keeps the card's security code from the next payment, then the user's yes is enough to pay. Off: Otto deletes the code and asks for it each time. card is the card the user named, by name or last four digits.",
+    Type.Object({
+      card: Type.Optional(Type.String({ maxLength: 100 })),
+      doItForMe: Type.Boolean(),
     }),
   ),
   browser_session: defineTool(
@@ -597,9 +605,13 @@ export function ottoTools(
       if (appConfirmation in result)
         return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
       if ('entered' in result) return result.message;
-      await turn.invite(paymentInvitation(result.url, result.question));
+      await turn.invite(result.question);
       await pause('credentials', undefined, { post: false });
-      return 'Waiting for the user to approve the payment.';
+      return 'Waiting for the user to reply with the security code.';
+    }),
+    bind(toolDefinitions.payment_setting, async (p) => {
+      if (!context.paymentSetting) throw new Error('Payments are unavailable.');
+      return context.paymentSetting(p);
     }),
     bind(toolDefinitions.browser_session, async (p) => {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');

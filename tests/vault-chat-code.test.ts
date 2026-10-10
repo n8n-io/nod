@@ -40,9 +40,46 @@ test(
     let hold: Promise<void> | undefined;
     let started: (() => void) | undefined;
     let throwPrivateError = false;
+    const { createPayments } = await import('../src/server/payments.ts');
+    const paymentCard = {
+      id: randomUUID(),
+      label: 'Studio card',
+      brand: 'Visa',
+      last4: '4242',
+      doItForMe: false,
+      choice: null,
+    };
+    const entered: string[] = [];
+    const kept: Array<[string, boolean, string | undefined]> = [];
+    const payments = await createPayments(db.pool, {
+      ownerId,
+      local: true,
+      policy: async () => ({ allowed: true, flagged: false }),
+      page: async () => ({
+        origin: 'https://shop.fixture.test',
+        url: 'https://shop.fixture.test/checkout',
+      }),
+      cards: async () => [paymentCard],
+      card: async () => ({
+        cardholder: 'Synthetic Cardholder',
+        cardNumber: '4242424242424242',
+        expiryMonth: 8,
+        expiryYear: 2031,
+      }),
+      remember: async (id, on, code) => {
+        kept.push([id, on, code]);
+      },
+      fill: async (input) => {
+        entered.push(input.card.securityCode ?? '');
+      },
+      resume: async () => {},
+      record: async () => {},
+    });
     const verification = await createChatVerification(db.pool, {
       ownerId,
       keyStore: { getKey: async () => Buffer.alloc(32, 61) },
+      submitPayment: (turnId, code, paymentId, keep) =>
+        payments.submitCode(turnId, code, paymentId, keep),
       refresh() {},
       async submitCode(owner, turnId, code, requestId) {
         injected.push({ owner, turnId, code, requestId });
@@ -134,9 +171,11 @@ test(
     }
     async function reset() {
       await db.pool.query(
-        'DELETE FROM chat_verification_submissions; DELETE FROM messages; DELETE FROM credential_requests; DELETE FROM turn_events; DELETE FROM turns; DELETE FROM threads',
+        'DELETE FROM chat_verification_submissions; DELETE FROM messages; DELETE FROM credential_requests; DELETE FROM vault_payments; DELETE FROM turn_events; DELETE FROM turns; DELETE FROM threads',
       );
       ordinary.length = 0;
+      entered.length = 0;
+      kept.length = 0;
       injected.length = 0;
       outcome = 'submitted';
       hold = undefined;
@@ -171,6 +210,7 @@ test(
             assert.deepEqual(Object.keys(before.verificationRequests[0]).sort(), [
               'expiresAt',
               'id',
+              'kind',
               'turnId',
             ]);
             const response = await send(text);
@@ -196,6 +236,47 @@ test(
             assert.ok(!JSON.stringify(persisted.rows).includes(code));
             assert.ok(!JSON.stringify(persisted.rows).includes(text.trim()));
           }
+        },
+      );
+      await t.test(
+        'a security code reply pays and saves the keep choice without reaching chat history',
+        async () => {
+          await reset();
+          const threadId = (await thread.activeThread(db.pool, ownerId)).id;
+          const turnId = randomUUID();
+          await db.pool.query(
+            `INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,waiting_reason,started_at)
+             VALUES($1,$2,$3,'user','Buy the hinges','web','waiting','credentials',clock_timestamp())`,
+            [turnId, ownerId, threadId],
+          );
+          const order = {
+            amount: '43.20',
+            currency: 'EUR',
+            description: 'Two brass hinges',
+            fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
+          };
+          const asked = await payments.request({ threadId, turnId }, order);
+          assert.ok('question' in asked && !('paymentId' in asked));
+          assert.match(asked.question, /Reply with its security code\. Add “keep”/);
+          const state = (await app.inject({ url: '/api/state', headers })).json();
+          assert.equal(state.verificationRequests[0].kind, 'payment');
+          assert.equal((await send('73951')).statusCode, 409);
+          assert.deepEqual(entered, []);
+          const response = await send('7395, keep');
+          assert.equal(response.statusCode, 200, response.body);
+          assert.equal(response.json().messageText, 'Security code sent securely.');
+          assert.equal(response.json().verificationStatus, 'submitted');
+          assert.deepEqual(entered, ['7395']);
+          assert.deepEqual(kept, [[paymentCard.id, true, '7395']]);
+          await payments.request({ threadId, turnId }, order);
+          assert.equal((await send('7395')).statusCode, 200);
+          assert.deepEqual(kept.at(-1), [paymentCard.id, false, undefined]);
+          assert.deepEqual(ordinary, []);
+          const persisted = await db.pool.query(
+            `SELECT text AS value FROM messages UNION ALL SELECT prompt FROM turns
+             UNION ALL SELECT description||fields::text||status FROM vault_payments`,
+          );
+          assert.ok(!JSON.stringify(persisted.rows).includes('7395'));
         },
       );
       await t.test(

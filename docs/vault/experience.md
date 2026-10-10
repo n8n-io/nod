@@ -18,7 +18,7 @@ Interface text is short, with no labels that explain themselves.
 | A purchase                                   | One approval: in Stripe Link where the owner uses it, otherwise one dialog in Otto. The owner types the security code, or taps Pay when they chose to remember it; on desktop the tap is Touch ID or Windows Hello. |
 | Schedules                                    | Use the sites granted when the schedule was made. Never pay without the owner.                                                                                                                                      |
 | Event work                                   | Never signs in and never opens a saved session. Tells the owner when a site needs them.                                                                                                                             |
-| Telegram and WhatsApp                        | Questions work as today. Secure forms and payments say "Open Otto to continue securely."                                                                                                                            |
+| Telegram and WhatsApp                        | Questions and payments work as in Otto. Secure forms say "Open Otto to continue securely."                                                                                                                          |
 | Lost key                                     | A banner on every page until the key is restored. Nothing is overwritten.                                                                                                                                           |
 
 ## Text
@@ -52,7 +52,7 @@ Usernames are shown as their first two characters followed by an ellipsis. Cards
   - Denied by you
 - **Permissions.** Each login and saved session has a Sign in without asking switch. Schedules use the sites their instruction names.
 - **Add.** Login or card. On the owner's own installs, a card offers Do it for me, which shows the security code field; with it on, a yes is enough to pay. The card's detail has the same switch and its payment history. Hosted mode has no security code field.
-- **Pay.** A payment appears in the chat as a card: amount, shop, card, security code, Do it for me, Pay and Don't pay. Typing the code in the chat box works too, and with Do it for me a yes is enough, also from Telegram or WhatsApp.
+- **Pay.** Plain text everywhere: "Pay €43.20 at shop.example with Visa ••4242? Reply with its security code." The first time, Otto adds: "Add “keep” and next time your yes is enough." With Do it for me the question is just "Pay €43.20 at shop.example with Visa ••4242?" and a yes pays. "Turn off Do it for me" or "keep my card's code" changes it.
 - **Import.** New › Import passwords takes a CSV export from Chrome, 1Password, Apple Passwords, Firefox or Bitwarden, parsed in the page. It shows the count, imports, keeps what is already saved and reminds the owner to delete the file.
 
 ## Apps page

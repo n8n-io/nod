@@ -625,6 +625,8 @@ async function initializeApplication(
     ownerId,
     keyStore: adapters.keyStore,
     submitCode: vault.submitChatCode,
+    submitPayment: (turnId, code, paymentId, keep) =>
+      payments.submitCode(turnId, code, paymentId, keep),
     refresh,
   });
   const approvals = await createApprovals(
@@ -738,7 +740,7 @@ async function initializeApplication(
     page: (threadId) => computer.currentPage(threadId),
     cards: () => vault.paymentCards(),
     card: (id) => vault.paymentCard(id),
-    remember: (id, securityCode) => vault.rememberSecurityCode(id, { securityCode }),
+    remember: (id, on, securityCode) => vault.setDoItForMe(id, on, securityCode),
     fill: (input) => computer.fillCard(input),
     resume: resumeAfterPayment,
     record: (turn, entry) => vaultAccess.record(turn, entry),
@@ -840,6 +842,7 @@ async function initializeApplication(
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
+      paymentSetting: (turn, input) => payments.setting(turn, input),
       requestPayment: async (turn, input) => {
         const result = await payments.request(turn, input);
         if (!('paymentId' in result)) return result;
@@ -1062,7 +1065,6 @@ async function initializeApplication(
   }
   vault.registerRoutes(app);
   vaultAccess.registerRoutes(app);
-  payments.registerRoutes(app);
   browserConnections.registerRoutes(app);
   integrations.registerRoutes(app);
   personal.registerRoutes(app);

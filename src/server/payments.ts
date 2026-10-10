@@ -1,5 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { BrowserPage, CardEntry, CardFields } from '../ports/computer.ts';
@@ -7,7 +6,6 @@ import type {
   VaultActivityEntry,
   VaultActivityReason,
   VaultPaymentCard,
-  VaultPaymentRequest,
 } from '../shared/contracts.ts';
 import { logFailure } from './failure-log.ts';
 import type { TurnRef } from './thread.ts';
@@ -32,7 +30,7 @@ type Row = {
   amount_minor: string;
   currency: string;
   description: string;
-  card_id: string | null;
+  card_id: string;
   fields: CardFields;
   flagged: boolean;
   status: 'pending' | 'approved' | 'entered' | 'declined' | 'failed' | 'superseded';
@@ -78,8 +76,6 @@ export function formatAmount(minor: number, currency: string) {
   );
 }
 
-const hash = (token: string) => createHash('sha256').update(token).digest('hex');
-
 export async function createPayments(
   pool: Pool,
   options: {
@@ -89,7 +85,7 @@ export async function createPayments(
     page(threadId: string): Promise<BrowserPage>;
     cards(): Promise<VaultPaymentCard[]>;
     card(id: string): Promise<CardEntry['card']>;
-    remember(id: string, securityCode: string): Promise<unknown>;
+    remember(id: string, on: boolean, securityCode?: string): Promise<unknown>;
     fill(input: CardEntry): Promise<void>;
     resume(turnId: string, prompt: string): Promise<void>;
     record(
@@ -110,7 +106,7 @@ export async function createPayments(
     CREATE TABLE IF NOT EXISTS vault_payments (
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL, turn_id uuid NOT NULL,
       origin text NOT NULL, page_url text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL,
-      description text NOT NULL, card_id text, fields jsonb NOT NULL, token_hash text NOT NULL UNIQUE,
+      description text NOT NULL, card_id text NOT NULL, fields jsonb NOT NULL,
       flagged boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
       created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, entered_at timestamptz
     );
@@ -145,16 +141,22 @@ export async function createPayments(
             card.last4 === named.replace(/\D/g, '') || card.label.toLowerCase().includes(named),
         )
       : [];
-    if (matches.length === 1) return matches[0];
-    if (cards.length === 1) return cards[0];
-    const recent = (
-      await pool.query<{ card_id: string }>(
-        `SELECT card_id FROM vault_payments WHERE owner_id=$1 AND status='entered' AND card_id IS NOT NULL
-         ORDER BY origin=$2 DESC,entered_at DESC LIMIT 1`,
-        [ownerId, origin],
-      )
-    ).rows[0]?.card_id;
-    return cards.find((card) => card.id === recent);
+    if (matches.length === 1) return matches[0]!;
+    if (cards.length === 1) return cards[0]!;
+    const recent = named
+      ? undefined
+      : (
+          await pool.query<{ card_id: string }>(
+            `SELECT card_id FROM vault_payments WHERE owner_id=$1 AND origin=$2 AND status='entered'
+             ORDER BY entered_at DESC LIMIT 1`,
+            [ownerId, origin],
+          )
+        ).rows[0]?.card_id;
+    const card = cards.find((item) => item.id === recent);
+    if (card) return card;
+    throw new PaymentError(
+      `Ask the owner which card to use: ${cards.map((item) => `${item.label} (${cardName(item)})`).join(', ')}. Then call again with card.`,
+    );
   }
 
   async function enter(row: Row, cardId: string, securityCode?: string) {
@@ -183,7 +185,7 @@ export async function createPayments(
     turn: TurnRef,
     raw: unknown,
   ): Promise<
-    | { url: string; question: string }
+    | { question: string }
     | { paymentId: string; question: string }
     | { entered: true; message: string }
   > {
@@ -228,7 +230,6 @@ export async function createPayments(
     const minor = Number(whole) * 10 ** places + Number(fraction.padEnd(places, '0') || '0');
     if (!minor) throw new PaymentError('Check the amount.');
     const chosen = await choose(origin, parsed.card);
-    const token = randomBytes(32).toString('base64url');
     const row: Row = {
       id: randomUUID(),
       thread_id: turn.threadId,
@@ -238,7 +239,7 @@ export async function createPayments(
       amount_minor: String(minor),
       currency,
       description: parsed.description,
-      card_id: chosen?.id ?? null,
+      card_id: chosen.id,
       fields: parsed.fields,
       flagged: policy.flagged,
       status: 'pending',
@@ -250,8 +251,8 @@ export async function createPayments(
       [ownerId, turn.threadId],
     );
     await pool.query(
-      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,page_url,amount_minor,currency,description,card_id,fields,token_hash,flagged,expires_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,page_url,amount_minor,currency,description,card_id,fields,flagged,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         row.id,
         ownerId,
@@ -264,7 +265,6 @@ export async function createPayments(
         row.description,
         row.card_id,
         JSON.stringify(row.fields),
-        hash(token),
         row.flagged,
         row.expires_at,
       ],
@@ -274,13 +274,26 @@ export async function createPayments(
       origin,
       reason: 'payment',
       itemKind: 'card',
-      ...(chosen ? { itemId: chosen.id } : {}),
+      itemId: chosen.id,
       payment: payment(row),
     });
-    const question = `Pay ${money(row)} at ${site(origin)}${chosen ? ` with ${cardName(chosen)}` : ''}?`;
-    if (options.local && chosen?.doItForMe && !policy.flagged)
+    const question = `Pay ${money(row)} at ${site(origin)} with ${cardName(chosen)}?`;
+    if (options.local && chosen.doItForMe && !policy.flagged)
       return { paymentId: row.id, question };
-    return { url: `/pay/${token}`, question };
+    const keep = options.local && !policy.flagged;
+    return {
+      question: [
+        policy.flagged
+          ? 'A page in this task had instructions for AI assistants, so a yes is not enough.'
+          : '',
+        question,
+        'Reply with its security code.',
+        keep && chosen.choice === null ? 'Add “keep” and next time your yes is enough.' : '',
+        keep && chosen.choice ? 'Otto keeps it, so next time your yes is enough.' : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+    };
   }
 
   async function approve(context: { threadId: string; turnId: string }, raw: unknown) {
@@ -330,66 +343,18 @@ export async function createPayments(
     return { entered: true, paymentId: row.id, message: await entered(row, card.id) };
   }
 
-  async function lookup(token: string) {
-    const row = (
-      await pool.query<Row>('SELECT * FROM vault_payments WHERE token_hash=$1 AND owner_id=$2', [
-        hash(z.string().min(20).max(200).parse(token)),
-        ownerId,
-      ])
-    ).rows[0];
-    if (!row) throw new PaymentError('This payment request could not be found.', 404);
-    return row;
-  }
-
-  async function describe(token: string): Promise<VaultPaymentRequest> {
-    const row = await lookup(token);
-    return {
-      origin: row.origin,
-      amount: { minor: Number(row.amount_minor), currency: row.currency },
-      description: row.description,
-      cards: await options.cards(),
-      ...(row.card_id ? { cardId: row.card_id } : {}),
-      flagged: row.flagged,
-      local: options.local,
-      status:
-        row.status === 'pending' && row.expires_at.getTime() <= Date.now() ? 'expired' : row.status,
-    };
-  }
-
-  async function pay(token: string, raw: unknown) {
-    const body = z
-      .object({
-        cardId: z.uuid(),
-        securityCode: z
-          .string()
-          .regex(/^\d{3,4}$/)
-          .optional(),
-        doItForMe: z.boolean().optional(),
-      })
-      .strict()
-      .parse(raw);
-    const found = await lookup(token);
-    const card = (await options.cards()).find((item) => item.id === body.cardId);
-    if (!card) throw new PaymentError('This card could not be found.', 404);
-    if (!body.securityCode && (found.flagged || !card.doItForMe))
-      throw new PaymentError('Enter the security code to pay.');
-    const waiting = await pool.query(
-      "SELECT 1 FROM turns WHERE id=$1 AND owner_id=$2 AND status='waiting'",
-      [found.turn_id, ownerId],
-    );
-    if (!waiting.rowCount) throw new PaymentError('This payment’s task has stopped.', 409);
+  async function submitCode(turnId: string, code: string, paymentId: string, keep: boolean) {
     const row = (
       await pool.query<Row>(
-        `UPDATE vault_payments SET status='approved',card_id=$3 WHERE id=$1 AND owner_id=$2
+        `UPDATE vault_payments SET status='approved' WHERE id=$1 AND owner_id=$2 AND turn_id=$3
          AND status='pending' AND expires_at>now() RETURNING *`,
-        [found.id, ownerId, card.id],
+        [paymentId, ownerId, turnId],
       )
     ).rows[0];
-    if (!row) throw new PaymentError('This payment request is no longer open.', 409);
-    if (body.securityCode && body.doItForMe && options.local)
-      await options.remember(card.id, body.securityCode);
+    const card = (await options.cards()).find((item) => item.id === row?.card_id);
+    if (!row || !card) return { status: 'unavailable' as const };
     try {
-      await enter(row, card.id, body.securityCode);
+      await enter(row, card.id, code);
     } catch {
       await pool.query("UPDATE vault_payments SET status='failed' WHERE id=$1 AND owner_id=$2", [
         row.id,
@@ -397,19 +362,21 @@ export async function createPayments(
       ]);
       await options.resume(
         row.turn_id,
-        `The owner approved ${money(row)} at ${site(row.origin)}, but the checkout page changed before Otto could enter the card. Take a fresh snapshot and call pay again if the purchase is still wanted. Do not repeat completed external actions.`,
+        `The owner sent the security code for ${money(row)} at ${site(row.origin)}, but the checkout page changed before Otto could enter the card. Take a fresh snapshot and call pay again if the purchase is still wanted. Do not repeat completed external actions.`,
       );
-      throw new PaymentError(
-        'Otto could not enter the card because the checkout page changed. Otto will ask again.',
-        409,
-      );
+      return { status: 'unavailable' as const };
     }
+    const choice = options.local && !row.flagged && (keep || card.choice === true);
+    if (options.local && !row.flagged && (keep || card.choice !== false))
+      await options.remember(card.id, choice, choice ? code : undefined).catch((error: unknown) => {
+        logFailure('vault_payment_choice_failed', error);
+      });
     await record(
       { threadId: row.thread_id, turnId: row.turn_id },
       {
         action: 'paid',
         origin: row.origin,
-        reason: body.securityCode ? 'code_typed' : 'tapped',
+        reason: 'code_typed',
         itemId: card.id,
         itemKind: 'card',
         payment: payment(row),
@@ -417,74 +384,29 @@ export async function createPayments(
     );
     await options.resume(
       row.turn_id,
-      `${await entered(row, card.id)} Do not repeat completed external actions.`,
+      `${await entered(row, card.id)}${choice ? ` Do it for me is on for ${cardName(card)}: next time the owner's yes is enough.` : ''} Do not repeat completed external actions.`,
     );
-    return { status: 'entered' as const };
+    return { status: 'submitted' as const };
   }
 
-  async function decline(token: string) {
-    const found = await lookup(token);
-    const row = (
-      await pool.query<Row>(
-        `UPDATE vault_payments SET status='declined' WHERE id=$1 AND owner_id=$2 AND status='pending' RETURNING *`,
-        [found.id, ownerId],
-      )
-    ).rows[0];
-    if (!row) throw new PaymentError('This payment request is no longer open.', 409);
-    await record(
-      { threadId: row.thread_id, turnId: row.turn_id },
-      {
-        action: 'declined',
-        origin: row.origin,
-        reason: 'said_no',
-        itemKind: 'card',
-        ...(row.card_id ? { itemId: row.card_id } : {}),
-        payment: payment(row),
-      },
-    );
-    await options.resume(
-      row.turn_id,
-      `The owner declined paying ${money(row)} at ${site(row.origin)}. Do not pay; tell them what is left to do.`,
-    );
-    return { status: 'declined' as const };
+  async function setting(turn: TurnRef, raw: unknown) {
+    const parsed = z
+      .object({ card: z.string().trim().max(100).optional(), doItForMe: z.boolean() })
+      .strict()
+      .parse(raw);
+    if (!options.local)
+      throw new PaymentError('Otto never keeps security codes here, so every payment needs one.');
+    const policy = await options.policy(turn);
+    if (!policy.allowed || (parsed.doItForMe && policy.flagged))
+      throw new PaymentError('Only a message from the owner can change Do it for me.');
+    const card = await choose('', parsed.card);
+    await options.remember(card.id, parsed.doItForMe);
+    return !parsed.doItForMe
+      ? `Do it for me is off for ${cardName(card)}. Otto deleted its security code and asks for it each time.`
+      : card.doItForMe
+        ? `Do it for me is on for ${cardName(card)}: the owner's yes is enough to pay.`
+        : `Do it for me is on for ${cardName(card)}. Otto keeps its security code the next time the owner pays with it; after that a yes is enough.`;
   }
 
-  function registerRoutes(app: FastifyInstance) {
-    app.register(async (scope) => {
-      scope.addHook('onSend', async (_request, reply, payload) => {
-        reply.header('Cache-Control', 'no-store');
-        return payload;
-      });
-      scope.setErrorHandler((error, _request, reply) => {
-        const status =
-          error instanceof PaymentError
-            ? error.statusCode
-            : error instanceof z.ZodError
-              ? 400
-              : 500;
-        if (status >= 500) logFailure('vault_payment_failed', error);
-        reply.code(status).send({
-          error:
-            error instanceof PaymentError
-              ? error.message
-              : status === 400
-                ? 'Check the payment details.'
-                : 'The payment could not be completed.',
-        });
-      });
-      scope.get<{ Params: { token: string } }>('/api/payments/:token', async (request) =>
-        describe(request.params.token),
-      );
-      scope.post<{ Params: { token: string } }>(
-        '/api/payments/:token',
-        { bodyLimit: 1024 },
-        async (request) => pay(request.params.token, request.body),
-      );
-      scope.post<{ Params: { token: string } }>('/api/payments/:token/decline', async (request) =>
-        decline(request.params.token),
-      );
-    });
-  }
-
-  return { request, approve, registerRoutes };
+  return { request, approve, submitCode, setting };
 }

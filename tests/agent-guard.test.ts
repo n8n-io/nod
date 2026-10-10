@@ -1187,22 +1187,16 @@ test('pay never returns card data to Pi and waits for the owner on every new pay
     },
   );
   assert.equal(asked.result.status, 'waiting_user');
-  const linked = await fixture(
+  const question =
+    'Pay €43.20 at shop.example.test with Visa ••4242? Reply with its security code.';
+  const coded = await fixture(
     async (tools) => {
       await call(tools, 'pay', input);
     },
-    {
-      requestPayment: async () => ({
-        url: `/pay/${'a'.repeat(43)}`,
-        question: 'Pay €43.20 at shop.example.test with Visa ••4242?',
-      }),
-    },
+    { requestPayment: async () => ({ question }) },
   );
-  assert.equal(linked.result.status, 'waiting_credentials');
-  assert.match(
-    JSON.stringify(linked.replies),
-    /Pay €43\.20 at shop\.example\.test with Visa ••4242\? \[Pay securely\]\(\/pay\/a{43}\)/,
-  );
+  assert.equal(coded.result.status, 'waiting_credentials');
+  assert.ok(JSON.stringify(coded.replies).includes(question));
 });
 
 test('a turn prepares the shared browser before its first browser action and again after a failed preparation', async () => {

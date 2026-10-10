@@ -138,10 +138,9 @@ export interface RuntimeContext {
   requestPayment?(
     input: unknown,
   ): Promise<
-    | { url: string; question: string }
-    | { entered: true; message: string }
-    | { [appConfirmation]: string }
+    { question: string } | { entered: true; message: string } | { [appConfirmation]: string }
   >;
+  paymentSetting?(input: unknown): Promise<string>;
   integration(
     action: string,
     args: Record<string, unknown>,

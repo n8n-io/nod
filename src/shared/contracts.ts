@@ -38,6 +38,7 @@ export interface VerificationRequest {
   id: string;
   turnId: string;
   expiresAt: string;
+  kind: 'otp' | 'payment';
 }
 export interface Turn {
   id: string;
@@ -134,16 +135,7 @@ export interface VaultPaymentCard {
   brand: string;
   last4: string;
   doItForMe: boolean;
-}
-export interface VaultPaymentRequest {
-  origin: string;
-  amount: { minor: number; currency: string };
-  description: string;
-  cards: VaultPaymentCard[];
-  cardId?: string;
-  flagged: boolean;
-  local: boolean;
-  status: 'pending' | 'approved' | 'entered' | 'declined' | 'expired' | 'failed' | 'superseded';
+  choice: boolean | null;
 }
 export interface VaultImportResult {
   imported: number;

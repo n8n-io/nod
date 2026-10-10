@@ -508,7 +508,7 @@ test(
           channelId: 'telegram',
           accountId: 'fixture-account',
           threadId: 'fixture-thread',
-          text: 'The code could not be matched to a sign-in. Open the corresponding sign-in conversation in Otto web chat to continue.',
+          text: 'The code could not be matched to a sign-in or payment. Open the conversation in Otto web chat to continue.',
         },
       ]);
       const guidance = (

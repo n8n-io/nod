@@ -127,6 +127,7 @@ export interface ThreadDependencies {
     turn: TurnRef,
     input: unknown,
   ) => ReturnType<NonNullable<RuntimeContext['requestPayment']>>;
+  paymentSetting?: (turn: TurnRef, input: unknown) => Promise<string>;
   integration: (
     turn: TurnRef,
     action: string,
@@ -1070,6 +1071,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       ...(dependencies.requestPayment
         ? {
             requestPayment: fenced((input: unknown) => dependencies.requestPayment!(ref, input)),
+          }
+        : {}),
+      ...(dependencies.paymentSetting
+        ? {
+            paymentSetting: fenced((input: unknown) => dependencies.paymentSetting!(ref, input)),
           }
         : {}),
       integration: fenced(async (action, args, callSignal?: AbortSignal) => {

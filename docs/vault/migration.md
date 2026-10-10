@@ -51,7 +51,7 @@ Each step ships on its own.
    - Type outside locks.
    - Show the activity view. Built as `vault_activity` beside the existing sign-in tables; the tables are not merged yet. The chat stays quiet: activity lives in Vault, as the Trust panel direction asks.
 4. **Keeper.** Move `secrets.ts` and `release` into the keeper process.
-5. **Cards.** Built: `pay` with single-use mandates for stored cards, approved in the chat with the security code or, with Do it for me, a yes; hosted mode never keeps a code. One-time cards remain.
+5. **Cards.** Built: `pay` with single-use mandates for stored cards, approved by a plain-text reply with the security code or, with Do it for me, a yes; hosted mode never keeps a code. One-time cards remain.
 6. **Egress.** Add the egress registry in place of the redaction lists, and screenshot masking.
 7. **Accounts.** Built for sessions: website sessions and logins live in Vault, Apps no longer lists them, and Disconnect no longer deletes a password. The per-site Sign in without asking switch is built, and so is CSV import from Chrome, 1Password and other password managers.
 8. **Signed-in turns.**
@@ -93,5 +93,5 @@ Also: saving the same account updates its password; the same card cannot be save
 ## Decisions
 
 1. **Hosted cards.** Hosted mode offers only one-time card sources and stores no card numbers or security codes. Revisit when hosted owners need saved cards, or when agent card tokens from Visa and Mastercard are generally available.
-2. **Security codes on own installs.** Remembered per card when the owner turns on Do it for me. A payment then needs only a yes.
+2. **Security codes on own installs.** Remembered per card when the owner turns on Do it for me, by replying "keep" with the code or by asking. A payment then needs only a yes.
 3. **Recovery.** No passkey recovery for now. Owners of local and Linux installs back up the outer key.

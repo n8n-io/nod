@@ -15,7 +15,6 @@ import { integrationServices } from '../../shared/integrations';
 import { classifyVerificationReply } from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
-import { paymentCodeTarget } from '../components/payment-form';
 import { ChatTurnRail } from '../components/chat-turn-rail';
 import { BrandMark } from '../components/brand';
 import { FeedbackLauncher } from '../components/feedback-intro';
@@ -455,17 +454,6 @@ export function Chat({
     if (resetLock.current || welcoming || spendingPaused) return { sent: false, restoreText: true };
     const captureAnalytics = analyticsForCurrentSession();
     const sentThread = threadId;
-    const securityCode = paymentCodeTarget();
-    if (
-      securityCode &&
-      !attachments.length &&
-      !state.verificationRequests?.length &&
-      /^\s*\d{3,4}\s*$/.test(value)
-    ) {
-      if (reply) setReplyTo(null);
-      void securityCode(value.trim());
-      return { sent: true };
-    }
     const verificationRequests = (state.verificationRequests ?? []).filter(
       (request) => !reply || request.turnId === reply.turnId,
     );
@@ -476,6 +464,9 @@ export function Chat({
         ? verificationRequests[0].id
         : undefined;
     let verificationStatus: SubmitMessageResponse['verificationStatus'];
+    const masked = verificationRequests.every((request) => request.kind === 'payment')
+      ? 'Security code sent securely.'
+      : 'Verification code sent securely.';
     const signature = privateVerification
       ? null
       : JSON.stringify([value, attachments.map((item) => item.id), reply?.id ?? null]);
@@ -499,7 +490,7 @@ export function Chat({
     const message: Message = {
       id,
       role: 'user',
-      text: privateVerification ? 'Verification code sent securely.' : value,
+      text: privateVerification ? masked : value,
       attachments,
       turnId: null,
       createdAt: new Date().toISOString(),
@@ -563,7 +554,7 @@ export function Chat({
         typeof result.messageText === 'string'
           ? result.messageText
           : privateVerification
-            ? 'Verification code sent securely.'
+            ? masked
             : message.text;
       retry.current = null;
       setOptimistic((current) =>
