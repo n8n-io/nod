@@ -353,15 +353,38 @@
 .vault-site-activity .statement-empty {
   padding: 0 12px;
 }
-.vault-website-dialog {
+.vault-dialog {
   width: min(480px, calc(100vw - 32px));
 }
-.vault-website-dialog form {
+.vault-dialog form {
   display: grid;
   gap: 16px;
   margin-top: 24px;
 }
-.vault-website-dialog form > .button {
+.vault-dialog form > .button {
   justify-self: end;
   margin-top: 8px;
+}
+.vault-dialog form > p {
+  color: var(--muted-foreground);
+  font-size: var(--text-control);
+}
+.vault-dialog form > .vault-import-file {
+  position: relative;
+  justify-self: start;
+  margin-top: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-import-file input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.vault-import-file:has(input:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }

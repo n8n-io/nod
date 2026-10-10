@@ -12,6 +12,7 @@ import type {
   VaultCardEntry,
   VaultCardNumber,
   VaultCardSecurityCode,
+  VaultImportResult,
 } from '../shared/contracts.ts';
 import type { BrowserPage, CredentialKind, CredentialSubmission } from '../ports/computer.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
@@ -634,6 +635,88 @@ export async function createVault(pool: Pool, options: VaultOptions) {
       [entry.id, ownerId, input.label, entry.origin, hint, ciphertext],
     );
     return metadata(rows[0], input.username);
+  }
+
+  async function importLogins(raw: unknown): Promise<VaultImportResult> {
+    const { logins } = z
+      .object({
+        logins: z
+          .array(
+            z
+              .object({
+                label: z.string().max(1000),
+                url: z.string().min(1).max(2048),
+                username: z.string().max(320),
+                password: z.string().min(1).max(8192),
+              })
+              .strict(),
+          )
+          .min(1)
+          .max(5000),
+      })
+      .strict()
+      .parse(raw);
+    const credentialKey = await key();
+    const result = { imported: 0, existing: 0, skipped: 0 };
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query<EntryRow>(
+        'SELECT * FROM vault_entries WHERE owner_id=$1 FOR UPDATE',
+        [owner],
+      );
+      const known = new Set(
+        rows.flatMap((row) => {
+          try {
+            return [JSON.stringify([row.origin, openCredential(credentialKey, row).username])];
+          } catch {
+            return [];
+          }
+        }),
+      );
+      for (const login of logins) {
+        let origin: string;
+        try {
+          const url = new URL(
+            /^[a-z][a-z\d+.-]*:\/\//i.test(login.url) ? login.url : `https://${login.url}`,
+          );
+          if (url.protocol === 'http:' && !localHost(url.hostname)) url.protocol = 'https:';
+          origin = credentialOrigin(url.origin);
+        } catch {
+          result.skipped++;
+          continue;
+        }
+        const account = JSON.stringify([origin, login.username]);
+        if (known.has(account)) {
+          result.existing++;
+          continue;
+        }
+        known.add(account);
+        const entry = { id: randomUUID(), owner_id: owner, origin };
+        await client.query(
+          'INSERT INTO vault_entries (id, owner_id, label, origin, username_hint, ciphertext) VALUES ($1,$2,$3,$4,$5,$6)',
+          [
+            entry.id,
+            owner,
+            (login.label.trim() || new URL(origin).hostname.replace(/^www\./, '')).slice(0, 100),
+            origin,
+            login.username ? `${login.username.slice(0, 2)}…` : '',
+            sealCredential(credentialKey, entry, {
+              username: login.username,
+              password: login.password,
+            }),
+          ],
+        );
+        result.imported++;
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    return result;
   }
 
   async function update(rawId: string, raw: unknown) {
@@ -1845,6 +1928,9 @@ export async function createVault(pool: Pool, options: VaultOptions) {
         });
       });
       scope.get('/api/vault', listEntries);
+      scope.post('/api/vault/import', { bodyLimit: 5_000_000 }, async (request) =>
+        importLogins(request.body),
+      );
       scope.post('/api/vault', { bodyLimit: 16_384 }, async (request) => {
         const { kind } = z
           .object({ kind: z.enum(['login', 'card']).optional() })

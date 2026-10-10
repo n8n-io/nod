@@ -14,14 +14,14 @@ This covers how Otto gets permission to use a secret, how a login reaches a webs
 
 ## Grants
 
-| Source   | Created when                                                                                                   | Scope                                                            |
-| -------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Named    | The site's host name or registrable domain appears in one of the owner's last five messages of the day         | The task: its turn chain                                         |
-| Reviewed | The review model matches the sign-in to the owner's request; a business name instead of the site is left to it | The task                                                         |
-| Answer   | The owner answers yes, in Otto, Telegram or WhatsApp                                                           | In a conversation, a day from the latest; in a schedule, its run |
-| Entered  | The owner types or picks a login or code in a secure form, or uses Otto's live browser on the site             | In a conversation, a day from the latest; in a schedule, its run |
-| Standing | The owner turns on Sign in without asking                                                                      | Conversation and schedule turns, until removed                   |
-| Schedule | The check runs against the instruction that created the schedule                                               | That run                                                         |
+| Source   | Created when                                                                                                   | Scope                                                   |
+| -------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Named    | The site's host name or registrable domain appears in one of the owner's last five messages of the day         | The task: its turn chain                                |
+| Reviewed | The review model matches the sign-in to the owner's request; a business name instead of the site is left to it | The task                                                |
+| Answer   | The owner answers yes, in Otto, Telegram or WhatsApp                                                           | In a conversation, while in use; in a schedule, its run |
+| Entered  | The owner types or picks a login or code in a secure form, or uses Otto's live browser on the site             | In a conversation, while in use; in a schedule, its run |
+| Standing | The owner turns on Sign in without asking                                                                      | Conversation and schedule turns, until removed          |
+| Schedule | The check runs against the instruction that created the schedule                                               | That run                                                |
 
 - The review model is the existing trust review. It sees only the owner's recent messages and the requested sign-in, never assistant text, page content or tool results.
 - A miss becomes a question, never a silent release.
@@ -113,9 +113,13 @@ A saved browser session signs Otto in as the owner, so opening one needs the sam
 
 ## The signed-in browser
 
-Otto's browser keeps its cookies between turns. The server tracks each site the browser has been signed in to since it last signed out: logins it typed, codes, saved sessions it bound and sites the owner used in the live browser. When a turn first takes the browser, every one of those sites must pass the same check as a sign-in, without asking. If one fails, the browser signs out first: it closes, its own profile, downloads and cache are deleted, a saved session it had open is released, and the turn starts signed out. Saved sessions stay in Vault.
+Otto's browser stays signed in only while the owner is working with it. It is held by one task at a time, and a new task keeps its sign-ins only when it continues the owner's conversation within 30 minutes of the browser's last use. Background work, read-only turns, schedules and the first task after a pause start signed out.
 
-Work Otto starts on its own and read-only turns always start signed out, whatever was tracked. Schedules that do not name a site never see it signed in, and a conversation keeps a site only while the owner's say-so lasts.
+A task that continues the conversation still checks each site the browser is signed in to: logins Otto typed, codes, saved sessions it bound and sites the owner used in the live browser. Every one must pass the same check as a sign-in, without asking.
+
+Signing out closes the browser, deletes its own profile, downloads and cache, and releases a saved session it had open. Saved sessions stay in Vault, so a schedule opens its saved session or signs in again.
+
+"While in use" in the grants table means the same 30 minutes: a yes or an entry lasts until 30 minutes after Otto last used that site, and each use renews it.
 
 In the live browser, the site the owner acted on counts as their say-so, and so does the page it led to when that is on the same site. A page on another site is tracked but not trusted.
 

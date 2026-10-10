@@ -52,7 +52,7 @@ Usernames are shown as their first two characters followed by an ellipsis. Cards
   - Denied by you
 - **Permissions.** Each login and saved session has a Sign in without asking switch. Schedules use the sites their instruction names.
 - **Add.** Login or card. On the owner's own installs, a card offers "Remember security code on this device", which shows the security code field. A card with a remembered code has Forget security code. Hosted mode has no security code field.
-- **Import.** A CSV export from Chrome, 1Password, Bitwarden or Apple Passwords, parsed in the page.
+- **Import.** New › Import passwords takes a CSV export from Chrome, 1Password, Apple Passwords, Firefox or Bitwarden, parsed in the page. It shows the count, imports, keeps what is already saved and reminds the owner to delete the file.
 
 ## Apps page
 

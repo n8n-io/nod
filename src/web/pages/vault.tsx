@@ -1,7 +1,7 @@
 import { PageTitle } from '../components/page-title';
 import { useEffect, useId, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { ChevronRight, CreditCard, Globe, Plus } from 'lucide-react';
+import { ChevronRight, CreditCard, Globe, Plus, Upload } from 'lucide-react';
 import type {
   VaultActivity,
   VaultActivityEntry,
@@ -15,6 +15,7 @@ import { VaultDetails } from '../components/vault-details';
 import { VaultSessionDetails, VaultSiteAccess } from '../components/vault-site';
 import { VaultEntryIcon, VaultSurface } from '../components/vault-surface';
 import { formatCardExpiry, VaultItemForm } from '../components/vault-item-form';
+import { VaultImportDialog } from '../components/vault-import-dialog';
 import { WebsiteSessionDialog } from '../components/website-session-dialog';
 import { originLabel } from '../lib/vault-name';
 import { cn } from '../lib/utils';
@@ -55,6 +56,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState(false);
   const [website, setWebsite] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [adding, setAdding] = useState<'login' | 'card' | null>(addRequested ? 'login' : null);
   const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const [savingNew, setSavingNew] = useState(false);
@@ -62,7 +64,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   const returnTo = useRef<string | null>(null);
   const backTo = useRef<View>('saved');
   const newTrigger = useRef<HTMLButtonElement>(null);
-  const openingWebsite = useRef(false);
+  const openingDialog = useRef(false);
   const split = !phone;
   const logins = new Set(
     (entries ?? []).flatMap((entry) => (entry.kind === 'login' ? [entry.origin] : [])),
@@ -274,8 +276,8 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
                   align="end"
                   sideOffset={6}
                   onCloseAutoFocus={(event) => {
-                    if (!openingWebsite.current) return;
-                    openingWebsite.current = false;
+                    if (!openingDialog.current) return;
+                    openingDialog.current = false;
                     event.preventDefault();
                   }}
                 >
@@ -292,7 +294,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
                       type="button"
                       className="menu-item"
                       onClick={() => {
-                        openingWebsite.current = true;
+                        openingDialog.current = true;
                         setMenu(false);
                         setWebsite(true);
                       }}
@@ -301,6 +303,18 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
                       Website session
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="menu-item"
+                    onClick={() => {
+                      openingDialog.current = true;
+                      setMenu(false);
+                      setImporting(true);
+                    }}
+                  >
+                    <Upload size={16} aria-hidden="true" />
+                    Import passwords
+                  </button>
                 </Popover.Content>
               </Popover.Portal>
             </Popover.Root>
@@ -390,6 +404,14 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
         )}
       </div>
       {onAsk && <WebsiteSessionDialog open={website} onOpenChange={setWebsite} onAsk={onAsk} />}
+      <VaultImportDialog
+        open={importing}
+        onOpenChange={setImporting}
+        onImported={() => {
+          setView('saved');
+          void refresh();
+        }}
+      />
     </div>
   );
 }

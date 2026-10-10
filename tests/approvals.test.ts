@@ -679,6 +679,8 @@ test(
           aligned = false;
 
           const named = await begin('Download my October invoice from iberdrola.es.');
+          assert.equal(await access.keeps(named), false);
+          await access.signedOut(named.threadId);
           assert.deepEqual(await access.authorize(named, { origin: site, kind: 'sign_in' }), {
             ok: true,
             reason: 'asked',
@@ -792,10 +794,29 @@ test(
             ok: false,
             question: 'Sign in to login.example-energy.test?',
           });
-          await db.pool.query(
-            "UPDATE vault_grants SET created_at=now()-interval '25 hours' WHERE origin=$1 AND scope='conversation'",
-            [energy],
+          const age = (minutes: number) =>
+            db.pool.query(
+              `UPDATE vault_grants SET used_at=now()-interval '${minutes} minutes' WHERE origin=$1 AND scope='conversation'`,
+              [energy],
+            );
+          await age(29);
+          assert.deepEqual(
+            await access.authorize(await begin('And the one before that.'), {
+              origin: energy,
+              kind: 'sign_in',
+            }),
+            { ok: true, reason: 'allowed' },
           );
+          assert.equal(
+            (
+              await db.pool.query(
+                "SELECT count(*)::int AS n FROM vault_grants WHERE origin=$1 AND scope='conversation' AND used_at>now()-interval '1 minute'",
+                [energy],
+              )
+            ).rows[0].n,
+            1,
+          );
+          await age(31);
           const nextDay = await begin('Find one more invoice.');
           assert.ok(
             'question' in (await access.authorize(nextDay, { origin: energy, kind: 'sign_in' })),
@@ -805,20 +826,6 @@ test(
             ok: true,
             reason: 'entered',
           });
-          await db.pool.query(
-            "UPDATE vault_grants SET created_at=now()-interval '23 hours' WHERE origin=$1 AND scope='conversation'",
-            [energy],
-          );
-          await access.allow(nextDay, { origin: energy });
-          assert.equal(
-            (
-              await db.pool.query(
-                "SELECT count(*)::int AS n FROM vault_grants WHERE origin=$1 AND scope='conversation' AND created_at>now()-interval '1 minute'",
-                [energy],
-              )
-            ).rows[0].n,
-            1,
-          );
           await access.forget(gas);
           assert.ok(
             'question' in
@@ -872,6 +879,25 @@ test(
             await access.keeps(await begin('Synthetic event', { source: 'event' })),
             false,
           );
+          await access.signedOut(nightly.threadId);
+
+          const working = await begin('Download my September invoice from iberdrola.es.');
+          assert.equal(await access.keeps(working), false);
+          await access.record(working, { action: 'sign_in', origin: site, reason: 'asked' });
+          assert.equal(await access.keeps(working), true);
+          const holder = () =>
+            db.pool.query(
+              "UPDATE vault_browser_holder SET used_at=now()-interval '31 minutes' WHERE thread_id=$1",
+              [working.threadId],
+            );
+          const continuing = await begin('And the August one from iberdrola.es.');
+          assert.equal(await access.keeps(continuing), true);
+          await holder();
+          await access.released(continuing);
+          assert.equal(await access.keeps(await begin('July too, from iberdrola.es.')), true);
+          await holder();
+          assert.equal(await access.keeps(await begin('June too, from iberdrola.es.')), false);
+          await access.signedOut(working.threadId);
 
           await access.always({ origin: 'https://ctt.pt' });
           assert.deepEqual(
@@ -949,6 +975,7 @@ test(
               ['asked', energy, 'unrequested'],
               ['sign_in', energy, 'entered'],
               ['asked', gas, 'unrequested'],
+              ['sign_in', site, 'asked'],
               ['session', 'https://ctt.pt', 'always'],
               ['asked', 'https://ctt.pt', 'injection'],
               ['held', 'https://ctt.pt', 'injection'],
@@ -962,7 +989,7 @@ test(
             'Download my October invoice from iberdrola.es.',
           );
           assert.equal(activity.entries[0]?.task, 'Monthly invoices');
-          assert.deepEqual(activity.week, { signIns: 4, held: 3 });
+          assert.deepEqual(activity.week, { signIns: 5, held: 3 });
           const first = await access.activity({ origin: energy });
           assert.equal(first.entries.length, 4);
           await db.pool.query(

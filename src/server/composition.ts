@@ -738,7 +738,13 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact?.bind(workspace),
       executeConfirmation: approvals.executeConfirmed,
       reactToMessage: reactions.react,
-      runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
+      runTurn: async (context) => {
+        try {
+          return await ledger.withTurn(context.turnId, () => runtime.runTurn(context));
+        } finally {
+          await vaultAccess.released(context).catch(() => {});
+        }
+      },
       spendingLimitReached: ledger.limitReached,
       observe: adapters.observe,
       inspectPrompt: adapters.inspectPrompt,

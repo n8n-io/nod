@@ -122,6 +122,12 @@ export interface VaultActivity {
   entries: VaultActivityEntry[];
   next?: { at: string; id: string };
 }
+export interface VaultImportResult {
+  imported: number;
+  existing: number;
+  skipped: number;
+}
+
 export interface VaultPermission {
   id: string;
   origin: string;

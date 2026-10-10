@@ -53,7 +53,7 @@ Each step ships on its own.
 4. **Keeper.** Move `secrets.ts` and `release` into the keeper process.
 5. **Cards.** Remember security code with consent per card is built, and hosted mode never keeps a code. `pay` with mandates remains.
 6. **Egress.** Add the egress registry in place of the redaction lists, and screenshot masking.
-7. **Accounts.** Built for sessions: website sessions and logins live in Vault, Apps no longer lists them, and Disconnect no longer deletes a password. The per-site Sign in without asking switch is built. CSV import remains.
+7. **Accounts.** Built for sessions: website sessions and logins live in Vault, Apps no longer lists them, and Disconnect no longer deletes a password. The per-site Sign in without asking switch is built, and so is CSV import from Chrome, 1Password and other password managers.
 8. **Signed-in turns.**
 9. **One-time cards.** Add the Stripe Link source. Hosted cards follow the compliance decision.
 10. **1Password.** Optionally read a dedicated 1Password vault through a read-only service account.
