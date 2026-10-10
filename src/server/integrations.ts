@@ -402,21 +402,49 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 remote.service !== row.slug
               )
                 continue;
-              const saved = await pool.query(
-                `UPDATE app_connections SET configuration_id=$1 WHERE id=$2 AND owner_id=$3
-                 AND provider_id=$4 AND account_id=$5 AND configuration_id IS NOT DISTINCT FROM $6
-                 AND slug=$7 AND NOT revoked`,
-                [
-                  configurationId,
-                  row.id,
-                  configuredOwner,
-                  selected.id,
-                  row.account_id,
-                  row.configuration_id,
-                  row.slug,
-                ],
-              );
-              if (!saved.rowCount) continue;
+              const client = await pool.connect();
+              let saved = false;
+              try {
+                await client.query('BEGIN');
+                await client.query(
+                  'SELECT id FROM app_connections WHERE id=$1 AND owner_id=$2 FOR UPDATE NOWAIT',
+                  [row.id, configuredOwner],
+                );
+                if (
+                  !closed &&
+                  selected.configured &&
+                  selected.configurationId === configurationId
+                ) {
+                  const updated = await client.query(
+                    `UPDATE app_connections SET configuration_id=$1 WHERE id=$2 AND owner_id=$3
+                     AND provider_id=$4 AND account_id=$5 AND configuration_id IS NOT DISTINCT FROM $6
+                     AND slug=$7 AND NOT revoked
+                     AND NOT EXISTS (
+                       SELECT 1 FROM app_connections pending
+                       WHERE pending.owner_id=$3 AND pending.replaces_connection_id=$2
+                         AND pending.account_id IS NULL AND pending.callback_expires>now()
+                         AND NOT pending.revoked
+                     )`,
+                    [
+                      configurationId,
+                      row.id,
+                      configuredOwner,
+                      selected.id,
+                      row.account_id,
+                      row.configuration_id,
+                      row.slug,
+                    ],
+                  );
+                  saved = Boolean(updated.rowCount);
+                }
+                await client.query('COMMIT');
+              } catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+              } finally {
+                client.release();
+              }
+              if (!saved) continue;
               if (selected === provider) await resetSession(configuredOwner, pollController.signal);
               if (!closed) options.refresh?.();
             } catch {}

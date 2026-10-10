@@ -1379,6 +1379,338 @@ test(
 );
 
 test(
+  'configuration adoption preserves in-flight reconnects and ignores unrelated pending attempts',
+  { skip: !process.env.TEST_DATABASE_URL },
+  async (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    t.mock.method(globalThis, 'fetch', async () => {
+      throw new Error('Unexpected external request in the configuration adoption fixture.');
+    });
+    const { createWorkAdmission } = await import('../src/server/work-admission.ts');
+    for (const variant of [
+      'pending',
+      'claimed',
+      'restart',
+      'transaction-overlap',
+      'callback-first',
+      'expired',
+      'cancelled',
+      'foreign-owner-pending',
+      'other-target-pending',
+    ]) {
+      await t.test(variant, async (t) => {
+        const applicationName = `adoption-${randomUUID()}`;
+        const database = await hostedDatabase({ application_name: applicationName });
+        const { pool } = database;
+        const apps: ReturnType<typeof Fastify>[] = [];
+        const gates: ReturnType<typeof deferred>[] = [];
+        const parsingStarted = deferred();
+        const parsingRelease = deferred();
+        let inspection = { started: deferred(), release: deferred() };
+        gates.push(inspection.release);
+        const lockKey = randomBytes(4).readUInt32BE() & 0x7fffffff;
+        let lock: pg.PoolClient | undefined;
+        let pendingRequest: Promise<unknown> | undefined;
+        async function unlock() {
+          if (!lock) return;
+          await lock.query('SELECT pg_advisory_unlock($1)', [lockKey]);
+          lock.release();
+          lock = undefined;
+        }
+        t.after(async () => {
+          for (const gate of gates) gate.resolve();
+          parsingRelease.resolve();
+          await unlock();
+          await pendingRequest?.catch(() => {});
+          for (const app of apps) await app.close();
+          await database.close();
+        });
+        async function until(check: () => Promise<boolean>) {
+          const deadline = Date.now() + 2000;
+          while (!(await check())) {
+            assert.ok(Date.now() < deadline, `Timed out waiting for ${variant}.`);
+            await delay(5);
+          }
+        }
+        async function reached(promise: Promise<void>) {
+          await Promise.race([
+            promise,
+            delay(2000, undefined, { ref: false }).then(() =>
+              assert.fail(`Timed out waiting for ${variant}.`),
+            ),
+          ]);
+        }
+        const owner = 'adoption-owner';
+        const connectionId = randomUUID();
+        const email = 'owner@example.test';
+        let callback = '';
+        let authorizations = 0;
+        let completions = 0;
+        let refreshes = 0;
+        const deleted: string[] = [];
+        const remote = new Map([
+          ['original-account', { owner, email, active: true }],
+          ['replacement-account', { owner, email, active: false }],
+        ]);
+        const session: IntegrationSession = {
+          id: 'owned-session',
+          authorize: async (_service, url) => {
+            authorizations++;
+            callback = url;
+            return { accountId: 'replacement-account', url: 'https://consent.example.test/link' };
+          },
+          search: async () => ({ tools: {}, suggestions: [] }),
+          execute: async (_action, _args, accountId) => {
+            assert.equal(remote.get(accountId!)?.active, true);
+            return { accountId };
+          },
+        };
+        const provider: IntegrationProvider = {
+          ...fakeProvider(session),
+          configurationId: 'current-project',
+          webhooksConfigured: false,
+          supportsSubscriptions: [],
+          inspectAccount: async (id, user, options) => {
+            assert.equal(user, owner);
+            assert.equal(options?.verifyOwner, true);
+            if (id === 'original-account') {
+              const gate = inspection;
+              gate.started.resolve();
+              await gate.release.promise;
+            }
+            const account = remote.get(id);
+            assert.equal(account?.owner, user);
+            return { active: account!.active, service: 'gmail', accountEmail: account!.email };
+          },
+          deleteAccount: async (id, user) => {
+            assert.equal(user, owner);
+            assert.notEqual(id, 'original-account');
+            deleted.push(id);
+            remote.delete(id);
+          },
+          parseCallback: async (raw) => {
+            const query = raw as Record<string, string>;
+            completions++;
+            if (variant === 'claimed') {
+              parsingStarted.resolve();
+              await parsingRelease.promise;
+            }
+            if (query.outcome === 'ok') remote.get(query.account_ref)!.active = true;
+            return {
+              state: query.state,
+              accountId: query.account_ref,
+              success: query.outcome === 'ok',
+            };
+          },
+        };
+        const setup = await createIntegrations(pool, {
+          ownerId: owner,
+          provider: { ...provider, configurationId: undefined },
+          baseUrl: 'http://localhost:4310',
+          wake: async () => assert.fail('Configuration recovery must not dispatch work.'),
+        });
+        const setupApp = Fastify();
+        setup.registerRoutes(setupApp);
+        await setupApp.close();
+        await pool.query(
+          `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id,
+           account_active,account_checked_at,account_email,account_name,watch_requested,inbox_cursor)
+           VALUES($1,$2,'fixture','gmail','original-account','previous-project',true,now(),$3,'Saved account',false,'retained-cursor')`,
+          [connectionId, owner, email],
+        );
+        async function start() {
+          const admission = createWorkAdmission();
+          const integrations = await createIntegrations(pool, {
+            admission,
+            ownerId: owner,
+            provider,
+            baseUrl: 'http://localhost:4310',
+            wake: async () => assert.fail('Configuration recovery must not dispatch work.'),
+            refresh: () => {
+              refreshes++;
+            },
+          });
+          const app = Fastify();
+          apps.push(app);
+          integrations.registerRoutes(app);
+          return { app, integrations, admission };
+        }
+        let { app, integrations, admission } = await start();
+        await until(async () => admission.pending === 1);
+        await reached(inspection.started.promise);
+        const original = (
+          await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])
+        ).rows[0];
+        async function begin() {
+          return app.inject({
+            method: 'POST',
+            url: '/api/apps/gmail/connect',
+            payload: { connectionId },
+          });
+        }
+        async function complete(outcome = 'ok') {
+          const url = new URL(callback);
+          url.searchParams.set('account_ref', 'replacement-account');
+          url.searchParams.set('outcome', outcome);
+          return app.inject({ url: `${url.pathname}${url.search}` });
+        }
+        if (variant === 'transaction-overlap') {
+          lock = await pool.connect();
+          await lock.query('SELECT pg_advisory_lock($1)', [lockKey]);
+          await pool.query(
+            `CREATE FUNCTION hold_replacement() RETURNS trigger LANGUAGE plpgsql AS $$
+             BEGIN PERFORM pg_advisory_xact_lock(${lockKey}); RETURN NEW; END $$;
+             CREATE TRIGGER hold_replacement BEFORE INSERT ON app_connections
+             FOR EACH ROW WHEN (NEW.replaces_connection_id IS NOT NULL) EXECUTE FUNCTION hold_replacement()`,
+          );
+          const beginning = begin();
+          pendingRequest = beginning;
+          await until(
+            async () =>
+              (
+                await pool.query(
+                  "SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted",
+                  [lockKey],
+                )
+              ).rowCount! > 0,
+          );
+          inspection.release.resolve();
+          await until(
+            async () =>
+              admission.pending === 0 ||
+              (
+                await pool.query(
+                  "SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE 'UPDATE app_connections SET configuration_id=%'",
+                  [applicationName],
+                )
+              ).rowCount! > 0,
+          );
+          await unlock();
+          const begun = await beginning;
+          assert.equal(begun.statusCode, 200, begun.body);
+        } else {
+          const begun = await begin();
+          assert.equal(begun.statusCode, 200, begun.body);
+        }
+        assert.equal(authorizations, 1);
+        const pending = (
+          await pool.query('SELECT * FROM app_connections WHERE replaces_connection_id=$1', [
+            connectionId,
+          ])
+        ).rows[0];
+        assert.ok(pending);
+        if (variant === 'restart') {
+          await app.close();
+          inspection.release.resolve();
+          inspection = { started: deferred(), release: deferred() };
+          gates.push(inspection.release);
+          ({ app, integrations, admission } = await start());
+          await reached(inspection.started.promise);
+        }
+        let completing: ReturnType<typeof complete> | undefined;
+        if (variant === 'claimed') {
+          completing = complete();
+          pendingRequest = completing;
+          await reached(parsingStarted.promise);
+          assert.ok(
+            (
+              await pool.query('SELECT callback_claim_id FROM app_connections WHERE id=$1', [
+                pending.id,
+              ])
+            ).rows[0].callback_claim_id,
+          );
+        }
+        if (variant === 'callback-first') {
+          const completed = await complete();
+          assert.match(String(completed.headers.location), /connection=connected/);
+          assert.equal(refreshes, 1);
+        }
+        if (variant === 'expired')
+          await pool.query(
+            "UPDATE app_connections SET callback_expires=now()-interval '1 second' WHERE id=$1",
+            [pending.id],
+          );
+        if (variant === 'cancelled')
+          assert.match(String((await complete('cancel')).headers.location), /connection=cancelled/);
+        if (variant === 'foreign-owner-pending')
+          await pool.query("UPDATE app_connections SET owner_id='another-owner' WHERE id=$1", [
+            pending.id,
+          ]);
+        if (variant === 'other-target-pending') {
+          const otherId = randomUUID();
+          await pool.query(
+            `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id)
+             VALUES($1,$2,'fixture','gmail','unrelated-account','current-project')`,
+            [otherId, owner],
+          );
+          await pool.query('UPDATE app_connections SET replaces_connection_id=$2 WHERE id=$1', [
+            pending.id,
+            otherId,
+          ]);
+        }
+        const retainedPending = (
+          await pool.query('SELECT * FROM app_connections WHERE id=$1', [pending.id])
+        ).rows[0];
+        inspection.release.resolve();
+        admission.pause();
+        await admission.drain(Date.now() + 2000);
+        admission.resume();
+        const beforeCallback = (
+          await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])
+        ).rows[0];
+        const succeeds = [
+          'pending',
+          'claimed',
+          'restart',
+          'transaction-overlap',
+          'callback-first',
+        ].includes(variant);
+        if (succeeds) {
+          if (variant !== 'callback-first') {
+            parsingRelease.resolve();
+            const completed = await (completing ?? complete());
+            assert.match(String(completed.headers.location), /connection=connected/);
+          }
+          const saved = (
+            await pool.query('SELECT * FROM app_connections WHERE id=$1', [connectionId])
+          ).rows[0];
+          assert.equal(saved.account_id, 'replacement-account');
+          assert.equal(saved.configuration_id, 'current-project');
+          assert.equal(saved.account_email, original.account_email);
+          assert.equal(saved.watch_requested, original.watch_requested);
+          assert.equal(saved.account_active, true);
+          assert.equal(
+            (await pool.query('SELECT 1 FROM app_connections WHERE id=$1', [pending.id])).rowCount,
+            0,
+          );
+          assert.deepEqual(
+            await integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }),
+            { accountId: 'replacement-account' },
+          );
+          assert.equal(completions, 1);
+          assert.equal(refreshes, 1);
+          assert.doesNotMatch(String((await complete()).headers.location), /connection=connected/);
+          assert.equal(completions, 1);
+        } else {
+          assert.deepEqual(beforeCallback, { ...original, configuration_id: 'current-project' });
+          assert.deepEqual(
+            (await pool.query('SELECT * FROM app_connections WHERE id=$1', [pending.id])).rows[0],
+            retainedPending,
+          );
+          assert.equal(refreshes, 1);
+          assert.equal(completions, variant === 'cancelled' ? 1 : 0);
+          if (variant === 'expired')
+            assert.match(String((await complete()).headers.location), /connection=expired/);
+        }
+        assert.equal(remote.has('original-account'), true);
+        assert.equal(deleted.includes('original-account'), false);
+        assert.equal(authorizations, 1);
+      });
+    }
+  },
+);
+
+test(
   'integration provider changes replace owned connections only after verified consent',
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
