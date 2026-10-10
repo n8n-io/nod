@@ -33,6 +33,7 @@ type Row = {
   card_id: string;
   fields: CardFields;
   flagged: boolean;
+  in_otto: boolean;
   status: 'pending' | 'approved' | 'entered' | 'failed' | 'superseded';
   expires_at: Date;
 };
@@ -107,7 +108,7 @@ export async function createPayments(
       id uuid PRIMARY KEY, owner_id text NOT NULL, thread_id uuid NOT NULL, turn_id uuid NOT NULL,
       origin text NOT NULL, page_url text NOT NULL, amount_minor bigint NOT NULL, currency text NOT NULL,
       description text NOT NULL, card_id text NOT NULL, fields jsonb NOT NULL,
-      flagged boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
+      flagged boolean NOT NULL, in_otto boolean NOT NULL, status text NOT NULL DEFAULT 'pending',
       created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, entered_at timestamptz
     );
     CREATE INDEX IF NOT EXISTS vault_payments_owner ON vault_payments(owner_id,created_at DESC);
@@ -205,6 +206,12 @@ export async function createPayments(
           : 'This turn can only read. Do not pay.',
       );
     }
+    if (policy.channel === 'other') {
+      await record(turn, { action: 'held', origin, reason: 'chat_app', itemKind: 'card' });
+      throw new PaymentError(
+        'Payments cannot be approved from this chat app, because it keeps the security code in its history. Tell the owner to ask in Otto or Telegram.',
+      );
+    }
     if (parsed.paymentId) {
       const row = (
         await pool.query<Row>(
@@ -231,7 +238,7 @@ export async function createPayments(
       "SELECT 1 FROM vault_payments WHERE owner_id=$1 AND origin=$2 AND status='entered' LIMIT 1",
       [ownerId, origin],
     );
-    if (!policy.inOtto && !known.rowCount) {
+    if (policy.channel !== 'otto' && !known.rowCount) {
       await record(turn, { action: 'held', origin, reason: 'new_shop', itemKind: 'card' });
       throw new PaymentError(
         `The owner has not paid at ${site(origin)} before, and a first payment at a shop works only from the Otto app, not Telegram or WhatsApp. Tell them to ask there.`,
@@ -256,6 +263,7 @@ export async function createPayments(
       card_id: chosen.id,
       fields: parsed.fields,
       flagged: policy.flagged,
+      in_otto: policy.channel === 'otto',
       status: 'pending',
       expires_at: new Date(Date.now() + 10 * 60_000),
     };
@@ -265,8 +273,8 @@ export async function createPayments(
       [ownerId, turn.threadId],
     );
     await pool.query(
-      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,page_url,amount_minor,currency,description,card_id,fields,flagged,expires_at)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      `INSERT INTO vault_payments(id,owner_id,thread_id,turn_id,origin,page_url,amount_minor,currency,description,card_id,fields,flagged,in_otto,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         row.id,
         ownerId,
@@ -280,6 +288,7 @@ export async function createPayments(
         row.card_id,
         JSON.stringify(row.fields),
         row.flagged,
+        row.in_otto,
         row.expires_at,
       ],
     );
@@ -292,8 +301,8 @@ export async function createPayments(
       payment: payment(row),
     });
     const question = `Pay ${money(row)} at ${site(origin)} with ${cardName(chosen)}?`;
-    if (chosen.doItForMe && !policy.flagged) return { paymentId: row.id, question };
-    const keep = !policy.flagged;
+    if (chosen.doItForMe && !policy.flagged && row.in_otto) return { paymentId: row.id, question };
+    const keep = !policy.flagged && row.in_otto;
     return {
       question: [
         policy.flagged
@@ -301,8 +310,10 @@ export async function createPayments(
           : '',
         question,
         'Reply with its security code.',
-        keep && chosen.choice === null ? 'Add “keep” and next time your yes is enough.' : '',
-        keep && chosen.choice ? 'Otto keeps it, so next time your yes is enough.' : '',
+        keep && chosen.choice === null ? 'Add “keep” and next time a yes in Otto is enough.' : '',
+        keep && chosen.choice && !chosen.doItForMe
+          ? 'Otto keeps it, so next time a yes in Otto is enough.'
+          : '',
       ]
         .filter(Boolean)
         .join(' '),
@@ -380,7 +391,7 @@ export async function createPayments(
       return { status: 'unavailable' as const };
     }
     const choice = !row.flagged && (keep || card.choice === true);
-    if (!row.flagged && (keep || card.choice !== false))
+    if (!row.flagged && (keep || card.choice === true || (card.choice === null && row.in_otto)))
       await options.remember(card.id, choice, choice ? code : undefined).catch((error: unknown) => {
         logFailure('vault_payment_choice_failed', error);
       });
@@ -397,7 +408,7 @@ export async function createPayments(
     );
     await options.resume(
       row.turn_id,
-      `${await entered(row, card.id)}${choice ? ` Do it for me is on for ${cardName(card)}: next time the owner's yes is enough.` : ''} Do not repeat completed external actions.`,
+      `${await entered(row, card.id)}${choice ? ` Do it for me is on for ${cardName(card)}: next time a yes in Otto is enough.` : ''} Do not repeat completed external actions.`,
     );
     return { status: 'submitted' as const };
   }
@@ -416,8 +427,8 @@ export async function createPayments(
     return !parsed.doItForMe
       ? `Do it for me is off for ${cardName(card)}. Otto deleted its security code and asks for it each time.`
       : card.doItForMe
-        ? `Do it for me is on for ${cardName(card)}: the owner's yes is enough to pay.`
-        : `Do it for me is on for ${cardName(card)}. Otto keeps its security code the next time the owner pays with it; after that a yes is enough.`;
+        ? `Do it for me is on for ${cardName(card)}: a yes in Otto is enough to pay. Telegram still asks for the code.`
+        : `Do it for me is on for ${cardName(card)}. Otto keeps its security code the next time the owner pays with it; after that a yes in Otto is enough.`;
   }
 
   return { request, approve, submitCode, setting };

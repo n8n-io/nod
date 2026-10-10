@@ -2442,7 +2442,7 @@ test(
       const resumed: string[] = [];
       const recorded: Array<{ action: string; reason: string; origin: string }> = [];
       const remembered: Array<[string, boolean]> = [];
-      let policy: PaymentPolicy = { allowed: true, flagged: false, inOtto: true };
+      let policy: PaymentPolicy = { allowed: true, flagged: false, channel: 'otto' };
       let url = 'https://shop.fixture.test/checkout';
       let failFill = false;
       const make = (local: boolean) =>
@@ -2502,7 +2502,7 @@ test(
       assert.ok(!('paymentId' in first) && 'question' in first);
       assert.equal(
         first.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code. Add “keep” and next time your yes is enough.',
+        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code. Add “keep” and next time a yes in Otto is enough.',
       );
       const firstId = (await latest()).id;
       assert.equal(
@@ -2583,7 +2583,7 @@ test(
       assert.ok('entered' in retried);
       assert.equal(fills.at(-1)?.fields.number, '@e9');
 
-      policy = { allowed: true, flagged: true, inOtto: true };
+      policy = { allowed: true, flagged: true, channel: 'otto' };
       const flagged = await payments.request(turn, order);
       assert.ok('question' in flagged && !('paymentId' in flagged));
       assert.match(flagged.question, /^A page in this task had instructions for AI assistants/);
@@ -2598,7 +2598,7 @@ test(
       assert.equal(remembered.length, changes);
       await assert.rejects(payments.setting(turn, { doItForMe: true }), /Only a message/);
 
-      policy = { allowed: true, flagged: false, inOtto: true };
+      policy = { allowed: true, flagged: false, channel: 'otto' };
       assert.match(await payments.setting(turn, { doItForMe: false }), /off for Visa ••4242/);
       assert.deepEqual(await choice(), { ...(await choice()), doItForMe: false, choice: false });
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
@@ -2608,7 +2608,7 @@ test(
       );
       const again = await payments.request(turn, order);
       assert.ok('question' in again && !('paymentId' in again));
-      assert.match(again.question, /Otto keeps it, so next time your yes is enough\.$/);
+      assert.match(again.question, /Otto keeps it, so next time a yes in Otto is enough\.$/);
       assert.equal(await reply('737'), 'submitted');
       assert.equal((await choice()).doItForMe, true);
 
@@ -2617,13 +2617,19 @@ test(
       await assert.rejects(payments.request(turn, order), /never pays/);
       await assert.rejects(payments.setting(turn, { doItForMe: false }), /Only a message/);
       assert.equal(fills.length, before);
-      policy = { allowed: true, flagged: false, inOtto: false };
+      policy = { allowed: true, flagged: false, channel: 'telegram' };
       const known = await payments.request(turn, order);
-      assert.ok('paymentId' in known);
+      assert.ok('question' in known && !('paymentId' in known));
+      assert.equal(
+        known.question,
+        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code.',
+      );
       url = 'https://new.fixture.test/checkout';
       await assert.rejects(payments.request(turn, order), /not paid at new\.fixture\.test before/);
+      policy = { allowed: true, flagged: false, channel: 'other' };
+      await assert.rejects(payments.request(turn, order), /cannot be approved from this chat app/);
       assert.equal(fills.length, before);
-      policy = { allowed: true, flagged: false, inOtto: true };
+      policy = { allowed: true, flagged: false, channel: 'otto' };
       assert.ok('question' in (await payments.request(turn, order)));
 
       const second = await app.inject({
@@ -2684,6 +2690,7 @@ test(
           ['held', 'background'],
           ['asked', 'payment'],
           ['held', 'new_shop'],
+          ['held', 'chat_app'],
           ['asked', 'payment'],
           ['asked', 'payment'],
           ['asked', 'payment'],

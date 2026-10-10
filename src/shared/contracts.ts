@@ -110,6 +110,7 @@ export type VaultActivityReason =
   | 'unrequested'
   | 'payment'
   | 'new_shop'
+  | 'chat_app'
   | 'code_typed'
   | 'said_yes';
 export interface VaultActivityEntry {

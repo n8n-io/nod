@@ -296,7 +296,7 @@ export const toolDefinitions = {
   ),
   payment_setting: defineTool(
     'payment_setting',
-    "Turn Do it for me on or off for a Vault card when the user asks. On: Otto keeps the card's security code from the next payment, then the user's yes is enough to pay. Off: Otto deletes the code and asks for it each time. card is the card the user named, by name or last four digits.",
+    "Turn Do it for me on or off for a Vault card when the user asks. On: Otto keeps the card's security code from the next payment, then the user's yes in the Otto app is enough to pay. Off: Otto deletes the code and asks for it each time. card is the card the user named, by name or last four digits.",
     Type.Object({
       card: Type.Optional(Type.String({ maxLength: 100 })),
       doItForMe: Type.Boolean(),
