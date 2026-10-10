@@ -133,7 +133,10 @@ export function createComposioProxy(options: {
         publicKey,
         userId: `otto_${createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex')}`,
       };
-    })();
+    })().catch((error: unknown) => {
+      initializing = undefined;
+      throw error;
+    });
     await initializing;
   }
   function requiredIdentity() {

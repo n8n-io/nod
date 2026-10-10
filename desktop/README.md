@@ -11,7 +11,7 @@ Desktop is a wrapper around the same Otto product: it starts `src/server/index.t
 1. Download the release's `Otto-arm64.dmg` using the supplied installation link, open it, drag **Otto** to **Applications**, then open it from Applications. No GitHub account or developer tools are needed.
 2. This alpha is self-signed. If macOS blocks its first launch, approve this installation in **System Settings → Privacy & Security → Open Anyway**. Approve the normal Keychain prompt if shown so Otto can use its saved credentials.
 3. Choose your preferences and keep an internet connection available while Otto automatically downloads and prepares its computer and browser. An existing verified runtime is reused.
-4. Connect an AI provider in the shared product onboarding: a supported API key or ChatGPT plan. Connect apps through the hosted integration service.
+4. Connect an AI provider in the shared product onboarding: a supported API key or ChatGPT plan. App connections use the hosted integration service, except Notion and Linear, which connect directly to their hosted MCP servers.
 5. Use **Settings → Models** for AI connections. The app menu, menu bar and **⌘,** open the same Settings screen.
 
 Alternatively, quit Otto and install the latest published release from Terminal:
@@ -62,7 +62,7 @@ To build the runtime, run `pnpm run desktop:windows:prepare` on a Linux x64 Dock
 - Lima and Apple's Virtualization framework run a private Ubuntu computer.
 - The private computer contains PostgreSQL and separate workspace and browser containers. Docker is an internal implementation detail; Docker Desktop is not a prerequisite.
 - Container images, the base computer image, Lima, and Docker binaries live in the versioned runtime pack. First-run provisioning may still require network access for guest system packages. The optional full build embeds these assets in the app.
-- The Vault encryption key is encrypted through Electron `safeStorage`, backed by the macOS key store. Shared model connections use the Vault encryption key; model credentials never enter the computer containers. App connections use the hosted integration service; Composio project keys never enter the desktop engine.
+- The Vault encryption key is encrypted through Electron `safeStorage`, backed by the macOS key store. Shared model connections use the Vault encryption key; model credentials never enter the computer containers. App connections use the hosted integration service, except Notion and Linear, which connect directly to their hosted MCP servers. Composio project keys never enter the desktop engine.
 - The engine listens on a loopback port protected by a per-launch token. Approved app windows receive access; an ordinary website or browser tab does not.
 - The workspace and browser have separate networks, no host home-directory mount, no Docker socket, and no model-provider credentials.
 

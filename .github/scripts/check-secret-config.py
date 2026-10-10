@@ -97,8 +97,8 @@ digest = hashlib.sha256(candidate.encode()).hexdigest()
 records = f'{{\n  "src/ports/key-store.ts": "{digest}",\n  "projectKeySha256": "{digest}"\n}}\n'
 for filename in ["docs/testing/run.json", "docs/research/run.json"]:
     code, findings = scan(records, filename)
-    if code != 0 or findings:
-        raise SystemExit("Source hash records in test evidence must pass secret scanning.")
+    if code != 1 or not any(finding.get("RuleID") == "generic-api-key" for finding in findings):
+        raise SystemExit("Unverified source hash records must fail secret scanning.")
 
 for content, filename in [
     (records, "docs/app.json"),
@@ -114,7 +114,7 @@ for content, filename in [
         and ("api_key" not in content or "api_key" in finding.get("Match", ""))
         for finding in findings
     ):
-        raise SystemExit("The evidence exception must be limited to source hash records in test evidence.")
+        raise SystemExit("Unverified evidence fields and adjacent credentials must fail scanning.")
 
 provider_keys = {
     "github-pat": "ghp_" + candidate[:36],
@@ -131,31 +131,30 @@ changed_digest = hashlib.sha256(candidate.encode()).hexdigest()
 composio = json.loads(
     (config.parent / ".github/fixtures/composio-secret-scanner.json").read_text()
 )
-for filename in [
-    "docs/testing/composio-proxy/cp03.v2.inputs.json",
-    "docs/testing/composio-proxy/cp03.v2.results.json",
-    "docs/testing/composio-proxy/cp06.v2.source.json",
-    "docs/testing/composio-proxy/cp06.v2.upgrade.a02.source.json",
-]:
-    fingerprints = composio["fingerprints"][filename]
+for filename, fingerprints in composio["fingerprints"].items():
     if not fingerprints:
         raise SystemExit("The Composio snapshot must exercise a fingerprint exception.")
     snapshot = "".join(f'"{field}": "{digest}"\n' for digest, field in fingerprints)
     changed = "".join(f'"{field}": "{changed_digest}"\n' for _, field in fingerprints)
+    code, findings = scan(snapshot, filename)
+    if code != 0 or findings:
+        raise SystemExit("Verified evidence fingerprints must pass at their exact artifact path.")
     for content, target in [
-        (snapshot, filename),
         (changed, filename),
         (snapshot, "docs/testing/composio-proxy/new-source.json"),
+        (snapshot, "nested/" + filename),
+        (snapshot, "docs/composio-source.json"),
+        (f'"api_key": "{fingerprints[0][0]}"\n', filename),
+        (f'{snapshot}api_key = "{candidate}"\n', filename),
+        (f'{snapshot.rstrip()} api_key = "{candidate}"\n', filename),
     ]:
         code, findings = scan(content, target)
-        if code != 0 or findings:
-            raise SystemExit("Composio evidence fingerprints must follow the source hash policy.")
-    for outside in ["nested/" + filename, "docs/composio-source.json"]:
-        code, findings = scan(snapshot, outside)
         if code != 1 or not any(
-            finding.get("RuleID") == "generic-api-key" for finding in findings
+            finding.get("RuleID") == "generic-api-key"
+            and ("api_key" not in content or "api_key" in finding.get("Match", ""))
+            for finding in findings
         ):
-            raise SystemExit("Composio fingerprint exceptions must require a test evidence path.")
+            raise SystemExit("Altered fingerprints, paths, fields and adjacent credentials must fail.")
 
 runner_path = "docs/testing/composio-proxy/cp04.v1.results.json"
 property_reference = "const attachment = { " + "".join(composio["propertyReference"]) + "};"

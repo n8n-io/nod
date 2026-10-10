@@ -211,7 +211,7 @@ export function SetupActions({
     const popup =
       external || opened.current.has(href)
         ? null
-        : window.open('', 'otto-connect-app', 'popup,width=520,height=720');
+        : window.open('', '_blank', 'popup,width=520,height=720');
     let handedOff = false;
     controller.signal.addEventListener(
       'abort',

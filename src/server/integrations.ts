@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
@@ -323,50 +324,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       ADD COLUMN IF NOT EXISTS intent text NOT NULL DEFAULT 'classify' CHECK(intent IN ('classify','inspect_message'));
     ALTER TABLE integration_sessions ADD COLUMN IF NOT EXISTS configuration_id text;
   `);
-  for (const selected of providers) {
-    if (!selected.configured || !selected.configurationId) continue;
-    const { rows: pending } = await pool.query<ConnectionRow>(
-      `SELECT * FROM app_connections WHERE owner_id=$1 AND provider_id=$2
-       AND configuration_id IS DISTINCT FROM $3 AND account_id IS NOT NULL AND NOT revoked`,
-      [configuredOwner, selected.id, selected.configurationId],
-    );
-    await Promise.all(
-      Array.from({ length: Math.min(4, pending.length) }, async () => {
-        while (pending.length) {
-          const row = pending.shift()!;
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          try {
-            const remote = await Promise.race([
-              selected.inspectAccount(row.account_id!, configuredOwner, { verifyOwner: true }),
-              new Promise<never>((_, reject) => {
-                timer = setTimeout(
-                  () => reject(new Error('Account inspection timed out.')),
-                  10_000,
-                );
-                timer.unref();
-              }),
-            ]);
-            if (!remote.active || remote.service !== row.slug) continue;
-            await pool.query(
-              `UPDATE app_connections SET configuration_id=$1 WHERE id=$2 AND owner_id=$3
-               AND provider_id=$4 AND account_id=$5 AND configuration_id IS NOT DISTINCT FROM $6 AND NOT revoked`,
-              [
-                selected.configurationId,
-                row.id,
-                configuredOwner,
-                selected.id,
-                row.account_id,
-                row.configuration_id,
-              ],
-            );
-          } catch {
-          } finally {
-            if (timer) clearTimeout(timer);
-          }
-        }
-      }),
-    );
-  }
   const sessions = new Map<string, Promise<IntegrationSession>>();
   let sessionState: Promise<unknown> = Promise.resolve();
   let draining = false;
@@ -397,6 +354,76 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         ownerId,
       ])
     ).rows;
+  }
+
+  async function boundedRequest<T>(operation: () => Promise<T>, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const timeout = new AbortController();
+    try {
+      return await Promise.race([
+        operation(),
+        wait(10_000, undefined, {
+          signal: AbortSignal.any([signal, timeout.signal]),
+          ref: false,
+        }).then(() => {
+          throw new Error('Account request timed out.');
+        }),
+      ]);
+    } finally {
+      timeout.abort();
+    }
+  }
+
+  async function verifyConfigurations() {
+    for (const selected of providers) {
+      if (closed) return;
+      const configurationId = selected.configurationId;
+      if (!selected.configured || !configurationId) continue;
+      const { rows: pending } = await pool.query<ConnectionRow>(
+        `SELECT * FROM app_connections WHERE owner_id=$1 AND provider_id=$2
+         AND configuration_id IS DISTINCT FROM $3 AND account_id IS NOT NULL AND NOT revoked`,
+        [configuredOwner, selected.id, configurationId],
+      );
+      await Promise.all(
+        Array.from({ length: Math.min(4, pending.length) }, async () => {
+          while (pending.length && !closed) {
+            const row = pending.shift()!;
+            try {
+              const remote = await boundedRequest(
+                () =>
+                  selected.inspectAccount(row.account_id!, configuredOwner, { verifyOwner: true }),
+                pollController.signal,
+              );
+              if (
+                closed ||
+                !selected.configured ||
+                selected.configurationId !== configurationId ||
+                !remote.active ||
+                remote.service !== row.slug
+              )
+                continue;
+              const saved = await pool.query(
+                `UPDATE app_connections SET configuration_id=$1 WHERE id=$2 AND owner_id=$3
+                 AND provider_id=$4 AND account_id=$5 AND configuration_id IS NOT DISTINCT FROM $6
+                 AND slug=$7 AND NOT revoked`,
+                [
+                  configurationId,
+                  row.id,
+                  configuredOwner,
+                  selected.id,
+                  row.account_id,
+                  row.configuration_id,
+                  row.slug,
+                ],
+              );
+              if (!saved.rowCount) continue;
+              if (selected === provider) await resetSession(configuredOwner, pollController.signal);
+              if (!closed) options.refresh?.();
+            } catch {}
+          }
+        }),
+      );
+    }
   }
 
   async function connectedAccounts(ownerId: string, selected: IntegrationProvider) {
@@ -488,7 +515,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
     return pending;
   }
 
-  async function resetSession(ownerId: string) {
+  async function resetSession(ownerId: string, signal?: AbortSignal) {
     sessions.delete(ownerId);
     const { rows } = await withSessionState(() =>
       pool.query<{ session_id: string; configuration_id: string | null }>(
@@ -502,7 +529,8 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       (!provider.configurationId || rows[0].configuration_id === provider.configurationId)
     ) {
       try {
-        await provider.deleteSession(rows[0].session_id);
+        if (signal) await boundedRequest(() => provider.deleteSession(rows[0].session_id), signal);
+        else await provider.deleteSession(rows[0].session_id);
       } catch {}
     }
   }
@@ -2093,6 +2121,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       draining = false;
     }
   }
+  const verifying = background(verifyConfigurations)?.catch(() => {});
   const timer = setInterval(() => {
     void background(drain)?.catch(() => {});
     void background(syncWatches)?.catch(() => {});
@@ -2105,7 +2134,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
       closed = true;
       clearInterval(timer);
       pollController.abort();
-      await Promise.all([refreshing, polling]);
+      await Promise.all([verifying, refreshing, polling]);
     });
     app.register(async (scope) => {
       scope.setErrorHandler((error, _request, reply) => {

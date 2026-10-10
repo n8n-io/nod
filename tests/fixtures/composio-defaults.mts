@@ -223,6 +223,7 @@ globalThis.fetch = async (resource, options) => {
 mock.timers.enable({ apis: ['setInterval'] });
 const { createDefaultAdapters } = await import('../../src/server/composition.ts');
 const { createIntegrations } = await import('../../src/server/integrations.ts');
+const { createWorkAdmission } = await import('../../src/server/work-admission.ts');
 const { ownerId } = await import('../../src/server/config.ts');
 const { pool } = await import('../../src/server/db.ts');
 const app = Fastify();
@@ -262,13 +263,18 @@ try {
     };
   }
   await provider.listServices!();
+  const admission = createWorkAdmission();
   const service = await createIntegrations(pool, {
+    admission,
     ownerId,
     provider,
     baseUrl: process.env.OTTO_PUBLIC_URL!,
     wake: async () => assert.fail('Periodic fixture workers must not dispatch queued work.'),
   });
   service.registerRoutes(app);
+  admission.pause();
+  await admission.drain(Date.now() + 5000);
+  admission.resume();
   if (input.phase === 'initial') {
     assert.equal(
       (await service.list(ownerId, { refresh: false })).filter(

@@ -8,6 +8,8 @@ Desktop integration requests always use the managed proxy at `https://composio.n
 
 For managed connections, match the code in Otto with the code in the browser, then sign in to the app. Direct `COMPOSIO_API_KEY` connections do not show this pairing code. Hosted installations require signing in to Otto before connecting an app.
 
+Managed connections check Gmail for new mail while Otto is running. Automatic updates from Google Calendar, Slack and Notion are not supported through the proxy; connected app actions still work on request. Source/server installs using their own Composio key can configure webhooks with `COMPOSIO_WEBHOOK_SECRET` as described below.
+
 Keep the data folder when backing up or moving an installation. Losing its integration identity requires connecting those apps again. This identity is specific to the installation; it does not provide cross-device account recovery.
 
 Hosted tenant runtimes derive separate integration identities from each owner's stable vault key, so replacing a runtime preserves its connected apps. The derived key remains in the trusted tenant process and is never written into the workspace or browser.

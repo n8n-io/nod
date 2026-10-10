@@ -83,6 +83,9 @@ function fakeProvider(session: IntegrationSession): IntegrationProvider {
 }
 
 test('managed integration requests bind SDK calls to a private persisted installation and never retry execution', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Unexpected external request in the managed integration fixture.');
+  });
   const root = await mkdtemp(join(tmpdir(), 'otto-integration-proxy-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const calls: Array<{ path: string; body: Record<string, unknown>; key: string }> = [];
@@ -485,6 +488,26 @@ test('managed integration requests bind SDK calls to a private persisted install
       },
     );
   }
+  await t.test(
+    'failed initialization can recover on the same instance without an implicit retry',
+    async () => {
+      const dataRoot = join(root, 'recoverable-initialization');
+      await copyFile(join(directory, entries[0]), dataRoot);
+      const recovering = createComposioProxy({ ...options, dataRoot });
+      const before = calls.length;
+      const failed = await Promise.allSettled([recovering.initialize(), recovering.initialize()]);
+      assert.ok(failed.every((result) => result.status === 'rejected'));
+      assert.throws(() => recovering.userId);
+      assert.equal(calls.length, before);
+      await rm(dataRoot);
+      await Promise.all([recovering.initialize(), recovering.initialize()]);
+      const restored = createComposioProxy({ ...options, dataRoot });
+      await restored.initialize();
+      assert.equal(recovering.userId, restored.userId);
+      await recovering.client.getClient().get('/api/v3.1/toolkits');
+      assert.equal(calls.length, before + 1);
+    },
+  );
 });
 
 for (const [scenario, name, restart] of [
@@ -864,6 +887,7 @@ test(
   { skip: !process.env.TEST_DATABASE_URL },
   async (t) => {
     t.mock.timers.enable({ apis: ['setInterval'] });
+    const { createWorkAdmission } = await import('../src/server/work-admission.ts');
     for (const variant of [
       'missing-fingerprint',
       'same-project-key-rotation',
@@ -1011,7 +1035,9 @@ test(
         );
         const before = (await database.pool.query('SELECT * FROM app_connections')).rows[0];
         await first.close();
+        const admission = createWorkAdmission();
         const integrations = await createIntegrations(database.pool, {
+          admission,
           ownerId: owner,
           provider,
           baseUrl: 'http://localhost:4310',
@@ -1031,6 +1057,9 @@ test(
         const app = Fastify();
         apps.push(app);
         integrations.registerRoutes(app);
+        admission.pause();
+        await admission.drain(Date.now() + 2000);
+        admission.resume();
         assert.deepEqual((await database.pool.query('SELECT * FROM app_connections')).rows[0], {
           ...before,
           configuration_id: verified ? provider.configurationId : before.configuration_id,
@@ -1136,6 +1165,214 @@ test(
           calls,
           ['missing-provider', 'unconfigured-provider'].includes(variant) ? [] : ['inspect'],
         );
+      });
+    }
+    for (const variant of [
+      'deferred-adoption',
+      'disconnected-during-verification',
+      'configuration-replaced-during-verification',
+      'provider-reconfigured-during-verification',
+      'service-replaced-during-verification',
+      'closed-during-verification',
+      'closed-during-session-cleanup',
+    ]) {
+      await t.test(variant, async (t) => {
+        const database = await hostedDatabase({ max: 1, connectionTimeoutMillis: 1500 });
+        const apps: ReturnType<typeof Fastify>[] = [];
+        let releaseInspection = () => {};
+        const heldInspection = new Promise<void>((resolve) => {
+          releaseInspection = resolve;
+        });
+        let beganInspection = () => {};
+        const inspectionStarted = new Promise<void>((resolve) => {
+          beganInspection = resolve;
+        });
+        let releaseDeletion = () => {};
+        const heldDeletion = new Promise<void>((resolve) => {
+          releaseDeletion = resolve;
+        });
+        let beganDeletion = () => {};
+        const deletionStarted = new Promise<void>((resolve) => {
+          beganDeletion = resolve;
+        });
+        let starting: Promise<Awaited<ReturnType<typeof createIntegrations>>> | undefined;
+        t.after(async () => {
+          releaseInspection();
+          releaseDeletion();
+          await starting?.catch(() => {});
+          for (const app of apps) await app.close();
+          await database.close();
+        });
+        const owner = 'deferred-upgrade-owner';
+        const connectionId = randomUUID();
+        const inspected: string[] = [];
+        const sessionAccounts: Array<Record<string, string[]>> = [];
+        const deletedSessions: string[] = [];
+        let refreshes = 0;
+        const provider: IntegrationProvider = {
+          ...fakeProvider({
+            id: 'unused',
+            authorize: async () => assert.fail('Existing accounts must not authorize again.'),
+            search: async () => ({ tools: {}, suggestions: [] }),
+            execute: async () => assert.fail('A saved session must not be restored.'),
+          }),
+          configurationId: 'current-project',
+          createSession: async (ownerId, accounts) => {
+            assert.equal(ownerId, owner);
+            const snapshot = JSON.parse(JSON.stringify(accounts)) as Record<string, string[]>;
+            sessionAccounts.push(snapshot);
+            return {
+              id: `created-session-${sessionAccounts.length}`,
+              authorize: async () => assert.fail('Existing accounts must not authorize again.'),
+              search: async () => ({ tools: {}, suggestions: [] }),
+              execute: async (_action, _args, accountId) => {
+                assert.ok(snapshot.gmail?.includes(accountId!));
+                return { accountId };
+              },
+            };
+          },
+          restoreSession: async () => assert.fail('A stale session must not be restored.'),
+          deleteSession: async (id) => {
+            deletedSessions.push(id);
+            if (variant === 'closed-during-session-cleanup') {
+              beganDeletion();
+              await heldDeletion;
+            }
+          },
+          deleteAccount: async () => assert.fail('Old project grants must not be changed.'),
+          inspectAccount: async (accountId, ownerId, options) => {
+            assert.equal(ownerId, owner);
+            assert.equal(options?.verifyOwner, true);
+            inspected.push(accountId);
+            beganInspection();
+            await heldInspection;
+            return { active: true, service: 'gmail' };
+          },
+        };
+        const setup = await createIntegrations(database.pool, {
+          ownerId: owner,
+          provider: { ...provider, configurationId: undefined },
+          baseUrl: 'http://localhost:4310',
+          wake: async () => assert.fail('Startup must not dispatch work.'),
+        });
+        const first = Fastify();
+        apps.push(first);
+        setup.registerRoutes(first);
+        await database.pool.query(
+          `INSERT INTO app_connections(id,owner_id,provider_id,slug,account_id,configuration_id,
+           account_checked_at,account_email,inbox_cursor,watch_requested)
+           VALUES($1,$2,'fixture','gmail','retained-account','old-project','2100-01-01',
+           'owner@example.test','retained-cursor',false)`,
+          [connectionId, owner],
+        );
+        if (variant === 'closed-during-verification')
+          await database.pool.query(
+            `INSERT INTO app_connections(owner_id,provider_id,slug,account_id,configuration_id)
+             SELECT $1,'fixture','gmail','pending-account-'||n,'old-project' FROM generate_series(1,5) AS n`,
+            [owner],
+          );
+        await database.pool.query(
+          `INSERT INTO integration_sessions(owner_id,provider_id,session_id,configuration_id,configuration_version)
+           VALUES($1,'fixture','old-project-session','old-project',3)`,
+          [owner],
+        );
+        await first.close();
+        const admission = createWorkAdmission();
+        const app = Fastify();
+        apps.push(app);
+        let integrations: Awaited<ReturnType<typeof createIntegrations>> | undefined;
+        starting = createIntegrations(database.pool, {
+          admission,
+          ownerId: owner,
+          provider,
+          baseUrl: 'http://localhost:4310',
+          wake: async () => assert.fail('Startup must not dispatch work.'),
+          refresh: () => {
+            refreshes++;
+          },
+        }).then((value) => {
+          value.registerRoutes(app);
+          integrations = value;
+          return value;
+        });
+        await inspectionStarted;
+        assert.ok(integrations, 'Local startup must finish while remote verification is pending.');
+        const listed = await integrations.list(owner, { refresh: false });
+        assert.equal(
+          listed.find((row) => row.connectionId === connectionId)?.status,
+          'disconnected',
+        );
+        await assert.rejects(integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }));
+        await integrations.execute(owner, 'SEARCH_TOOLS', { query: 'Find mail tools' });
+        assert.deepEqual(sessionAccounts, [{}]);
+        if (variant === 'disconnected-during-verification') {
+          const removed = await app.inject({
+            method: 'POST',
+            url: `/api/apps/gmail/accounts/${connectionId}/disconnect`,
+          });
+          assert.equal(removed.statusCode, 200);
+        }
+        if (variant === 'configuration-replaced-during-verification')
+          await database.pool.query('UPDATE app_connections SET configuration_id=$1 WHERE id=$2', [
+            'replacement-project',
+            connectionId,
+          ]);
+        if (variant === 'service-replaced-during-verification')
+          await database.pool.query("UPDATE app_connections SET slug='slack' WHERE id=$1", [
+            connectionId,
+          ]);
+        if (variant === 'provider-reconfigured-during-verification')
+          provider.configurationId = 'replacement-project';
+        if (variant === 'closed-during-session-cleanup') {
+          releaseInspection();
+          await deletionStarted;
+        }
+        if (variant.startsWith('closed-during-')) {
+          if (variant === 'closed-during-verification') assert.equal(inspected.length, 4);
+          await Promise.race([
+            app.close(),
+            delay(1000).then(() => assert.fail('Shutdown must not await remote verification.')),
+          ]);
+          assert.equal(admission.pending, 0);
+        }
+        releaseInspection();
+        releaseDeletion();
+        admission.pause();
+        await admission.drain(Date.now() + 2000);
+        admission.resume();
+        await delay(0);
+        const rows = (await database.pool.query('SELECT * FROM app_connections')).rows;
+        if (variant === 'deferred-adoption') {
+          assert.equal(rows[0].configuration_id, 'current-project');
+          assert.equal(rows[0].inbox_cursor, 'retained-cursor');
+          assert.equal(rows[0].watch_requested, false);
+          assert.equal(refreshes, 1);
+          assert.deepEqual(deletedSessions, ['created-session-1']);
+          await integrations.execute(owner, 'SEARCH_TOOLS', { query: 'Find mail tools' });
+          assert.deepEqual(sessionAccounts, [{}, { gmail: ['retained-account'] }]);
+          assert.deepEqual(
+            await integrations.execute(owner, 'GMAIL_LIST_LABELS', { connectionId }),
+            { accountId: 'retained-account' },
+          );
+          assert.deepEqual(sessionAccounts.at(-1), { gmail: ['retained-account'] });
+        } else {
+          assert.equal(refreshes, 0);
+          if (variant === 'disconnected-during-verification') assert.deepEqual(rows, []);
+          else
+            assert.ok(
+              rows.every(
+                (row) =>
+                  row.configuration_id ===
+                  (variant === 'configuration-replaced-during-verification'
+                    ? 'replacement-project'
+                    : variant === 'closed-during-session-cleanup'
+                      ? 'current-project'
+                      : 'old-project'),
+              ),
+            );
+          assert.equal(deletedSessions.includes('old-project-session'), false);
+          if (variant === 'closed-during-verification') assert.equal(inspected.length, 4);
+        }
       });
     }
   },
@@ -12072,6 +12309,101 @@ test('chat app setup shows owned pairing codes before handoff and completes with
     await waitFor(() => !dialog() && buttons().length === 0);
     assert.equal(timers.size, 0);
     assert.doesNotMatch(dom.window.document.body.innerHTML, /synthetic-work|synthetic-personal/);
+    Reflect.deleteProperty(dom.window, 'ottoDesktop');
+    completed = [];
+    paired.clear();
+    pending.add(hashes[0]);
+    pending.add(hashes[1]);
+    Object.defineProperty(dom.window.document, 'visibilityState', {
+      configurable: true,
+      value: 'visible',
+    });
+    const popups: Array<{
+      closed: boolean;
+      opener: unknown;
+      document: { title: string; body: { textContent: string } };
+      location: { href: string };
+      close(): void;
+    }> = [];
+    const namedPopups = new Map<string, (typeof popups)[number]>();
+    dom.window.open = (url, target) => {
+      const reusable = target && target !== '_blank';
+      let popup = reusable ? namedPopups.get(target) : undefined;
+      if (!popup || popup.closed) {
+        popup = {
+          closed: false,
+          opener: dom.window,
+          document: { title: '', body: { textContent: '' } },
+          location: { href: 'about:blank' },
+          close() {
+            this.closed = true;
+          },
+        };
+        popups.push(popup);
+        if (reusable) namedPopups.set(target, popup);
+      }
+      if (url) popup.location.href = String(url);
+      return popup as unknown as Window;
+    };
+    const renderMessages = (key: string) =>
+      act(async () =>
+        root.render(
+          createElement(
+            'div',
+            { key },
+            ...links.slice(0, 2).map((href, index) =>
+              createElement(MessageText, {
+                key: href,
+                text: `[Connect Gmail ${index + 1}](${href})`,
+              }),
+            ),
+          ),
+        ),
+      );
+    await renderMessages('separate-messages');
+    await waitFor(() => buttons().length === 2 && Boolean(buttons()[1].querySelector('img')));
+    await act(async () => buttons()[0].click());
+    await waitFor(() => code() === '123-456' && popups[0]?.location.href === links[0]);
+    assert.equal(popups[0].opener, null);
+    await close();
+    assert.equal(popups[0].closed, false);
+    await act(async () => buttons()[0].click());
+    await waitFor(() => code() === '123-456');
+    assert.equal(popups.length, 1);
+    assert.equal(popups[0].location.href, links[0]);
+    await close();
+    await act(async () => buttons()[1].click());
+    await waitFor(() => code() === personalCode);
+    assert.equal(popups[0].location.href, links[0]);
+    assert.equal(popups.length, 2);
+    assert.equal(popups[1].location.href, links[1]);
+    assert.equal(popups[1].opener, null);
+    await close();
+    assert.deepEqual(
+      popups.map((popup) => popup.closed),
+      [false, false],
+    );
+    await renderMessages('cancel-before-handoff');
+    await waitFor(() => buttons().length === 2 && Boolean(buttons()[1].querySelector('img')));
+    holdRead = true;
+    releaseRead = undefined;
+    await act(async () => buttons()[0].click());
+    await waitFor(() => Boolean(dialog()) && Boolean(releaseRead));
+    assert.equal(popups.length, 3);
+    assert.equal(popups[2].location.href, 'about:blank');
+    await close();
+    assert.deepEqual(
+      popups.map((popup) => popup.closed),
+      [false, false, true],
+    );
+    await act(async () => releaseRead!());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    assert.deepEqual(
+      popups.map((popup) => popup.location.href),
+      [links[0], links[1], 'about:blank'],
+    );
+    assert.equal(dialog(), null);
+    assert.equal(timers.size, 0);
   } finally {
     await act(async () => root.unmount());
     await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
