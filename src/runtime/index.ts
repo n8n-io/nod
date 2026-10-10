@@ -39,7 +39,7 @@ const parallelTools = new Set([
   'manage_personal_context',
 ]);
 const mixedTools = new Set(['apps', 'manage_personal_context']);
-const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in']);
+const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
   /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));

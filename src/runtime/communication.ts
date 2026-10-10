@@ -22,9 +22,15 @@ export function vaultInvitation(
   return `${text} [${label}](${url})`;
 }
 
+export function paymentInvitation(url: string, question: string) {
+  if (!/^\/pay\/[A-Za-z0-9_-]{20,200}$/.test(url))
+    throw new Error('The payment link is unavailable.');
+  return `${plain(question)} [Pay securely](${url})`;
+}
+
 export function requestsPrivateInput(text: string) {
   const detail =
-    '(?:user[ -]?name|password|passcode|passphrase|pin(?: code)?|login identifier|credentials|(?:login|sign[ -]?in) details|recovery code|backup code|authentication code|(?:login|account|X|Twitter) (?:email|e-mail|handle)|one[ -]?time(?: code)?|otp|verification code|security code|sms code|api[ _-]?key|nome de utilizador|palavra[ -]passe|codigo (?:de (?:verificacao|seguranca|confirmacao|autenticacao|verificacion|seguridad|confirmacion|autenticacion)|pin)|code de (?:verification|securite|confirmation|authentification)|chave(?: de| da)? api|nif|eori|numero (?:de )?(?:contribuinte|identificacao fiscal)|tax (?:identification )?(?:number|id)|contrasena|mot de passe)';
+    '(?:card number|card details|cvc|cvv2?|expiry date|expiration date|user[ -]?name|password|passcode|passphrase|pin(?: code)?|login identifier|credentials|(?:login|sign[ -]?in) details|recovery code|backup code|authentication code|(?:login|account|X|Twitter) (?:email|e-mail|handle)|one[ -]?time(?: code)?|otp|verification code|security code|sms code|api[ _-]?key|nome de utilizador|palavra[ -]passe|codigo (?:de (?:verificacao|seguranca|confirmacao|autenticacao|verificacion|seguridad|confirmacion|autenticacion)|pin)|code de (?:verification|securite|confirmation|authentification)|chave(?: de| da)? api|nif|eori|numero (?:de )?(?:contribuinte|identificacao fiscal)|tax (?:identification )?(?:number|id)|contrasena|mot de passe)';
   const normalized = text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
   return (
     requestsPrivateValue(normalized, detail) ||

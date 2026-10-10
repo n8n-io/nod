@@ -135,6 +135,13 @@ export interface RuntimeContext {
     emailRecipient?: string;
     savedLoginId?: string;
   }): Promise<{ url: string } | { filled: true } | { [appConfirmation]: string }>;
+  requestPayment?(
+    input: unknown,
+  ): Promise<
+    | { url: string; question: string }
+    | { entered: true; message: string }
+    | { [appConfirmation]: string }
+  >;
   integration(
     action: string,
     args: Record<string, unknown>,

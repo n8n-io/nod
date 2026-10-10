@@ -31,7 +31,7 @@ Interface text is short, with no labels that explain themselves.
 | Secure form option                             | Remember in Vault                                                        |
 | Payment dialog                                 | Pay €43.20 at shop.example · Visa ••4242 · Security code · Pay           |
 | Payment dialog, remembered code                | Pay €43.20 at shop.example · Visa ••4242 · Pay                           |
-| Card form option                               | Remember security code on this device                                    |
+| Card form option                               | Do it for me                                                             |
 | Card form note, under the option               | Otto can then pay with one tap.                                          |
 | Payment dialog, card fields in a payment frame | Card details go to js.stripe.com                                         |
 | Lost key banner                                | Otto can't open your Vault. Restore the key.                             |
@@ -51,7 +51,8 @@ Usernames are shown as their first two characters followed by an ellipsis. Cards
   - Held: you didn't mention this site
   - Denied by you
 - **Permissions.** Each login and saved session has a Sign in without asking switch. Schedules use the sites their instruction names.
-- **Add.** Login or card. On the owner's own installs, a card offers "Remember security code on this device", which shows the security code field. A card with a remembered code has Forget security code. Hosted mode has no security code field.
+- **Add.** Login or card. On the owner's own installs, a card offers Do it for me, which shows the security code field; with it on, a yes is enough to pay. The card's detail has the same switch and its payment history. Hosted mode has no security code field.
+- **Pay.** A payment appears in the chat as a card: amount, shop, card, security code, Do it for me, Pay and Don't pay. Typing the code as a chat message works too, and with Do it for me a yes is enough, also from Telegram or WhatsApp.
 - **Import.** New › Import passwords takes a CSV export from Chrome, 1Password, Apple Passwords, Firefox or Bitwarden, parsed in the page. It shows the count, imports, keeps what is already saved and reminds the owner to delete the file.
 
 ## Apps page

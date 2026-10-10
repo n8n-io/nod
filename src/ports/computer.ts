@@ -86,6 +86,26 @@ export interface CredentialInput {
   usernameSelector?: string;
   passwordSelector?: string;
 }
+export interface CardFields {
+  number: string;
+  expiry?: string;
+  expiryMonth?: string;
+  expiryYear?: string;
+  securityCode?: string;
+  name?: string;
+}
+export interface CardEntry {
+  threadId: string;
+  origin: string;
+  fields: CardFields;
+  card: {
+    cardNumber: string;
+    expiryMonth: number;
+    expiryYear: number;
+    cardholder: string;
+    securityCode?: string;
+  };
+}
 export interface CredentialSubmission {
   status: 'submitted';
 }
@@ -112,6 +132,7 @@ export interface Computer {
     capturedAt?: string;
   };
   injectCredentials(input: CredentialInput): Promise<CredentialSubmission | void>;
+  fillCard(input: CardEntry): Promise<void>;
   currentPage(threadId: string): Promise<BrowserPage>;
   hold(threadId: string, until: number | null): Promise<void>;
   close(threadId: string): Promise<void>;

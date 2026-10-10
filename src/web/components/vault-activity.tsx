@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { CirclePause, Globe, Hash, KeyRound, MessageCircleQuestion } from 'lucide-react';
+import {
+  CirclePause,
+  CircleX,
+  CreditCard,
+  Globe,
+  Hash,
+  KeyRound,
+  MessageCircleQuestion,
+} from 'lucide-react';
 import type {
   VaultActivity,
   VaultActivityEntry,
@@ -22,7 +30,17 @@ const reasons: Record<VaultActivityReason, string> = {
   background: 'Background work',
   injection: 'A page had instructions',
   unrequested: 'You didn’t mention it',
+  payment: 'Payments always ask',
+  code_typed: 'You entered the code',
+  tapped: 'You tapped Pay',
+  said_yes: 'You said yes',
+  said_no: 'You said no',
 };
+
+export function formatMoney(amount: { minor: number; currency: string }) {
+  const format = new Intl.NumberFormat(undefined, { style: 'currency', currency: amount.currency });
+  return format.format(amount.minor / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2));
+}
 
 const icons = {
   sign_in: KeyRound,
@@ -30,10 +48,24 @@ const icons = {
   code: Hash,
   held: CirclePause,
   asked: MessageCircleQuestion,
+  paid: CreditCard,
+  declined: CircleX,
 };
 
 function title(entry: VaultActivityEntry) {
   const site = originLabel(entry.origin);
+  const amount = entry.amount ? formatMoney(entry.amount) : '';
+  if (entry.itemKind === 'card')
+    switch (entry.action) {
+      case 'paid':
+        return `Used your card for ${amount} at ${site}`;
+      case 'declined':
+        return `You declined ${amount} at ${site}`;
+      case 'held':
+        return `Didn’t pay at ${site}`;
+      default:
+        return `Asked to pay ${amount} at ${site}`;
+    }
   switch (entry.action) {
     case 'sign_in':
       return `Signed in to ${site}`;
@@ -45,7 +77,7 @@ function title(entry: VaultActivityEntry) {
       return entry.itemKind === 'session'
         ? `Didn’t use your session on ${site}`
         : `Didn’t sign in to ${site}`;
-    case 'asked':
+    default:
       return entry.itemKind === 'session'
         ? `Asked to use your session on ${site}`
         : `Asked to sign in to ${site}`;
@@ -88,7 +120,7 @@ export function VaultActivityList({
                     </span>
                   </div>
                   <span
-                    className={`vault-reason${['held', 'asked'].includes(entry.action) ? ' is-held' : ''}`}
+                    className={`vault-reason${['held', 'asked', 'declined'].includes(entry.action) ? ' is-held' : ''}`}
                   >
                     {reasons[entry.reason]}
                   </span>
@@ -116,10 +148,12 @@ export function VaultActivityList({
 export function VaultActivityPages({
   activity,
   origin,
+  item,
   opener,
 }: {
   activity: VaultActivity;
   origin?: string;
+  item?: string;
   opener?(entry: VaultActivityEntry): (() => void) | undefined;
 }) {
   const [more, setMore] = useState<VaultActivityEntry[]>([]);
@@ -138,7 +172,7 @@ export function VaultActivityPages({
       const page = await api<VaultActivity>(
         `/api/vault/activity?at=${encodeURIComponent(next.at)}&id=${next.id}${
           origin ? `&origin=${encodeURIComponent(origin)}` : ''
-        }`,
+        }${item ? `&item=${encodeURIComponent(item)}` : ''}`,
       );
       setMore((current) => [...current, ...page.entries]);
       setNext(page.next);
@@ -168,16 +202,28 @@ export function VaultStatement({
   activity: VaultActivity;
   opener(entry: VaultActivityEntry): (() => void) | undefined;
 }) {
-  const { signIns, held } = activity.week;
+  const { signIns, payments, held } = activity.week;
   return (
     <div className="vault-statement">
       <p className="statement-summary">
-        {signIns ? (
+        {signIns || payments ? (
           <>
-            This week Otto signed in <b>{times(signIns, 'once', 'times')}</b>, all on your say-so.
+            This week Otto{' '}
+            {signIns > 0 && (
+              <>
+                signed in <b>{times(signIns, 'once', 'times')}</b>
+              </>
+            )}
+            {signIns > 0 && payments > 0 && ' and '}
+            {payments > 0 && (
+              <>
+                used your card <b>{times(payments, 'once', 'times')}</b>
+              </>
+            )}
+            , all on your say-so.
           </>
         ) : (
-          'Otto hasn’t signed in anywhere this week.'
+          'Otto hasn’t used your Vault this week.'
         )}
         {held > 0 && (
           <>
@@ -191,7 +237,7 @@ export function VaultStatement({
           <VaultActivityPages activity={activity} opener={opener} />
         </section>
       ) : (
-        <p className="statement-empty">Sign-ins and saved sessions Otto uses will show up here.</p>
+        <p className="statement-empty">Sign-ins, sessions and payments will show up here.</p>
       )}
     </div>
   );

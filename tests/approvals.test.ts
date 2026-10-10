@@ -1015,7 +1015,7 @@ test(
             'Download my October invoice from iberdrola.es.',
           );
           assert.equal(activity.entries[0]?.task, 'Monthly invoices');
-          assert.deepEqual(activity.week, { signIns: 7, held: 3 });
+          assert.deepEqual(activity.week, { signIns: 7, payments: 0, held: 3 });
           const first = await access.activity({ origin: energy });
           assert.equal(first.entries.length, 5);
           await db.pool.query(
@@ -1034,6 +1034,27 @@ test(
             60,
           );
           assert.equal(JSON.stringify(activity).includes('password'), false);
+        },
+      );
+
+      await t.test(
+        'payments never run from background or read-only work and note a task a page tried to steer',
+        async () => {
+          assert.deepEqual(await trust.payment(await begin('Buy hinges at shop.example.test.')), {
+            allowed: true,
+            flagged: false,
+          });
+          const steered = await begin('Buy more hinges.');
+          await trust.flag(steered, ['ignore_instructions']);
+          assert.deepEqual(await trust.payment(steered), { allowed: true, flagged: true });
+          assert.deepEqual(
+            await trust.payment(await begin('Synthetic event', { source: 'event' })),
+            { allowed: false, reason: 'background' },
+          );
+          assert.deepEqual(await trust.payment(await begin('', { source: 'onboarding' })), {
+            allowed: false,
+            reason: 'readonly',
+          });
         },
       );
 

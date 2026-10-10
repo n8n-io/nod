@@ -226,6 +226,18 @@ export function createTrust(options: {
     return { confirm: true, reason: 'unrequested' };
   }
 
+  async function payment(
+    turn: TurnRef,
+  ): Promise<
+    { allowed: false; reason: 'readonly' | 'background' } | { allowed: true; flagged: boolean }
+  > {
+    const origin = await turnOrigin(turn.turnId);
+    if (!origin) throw new Error('This turn is no longer running.');
+    if (origin.readOnly) return { allowed: false, reason: 'readonly' };
+    if (origin.source === 'event') return { allowed: false, reason: 'background' };
+    return { allowed: true, flagged: await flagged(turn.threadId) };
+  }
+
   async function reviewSignIn(request: object, target: { origin: string; account?: string }) {
     try {
       const answer = await options.review(signInInstructions, {
@@ -240,5 +252,5 @@ export function createTrust(options: {
     }
   }
 
-  return { initialize, flag, check, signIn };
+  return { initialize, flag, check, signIn, payment };
 }

@@ -38,7 +38,7 @@ function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadat
     request &&
     ('threadId' in request
       ? request.threadId
-      : request.method === 'injectCredentials'
+      : request.method === 'injectCredentials' || request.method === 'fillCard'
         ? request.input.threadId
         : undefined);
   try {
@@ -107,6 +107,9 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return computer.currentPage(request.threadId);
     case 'injectCredentials':
       return computer.injectCredentials(request.input);
+    case 'fillCard':
+      await computer.fillCard(request.input);
+      return null;
     case 'hold':
       return computer.hold(request.threadId, request.until);
     case 'close':

@@ -1132,6 +1132,71 @@ test('sign_in never returns a saved value to Pi and pauses for the owner when Ot
   assert.deepEqual(asked.replies, []);
 });
 
+test('pay never returns card data to Pi and waits for the owner on every new payment', async () => {
+  const input = {
+    amount: '43.20',
+    currency: 'EUR',
+    description: 'Two brass hinges',
+    fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
+  };
+  const requests: unknown[] = [];
+  const entered = await fixture(
+    async (tools) => {
+      const result = await call(tools, 'pay', { ...input, paymentId: randomUUID() });
+      assert.deepEqual(result, {
+        content: [
+          { type: 'text', text: 'Otto entered Visa ••4242 for €43.20 at shop.example.test.' },
+        ],
+        details: {},
+      });
+    },
+    {
+      requestPayment: async (request: unknown) => {
+        requests.push(request);
+        return {
+          entered: true as const,
+          message: 'Otto entered Visa ••4242 for €43.20 at shop.example.test.',
+        };
+      },
+    },
+  );
+  assert.equal(entered.result.status, 'succeeded');
+  assert.deepEqual(Object.keys(requests[0] as object).sort(), [
+    'amount',
+    'currency',
+    'description',
+    'fields',
+    'paymentId',
+  ]);
+  const asked = await fixture(
+    async (tools) => {
+      await call(tools, 'pay', input);
+    },
+    {
+      requestPayment: async () => ({
+        [appConfirmation]: 'Pay €43.20 at shop.example.test with Visa ••4242?',
+      }),
+    },
+  );
+  assert.equal(asked.result.status, 'waiting_user');
+  const linked = await fixture(
+    async (tools) => {
+      await call(tools, 'pay', input);
+    },
+    {
+      requestPayment: async () => ({
+        url: `/pay/${'a'.repeat(43)}`,
+        question: 'Pay €43.20 at shop.example.test with Visa ••4242?',
+      }),
+    },
+  );
+  assert.equal(linked.result.status, 'waiting_credentials');
+  assert.match(
+    JSON.stringify(linked.replies),
+    /Pay €43\.20 at shop\.example\.test with Visa ••4242\? \[Pay securely\]\(\/pay\/a{43}\)/,
+  );
+});
+
 test('a turn prepares the shared browser before its first browser action and again after a failed preparation', async () => {
   const events: string[] = [];
   await fixture(
@@ -1189,6 +1254,15 @@ const refused: Array<[string, Record<string, unknown>]> = [
       kind: 'password',
       message: 'Sign in.',
       action: 'Sign in',
+    },
+  ],
+  [
+    'pay',
+    {
+      amount: '1.00',
+      currency: 'EUR',
+      description: 'Synthetic',
+      fields: { number: '@e1', expiry: '@e2' },
     },
   ],
   ['ask_user', { question: 'Which email should I answer?' }],

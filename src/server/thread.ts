@@ -123,6 +123,10 @@ export interface ThreadDependencies {
     turn: TurnRef,
     input: Parameters<RuntimeContext['requestCredential']>[0],
   ) => ReturnType<RuntimeContext['requestCredential']>;
+  requestPayment?: (
+    turn: TurnRef,
+    input: unknown,
+  ) => ReturnType<NonNullable<RuntimeContext['requestPayment']>>;
   integration: (
     turn: TurnRef,
     action: string,
@@ -553,6 +557,10 @@ export async function resumeAfterCredentials(turnId: string) {
     `credentials:${turnId}`,
     'The secure credential step has completed. Inspect the current browser and continue the request you were working on. Do not repeat completed external actions.',
   );
+}
+
+export async function resumeAfterPayment(turnId: string, prompt: string) {
+  await resumeTurn(turnId, `credentials:${turnId}`, prompt);
 }
 
 export async function retryCredentials(turnId: string) {
@@ -1059,6 +1067,11 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
         ),
       prepareBrowser: prepareBrowser && fenced(() => prepareBrowser(ref)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
+      ...(dependencies.requestPayment
+        ? {
+            requestPayment: fenced((input: unknown) => dependencies.requestPayment!(ref, input)),
+          }
+        : {}),
       integration: fenced(async (action, args, callSignal?: AbortSignal) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
         operation.throwIfAborted();

@@ -106,21 +106,44 @@ export type VaultActivityReason =
   | 'readonly'
   | 'background'
   | 'injection'
-  | 'unrequested';
+  | 'unrequested'
+  | 'payment'
+  | 'code_typed'
+  | 'tapped'
+  | 'said_yes'
+  | 'said_no';
 export interface VaultActivityEntry {
   id: string;
   at: string;
-  action: 'sign_in' | 'session' | 'code' | 'held' | 'asked';
+  action: 'sign_in' | 'session' | 'code' | 'held' | 'asked' | 'paid' | 'declined';
   origin: string;
   itemId?: string;
-  itemKind?: 'login' | 'session';
+  itemKind?: 'login' | 'session' | 'card';
+  amount?: { minor: number; currency: string };
   task: string;
   reason: VaultActivityReason;
 }
 export interface VaultActivity {
-  week: { signIns: number; held: number };
+  week: { signIns: number; payments: number; held: number };
   entries: VaultActivityEntry[];
   next?: { at: string; id: string };
+}
+export interface VaultPaymentCard {
+  id: string;
+  label: string;
+  brand: string;
+  last4: string;
+  doItForMe: boolean;
+}
+export interface VaultPaymentRequest {
+  origin: string;
+  amount: { minor: number; currency: string };
+  description: string;
+  cards: VaultPaymentCard[];
+  cardId?: string;
+  flagged: boolean;
+  local: boolean;
+  status: 'pending' | 'entered' | 'declined' | 'expired' | 'failed';
 }
 export interface VaultImportResult {
   imported: number;
@@ -193,6 +216,7 @@ export interface AppState {
   threadId: string;
   hasEarlierMessages?: boolean;
   verificationRequests?: VerificationRequest[];
+  paymentAwaitingCode?: boolean;
   planningTasks?: boolean;
   messages: Message[];
   turns: Turn[];

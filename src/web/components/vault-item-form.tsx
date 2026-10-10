@@ -197,10 +197,15 @@ export function VaultFields({
           </Field>
           {!hosted && !savedCode && (
             <div className="field vault-switch-row">
-              <span className="field-label">Remember security code on this device</span>
+              <span>
+                <span className="field-label">Do it for me</span>
+                <small className="payment-hint">
+                  Otto keeps the security code, so your yes is enough to pay.
+                </small>
+              </span>
               <Switch
                 checked={remember}
-                aria-label="Remember security code on this device"
+                aria-label="Do it for me"
                 disabled={disabled}
                 onCheckedChange={setRemember}
               />

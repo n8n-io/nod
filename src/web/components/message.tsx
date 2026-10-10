@@ -17,6 +17,7 @@ import {
   setupLink,
 } from '../lib/message-links';
 import { rehypeLocalLinks } from '../lib/markdown';
+import { PaymentForm } from './payment-form';
 import { nextReaction, reactionName } from '../lib/reactions';
 import { MessageLinkPreviews } from './link-previews';
 import { SetupActions } from './setup-link';
@@ -45,7 +46,9 @@ export const MessageText = memo(function MessageText({
 }) {
   const content = useRef<HTMLDivElement>(null);
   const origin = typeof window === 'undefined' ? 'http://localhost:4310' : window.location.origin;
-  const actions = messageSetupLinks(text, origin);
+  const links = messageSetupLinks(text, origin);
+  const payments = links.filter((action) => action.href.startsWith('/pay/'));
+  const actions = links.filter((action) => !action.href.startsWith('/pay/'));
   const connected = (href: string) =>
     href.startsWith('/apps?connect=') &&
     Boolean(connectedAppIds?.has(href.slice('/apps?connect='.length)));
@@ -61,6 +64,7 @@ export const MessageText = memo(function MessageText({
               const link = safeMessageLink(href ?? '', origin);
               if (!link) return <span>{children}</span>;
               const setup = setupLink(link, messageLinkText(node?.children ?? []));
+              if (setup && payments.some((action) => action.href === setup.href)) return null;
               if (setup && actions.some((action) => action.href === setup.href))
                 return <strong className="setup-phrase">{setup.label}</strong>;
               return (
@@ -74,7 +78,7 @@ export const MessageText = memo(function MessageText({
                   }
                   rel={
                     setup?.setup === 'vault' &&
-                    /^\/(?:vault|credentials)\/[A-Za-z0-9_-]+\/?$/.test(link.href)
+                    /^\/(?:vault|credentials|pay)\/[A-Za-z0-9_-]+\/?$/.test(link.href)
                       ? 'opener'
                       : 'noopener noreferrer'
                   }
@@ -95,6 +99,9 @@ export const MessageText = memo(function MessageText({
         >
           {text}
         </Markdown>
+        {payments.map((action) => (
+          <PaymentForm key={action.href} token={action.href.slice('/pay/'.length)} inline />
+        ))}
         <SetupActions
           actions={actions.filter(
             (action) => action.setup !== 'browser' && !connected(action.href),

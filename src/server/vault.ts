@@ -13,6 +13,7 @@ import type {
   VaultCardNumber,
   VaultCardSecurityCode,
   VaultImportResult,
+  VaultPaymentCard,
 } from '../shared/contracts.ts';
 import type { BrowserPage, CredentialKind, CredentialSubmission } from '../ports/computer.ts';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
@@ -775,6 +776,82 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     const credentialKey = await key();
     const entry = await ownedCard(id);
     return { entry, secret: openCard(credentialKey, entry) };
+  }
+
+  async function paymentCards(): Promise<VaultPaymentCard[]> {
+    const { rows } = await pool.query<CardRow>(
+      'SELECT * FROM vault_cards WHERE owner_id=$1 ORDER BY updated_at DESC',
+      [owner],
+    );
+    if (!rows.length) return [];
+    const credentialKey = await key();
+    return rows.flatMap((row) => {
+      try {
+        const secret = openCard(credentialKey, row);
+        return [
+          {
+            id: row.id,
+            label: row.label,
+            brand: row.brand,
+            last4: row.last4,
+            doItForMe: options.securityCodes !== false && Boolean(secret.securityCode),
+          },
+        ];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  async function paymentCard(id: string) {
+    const { secret } = await readCard(id);
+    return {
+      ...secret,
+      securityCode: options.securityCodes === false ? undefined : secret.securityCode,
+    };
+  }
+
+  async function rememberSecurityCode(rawId: string, raw: unknown) {
+    if (options.securityCodes === false)
+      throw new VaultError('Otto never keeps security codes here.', 400);
+    const id = z.uuid().parse(rawId);
+    const { securityCode } = z
+      .object({
+        securityCode: z
+          .string()
+          .regex(/^\d{3,4}$/)
+          .nullable(),
+      })
+      .strict()
+      .parse(raw);
+    const credentialKey = await key();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const entry = (
+        await client.query<CardRow>(
+          'SELECT * FROM vault_cards WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+          [id, owner],
+        )
+      ).rows[0];
+      if (!entry) throw new VaultError('This saved card could not be found.', 404);
+      const { securityCode: _previous, ...secret } = openCard(credentialKey, entry);
+      const { rows } = await client.query<CardRow>(
+        'UPDATE vault_cards SET ciphertext=$3,updated_at=now() WHERE id=$1 AND owner_id=$2 RETURNING *',
+        [
+          id,
+          owner,
+          sealCard(credentialKey, entry, securityCode ? { ...secret, securityCode } : secret),
+        ],
+      );
+      await client.query('COMMIT');
+      return cardMetadata(rows[0]!);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async function saveCard(raw: unknown) {
@@ -2003,6 +2080,11 @@ export async function createVault(pool: Pool, options: VaultOptions) {
           return { securityCode: secret.securityCode };
         },
       );
+      scope.put<{ Params: { id: string } }>(
+        '/api/vault/:id/security-code',
+        { bodyLimit: 1024 },
+        async (request) => rememberSecurityCode(request.params.id, request.body),
+      );
       scope.post<{ Params: { id: string } }>(
         '/api/vault/:id/card-number',
         async (request): Promise<VaultCardNumber> => {
@@ -2071,5 +2153,8 @@ export async function createVault(pool: Pool, options: VaultOptions) {
     fillEmailCode,
     submitChatCode,
     resumePending,
+    paymentCards,
+    paymentCard,
+    rememberSecurityCode,
   };
 }

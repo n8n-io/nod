@@ -23,7 +23,9 @@ type Row = {
   action: VaultActivityEntry['action'];
   origin: string;
   item_id: string | null;
-  item_kind: 'login' | 'session' | null;
+  item_kind: VaultActivityEntry['itemKind'] | null;
+  amount_minor: string | null;
+  currency: string | null;
   task: string;
   reason: VaultActivityReason;
 };
@@ -77,10 +79,12 @@ export async function createVaultAccess(
     CREATE TABLE IF NOT EXISTS vault_activity (
       id uuid PRIMARY KEY, owner_id text NOT NULL, at timestamptz NOT NULL DEFAULT now(),
       action text NOT NULL, origin text NOT NULL, item_id uuid, item_kind text,
-      turn_id uuid, root_turn_id uuid, task text NOT NULL DEFAULT '', reason text NOT NULL
+      turn_id uuid, root_turn_id uuid, task text NOT NULL DEFAULT '', reason text NOT NULL,
+      payment_id uuid, amount_minor bigint, currency text
     );
     CREATE INDEX IF NOT EXISTS vault_activity_owner_time ON vault_activity(owner_id,at DESC,id DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_once ON vault_activity(owner_id,root_turn_id,origin,action);
+    CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_once ON vault_activity(owner_id,root_turn_id,origin,action) WHERE payment_id IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS vault_activity_payment ON vault_activity(owner_id,payment_id,action) WHERE payment_id IS NOT NULL;
     CREATE TABLE IF NOT EXISTS vault_browser (
       owner_id text NOT NULL, thread_id uuid NOT NULL, origin text NOT NULL,
       PRIMARY KEY(owner_id,thread_id,origin)
@@ -179,14 +183,19 @@ export async function createVaultAccess(
       origin: string;
       reason: VaultActivityReason;
       itemId?: string;
-      itemKind?: 'login' | 'session';
+      itemKind?: VaultActivityEntry['itemKind'];
+      payment?: { id: string; minor: number; currency: string };
     },
   ) {
     await pool.query(
-      `INSERT INTO vault_activity(id,owner_id,action,origin,item_id,item_kind,turn_id,root_turn_id,task,reason)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (owner_id,root_turn_id,origin,action) DO UPDATE
-       SET item_id=COALESCE(vault_activity.item_id,excluded.item_id),item_kind=COALESCE(vault_activity.item_kind,excluded.item_kind)`,
+      `INSERT INTO vault_activity(id,owner_id,action,origin,item_id,item_kind,turn_id,root_turn_id,task,reason,payment_id,amount_minor,currency)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ${
+         entry.payment
+           ? 'ON CONFLICT (owner_id,payment_id,action) WHERE payment_id IS NOT NULL DO NOTHING'
+           : `ON CONFLICT (owner_id,root_turn_id,origin,action) WHERE payment_id IS NULL DO UPDATE
+       SET item_id=COALESCE(vault_activity.item_id,excluded.item_id),item_kind=COALESCE(vault_activity.item_kind,excluded.item_kind)`
+       }`,
       [
         randomUUID(),
         ownerId,
@@ -198,9 +207,13 @@ export async function createVaultAccess(
         chain.id,
         chain.task,
         entry.reason,
+        entry.payment?.id ?? null,
+        entry.payment?.minor ?? null,
+        entry.payment?.currency ?? null,
       ],
     );
-    if (!['held', 'asked'].includes(entry.action)) await track(turn.threadId, entry.origin);
+    if (['sign_in', 'session', 'code'].includes(entry.action))
+      await track(turn.threadId, entry.origin);
     options.refresh?.();
   }
 
@@ -349,22 +362,29 @@ export async function createVaultAccess(
     return { allowed: true, website: exact, message: `You allowed signing in to ${host(exact)}.` };
   }
 
-  async function activity(query: { before?: unknown; origin?: unknown }): Promise<VaultActivity> {
+  async function activity(query: {
+    before?: unknown;
+    origin?: unknown;
+    item?: unknown;
+  }): Promise<VaultActivity> {
     const before = query.before === undefined ? undefined : cursor.parse(query.before);
     const origin =
       typeof query.origin === 'string' && query.origin ? credentialOrigin(query.origin) : undefined;
+    const item =
+      query.item === undefined || query.item === '' ? undefined : z.uuid().parse(query.item);
     const { rows } = await pool.query<Row>(
       `SELECT id,at,to_char(at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor,
-       action,origin,item_id,item_kind,task,reason FROM vault_activity
-       WHERE owner_id=$1 AND ($2::text IS NULL OR origin=$2)
+       action,origin,item_id,item_kind,amount_minor,currency,task,reason FROM vault_activity
+       WHERE owner_id=$1 AND ($2::text IS NULL OR origin=$2) AND ($5::uuid IS NULL OR item_id=$5)
        AND ($3::timestamptz IS NULL OR (at,id)<($3,$4::uuid))
        ORDER BY at DESC,id DESC LIMIT 51`,
-      [ownerId, origin ?? null, before?.at ?? null, before?.id ?? null],
+      [ownerId, origin ?? null, before?.at ?? null, before?.id ?? null, item ?? null],
     );
     const page = rows.slice(0, 50);
     const week = (
-      await pool.query<{ signed: number; held: number }>(
+      await pool.query<{ signed: number; paid: number; held: number }>(
         `SELECT count(*) FILTER (WHERE action IN ('sign_in','session'))::int AS signed,
+                count(*) FILTER (WHERE action='paid')::int AS paid,
                 count(*) FILTER (WHERE action='held')::int AS held
          FROM vault_activity WHERE owner_id=$1 AND at>now()-interval '7 days'`,
         [ownerId],
@@ -372,7 +392,7 @@ export async function createVaultAccess(
     ).rows[0]!;
     const last = page.at(-1);
     return {
-      week: { signIns: week.signed, held: week.held },
+      week: { signIns: week.signed, payments: week.paid, held: week.held },
       entries: page.map((row) => ({
         id: row.id,
         at: row.at.toISOString(),
@@ -380,6 +400,9 @@ export async function createVaultAccess(
         origin: row.origin,
         ...(row.item_id ? { itemId: row.item_id } : {}),
         ...(row.item_kind ? { itemKind: row.item_kind } : {}),
+        ...(row.amount_minor !== null && row.currency
+          ? { amount: { minor: Number(row.amount_minor), currency: row.currency } }
+          : {}),
         task: row.task,
         reason: row.reason,
       })),
@@ -440,7 +463,7 @@ export async function createVaultAccess(
                 : 'The Vault activity is unavailable.',
         });
       });
-      scope.get<{ Querystring: { at?: string; id?: string; origin?: string } }>(
+      scope.get<{ Querystring: { at?: string; id?: string; origin?: string; item?: string } }>(
         '/api/vault/activity',
         async (request) =>
           activity({
@@ -448,6 +471,7 @@ export async function createVaultAccess(
               ? { before: { at: request.query.at, id: request.query.id } }
               : {}),
             origin: request.query.origin,
+            item: request.query.item,
           }),
       );
       scope.get('/api/vault/permissions', permissions);

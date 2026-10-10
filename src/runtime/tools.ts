@@ -6,7 +6,7 @@ import { browserDownloadBytes } from '../ports/computer.ts';
 import { browserUploadBytes } from '../ports/computer.ts';
 import { basename } from 'node:path';
 import { isMessageReaction } from '../shared/emoji.ts';
-import { requestsPrivateInput, vaultInvitation } from './communication.ts';
+import { paymentInvitation, requestsPrivateInput, vaultInvitation } from './communication.ts';
 import { browserFlowParameters } from './browser-flows.ts';
 import { privateInputNotice, type Turn } from './turn.ts';
 
@@ -273,6 +273,25 @@ export const toolDefinitions = {
       savedLoginId: Type.Optional(uuid),
       message: Type.String({ minLength: 1, maxLength: 300 }),
       action: Type.String({ minLength: 1, maxLength: 60 }),
+    }),
+  ),
+  pay: defineTool(
+    'pay',
+    'Pay at the checkout on the current page with a Vault card. You never see the card: Otto types the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; description says what is being bought in a few words; card is the card the user named, by name or last four digits. Every payment needs the user: Otto asks them, or sends a secure link where they enter the security code. Stop and wait. After Otto enters the card, place the order and check the result. With paymentId, Otto enters the card again for a payment the user already approved.',
+    Type.Object({
+      amount: Type.String({ pattern: '^\\d{1,9}(\\.\\d{1,3})?$' }),
+      currency: Type.String({ minLength: 3, maxLength: 3 }),
+      description: Type.String({ minLength: 1, maxLength: 200 }),
+      card: Type.Optional(Type.String({ maxLength: 100 })),
+      paymentId: Type.Optional(uuid),
+      fields: Type.Object({
+        number: Type.String({ minLength: 1 }),
+        expiry: Type.Optional(Type.String({ minLength: 1 })),
+        expiryMonth: Type.Optional(Type.String({ minLength: 1 })),
+        expiryYear: Type.Optional(Type.String({ minLength: 1 })),
+        securityCode: Type.Optional(Type.String({ minLength: 1 })),
+        name: Type.Optional(Type.String({ minLength: 1 })),
+      }),
     }),
   ),
   browser_session: defineTool(
@@ -571,6 +590,16 @@ export function ottoTools(
       await turn.invite(vaultInvitation(request.origin, result.url, message, action));
       await pause('credentials', undefined, { post: false });
       return 'Waiting for secure input.';
+    }),
+    bind(toolDefinitions.pay, async (p) => {
+      if (!context.requestPayment) throw new Error('Payments are unavailable.');
+      const result = await context.requestPayment(p);
+      if (appConfirmation in result)
+        return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
+      if ('entered' in result) return result.message;
+      await turn.invite(paymentInvitation(result.url, result.question));
+      await pause('credentials', undefined, { post: false });
+      return 'Waiting for the user to approve the payment.';
     }),
     bind(toolDefinitions.browser_session, async (p) => {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');

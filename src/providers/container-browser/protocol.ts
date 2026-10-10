@@ -83,6 +83,35 @@ const credential = z
   })
   .strict();
 
+const card = z
+  .object({
+    threadId: thread,
+    origin: z.string().max(2048),
+    fields: z
+      .object({
+        number: selector,
+        expiry: selector.optional(),
+        expiryMonth: selector.optional(),
+        expiryYear: selector.optional(),
+        securityCode: selector.optional(),
+        name: selector.optional(),
+      })
+      .strict(),
+    card: z
+      .object({
+        cardNumber: z.string().regex(/^\d{12,19}$/),
+        expiryMonth: z.number().int().min(1).max(12),
+        expiryYear: z.number().int().min(2000).max(9999),
+        cardholder: z.string().max(200),
+        securityCode: z
+          .string()
+          .regex(/^\d{3,4}$/)
+          .optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const browserRequest = z.discriminatedUnion('method', [
   z
     .object({ ...identity, method: z.literal('act'), threadId: thread, input: browserAction })
@@ -129,6 +158,7 @@ export const browserRequest = z.discriminatedUnion('method', [
   z.object({ ...identity, method: z.literal('view'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('currentPage'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('injectCredentials'), input: credential }).strict(),
+  z.object({ ...identity, method: z.literal('fillCard'), input: card }).strict(),
   z
     .object({
       ...identity,

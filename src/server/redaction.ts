@@ -38,7 +38,7 @@ function compileRedactor(
       )
       .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, hidden)
       .replace(
-        /((?:https?:\/\/[^\s/"'<>]+)?\/(?:vault|credentials|approvals)\/)[^\s"'<>]+/gi,
+        /((?:https?:\/\/[^\s/"'<>]+)?\/(?:vault|credentials|approvals|pay)\/)[^\s"'<>]+/gi,
         '$1[redacted]',
       )
       .replace(

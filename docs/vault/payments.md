@@ -32,40 +32,39 @@ Own installs are the desktop app and any server the owner runs for themselves. H
 
 ## Mandates
 
-A mandate is a `pay` grant with `max_amount`, `currency`, the merchant origin and the card. It is used once and expires after ten minutes.
+Built for stored cards. A mandate is one payment: the merchant origin, amount, currency, card and task. It is used once and expires after ten minutes.
 
 ```mermaid
 sequenceDiagram
   participant Pi
   participant S as Server
-  participant O as Owner
-  participant K as Keeper
+  participant O as Owner, in chat
   participant B as Browser
-  Pi->>S: pay(card, amount, currency, summary, fields)
-  S->>B: merchant origin and each field's frame origin
-  S->>O: payment dialog in Otto web or desktop
-  O->>S: Pay, with the security code unless it is remembered
-  S->>K: stage the typed code or use the remembered one; release the card under the mandate
-  S->>B: type number, expiry, name and code
-  S->>K: finish the use; wipe the code
-  S-->>Pi: Card details entered
+  Pi->>S: pay(amount, currency, description, card?, fields)
+  S->>B: read the merchant origin
+  S->>O: Pay €43.20 at shop.example with Visa ••4242?
+  O->>S: the security code in the inline card or as a chat message, or yes with Do it for me
+  S->>B: type number, expiry, code and name, re-checking the merchant before each key
+  S-->>Pi: Card entered
   Pi->>B: place the order
 ```
 
-- **Tool.** `pay {card?, amount, currency, summary, fields: {number, expiry, code, name}}`.
-- **Merchant.** The server reads the merchant origin from the browser, not from Pi.
-- **Payment frames.** Each field's frame origin is the merchant or a payment frame such as `js.stripe.com`. The dialog lists any payment frame that will receive the card.
-- **Approval.** Typing the security code is the approval. When the owner chose to remember the code, the approval is one tap on Pay, and on desktop Touch ID or Windows Hello. Pi cannot press Pay: its browser runs in a separate container without the owner key. Telegram and WhatsApp receive "Open Otto to pay securely," so a chat reply can never approve a payment.
-- **Fill.** One use; an interruption makes it uncertain and it is never repeated. Screenshots are refused until the page leaves the merchant.
+- **Tool.** `pay {amount, currency, description, card?, fields: {number, expiry | expiryMonth and expiryYear, securityCode?, name?}, paymentId?}`. `card` is the card the owner named; with one card, or one used before at the merchant, Otto picks it.
+- **Merchant.** The server reads the merchant origin from the browser, not from Pi, and checks it again before every keystroke. Fields inside payment frames such as `js.stripe.com` work by their snapshot references.
+- **Approval, in the chat.** The question appears as a payment card in Otto's chat: the card, a security code field, Do it for me, Pay and Don't pay. The owner can also type the code as a chat message; Otto catches it before it is saved or reaches the model and keeps only "Security code sent securely." A link to a separate page remains for other surfaces.
+- **Do it for me.** A per-card switch on the owner's own installs. Otto keeps the card's security code, and each payment is approved with a yes, in Otto, Telegram or WhatsApp. Telegram and WhatsApp never carry a security code: without Do it for me they say "Open Otto to continue securely."
+- **Steered tasks.** When a page in the task had instructions for AI assistants, a yes is not enough: the owner types the code in Otto, and the card shows a warning.
+- **Fill.** One use. Snapshots hide the card number in any spacing and the filled card fields; screenshots and page scripts pause until the page changes; Pi cannot type into card fields itself.
 - **Order.** Pi places the order. A 3-D Secure challenge goes to the browser handoff.
-- **Turns.** Event turns can only draft a purchase. A schedule waits for the owner.
+- **Turns.** Background and read-only work never pay. A schedule can ask and waits for the owner.
+- **Activity.** Each question, payment, decline and held attempt is a Vault activity row with the amount, and the card shows its own history.
 
 ## Card sources
 
-| Source                    | Where                                    | Approval                                                                        | What enforces the amount                       |
-| ------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Stripe Link one-time card | Where the owner uses Link; US only today | In Link                                                                         | The issuer: one card for the exact amount      |
-| Stored card               | Own installs                             | The payment dialog in Otto: the security code, or one tap when it is remembered | The owner's approval and the card's own checks |
+| Source                    | Where                                    | Approval                                               | What enforces the amount                       |
+| ------------------------- | ---------------------------------------- | ------------------------------------------------------ | ---------------------------------------------- |
+| Stripe Link one-time card | Where the owner uses Link; US only today | In Link                                                | The issuer: one card for the exact amount      |
+| Stored card               | Own installs                             | In chat: the security code, or a yes with Do it for me | The owner's approval and the card's own checks |
 
 A one-time card's number is never stored; it is released straight into the fields and discarded. Standing approvals for schedules, such as "up to €50 a month at utility.example", need a one-time card source, because only the issuer can enforce the amount. A remembered security code does not change that.
 
@@ -79,4 +78,6 @@ A one-time card's number is never stored; it is released straight into the field
 ## Limits
 
 - With a stored card, Otto cannot check the final total on the page without reading it, so the approved amount is what Pi reported. One-time cards enforce it at the issuer.
+- With Do it for me, whoever controls the owner's Telegram or WhatsApp can approve a payment with a yes. Keep it off for cards where that matters.
+- Hosted mode can still save cards from before this design; it never keeps their codes, so every hosted payment needs the code typed in Otto. The decision above to offer only one-time cards in hosted mode still has to be enforced before hosted launch.
 - Agent-specific card tokens from Visa and Mastercard are not generally available yet. They would be another card source.

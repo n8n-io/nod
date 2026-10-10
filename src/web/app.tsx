@@ -5,6 +5,7 @@ import { Vault } from './pages/vault';
 import { Apps } from './pages/apps';
 import { Channels } from './pages/channels';
 import { Credentials } from './pages/credentials';
+import { Payment } from './pages/payment';
 import { Tasks } from './pages/tasks';
 import { useAppState } from './hooks/use-app-state';
 import { useChatUnread } from './hooks/use-chat-unread';
@@ -415,8 +416,9 @@ function AuthenticatedApp({
   };
   const allowed = path !== '/browser' || session.capabilities.developer;
   const match = /^\/(?:vault|credentials)\/([^/]+)\/?$/.exec(path);
+  const paying = /^\/pay\/([^/]+)\/?$/.exec(path);
   const onboarding = !session.settings!.onboardingCompleted || replayingOnboarding(path);
-  const workspace = allowed && path !== '/browser' && !match && !onboarding;
+  const workspace = allowed && path !== '/browser' && !match && !paying && !onboarding;
   return (
     <>
       {!allowed ? (
@@ -430,6 +432,8 @@ function AuthenticatedApp({
         <BrowserWindow />
       ) : match ? (
         <Credentials key={match[1]} id={match[1]} />
+      ) : paying ? (
+        <Payment key={paying[1]} token={paying[1]} />
       ) : onboarding ? (
         <Onboarding
           user={session.user!}
@@ -509,7 +513,7 @@ function AccountApp({
       (!session?.user && session?.auth.mode !== 'google')
     )
       return;
-    const secure = /^\/(?:vault|credentials)\/[^/]+\/?$/.test(path) || path === '/browser';
+    const secure = /^\/(?:vault|credentials|pay)\/[^/]+\/?$/.test(path) || path === '/browser';
     capturePageview(
       !session?.user
         ? '/login'
@@ -524,7 +528,7 @@ function AccountApp({
   }, [path, sessionState.loading, sessionState.signingOut, session, legacyBrowserLink]);
   useEffect(() => {
     if (sessionState.loading || !session?.user || !session.settings) return;
-    const secure = /^\/(?:vault|credentials)\/[^/]+\/?$/.test(path) || path === '/browser';
+    const secure = /^\/(?:vault|credentials|pay)\/[^/]+\/?$/.test(path) || path === '/browser';
     const next =
       !session.settings.onboardingCompleted && !secure
         ? '/onboarding'

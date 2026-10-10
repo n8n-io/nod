@@ -523,6 +523,7 @@ function syntheticComputer(): Computer & { canCheckpoint?: () => boolean } {
     hold: async () => {},
     close: async () => {},
     signOut: async () => {},
+    fillCard: async () => {},
     dispose: async () => {},
     status: () => 'Synthetic browser',
     canCheckpoint: () => true,
@@ -953,6 +954,93 @@ for (const action of ['snapshot', 'click'] as const)
       await browser.cleanup();
     }
   });
+
+test('a card fill types into the chosen fields on the approved merchant and keeps the card out of what the model sees', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-browser-card-'));
+  let url = 'about:blank';
+  let focused = '';
+  const fields = new Map<string, string>();
+  const autocomplete: Record<string, string> = { '@e4': 'cc-number', '@e5': 'cc-csc' };
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (_executable, args, options) => {
+      const command = args.slice(args.indexOf('--idle-timeout') + 2);
+      let data: Record<string, unknown> = {};
+      if (command[0] === 'open') url = command[1]!;
+      if (command[0] === 'get' && command[1] === 'url') data = { url };
+      if (command[0] === 'get' && command[1] === 'attr')
+        data = {
+          value: command[3] === 'autocomplete' ? (autocomplete[command[2]!] ?? null) : null,
+        };
+      if (command[0] === 'fill') {
+        focused = command[1]!;
+        fields.set(focused, command[2]!);
+      }
+      if (command[0] === 'press') fields.set(focused, `${fields.get(focused) ?? ''}${command[1]}`);
+      if (command[0] === 'eval') data = { result: options?.input?.length ?? 0 };
+      if (command[0] === 'screenshot') await writeFile(command[1]!, 'synthetic-screen');
+      if (command[0] === 'snapshot')
+        data = {
+          snapshot: [
+            '- heading "Checkout" [ref=e1]',
+            '- StaticText "Total €43.20, order 737-12"',
+            `- textbox "Name" [ref=e3]: ${fields.get('@e3') ?? ''}`,
+            `- textbox "Card" [ref=e4]: ${(fields.get('@e4') ?? '').replace(/(\d{4})(?=\d)/g, '$1 ')}`,
+            `- textbox "Code" [ref=e5]: ${fields.get('@e5') ?? ''}`,
+            `- StaticText "Paying with ${(fields.get('@e4') ?? '').replace(/(\d{4})(?=\d)/g, '$1-')}"`,
+          ].join('\n'),
+        };
+      return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
+    },
+  });
+  const card = {
+    cardNumber: '4242424242424242',
+    expiryMonth: 8,
+    expiryYear: 2030,
+    cardholder: 'Synthetic Cardholder',
+    securityCode: '737',
+  };
+  const entry = {
+    threadId: 'shop',
+    origin: 'https://1.1.1.1',
+    fields: { number: '@e4', expiry: '@e6', securityCode: '@e5', name: '@e3' },
+    card,
+  };
+  try {
+    await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/checkout' });
+    await assert.rejects(computer.fillCard({ ...entry, origin: 'https://1.1.1.2' }), /merchant/);
+    assert.equal(fields.size, 0);
+    await computer.fillCard(entry);
+    assert.deepEqual(Object.fromEntries(fields), {
+      '@e4': '4242424242424242',
+      '@e6': '08/30',
+      '@e5': '737',
+      '@e3': 'Synthetic Cardholder',
+    });
+    const seen = (await computer.act('shop', { action: 'snapshot' })).text;
+    assert.doesNotMatch(seen, /4242/);
+    assert.match(seen, /\[ref=e5\] \[redacted\]/);
+    assert.match(seen, /Total €43\.20, order 737-12/);
+    await assert.rejects(
+      computer.act('shop', { action: 'evaluate', script: 'document.title' }),
+      /scripts are paused/,
+    );
+    await assert.rejects(computer.screenshot('shop'));
+    await assert.rejects(
+      computer.act('shop', { action: 'fill', selector: '@e4', text: '4000' }),
+      /Use pay for card fields/,
+    );
+    await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/thanks' });
+    assert.ok(await computer.screenshot('shop'));
+    assert.match(
+      (await computer.act('shop', { action: 'evaluate', script: 'document.title' })).text,
+      /Script result/,
+    );
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('signing out closes the thread browser, clears its own profile and keeps saved sessions', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-browser-sign-out-'));
@@ -1482,6 +1570,9 @@ function workerComputer() {
     },
     signOut: async (id) => {
       calls.push({ method: 'signOut', input: id });
+    },
+    fillCard: async (input) => {
+      calls.push({ method: 'fillCard', input });
     },
     dispose: async () => {
       calls.push({ method: 'dispose' });

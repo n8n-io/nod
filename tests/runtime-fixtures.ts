@@ -9,6 +9,7 @@ export function fakeComputer(overrides: Partial<Computer> = {}): Computer {
     hold: async () => {},
     close: async () => {},
     signOut: async () => {},
+    fillCard: async () => {},
     dispose: async () => {},
     status: () => 'fixture computer',
     ...overrides,

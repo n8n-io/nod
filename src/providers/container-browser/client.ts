@@ -381,6 +381,12 @@ export function createBridgeComputer(options: {
         .object({ origin: z.string().max(2048), url: z.string().max(8192) })
         .strict()
         .parse(await call({ method: 'currentPage', threadId: threadIdentity(id) })),
+    fillCard: async ({ threadId: id, origin, fields, card }) => {
+      await call({
+        method: 'fillCard',
+        input: { threadId: threadIdentity(id), origin, fields, card },
+      });
+    },
     injectCredentials: async (input) => {
       const {
         threadId: id,

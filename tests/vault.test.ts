@@ -33,6 +33,8 @@ import type {
   VaultLoginEntry,
 } from '../src/shared/contracts.ts';
 import { parsePasswordCsv } from '../src/shared/password-import.ts';
+import { createPayments } from '../src/server/payments.ts';
+import type { CardEntry } from '../src/ports/computer.ts';
 
 async function seedTurns(pool: pg.Pool) {
   await pool.query(
@@ -2398,6 +2400,283 @@ test('site matching uses public suffix boundaries and separates hosted tenants',
     undefined,
   );
 });
+
+test(
+  'a payment enters the card only into the approved merchant after the owner types the code or says yes',
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async () => {
+    const schema = `test_vault_pay_${randomUUID().replaceAll('-', '')}`;
+    const admin = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const pool = new pg.Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+      options: `-c search_path=${schema}`,
+    });
+    const headers = {
+      host: 'localhost:4310',
+      origin: 'http://localhost:4310',
+      cookie: 'otto-access-4310=synthetic-local-access',
+    };
+    const key = randomBytes(32);
+    const app = Fastify({ logger: false });
+    registerLocalAccess(app, 4310, { key: 'synthetic-local-access' });
+    try {
+      await pool.query(`
+        CREATE TABLE threads(id uuid PRIMARY KEY,owner_id text NOT NULL,archived_at timestamptz);
+        CREATE TABLE turns(id uuid PRIMARY KEY,owner_id text NOT NULL,thread_id uuid NOT NULL REFERENCES threads(id),source text NOT NULL DEFAULT 'user',source_id text,status text NOT NULL DEFAULT 'running');
+        CREATE TABLE approvals(owner_id text,turn_id uuid,execution_turn_id uuid);
+      `);
+      const vault = await createVault(pool, {
+        keyStore: checkedKeyStore(pool, {
+          id: 'synthetic',
+          configured: true,
+          getKey: async () => key,
+        }),
+        inject: async () => assert.fail('A payment never types a login.'),
+        resume: async () => assert.fail('Card management must not resume a task.'),
+        retry: async () => assert.fail('Card management must not retry a task.'),
+      });
+      vault.registerRoutes(app);
+      const fills: CardEntry[] = [];
+      const resumed: string[] = [];
+      const recorded: Array<{ action: string; reason: string; origin: string }> = [];
+      const remembered: string[] = [];
+      let policy: { allowed: true; flagged: boolean } | { allowed: false; reason: 'background' } = {
+        allowed: true,
+        flagged: false,
+      };
+      let page = 'https://shop.fixture.test';
+      let failFill = false;
+      const make = (local: boolean) =>
+        createPayments(pool, {
+          ownerId: 'local-development',
+          local,
+          policy: async () => policy,
+          page: async () => ({ origin: page }),
+          cards: vault.paymentCards,
+          card: vault.paymentCard,
+          remember: async (id, securityCode) => {
+            remembered.push(id);
+            return vault.rememberSecurityCode(id, { securityCode });
+          },
+          fill: async (input) => {
+            if (failFill) throw new Error('Synthetic stale field.');
+            fills.push(input);
+          },
+          resume: async (_turnId, prompt) => {
+            resumed.push(prompt);
+          },
+          record: async (_turn, entry) => {
+            recorded.push(entry);
+          },
+        });
+      const payments = await make(true);
+      payments.registerRoutes(app);
+      const expiryYear = new Date().getUTCFullYear() + 3;
+      const saved = await app.inject({
+        method: 'POST',
+        url: '/api/vault',
+        headers,
+        payload: {
+          kind: 'card',
+          label: 'Studio card',
+          cardholder: 'Synthetic Cardholder',
+          cardNumber: '4242 4242 4242 4242',
+          expiryMonth: 8,
+          expiryYear,
+        },
+      });
+      assert.equal(saved.statusCode, 200, saved.body);
+      const card = saved.json<VaultCardEntry>();
+      const turn = { threadId: randomUUID(), turnId: randomUUID() };
+      const fields = { number: '@e4', expiry: '@e5', securityCode: '@e6', name: '@e3' };
+      const order = { amount: '43.20', currency: 'eur', description: 'Two brass hinges', fields };
+      const pay = (token: string, payload: object) =>
+        app.inject({ method: 'POST', url: `/api/payments/${token}`, headers, payload });
+
+      const linked = await payments.request(turn, order);
+      assert.ok('url' in linked);
+      assert.equal(linked.question, 'Pay €43.20 at shop.fixture.test with Visa ••4242?');
+      const token = linked.url.slice('/pay/'.length);
+      const view = await app.inject({ url: `/api/payments/${token}`, headers });
+      assert.equal(view.statusCode, 200);
+      assert.deepEqual(view.json().amount, { minor: 4320, currency: 'EUR' });
+      assert.equal(view.json().cardId, card.id);
+      assert.doesNotMatch(view.body, /4242424242424242|4242 4242/);
+      assert.equal((await pay(token, { cardId: card.id })).statusCode, 400);
+      assert.equal(fills.length, 0);
+      const paid = await pay(token, { cardId: card.id, securityCode: '737' });
+      assert.equal(paid.statusCode, 200, paid.body);
+      assert.deepEqual(fills, [
+        {
+          threadId: turn.threadId,
+          origin: 'https://shop.fixture.test',
+          fields,
+          card: {
+            cardholder: 'Synthetic Cardholder',
+            cardNumber: '4242424242424242',
+            expiryMonth: 8,
+            expiryYear,
+            securityCode: '737',
+          },
+        },
+      ]);
+      assert.match(resumed.at(-1)!, /entered Visa ••4242 for €43\.20 at shop\.fixture\.test/);
+      assert.equal((await pay(token, { cardId: card.id, securityCode: '737' })).statusCode, 409);
+      assert.equal(fills.length, 1);
+      assert.equal((await vault.paymentCards())[0]?.doItForMe, false);
+
+      const kept = await payments.request(turn, order);
+      assert.ok('url' in kept);
+      const keepToken = kept.url.slice('/pay/'.length);
+      assert.equal(
+        (await pay(keepToken, { cardId: card.id, securityCode: '737', doItForMe: true }))
+          .statusCode,
+        200,
+      );
+      assert.deepEqual(remembered, [card.id]);
+      assert.equal((await vault.paymentCards())[0]?.doItForMe, true);
+
+      const asked = await payments.request(turn, order);
+      assert.ok('paymentId' in asked);
+      assert.equal(asked.question, 'Pay €43.20 at shop.fixture.test with Visa ••4242?');
+      const approved = await payments.approve(turn, { paymentId: asked.paymentId });
+      assert.equal(approved.entered, true);
+      assert.equal(fills.at(-1)?.card.securityCode, '737');
+      await assert.rejects(payments.approve(turn, { paymentId: asked.paymentId }), /no longer/);
+
+      failFill = true;
+      const stale = await payments.request(turn, order);
+      assert.ok('paymentId' in stale);
+      const waiting = await payments.approve(turn, { paymentId: stale.paymentId });
+      assert.equal(waiting.entered, false);
+      failFill = false;
+      page = 'https://other.fixture.test';
+      await assert.rejects(
+        payments.request(turn, { ...order, paymentId: stale.paymentId }),
+        /no longer available/,
+      );
+      page = 'https://shop.fixture.test';
+      const retried = await payments.request(turn, {
+        ...order,
+        paymentId: stale.paymentId,
+        fields: { ...fields, number: '@e9' },
+      });
+      assert.ok('entered' in retried);
+      assert.equal(fills.at(-1)?.fields.number, '@e9');
+      await assert.rejects(
+        payments.request(turn, { ...order, paymentId: stale.paymentId }),
+        /no longer available/,
+      );
+
+      policy = { allowed: true, flagged: true };
+      const flagged = await payments.request(turn, order);
+      assert.ok('url' in flagged);
+      const flaggedRow = (
+        await pool.query<{ id: string }>(
+          'SELECT id FROM vault_payments WHERE flagged ORDER BY created_at DESC LIMIT 1',
+        )
+      ).rows[0]!;
+      await assert.rejects(payments.approve(turn, { paymentId: flaggedRow.id }), /no longer/);
+      const declined = await app.inject({
+        method: 'POST',
+        url: `${flagged.url.replace('/pay/', '/api/payments/')}/decline`,
+        headers,
+      });
+      assert.equal(declined.statusCode, 200);
+      assert.match(resumed.at(-1)!, /declined/);
+
+      policy = { allowed: false, reason: 'background' };
+      const before = fills.length;
+      await assert.rejects(payments.request(turn, order), /never pays/);
+      assert.equal(fills.length, before);
+      policy = { allowed: true, flagged: false };
+
+      const hosted = await make(false);
+      const remote = await hosted.request(turn, order);
+      assert.ok('url' in remote);
+      const yen = await hosted.request(turn, { ...order, amount: '1200', currency: 'JPY' });
+      assert.ok('question' in yen);
+      assert.equal(yen.question, 'Pay ¥1,200 at shop.fixture.test with Visa ••4242?');
+      await assert.rejects(hosted.request(turn, { ...order, amount: '12.5', currency: 'JPY' }));
+      await assert.rejects(hosted.request(turn, { ...order, currency: 'ZZZ' }));
+      await assert.rejects(hosted.request(turn, { ...order, fields: { number: '@e4' } }));
+
+      assert.deepEqual(
+        recorded.map((entry) => [entry.action, entry.reason]),
+        [
+          ['asked', 'payment'],
+          ['paid', 'code_typed'],
+          ['asked', 'payment'],
+          ['paid', 'code_typed'],
+          ['asked', 'payment'],
+          ['paid', 'said_yes'],
+          ['asked', 'payment'],
+          ['paid', 'said_yes'],
+          ['asked', 'payment'],
+          ['declined', 'said_no'],
+          ['held', 'background'],
+          ['asked', 'payment'],
+          ['asked', 'payment'],
+        ],
+      );
+      assert.doesNotMatch(
+        JSON.stringify(
+          (
+            await pool.query(
+              'SELECT origin,amount_minor,currency,description,fields,status FROM vault_payments',
+            )
+          ).rows,
+        ),
+        /4242424242424242|737/,
+      );
+
+      await pool.query(`
+        ALTER TABLE turns ADD COLUMN channel text NOT NULL DEFAULT 'web';
+        CREATE TABLE messages(id uuid PRIMARY KEY,owner_id text,role text,text text,thread_id uuid,turn_id uuid);
+      `);
+      await vault.rememberSecurityCode(card.id, { securityCode: null });
+      const chat = { threadId: randomUUID(), turnId: randomUUID() };
+      await pool.query("INSERT INTO threads(id,owner_id) VALUES($1,'local-development')", [
+        chat.threadId,
+      ]);
+      await pool.query(
+        "INSERT INTO turns(id,owner_id,thread_id) VALUES($1,'local-development',$2)",
+        [chat.turnId, chat.threadId],
+      );
+      const typed = await payments.request(chat, order);
+      assert.ok('url' in typed);
+      assert.equal(await payments.awaitingCode(), true);
+      const messageId = randomUUID();
+      for (const text of ['yes please', '12345', '7 3 7'])
+        assert.equal(await payments.acceptCode(text, { clientMessageId: messageId }), undefined);
+      const sent = await payments.acceptCode(' 737 ', {
+        clientMessageId: messageId,
+        threadId: chat.threadId,
+      });
+      assert.deepEqual(sent, {
+        threadId: chat.threadId,
+        turnId: chat.turnId,
+        messageId,
+        messageText: 'Security code sent securely.',
+      });
+      assert.equal(fills.at(-1)?.card.securityCode, '737');
+      assert.equal(await payments.awaitingCode(), false);
+      assert.deepEqual((await pool.query('SELECT text FROM messages')).rows, [
+        { text: 'Security code sent securely.' },
+      ]);
+      await payments.request(chat, order);
+      await payments.request(chat, order);
+      assert.equal(await payments.awaitingCode(), false);
+      assert.equal(await payments.acceptCode('737', { clientMessageId: randomUUID() }), undefined);
+    } finally {
+      await app.close();
+      await pool.end();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  },
+);
 
 test('Gmail verification uses fixed account-bound read endpoints and validates received MIME headers', async (t) => {
   const client = new Composio({

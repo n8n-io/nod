@@ -15,6 +15,7 @@ import { VaultDetails } from '../components/vault-details';
 import { VaultSessionDetails, VaultSiteAccess } from '../components/vault-site';
 import { VaultEntryIcon, VaultSurface } from '../components/vault-surface';
 import { formatCardExpiry, VaultItemForm } from '../components/vault-item-form';
+import { VaultCardPayments } from '../components/vault-card';
 import { VaultImportDialog } from '../components/vault-import-dialog';
 import { WebsiteSessionDialog } from '../components/website-session-dialog';
 import { originLabel } from '../lib/vault-name';
@@ -57,6 +58,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   const [menu, setMenu] = useState(false);
   const [website, setWebsite] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [revision, setRevision] = useState(0);
   const [adding, setAdding] = useState<'login' | 'card' | null>(addRequested ? 'login' : null);
   const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const [savingNew, setSavingNew] = useState(false);
@@ -219,7 +221,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     />
   ) : selected ? (
     <VaultDetails
-      key={selected.id}
+      key={`${selected.id}-${revision}`}
       entry={selected}
       hosted={hosted}
       autoFocus={chosen && selectedId === selected.id}
@@ -238,6 +240,13 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
             sessions.update((current) => current?.filter((value) => value.id !== id) ?? current)
           }
           onAsk={onAsk}
+        />
+      )}
+      {selected.kind === 'card' && (
+        <VaultCardPayments
+          cardId={selected.id}
+          hosted={hosted}
+          onChanged={() => setRevision((current) => current + 1)}
         />
       )}
     </VaultDetails>

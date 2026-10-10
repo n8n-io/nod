@@ -9,6 +9,7 @@ import type {
   BrowserUploadInput,
   BrowserObservation,
   Computer,
+  CardEntry,
   CredentialInput,
   CredentialSubmission,
   BrowserPage,
@@ -44,6 +45,7 @@ interface BrowserState {
   typed?: { value: string; origin: string; field: number; fresh: boolean };
   pageSize?: [number, number];
   protectedSelectors: Set<string>;
+  payment?: string;
   uploads: Set<string>;
   started: boolean;
   lastUsed: number;
@@ -109,6 +111,9 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
   }
   for (const value of variants)
     variants.add(value.replace(/%[0-9A-F]{2}/g, (code) => code.toLowerCase()));
+  for (const secret of secrets)
+    if (/^\d{12,19}$/.test(secret))
+      text = text.replace(new RegExp(secret.split('').join('[\\s.-]?'), 'g'), secret);
   let parts: Array<string | null> = [text];
   for (const value of [...variants].sort((a, b) => b.length - a.length))
     parts = parts.flatMap((part) => {
@@ -116,7 +121,21 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
       return part.split(value).flatMap((section, index) => (index ? [null, section] : [section]));
     });
   const result = parts.map((part) => part ?? '[redacted]').join('');
-  return result.replace(/(password[^\n]*?)(?:value=|: )[^\n]*/gi, '$1 [redacted]');
+  return result.replace(
+    /((?:password|card ?number|security code|cvc|cvv|csc)[^\n]*?)(?:value=|: )[^\n]*/gi,
+    '$1 [redacted]',
+  );
+}
+
+function redactFields(text: string, selectors: Iterable<string>) {
+  let result = text;
+  for (const selector of selectors)
+    if (/^@e\d+$/.test(selector))
+      result = result.replace(
+        new RegExp(`(\\[ref=${selector.slice(1)}\\][^\\n]*?): [^\\n]*`, 'g'),
+        '$1 [redacted]',
+      );
+  return result;
 }
 
 const browserTabList = z
@@ -813,7 +832,10 @@ export function createAgentBrowserComputer(options: {
       await delay(750, undefined, { signal });
       data = await snapshot();
     }
-    const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
+    const page = redactFields(
+      redactBrowserText(String(data.snapshot ?? ''), state.secrets),
+      state.protectedSelectors,
+    );
     return {
       text: `Page (${offset}-${Math.min(offset + 16_000, page.length)} of ${page.length} characters):\n${page.slice(offset, offset + 16_000)}`,
       url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
@@ -994,6 +1016,7 @@ export function createAgentBrowserComputer(options: {
           const autocomplete = await command(state, ['get', 'attr', target, 'autocomplete'], {
             signal,
           });
+          if (/cc-/i.test(String(autocomplete.value))) throw new Error('Use pay for card fields.');
           if (
             /password|one-time-code|username/i.test([type.value, autocomplete.value].join(' ')) ||
             state.protectedSelectors.has(target)
@@ -1104,6 +1127,10 @@ export function createAgentBrowserComputer(options: {
         if (['back', 'forward', 'reload'].includes(input.action))
           await command(state, [input.action], { signal });
         if (input.action === 'evaluate') {
+          if (await cardOnPage(state, signal))
+            throw new Error(
+              'Card details are on this page, so scripts are paused. Use snapshot until the page changes.',
+            );
           const script = input.script ?? '';
           if (!script.trim() || script.length > 20_000)
             throw new Error('Provide a script of at most 20,000 characters.');
@@ -1326,6 +1353,104 @@ export function createAgentBrowserComputer(options: {
     }
   }
 
+  async function cardOnPage(state: BrowserState, signal?: AbortSignal) {
+    if (!state.payment) return false;
+    if ((await currentUrl(state, signal)) === state.payment) return true;
+    state.payment = undefined;
+    return false;
+  }
+
+  async function fillCard(input: CardEntry): Promise<void> {
+    const state = browsers.get(threadIdentity(input.threadId));
+    if (!state?.started) throw new Error('The checkout page is no longer open.');
+    if (state.injecting) throw new BrowserLockedError();
+    if (browserUrl(input.origin).origin !== input.origin)
+      throw new Error('An exact merchant origin is required.');
+    const { card, fields } = input;
+    if (fields.securityCode && !card.securityCode)
+      throw new Error('The security code is needed for this card.');
+    const month = String(card.expiryMonth).padStart(2, '0');
+    const year = String(card.expiryYear);
+    const steps = [
+      { selector: fields.number, typed: card.cardNumber, secret: true },
+      ...(fields.expiry
+        ? [{ selector: fields.expiry, typed: `${month}/${year.slice(-2)}`, secret: false }]
+        : []),
+      ...(fields.expiryMonth
+        ? [
+            {
+              selector: fields.expiryMonth,
+              choices: [month, String(card.expiryMonth)],
+              secret: false,
+            },
+          ]
+        : []),
+      ...(fields.expiryYear
+        ? [{ selector: fields.expiryYear, choices: [year, year.slice(-2)], secret: false }]
+        : []),
+      ...(fields.securityCode && card.securityCode
+        ? [{ selector: fields.securityCode, typed: card.securityCode, secret: true }]
+        : []),
+      ...(fields.name
+        ? [{ selector: fields.name, choices: [card.cardholder], secret: false }]
+        : []),
+    ];
+    state.injecting = true;
+    markActivity(input.threadId);
+    try {
+      await serialize(state, async () => {
+        const onOrigin = async () => {
+          if (new URL(await currentUrl(state)).origin !== input.origin)
+            throw new Error(
+              'The page is not on the merchant for this payment. Inspect the page and ask again.',
+            );
+        };
+        await onOrigin();
+        const socket = await daemonSocket(state);
+        state.secrets.add(card.cardNumber);
+        for (const step of steps) if (step.secret) state.protectedSelectors.add(step.selector);
+        await saveState(state);
+        for (const step of steps) {
+          await onOrigin();
+          if ('typed' in step && step.typed) {
+            await requestDaemon(socket, { action: 'fill', selector: step.selector, value: '' });
+            for (const key of step.typed) {
+              await onOrigin();
+              await requestDaemon(socket, { action: 'press', key });
+            }
+            continue;
+          }
+          const choices = 'choices' in step ? (step.choices ?? []) : [];
+          let done = false;
+          for (const choice of choices) {
+            try {
+              await requestDaemon(socket, {
+                action: 'fill',
+                selector: step.selector,
+                value: choice,
+              });
+              done = true;
+              break;
+            } catch {}
+          }
+          for (const choice of done ? [] : choices) {
+            try {
+              await command(state, ['select', step.selector, choice]);
+              done = true;
+              break;
+            } catch {}
+          }
+          if (!done)
+            throw new Error('A card field did not accept its value. Take a fresh snapshot.');
+        }
+        await onOrigin();
+        state.payment = await currentUrl(state);
+      });
+    } finally {
+      state.injecting = false;
+    }
+  }
+
   async function currentPage(id: string): Promise<BrowserPage> {
     const state = await recoverBrowser(id);
     if (state?.saved.navigationFailed || (!state && (await screens.load(id))?.navigationFailed))
@@ -1503,6 +1628,7 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
+      if (await cardOnPage(state, signal)) throw new BrowserLockedError();
       try {
         return await captureScreen(state, signal);
       } catch (error) {
@@ -1692,6 +1818,7 @@ export function createAgentBrowserComputer(options: {
     view,
     screenStatus: (id) => screenStatuses.get(threadIdentity(id)) ?? { state: 'unavailable' },
     injectCredentials: tracked(injectCredentials),
+    fillCard: tracked(fillCard),
     currentPage: tracked(currentPage),
     hold: tracked(hold),
     close: tracked(closeBrowser),

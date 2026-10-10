@@ -37,6 +37,7 @@ import type {
   Message,
   MessageHistoryPage,
   MessageReaction,
+  SubmitMessageResponse,
   Turn,
 } from '../shared/contracts.ts';
 import type { createChatVerification } from './chat-verification.ts';
@@ -69,6 +70,13 @@ export interface AppDependencies {
   artifacts?: ArtifactService;
   submitMessage?: typeof submitUserMessage;
   verification?: Awaited<ReturnType<typeof createChatVerification>>;
+  payments?: {
+    awaitingCode(): Promise<boolean>;
+    acceptCode(
+      text: string,
+      input: { clientMessageId: string; threadId?: string },
+    ): Promise<SubmitMessageResponse | undefined>;
+  };
   computer?: Pick<
     Computer,
     | 'act'
@@ -176,7 +184,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
   app.get('/api/configuration', async () => publicConfiguration());
   app.get('/api/state', async () => {
     const thread = await activeThread(pool);
-    const [messages, turns, verificationRequests] = await Promise.all([
+    const [messages, turns, verificationRequests, paymentAwaitingCode] = await Promise.all([
       pool.query(
         `SELECT ${messageFields} FROM (SELECT m.* FROM messages m WHERE m.owner_id=$1 AND m.thread_id=$2 ORDER BY date_trunc('milliseconds',m.created_at) DESC,m.id DESC LIMIT 151) m
          LEFT JOIN messages target ON target.id=m.reply_to_message_id AND target.owner_id=m.owner_id ORDER BY date_trunc('milliseconds',m.created_at),m.id`,
@@ -187,6 +195,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
         [ownerId, thread.id],
       ),
       dependencies.verification?.pending() ?? [],
+      dependencies.payments?.awaitingCode() ?? false,
     ]);
     const hasEarlierMessages = messages.rows.length > 150;
     const visibleMessages = messages.rows.slice(hasEarlierMessages ? 1 : 0);
@@ -212,6 +221,7 @@ export async function createApp(dependencies: AppDependencies = {}) {
       }),
       turns: [...turns.rows, ...olderTurns],
       verificationRequests,
+      paymentAwaitingCode,
       planningTasks: dependencies.planningTasks?.() ?? false,
       configuration: publicConfiguration(),
     };
@@ -315,6 +325,13 @@ export async function createApp(dependencies: AppDependencies = {}) {
       .refine((value) => value.text.length > 0 || value.attachmentIds.length > 0)
       .parse(request.body);
     const clientMessageId = input.clientMessageId ?? randomUUID();
+    const payment = input.attachmentIds.length
+      ? undefined
+      : await dependencies.payments?.acceptCode(input.text, {
+          clientMessageId,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+        });
+    if (payment) return payment;
     const verification = await dependencies.verification?.accept(input.text, {
       ...input,
       clientMessageId,

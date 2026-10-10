@@ -27,7 +27,7 @@ const connectionPath =
 const e2eConsentPath =
   /^\/e2e\/connect\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const localPath =
-  /^\/(?:api\/artifacts|vault|credentials)\/[A-Za-z0-9_-]+\/?$|^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/;
+  /^\/(?:api\/artifacts|vault|credentials|pay)\/[A-Za-z0-9_-]+\/?$|^\/browser-connect\/[A-Za-z0-9_-]{43}\/?$/;
 const defaultLabels = { vault: 'Open Vault', website: 'Connect website', browser: 'Open browser' };
 const appLabel = /^Connect [\p{L}\p{N}][\p{L}\p{N} .&()+-]{0,79}$/u;
 

@@ -100,7 +100,7 @@ export function channelReply(
   deliversAttachments = false,
   privateLinks: { name: string; url: string }[] = [],
 ) {
-  const securePath = '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault|credentials|approvals)\\/[^\\s)]+';
+  const securePath = '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault|credentials|approvals|pay)\\/[^\\s)]+';
   const safe = text
     .replace(
       /\[[^\]]*\]\((?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+\)|(?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+/g,
