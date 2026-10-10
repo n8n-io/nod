@@ -32,6 +32,8 @@ For automatic private runtime downloads and Intel updates, publish and verify th
 3. Merge after review and CI. If main changes before merge, run **Release desktop** again to update the source and notes. CI rejects source changes that are missing from the prepared release.
 4. CI on the merge commit starts native Mac ARM, Mac Intel and Windows builds. It checks signing, runtime hashes, Windows installation, and downloaded installer bytes. It uploads all assets to one draft and then publishes one regular GitHub release. If one build or check fails, the release stays unpublished. Mac ZIP files, runtime packs, checksums, the public certificate and update metadata stay on that release as supporting assets.
 
+On Windows, download `Otto-Setup-x64.exe` and `Otto-Runtime-win32-x64.tar.gz` into the same folder. Keep the runtime pack compressed, then run the installer.
+
 There is no daily release. Normal main merges do not publish a desktop version. CI completion must belong to the exact merged release PR from this repository. The build stays on that commit even if main moves. Repeated CI completion for a published version does not build it again. Only the final release job records a `release` deployment.
 
 The **Evals** workflow runs the full controlled suite nightly on `main` at 01:23 UTC. Live model evals do not run on release publication and do not gate publication. Maintainers can still start a manual comparison with a release tag.

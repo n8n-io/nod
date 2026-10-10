@@ -444,9 +444,10 @@ export async function verifyRuntimeRelease(
         !/^[a-f0-9-]{36}$/i.test(release.notarization?.id || '')))
   )
     throw new Error('The runtime release provenance does not match this signed build.');
+  const platform = runtimePlatform(env);
   if (
-    release.platform !== runtimePlatform() ||
-    !new RegExp(`^Otto-Runtime-${runtimePlatform()}-[a-f0-9]{12}\\.tar\\.gz$`).test(
+    release.platform !== platform ||
+    !new RegExp(`^Otto-Runtime-${platform}-[a-f0-9]{12}\\.tar\\.gz$`).test(
       release.archive?.file || '',
     )
   )

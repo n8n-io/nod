@@ -913,10 +913,21 @@ test('new public runtime drafts omit anonymous download URLs and support signed 
   const request = t.mock.method(globalThis, 'fetch', () => {
     throw new Error('Unexpected anonymous download');
   });
-  await verifyRuntimeRelease(f.release, f.release.fingerprint, {
-    ...f.release.signing,
-    team: f.release.signing.teamId,
-  });
+  await verifyRuntimeRelease(
+    f.release,
+    f.release.fingerprint,
+    { ...f.release.signing, team: f.release.signing.teamId },
+    { env: { OTTO_DESKTOP_TARGET: 'darwin-arm64' } },
+  );
+  await assert.rejects(
+    verifyRuntimeRelease(
+      f.release,
+      f.release.fingerprint,
+      { ...f.release.signing, team: f.release.signing.teamId },
+      { env: { OTTO_DESKTOP_TARGET: 'darwin-x64' } },
+    ),
+    /archive name/,
+  );
   await f.invoke('draft');
   const state = await f.readState();
   const uploaded = JSON.parse(
@@ -947,6 +958,7 @@ test('pending public runtime packaging defers only reachability for the checked 
   const descriptorPath = join(f.assets, 'runtime-release.json');
   const env = {
     GITHUB_ACTIONS: 'true',
+    OTTO_DESKTOP_TARGET: 'darwin-arm64',
     OTTO_PENDING_RUNTIME_DESCRIPTOR_SHA256: await assetHash(descriptorPath),
   };
   const request = t.mock.method(
@@ -976,7 +988,9 @@ test('pending public runtime packaging defers only reachability for the checked 
     /checked CI artifact/,
   );
   await assert.rejects(
-    verifyRuntimeRelease(f.release, f.release.fingerprint, configuration, { env: {} }),
+    verifyRuntimeRelease(f.release, f.release.fingerprint, configuration, {
+      env: { OTTO_DESKTOP_TARGET: 'darwin-arm64' },
+    }),
     /not anonymously reachable/,
   );
 });
@@ -1922,6 +1936,7 @@ else if (args[0] !== 'pull') throw new Error('Unexpected Docker command');
   ];
   const environment = {
     PATH: `${bin}:/usr/bin:/bin`,
+    OTTO_DESKTOP_TARGET: 'darwin-arm64',
     FIXTURE_STATE: statePath,
     FIXTURE_ARCHIVE: archive,
     OTTO_RUNTIME_ASSETS: join(root, 'assets'),
