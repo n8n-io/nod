@@ -54,7 +54,7 @@ test(
     const payments = await createPayments(db.pool, {
       ownerId,
       local: true,
-      policy: async () => ({ allowed: true, flagged: false }),
+      policy: async () => ({ allowed: true, flagged: false, inOtto: true }),
       page: async () => ({
         origin: 'https://shop.fixture.test',
         url: 'https://shop.fixture.test/checkout',

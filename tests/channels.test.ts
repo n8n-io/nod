@@ -242,6 +242,7 @@ test(
       'succeeded',
     );
     const submitted: string[] = [];
+    const forgotten: string[] = [];
     const app = Fastify();
     const channels = await createChannels(pool, {
       ownerId: 'local-development',
@@ -270,6 +271,9 @@ test(
           ],
         }),
         post: async () => ({ id: 'fixture-reply' }),
+        forget: async (input) => {
+          forgotten.push(input.messageId);
+        },
         close: async () => {},
       },
       acceptVerification: (text, input) => verification.accept(text, input),
@@ -337,6 +341,13 @@ test(
       assert.equal(injections, 1);
       assert.deepEqual(submitted, ['2026']);
       assert.doesNotMatch(await stored(), /481927/);
+      assert.deepEqual(forgotten, [
+        'early-code',
+        'ambiguous-code',
+        'malformed-code',
+        'empty-code',
+        'code',
+      ]);
     } finally {
       await app.close();
       await pool.end();

@@ -52,13 +52,14 @@ sequenceDiagram
 - **Tool.** `pay {amount, currency, description, card?, fields: {number, expiry | expiryMonth and expiryYear, securityCode?, name?}, paymentId?}`. `card` is the card the owner named; with one card, or one used before at the merchant, Otto picks it, and otherwise Pi asks which card.
 - **Merchant.** The server reads the merchant origin from the browser, not from Pi, and checks it again before every keystroke. Fields inside payment frames such as `js.stripe.com` work by their snapshot references.
 - **Approval, in plain text.** Otto asks "Pay €43.20 at shop.example with Visa ••4242? Reply with its security code." in Otto, Telegram or WhatsApp. The reply goes through the same path as sign-in verification codes: it is caught before it is saved or reaches the model, and chat keeps only "Security code sent securely." A "no" or any other reply is an ordinary message, and the payment is no longer accepted.
+- **New shops need Otto.** A task that came from Telegram or WhatsApp pays only at a shop the owner has already paid at. The first payment at a shop starts in the Otto app, where only the owner's own session can answer. So someone who takes over a chat app cannot send the card to a site of their choosing. Otto deletes every code reply it catches from Telegram; WhatsApp does not allow it.
 - **One open payment.** Each request is bound to the checkout page it was made on and replaces any earlier open request in the thread. The card is entered only while the task still waits and the browser is on that same page; otherwise the request fails and Pi asks again.
 - **Do it for me.** A per-card choice on the owner's own installs. On: Otto keeps the card's security code and each payment is approved with a yes. The first payment with a card asks: "Add “keep” and next time your yes is enough." A reply of "737 keep" turns it on; a bare "737" saves it as off. The owner can change it by asking Otto (`payment_setting`) or with the switch in Vault; turning it on from chat keeps the code from the next payment.
 - **Steered tasks.** When a page in the task had instructions for AI assistants, a yes is not enough and the question says so; the code reply never changes Do it for me, and Do it for me cannot be turned on from that task.
 - **Fill.** One use. From the first key until that page document is gone, even after a failed fill, snapshots hide every text field value, and screenshots and page scripts pause. The card number is hidden in any spacing everywhere. Pi cannot type into card fields itself.
 - **Order.** Pi places the order. A 3-D Secure challenge goes to the browser handoff.
 - **Turns.** Event and read-only turns never pay. A schedule can ask and waits for the owner.
-- **Activity.** Each question, payment, decline and held attempt is a Vault activity row with the amount, and the card shows its own history.
+- **Activity.** Each question, payment and held attempt is a Vault activity row with the amount, and the card shows its own history.
 
 ## Card sources
 
@@ -73,14 +74,14 @@ A one-time card's number is never stored; it is released straight into the field
 
 - **Own installs.** Cards, and security codes the owner chose to remember, stay on the owner's own device. PCI FAQ 1574 treats a consumer's own device like their payment card.
 - **Hosted.** A hosted service that stores many owners' card numbers is a PCI service provider. That means SAQ-D or a QSA assessment, keys in a hardware-backed key service, and a random outer key per tenant so a deleted tenant can be crypto-shredded.
-- **Decision.** Hosted mode offers only one-time card sources and stores no card numbers or security codes. Revisit when hosted owners need saved cards, or when agent card tokens from Visa and Mastercard are generally available.
+- **Decision.** Hosted mode offers only one-time card sources and stores no security codes; `pay` refuses saved cards there. Revisit when hosted owners need saved cards, or when agent card tokens from Visa and Mastercard are generally available.
 - **Handoff.** Compliance should also review checkout handoffs: an owner who types a card into the hosted browser sends it through operator infrastructure.
 
 ## Limits
 
 - With a stored card, Otto cannot check the final total on the page without reading it, so the approved amount is what Pi reported. One-time cards enforce it at the issuer.
-- With Do it for me, whoever controls the owner's Telegram or WhatsApp can approve a payment with a yes. Keep it off for cards where that matters.
-- A security code sent over Telegram or WhatsApp stays in that app's history. Without the card number it cannot pay, but Otto cannot delete it there.
-- Hosted mode can still save cards from before this design; it never keeps their codes, so every hosted payment needs the code typed in Otto. The decision above to offer only one-time cards in hosted mode still has to be enforced before hosted launch.
+- With Do it for me, whoever controls the owner's Telegram or WhatsApp can approve a payment with a yes at a shop the owner has paid at before. Keep it off for cards where that matters.
+- A security code sent over WhatsApp stays in WhatsApp's history, so someone who controls that account could reuse it at a shop the owner has paid at before.
+- Hosted mode can still store cards from before this design for the owner to view, but cannot pay with them.
 - The merchant check covers the page's top origin. Fields inside a payment frame are filled by their snapshot reference without checking the frame's own origin, so a merchant page that embeds a hostile frame could receive the card.
 - Agent-specific card tokens from Visa and Mastercard are not generally available yet. They would be another card source.

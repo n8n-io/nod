@@ -1043,10 +1043,21 @@ test(
           assert.deepEqual(await trust.payment(await begin('Buy hinges at shop.example.test.')), {
             allowed: true,
             flagged: false,
+            inOtto: true,
           });
+          assert.deepEqual(
+            await trust.payment(
+              await begin('Buy hinges at shop.example.test.', { channel: 'telegram:synthetic' }),
+            ),
+            { allowed: true, flagged: false, inOtto: false },
+          );
           const steered = await begin('Buy more hinges.');
           await trust.flag(steered, ['ignore_instructions']);
-          assert.deepEqual(await trust.payment(steered), { allowed: true, flagged: true });
+          assert.deepEqual(await trust.payment(steered), {
+            allowed: true,
+            flagged: true,
+            inOtto: true,
+          });
           assert.deepEqual(
             await trust.payment(await begin('Synthetic event', { source: 'event' })),
             { allowed: false, reason: 'background' },

@@ -25,7 +25,7 @@ These describe the finished design; [migration](migration.md#steps) says which s
 5. **Trusted grants.** Grants come only from the owner's messages, schedule instructions, the owner's answers and the owner's approvals. Page content and tool results never create or widen one.
 6. **No background secrets.** Event, read-only and onboarding turns hold no grants, standing grants included.
 7. **Tripwire suspends.** A tripwire flag suspends every grant until the owner's next message. Questions still work.
-8. **Mandated payments.** A payment needs a mandate approved by the owner in Otto web or desktop, or in the card issuer. A mandate is used once, is bound to merchant, amount, currency and card, and expires after ten minutes. A chat reply cannot approve one.
+8. **Mandated payments.** A payment needs a mandate approved by the owner with the card's security code or, with Do it for me, a yes, or in the card issuer. A mandate is used once, is bound to merchant, amount, currency and card, and expires after ten minutes. A reply in Telegram or WhatsApp can approve one only at a shop the owner has already paid at; the first payment at a shop starts in Otto web or desktop.
 9. **Security codes by consent.** A card's security code is stored only on an own install, only when the owner chose to remember it for that card, and never in hosted mode. Otherwise it exists only for the use that consumes it.
 10. **No repeats.** A release that may have happened becomes uncertain and is never repeated.
 11. **Fail closed.** A key that cannot unwrap existing data locks the Vault. No key is created over existing data.

@@ -291,6 +291,11 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         if (closed || replacing || !permitted(identity))
           throw new Error('Channel configuration changed.');
       };
+      const forget = async () => {
+        await transport
+          .forget?.({ channelId, accountId, threadId, messageId })
+          .catch((cause: unknown) => logFailure('channel_forget_failed', cause));
+      };
       const commandReply = options.commandReply;
       const command = replyCommand.exec(text.trim())?.[1]?.toLowerCase();
       if (command && commandReply) {
@@ -334,10 +339,12 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
               }),
             ),
           );
+          await forget();
           return;
         }
       }
       if (!ordinaryPersisted) await inTransaction(persist);
+      if (verification) await forget();
     } catch (cause) {
       logFailure('channel_accept_failed', cause);
       throw Object.assign(new Error('Channel processing is temporarily unavailable. Try again.'), {

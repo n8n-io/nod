@@ -109,14 +109,13 @@ export type VaultActivityReason =
   | 'injection'
   | 'unrequested'
   | 'payment'
+  | 'new_shop'
   | 'code_typed'
-  | 'tapped'
-  | 'said_yes'
-  | 'said_no';
+  | 'said_yes';
 export interface VaultActivityEntry {
   id: string;
   at: string;
-  action: 'sign_in' | 'session' | 'code' | 'held' | 'asked' | 'paid' | 'declined';
+  action: 'sign_in' | 'session' | 'code' | 'held' | 'asked' | 'paid';
   origin: string;
   itemId?: string;
   itemKind?: 'login' | 'session' | 'card';

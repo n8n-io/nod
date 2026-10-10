@@ -116,6 +116,7 @@ export async function turnOrigin(turnId: string) {
     if (!chain || !origin) return undefined;
     return {
       source: origin.source,
+      channel: current.channel,
       readOnly: readOnlyChain(chain),
       scheduleInstruction:
         origin.source === 'schedule'

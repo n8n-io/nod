@@ -34,6 +34,7 @@ import type {
 } from '../src/shared/contracts.ts';
 import { parsePasswordCsv } from '../src/shared/password-import.ts';
 import { createPayments } from '../src/server/payments.ts';
+import type { PaymentPolicy } from '../src/server/trust.ts';
 import type { CardEntry } from '../src/ports/computer.ts';
 
 async function seedTurns(pool: pg.Pool) {
@@ -2441,10 +2442,7 @@ test(
       const resumed: string[] = [];
       const recorded: Array<{ action: string; reason: string; origin: string }> = [];
       const remembered: Array<[string, boolean]> = [];
-      let policy: { allowed: true; flagged: boolean } | { allowed: false; reason: 'background' } = {
-        allowed: true,
-        flagged: false,
-      };
+      let policy: PaymentPolicy = { allowed: true, flagged: false, inOtto: true };
       let url = 'https://shop.fixture.test/checkout';
       let failFill = false;
       const make = (local: boolean) =>
@@ -2585,7 +2583,7 @@ test(
       assert.ok('entered' in retried);
       assert.equal(fills.at(-1)?.fields.number, '@e9');
 
-      policy = { allowed: true, flagged: true };
+      policy = { allowed: true, flagged: true, inOtto: true };
       const flagged = await payments.request(turn, order);
       assert.ok('question' in flagged && !('paymentId' in flagged));
       assert.match(flagged.question, /^A page in this task had instructions for AI assistants/);
@@ -2600,7 +2598,7 @@ test(
       assert.equal(remembered.length, changes);
       await assert.rejects(payments.setting(turn, { doItForMe: true }), /Only a message/);
 
-      policy = { allowed: true, flagged: false };
+      policy = { allowed: true, flagged: false, inOtto: true };
       assert.match(await payments.setting(turn, { doItForMe: false }), /off for Visa ••4242/);
       assert.deepEqual(await choice(), { ...(await choice()), doItForMe: false, choice: false });
       assert.equal((await vault.paymentCard(card.id)).securityCode, undefined);
@@ -2619,7 +2617,14 @@ test(
       await assert.rejects(payments.request(turn, order), /never pays/);
       await assert.rejects(payments.setting(turn, { doItForMe: false }), /Only a message/);
       assert.equal(fills.length, before);
-      policy = { allowed: true, flagged: false };
+      policy = { allowed: true, flagged: false, inOtto: false };
+      const known = await payments.request(turn, order);
+      assert.ok('paymentId' in known);
+      url = 'https://new.fixture.test/checkout';
+      await assert.rejects(payments.request(turn, order), /not paid at new\.fixture\.test before/);
+      assert.equal(fills.length, before);
+      policy = { allowed: true, flagged: false, inOtto: true };
+      assert.ok('question' in (await payments.request(turn, order)));
 
       const second = await app.inject({
         method: 'POST',
@@ -2642,15 +2647,7 @@ test(
       assert.match(named.question, /with Mastercard ••4444\?/);
       url = 'https://shop.fixture.test/checkout?step=2';
 
-      const hosted = await make(false);
-      const remote = await hosted.request(turn, { ...order, card: '4242' });
-      assert.ok('question' in remote && !('paymentId' in remote));
-      assert.equal(
-        remote.question,
-        'Pay €43.20 at shop.fixture.test with Visa ••4242? Reply with its security code.',
-      );
-      await assert.rejects(hosted.setting(turn, { doItForMe: true }), /never keeps/);
-      const yen = await hosted.request(turn, {
+      const yen = await payments.request(turn, {
         ...order,
         card: '4242',
         amount: '1200',
@@ -2658,9 +2655,14 @@ test(
       });
       assert.ok('question' in yen);
       assert.match(yen.question, /^Pay ¥1,200 at shop\.fixture\.test with Visa ••4242\?/);
-      await assert.rejects(hosted.request(turn, { ...order, amount: '12.5', currency: 'JPY' }));
-      await assert.rejects(hosted.request(turn, { ...order, currency: 'ZZZ' }));
-      await assert.rejects(hosted.request(turn, { ...order, fields: { number: '@e4' } }));
+      await assert.rejects(payments.request(turn, { ...order, amount: '12.5', currency: 'JPY' }));
+      await assert.rejects(payments.request(turn, { ...order, currency: 'ZZZ' }));
+      await assert.rejects(payments.request(turn, { ...order, fields: { number: '@e4' } }));
+      const hosted = await make(false);
+      const asking = recorded.length;
+      await assert.rejects(hosted.request(turn, { ...order, card: '4242' }), /Hosted Otto/);
+      await assert.rejects(hosted.setting(turn, { doItForMe: true }), /Hosted Otto/);
+      assert.equal(recorded.length, asking);
 
       assert.deepEqual(
         recorded.map((entry) => [entry.action, entry.reason]),
@@ -2680,6 +2682,8 @@ test(
           ['asked', 'payment'],
           ['paid', 'code_typed'],
           ['held', 'background'],
+          ['asked', 'payment'],
+          ['held', 'new_shop'],
           ['asked', 'payment'],
           ['asked', 'payment'],
           ['asked', 'payment'],

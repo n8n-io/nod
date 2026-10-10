@@ -67,5 +67,11 @@ export interface MessagingTransport {
     text: string;
     attachments?: MessagingAttachment[];
   }): Promise<{ id: string }>;
+  forget?(input: {
+    channelId: string;
+    accountId: string;
+    threadId: string;
+    messageId: string;
+  }): Promise<void>;
   close(): Promise<void>;
 }

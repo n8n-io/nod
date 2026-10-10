@@ -18,7 +18,7 @@ Interface text is short, with no labels that explain themselves.
 | A purchase                                   | One approval: in Stripe Link where the owner uses it, otherwise one dialog in Otto. The owner types the security code, or taps Pay when they chose to remember it; on desktop the tap is Touch ID or Windows Hello. |
 | Schedules                                    | Use the sites granted when the schedule was made. Never pay without the owner.                                                                                                                                      |
 | Event work                                   | Never signs in and never opens a saved session. Tells the owner when a site needs them.                                                                                                                             |
-| Telegram and WhatsApp                        | Questions and payments work as in Otto. Secure forms say "Open Otto to continue securely."                                                                                                                          |
+| Telegram and WhatsApp                        | Questions work as in Otto, and payments at shops already paid at. Secure forms say "Open Otto to continue securely."                                                                                                |
 | Lost key                                     | A banner on every page until the key is restored. Nothing is overwritten.                                                                                                                                           |
 
 ## Text

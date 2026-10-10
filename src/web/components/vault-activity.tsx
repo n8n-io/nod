@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   CirclePause,
-  CircleX,
   CreditCard,
   Globe,
   Hash,
@@ -31,10 +30,9 @@ const reasons: Record<VaultActivityReason, string> = {
   injection: 'A page had instructions',
   unrequested: 'You didn’t mention it',
   payment: 'Payments always ask',
-  code_typed: 'You entered the code',
-  tapped: 'You tapped Pay',
+  new_shop: 'New shops need Otto',
+  code_typed: 'You sent the code',
   said_yes: 'You said yes',
-  said_no: 'You said no',
 };
 
 export function formatMoney(amount: { minor: number; currency: string }) {
@@ -49,7 +47,6 @@ const icons = {
   held: CirclePause,
   asked: MessageCircleQuestion,
   paid: CreditCard,
-  declined: CircleX,
 };
 
 function title(entry: VaultActivityEntry) {
@@ -59,8 +56,6 @@ function title(entry: VaultActivityEntry) {
     switch (entry.action) {
       case 'paid':
         return `Used your card for ${amount} at ${site}`;
-      case 'declined':
-        return `You declined ${amount} at ${site}`;
       case 'held':
         return `Didn’t pay at ${site}`;
       default:
@@ -120,7 +115,7 @@ export function VaultActivityList({
                     </span>
                   </div>
                   <span
-                    className={`vault-reason${['held', 'asked', 'declined'].includes(entry.action) ? ' is-held' : ''}`}
+                    className={`vault-reason${['held', 'asked'].includes(entry.action) ? ' is-held' : ''}`}
                   >
                     {reasons[entry.reason]}
                   </span>

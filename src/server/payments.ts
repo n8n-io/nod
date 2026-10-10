@@ -33,7 +33,7 @@ type Row = {
   card_id: string;
   fields: CardFields;
   flagged: boolean;
-  status: 'pending' | 'approved' | 'entered' | 'declined' | 'failed' | 'superseded';
+  status: 'pending' | 'approved' | 'entered' | 'failed' | 'superseded';
   expires_at: Date;
 };
 
@@ -190,6 +190,10 @@ export async function createPayments(
     | { entered: true; message: string }
   > {
     const parsed = input.parse(raw);
+    if (!options.local)
+      throw new PaymentError(
+        'Hosted Otto does not pay with saved cards. Tell the owner to pay on the site themselves.',
+      );
     const policy = await options.policy(turn);
     const page = await options.page(turn.threadId);
     const origin = credentialOrigin(page.origin);
@@ -222,6 +226,16 @@ export async function createPayments(
         payment: payment(row),
       });
       return { entered: true, message: await entered(row, card.id) };
+    }
+    const known = await pool.query(
+      "SELECT 1 FROM vault_payments WHERE owner_id=$1 AND origin=$2 AND status='entered' LIMIT 1",
+      [ownerId, origin],
+    );
+    if (!policy.inOtto && !known.rowCount) {
+      await record(turn, { action: 'held', origin, reason: 'new_shop', itemKind: 'card' });
+      throw new PaymentError(
+        `The owner has not paid at ${site(origin)} before, and a first payment at a shop works only from the Otto app, not Telegram or WhatsApp. Tell them to ask there.`,
+      );
     }
     const currency = parsed.currency.toUpperCase();
     const [whole, fraction = ''] = parsed.amount.split('.');
@@ -278,9 +292,8 @@ export async function createPayments(
       payment: payment(row),
     });
     const question = `Pay ${money(row)} at ${site(origin)} with ${cardName(chosen)}?`;
-    if (options.local && chosen.doItForMe && !policy.flagged)
-      return { paymentId: row.id, question };
-    const keep = options.local && !policy.flagged;
+    if (chosen.doItForMe && !policy.flagged) return { paymentId: row.id, question };
+    const keep = !policy.flagged;
     return {
       question: [
         policy.flagged
@@ -366,8 +379,8 @@ export async function createPayments(
       );
       return { status: 'unavailable' as const };
     }
-    const choice = options.local && !row.flagged && (keep || card.choice === true);
-    if (options.local && !row.flagged && (keep || card.choice !== false))
+    const choice = !row.flagged && (keep || card.choice === true);
+    if (!row.flagged && (keep || card.choice !== false))
       await options.remember(card.id, choice, choice ? code : undefined).catch((error: unknown) => {
         logFailure('vault_payment_choice_failed', error);
       });
@@ -394,8 +407,7 @@ export async function createPayments(
       .object({ card: z.string().trim().max(100).optional(), doItForMe: z.boolean() })
       .strict()
       .parse(raw);
-    if (!options.local)
-      throw new PaymentError('Otto never keeps security codes here, so every payment needs one.');
+    if (!options.local) throw new PaymentError('Hosted Otto does not pay with saved cards.');
     const policy = await options.policy(turn);
     if (!policy.allowed || (parsed.doItForMe && policy.flagged))
       throw new PaymentError('Only a message from the owner can change Do it for me.');
