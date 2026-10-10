@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Copy, Eye, EyeOff, ExternalLink, Trash2 } from 'lucide-react';
+import { Copy, Eye, EyeOff } from 'lucide-react';
 import type {
   VaultEntry,
   VaultEntryDetails,
@@ -535,7 +535,15 @@ export function VaultDetails({
           <VaultEntryIcon entry={entry} size={56} />
         </span>
         <VaultTitle>{name}</VaultTitle>
-        <p>{entry.kind === 'card' ? `${entry.brand} •••• ${entry.last4}` : host}</p>
+        <p>
+          {entry.kind === 'card' ? (
+            `${entry.brand} •••• ${entry.last4}`
+          ) : (
+            <a href={entry.origin} target="_blank" rel="noopener noreferrer">
+              {host}
+            </a>
+          )}
+        </p>
       </div>
       {!details ? (
         detailsError ? (
@@ -577,22 +585,6 @@ export function VaultDetails({
         </form>
       ) : (
         <div className="vault-inset">
-          {field('Name', editableValue('label', name))}
-          {entry.kind === 'login' &&
-            field(
-              'Website',
-              <span className="vault-detail-value">{host}</span>,
-              <Button asChild variant="ghost" size="icon">
-                <a
-                  href={entry.origin}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Open ${host}`}
-                >
-                  <ExternalLink size={16} aria-hidden="true" />
-                </a>
-              </Button>,
-            )}
           {field(
             identityName,
             editableValue(
@@ -629,22 +621,19 @@ export function VaultDetails({
         {notice}
       </p>
       {details && !editing && children}
-      {(details || detailsError) && !editing && (
-        <div className="vault-inset">
-          <button
-            ref={deleteTrigger}
-            type="button"
-            className="button button-ghost button-default vault-delete-row"
-            disabled={saving}
-            onClick={() => {
-              hideSecrets();
-              setDeleting(true);
-            }}
-          >
-            <Trash2 size={16} aria-hidden="true" />
-            Delete {item}
-          </button>
-        </div>
+      {(editing || (!details && detailsError)) && (
+        <button
+          ref={deleteTrigger}
+          type="button"
+          className="vault-delete"
+          disabled={saving}
+          onClick={() => {
+            hideSecrets();
+            setDeleting(true);
+          }}
+        >
+          Delete {item}
+        </button>
       )}
       <Dialog
         open={deleting}

@@ -80,7 +80,6 @@ export function VaultCardPayments({
       )}
       {error && <Notice>{error}</Notice>}
       <section className="vault-site-activity" aria-label="Payments">
-        <h3>Payments</h3>
         {!activity ? null : activity.entries.length ? (
           <div className="statement">
             <VaultActivityPages activity={activity} item={cardId} />
