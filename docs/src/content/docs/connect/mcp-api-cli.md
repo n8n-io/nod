@@ -58,7 +58,7 @@ MCP servers, APIs and CLIs use their own upload methods.
 
 ## Every action goes through the trust check
 
-Otto classifies each call from the request it actually sends: the HTTP method and path, the MCP tool name or the CLI subcommand. Reads and changes to your own data run directly. In a conversation, a send to [known recipients](/trust/approvals/#known-recipients) also runs directly. Any other action that reaches other people or deletes data runs directly only when it matches your request. Otherwise Otto asks you first.
+Otto classifies each call from the request it actually sends: the HTTP method and path, the MCP tool name or the CLI subcommand. Reads and changes to your own data run directly, and so does a send only to [your own addresses](/trust/approvals/#your-own-addresses). Any other action that reaches other people or deletes data runs directly only when it matches your request. Otherwise Otto asks you first.
 
 :::caution
 The trust check doesn't review changes to your own data. For a CLI, it reads the subcommand words, never option values.

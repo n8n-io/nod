@@ -5,7 +5,6 @@ import {
   actionEffect,
   actionRecipients,
   draftAction,
-  emailAddress,
   type ActionEffect,
 } from '../shared/action-effect.ts';
 import { reviewedRequest } from './action-presentation.ts';
@@ -44,29 +43,11 @@ export function createTrust(options: {
 }) {
   const { pool, ownerId } = options;
 
-  async function known(addresses: string[]) {
-    const own = new Set<string>();
+  async function own(addresses: string[]) {
+    const mine = new Set<string>();
     for (const value of await options.ownAddresses().catch(() => []))
-      if (typeof value === 'string') own.add(value.toLowerCase());
-    const pending = new Set(addresses.filter((address) => !own.has(address)));
-    if (!pending.size) return true;
-    const said = await pool.query<{ text: string }>(
-      `SELECT text FROM messages WHERE owner_id=$1 AND role='user' AND length(text)<=1000
-       AND EXISTS (SELECT 1 FROM unnest($2::text[]) address WHERE position(address IN lower(text))>0)
-       LIMIT 200`,
-      [ownerId, [...pending]],
-    );
-    for (const row of said.rows)
-      for (const match of row.text.matchAll(emailAddress)) pending.delete(match[0].toLowerCase());
-    if (!pending.size) return true;
-    const approved = await pool.query<{ action: string; args: Record<string, unknown> }>(
-      `SELECT action,args FROM approvals WHERE owner_id=$1 AND action NOT LIKE 'OTTO\\_%'
-       AND status IN ('confirmed','executing','completed','uncertain') LIMIT 500`,
-      [ownerId],
-    );
-    for (const row of approved.rows)
-      for (const address of actionRecipients(row.action, row.args)) pending.delete(address);
-    return !pending.size;
+      if (typeof value === 'string') mine.add(value.toLowerCase());
+    return addresses.every((address) => mine.has(address));
   }
 
   async function conversation(threadId: string) {
@@ -166,12 +147,7 @@ export function createTrust(options: {
     if (effect === 'change') return { confirm: false };
     if (await flagged(turn.threadId)) return { confirm: true, reason: 'injection' };
     const recipients = [...actionRecipients(action, args)];
-    if (
-      origin.source !== 'schedule' &&
-      effect !== 'destructive' &&
-      recipients.length &&
-      (await known(recipients))
-    )
+    if (effect !== 'destructive' && recipients.length && (await own(recipients)))
       return { confirm: false };
     const request =
       origin.source === 'schedule'

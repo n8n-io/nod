@@ -5,7 +5,9 @@ sidebar:
   order: 5
 ---
 
-Before Otto runs an action in a connected app, the Otto server checks it. Reads and changes to your own data run. Anything that reaches other people or deletes data runs only when your request clearly covers it. Otherwise Otto asks you.
+Before Otto runs an action in a connected app, the Otto server checks it against what you asked for. Reads and changes to your own data run. Anything that reaches other people or deletes data runs only when your request clearly covers it. Otherwise Otto asks you.
+
+Work Otto starts on its own, such as on a new email, has no request from you behind it. So it only reads and drafts, and asks for everything else. Otto doesn't remember approvals: a send you confirmed earlier never approves a later one.
 
 ## How the server reads an action
 
@@ -23,8 +25,8 @@ The server classifies the request exactly as it will be sent, not the model's de
 
 | Kind of work                                      | Reads | Changes                | Outbound or unknown                                   | Destructive             |
 | ------------------------------------------------- | ----- | ---------------------- | ----------------------------------------------------- | ----------------------- |
-| A conversation with you                           | Run   | Run                    | Run with known recipients or a review match           | Run with a review match |
-| A scheduled run                                   | Run   | Run                    | Run if it matches the schedule's instruction          | Same                    |
+| A conversation with you                           | Run   | Run                    | Run if it's only to you or matches your request       | Run with a review match |
+| A scheduled run                                   | Run   | Run                    | Run if it's only to you or matches the instruction    | Run with a review match |
 | Background work Otto starts, such as on new email | Run   | Drafts run, others ask | Ask                                                   | Ask                     |
 | Read-only and onboarding work                     | Run   | Refused                | Outbound refused, unknown left to Otto's instructions | Refused                 |
 
@@ -36,24 +38,20 @@ flowchart TD
   kind -- yes --> run[Run it]:::go
   kind -- no --> flag{{Tripwire hit since<br/>your last message?}}
   flag -- yes --> ask[Ask you]:::accent
-  flag -- no --> known{{Known recipients?}}
-  known -- yes --> run
-  known -- no --> review{{Review matches<br/>your request?}}
+  flag -- no --> own{{Only to your<br/>own addresses?}}
+  own -- yes --> run
+  own -- no --> review{{Review matches<br/>your request?}}
   review -- yes --> run
   review -- no --> ask
 ```
 
 The diagram shows a conversation. Background work only reads and drafts, read-only work refuses classified writes, and destructive actions always go to the review.
 
-## Known recipients
+## Your own addresses
 
-In a conversation, a send or other outbound action runs directly when every recipient is:
+A send or other outbound action runs directly when every recipient is your own address, from your Otto account or a connected app account. Nobody else is reached, so there's nothing to check.
 
-- your own address, from your Otto account or a connected app account,
-- an address you wrote yourself in one of your own short messages, or
-- someone you confirmed an app action to before.
-
-An address Otto found in an email or on a web page doesn't count. Scheduled runs and deletions skip this shortcut and always go to the review.
+Any other recipient goes to the review, even someone you emailed before. Deletions always go to the review.
 
 ## The review model
 

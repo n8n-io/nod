@@ -38,7 +38,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 ### Authority
 
 - Only your messages, a schedule's instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
-- App actions that reach other people, delete data or can't be classified need known recipients, a review match or your yes. See [Approvals](/trust/approvals/).
+- App actions that reach other people, delete data or can't be classified need a review match against your request or your yes. A send only to your own addresses runs. See [Approvals](/trust/approvals/).
 - A confirmation is bound to the exact action and arguments, and runs once.
 - Background work Otto starts itself only reads and drafts on its own, and never signs in or pays. Read-only and onboarding work refuses classified writes, and never signs in or pays.
 

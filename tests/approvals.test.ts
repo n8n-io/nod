@@ -521,30 +521,34 @@ test(
           const later = await begin('Summarise my inbox again.');
           assert.deepEqual(
             await trust.check(later, 'GMAIL_SEND_EMAIL', email('stranger@example.test')),
-            { confirm: false },
+            { confirm: true, reason: 'unrequested' },
           );
-          assert.equal(reviews.length, reviewed);
+          assert.equal(reviews.length, reviewed + 1);
         },
       );
 
       await t.test(
-        'recipients the owner named or owns run directly and a matching request needs no confirmation',
+        'only the owner own addresses skip the review and a matching request needs no confirmation',
         async () => {
           aligned = false;
           const reviewed = reviews.length;
           const turn = await begin('Email ana.named@example.test the synthetic notes.');
-          for (const to of ['ana.named@example.test', 'OWNER@example.test'])
-            assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', email(to)), {
-              confirm: false,
-            });
           assert.deepEqual(
-            await trust.check(turn, 'GMAIL_SEND_EMAIL', {
-              recipient_email: 'ana.named@example.test',
-              cc: ['outsider@example.test'],
-            }),
-            { confirm: true, reason: 'unrequested' },
+            await trust.check(turn, 'GMAIL_SEND_EMAIL', email('OWNER@example.test')),
+            {
+              confirm: false,
+            },
           );
-          assert.equal(reviews.length, reviewed + 1);
+          assert.equal(reviews.length, reviewed);
+          for (const args of [
+            email('ana.named@example.test'),
+            { recipient_email: 'owner@example.test', cc: ['outsider@example.test'] },
+          ])
+            assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', args), {
+              confirm: true,
+              reason: 'unrequested',
+            });
+          assert.equal(reviews.length, reviewed + 2);
           aligned = true;
           const reply = await begin('Yes, reply YES to the dentist.');
           assert.deepEqual(
