@@ -45,8 +45,6 @@ const reasons: Record<TrustReason, string> = {
   background: 'this came up in background work, not from a message of yours.',
   schedule: 'your scheduled task does not clearly ask for this.',
   unrequested: 'I could not confirm that you asked for exactly this.',
-  injection:
-    'something I read since your last message looked like instructions aimed at an AI assistant.',
 };
 
 function abbreviated(value: string, limit: number) {

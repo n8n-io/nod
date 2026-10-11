@@ -234,9 +234,6 @@ test(
           await waitFor(declined.json().turnId, 'succeeded');
           assert.equal((await approvalsFor(held))[0].status, 'declined');
           assert.equal(sends(), 0);
-          const direct = await propose('GMAIL_SEND_EMAIL', email('tester1@example.test'), 'apps');
-          assert.equal((await approvalsFor(direct)).length, 0);
-          assert.equal(sends(), 1);
         },
       );
 

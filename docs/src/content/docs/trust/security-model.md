@@ -38,7 +38,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 ### Authority
 
 - Only your messages, a schedule's instruction and your approvals carry authority. Pages, emails, files and tool results can't create permission.
-- App actions that reach other people, delete data or can't be classified need a review match against your request or your yes. A send only to your own addresses runs. See [Approvals](/trust/approvals/).
+- App actions beyond reads and drafts need a review match against your request or your yes. See [Approvals](/trust/approvals/).
 - A confirmation is bound to the exact action and arguments, and runs once.
 - Background work Otto starts itself only reads and drafts on its own, and never signs in or pays. Read-only and onboarding work refuses classified writes, and never signs in or pays.
 
@@ -80,7 +80,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The website receives what's submitted, and can store, encode or show it again. Masking replaces only the exact known values.
 - Once signed in, Otto can act anywhere on that website. Vault doesn't review each click, and the trust check covers app actions only.
 - The review model can be wrong, and the model isn't immune to prompt injection.
-- Changes to your own data, sends only to your own addresses, and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
+- Reads, drafts and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
 - In hosted mode, the operator can decrypt stored data.
 - Tests cover known failure cases. They don't prove that every injection or browser exploit is blocked.

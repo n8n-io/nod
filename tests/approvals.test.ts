@@ -440,7 +440,6 @@ test(
       const trust = createTrust({
         pool: db.pool,
         ownerId,
-        ownAddresses: async () => ['owner@example.test', null],
         review: async (_instructions, input) => {
           reviews.push(input as Record<string, any>);
           return {
@@ -528,34 +527,31 @@ test(
       );
 
       await t.test(
-        "only the owner's own addresses skip the review and a matching request needs no confirmation",
+        'every write except a draft runs only when the review matches the current request',
         async () => {
           aligned = false;
           const reviewed = reviews.length;
           const turn = await begin('Email ana.named@example.test the synthetic notes.');
-          assert.deepEqual(
-            await trust.check(turn, 'GMAIL_SEND_EMAIL', email('OWNER@example.test')),
-            {
-              confirm: false,
-            },
-          );
-          assert.equal(reviews.length, reviewed);
-          for (const args of [
-            email('ana.named@example.test'),
-            { recipient_email: 'owner@example.test', cc: ['outsider@example.test'] },
-          ])
-            assert.deepEqual(await trust.check(turn, 'GMAIL_SEND_EMAIL', args), {
+          const writes: Array<[string, Record<string, unknown>]> = [
+            ['GMAIL_SEND_EMAIL', email('owner@example.test')],
+            ['GMAIL_SEND_EMAIL', email('ana.named@example.test')],
+            ['GOOGLECALENDAR_PATCH_EVENT', { event_id: 'synthetic-shared', start_time: '10:00' }],
+            [
+              'CONNECTED_MCP_CALL',
+              { tool: 'synthetic_operation', input: { to: 'owner@example.test' } },
+            ],
+          ];
+          for (const [action, args] of writes)
+            assert.deepEqual(await trust.check(turn, action, args), {
               confirm: true,
               reason: 'unrequested',
             });
+          assert.equal(reviews.length, reviewed + writes.length);
           assert.deepEqual(
-            await trust.check(turn, 'CONNECTED_MCP_CALL', {
-              tool: 'synthetic_operation',
-              input: { to: 'owner@example.test' },
-            }),
-            { confirm: true, reason: 'unrequested' },
+            await trust.check(turn, 'GMAIL_CREATE_EMAIL_DRAFT', email('ana.named@example.test')),
+            { confirm: false },
           );
-          assert.equal(reviews.length, reviewed + 3);
+          assert.equal(reviews.length, reviewed + writes.length);
           aligned = true;
           const reply = await begin('Yes, reply YES to the dentist.');
           assert.deepEqual(
@@ -566,16 +562,6 @@ test(
             { confirm: false },
           );
           assert.equal(reviews.at(-1)?.userMessages.at(-1).text, 'Yes, reply YES to the dentist.');
-          await trust.flag(reply, ['ignore_instructions']);
-          assert.deepEqual(
-            await trust.check(reply, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
-            { confirm: true, reason: 'injection' },
-          );
-          const next = await begin('Email ana.named@example.test the notes now.');
-          assert.deepEqual(
-            await trust.check(next, 'GMAIL_SEND_EMAIL', email('ana.named@example.test')),
-            { confirm: false },
-          );
         },
       );
 
@@ -646,16 +632,20 @@ test(
               await trust.check(await begin('Synthetic event', { source: 'event' }), action, args),
               { confirm: true, reason: 'background' },
             );
-          for (const [action, args] of writes.slice(0, 2))
-            for (const source of [undefined, 'schedule'] as const)
-              assert.deepEqual(
-                await trust.check(
-                  await begin('Update my synthetic item.', source ? { source } : {}),
-                  action,
-                  args,
-                ),
-                { confirm: false },
-              );
+          for (const [action, args] of writes.slice(0, 2)) {
+            assert.deepEqual(
+              await trust.check(await begin('Update my synthetic item.'), action, args),
+              { confirm: false },
+            );
+            assert.deepEqual(
+              await trust.check(
+                await begin('Update my synthetic item.', { source: 'schedule' }),
+                action,
+                args,
+              ),
+              { confirm: true, reason: 'schedule' },
+            );
+          }
           const onboarding = await begin('', { source: 'onboarding' });
           await assert.rejects(
             trust.check(onboarding, 'GMAIL_SEND_EMAIL', email('owner@example.test')),

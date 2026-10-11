@@ -739,10 +739,6 @@ async function initializeApplication(
   const trust = createTrust({
     pool,
     ownerId,
-    ownAddresses: async () => [
-      (await accountProfile())?.email,
-      ...(await integrations.connectedApps()).map((app) => app.accountEmail),
-    ],
     review: async (instructions, input) =>
       curator.configured ? curator.curate({ task: 'review', instructions, input }) : undefined,
   });
