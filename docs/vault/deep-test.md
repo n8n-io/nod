@@ -1,10 +1,14 @@
 # Vault test results, 11 October 2026
 
+## Current tested source
+
+The [source manifest](tested-source.json) identifies production commit `4a4567a2a27403f9029b829f6d4e13f233b6078d` and its complete `src` tree. The final URL guard checks below apply to that source. Earlier sections keep their original source and result counts. A result from an earlier source does not count as a check of the current source.
+
 ## Scope and run rule
 
 The owner asked for a deep test of the complete Vault flow. The gate is an observable result: save a value in an owned private form, use it on the selected website, complete the task, and keep the value out of model messages and tool data. A payment must have one approved submission. Refusal, Stop, expiry, a changed card, uncertain entry and a lost response must not cause another submission. Before a fresh attempt after uncertainty, the owner must check the website result.
 
-The acceptance run used the local snapshot `f39692849cb5dad22e095777de921ce18e02d7b8`. Its complete `src` tree is identical to public PR commit `585916151b109fa22245a315fc288164d5faeeb3`. The [source manifest](tested-source.json) records that commit, its Git tree and SHA-256 hashes for all 376 production source files. These results apply to that source. Later PR review changes require their own checks. The deep test changed ten existing production modules after its first source snapshot; the full PR also contains the earlier Vault feature work. It adds no product wait, automatic retry, merchant case, vendor patch, dependency or service. The user still enters one code in one private form. The model can select its destination boxes as an ordered list of browser references.
+The acceptance run used the local snapshot `f39692849cb5dad22e095777de921ce18e02d7b8`. Its complete `src` tree is identical to public PR commit `585916151b109fa22245a315fc288164d5faeeb3`. The original acceptance record contains that commit, its Git tree and SHA-256 hashes for all 376 production source files. These results apply to that source. Later PR review changes require their own checks. The deep test changed ten existing production modules after its first source snapshot; the full PR also contains the earlier Vault feature work. It adds no product wait, automatic retry, merchant case, vendor patch, dependency or service. The user still enters one code in one private form. The model can select its destination boxes as an ordered list of browser references.
 
 Twenty task cases run three times each. The agent is `openai/gpt-6.1-sol`; the independent judge is `anthropic/claude-sonnet-5-5`. The browser is Chromium. Each attempt has a new database schema, workspace and browser profile. The owner task text, required checks, models and repeat rule stay fixed across sources. Frozen records contain the input hashes. A new source has its own report; earlier results do not count as results for the final source.
 
@@ -127,3 +131,52 @@ Public commit `657467daceb0b493477a21d7c1295a2334897a07` has the same complete G
 The complete Linux integration run passed 780 tests. Root check, build and eval check passed. The eval harness passed 47 tests. Native Chrome passed ten owner UI checks, including reveal cleanup, preserved private drafts, desktop payment approval and the original Telegram task resume. Two native private-entry checks passed. These results apply to this source.
 
 The fixed-source task matrix ran twenty cases three times, with the same agent and judge and no task retry. It produced 59 complete passing grades and one incomplete judge response. A fresh judge pass graded the same saved trace and unchanged criteria. All required checks passed. No task, browser operation or payment was repeated. The original incomplete result remains separate. Records are in `.local/vault-deep/cubic-final-judge/` and `.local/capability-evals/vault-cubic-final-1011/`.
+
+## Native browser simplification, 11 October 2026
+
+Production commit `239e36d96f3a7ed62e7248baf376ac87c4bcca32` removes duplicate browser work and execution limits. Normal actions use the pinned agent-browser native daemon. Download completion uses its native download events. The provider no longer polls files every 25 ms, switches new tabs for the model, retries empty snapshots or adds a five-second JavaScript deadline. The container client, bridge and worker have no second normal execution deadline. The native library still controls its own operation timeouts.
+
+The change removes script, text, selector, gesture and snapshot limits that could stop normal task work. The shared transport byte budget, file byte limits, exact-origin checks, private-entry locks and cancellation cleanup remain. Stop drains or closes an uncertain operation. A failed native download with a confirmed response leaves the browser available. There is no automatic action retry, fixed page wait, vendor patch or site-specific production case. Across the production files in this commit, the change removes 203 net lines.
+
+### Automated checks
+
+| Check                                  | Result                         | Record                                             |
+| -------------------------------------- | ------------------------------ | -------------------------------------------------- |
+| Type, architecture and format checks   | Passed                         | `.local/vault-deep/browser-limits-check.log`       |
+| Complete integration suite             | 785 passed; no failure or skip | `.local/vault-deep/browser-limits-integration.log` |
+| Production build                       | Passed                         | `.local/vault-deep/browser-limits-build.log`       |
+| Eval harness check                     | Passed                         | `.local/vault-deep/browser-limits-eval-check.log`  |
+| Eval harness tests                     | 47 passed                      | `.local/vault-deep/browser-limits-eval-test.log`   |
+| Native Mac browser and download checks | 4 passed; no failure or skip   | `.local/vault-deep/browser-limits-native-mac.log`  |
+
+The native checks cross the real private browser client, bridge, worker and Chrome. They cover text input events, long text and full script output, selection and checkbox actions, exact-origin private entry, generated PDF tabs, an acknowledged failed download, authenticated downloads, cross-origin downloads, unsafe files and cancellation. The condition-wait test supplies a 90-second timeout with an already satisfied condition; it proves the protocol accepts that value, not that the task waited 90 seconds. A separate blocked native request advances the parent clock by ten minutes and then completes once. It proves that the wrapper adds no second deadline.
+
+Two Cubic findings have regression checks. History and reload actions run when the script fence is set and the inspector cannot connect; the fence remains until a new document can be verified. Failed checkpoints read the published manifest and remove only new, unreferenced parts. Five real filesystem fault cases cover errors before and after part and manifest writes. An unreadable or uncertain manifest preserves its parts. This adds no normal-path reads or automatic retry.
+
+One preceding integration run had 782 passes and two reported failures: the cross-origin download subtest and its parent. Added inline fixture controls covered the link after the layout wrapped. The raw native error identifies the covering fixture button. The fixture now puts those controls on separate lines. No product forced-click behavior was added. The raw failed log remains in `.local/vault-deep/native-wrapper-integration.log`.
+
+### Repeated model tasks
+
+The prior PR review matrix used commit `800d27d8a0c206a33b170fa53ce92c887e83e473`. All 60 attempts passed their required feature and privacy checks. Four optional answer checks failed: one voice check and three unnecessary folder questions. These grades remain in `.local/capability-evals/vault-cubic-round3-1011/`. They do not establish a pass for the later native browser source.
+
+The same 20 cases, agent, judge and three-repeat rule use immutable browser source `239e36d96f3a7ed62e7248baf376ac87c4bcca32`, with zero task retries. The frozen record is `.local/vault-deep/frozen-native-browser.json`. The raw results belong to `.local/capability-evals/vault-native-browser-1011/`. The [validation record](https://github.com/n8n-io/otto/pull/218#issuecomment-6108899407) reports the run result and keeps optional answer grades separate from required feature and privacy checks.
+
+### Final URL guard and cancellation checks
+
+Commit `4a4567a2a27403f9029b829f6d4e13f233b6078d` adds three production lines to the native browser source: the existing HTTP URL check before saving an observed address, and removal of embedded user information from URL observations. Generated document URLs remain available. The new privacy regression fails on the prior source and passes after the fix. The generated-PDF native test also passes.
+
+Type, architecture and format checks and the build pass. The complete integration run passes 786 tests with no failure or skip. The native Mac download file passes 12 tests and skips three PostgreSQL-only tests; the complete integration run covers those database tests. The native browser cases and their two cross-origin subtests all pass. Separate focused checks pass five privacy and recovery tests and five long-action cancellation tests. Their records are `.local/vault-deep/url-guard-check.log`, `url-guard-integration.log`, `url-guard-build.log`, `url-guard-native-mac.log`, `url-credentials-green.log` and `long-actions-stop.log`.
+
+The Stop checks request a 90-second wait, a one-hour pointer hold and a one-hour drag with 101 points. They cancel after the operation starts. The hold and drag release the pointer exactly once. These checks complete in milliseconds and prove cancellation; they do not wait for the full requested duration.
+
+Cubic also asked to restore the earlier task deadlines, 15-second wait and gesture limits, point cap and fixed result truncation. Those requests were declined with source and regression evidence. The owner explicitly requested native browser behavior. The pinned native CDP client already bounds its own responses, and Pi estimates tool-result tokens and compacts before the next assistant response against the selected model context. The shared byte budget and bounded Stop cleanup remain.
+
+### Authorized live website check
+
+The owner authorized a manual check with their account on a real website. This check used source `239e36d96f3a7ed62e7248baf376ac87c4bcca32`. It is separate from automated tests and synthetic model tasks. No real account, password, code, document name or document content is included in this repository.
+
+The first minimal task reached private login and verification, stored the login, and then failed during document retrieval. That failed task remains in the private local record. A later task delivered two PDFs. It reused an active session, so it did not prove password reuse after sign-out.
+
+The final check signed out through the website. A repeated minimal request returned the existing downloaded files and stated that it had not checked the website. A natural follow-up asked for fresh copies. Otto then selected the saved account, entered its email and password privately, reached a new verification challenge, accepted one owner code through the private form and delivered two fresh PDFs. Both owner downloads returned HTTP 200 and application/pdf. An independent PDF parser accepted both files. The saved Pi sessions contain neither the stored password nor the new complete code. The password check includes literal and JSON-escaped values. The login remains stored in Vault.
+
+The private metadata records are `.local/vault-deep/live-reuse-final-audit.json` and `.local/vault-deep/live-fresh-download-proof.json`. A first PDF parser probe called cleanup on the document instead of its loading task. That probe failed and is excluded; the corrected probe parsed both files. No product change was needed.

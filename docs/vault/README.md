@@ -1,5 +1,7 @@
 # Vault
 
+Read [Trust and Vault](../trust-and-vault.md) for the user guide and architecture diagrams.
+
 Implemented design, 10 October 2026. See [architecture](../architecture.md) for the full system.
 
 **Pi can use a saved login without receiving its password.** The server checks permission, claims one durable use, and sends the value to the selected browser field. Pi selects the method, account, fields and submit control. It then checks the website result with its normal tools.

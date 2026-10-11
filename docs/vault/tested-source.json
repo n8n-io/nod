@@ -1,6 +1,6 @@
 {
-  "commit": "585916151b109fa22245a315fc288164d5faeeb3",
-  "srcTree": "8aab315654fe5a07d0d1df3b804d2baf9d7f4847",
+  "commit": "4a4567a2a27403f9029b829f6d4e13f233b6078d",
+  "srcTree": "18a7b2cbaaba3779ffc1fbc5a2d8fd2de175b587",
   "files": [
     ["3052107e3fa38c227851820afd4104e19bf1b6dda942fa4c67d509657990b7be", "src/ports/agent.ts"],
     ["511a56f22736afc4c492f53c53061fd828dbd21c04c0c834f43d8f71a88ba1b8", "src/ports/analytics.ts"],
@@ -63,19 +63,19 @@
       "src/ports/thread-identity.ts"
     ],
     [
-      "f7d89fb52556879b047d7555ac5c9945c1c7d0edde81033119a631af477d6831",
+      "fb5c2730bb5d6eb1f9549032e652d00f538c5f20517635c6078770b6f46a56f4",
       "src/providers/agent-browser/credentials.ts"
     ],
     [
-      "007363665c923bf537eef6c044c300dbcbb3f5ed40dbeb39f25f1912beed416f",
+      "761a8d374fa4a9eafb4bcd102a7ed1cc6a5a9be997bd51bf118ff35671652f69",
       "src/providers/agent-browser/devtools.ts"
     ],
     [
-      "b059487b2b6fa4023e870d999d514312506daf1ab145ef6ee2675770700fb7e4",
+      "ae46016b4d0e82955021c779b63b695c113a7d78b4f0f45eb11d1e5590bea9c9",
       "src/providers/agent-browser/downloads.ts"
     ],
     [
-      "16f72e0d8bb0c112a0d5b8a0da25e3b355e0eecce3d25d764a53e0c207dfcf22",
+      "66614b6463d556e9e3cdb4742d846dfe67c8f5edf4713cd057be2b99ee88f0b8",
       "src/providers/agent-browser/index.ts"
     ],
     [
@@ -83,7 +83,7 @@
       "src/providers/agent-browser/network.ts"
     ],
     [
-      "14ece2b40ad93da1a019014d5908857bfc1288536f178aa6146ed753c72b3a7d",
+      "9c67822f8bbcc885e084daeee95c5261391c2f9ba4af0c92506c62b3f2bbc00d",
       "src/providers/agent-browser/screens.ts"
     ],
     [
@@ -143,7 +143,7 @@
       "src/providers/composio/verification-email.ts"
     ],
     [
-      "a8575c5729175cf3262c7fcbfa7d8dfc87a5762cfe2809389cf8c300aeca7d09",
+      "c8491bc492396fedbb477100567b2f3c87234b33712b0906b8aedf499afa7697",
       "src/providers/container-browser/bridge.ts"
     ],
     [
@@ -151,7 +151,7 @@
       "src/providers/container-browser/chromium.sh"
     ],
     [
-      "aa5aa54936a9ab3b16d9727b868ab2c2425fb4e5064b82e54d93f7f86a6ffd35",
+      "5bc8074d442e98f0351036d98c558685342dc46d88b145768831eca6b0ac6f89",
       "src/providers/container-browser/client.ts"
     ],
     [
@@ -163,11 +163,11 @@
       "src/providers/container-browser/index.ts"
     ],
     [
-      "50eaeab57b741a532bf5f24a1b96b8ac08a129989379886105dab8a1e1225db7",
+      "8247c8b52332eb7de36f644e3c7c0c27ad35d12567fc468f421e217bfb6f6c52",
       "src/providers/container-browser/protocol.ts"
     ],
     [
-      "c741fc4e7f8e6026e4a56062778715ac9c376f33573a1f8711be33b7f4b92ce0",
+      "ddfbf19f0bc620081494214a5e534f8d44316215a17b382c87b63d43cab9f4ee",
       "src/providers/container-browser/worker.ts"
     ],
     [
@@ -259,7 +259,7 @@
       "src/providers/openai/speech.ts"
     ],
     [
-      "e864044e065f07b6d75c7f73af8ee22430b6ec808d1ac45b1564977b6346a967",
+      "91b10a7cc94ec42ee59f69f07aabb8bf83302cc1800a4e8bbcde628de4fd746e",
       "src/providers/pi/checkpoint.ts"
     ],
     [
@@ -291,7 +291,7 @@
       "src/providers/posthog/analytics.ts"
     ],
     [
-      "0619edd5d4fdeaaf260e25d438e2745837ad4738b9b12e5d55f87b8fede24905",
+      "0e28da80615936cf4b2b7e83119f4e4a455f121c86f2c326c80c00880ead8323",
       "src/providers/process.ts"
     ],
     [
@@ -323,10 +323,10 @@
       "src/runtime/browser-flows.ts"
     ],
     [
-      "d6f263cde8f1f3ad86bdbe96e4839255ca9e22792752ebd3a6b3c51156afed28",
+      "a701d11740649f0ec1f37817fda8669b5e2b5d0133e157d2291a279346860507",
       "src/runtime/communication.ts"
     ],
-    ["60dde2a31595da77f20dd6658b3392657e69b078967fb3a0295636066045b30e", "src/runtime/index.ts"],
+    ["b1ceda3c13f78d0647a5c1e7729924af1a03ec66a05ee631042e54f78b835be2", "src/runtime/index.ts"],
     [
       "c0ab80f837983ef09d1c7f0fb110a9bb8191d4d42562741304ef25aeffea058e",
       "src/runtime/observations.ts"
@@ -335,7 +335,7 @@
       "2ad0f43d43306a5505b280f7af2be0a013789ba9ca0046198a6ce50d3da9bbbb",
       "src/runtime/personality.ts"
     ],
-    ["3d2aa786d84c33986c256b8431a67b55191c4747ac85134124a279c3117ae25f", "src/runtime/prompt.ts"],
+    ["83f654243dfd07145e7f23195cbbdedf39a50bce806f391616208be93bdf7f03", "src/runtime/prompt.ts"],
     [
       "73e332913fbcf3c74ed513e3b73ccbc82bb00cc34abb55aab34126fe657d3cc9",
       "src/runtime/skills/artifacts/SKILL.md"
@@ -484,7 +484,7 @@
       "2f6660ab171354bae54ac6e367c96a4b4997e09b2386cf02dc7047166271367f",
       "src/runtime/time-context.ts"
     ],
-    ["c28c1320decd3f264b25d57e13b8691f426bf57a962e0920c15e073e6387a6a2", "src/runtime/tools.ts"],
+    ["88f8d7e63975e723999d423323bf38edfe2f48d877cc0996b26b91fd2be6ee6d", "src/runtime/tools.ts"],
     ["de9a9852ffec22cb57ab1ee2f7289d13c1c63b84ab8468f0fea2df3b1d61afc9", "src/runtime/turn.ts"],
     [
       "48f5b7b0790c222fbc46f0b3e60f1c8f675593d3af143a9458c434f2238efcfe",
@@ -513,11 +513,11 @@
       "src/server/agent-reactions.ts"
     ],
     ["7ce17c037fd5ccd63fc6f44f298d93b4d7e294f64485e5efdc25428be8d2250e", "src/server/analytics.ts"],
-    ["719081634d1797798e50092e28485ecdc81fcc78acbc96e0e4993134fc75ce57", "src/server/app.ts"],
+    ["a0760aa05d53a31dcfd36a58b8466628b06f4e95a21ea0dd5bc91a7627c89893", "src/server/app.ts"],
     ["f267702a046e7eb9eea00f05b6595c0380ab9e8031f591275c1a02f620642550", "src/server/approvals.ts"],
     ["09274014fcea2f38c7a99e730f17558e2c1701c5dc75239a5617f39e3868c975", "src/server/artifacts.ts"],
     [
-      "ee0fddb9b054921be40d29fff7c84b8aeb5b845d14ff955defa422fb0c22a422",
+      "0ed2199e1a49d280358551e1966e0ee7253f40969658cd34cc3d9eaba051f3a6",
       "src/server/browser-connections.ts"
     ],
     [
@@ -532,13 +532,13 @@
       "47a380a8b74ce4a971e2159e5196007358f38b89556285714adc12ba3ea63800",
       "src/server/channel-settings.ts"
     ],
-    ["ee5cbf064110b799bfd8672f98f836352e162d36b3561257aac9f93dd61f867c", "src/server/channels.ts"],
+    ["14897d5f2b71825cb93051fcc02132d3264c4d5afd737f5a3c263a234d1057a4", "src/server/channels.ts"],
     [
       "8572107695a317de2b3191650d8375da0ce0e856d60e9cde804d9fa0e91f9ae2",
       "src/server/chat-verification.ts"
     ],
     [
-      "e253be63bd62335f53596b24a83fc906bd0bdcbe803dc37c772b201f7584e835",
+      "46b367075480e80c15c1c4329e0fa64978e6e481923ee3ee102466d03009d573",
       "src/server/composition.ts"
     ],
     [
@@ -592,7 +592,7 @@
       "src/server/integration-result.ts"
     ],
     [
-      "25d9c6298e09f2429340f1abbe6f40ca913a8027457c3e4a8bc0dd8768a62b8c",
+      "0fb984830a9a1ba159c29db2cdd0e880ff5798cc03d2ab365aca940ee44a7b39",
       "src/server/integrations.ts"
     ],
     ["0f0d85ccbf0b670fae25dfb23b9aa6baa3f8f4616473991bb0767a8108626981", "src/server/ledger.ts"],
@@ -635,7 +635,7 @@
       "67b7ca84b4dd92580668438fb7ea5466addb91874e339b32b9d150fdc75ad001",
       "src/server/onboarding-suggestions.ts"
     ],
-    ["66b8edd5b1106e1e65613f2669e24b9cd84a1c9b0b462bce62617a5167b8098e", "src/server/payments.ts"],
+    ["7d632f00ea255606f9359fc1022cab335a5eb53433dcac9a222b3426beae9ac5", "src/server/payments.ts"],
     ["c58205c8a8ddf716a215ea1d622612525295e3bc174234745575d4eb2a2141c0", "src/server/personal.ts"],
     [
       "efbca9cc7eb7c74544cb49ebb62d42278eabbbef76c2666484461f6265b7e098",
@@ -671,7 +671,7 @@
       "src/server/tenant-drain.ts"
     ],
     ["7b17688ef7cbaabd922d056740ba7844a0b60509665b4dfb9668d1012ebc64f4", "src/server/tenants.ts"],
-    ["d67eafdcd44d01393f479f08b87adfbe1a28929ec08a6125af9bc7db216347c6", "src/server/thread.ts"],
+    ["5fa30b068774188e9b2cbc1731e272de57dcbc5f15bf150e03a242d0947d1881", "src/server/thread.ts"],
     ["5eeb2490fcc44e6f0fdf961f2031105b4041b5436eda6362535fad8d85ca4533", "src/server/triage.ts"],
     ["bf0cd0769362ca6d3c2cb45ce65d24a29c7bd28e3aecc5d7f36e0e842c07f3f7", "src/server/trust.ts"],
     [
@@ -683,7 +683,7 @@
       "src/server/usage-report.ts"
     ],
     [
-      "6d2f6bad1a113b0b42d264346d69079b2a9b361acbcd7e8f685a261201f0de22",
+      "8a17ecd22cc53ded1eb916eacbb0f5ac2322f0258e8b7907fb3304fea8071abc",
       "src/server/vault-access.ts"
     ],
     [
@@ -691,11 +691,11 @@
       "src/server/vault-app-grants.ts"
     ],
     [
-      "7cb9b7cc6e2f6e86d608fc4e7000f788f5488fab0595b65cae7ba4bbc96aaa84",
+      "1ab588c183598be7951b6016a419093c60f05cb703302425e96c0c18d0c81d1a",
       "src/server/vault-crypto.ts"
     ],
-    ["5a8e9af66b660e06e2f0d27ec151f2820e42ee1bd092d6a5d7b83234d13079db", "src/server/vault-use.ts"],
-    ["6cd0e77c118c30dc936408e8ca6b9fcec747bcd19d2e17e94fb2cc5614b65647", "src/server/vault.ts"],
+    ["b7693482b752fbae71fa95bd6b6aceff54e07df5f8cf6a37b131aae9f24da132", "src/server/vault-use.ts"],
+    ["acb78c319105b5fc8f64983de1f0a852793255b1f00be7e12b622b432e593c8c", "src/server/vault.ts"],
     [
       "1cef7be8b07b741f286d502c08aa2de26b8305594b53768f52e91aeae795c59a",
       "src/server/work-admission.ts"
@@ -711,14 +711,14 @@
     ],
     ["3eb61735d4d1590a972eeb305bf93383c83273821f0f525e57e53d04337c96d2", "src/shared/analytics.ts"],
     [
-      "f0cc5b29a1d3fa43894bc62ac761793cd555c04ffa2e6dc143606e637cc9bf51",
+      "bb4f0a4ff93c4014f6802469685e88815eedfa502abc6e1ea1c57a9d7736c847",
       "src/shared/browser-errors.ts"
     ],
     [
       "737d4bc2eb4848c2581ad4e9ecbf534d3b4e5683d2aa4f43aaba895f3bfb1035",
       "src/shared/browser-handoff.ts"
     ],
-    ["bded4d677768081cdf1990b81e537b9edb853e7cb6596bde5492cab289e6c7bd", "src/shared/contracts.ts"],
+    ["e2c7e8c984ae946f951c9ffad8d050b865ffe5eec58892e9a1c338948d4ae5f3", "src/shared/contracts.ts"],
     [
       "38a40bf85d152a8b21099d0aa22a434a678bf95b08ce01c96487086b8aef8872",
       "src/shared/date-locale.ts"
@@ -748,7 +748,7 @@
       "src/shared/onboarding.ts"
     ],
     [
-      "b18f1c81d0315f9e7191040d765a82a1f57c57ecb97d5ebccb80f1af74ce6893",
+      "09ccebdda0c040e54f4d97e07125b738c889973c7ac2d9702a99a9e5bc0850c2",
       "src/shared/password-import.ts"
     ],
     ["e516d238ffb3eb96c9e756dab9459ff5236a83f8bd6792b9d6bba9f4baf289c9", "src/shared/privacy.ts"],
@@ -759,7 +759,7 @@
     ["422a4a145432f0f5cdbf2d05dbd730e6c48cb7615d76684543bb1bed20d399f5", "src/shared/trust.ts"],
     ["7e8095b3c09a7a6096f3e3c0d5d634a89ee2b84447dc2d7be652774aeb3ba042", "src/shared/untrusted.ts"],
     [
-      "2dfb814ace7054c5db366a2b45a911b7c0e912246ea37f3c167ce2b973d13f2c",
+      "7ec00fb141be1c1441688e0e4c581aa66b5df845c56f80d6d41ccd53d46a6b7d",
       "src/shared/verification-code.ts"
     ],
     ["b887e2d21dc70d070d76b2a56f4b4de3a2ceee05ce6885268c2d49900ac6a1cd", "src/web/app.tsx"],
@@ -960,31 +960,31 @@
       "src/web/components/ui.tsx"
     ],
     [
-      "f6e18cac040b9362c9264f8e72602eea6673a07a954058ac618e82b6ba38780d",
+      "0405c3a6fbd7a8041dbf873b54aa5907773edb95b8110645cae82f4aa5263954",
       "src/web/components/vault-activity.tsx"
     ],
     [
-      "f262478f75ec282517e0bf9979ad6abf24325f69056c74729c2403ace95c3b35",
+      "e900cdfb7afd32167370c8d8a6fae8d951e5bb478b4f27cd3e86576e6a5ebf66",
       "src/web/components/vault-card.tsx"
     ],
     [
-      "fae9d824238daec5c7a3b86aa207fa5fec122abe01a1adc9919f6aff3a4dfc65",
+      "f5487e771779b5bf19c160e56cb73e7ed02bb4d4cd3650c051cf0e40127e9819",
       "src/web/components/vault-details.css"
     ],
     [
-      "6d3822e04963b0a720570a6cc72c1d1a78f09a1b21ddbb2c92332b89b892ac6d",
+      "0eb77b8a9eb21ab8d84fc82eab004f4ffa657c3063c0eb1a2b8abaf930038807",
       "src/web/components/vault-details.tsx"
     ],
     [
-      "319e488e222b0cd7eedf7df7bcff2312b596110336f78993aaf17a652008b0fa",
+      "f9385ae7365d2d506e686c353c19730a3fdd8fb6c5cb94c5c655f46690a743a7",
       "src/web/components/vault-import-dialog.tsx"
     ],
     [
-      "a0bc2a7221185477891c24e01f9076d08a833520dd71575abba9fe82e3f552d9",
+      "b0b00d51d5dba8b28b4f0e6b28d7e43bf0487e8c1c31e6383d84c6ba0d3024f3",
       "src/web/components/vault-item-form.tsx"
     ],
     [
-      "453a1ce923b70cb23b09bea619c3a38e5ce2ef571b0ba05ca0e0e908fbdd0e64",
+      "9880002a32b6c73680034cf4f8b70c83ecbb0dac4460dbf3eaa35fb26b627f94",
       "src/web/components/vault-site.tsx"
     ],
     [
@@ -992,7 +992,7 @@
       "src/web/components/vault-surface.tsx"
     ],
     [
-      "9dc776d824cc4122f1c4a3b9587a8843231fb8f4b3488bcac130c95be90c262d",
+      "d23c0626e3d45aed66714cb555d3fdb8b0787e6d1581ad89ddf481067fb02a51",
       "src/web/components/website-session-dialog.tsx"
     ],
     [
@@ -1148,7 +1148,7 @@
     ],
     ["4ec80199c6fc42e13b9a4eaebf90ed84dbec2d68be893b63f8faee06fa6a2933", "src/web/main.tsx"],
     ["99e7b1371d28b7119d3259f0f77edcb2fe92685cbb2ae4a47351b20ceb8e0b28", "src/web/pages/apps.css"],
-    ["df5367dbd8135a7883fd19906aaa52e8f6f87f21330fbfbce6f0f173367cebf5", "src/web/pages/apps.tsx"],
+    ["eab3fcf66296988a7d67b836887b314cad661a20a46b4a6cd788f6957fea3750", "src/web/pages/apps.tsx"],
     [
       "a8d545d113d1b6eba8f32b339423c8b1293b2e85927dde71255c4ade8dde6d17",
       "src/web/pages/browser.css"
@@ -1166,9 +1166,9 @@
       "src/web/pages/channels.tsx"
     ],
     ["0ded24c4b7f6d0373d8dacb49e3c2c20b722b3893b5934ffa615ebbef8ec3955", "src/web/pages/chat.css"],
-    ["252cea97a6dab554bf35d6892cecd8066fc9dbb6f158ef4dba3c345a8a3c6ad0", "src/web/pages/chat.tsx"],
+    ["f88a99e687a35bad05bf774fb360e4f9bfca80004bc57257b86662bbedafcb42", "src/web/pages/chat.tsx"],
     [
-      "bf853104c3acb03658181479599cbb53b589bc0b01d7b68e9a76bab9cd9861b9",
+      "4604362ffe6749758c4b3a48fd530b892fe6f2c76afa956e2f03d2f6c9e9bd96",
       "src/web/pages/credentials.tsx"
     ],
     [
@@ -1260,7 +1260,7 @@
       "src/web/pages/schedule.tsx"
     ],
     [
-      "6cfe9a9ffb25ad5c5ff68068f78ec39e789234b2b8454d7802d955d5b4ca41e9",
+      "c439a7de74676e7051de81a6287f7a2475c7f284e5ecd4eac8fcbb8f1ada421b",
       "src/web/pages/secondary-pages.css"
     ],
     [
@@ -1275,7 +1275,7 @@
     ["218f5df1d3b8cc0d39dc5ae34d13347eb185ebaf6640960abece572414a9f53e", "src/web/pages/tasks.tsx"],
     ["566001bfa3d94b940472fb5ce439a51fb4f115a440e45c6ba1d0c9380c799601", "src/web/pages/trust.css"],
     ["74d903e4a125f6505f73671525cc0bec31c021e6eb4eb41190150f2e0ea56f59", "src/web/pages/trust.tsx"],
-    ["9794f5cec44d8d6d31707f96b87359f110fe3c405e4241715e7929f740aa524d", "src/web/pages/vault.tsx"],
+    ["1a8c129d4aa4c897999440247abfc0d313bc39466165b2c1b9aa30ee162814e2", "src/web/pages/vault.tsx"],
     ["6b72407d87e3ab63e23bfe21e5e8f88d75270f074c681fcec05f211d2f323854", "src/web/styles.css"],
     ["04c72e882ecc41cf5a4acb2ae368e3b51e7959ae893baba9fb2329a81beed4fa", "src/web/theme.css"]
   ]
