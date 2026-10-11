@@ -11,8 +11,12 @@ hero:
 
 import { Card, CardGrid, LinkButton, LinkCard } from '@astrojs/starlight/components';
 import { Image } from 'astro:assets';
-import chatLight from '../../assets/screens/chat-light.png';
-import chatDark from '../../assets/screens/chat-dark.png';
+import chatLight from '../../assets/screens/card-chat-light.png';
+import chatDark from '../../assets/screens/card-chat-dark.png';
+import tasksLight from '../../assets/screens/card-tasks-light.png';
+import tasksDark from '../../assets/screens/card-tasks-dark.png';
+import vaultLight from '../../assets/screens/card-vault-light.png';
+import vaultDark from '../../assets/screens/card-vault-dark.png';
 
 <div class="otto-actions">
   <LinkButton href="/get-started/install-desktop/" icon="right-arrow">
@@ -23,17 +27,46 @@ import chatDark from '../../assets/screens/chat-dark.png';
   </LinkButton>
 </div>
 
-<div class="otto-shot">
-  <Image
-    src={chatLight}
-    alt="Otto chat comparing three suppliers in a table, then preparing a reply for review."
-    class="dark:sl-hidden"
-  />
-  <Image
-    src={chatDark}
-    alt="Otto chat comparing three suppliers in a table, then preparing a reply for review."
-    class="light:sl-hidden"
-  />
+<div class="otto-gallery not-content">
+  <figure>
+    <Image
+      src={chatLight}
+      alt="Otto comparing three venues in a table and drafting a booking request it hasn't sent."
+      class="dark:sl-hidden"
+    />
+    <Image
+      src={chatDark}
+      alt="Otto comparing three venues in a table and drafting a booking request it hasn't sent."
+      class="light:sl-hidden"
+    />
+    <figcaption>Give it the whole task</figcaption>
+  </figure>
+  <figure>
+    <Image
+      src={tasksLight}
+      alt="The Tasks page with a weekday calendar check and a Friday recap scheduled."
+      class="dark:sl-hidden"
+    />
+    <Image
+      src={tasksDark}
+      alt="The Tasks page with a weekday calendar check and a Friday recap scheduled."
+      class="light:sl-hidden"
+    />
+    <figcaption>Keep watch on a schedule</figcaption>
+  </figure>
+  <figure>
+    <Image
+      src={vaultLight}
+      alt="Vault with saved logins and a card, and every use of the selected login."
+      class="dark:sl-hidden"
+    />
+    <Image
+      src={vaultDark}
+      alt="Vault with saved logins and a card, and every use of the selected login."
+      class="light:sl-hidden"
+    />
+    <figcaption>Sign in without sharing passwords</figcaption>
+  </figure>
 </div>
 
 ## Start here
@@ -79,7 +112,7 @@ flowchart LR
   chat --> otto[Otto plans the work]
   otto --> computer[Its own computer<br/>files · commands · browser]
   otto --> web[The web]
-  otto --> trust{Trust check}:::accent
+  otto --> trust{{Trust check}}:::accent
   trust --> apps[Your apps<br/>Gmail · Calendar · Slack]
   computer --> vault[(Vault<br/>logins · cards)]:::accent
 ```

@@ -2,9 +2,9 @@
 
 The Electron app that packages Otto for Mac and Windows. It starts the same server, web app, workspace and browser as a source install, inside a private virtual machine.
 
-- [Install the desktop app](https://n8n-io.github.io/otto/get-started/install-desktop/)
-- [Desktop app internals](https://n8n-io.github.io/otto/deploy/desktop-app/): what runs locally, data locations, updates and limits
-- [Desktop releases](https://n8n-io.github.io/otto/contribute/desktop-releases/): how a version is built, signed and published
+- [Install the desktop app](../docs/src/content/docs/get-started/install-desktop.mdx)
+- [Desktop app internals](../docs/src/content/docs/deploy/desktop-app.mdx): what runs locally, data locations, updates and limits
+- [Desktop releases](../docs/src/content/docs/contribute/desktop-releases.mdx): how a version is built, signed and published
 
 ```sh
 pnpm install --frozen-lockfile

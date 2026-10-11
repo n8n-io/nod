@@ -17,7 +17,7 @@ The deployment has a switch too. Otto collects only when both are on, and `OTTO_
 
 ```mermaid
 flowchart LR
-  deploy{Deployment<br/>allows it?} -- yes --> owner{You turned on<br/>Share usage data?}
+  deploy{{Deployment<br/>allows it?}} -- yes --> owner{{You turned on<br/>Share usage data?}}
   deploy -- no --> off[Nothing sent]:::stop
   owner -- no --> off
   owner -- yes --> on[Events and<br/>masked recordings]:::go

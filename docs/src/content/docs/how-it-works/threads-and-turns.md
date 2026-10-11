@@ -35,11 +35,11 @@ Creating a turn also queues a `thread-drain` job in the same transaction.
 ## How the worker starts turns
 
 ```mermaid
-flowchart LR
+flowchart TD
   new[New turn row<br/>and drain job] --> worker[Worker takes<br/>up to 20 jobs]
   worker --> lock[Lock the thread once]
   lock --> bg[Start every queued<br/>background turn]:::go
-  lock --> conv{Conversation<br/>turn running?}
+  lock --> conv{{Conversation<br/>turn running?}}
   conv -- no --> next[Start the oldest<br/>queued one]:::go
   conv -- yes --> wait[Leave it queued]:::muted
 ```

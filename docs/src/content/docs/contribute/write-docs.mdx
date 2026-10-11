@@ -49,7 +49,7 @@ The docs are an [Astro Starlight](https://starlight.astro.build) site in the `do
 
 </Steps>
 
-When your pull request merges to `main`, the **Docs** workflow builds the site again and publishes it to GitHub Pages.
+On every pull request that changes `docs/`, the **Docs** workflow builds the site, checks every link, and attaches the built site to the run as the `otto-docs` artifact.
 
 ## Where pages live
 
@@ -269,12 +269,12 @@ COMPOSIO_API_KEY=<your-key>
 Store screenshots in `src/assets/screens` and use synthetic data only. Write alt text that says what the image shows.
 
 ```md
-![Vault showing one saved login with Sign in without asking turned off.](../../../assets/screens/vault-login.png)
+![Vault with saved logins and the selected login's activity.](../../../assets/screens/vault-light.png)
 ```
 
 ## Diagrams
 
-Draw diagrams with [Mermaid](https://mermaid.js.org) in a `mermaid` code block. They follow the site's light and dark theme. Keep each diagram small: about eight boxes, short labels and one idea.
+Draw diagrams with [Mermaid](https://mermaid.js.org) in a `mermaid` code block. They follow the site's light and dark theme. Keep each diagram small: about eight boxes, short labels and one idea. Draw decisions as hexagons, `{{Like this?}}`, because diamonds grow very tall. Prefer `flowchart TD` when a left-to-right chart would be wider than about five boxes.
 
 Add a class to highlight a box:
 
@@ -291,7 +291,7 @@ Use a flowchart for parts and the paths between them.
 
 ```mermaid
 flowchart LR
-  action[App action] --> check{Allowed?}
+  action[App action] --> check{{Allowed?}}
   check -- yes --> run[Run it]:::go
   check -- not sure --> ask[Ask you]:::accent
   ask -- no --> stop[Don't run]:::stop
@@ -301,7 +301,7 @@ flowchart LR
 ````md
 ```mermaid
 flowchart LR
-  action[App action] --> check{Allowed?}
+  action[App action] --> check{{Allowed?}}
   check -- yes --> run[Run it]:::go
   check -- not sure --> ask[Ask you]:::accent
   ask -- no --> stop[Don't run]:::stop

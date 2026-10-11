@@ -34,10 +34,10 @@ You can also tell Otto in chat, for example "stop the morning summary".
 ## What happens when a schedule runs
 
 ```mermaid
-flowchart LR
+flowchart TD
   due[Schedule is due]:::accent --> run[Otto runs it<br/>in the background]
   run --> check[Trust check<br/>against your instruction]
-  check --> useful{Useful result<br/>or question?}
+  check --> useful{{Useful result<br/>or question?}}
   useful -- yes --> send[Message in the chat<br/>where you set it up]:::go
   useful -- no --> quiet[Stays quiet]:::muted
 ```

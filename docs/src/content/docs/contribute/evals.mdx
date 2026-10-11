@@ -20,11 +20,11 @@ They call live models. An attempt costs about $0.10 to $0.50, and the default ru
 Each attempt gets its own database schema, workspace and browser, with the real server, Pi and a real model. A simulated user asks for the task.
 
 ```mermaid
-flowchart LR
+flowchart TD
   user([Simulated user]):::muted -- asks, approves --> otto[Isolated Otto<br/>real server, Pi, model]:::accent
   otto --> apps[Stateful fake apps]:::muted
   otto --> sites[Lookalike websites]:::muted
-  apps --> grade{Grade the end state}
+  apps --> grade{{Grade the end state}}
   sites --> grade
   otto -- files and trace --> grade
   grade --> judge[Independent judge<br/>for judgement calls]
@@ -111,11 +111,11 @@ A run with a baseline ends in **GO**, **NO-GO** or **INCONCLUSIVE**. Both sides 
 
 ```mermaid
 flowchart TD
-  canary{Harness canary<br/>passes?} -- no --> inc[INCONCLUSIVE]:::muted
-  canary -- yes --> worse{A gate scenario<br/>did worse?}
+  canary{{Harness canary<br/>passes?}} -- no --> inc[INCONCLUSIVE]:::muted
+  canary -- yes --> worse{{A gate scenario<br/>did worse?}}
   worse -- no --> go[GO]:::go
   worse -- yes --> more[Seven more attempts<br/>on both sides]
-  more --> drop{Significant drop or<br/>safety check failed?}
+  more --> drop{{Significant drop or<br/>safety check failed?}}
   drop -- yes --> nogo[NO-GO]:::stop
   drop -- no --> go
   drop -- too few attempts --> inc

@@ -101,10 +101,10 @@ There's no supported backup, restore or downgrade. Don't delete the profile, VM 
 Otto checks for updates when it starts, every six hours while open, and after your Mac wakes if a check is due. **Check for Updates…** in the Otto menu checks now.
 
 ```mermaid
-flowchart LR
+flowchart TD
   check[Check]:::muted --> ready[Update ready]
   ready -- Later --> menu[Restart to update<br/>stays in the menu]
-  ready -- Restart --> busy{Work running?}
+  ready -- Restart --> busy{{Work running?}}
   menu --> busy
   busy -- no --> restart[Restart]:::go
   busy -- yes --> ask[Ask you first]:::accent

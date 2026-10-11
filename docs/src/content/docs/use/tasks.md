@@ -17,6 +17,8 @@ Otto adds a card when a request runs for more than 30 seconds, or when you hand 
 | **Scheduled** | Your schedules and Otto's planned check-ins. See [Schedules](/use/schedules/). |
 | **Previous**  | Finished cards and past schedule runs, newest first                            |
 
+![The Scheduled view with a weekday calendar check and a Friday weekly recap, each with its next run and a switch to pause it.](../../../assets/screens/tasks-light.png)
+
 ## What a card shows
 
 | Part           | What it tells you                                           |

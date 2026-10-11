@@ -100,7 +100,7 @@ CI reads the files a pull request changes and runs only the checks those files n
 
 ```mermaid
 flowchart TD
-  files[Changed files] --> scope{Select checks}:::accent
+  files[Changed files] --> scope{{Select checks}}:::accent
   scope -- docs and Markdown only --> light[Formatting<br/>and secrets]:::muted
   scope -- src, tests, packages --> core[Full app checks]:::go
   scope -- desktop --> desk[Desktop and<br/>Windows checks]

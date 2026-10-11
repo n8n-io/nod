@@ -14,7 +14,7 @@ The short version: a gateway signs you in with Google and forwards each request,
 ## How a request reaches your Otto
 
 ```mermaid
-flowchart LR
+flowchart TD
   you([You]):::accent --> worker[Public Worker<br/>serves the web app]
   worker -- /api/* --> gateway[Node gateway<br/>Google sessions]
   gateway -- signed request --> tenant[Your tenant<br/>fixed owner]:::accent

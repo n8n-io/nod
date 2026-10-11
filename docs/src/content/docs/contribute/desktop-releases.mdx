@@ -12,7 +12,7 @@ This page is for maintainers who publish the Otto desktop app, and for anyone he
 The short version: run **Release desktop**, review and merge the version pull request, and CI publishes one GitHub release with all three installers.
 
 ```mermaid
-flowchart LR
+flowchart TD
   run([Run Release desktop]):::accent --> pr[Review and merge<br/>the version PR]
   pr --> ci[CI passes on the<br/>merge commit]
   ci --> arm[Mac Apple silicon]

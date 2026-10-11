@@ -24,9 +24,9 @@ A short follow-up, such as "also check Friday", joins the task that's running. O
 
 ```mermaid
 flowchart LR
-  new[You send a message] --> busy{Is Otto<br/>working?}
+  new[You send a message] --> busy{{Is Otto<br/>working?}}
   busy -- no --> run[Otto starts on it]:::go
-  busy -- yes --> plain{Plain text<br/>from the same app?}
+  busy -- yes --> plain{{Plain text<br/>from the same app?}}
   plain -- yes --> join[Joins the running task]:::accent
   plain -- no --> queue[Waits for its own turn]:::muted
 ```

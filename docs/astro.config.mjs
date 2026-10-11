@@ -1,6 +1,6 @@
 import { defineConfig } from 'astro/config';
 import { satteri } from '@astrojs/markdown-satteri';
-import { defineMdastPlugin } from 'satteri';
+import { defineHastPlugin, defineMdastPlugin } from 'satteri';
 import starlight from '@astrojs/starlight';
 import mermaid from 'astro-mermaid';
 import starlightLinksValidator from 'starlight-links-validator';
@@ -34,6 +34,21 @@ const baseLinks = defineMdastPlugin({
   mdxJsxTextElement: jsxLinks,
 });
 
+const scrollTables = defineHastPlugin({
+  name: 'otto-scroll-tables',
+  element: {
+    filter: ['table'],
+    visit(node, ctx) {
+      ctx.wrapNode(node, {
+        type: 'element',
+        tagName: 'div',
+        properties: { className: ['otto-table'] },
+        children: [],
+      });
+    },
+  },
+});
+
 const section = (label, directory) => ({
   label,
   collapsed: true,
@@ -46,7 +61,11 @@ export default defineConfig({
   trailingSlash: 'always',
   devToolbar: { enabled: false },
   markdown: {
-    processor: satteri({ mdastPlugins: [baseLinks], features: { smartPunctuation: false } }),
+    processor: satteri({
+      mdastPlugins: [baseLinks],
+      hastPlugins: [scrollTables],
+      features: { smartPunctuation: false },
+    }),
   },
   vite: { server: { fs: { allow: ['..'] } } },
   integrations: [
@@ -57,8 +76,14 @@ export default defineConfig({
       mermaidConfig: {
         fontFamily: "'n8n Baumer Uniwidth', system-ui, sans-serif",
         themeVariables: { fontSize: '15px' },
-        flowchart: { curve: 'basis', padding: 14, nodeSpacing: 36, rankSpacing: 44 },
-        sequence: { mirrorActors: false, actorMargin: 48, messageMargin: 36 },
+        flowchart: { curve: 'basis', padding: 10, nodeSpacing: 28, rankSpacing: 32 },
+        sequence: {
+          mirrorActors: false,
+          actorMargin: 32,
+          messageMargin: 32,
+          wrap: true,
+          width: 130,
+        },
       },
     }),
     starlight({

@@ -1,6 +1,6 @@
 # Cloudflare deployment
 
-Hosted Otto on Cloudflare: a public Worker, a private gateway, and one tenant, browser and workspace container per user. The operator guide is [Hosted on Cloudflare](https://n8n-io.github.io/otto/deploy/cloudflare/), and the design is in [Hosted mode](https://n8n-io.github.io/otto/how-it-works/hosted-mode/).
+Hosted Otto on Cloudflare: a public Worker, a private gateway, and one tenant, browser and workspace container per user. The operator guide is [Hosted on Cloudflare](../../docs/src/content/docs/deploy/cloudflare.mdx), and the design is in [Hosted mode](../../docs/src/content/docs/how-it-works/hosted-mode.mdx).
 
 ```sh
 pnpm install --frozen-lockfile && pnpm run build

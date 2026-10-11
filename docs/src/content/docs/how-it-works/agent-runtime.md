@@ -72,10 +72,10 @@ The `pi-web-access` extension runs in the server process with the server's permi
 Every tool call, including every call a codemode script makes, passes the same guard.
 
 ```mermaid
-flowchart LR
-  call[Tool call] --> live{Turn still<br/>running?}
+flowchart TD
+  call[Tool call] --> live{{Turn still<br/>running?}}
   live -- no --> refuse[Refused]:::stop
-  live -- yes --> mode{Allowed in<br/>this turn mode?}
+  live -- yes --> mode{{Allowed in<br/>this turn mode?}}
   mode -- no --> refuse
   mode -- yes --> run[Run the tool]:::go
   run --> scan[Tripwire scan<br/>of outside results]

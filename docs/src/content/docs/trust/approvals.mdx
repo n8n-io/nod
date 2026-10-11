@@ -32,13 +32,13 @@ When an action doesn't run directly, Otto asks you a yes/no question. Read-only 
 
 ```mermaid
 flowchart TD
-  action[App action] --> kind{Read, or a change<br/>to your own data?}
+  action[App action] --> kind{{Read, or a change<br/>to your own data?}}
   kind -- yes --> run[Run it]:::go
-  kind -- no --> flag{Tripwire hit since<br/>your last message?}
+  kind -- no --> flag{{Tripwire hit since<br/>your last message?}}
   flag -- yes --> ask[Ask you]:::accent
-  flag -- no --> known{Known recipients?}
+  flag -- no --> known{{Known recipients?}}
   known -- yes --> run
-  known -- no --> review{Review matches<br/>your request?}
+  known -- no --> review{{Review matches<br/>your request?}}
   review -- yes --> run
   review -- no --> ask
 ```

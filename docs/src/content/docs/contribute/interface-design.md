@@ -115,7 +115,7 @@ Don't show a construction grid. Keep the existing reduced-motion behaviour. The 
 The test suite doesn't cover how the interface looks. Run Otto with synthetic data and look at the change yourself.
 
 ```mermaid
-flowchart LR
+flowchart TD
   change([Your UI change]):::accent --> data[Load synthetic data]
   data --> sizes[Light and dark,<br/>desktop and phone]
   sizes --> states[Menus, focus, errors,<br/>empty and full]

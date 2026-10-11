@@ -82,9 +82,9 @@ Merged changes reach desktop users in the next desktop release. A maintainer run
 
 ```mermaid
 flowchart TD
-  pr[Dependabot PR] --> kind{Patch or minor,<br/>stable 1.0 or later?}
+  pr[Dependabot PR] --> kind{{Patch or minor,<br/>stable 1.0 or later?}}
   kind -- no --> manual[Manual review]:::stop
-  kind -- yes --> checks{Required checks pass?}
+  kind -- yes --> checks{{Required checks pass?}}
   checks -- no --> open[Stays open]:::muted
   checks -- yes --> merge[Approve and<br/>squash-merge]:::go
   merge --> main[Run CI on main]

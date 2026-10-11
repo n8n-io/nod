@@ -1,6 +1,6 @@
 # Contributing to Otto
 
-Thanks for helping improve Otto. The full guide is in the docs: [Contribute to Otto](https://n8n-io.github.io/otto/contribute/). This page has the essentials.
+Thanks for helping improve Otto. The full guide is in the docs: [Contribute to Otto](docs/src/content/docs/contribute/index.mdx). This page has the essentials.
 
 Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
@@ -13,7 +13,7 @@ Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Set up and check
 
-Follow [Install from source](https://n8n-io.github.io/otto/get-started/install-from-source/), then run Otto with automatic reload:
+Follow [Install from source](docs/src/content/docs/get-started/install-from-source.mdx), then run Otto with automatic reload:
 
 ```sh
 pnpm run dev
@@ -28,7 +28,7 @@ pnpm run test:integration  # every test in Linux with a disposable PostgreSQL an
 pnpm run build             # types and web bundle
 ```
 
-Some areas need extra checks, such as `pnpm run desktop:test` or `pnpm --dir docs build`. See [Checks and tests](https://n8n-io.github.io/otto/contribute/checks-and-tests/).
+Some areas need extra checks, such as `pnpm run desktop:test` or `pnpm --dir docs build`. See [Checks and tests](docs/src/content/docs/contribute/checks-and-tests.md).
 
 ## Pull requests
 
@@ -38,7 +38,7 @@ Some areas need extra checks, such as `pnpm run desktop:test` or `pnpm --dir doc
 - Keep keys, credentials and private content out of code, tests, logs and screenshots.
 - Update the docs in [`docs/`](docs/README.md) when setup or behaviour changes.
 
-A member of [@n8n-io/n8n-labs](.github/CODEOWNERS) reviews every change. See [Pull requests](https://n8n-io.github.io/otto/contribute/pull-requests/) for review, merge and release details.
+A member of [@n8n-io/n8n-labs](.github/CODEOWNERS) reviews every change. See [Pull requests](docs/src/content/docs/contribute/pull-requests.md) for review, merge and release details.
 
 ## License
 

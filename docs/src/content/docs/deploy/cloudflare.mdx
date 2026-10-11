@@ -18,7 +18,7 @@ This release has no migration path from the task model. Reset every existing env
 The Worker serves the web app and sends `/api/*` to one private gateway. The gateway signs users in with Google and sends signed requests to each user's own tenant. Provider keys stay in the Node runtime.
 
 ```mermaid
-flowchart LR
+flowchart TD
   worker[Worker<br/>web app]:::accent -- /api --> gateway[Gateway<br/>Google sign-in]
   gateway -- signed requests --> tenant[Tenant<br/>one per user]
   gateway -- provisions --> pg[(PostgreSQL)]

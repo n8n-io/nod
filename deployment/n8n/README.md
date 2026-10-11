@@ -17,4 +17,4 @@ node --test deployment/n8n/*.test.mjs
 - Feedback requests are versioned in `src/ports/feedback.ts`. The workflow checks every hash before it touches Linear, and repeated submissions with the same ID can't create a second issue. Execution data retention stays off.
 - Publish the broker before the installer. Before you replace a workflow, export its current version so you can roll back.
 
-User-facing behaviour is documented in [Install the desktop app](https://n8n-io.github.io/otto/get-started/install-desktop/) and [Your data and privacy](https://n8n-io.github.io/otto/trust/privacy/).
+User-facing behaviour is documented in [Install the desktop app](../../docs/src/content/docs/get-started/install-desktop.mdx) and [Your data and privacy](../../docs/src/content/docs/trust/privacy.md).

@@ -19,6 +19,8 @@ Open **Settings → Trust & cost** (⌘I on a Mac, Ctrl+I elsewhere).
 
 Reads in your apps aren't recorded as actions. Changes and sends are.
 
+![Settings → Trust & cost showing $0.17 spent this month of a $25 limit, a spending chart and the day's statement.](../../../assets/screens/trust-cost-light.png)
+
 ## Set a monthly limit
 
 1. Open **Settings → Trust & cost**.
@@ -31,7 +33,7 @@ To change the limit, select it and enter a new amount. To remove it, select it, 
 
 ```mermaid
 flowchart LR
-  req[New request<br/>chat or background]:::accent --> check{Spent less than<br/>the limit this month?}
+  req[New request<br/>chat or background]:::accent --> check{{Spent less than<br/>the limit this month?}}
   check -- yes --> run[Otto works]:::go
   check -- no --> stop[Stops before<br/>using the model]:::stop
   stop -.-> lift[Next month, or you<br/>raise or remove the limit]:::muted

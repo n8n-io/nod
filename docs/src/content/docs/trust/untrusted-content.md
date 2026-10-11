@@ -40,13 +40,13 @@ On a hit, the block gets a warning that names what was found, and Otto is told n
 Your next message clears the hold, because it's fresh authority from you.
 
 ```mermaid
-flowchart LR
+flowchart TD
   source[Web page, email<br/>or app result] --> wrap[Marked as data]
-  wrap --> trip{Tripwire<br/>match?}
+  wrap --> trip{{Tripwire<br/>match?}}
   trip -- no --> model[Otto reads it]
   trip -- yes --> flag[Labeled, sends held]:::stop
   flag --> model
-  model -- send or delete --> check{Trust check}:::accent
+  model -- send or delete --> check{{Trust check}}:::accent
   check -- held --> you([Asks you]):::accent
 ```
 

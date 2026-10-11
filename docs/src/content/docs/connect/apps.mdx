@@ -12,8 +12,8 @@ Otto connects to Gmail, Google Calendar, Drive, Sheets, Docs, Slack and many oth
 Composio handles each app's sign-in and runs the app actions. Otto's server checks every action before it reaches Composio. Notion and Linear don't need Composio. See [MCP servers, APIs and CLIs](/connect/mcp-api-cli/).
 
 ```mermaid
-flowchart LR
-  otto[Otto plans<br/>an app action] --> trust{Trust check}:::accent
+flowchart TD
+  otto[Otto plans<br/>an app action] --> trust{{Trust check}}:::accent
   trust -- allowed --> server[Otto server]
   trust -. held .-> you([You approve]):::accent
   you -. yes .-> server
@@ -73,6 +73,8 @@ The key grants project-wide access. Anyone who has it, including anyone who can 
 ## Connect your apps
 
 Open **Apps**, search for an app and select **Connect**. You sign in on the app's own consent screen.
+
+![The Apps page with Gmail and Google Calendar connected, and Drive, Sheets, Docs and Slack ready to connect.](../../../assets/screens/apps-light.png)
 
 You can also ask Otto in chat. It searches the same catalog with `manage_apps discover`, then sends you a private link to connect.
 

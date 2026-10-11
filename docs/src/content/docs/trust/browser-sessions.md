@@ -30,7 +30,7 @@ Many sites also load assets, call APIs or redirect to a sign-in service on other
 
 ```mermaid
 flowchart LR
-  page[Saved profile] --> proxy{Profile proxy}:::accent
+  page[Saved profile] --> proxy{{Profile proxy}}:::accent
   proxy -- permitted --> site[app.example.com]:::go
   proxy -- permitted extra --> api[api.example.com]:::go
   proxy -- anything else --> block[Blocked]:::stop

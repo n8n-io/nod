@@ -36,7 +36,6 @@ Something Otto picks up from one message is only a guess. It becomes **Learned**
 
 ```mermaid
 stateDiagram-v2
-  direction LR
   state "Mentioned once" as once
   state "Let go" as gone
   [*] --> once: heard once
