@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { appConfirmation, type Agent } from '../ports/agent.ts';
+import { lightestEffort } from '../shared/models.ts';
 import type { ProductAnalytics } from '../ports/analytics.ts';
 import { createPostHogAnalytics } from '../providers/posthog/analytics.ts';
 import { analyticsEnabled, analyticsEnvironment, createAnalytics } from './analytics.ts';
@@ -217,13 +218,7 @@ export function createDefaultAdapters(
     },
     resolve: async () => {
       const access = await models.resolve();
-      const efforts = access.definition.choice.efforts;
-      return {
-        ...access,
-        effort:
-          efforts.find((level) => ['off', 'minimal', 'low', 'medium'].includes(level)) ??
-          efforts[0],
-      };
+      return { ...access, effort: lightestEffort(access.definition.choice.efforts) };
     },
     configured: () => models.configured,
   });

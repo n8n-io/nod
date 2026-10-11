@@ -349,7 +349,7 @@ export async function startStack(options: {
         provider: model.provider,
         apiKey: model.apiKey,
         model: model.name,
-        effort: 'low',
+        lightest: true,
       }),
       linkPreviews: createPublicLinkPreviewProvider(),
       model: { provider: model.provider, name: model.name, configured: true },

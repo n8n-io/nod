@@ -1,8 +1,8 @@
-import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import { InMemoryCredentialStore, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { createPiModelRuntime } from './models.ts';
 import type { ModelAccess } from '../../ports/models.ts';
-import type { ModelEffort } from '../../shared/models.ts';
+import { lightestEffort } from '../../shared/models.ts';
 import type { MemoryCurator } from '../../ports/memory-curator.ts';
 import { agentModels, memoryModels } from '../../shared/model-defaults.ts';
 import { piUsageMetrics } from './usage.ts';
@@ -22,7 +22,7 @@ export function createPiMemoryCurator(options: {
   resolve?: () => Promise<ModelAccess>;
   configured?: () => boolean;
   model?: string;
-  effort?: ModelEffort;
+  lightest?: boolean;
   apiKey?: string;
   runtime?: ModelRuntime;
 }): MemoryCurator {
@@ -53,7 +53,12 @@ export function createPiMemoryCurator(options: {
           ]
     ).flatMap((id) => (id ? (runtime.getModel(options.provider, id) ?? []) : []))[0];
     if (!model) throw new Error('The memory model is not present in the installed Pi catalog.');
-    return { runtime, model, effort: options.effort, subscription: false };
+    return {
+      runtime,
+      model,
+      effort: options.lightest ? lightestEffort(getSupportedThinkingLevels(model)) : undefined,
+      subscription: false,
+    };
   }
   return {
     get id() {
