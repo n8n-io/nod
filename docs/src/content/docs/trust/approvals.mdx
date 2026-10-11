@@ -59,13 +59,13 @@ An address Otto found in an email or on a web page doesn't count. Scheduled runs
 
 The review model is a smaller model from your model provider. It answers one question: did you ask for this kind of action on this target?
 
-It sees only your last five messages from the past day, the Otto message your latest one answered, and every field of the action as sent. It never sees tool results, web pages or emails. Task cards you tapped on your first chat are Otto's words, so they don't count as yours. A scheduled run is checked against the instruction that created its schedule.
+It sees only your last five messages from the past day, the Otto message your latest one answered, and the action as sent, with long values shortened. It never sees tool results, web pages or emails. Task cards you tapped on your first chat are Otto's words, so they don't count as yours. A scheduled run is checked against the instruction that created its schedule.
 
 If the review model isn't available, for example without a model provider key, every action that isn't matched another way asks you.
 
 ## The confirmation
 
-The question shows the action, the account that will run it, every field of the request and why Otto is asking:
+The question shows the action, the account that will run it, the fields of the request and why Otto is asking. Long values are shortened, and a very long request ends with a count of the fields left out.
 
 ```text title="Example confirmation"
 Gmail: send email?

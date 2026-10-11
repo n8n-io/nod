@@ -28,7 +28,7 @@ We ask you to keep the details private until a fix is released, or for 90 days a
 
 ## Supported versions
 
-Otto is an early preview. Fixes go into `main` and the next desktop release. Desktop releases are cut from `main` daily and installed apps update automatically.
+Otto is an early preview. Fixes go into `main` and the next desktop release. Maintainers cut desktop releases from `main` by hand, and the app on Apple silicon Macs updates automatically.
 
 | Version                            | Supported |
 | ---------------------------------- | --------- |

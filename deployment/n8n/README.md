@@ -1,6 +1,6 @@
 # n8n workflows
 
-Otto uses three workflows on the internal n8n instance. Each script here generates or embeds the exact workflow source, and each has synthetic contract tests.
+This folder maintains three of Otto's workflows on the internal n8n instance. Each script here generates or embeds the exact workflow source, and each has synthetic contract tests.
 
 | Workflow              | Source                 | What it does                                                                                      |
 | --------------------- | ---------------------- | ------------------------------------------------------------------------------------------------- |

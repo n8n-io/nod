@@ -67,7 +67,7 @@ export default defineConfig({
       features: { smartPunctuation: false },
     }),
   },
-  vite: { server: { fs: { allow: ['..'] } } },
+  vite: { server: { fs: { allow: ['.', '../public/fonts'] } } },
   integrations: [
     mermaid({
       theme: 'base',

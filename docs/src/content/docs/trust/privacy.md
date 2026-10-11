@@ -32,14 +32,14 @@ flowchart LR
   otto -. only if you choose .-> n8n[n8n]:::muted
 ```
 
-| Goes to                                   | What                                                        |
-| ----------------------------------------- | ----------------------------------------------------------- |
-| The model provider you choose             | Your conversation, tool results and screenshots Otto takes  |
-| Apps and services you connect             | The actions Otto runs in them                               |
-| Composio, if you connect apps through it  | Those app connections and the actions Otto sends            |
-| Telegram and WhatsApp, if you set them up | The messages in those chats                                 |
-| Websites Otto visits                      | Whatever Otto browses, fills in or submits there            |
-| n8n                                       | Feedback you send, and masked usage analytics if you opt in |
+| Goes to                                   | What                                                                                                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The model provider you choose             | Your conversation, tool results and screenshots. With Gmail connected, also recent email Otto reads to suggest first tasks and learn your writing style |
+| Apps and services you connect             | The actions Otto runs in them                                                                                                                           |
+| Composio, if you connect apps through it  | Those app connections and the actions Otto sends                                                                                                        |
+| Telegram and WhatsApp, if you set them up | The messages in those chats                                                                                                                             |
+| Websites Otto visits                      | Whatever Otto browses, fills in or submits there                                                                                                        |
+| n8n                                       | Feedback you send, and masked usage analytics if you opt in                                                                                             |
 
 Provider keys, such as your model and Composio keys, stay in the Otto server. They never enter a prompt, Otto's workspace or its browser.
 
@@ -55,7 +55,7 @@ Feedback you send goes to the Otto team at n8n. By default it includes a diagnos
 
 ## What memory learns from
 
-Otto learns only from your own short messages, never from its replies, tool results or web pages. When you connect Gmail, it also learns your writing style from your own sent email, with no facts, names or quotes. See [Memory](/use/memory/).
+Otto learns only from your own short messages, never from its replies, tool results or web pages. When you connect Gmail, your model also reads your recent sent email and writes one short note on your writing style. The model is told to leave out facts, names and quotes, and Otto drops a note with an email address or link. See [Memory](/use/memory/).
 
 ## Delete your data
 
@@ -70,7 +70,7 @@ Released builds don't have a button to clear your chat history yet. To remove it
 
 ## Where this is enforced
 
-[`src/server/memory-learning.ts`](https://github.com/n8n-io/otto/blob/main/src/server/memory-learning.ts) (memory sources) · [`src/shared/analytics.ts`](https://github.com/n8n-io/otto/blob/main/src/shared/analytics.ts) (analytics) · [`src/server/bug-report.ts`](https://github.com/n8n-io/otto/blob/main/src/server/bug-report.ts) (report redaction)
+[`src/server/memory-learning.ts`](https://github.com/n8n-io/otto/blob/main/src/server/memory-learning.ts) (memory sources) · [`src/server/analytics.ts`](https://github.com/n8n-io/otto/blob/main/src/server/analytics.ts) (analytics opt-in and events) · [`src/web/lib/analytics-privacy.ts`](https://github.com/n8n-io/otto/blob/main/src/web/lib/analytics-privacy.ts) (recording masks) · [`src/server/bug-report.ts`](https://github.com/n8n-io/otto/blob/main/src/server/bug-report.ts) (report redaction)
 
 ## Related resources
 

@@ -13,7 +13,7 @@ The short version: in local mode, Otto is one Node process plus a few Docker con
 
 ## One process and a few containers
 
-In local mode, one Node process runs the React client, the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser.
+In local mode, one Node process serves the React client and runs the Fastify API, the agent runtime, the thread-drain worker and the schedulers. Docker containers run PostgreSQL, the workspace and the browser.
 
 ```mermaid
 flowchart TD

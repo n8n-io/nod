@@ -52,7 +52,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 ### Browser
 
 - A login is entered only into a field whose real frame origin matches the login's exact origin. Card fields must match the approved destinations.
-- Entry and submission happen in one private step. The model can't observe or act during it.
+- Entry and submission happen in one step that the model can't observe or act during. Scripts on the destination page can read the entered values, as with any form.
 - A page changed by the model's own JavaScript must reload before entry. After a failed entry, the model's view stays locked until the filled page changes.
 - A saved browser profile can reach only the exact origins permitted for the task.
 
@@ -80,7 +80,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The website receives what's submitted, and can store, encode or show it again. Masking replaces only the exact known values.
 - Once signed in, Otto can act anywhere on that website. Vault doesn't review each click, and the trust check covers app actions only.
 - The review model can be wrong, and the model isn't immune to prompt injection.
-- Changes to your own data, data sent to recipients you already trust, and links Otto opens or fetches aren't checked. The workspace has no outbound firewall.
+- Changes to your own data, data sent to recipients you already trust, and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
 - In hosted mode, the operator can decrypt stored data.
 - Tests cover known failure cases. They don't prove that every injection or browser exploit is blocked.

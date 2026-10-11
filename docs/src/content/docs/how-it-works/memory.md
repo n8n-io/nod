@@ -7,7 +7,7 @@ sidebar:
 
 Otto keeps one private memory document per owner. This page explains how it's stored, how the model reads and writes it, and what the hourly maintenance job does. To see and edit memory in the app, read [Memory](/use/memory/).
 
-The short version: only the owner's own words can become memory. The server enforces that rule, and an hourly job archives entries instead of deleting them.
+The short version: memory can hold only what the owner said in their own messages. The server checks each save against those messages, and an hourly job archives entries instead of deleting them.
 
 ## Where memory lives
 

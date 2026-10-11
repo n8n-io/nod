@@ -66,7 +66,7 @@ A failed or stopped task shows **Needs you** until you write again. When your ne
 
 ## Tasks only report
 
-A card is a view of the work, not a control. It doesn't schedule anything, grant any permission or post to chat. Otto's planned check-ins are ordinary [schedules](/use/schedules/), and every action still goes through the [trust check](/trust/approvals/).
+A card is a view of the work. Apart from **Schedule task**, it doesn't schedule anything, grant any permission or post to chat. Otto's planned check-ins are ordinary [schedules](/use/schedules/), and every action still goes through the [trust check](/trust/approvals/).
 
 To change a task, tell Otto in [chat](/use/chat/).
 

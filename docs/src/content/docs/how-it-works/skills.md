@@ -65,7 +65,7 @@ Read-only turns can load guides. Activity checks can't, because they're limited 
 2. Add front matter with `name`, which must match the folder, and `description`, which says when the model must use the guide.
 3. In the body, write the task decisions, the failure cases and the evidence needed to check the result.
 4. For a long procedure that applies only in one case, add `references/<name>.md`. Link it from the guide and state the condition.
-5. Keep each file at or below 64 KiB, then restart Otto.
+5. Keep each file at or below 64 KiB.
 
 ```md title="src/runtime/skills/example-task/SKILL.md"
 ---

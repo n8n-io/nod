@@ -15,7 +15,7 @@ Before the server enters a saved login, a code or a card, it saves a claim in it
 stateDiagram-v2
   direction LR
   [*] --> Running: claim saved
-  Running --> Submitted: entry and submit finished
+  Running --> Submitted: entry finished
   Running --> Uncertain: interrupted or failed
   Submitted --> [*]
   Uncertain --> [*]
@@ -24,7 +24,7 @@ stateDiagram-v2
 | State     | What it means                                                         | What happens next                       |
 | --------- | --------------------------------------------------------------------- | --------------------------------------- |
 | Running   | The server is entering and submitting the values                      | Otto waits                              |
-| Submitted | The values were entered and the chosen button was submitted           | Otto reads the page to see if it worked |
+| Submitted | The values were entered, and any chosen submit button was pressed     | Otto reads the page to see if it worked |
 | Uncertain | The step may have reached the website, but the result wasn't recorded | Check the result before another attempt |
 
 **Submitted** doesn't mean the sign-in or payment succeeded. Only the website knows that, so Otto checks the page.
@@ -35,7 +35,7 @@ stateDiagram-v2
 
 When you say yes to an app action, the server runs that saved action once. If it fails or is interrupted, it becomes uncertain, and Otto asks you to check the app before trying again. It never runs again on its own.
 
-## Nothing is retried automatically
+## Tasks and actions aren't retried
 
 | What                       | If it fails                                                                |
 | -------------------------- | -------------------------------------------------------------------------- |

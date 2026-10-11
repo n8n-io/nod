@@ -51,7 +51,7 @@ The workspace and browser have separate networks, no access to your home folder,
 The app download is small. On first launch, Otto downloads a matching runtime pack with the container images, the base VM image and the tools that run them.
 
 - Otto checks the archive size and SHA-256 before it extracts anything, then checks every extracted file.
-- Before it installs, Otto checks free space for the extracted files plus 512 MiB, and the archive size when it downloads.
+- On a Mac, before it installs, Otto checks free space for the extracted files plus 512 MiB, and the archive size when it downloads.
 - On a Mac, verified packs live in `~/Library/Application Support/Otto/runtime/<release>`. The VM mounts them read-only.
 - An app update reuses the runtime when it hasn't changed. Old versions stay on disk; Otto doesn't clean them up yet.
 
@@ -98,7 +98,7 @@ There's no supported backup, restore or downgrade. Don't delete the profile, VM 
 <Tabs syncKey="os">
 <TabItem label="Mac" icon="apple">
 
-Otto checks for updates when it starts, every six hours while open, and after your Mac wakes if a check is due. **Check for Updates…** in the Otto menu checks now.
+On Apple silicon, Otto checks for updates when it starts, every six hours while open, and after your Mac wakes if a check is due. **Check for Updates…** in the Otto menu checks now.
 
 ```mermaid
 flowchart TD
@@ -112,6 +112,8 @@ flowchart TD
 ```
 
 Restarting stops a running reply, scheduled task or background check, and you can ask Otto to continue afterwards. Queued messages, schedules and app checks resume. Unsent text in the message box isn't kept.
+
+An Intel Mac doesn't update automatically yet. Quit Otto, then install the new DMG over the old app.
 
 </TabItem>
 <TabItem label="Windows" icon="seti:windows">

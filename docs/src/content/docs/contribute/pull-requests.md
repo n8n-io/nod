@@ -99,8 +99,9 @@ GitHub doesn't trigger workflows from a merge made with `GITHUB_TOKEN`, so the w
 <details>
 <summary>Repository settings auto-merge needs</summary>
 
-- `Checks, tests and build` and `Secret scanning` are required on `main`, and the branch must be up to date.
-- GitHub Actions is allowed to approve pull requests. Its approval satisfies the one-review rule.
+- `Checks, tests and build`, `Secret scanning` and `Conventional PR title` are required on `main`, and the branch must be up to date.
+- `main` requires one approving review and a code owner's review.
+- GitHub Actions is allowed to approve pull requests. Its approval satisfies the one-review rule, but it isn't a code owner.
 - [CODEOWNERS](https://github.com/n8n-io/otto/blob/main/.github/CODEOWNERS) leaves npm manifests, lockfiles, Dockerfiles and `compose.yaml` without owners, so the workflow's approval can merge them.
 - The `auto-merge` job itself isn't a required check, because it waits for the required checks.
 

@@ -43,12 +43,12 @@ stateDiagram-v2
   once --> Confirmed: you confirm
   Learned --> Confirmed: you confirm or edit
   once --> gone: 60 days quiet
-  Learned --> gone: replaced, expired or 60 days quiet
+  Learned --> gone: replaced or expired
   Confirmed --> gone: replaced or expired
   gone --> Confirmed: you bring it back
 ```
 
-Notes that are replaced, expired or not mentioned for 60 days move to **Let go** instead of being deleted. Only a forget deletes a note.
+Replaced and expired notes, and guesses not mentioned again for 60 days, move to **Let go** instead of being deleted. Notes are deleted only when you select **Forget** or ask Otto to clear its memory.
 
 ## Sensitive topics
 
@@ -60,7 +60,7 @@ When you connect Gmail, Otto reads your own text from recent sent emails. It rem
 
 ## Review and change memory
 
-Open **Settings → Memory**. Filter by **All**, **Mentioned once**, **Learned**, **Confirmed** or **Let go**, or search. Each note shows the messages it came from.
+Open **Settings → Memory**. Filter by **All**, **Mentioned once**, **Learned**, **Confirmed** or **Let go**, or search. Notes from chat show the messages they came from.
 
 | To                           | Do this                                       |
 | ---------------------------- | --------------------------------------------- |

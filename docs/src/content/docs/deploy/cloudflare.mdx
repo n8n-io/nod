@@ -56,7 +56,7 @@ Dry runs check bundling and configuration only.
 
 <Steps>
 
-1. Create a private `.env.hosted.local` (mode 600) from `deployment/hosted.env.example`. Add a dedicated development database reachable from Docker, fresh random 32-byte `OTTO_MASTER_KEY` and `BETTER_AUTH_SECRET`, `OTTO_ENVIRONMENT=development`, model and Composio keys, and a Google OAuth client with the redirect `http://localhost:4330/api/auth/callback/google`.
+1. Create a private `.env.hosted.local` (mode 600) from `deployment/hosted.env.example`. Add a dedicated development database reachable from Docker, a fresh `OTTO_MASTER_KEY` from `openssl rand -base64 32`, a random `BETTER_AUTH_SECRET` of at least 32 characters, `OTTO_ENVIRONMENT=development`, model and Composio keys, and a Google OAuth client with the redirect `http://localhost:4330/api/auth/callback/google`.
 
 2. Build and start.
 
@@ -84,7 +84,7 @@ Each environment has one `GATEWAY_ENV` Worker secret, compact JSON with these ke
 | Key                                                              | Value                                                                                                                      |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`                                                   | The dedicated database                                                                                                     |
-| `OTTO_MASTER_KEY`                                                | 32 random bytes                                                                                                            |
+| `OTTO_MASTER_KEY`                                                | 32 random bytes, base64-encoded                                                                                            |
 | `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in                                                                                                             |
 | `COMPUTER_PROVIDER`                                              | `cloudflare`, or `e2b` with `E2B_API_KEY` and `E2B_COMPUTER_TEMPLATE`                                                      |
 | `OBJECT_STORAGE_PROVIDER`                                        | `http`                                                                                                                     |
@@ -108,7 +108,7 @@ Analytics are on by default for `production` only, and each user still has to op
 
 ## Create storage
 
-Each environment needs exactly one private EU R2 bucket bound as `TENANT_FILES`. Create it once with a separate operator token, `CLOUDFLARE_R2_OPERATOR_TOKEN`, that has Workers R2 Storage Edit.
+Each environment needs exactly one private EU R2 bucket bound as `TENANT_FILES`. Create it once. The command needs `CLOUDFLARE_ACCOUNT_ID` and a separate operator token, `CLOUDFLARE_R2_OPERATOR_TOKEN`, with Workers R2 Storage Edit.
 
 ```sh title="Terminal"
 pnpm --dir deployment/cloudflare run provision:storage development

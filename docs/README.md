@@ -1,6 +1,6 @@
 # Otto docs
 
-The source of the Otto documentation site, built with [Astro Starlight](https://starlight.astro.build). The **Docs** workflow builds the site and checks every link on each pull request and on `main`, and attaches the built site to the run as the `otto-docs` artifact.
+The source of the Otto documentation site, built with [Astro Starlight](https://starlight.astro.build). When a pull request or a push to `main` changes the site, the **Docs** workflow builds it, checks every internal link, and attaches the built site to the run as the `otto-docs` artifact.
 
 ```sh
 pnpm --dir docs install --frozen-lockfile

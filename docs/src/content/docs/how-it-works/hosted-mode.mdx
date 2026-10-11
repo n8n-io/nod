@@ -52,8 +52,9 @@ Provider keys stay in the Node gateway and tenant processes. They never enter th
     generation's stop is confirmed.
   </Card>
   <Card title="Derived keys" icon="padlock">
-    `OTTO_MASTER_KEY` stays in the gateway. Each tenant gets only its own derived values, never
-    control or auth credentials.
+    `OTTO_MASTER_KEY` stays in the gateway. Each tenant gets only the keys derived for its own user,
+    including the secret that checks the gateway's signed requests. It never gets the gateway's
+    control or sign-in credentials.
   </Card>
 </CardGrid>
 

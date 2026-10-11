@@ -42,8 +42,8 @@
 
 - **Authority comes from you.** A web page or an email can never give Otto permission. The server checks every app action against what you asked, and asks you when it isn't sure.
 - **Your secrets never reach the model.** Vault fills saved logins and cards into the exact website, privately.
-- **Everything is on the record.** Every sign-in, app action and model cost, with a monthly spending limit.
-- **Your computer, your model.** Otto runs on your machine with the provider you choose, and its code is open.
+- **What matters is on the record.** Every sign-in, every change or message sent through your apps, and every model cost, with a monthly spending limit.
+- **Runs where you choose.** On your computer with the desktop app or from source, or hosted on the operator's infrastructure. You pick the model provider, and the code is open.
 
 [Our trust principles](docs/src/content/docs/trust/principles.mdx) · [How Otto compares](docs/src/content/docs/trust/compare.mdx) · [Security review guide](docs/src/content/docs/trust/security-review.mdx)
 

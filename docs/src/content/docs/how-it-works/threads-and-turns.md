@@ -7,7 +7,7 @@ sidebar:
 
 This page explains how Otto turns your messages, schedules and events into work, and how that work shares one conversation.
 
-The short version: you have one thread. Everything that happens on it is a turn. Conversation turns run one at a time. Background turns run in parallel. Nothing is retried automatically.
+The short version: you have one thread. Everything that happens on it is a turn. Conversation turns run one at a time. Background turns run in parallel. Turns and tool calls aren't retried automatically.
 
 ## One thread per owner
 
@@ -65,7 +65,7 @@ stateDiagram-v2
   cancelled --> [*]
 ```
 
-`withTurnLock(turnId, op)` fences every write a turn makes. The write runs only if the turn is still `running` on the active thread. A stopped, finished or reset turn can't write anything late.
+`withTurnLock(turnId, op)` fences every database write a turn makes. The write runs only if the turn is still `running` on the active thread. A stopped, finished or reset turn can't write anything late, but an outside action that already started can still finish.
 
 ## Messages you send while Otto works
 

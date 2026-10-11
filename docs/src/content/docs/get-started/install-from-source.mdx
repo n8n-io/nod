@@ -95,7 +95,7 @@ Otto serves one person on `127.0.0.1` with no account login. Don't expose it to 
 | Update Otto    | Stop it, run `git pull` and `pnpm install --frozen-lockfile`, then `pnpm start`.                                                       |
 | Get a new link | Delete `access-key` in your data folder (`.local/` by default) and restart. Otherwise the key stays the same across restarts.          |
 | Find your data | `.local/` (or `OTTO_DATA_ROOT`) and the Docker volumes. The Vault key is in `.env`, or in the Keychain item `dev.otto.vault` on macOS. |
-| Back up        | Stop Otto, then copy `.local/`, the Docker volumes and the Vault key.                                                                  |
+| Back up        | Stop Otto, then copy your data folder (`.local/` or `OTTO_DATA_ROOT`), the Docker volumes and the Vault key.                           |
 
 :::caution
 There's no tested restore procedure yet. Keep your Vault key with your backup, or your saved credentials can't be read.

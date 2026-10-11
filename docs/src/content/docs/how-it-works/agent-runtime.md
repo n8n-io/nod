@@ -22,7 +22,7 @@ Recent chat history goes into the prompt only when Pi has no saved session. A re
 
 | Mechanism          | Rule                                                                                                                                                                                      |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Compaction         | Pi compacts at 256k tokens or the model's context window, whichever is smaller.                                                                                                           |
+| Compaction         | Pi compacts at 256k tokens or 16,384 tokens below the model's context window, whichever is smaller.                                                                                       |
 | Screenshot pruning | Above twelve screenshots, the oldest are replaced in steps of eight with a note to take a new one. The prompt cache breaks only at those steps. The saved session keeps every screenshot. |
 | Provider errors    | Reach Pi with only the connection key redacted, so Pi's overflow recovery and retries see the real error.                                                                                 |
 

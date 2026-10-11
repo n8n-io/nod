@@ -25,7 +25,7 @@ You ran `docker compose` yourself before Otto created the database password. Run
 
 ### Configure OTTO_VAULT_KEY in server settings before saving a connection.
 
-Otto has no key to encrypt saved credentials. This happens on Linux, where there's no Keychain. Add a key to `.env`, then restart Otto.
+Otto has no key to encrypt saved credentials. This happens outside macOS, where there's no Keychain. Add a key to `.env`, then restart Otto.
 
 ```sh title="Terminal"
 sed -i.bak "s|^OTTO_VAULT_KEY=.*|OTTO_VAULT_KEY=$(openssl rand -base64 32)|" .env && rm .env.bak
@@ -89,7 +89,7 @@ Telegram doesn't need one. Leave **Public HTTPS callback** blank and Otto receiv
 
 ### This Telegram bot already uses a webhook
 
-The bot was set up with a webhook elsewhere. Remove that webhook, or enter its public URL, before you switch to local polling.
+The bot was set up with a webhook elsewhere. Remove that webhook to use local polling, or enter a public URL in **Public HTTPS callback** to have Otto use a webhook.
 
 ## Tasks and actions
 

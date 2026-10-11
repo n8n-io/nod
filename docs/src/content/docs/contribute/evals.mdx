@@ -9,7 +9,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 Capability evals run real tasks against the real Otto harness and report how often Otto gets them right.
 
-The short version: each attempt boots its own Otto with a real model. Only the outside world is fake. The score comes from what actually changed, not from what Otto said.
+The short version: each attempt boots its own Otto with a real model. The apps, websites and user are fake. The score comes from what actually changed, not from what Otto said.
 
 :::caution[Evals cost money]
 They call live models. An attempt costs about $0.10 to $0.50, and the default run has 159 attempts. The unit tests never call them.
@@ -35,6 +35,8 @@ flowchart TD
 | The model, Pi, tools, turns, memory, schedules, approvals, Vault | Gmail, Calendar, Sheets and Slack, as stateful fakes behind the same port as Composio     |
 | The workspace container, Chromium, downloads and uploads         | Websites with logins, codes, carts and bookings, served under made-up hostnames           |
 | The clock                                                        | The user: scripted answers and approvals, plus a model-voiced persona for other questions |
+
+Web search and page fetch (`web_search` and `fetch_content`) run on the server, so they reach the public web in every case.
 
 Checks grade the end state: the fake world, the workspace files and the trace. A separate judge model grades what needs judgement.
 
@@ -103,7 +105,7 @@ The agent is `openai/gpt-6.1-sol` at high reasoning effort, and the judge is `an
 The branch's code runs with the eval keys.
 :::
 
-The run summary shows the verdict and the scores side by side. The `capability-evals` artifact, kept for 14 days, has a `report.html` for each side. A low score doesn't fail the workflow. It fails only when nothing could be scored.
+With a baseline, the run summary shows the verdict and both sides' scores. Without one, it shows this run's scores. The `capability-evals` artifact, kept for 14 days, has a `report.html` for each run. A low score doesn't fail the workflow. It fails only when nothing could be scored.
 
 ## What the verdict means
 
@@ -111,8 +113,8 @@ A run with a baseline ends in **GO**, **NO-GO** or **INCONCLUSIVE**. Both sides 
 
 ```mermaid
 flowchart TD
-  canary{{Harness canary<br/>passes?}} -- no --> inc[INCONCLUSIVE]:::muted
-  canary -- yes --> worse{{A gate scenario<br/>did worse?}}
+  canary{{Harness canary passes<br/>and a gate scenario ran?}} -- no --> inc[INCONCLUSIVE]:::muted
+  canary -- yes --> worse{{A gate scenario did worse<br/>or has too few attempts?}}
   worse -- no --> go[GO]:::go
   worse -- yes --> more[Seven more attempts<br/>on both sides]
   more --> drop{{Significant drop or<br/>safety check failed?}}
@@ -218,7 +220,38 @@ Payment cases use a synthetic merchant and never a real card. They measure task 
 | `video-to-three-platforms`              | Post one video to three platforms with captions that fit each, shown first    | approvals, files, vault, browser         | calibrating |
 | `youtube-topics`                        | Recent YouTube videos on a theme, grouped into topics                         | research, progress, files                | calibrating |
 
-To write or calibrate a scenario, or to read every number in a report, see [`evals/README.md`](https://github.com/n8n-io/otto/blob/main/evals/README.md).
+## Write a scenario
+
+Each scenario is one file in `evals/src/scenarios/`, named after its `id`. The suite loads every file in that folder. [`invoices-overdue.ts`](https://github.com/n8n-io/otto/blob/main/evals/src/scenarios/invoices-overdue.ts) is a good example.
+
+| Field                    | What it holds                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| `id`, `title`            | The file name, and the task in the user's words                                           |
+| `capabilities`           | The areas it covers, such as `apps`, `browser` or `vault`                                 |
+| `tier`                   | `pr` for small, stable and cheap cases, `full`, or `live` for cases that use the open web |
+| `complexity`, `seconds`  | `simple`, `medium` or `complex`, and the time limit                                       |
+| `stance`                 | `regression` for a task that should keep passing, `gap` for a known limitation            |
+| `calibration: 'pending'` | Marks it as calibrating until you've calibrated it                                        |
+| `user`                   | Scripted answers, approvals and secrets, plus a persona for other questions               |
+| `world`                  | Fake apps, sites, saved logins and cards, built from the run clock                        |
+| `play`                   | What the simulated user says, and when schedules fire                                     |
+| `expect`                 | `check()` for state you can test, and one `judge()` criterion per judgement               |
+| `evidence`               | The exact end state the judge sees                                                        |
+
+Every attempt also checks that the last turn finished and that no saved password or key-shaped string appears in a message.
+
+Follow these rules:
+
+- Write the brief like a real user. Everything you grade must be in the brief or discoverable from it.
+- Grade the end state, not the route. Any correct path must pass, and any wrong answer must fail.
+- Anchor dates and seeded data to the run clock and the user's time zone, never to a weekday word.
+- Pair a negative check, such as "nothing was sent", with a check that its precondition happened.
+- Add the traps real tasks have: a decoy, noise that changes on every visit, an old item outside the window, an instruction hidden in an email.
+- Make fake sites behave like real ones. Redirect after a form post, show changes on the next page and reject invalid input.
+- Harden with realistic complications, never stricter graders.
+- Keep all data synthetic.
+
+To calibrate it, run `run --scenario <id> --repeat 3`. Sort every failure: an agent mistake stays, a harness or fake app fault means fixing the harness, and an authoring fault means fixing the scenario and running it again. If it passes the first time, break what it tests and confirm it fails. Then remove `calibration: 'pending'`. Before you open a pull request, run `pnpm --dir evals run check` and `pnpm --dir evals test`.
 
 ## Related resources
 

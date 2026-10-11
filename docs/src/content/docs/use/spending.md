@@ -25,7 +25,7 @@ Reads in your apps aren't recorded as actions. Changes and sends are.
 
 1. Open **Settings → Trust & cost**.
 2. Select **Set a monthly limit**.
-3. Enter an amount in US dollars, at least $1, and select **Save**.
+3. Enter an amount in US dollars, from $1 to $100,000, and select **Save**.
 
 To change the limit, select it and enter a new amount. To remove it, select it, then **Remove**.
 

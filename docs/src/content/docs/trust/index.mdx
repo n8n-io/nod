@@ -10,7 +10,7 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 Trust decides what Otto can do in your apps. Vault decides how Otto uses your saved logins and cards, and it never shows them to the model.
 
-Otto can sign in to a website, read a report, prepare a reply and complete a checkout. The model plans that work. The Otto server, not the model, decides what is allowed to run, and you can read every rule it applies.
+Otto can sign in to a website, read a report, prepare a reply and complete a checkout. The model plans that work. The Otto server, not the model, decides which app actions, sign-ins and payments can run, and you can read every rule it applies.
 
 <CardGrid>
   <LinkCard
@@ -67,22 +67,23 @@ flowchart LR
     The server enters saved values into the website. The model never receives them.
   </Card>
   <Card title="One use, one result" icon="random">
-    An approved action runs once. If the outcome is unclear, Otto checks instead of trying again.
+    An approved action runs once. If the outcome is unclear, Otto says so. You check the result, or
+    ask Otto to, before any new attempt.
   </Card>
 </CardGrid>
 
 ## What Otto does in common cases
 
-| You ask Otto to                                        | What happens                                                                |
-| ------------------------------------------------------ | --------------------------------------------------------------------------- |
-| Read your calendar or inbox                            | It runs.                                                                    |
-| Add an event to your own calendar                      | It runs.                                                                    |
-| Email an address you wrote in your message             | It runs, because the recipient came from you.                               |
-| Email an address it found on a web page                | A review checks it against your request. If it doesn't match, Otto asks.    |
-| Delete files in your Drive                             | A review checks it matches your request. If it doesn't, Otto asks.          |
-| Sign in to a site with a saved login                   | Vault checks the account and website, then fills in the password privately. |
-| Pay at a checkout                                      | You approve that one payment with your card's security code.                |
-| Do something while it reacts to a new email on its own | It only reads and drafts. Anything else waits for you.                      |
+| You ask Otto to                                        | What happens                                                                                     |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Read your calendar or inbox                            | It runs.                                                                                         |
+| Add an event to your own calendar                      | It runs.                                                                                         |
+| Email an address you wrote in your message             | It runs, because the recipient came from you.                                                    |
+| Email an address it found on a web page                | A review checks it against your request. If it doesn't match, Otto asks.                         |
+| Delete files in your Drive                             | A review checks it matches your request. If it doesn't, Otto asks.                               |
+| Sign in to a site with a saved login                   | Vault checks the account and website, then fills in the password privately.                      |
+| Pay at a checkout                                      | You approve that one payment with your card's security code, or a yes if **Do it for me** is on. |
+| Do something while it reacts to a new email on its own | It only reads and drafts. Anything else waits for you.                                           |
 
 :::note[The model still uses judgement]
 These checks are a floor under Otto's own instructions, not a replacement. Otto also asks before a destructive action that your request doesn't clearly cover.

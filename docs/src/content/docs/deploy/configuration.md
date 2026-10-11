@@ -67,9 +67,9 @@ Keys set here become server-managed connections. They stay in server memory and 
 
 ## Vault
 
-| Variable         | What it does                                                                                                                                                                                 | Default |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `OTTO_VAULT_KEY` | A base64 32-byte key that encrypts saved logins, cards, model keys and the Composio key. Required on Linux. On macOS, if it's empty, Otto keeps a key in the Keychain item `dev.otto.vault`. | Empty   |
+| Variable         | What it does                                                                                                                                                                                      | Default |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `OTTO_VAULT_KEY` | A base64 32-byte key that encrypts saved logins, cards, model keys and the Composio key. Required outside macOS. On macOS, if it's empty, Otto keeps a key in the Keychain item `dev.otto.vault`. | Empty   |
 
 Create a key with `openssl rand -base64 32`.
 
