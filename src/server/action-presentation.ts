@@ -129,14 +129,6 @@ function fitted(render: (limit: number) => string[], limits: number[], budget: n
     : shown;
 }
 
-export function reviewedRequest(action: string, args: Record<string, unknown>) {
-  return fitted(
-    (limit) => actionDetails(action, args, limit).map(([name, value]) => `${name}: ${value}`),
-    [300, 100],
-    16_000,
-  );
-}
-
 export function actionTitle(action: string) {
   if (action === 'CONNECTED_HTTP') return { app: '', label: 'Call a connected API' };
   if (action === 'CONNECTED_MCP_CALL') return { app: '', label: 'Run a tool on a connected app' };

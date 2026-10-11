@@ -600,6 +600,22 @@ test(
             }),
             { confirm: true, reason: 'schedule' },
           );
+          const instruction = 'Every Monday, move the synthetic standup to 10:00.';
+          const authorized = await begin('Synthetic scheduled work', { source: 'schedule' });
+          await db.pool.query(
+            `INSERT INTO schedule_runs(id,owner_id,schedule_id,schedule_revision,job_id,title,turn_id,scheduled_for,time_zone,authority_instruction)
+             VALUES($1,$2,$3,1,$4,'Synthetic standup',$5,now(),'UTC',$6)`,
+            [randomUUID(), ownerId, randomUUID(), randomUUID(), authorized.turnId, instruction],
+          );
+          aligned = (input) => input.scheduledTaskInstruction === instruction;
+          assert.deepEqual(
+            await trust.check(authorized, 'GOOGLECALENDAR_PATCH_EVENT', {
+              event_id: 'synthetic-standup',
+              start_time: '10:00',
+            }),
+            { confirm: false },
+          );
+          assert.equal(reviews.at(-1)?.userMessages, undefined);
           aligned = true;
           assert.deepEqual(
             await trust.check(event, 'GMAIL_CREATE_EMAIL_DRAFT', email('ana.named@example.test')),
@@ -887,9 +903,18 @@ test(
             { confirm: true, reason: 'unrequested' },
           );
           assert.match(
-            JSON.stringify(reviews.at(-1)?.action.request),
+            JSON.stringify(reviews.at(-1)?.action.arguments),
             /synthetic-mime-for-an-outsider/,
           );
+          const oversized = reviews.length;
+          assert.deepEqual(
+            await trust.check(turn, 'CONNECTED_MCP_CALL', {
+              tool: 'post_message',
+              input: { text: 'x'.repeat(50_000), channel: 'C-OUTSIDER' },
+            }),
+            { confirm: true, reason: 'unrequested' },
+          );
+          assert.equal(reviews.length, oversized);
           const hidden = {
             tool: 'post_message',
             input: { text: 'x'.repeat(6000), note: 'y'.repeat(6000), channel: 'C-OUTSIDER' },
@@ -908,7 +933,7 @@ test(
             /--repo outsider\/r/,
           );
           await trust.check(turn, 'CONNECTED_MCP_CALL', hidden);
-          assert.match(JSON.stringify(reviews.at(-1)?.action.request), /C-OUTSIDER/);
+          assert.match(JSON.stringify(reviews.at(-1)?.action.arguments), /C-OUTSIDER/);
 
           const asked = await begin('Email the synthetic notes to the team.');
           await approvals.request(asked, 'GMAIL_SEND_EMAIL', email('team@example.test'), {

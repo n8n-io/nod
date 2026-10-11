@@ -1,7 +1,6 @@
 import type { Pool } from 'pg';
 import type { TurnRef } from './thread.ts';
 import { turnOrigin } from './approvals.ts';
-import { reviewedRequest } from './action-presentation.ts';
 import type { VaultActivityReason } from '../shared/contracts.ts';
 
 export type TrustReason = 'background' | 'schedule' | 'unrequested';
@@ -105,13 +104,16 @@ export function createTrust(options: {
         : origin.source === 'schedule'
           ? instruction && { scheduledTaskInstruction: instruction.slice(0, 3000) }
           : await conversation(turn.threadId);
-    const answer = await options
-      .review(checkInstructions, {
-        ...words,
-        ...(origin.readOnly ? { readOnly: true } : {}),
-        action: { name: action, request: reviewedRequest(action, args) },
-      })
-      .catch(() => undefined);
+    const answer =
+      JSON.stringify(args).length > 40_000
+        ? undefined
+        : await options
+            .review(checkInstructions, {
+              ...words,
+              ...(origin.readOnly ? { readOnly: true } : {}),
+              action: { name: action, arguments: args },
+            })
+            .catch(() => undefined);
     if (answer && typeof answer === 'object' && (answer as { run?: unknown }).run === true)
       return { confirm: false };
     if (origin.readOnly) throw new Error('This turn can only read connected apps.');

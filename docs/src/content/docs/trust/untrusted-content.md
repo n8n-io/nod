@@ -65,7 +65,7 @@ Automatic memory learning reads only your own short messages without attachments
 The tripwire is a security alarm, not a page parser. It never changes or acts on the page. What limits the damage is the server: whatever the model believes, the trust check, Vault and payment checks still apply.
 
 :::caution
-The server doesn't check reads, drafts, or links Otto opens or fetches. Text that fools the model could still use those paths.
+The server doesn't check what Otto reads or types on websites in its browser, or the links it opens or fetches. Text that fools the model could still use those paths.
 :::
 
 ## Where this is enforced
