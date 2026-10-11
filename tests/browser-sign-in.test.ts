@@ -72,7 +72,13 @@ test(
       const connectionId = opened.connectionId;
       assert.deepEqual(
         await service.target({ action: 'use', url: 'https://example.test/login', connectionId }),
-        { origin: 'https://example.test', kind: 'session', itemId: connectionId, destinations: [] },
+        {
+          origin: 'https://example.test',
+          account: 'example.test',
+          kind: 'session',
+          itemId: connectionId,
+          destinations: [],
+        },
       );
       assert.equal(
         (
@@ -204,7 +210,13 @@ test(
       );
       assert.deepEqual(
         await service.target({ action: 'use', url: 'https://other.test/deep', connectionId }),
-        { origin: 'https://other.test', kind: 'session', itemId: connectionId, destinations: [] },
+        {
+          origin: 'https://other.test',
+          account: (await service.sessions())[0]!.label,
+          kind: 'session',
+          itemId: connectionId,
+          destinations: [],
+        },
       );
       assert.equal(
         await service.target({ action: 'connect', url: 'https://new.test/a' }),

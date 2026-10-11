@@ -337,8 +337,7 @@
   display: grid;
   min-width: 0;
 }
-.statement-entry-title,
-.statement-entry-meta {
+.statement-entry-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

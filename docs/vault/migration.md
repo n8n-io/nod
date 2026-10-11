@@ -1,6 +1,6 @@
 # Migration and validation
 
-The redesign retains existing encrypted values and the current API shape for owner pages. Internal browser protocols accept a submit selector; model-facing sign-in and payment tools require it. Existing internal callers can use Enter as their submit control.
+The redesign retains existing encrypted values and the current API shape for owner pages. Sign-in accepts an optional submit selector. Pi supplies it for a submit button and omits it for an automatic step. Payment requires a submit selector. Private entry has no implicit Enter action.
 
 Startup adds durable use records and item-bound task grants. It removes conversation grants, which could keep authority from an earlier task. Existing standing grants remain explicit site permissions. Old payment activity changes from paid to card submitted. In-flight legacy payment requests become uncertain and cannot run again. Pending payment requests without a card revision are superseded; the owner must approve a new request.
 

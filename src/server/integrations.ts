@@ -2148,7 +2148,7 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
               const origin = connection.accessPaths?.[0]?.endpoint;
               if (site.includes('.') || site.includes(':')) {
                 try {
-                  return new URL(origin!).host.toLowerCase() === site;
+                  return new URL(origin!).host.toLowerCase().replace(/^www\./, '') === site;
                 } catch {
                   return false;
                 }

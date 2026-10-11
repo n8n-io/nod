@@ -323,7 +323,7 @@ export async function createVaultAccess(
     for (const { origin, item_key } of rows) {
       const granted = await grant(chain, origin, item_key);
       const account = item_key ? await options.account?.(item_key) : undefined;
-      if (item_key && !granted && !account) return false;
+      if (item_key && !account) return false;
       const verdict = await options.check(
         turn,
         { origin, ...(account ? { account } : {}) },
@@ -494,7 +494,7 @@ export async function createVaultAccess(
       credentialOrigin(origin),
     ]);
     await pool.query(
-      "INSERT INTO vault_activity(id,owner_id,action,origin,reason) VALUES($1,$2,'permission',$3,'allowed')",
+      "INSERT INTO vault_activity(id,owner_id,action,origin,reason) VALUES($1,$2,'permission',$3,'revoked')",
       [randomUUID(), ownerId, credentialOrigin(origin)],
     );
     options.refresh?.();

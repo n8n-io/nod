@@ -918,6 +918,8 @@ test('PIN and semantic login identifier requests never reach chat', async () => 
     'Send me your card details and the CVC.',
     'Enter your CVC2.',
     "What's your card's expiry date?",
+    "What's your card's number?",
+    'Please send your card’s details.',
   ];
   for (const text of requests) assert.equal(requestsPrivateInput(text), true, text);
   for (const text of [
@@ -1280,6 +1282,9 @@ test('a read-only turn refuses every outside action with a fixed error and still
     {
       readOnly: true,
       background: true,
+      prepareBrowser: async () => {
+        sideEffects++;
+      },
       connections: async (action) => {
         assert.equal(action, 'discover');
         return { apps: [] };

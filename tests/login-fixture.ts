@@ -133,6 +133,7 @@ export function stagedLoginBrowser() {
             'Event',
             'NodeFilter',
             'getComputedStyle',
+            'MutationObserver',
             `return ${expression}`,
           )(
             target.dom.window.document,
@@ -140,6 +141,7 @@ export function stagedLoginBrowser() {
             target.dom.window.Event,
             target.dom.window.NodeFilter,
             target.dom.window.getComputedStyle.bind(target.dom.window),
+            target.dom.window.MutationObserver,
           );
           target.afterInspect?.(expression);
           return value;

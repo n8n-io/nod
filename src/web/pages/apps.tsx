@@ -1020,19 +1020,21 @@ export function Apps({
             ))}
           </div>
           <div className="dialog-actions app-manage-actions">
-            <Button
-              size="sm"
-              data-add-account
-              disabled={Boolean(busy) || addAccountConnection?.status === 'not_configured'}
-              onClick={() => addAccountConnection && void connect(addAccountConnection, true)}
-            >
-              {busy === `connect:${addAccountConnection?.slug}` ? (
-                <LoaderCircle size={16} className="spin" aria-hidden="true" />
-              ) : (
-                <Plus size={16} aria-hidden="true" />
-              )}
-              Add account
-            </Button>
+            {!addAccountConnection?.browserUrl && (
+              <Button
+                size="sm"
+                data-add-account
+                disabled={Boolean(busy) || addAccountConnection?.status === 'not_configured'}
+                onClick={() => addAccountConnection && void connect(addAccountConnection, true)}
+              >
+                {busy === `connect:${addAccountConnection?.slug}` ? (
+                  <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                ) : (
+                  <Plus size={16} aria-hidden="true" />
+                )}
+                Add account
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setManageService(null)}>
               Done
             </Button>

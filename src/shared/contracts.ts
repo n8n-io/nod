@@ -102,6 +102,7 @@ export type VaultActivityReason =
   | 'schedule'
   | 'always'
   | 'allowed'
+  | 'revoked'
   | 'entered'
   | 'picked'
   | 'mailbox'

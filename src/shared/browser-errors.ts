@@ -17,7 +17,7 @@ const browserErrors = {
   browser_card_field:
     'Otto could not verify a card field, so nothing more was entered. Check the result before another attempt.',
   browser_card_site:
-    'A card field is not on a site approved for this payment, so nothing more was entered. Check the result before another attempt.',
+    'The approved card field could not accept the value, so nothing more was entered. Check the result before another attempt.',
   browser_card_changed:
     'The checkout page changed. The operation may have reached the site. Check the result before another attempt.',
 } as const;

@@ -34,11 +34,12 @@ export const personalActions = [
 const uuid = Type.String({
   pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
 });
+const fieldSelector = Type.String({ minLength: 1, maxLength: 500 });
 const cardExpiryField = Type.Union([
-  Type.String({ minLength: 1, maxLength: 500 }),
+  fieldSelector,
   Type.Object(
     {
-      selector: Type.String({ minLength: 1, maxLength: 500 }),
+      selector: fieldSelector,
       format: Type.String({ minLength: 1, maxLength: 100 }),
       locale: Type.Optional(Type.String({ maxLength: 35 })),
     },
@@ -277,11 +278,11 @@ export const toolDefinitions = {
       origin: Type.String({ minLength: 1, maxLength: 2048 }),
       label: Type.String({ minLength: 1, maxLength: 100 }),
       kind: literals(['identifier', 'password', 'otp']),
-      usernameSelector: Type.Optional(Type.String()),
+      usernameSelector: Type.Optional(fieldSelector),
       passwordSelector: Type.Optional(
-        Type.Union([Type.String(), Type.Array(Type.String(), { minItems: 1, maxItems: 100 })]),
+        Type.Union([fieldSelector, Type.Array(fieldSelector, { minItems: 1, maxItems: 100 })]),
       ),
-      submitSelector: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+      submitSelector: Type.Optional(fieldSelector),
       emailCode: Type.Optional(Type.Boolean()),
       emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
       savedLoginId: Type.Optional(uuid),
@@ -296,15 +297,18 @@ export const toolDefinitions = {
       amount: Type.String({ pattern: '^\\d{1,9}(\\.\\d{1,3})?$' }),
       currency: Type.String({ minLength: 3, maxLength: 3 }),
       card: Type.Optional(Type.String({ maxLength: 100 })),
-      submitSelector: Type.String({ minLength: 1, maxLength: 2048 }),
-      fields: Type.Object({
-        number: Type.String({ minLength: 1 }),
-        expiry: Type.Optional(cardExpiryField),
-        expiryMonth: Type.Optional(cardExpiryField),
-        expiryYear: Type.Optional(cardExpiryField),
-        securityCode: Type.Optional(Type.String({ minLength: 1 })),
-        name: Type.Optional(Type.String({ minLength: 1 })),
-      }),
+      submitSelector: fieldSelector,
+      fields: Type.Intersect([
+        Type.Object({
+          number: fieldSelector,
+          securityCode: Type.Optional(fieldSelector),
+          name: Type.Optional(fieldSelector),
+        }),
+        Type.Union([
+          Type.Object({ expiry: cardExpiryField }),
+          Type.Object({ expiryMonth: cardExpiryField, expiryYear: cardExpiryField }),
+        ]),
+      ]),
     }),
   ),
   payment_setting: defineTool(

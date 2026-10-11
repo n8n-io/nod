@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { openVaultValue } from '../src/server/vault-crypto.ts';
+import { securityCodeIn } from '../src/shared/verification-code.ts';
 import test from 'node:test';
 import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
@@ -101,6 +103,24 @@ test('vault encryption binds the secret to its record, owner, and exact origin',
   damaged[damaged.length - 1] ^= 1;
   assert.throws(() => openCredential(key, { ...entry, ciphertext: damaged.toString('base64') }));
   assert.throws(() => openCredential(randomBytes(32), { ...entry, ciphertext }));
+  const nonce = randomBytes(12);
+  const shortTag = createCipheriv('aes-256-gcm', key, nonce, { authTagLength: 4 });
+  shortTag.setAAD(Buffer.from(JSON.stringify(['fixture'])));
+  shortTag.final();
+  assert.throws(() =>
+    openVaultValue(
+      key,
+      ['fixture'],
+      Buffer.concat([nonce, shortTag.getAuthTag()]).toString('base64'),
+    ),
+  );
+});
+
+test('explicit card code replies keep private codes separate from ordinary numeric prose', () => {
+  for (const text of ['Security code: 123', 'CVC 123', 'My CVV is 1234', '123'])
+    assert.ok(securityCodeIn(text));
+  for (const text of ['call 911', 'Code: 123', 'Security code: 12345'])
+    assert.equal(securityCodeIn(text), undefined);
 });
 
 test('password exports from Chrome, 1Password and other managers read the same way', () => {
@@ -1026,7 +1046,7 @@ test(
     const { createVaultUses, VaultUseError } = await import('../src/server/vault-use.ts');
     const f = await vaultFixture();
     try {
-      let loseCommit = true;
+      let loseCommit = false;
       const pool = new Proxy(f.pool, {
         get(target, key) {
           if (key === 'connect')
@@ -1069,6 +1089,47 @@ test(
       };
       const uncertain = (error: unknown) =>
         error instanceof VaultUseError && error.statusCode === 502;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let finish!: () => void;
+      const held = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const concurrent = { ...use, id: randomUUID() };
+      const running = uses.run(concurrent, {
+        perform: async () => {
+          entered();
+          await held;
+        },
+      });
+      try {
+        await started;
+        await assert.rejects(
+          uses.run(concurrent, {
+            prepare: async () => {
+              throw new Error('Synthetic preparation failure');
+            },
+            perform: operation.perform,
+          }),
+          /preparation failure/,
+        );
+        assert.equal(
+          (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [concurrent.id])).rows[0]
+            .status,
+          'running',
+        );
+      } finally {
+        finish();
+        await running;
+      }
+      assert.equal(
+        (await f.pool.query('SELECT status FROM vault_uses WHERE id=$1', [concurrent.id])).rows[0]
+          .status,
+        'submitted',
+      );
+      loseCommit = true;
       await assert.rejects(uses.run(use, operation), uncertain);
       assert.equal(entries, 0);
       assert.equal(

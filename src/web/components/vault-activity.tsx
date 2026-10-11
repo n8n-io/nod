@@ -16,6 +16,7 @@ const reasons: Record<VaultActivityReason, string> = {
   schedule: 'Schedule',
   always: 'Always for this site',
   allowed: 'You allowed it',
+  revoked: 'You removed access',
   entered: 'You entered it',
   picked: 'You chose it',
   mailbox: 'From your email',
@@ -125,7 +126,12 @@ export function VaultActivityList({
               return (
                 <li key={entry.id}>
                   {open ? (
-                    <button type="button" className="vault-use" onClick={open}>
+                    <button
+                      type="button"
+                      className="vault-use"
+                      data-vault-activity={entry.id}
+                      onClick={open}
+                    >
                       {content}
                     </button>
                   ) : (
@@ -161,6 +167,7 @@ export function VaultActivityPages({
     request.current?.abort();
     request.current = null;
     setLoading(false);
+    setError('');
     setMore([]);
     setNext(activity.next);
     return () => request.current?.abort();
@@ -230,7 +237,7 @@ export function VaultStatement({
             . Check the site for each final result.
           </>
         ) : (
-          'Otto hasn’t used your Vault this week.'
+          'No login or card submission was confirmed this week.'
         )}
         {held > 0 && (
           <>

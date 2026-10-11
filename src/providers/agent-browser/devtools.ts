@@ -20,6 +20,8 @@ const armScript = (privateValue: boolean) =>
   `(() => { const node = ${active}; if (!node || node !== globalThis.__ottoFocused) return ''; globalThis.__ottoField = node; if (${privateValue}) (globalThis.__ottoPrivateFields ??= new Set()).add(node); node.setAttribute('autocomplete', 'off'); if (node.tagName !== 'SELECT') { if (typeof node.select === 'function') node.select(); else document.execCommand('selectAll'); document.execCommand('delete'); } return node.tagName; })()`;
 const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot: boolean) =>
   `(() => {
+    globalThis.__ottoMaskObserver?.disconnect();
+    delete globalThis.__ottoMaskObserver;
     const privateFields = [...(globalThis.__ottoPrivateFields ?? [])].filter(node => node.isConnected);
     const types = globalThis.__ottoMaskedTypes ??= new Map();
     for (const [node, type] of types) if (type === null) node.removeAttribute('type'); else node.setAttribute('type', type);
@@ -35,15 +37,17 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
     styles.clear();
     if (!${on}) return '';
     const hide = node => {
-      if (styles.has(node)) return;
       const property = ${snapshot} ? 'visibility' : 'opacity';
-      styles.set(node, [node.hasAttribute('style'), ['transition-property', property].map(name => [name, node.style.getPropertyValue(name), node.style.getPropertyPriority(name)])]);
-      node.style.setProperty('transition-property', 'none', 'important');
-      node.style.setProperty(property, ${snapshot} ? 'hidden' : '0', 'important');
+      if (!styles.has(node)) styles.set(node, [node.hasAttribute('style'), ['transition-property', property].map(name => [name, node.style.getPropertyValue(name), node.style.getPropertyPriority(name)])]);
+      if (node.style.getPropertyValue('transition-property') !== 'none' || node.style.getPropertyPriority('transition-property') !== 'important') node.style.setProperty('transition-property', 'none', 'important');
+      const value = ${snapshot} ? 'hidden' : '0';
+      if (node.style.getPropertyValue(property) !== value || node.style.getPropertyPriority(property) !== 'important') node.style.setProperty(property, value, 'important');
     };
     const secrets = ${JSON.stringify(secrets)};
     const scan = ${allFields} || secrets.length;
-    const roots = [...new Set([document, ...(scan ? globalThis.__ottoRoots ?? [] : []), ...privateFields.map(node => node.getRootNode())])];
+    let roots = [];
+    const apply = () => {
+    roots = [...new Set([document, ...(scan ? globalThis.__ottoRoots ?? [] : []), ...privateFields.map(node => node.getRootNode())])];
     if (scan) for (let index = 0; index < roots.length; index++) for (const node of roots[index].querySelectorAll('*')) if (node.shadowRoot) roots.push(node.shadowRoot);
     const numbers = secrets.filter(secret => /^\\d{12,19}$/.test(secret));
     const matches = value => typeof value === 'string' && (secrets.some(secret => value.includes(secret)) || numbers.some(secret => value.replace(/\\D/g, '').includes(secret)));
@@ -60,6 +64,14 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
         const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         while (walk.nextNode()) if (matches(walk.currentNode.textContent) && walk.currentNode.parentElement) hide(walk.currentNode.parentElement);
       }
+    }
+    };
+    apply();
+    if (!${snapshot}) {
+      const watch = () => roots.forEach(root => observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true }));
+      const observer = new MutationObserver(() => { observer.disconnect(); apply(); watch(); });
+      watch();
+      globalThis.__ottoMaskObserver = observer;
     }
     return '';
   })()`;

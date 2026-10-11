@@ -630,7 +630,7 @@ export function VaultDetails({
         {notice}
       </p>
       {details && !editing && (typeof children === 'function' ? children(details) : children)}
-      {(editing || (!details && detailsError) || (hosted && isCard)) && (
+      {(details || detailsError) && (
         <button
           ref={deleteTrigger}
           type="button"

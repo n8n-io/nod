@@ -10,7 +10,10 @@ export function sealVaultValue(key: Buffer, binding: readonly string[], value: s
 
 export function openVaultValue(key: Buffer, binding: readonly string[], ciphertext: string) {
   const bytes = Buffer.from(ciphertext, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+  if (bytes.length < 28) throw new Error('Invalid encrypted value.');
+  const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12), {
+    authTagLength: 16,
+  });
   decipher.setAAD(Buffer.from(JSON.stringify(binding)));
   decipher.setAuthTag(bytes.subarray(12, 28));
   return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8');

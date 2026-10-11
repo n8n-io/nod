@@ -118,7 +118,7 @@ export function channelReply(
         try {
           const url = new URL(linked ?? plain!);
           if (
-            url.origin !== appOrigin &&
+            url.host !== (appOrigin ? new URL(appOrigin).host : undefined) &&
             !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
           )
             return match;

@@ -876,6 +876,71 @@ test('legacy passwords are removed from embedded JSON strings', async () => {
   }
 });
 
+test('a local summary is scrubbed with credentials from its retained earlier file', async () => {
+  const f = await fixture();
+  try {
+    const local = join(f.directory, 'local');
+    await mkdir(local);
+    const older = SessionManager.create(local, local);
+    legacyLogin(older);
+    const current = SessionManager.create(local, local);
+    current.appendMessage({ role: 'user', content: 'Read the report.', timestamp: 6 });
+    current.appendCompaction(
+      'Use fixture-user with synthetic-legacy-password.',
+      current.getLeafId(),
+      50,
+    );
+    const activeFile = current.getSessionFile()!;
+    const { utimes } = await import('node:fs/promises');
+    await utimes(activeFile, new Date(Date.now() + 1000), new Date(Date.now() + 1000));
+    const opened = openLocalSession(local);
+    assert.doesNotMatch(
+      JSON.stringify(opened.buildSessionContext().messages),
+      /fixture-user|synthetic-legacy-password/,
+    );
+    const files = await filesUnder(local);
+    assert.equal(files.length, 1);
+    assert.doesNotMatch(
+      await readFile(files[0]!, 'utf8'),
+      /fixture-user|synthetic-legacy-password/,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('failed checkpoint cleanup blocks startup and preserves the published session', async () => {
+  const f = await fixture();
+  try {
+    const original = await createPiCheckpoint({ ...f, directory: f.directory });
+    legacyLogin(original.manager);
+    await original.checkpoint();
+    const store = {
+      ...f.store,
+      remove: async () => {
+        throw new Error('Synthetic removal failure');
+      },
+    };
+    await assert.rejects(
+      createPiCheckpoint({ ...f, store, directory: join(f.directory, 'blocked') }),
+      /could not be saved/,
+    );
+    const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'restored') });
+    assert.doesNotMatch(
+      JSON.stringify(restored.manager.buildSessionContext().messages),
+      /fixture-user|synthetic-legacy-password/,
+    );
+    assert.match(
+      JSON.stringify(restored.manager.buildSessionContext().messages),
+      /removed from context/,
+    );
+    for (const file of await filesUnder(join(f.directory, 'objects')))
+      assert.doesNotMatch(await readFile(file, 'utf8'), /fixture-user|synthetic-legacy-password/);
+  } finally {
+    await f.close();
+  }
+});
+
 function dangling(
   manager: SessionManager,
   answered: string[],

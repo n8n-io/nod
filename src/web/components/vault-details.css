@@ -471,7 +471,8 @@ button.vault-use:focus-visible {
     row-gap: 4px;
   }
   .vault-pill {
-    display: none;
+    grid-column: 2;
+    justify-self: start;
   }
   .vault-pill.is-held {
     display: block;

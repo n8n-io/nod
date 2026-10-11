@@ -102,11 +102,11 @@ const requestInput = z
     origin: z.string().max(2048),
     label: z.string().trim().min(1).max(100),
     kind: z.enum(['identifier', 'password', 'otp']),
-    usernameSelector: z.string().min(1).max(2048).optional(),
+    usernameSelector: z.string().min(1).max(500).optional(),
     passwordSelector: z
-      .union([z.string().min(1).max(2048), z.array(z.string().min(1).max(500)).min(1).max(100)])
+      .union([z.string().min(1).max(500), z.array(z.string().min(1).max(500)).min(1).max(100)])
       .optional(),
-    submitSelector: z.string().min(1).max(2048).optional(),
+    submitSelector: z.string().min(1).max(500).optional(),
     emailCode: z.boolean().optional(),
     emailRecipient: z.string().trim().min(3).max(320).optional(),
   })

@@ -1145,8 +1145,19 @@ export function createAgentBrowserComputer(options: {
               { signal },
             );
         }
-        if (['back', 'forward', 'reload'].includes(input.action))
-          await command(state, [input.action], { signal });
+        if (['back', 'forward', 'reload'].includes(input.action)) {
+          const devtools = state.saved.scripted ? await inspector(state) : undefined;
+          try {
+            const before = await devtools?.document();
+            await command(state, [input.action], { signal });
+            if (devtools && before !== (await devtools.document())) {
+              delete state.saved.scripted;
+              await saveState(state);
+            }
+          } finally {
+            devtools?.close();
+          }
+        }
         if (input.action === 'evaluate') {
           const script = input.script ?? '';
           if (!script.trim() || script.length > 20_000)

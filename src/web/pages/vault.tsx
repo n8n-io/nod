@@ -75,6 +75,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
   const [chosen, setChosen] = useState(false);
   const returnTo = useRef<string | null>(null);
   const backTo = useRef<View>('saved');
+  const activityTrigger = useRef<string | null>(null);
   const newTrigger = useRef<HTMLButtonElement>(null);
   const openingDialog = useRef(false);
   const split = !phone;
@@ -114,11 +115,15 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     returnTo.current = null;
     (id === 'new'
       ? newTrigger.current
-      : [...document.querySelectorAll<HTMLElement>('[data-vault-item]')].find(
-          (item) => item.dataset.vaultItem === id,
-        )
+      : id.startsWith('activity:')
+        ? [...document.querySelectorAll<HTMLElement>('[data-vault-activity]')].find(
+            (item) => item.dataset.vaultActivity === id.slice(9),
+          )
+        : [...document.querySelectorAll<HTMLElement>('[data-vault-item]')].find(
+            (item) => item.dataset.vaultItem === id,
+          )
     )?.focus();
-  }, [pageMode, adding, selectedId]);
+  }, [pageMode, adding, selectedId, view]);
 
   function save(entry: VaultListEntry) {
     update((current) => [entry, ...(current ?? []).filter((value) => value.id !== entry.id)]);
@@ -138,12 +143,20 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
       items.find((value) => value.id === entry.itemId) ??
       (!entry.itemId &&
         items.find((value) => value.kind === 'session' && value.origin === entry.origin));
-    return item ? () => open(item, 'activity') : undefined;
+    return item
+      ? () => {
+          activityTrigger.current = entry.id;
+          open(item, 'activity');
+        }
+      : undefined;
   }
 
   function closeDetail() {
     if (split) return;
-    returnTo.current = selectedId ?? null;
+    returnTo.current =
+      backTo.current === 'activity' && activityTrigger.current
+        ? `activity:${activityTrigger.current}`
+        : (selectedId ?? null);
     setChosen(false);
     setSelectedId(null);
     setView(backTo.current);
@@ -246,7 +259,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
       }}
       onDeleted={removed}
     >
-      {(details) => (
+      {() => (
         <>
           {selected.kind === 'login' && (
             <VaultSiteAccess
@@ -258,14 +271,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
               onAsk={onAsk}
             />
           )}
-          {selected.kind === 'card' && (
-            <VaultCardPayments
-              cardId={selected.id}
-              hosted={hosted}
-              initialDoItForMe={details.kind === 'card' && details.doItForMe}
-              onChanged={() => setRevision((current) => current + 1)}
-            />
-          )}
+          {selected.kind === 'card' && <VaultCardPayments cardId={selected.id} />}
         </>
       )}
     </VaultDetails>

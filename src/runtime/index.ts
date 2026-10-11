@@ -606,7 +606,11 @@ export function createAgentRuntime(dependencies: {
         parameters,
         parallel: parallelTools.has(name),
         execute: async (params) => {
-          if (browserTools.has(name) || handsOverBrowser(name, params)) await takeBrowser();
+          if (
+            (!context.readOnly || allowedReadOnly(name, params)) &&
+            (browserTools.has(name) || handsOverBrowser(name, params))
+          )
+            await takeBrowser();
           return inTurn(name, params, () =>
             guard(name, params, async () => {
               if (!Value.Check(parameters, params))

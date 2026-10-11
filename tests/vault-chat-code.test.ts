@@ -28,6 +28,16 @@ test(
     const db = await import('../src/server/db.ts');
     const { createChatVerification } = await import('../src/server/chat-verification.ts');
     const thread = await import('../src/server/thread.ts');
+    t.after(async () => {
+      await thread.boss.stop();
+      await db.pool.end();
+      try {
+        await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+        await admin.query(`DROP SCHEMA IF EXISTS ${bossSchema} CASCADE`);
+      } finally {
+        await admin.end();
+      }
+    });
     const { createApp } = await import('../src/server/app.ts');
     const { dataRoot, ownerId, port, configuration } = await import('../src/server/config.ts');
     await db.initializeDatabase();
@@ -715,11 +725,6 @@ test(
       );
     } finally {
       await app.close();
-      await thread.boss.stop();
-      await db.pool.end();
-      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-      await admin.query(`DROP SCHEMA ${bossSchema} CASCADE`);
-      await admin.end();
     }
   },
 );

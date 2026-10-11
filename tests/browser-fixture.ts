@@ -353,6 +353,7 @@ export async function fakeDevtools(model: DevtoolsModel) {
         let length = buffer[1]! & 0x7f;
         let offset = 2;
         if (length === 126) {
+          if (buffer.length < 4) return;
           length = buffer.readUInt16BE(2);
           offset = 4;
         }

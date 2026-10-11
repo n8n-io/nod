@@ -1036,7 +1036,7 @@ test('a card goes only into the approved fields on the approved sites and stays 
   try {
     await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/checkout' });
     const found = await computer.cardDestinations('shop', fields);
-    assert.deepEqual(found, { document: 'loader-1', destinations });
+    assert.deepEqual(found, { document: model.document, destinations });
     assert.equal(model.focused, undefined);
     assert.equal(
       Buffer.from(await computer.checkoutImage('shop')).toString(),
@@ -1056,7 +1056,7 @@ test('a card goes only into the approved fields on the approved sites and stays 
         ...entry,
         destinations: { ...destinations, number: 'https://1.1.1.1' },
       }),
-      /not on a site approved/,
+      (error: unknown) => error instanceof BrowserActionError && error.code === 'browser_card_site',
     );
     assert.equal(model.values.size, 0);
     await computer.act('shop', { action: 'reload' });
@@ -1095,7 +1095,10 @@ test('a card goes only into the approved fields on the approved sites and stays 
     await computer.act('shop', { action: 'open', url: 'https://1.1.1.1/checkout' });
     model.steal = { after: 4, field: '@e9' };
     const stolen = await computer.cardDestinations('shop', fields);
-    await assert.rejects(computer.fillCard({ ...entry, ...stolen }), /not on a site approved/);
+    await assert.rejects(
+      computer.fillCard({ ...entry, ...stolen }),
+      (error: unknown) => error instanceof BrowserActionError && error.code === 'browser_card_site',
+    );
     assert.equal(model.values.get('@e4'), card.cardNumber.slice(0, 4));
     assert.equal(model.values.get('@e9'), undefined);
     await assert.rejects(computer.act('shop', { action: 'snapshot' }));
@@ -5453,6 +5456,8 @@ test(
           root.innerHTML = '<style nonce="otto-fixture">input[aria-label="Card number"],input[aria-label="Security code"],h2{background:rgb(255,0,0);transition:opacity 60s !important}button{background:rgb(0,0,255)}</style><form><input aria-label="Card number"><select aria-label="Month"><option value="1">January</option><option value="8">August</option></select><input aria-label="Year"><input aria-label="Security code"><h2></h2><button>Complete</button></form>';
           root.querySelectorAll('input').forEach(node => node.style.setProperty('visibility', 'visible', 'important'));
           globalThis.privateStyles = Array.from(root.querySelectorAll('input[aria-label="Card number"],input[aria-label="Security code"],h2'));
+          globalThis.maskMutations = 0;
+          new MutationObserver(records => { globalThis.maskMutations++; const source = root.querySelector('h2'); if (records.some(record => record.target === source) && source.style.opacity === '0' && source.textContent) { const echo = source.cloneNode(true); echo.style.removeProperty('opacity'); echo.style.removeProperty('transition-property'); root.append(echo); } }).observe(root, { subtree: true, attributes: true, attributeFilter: ['style'] });
           root.querySelector('input').oninput = event => { event.target.value = event.target.value.replace(/\\D/g, '').replace(/(\\d{4})(?=\\d)/g, '$1 '); root.querySelector('h2').textContent = event.target.value; };
           root.querySelector('form').onsubmit = event => { event.preventDefault(); fetch('/record?value=' + encodeURIComponent([...root.querySelectorAll('input,select')].map(node => node.value).join('/'))); };
           } });</script>`,
@@ -5572,6 +5577,19 @@ test(
       const image = await computer.screenshot('private');
       assert.ok(image);
       shadowImage = Buffer.from(image);
+      await computer.act('private', {
+        action: 'evaluate',
+        script: 'globalThis.privateStyles[0].style.setProperty("outline-width", "1px")',
+      });
+      assert.match(
+        (
+          await computer.act('private', {
+            action: 'evaluate',
+            script: 'globalThis.maskMutations > 0',
+          })
+        ).text,
+        /true/,
+      );
       const restoredStyle = await computer.act('private', {
         action: 'evaluate',
         script:

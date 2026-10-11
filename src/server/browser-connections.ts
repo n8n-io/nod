@@ -325,7 +325,8 @@ export async function createBrowserConnections(
   async function target(
     raw: unknown,
   ): Promise<
-    { origin: string; kind: 'session'; itemId: string; destinations: string[] } | undefined
+    | { origin: string; account: string; kind: 'session'; itemId: string; destinations: string[] }
+    | undefined
   > {
     const parsed = requestSchema.safeParse(raw);
     if (!parsed.success || parsed.data.action !== 'use') return undefined;
@@ -340,13 +341,19 @@ export async function createBrowserConnections(
       return undefined;
     }
     const row = (
-      await pool.query<Pick<Row, 'origin'>>(
-        "SELECT origin FROM browser_connections WHERE id=$1 AND owner_id=$2 AND state<>'disconnecting'",
+      await pool.query<Pick<Row, 'origin' | 'label'>>(
+        "SELECT origin,label FROM browser_connections WHERE id=$1 AND owner_id=$2 AND state<>'disconnecting'",
         [parsed.data.connectionId, options.ownerId],
       )
     ).rows[0];
-    return row
-      ? { origin: address.origin, kind: 'session', itemId: parsed.data.connectionId, destinations }
+    return row?.label
+      ? {
+          origin: address.origin,
+          account: row.label,
+          kind: 'session',
+          itemId: parsed.data.connectionId,
+          destinations,
+        }
       : undefined;
   }
 

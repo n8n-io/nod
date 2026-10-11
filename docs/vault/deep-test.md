@@ -2,7 +2,7 @@
 
 ## Scope and run rule
 
-The owner asked for a deep test of the complete Vault flow. The gate is an observable result: save a value in an owned private form, use it on the selected website, complete the task, and keep the value out of model messages and tool data. A payment must have one approved submission. Refusal, Stop, expiry, a changed card, uncertain entry and a lost response must not cause another submission.
+The owner asked for a deep test of the complete Vault flow. The gate is an observable result: save a value in an owned private form, use it on the selected website, complete the task, and keep the value out of model messages and tool data. A payment must have one approved submission. Refusal, Stop, expiry, a changed card, uncertain entry and a lost response must not cause another submission. Before a fresh attempt after uncertainty, the owner must check the website result.
 
 The acceptance run used the local snapshot `f39692849cb5dad22e095777de921ce18e02d7b8`. Its complete `src` tree is identical to public PR commit `585916151b109fa22245a315fc288164d5faeeb3`. The [source manifest](tested-source.json) records that commit, its Git tree and SHA-256 hashes for all 376 production source files. These results apply to that source. Later PR review changes require their own checks. The deep test changed ten existing production modules after its first source snapshot; the full PR also contains the earlier Vault feature work. It adds no product wait, automatic retry, merchant case, vendor patch, dependency or service. The user still enters one code in one private form. The model can select its destination boxes as an ordered list of browser references.
 
@@ -27,7 +27,7 @@ Twenty task cases run three times each. The agent is `openai/gpt-6.1-sol`; the i
 
 The final frozen record is `.local/vault-deep/frozen-accepted-final.json`. The final report is `.local/capability-evals/vault-deep-accepted-final-1011/report.html`. The extra channel, UI and split-code probes have a separate frozen record, `.local/vault-deep/frozen-accepted-holdouts.json`.
 
-## Validation results
+## Acceptance-source validation results
 
 The final production source passed the type, architecture and format checks. The complete integration run passed all 774 tests, and the build passed. The inspector test adapter now supplies the real DOM window `getComputedStyle` method; this changes no production file. The eval harness passed 45 tests. Desktop tests passed 130 tests; one Firefox test is skipped because Firefox does not run as root in the Linux fixture.
 
@@ -119,3 +119,11 @@ The final source was measured on two 5,000-row pages. Private-input masking took
 These are controlled tasks with synthetic accounts, cards, shops, messages and bank codes. The manual channel tasks use real Pi and the server channel path. They do not contact a live bot or recipient. Native Chrome checks use the real web UI. Desktop tests exercise the real window handlers; this pass does not install or publish an Electron release.
 
 The destination website receives submitted values and can retain or transform them. JavaScript can also return a transformed value from that live page. Known-value masking does not contain every possible transformation. The selected gates can confirm this feature's tested behavior; they cannot prove that every website or future model response will work. CAPTCHA, issuer policy, an unavailable provider and a website change remain external conditions.
+
+## PR review validation, 11 October 2026
+
+Public commit `657467daceb0b493477a21d7c1295a2334897a07` has the same complete Git tree as tested snapshot `674ccbe70cec5d12f1bdf942b70369cd6313fbde`. The history rewrite changed only commit metadata and removed an earlier manifest format. It changed no file in the tested tree.
+
+The complete Linux integration run passed 780 tests. Root check, build and eval check passed. The eval harness passed 47 tests. Native Chrome passed ten owner UI checks, including reveal cleanup, preserved private drafts, desktop payment approval and the original Telegram task resume. Two native private-entry checks passed. These results apply to this source.
+
+The fixed-source task matrix ran twenty cases three times, with the same agent and judge and no task retry. It produced 59 complete passing grades and one incomplete judge response. A fresh judge pass graded the same saved trace and unchanged criteria. All required checks passed. No task, browser operation or payment was repeated. The original incomplete result remains separate. Records are in `.local/vault-deep/cubic-final-judge/` and `.local/capability-evals/vault-cubic-final-1011/`.

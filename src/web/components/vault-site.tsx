@@ -33,19 +33,23 @@ export function VaultSiteAccess({
     const controller = new AbortController();
     setAlways(null);
     setActivity(null);
-    void Promise.all([
-      api<VaultPermission[]>('/api/vault/permissions', { signal: controller.signal }),
-      api<VaultActivity>(`/api/vault/activity?origin=${encodeURIComponent(origin)}`, {
-        signal: controller.signal,
-      }),
-    ])
-      .then(([permissions, history]) => {
-        setAlways(permissions.some((permission) => permission.origin === origin));
-        setActivity(history);
+    setError('');
+    const failed = (cause: unknown) => {
+      if (!controller.signal.aborted) setError(errorMessage(cause));
+    };
+    void api<VaultPermission[]>('/api/vault/permissions', { signal: controller.signal })
+      .then((permissions) => {
+        if (!controller.signal.aborted)
+          setAlways(permissions.some((permission) => permission.origin === origin));
       })
-      .catch((cause) => {
-        if (!controller.signal.aborted) setError(errorMessage(cause));
-      });
+      .catch(failed);
+    void api<VaultActivity>(`/api/vault/activity?origin=${encodeURIComponent(origin)}`, {
+      signal: controller.signal,
+    })
+      .then((history) => {
+        if (!controller.signal.aborted) setActivity(history);
+      })
+      .catch(failed);
     return () => controller.abort();
   }, [origin]);
 

@@ -70,8 +70,10 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
         'The private operation did not finish. It may have reached the website. Check its result before another attempt.',
         502,
       );
+    let claimStarted = false;
     const ready = await transaction(async (client) => {
       if ((await operation.prepare?.(client)) === false) return false;
+      claimStarted = true;
       const claimed = await client.query(
         `INSERT INTO vault_uses(id,owner_id,thread_id,turn_id,root_turn_id,origin,kind,item_id,attempt_key,status)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'running') ON CONFLICT DO NOTHING RETURNING id`,
@@ -94,7 +96,7 @@ export async function createVaultUses(pool: Pool, ownerId: string) {
         );
       return true;
     }).catch(async (error: unknown) => {
-      if (error instanceof VaultUseError) throw error;
+      if (error instanceof VaultUseError || !claimStarted) throw error;
       try {
         const recovered = await pool.query(
           "UPDATE vault_uses SET status='uncertain',finished_at=now() WHERE id=$1 AND owner_id=$2 AND status='running' RETURNING id",

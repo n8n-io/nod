@@ -733,7 +733,7 @@ test('channel replies keep secure credential and approval links in the local app
   assert.equal(reply.includes('private-id'), false);
   assert.match(reply, /https:\/\/example.com\/docs/);
   const paymentReply = channelReply(
-    '[Approve](/payments/private-id) [Owned](https://otto.example/payments/private-id) [Invoice](https://merchant.example/payments/invoice)',
+    '[Approve](/payments/private-id) [Owned](https://otto.example/payments/private-id) [HTTP](http://otto.example/payments/private-id) [Invoice](https://merchant.example/payments/invoice)',
     false,
     false,
     [],

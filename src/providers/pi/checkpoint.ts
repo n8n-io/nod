@@ -60,20 +60,31 @@ function entries(bytes: Uint8Array): FileEntry[] {
 async function readSession(store: PrivateObjectStore, threadId: string) {
   const saved = await store.read(`sessions/${threadId}.jsonl`, objectBytes);
   if (!saved) return undefined;
-  let manifest: { type?: unknown; parts?: unknown } | undefined;
+  let manifest: { type?: unknown; parts?: unknown; obsolete?: unknown } | undefined;
   try {
     manifest = JSON.parse(Buffer.from(saved.bytes).toString('utf8'));
   } catch {
     manifest = undefined;
   }
   if (manifest?.type !== 'otto_session_parts')
-    return { bytes: Buffer.from(saved.bytes), version: saved.version, parts: [] as string[] };
+    return {
+      bytes: Buffer.from(saved.bytes),
+      version: saved.version,
+      parts: [] as string[],
+      obsolete: [] as string[],
+    };
   const parts = manifest.parts;
+  const obsolete = manifest.obsolete ?? [];
   if (
     !Array.isArray(parts) ||
     !parts.length ||
     parts.length > maxParts + maximum / partBytes ||
-    !parts.every((part) => typeof part === 'string' && partId.test(part))
+    !parts.every((part) => typeof part === 'string' && partId.test(part)) ||
+    !Array.isArray(obsolete) ||
+    obsolete.length > maxParts + maximum / partBytes ||
+    !obsolete.every(
+      (part) => typeof part === 'string' && partId.test(part) && !parts.includes(part),
+    )
   )
     throw failure();
   const chunks = await Promise.all(
@@ -85,7 +96,12 @@ async function readSession(store: PrivateObjectStore, threadId: string) {
   );
   const bytes = Buffer.concat(chunks);
   if (bytes.byteLength > maximum) throw failure();
-  return { bytes, version: saved.version, parts: parts as string[] };
+  return {
+    bytes,
+    version: saved.version,
+    parts: parts as string[],
+    obsolete: obsolete as string[],
+  };
 }
 
 function chunks(rows: object[]) {
@@ -148,11 +164,12 @@ function legacySecrets(context: ReturnType<SessionManager['getEntries']>) {
       for (const part of entry.message.role === 'toolResult' ? entry.message.content : [])
         if (part.type === 'text')
           try {
-            const password: unknown = JSON.parse(part.text)?.password;
-            if (typeof password === 'string' && password.length) {
-              values.add(password);
-              values.add(JSON.stringify(password).slice(1, -1));
-            }
+            const credential = JSON.parse(part.text);
+            for (const value of [credential?.username, credential?.password])
+              if (typeof value === 'string' && value.length) {
+                values.add(value);
+                values.add(JSON.stringify(value).slice(1, -1));
+              }
           } catch {}
   return [...values].sort((a, b) => b.length - a.length);
 }
@@ -173,9 +190,24 @@ export function openLocalSession(directory: string) {
   let manager = SessionManager.continueRecent(directory, directory);
   const file = manager.getSessionFile();
   if (!file || !existsSync(file)) return manager;
-  const legacy = holdsCredentials(manager);
+  const retained = readdirSync(directory)
+    .filter((name) => name.endsWith('.jsonl'))
+    .map((name) => join(directory, name))
+    .filter((path) => path !== file && statSync(path).isFile());
+  const secrets = [
+    ...new Set(
+      [
+        legacySecrets(manager.getEntries()),
+        ...retained.map((path) => {
+          if (statSync(path).size > maximum) throw failure();
+          return legacySecrets(SessionManager.open(path).getEntries());
+        }),
+      ].flat(),
+    ),
+  ].sort((a, b) => b.length - a.length);
+  const legacy = holdsCredentials(manager) || secrets.length > 0;
   if (!legacy && statSync(file).size <= rebaseAt) return manager;
-  manager = rebaseSession(manager, SessionManager.create(directory, directory));
+  manager = rebaseSession(manager, SessionManager.create(directory, directory), secrets);
   const current = manager.getSessionFile();
   if (legacy && current && existsSync(current))
     for (const name of readdirSync(directory))
@@ -184,9 +216,12 @@ export function openLocalSession(directory: string) {
   return manager;
 }
 
-export function rebaseSession(source: SessionManager, next: SessionManager) {
+export function rebaseSession(
+  source: SessionManager,
+  next: SessionManager,
+  secrets = legacySecrets(source.getEntries()),
+) {
   const context = source.buildContextEntries();
-  const secrets = legacySecrets(source.getEntries());
   let images = context.reduce(
     (count, entry) =>
       entry.type === 'message' && entry.message.role === 'toolResult'
@@ -287,6 +322,7 @@ export async function createPiCheckpoint(options: {
     saved ? entries(saved.bytes) : undefined,
   );
   let parts = saved?.parts ?? [];
+  let obsolete = saved?.obsolete ?? [];
   let stored = saved?.bytes.byteLength ?? 0;
   let rewrite = stored > rebaseAt || holdsCredentials(manager);
   if (rewrite) manager = rebaseSession(manager, SessionManager.inMemory(options.directory));
@@ -295,11 +331,17 @@ export async function createPiCheckpoint(options: {
   let version = saved?.version ?? null;
   let failed = false;
   let tail = Promise.resolve();
+  async function cleanup() {
+    if (!obsolete.length) return;
+    await Promise.all(obsolete.map((old) => store.remove(`sessions/${threadId}/${old}.jsonl`)));
+    obsolete = [];
+  }
   function checkpoint() {
     const next = tail.then(async () => {
       if (failed) throw failure();
       const written: string[] = [];
       try {
+        await cleanup();
         const all = manager.getEntries();
         const fresh = rewrite || !parts.length || parts.length >= maxParts;
         const rows = fresh ? [{ ...manager.getHeader() }, ...all] : all.slice(persisted);
@@ -312,6 +354,7 @@ export async function createPiCheckpoint(options: {
           await store.write(`sessions/${threadId}/${id}.jsonl`, bytes, { expectedVersion: null });
         }
         const nextParts = fresh ? written : [...parts, ...written];
+        const nextObsolete = fresh ? [...new Set([...obsolete, ...parts])] : obsolete;
         version = await store.write(
           key,
           Buffer.from(
@@ -319,22 +362,19 @@ export async function createPiCheckpoint(options: {
               type: 'otto_session_parts',
               revision: randomUUID(),
               parts: nextParts,
+              obsolete: nextObsolete,
             }),
           ),
           { expectedVersion: version },
         );
-        if (fresh)
-          await Promise.all(
-            parts.map((old) => store.remove(`sessions/${threadId}/${old}.jsonl`).catch(() => {})),
-          );
+        obsolete = nextObsolete;
         parts = nextParts;
         rewrite = false;
         persisted = all.length;
         stored = size;
+        await cleanup();
       } catch {
         failed = true;
-        for (const id of written)
-          void store.remove(`sessions/${threadId}/${id}.jsonl`).catch(() => {});
         throw failure();
       }
     });

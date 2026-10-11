@@ -634,7 +634,11 @@ export async function createApp(dependencies: AppDependencies = {}) {
     const thread = await activeThread(pool);
     if (!(await handoffOpen(thread.id))) return reply.code(423).send({ error: handoffClosed });
     try {
-      await act(thread.id, { action: body.data.action });
+      const apply = async () => {
+        await act(thread.id, { action: body.data.action });
+      };
+      if (dependencies.browserInput) await dependencies.browserInput(thread.id, apply);
+      else await apply();
     } catch (error) {
       const code = error instanceof BrowserActionError ? error.code : undefined;
       return reply
