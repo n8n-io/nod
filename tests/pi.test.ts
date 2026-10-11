@@ -837,6 +837,45 @@ test('short legacy passwords are removed after compaction without changing messa
   }
 });
 
+test('legacy passwords are removed from embedded JSON strings', async () => {
+  const f = await fixture();
+  try {
+    const password = 'synthetic"quoted\\password';
+    const manager = SessionManager.inMemory(f.directory);
+    legacyLogin(manager, password);
+    manager.appendMessage({ role: 'user', content: JSON.stringify({ password }), timestamp: 6 });
+    await f.store.write(
+      `sessions/${f.threadId}.jsonl`,
+      Buffer.from(
+        [manager.getHeader(), ...manager.getEntries()].map((row) => JSON.stringify(row)).join('\n'),
+      ),
+      { expectedVersion: null },
+    );
+    const restored = await createPiCheckpoint({
+      store: f.store,
+      threadId: f.threadId,
+      directory: join(f.directory, 'new'),
+    });
+    const texts = restored.manager
+      .buildSessionContext()
+      .messages.flatMap((message) =>
+        'content' in message
+          ? typeof message.content === 'string'
+            ? [message.content]
+            : message.content.filter((part) => part.type === 'text').map((part) => part.text)
+          : [],
+      );
+    for (const text of texts) {
+      assert.equal(text.includes(password), false);
+      assert.equal(text.includes(JSON.stringify(password).slice(1, -1)), false);
+    }
+    await restored.checkpoint();
+    assert.doesNotMatch(await savedText(f), /synthetic.*quoted/);
+  } finally {
+    await f.close();
+  }
+});
+
 function dangling(
   manager: SessionManager,
   answered: string[],

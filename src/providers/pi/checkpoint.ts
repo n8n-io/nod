@@ -149,9 +149,12 @@ function legacySecrets(context: ReturnType<SessionManager['getEntries']>) {
         if (part.type === 'text')
           try {
             const password: unknown = JSON.parse(part.text)?.password;
-            if (typeof password === 'string' && password.length) values.add(password);
+            if (typeof password === 'string' && password.length) {
+              values.add(password);
+              values.add(JSON.stringify(password).slice(1, -1));
+            }
           } catch {}
-  return [...values];
+  return [...values].sort((a, b) => b.length - a.length);
 }
 
 function scrub<T>(value: T, secrets: string[]): T {

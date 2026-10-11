@@ -316,6 +316,17 @@ export async function openDevtools(url: string, targetId: string) {
       )) as { result?: { value?: unknown }; exceptionDetails?: unknown };
       return exceptionDetails ? undefined : { value: result?.value };
     },
+    async scripted(mark = false) {
+      const [main] = await tree(page);
+      if (!main) throw new Error('The browser document is unavailable.');
+      return (
+        (await evaluate(
+          page,
+          await world(page, main.id),
+          mark ? '(globalThis.__ottoScripted = true)' : 'Boolean(globalThis.__ottoScripted)',
+        )) === true
+      );
+    },
     async focused(): Promise<FocusedField | undefined> {
       const hits = (await everyFrame(focusScript, 'focus')).filter((item) => item.value);
       if (hits.length !== 1) return undefined;

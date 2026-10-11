@@ -818,7 +818,16 @@ test(
             'question' in
               (await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first })),
           );
+          aligned = true;
+          assert.deepEqual(
+            await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first }),
+            { ok: true, reason: 'asked' },
+          );
           aligned = false;
+          assert.deepEqual(
+            await access.authorize(task, { origin: site, kind: 'sign_in', itemId: first }),
+            { ok: true, reason: 'asked' },
+          );
           await access.always({ origin: site });
           const later = await begin('Check what is due.');
           assert.deepEqual(

@@ -203,6 +203,7 @@ export type DevtoolsModel = {
 export async function fakeDevtools(model: DevtoolsModel) {
   const server = createServer();
   const sockets = new Set<Socket>();
+  const worlds = new Map<string, object>();
   server.on('upgrade', (request, socket: Socket) => {
     const accept = createHash('sha1')
       .update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
@@ -221,6 +222,12 @@ export async function fakeDevtools(model: DevtoolsModel) {
     };
     const evaluate = (frame: DevtoolsFrame, expression: string) => {
       if (model.evaluate) return model.evaluate(expression);
+      if (expression.includes('globalThis.__ottoScripted')) {
+        const key = `${model.document}:${frame.id}`;
+        let world = worlds.get(key);
+        if (!world) worlds.set(key, (world = {}));
+        return runInNewContext(expression, world);
+      }
       const here = model.focused === frame.id;
       if (expression.includes('globalThis.__ottoMaskedStyles')) {
         model.masked = expression.includes("if (!true) return ''");

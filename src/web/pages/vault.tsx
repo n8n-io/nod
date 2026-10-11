@@ -236,6 +236,7 @@ export function Vault({ hosted = false, onAsk }: { hosted?: boolean; onAsk?(text
     <VaultDetails
       key={`${selected.id}-${revision}`}
       entry={selected}
+      visible={view === 'saved'}
       hosted={hosted}
       autoFocus={chosen && selectedId === selected.id}
       onClose={closeDetail}

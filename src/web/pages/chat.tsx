@@ -12,7 +12,11 @@ import type {
 import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import type { TrustView } from '../../shared/trust';
 import { integrationServices } from '../../shared/integrations';
-import { classifyVerificationReply, mayHoldSecurityCode } from '../../shared/verification-code';
+import {
+  classifyVerificationReply,
+  mayHoldSecurityCode,
+  securityCodeIn,
+} from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
@@ -457,6 +461,8 @@ export function Chat({
     const verificationRequests = (state.verificationRequests ?? []).filter(
       (request) => !reply || request.turnId === reply.turnId,
     );
+    const explicitVerification =
+      classifyVerificationReply(value).kind !== 'ordinary' || Boolean(securityCodeIn(value));
     let privateVerification =
       (classifyVerificationReply(value).kind !== 'ordinary' &&
         verificationRequests.some((request) => request.kind === 'otp')) ||
@@ -519,7 +525,7 @@ export function Chat({
       if (!(await previous)) {
         failed = true;
         setOptimistic((current) => current.filter((item) => item.message.id !== id));
-        return { sent: false, restoreText: !privateVerification };
+        return { sent: false, restoreText: !privateVerification || !explicitVerification };
       }
       const response = await apiResponse('/api/messages', {
         method: 'POST',
@@ -594,7 +600,7 @@ export function Chat({
           : errorMessage(cause),
       );
       captureAnalytics('otto_ui_error', { area: 'chat', action: 'send' });
-      return { sent: false, restoreText: !privateVerification };
+      return { sent: false, restoreText: !privateVerification || !explicitVerification };
     } finally {
       outstandingSends.current--;
       finished(!failed);

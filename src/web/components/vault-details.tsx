@@ -52,10 +52,12 @@ export function VaultDetails({
   onSaved,
   onDeleted,
   hosted = false,
+  visible = true,
   children,
 }: {
   entry: VaultEntry;
   hosted?: boolean;
+  visible?: boolean;
   autoFocus?: boolean;
   onClose(): void;
   onSaved(entry: VaultListEntry): void;
@@ -124,6 +126,10 @@ export function VaultDetails({
 
   const hideSecretsRef = useRef(hideSecrets);
   hideSecretsRef.current = hideSecrets;
+
+  useEffect(() => {
+    if (!visible) hideRevealed();
+  }, [visible]);
 
   async function loadDetails() {
     detailsRequest.current?.abort();

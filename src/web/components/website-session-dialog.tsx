@@ -37,8 +37,8 @@ export function WebsiteSessionDialog({
       <DialogContent className="vault-dialog">
         <DialogTitle>Sign in to a website</DialogTitle>
         <DialogDescription>
-          Otto opens the site in its private browser. Sign in once and later tasks reuse the
-          session.
+          Otto opens the website’s home page in its private browser. Sign in once and later tasks
+          reuse the session.
         </DialogDescription>
         <form
           onSubmit={(event) => {
@@ -59,10 +59,8 @@ export function WebsiteSessionDialog({
               setError('Use a secure website address without a username or password.');
               return;
             }
-            address.search = '';
-            address.hash = '';
             onAsk(
-              `Connect to ${address.href} in your private browser${label.trim() ? ` as ${label.trim()}` : ''}. Help me sign in through the secure form if needed, then save the browser session.`,
+              `Connect to ${address.origin} in your private browser${label.trim() ? ` as ${label.trim()}` : ''}. Help me sign in through the secure form if needed, then save the browser session.`,
             );
             onOpenChange(false);
             setUrl('');

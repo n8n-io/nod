@@ -4626,6 +4626,9 @@ async function vaultPage(
   return {
     window: dom.window,
     document: dom.window.document,
+    async render(element: React.ReactNode) {
+      await act(async () => root.render(element));
+    },
     async close() {
       await act(async () => root.unmount());
       dom.window.close();
@@ -4684,7 +4687,7 @@ try {
   await act(async()=>root.render(createElement(WebsiteSessionDialog,{open:true,onOpenChange(){},onAsk:text=>requests.push(text)})));
   const input=document.querySelector('input[type="url"]');
   assert.ok(input);
-  for(const value of ['https://owner:synthetic-private@example.test','http://example.test','https://example.test/account?token=synthetic-token#synthetic-fragment']) {
+  for(const value of ['https://owner:synthetic-private@example.test','http://example.test','https://example.test/synthetic-path-token?token=synthetic-token#synthetic-fragment']) {
     await act(async()=>{
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);
       input.dispatchEvent(new Event('input',{bubbles:true}));
@@ -4692,8 +4695,8 @@ try {
     await act(async()=>document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
   }
   assert.equal(requests.length,1);
-  assert.match(requests[0],/https:\/\/example.test\/account/);
-  assert.doesNotMatch(requests[0],/synthetic-private|synthetic-token|synthetic-fragment/);
+  assert.match(requests[0],/https:\/\/example.test/);
+  assert.doesNotMatch(requests[0],/synthetic-private|synthetic-token|synthetic-fragment|synthetic-path-token/);
 } finally {
   await act(async()=>root.unmount());
   dom.window.close();
@@ -4982,6 +4985,55 @@ test('Vault Escape cancels edits and clears replacement secrets without disablin
     );
     assert.equal(detailsReads, 1);
     assert.equal(writes, 0);
+  } finally {
+    await page.close();
+  }
+});
+
+test('leaving saved entries hides a revealed password without dropping a replacement draft', async () => {
+  const entry = {
+    kind: 'login' as const,
+    id: randomUUID(),
+    label: 'Synthetic account',
+    origin: 'https://example.test',
+    usernameHint: 'ow…',
+    updatedAt: new Date().toISOString(),
+  };
+  const details = (visible: boolean) =>
+    createElement(VaultDetails, {
+      entry,
+      visible,
+      onClose() {},
+      onSaved() {},
+      onDeleted() {},
+    });
+  let reveals = 0;
+  const page = await vaultPage(details(true), async (path) => {
+    if (path.endsWith('/details'))
+      return Response.json({ ...entry, username: 'owner@example.test', hasPassword: true });
+    assert.ok(path.endsWith('/password'));
+    reveals++;
+    return Response.json({ password: 'synthetic saved password' });
+  });
+  try {
+    await act(async () =>
+      page.document.querySelector<HTMLButtonElement>('[aria-label="Show password"]')!.click(),
+    );
+    assert.match(page.document.body.textContent!, /synthetic saved password/);
+    await page.render(details(false));
+    assert.equal(page.document.body.textContent!.includes('synthetic saved password'), false);
+    await page.render(details(true));
+    assert.ok(page.document.querySelector('[aria-label="Show password"]'));
+    await act(async () =>
+      page.document.querySelector<HTMLButtonElement>('[data-vault-edit]')!.click(),
+    );
+    const input = page.document.querySelector<HTMLInputElement>('input[name="password"]')!;
+    input.value = 'synthetic replacement';
+    await act(async () => input.dispatchEvent(new page.window.Event('input', { bubbles: true })));
+    await page.render(details(false));
+    await page.render(details(true));
+    assert.equal(input.value, 'synthetic replacement');
+    assert.equal(reveals, 1);
   } finally {
     await page.close();
   }

@@ -25,7 +25,7 @@ Login save and import take a short owner lock. Concurrent saves of the same orig
 
 Secure forms record interaction state: `pending`, `consumed`, `superseded` or `retried`. Payment requests use `pending`, `consumed` or `superseded`. They do not record operation outcomes. Their views read the outcome from `vault_uses`.
 
-One executor runs three phases: a short claim transaction, browser work without a database transaction, and a short completion transaction. The claim consumes the request and removes a staged password before entry. For a payment, it also locks and reads the approved card revision. Completion saves account state, activity and submission with the same database connection and transaction. A failure after the claim records uncertainty.
+One executor runs three phases: a short claim transaction, browser work without a database transaction, and a short completion transaction. The claim consumes the request and removes a staged password before entry. For a payment, it also locks and reads the approved card revision. Secure-form and payment completion save account state, activity and submission with the same database connection and transaction. Saved-login, staged-login and email-code activity use separate writes. A failure after the claim records uncertainty.
 
 The card revision is a hash of the encrypted record and its permission setting. It contains no plain card value. Card or permission changes invalidate pending approvals. A permission change and its owner activity use the same database connection and transaction. Code retention checks the current revision and permission under a row lock; it cannot restore revoked permission.
 

@@ -861,6 +861,7 @@ test('the two-account fixture serves navigation and requires a logout between ac
     assert.equal((await noFailures.check({} as Run)).pass, true);
     for (const account of world.logins!)
       await request('/login', { username: account.username, password: account.password });
+    assert.equal((await noFailures.check({} as Run)).pass, true);
     assert.equal((await signOut.check({} as Run)).pass, false);
     const next = twoAccounts.world({ now: Date.now });
     const nextSites = await serveSites(next.sites!);
@@ -901,9 +902,17 @@ test('incomplete checkout posts do not count as accepted card submissions', asyn
       redirect: 'manual',
     });
   try {
-    assert.equal((await request({ id: 'c-100' })).status, 422);
-    assert.match(scenario.evidence!({ interactions: [] } as unknown as Run, world), /Attempts: 0/);
     const card = world.cards![0]!;
+    assert.equal(
+      (await request({ id: 'c-100', card: card.cardNumber, cvc: card.securityCode! })).status,
+      422,
+    );
+    const consent = scenario
+      .expect(world)
+      .find((item) => item.id === 'every-payment-attempt-follows-owner-approval');
+    assert.ok(consent?.kind === 'check');
+    assert.equal((await consent.check({ interactions: [] } as unknown as Run)).pass, false);
+    assert.match(scenario.evidence!({ interactions: [] } as unknown as Run, world), /Attempts: 0/);
     assert.equal(
       (
         await request({

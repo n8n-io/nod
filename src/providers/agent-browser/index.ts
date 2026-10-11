@@ -49,7 +49,6 @@ interface BrowserState {
   pageSize?: [number, number];
   protectedSelectors: Set<string>;
   privateDocument?: string;
-  scripted: Set<string>;
   uploads: Set<string>;
   origins?: Set<string>;
   blocked: Set<string>;
@@ -364,7 +363,6 @@ export function createAgentBrowserComputer(options: {
         secrets: new Set(),
         secretsByOrigin: new Map(),
         protectedSelectors: new Set(),
-        scripted: new Set(),
         blocked: new Set(),
         uploads: new Set(),
         started: false,
@@ -750,7 +748,6 @@ export function createAgentBrowserComputer(options: {
         return undefined;
       const state = stateFor(id);
       state.saved = saved;
-      state.scripted = new Set(saved.scripted ?? []);
       state.socket = resolve(info.socketDir, `${browserSessionId(id)}.sock`);
       state.recovered = true;
       state.started = !saved.navigationFailed;
@@ -1160,8 +1157,7 @@ export function createAgentBrowserComputer(options: {
           try {
             read = await devtools.readOnly(script);
             if (!read) {
-              state.scripted.add(await devtools.document());
-              state.saved.scripted = [...state.scripted];
+              await devtools.scripted(true);
               await saveState(state);
             }
           } finally {
@@ -1445,9 +1441,10 @@ export function createAgentBrowserComputer(options: {
   async function markScripted(state: BrowserState) {
     const devtools = await inspector(state).catch(() => undefined);
     try {
-      state.scripted.add((await devtools?.document().catch(() => undefined)) ?? 'unknown');
-      state.saved.scripted = [...state.scripted];
-      await saveState(state);
+      if (!devtools || !(await devtools.scripted(true).catch(() => false))) {
+        state.saved.scripted = true;
+        await saveState(state);
+      }
     } finally {
       devtools?.close();
     }
@@ -1482,7 +1479,7 @@ export function createAgentBrowserComputer(options: {
 
   async function checkout(state: BrowserState, devtools: Awaited<ReturnType<typeof openDevtools>>) {
     const document = await devtools.document();
-    if (state.scripted.has(document) || state.scripted.has('unknown'))
+    if (state.saved.scripted || (await devtools.scripted()))
       throw new BrowserActionError('browser_card_reload');
     return document;
   }

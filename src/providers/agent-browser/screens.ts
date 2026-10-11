@@ -13,7 +13,7 @@ const storedScreen = z.object({
   active: z.boolean(),
   navigationFailed: z.boolean().optional(),
   restoreSession: z.boolean().optional(),
-  scripted: z.array(z.string()).optional(),
+  scripted: z.boolean().optional(),
   profileId: z.uuid().optional(),
   resumeUrl: z.string().max(8192).optional(),
   capturedAt: z.iso.datetime().optional(),

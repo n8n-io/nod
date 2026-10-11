@@ -159,7 +159,7 @@ export async function createVaultAccess(
     if (chain.id)
       await database.query(
         `INSERT INTO vault_grants(id,owner_id,origin,scope,root_turn_id,source,item_key)
-        VALUES($1,$2,$3,'task',$4,$5,$6) ON CONFLICT(owner_id,root_turn_id,origin,item_key) WHERE scope='task' DO NOTHING`,
+        VALUES($1,$2,$3,'task',$4,$5,$6) ON CONFLICT(owner_id,root_turn_id,origin,item_key) WHERE scope='task' DO UPDATE SET source=EXCLUDED.source,created_at=now() WHERE vault_grants.created_at<=now()-interval '7 days'`,
         [randomUUID(), ownerId, origin, chain.id, source, itemKey],
       );
   }

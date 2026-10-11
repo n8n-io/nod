@@ -3827,6 +3827,48 @@ test('chat request isolates a stale reply and attachments and restores failure b
   }
 });
 
+test('chat restores rejected numeric prose but clears rejected private codes', async () => {
+  for (const text of ['call 911', '737']) {
+    const state = requestedChatState();
+    const requestId = randomUUID();
+    state.verificationRequests = [
+      {
+        id: requestId,
+        turnId: state.messages[0].turnId!,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        kind: 'payment',
+      },
+    ];
+    const submissions: Array<{ text: string; verificationRequestId: string }> = [];
+    const view = await handoffView(
+      async (path, options) => {
+        if (path === '/api/apps') return Response.json([]);
+        assert.equal(path, '/api/messages');
+        submissions.push(JSON.parse(String(options?.body)));
+        return Response.json({ error: 'Synthetic private reply rejected' }, { status: 409 });
+      },
+      createElement(Chat, {
+        ownerId: 'synthetic-feedback-owner',
+        state,
+        streams: {},
+        refresh: async () => {},
+        resetConversation: async () => state.threadId,
+        requestedMessage: { id: randomUUID(), text },
+      }),
+    );
+    try {
+      assert.equal(submissions.length, 1);
+      assert.equal(submissions[0].text, text);
+      assert.equal(submissions[0].verificationRequestId, requestId);
+      const editor = view.element<HTMLElement & { editor: Editor }>('[role="textbox"]').editor;
+      assert.equal(editor.getMarkdown(), text === 'call 911' ? text : '');
+      assert.equal(view.dom.window.document.querySelectorAll('.message-user').length, 0);
+    } finally {
+      await view.close();
+    }
+  }
+});
+
 test('chat keeps a waiting browser handoff after a background message and closes it for a new user turn', async () => {
   const state = requestedChatState();
   const turnId = state.messages[0].turnId!;
@@ -5679,6 +5721,7 @@ test('failed private entry holds every Pi action until the filled document chang
       (await computer.act('private', { action: 'evaluate', script: 'document.title' })).text,
       /Script result/,
     );
+    await computer.act('private', { action: 'reload' });
     const page = fixture.pages.get('private')!;
     page.afterInspect = (script) => {
       if (script.includes('globalThis.__ottoFocused = node')) page.search.focus();
@@ -5840,6 +5883,30 @@ test(
         script: 'document.querySelector("#number").value',
       });
       assert.equal(inspector.text.includes('4242424242424242'), false);
+      await computer.act('fence', { action: 'open', url: `${origin}/card` });
+      await computer.act('fence', {
+        action: 'evaluate',
+        script: 'globalThis.__ottoScripted = false',
+      });
+      const recovered = createAgentBrowserComputer({
+        dataRoot: directory,
+        browserExecutable: process.env.OTTO_TEST_BROWSER_EXECUTABLE,
+      });
+      try {
+        assert.equal((await recovered.currentPage('fence')).origin, origin);
+        await recovered.act('fence', { action: 'snapshot' });
+        await assert.rejects(
+          recovered.cardDestinations('fence', fields),
+          /script ran on this document/,
+        );
+        await computer.act('fence', { action: 'reload' });
+        assert.equal(
+          (await recovered.cardDestinations('fence', fields)).destinations.number,
+          origin,
+        );
+      } finally {
+        await recovered.dispose();
+      }
     } finally {
       await computer.dispose();
       server.closeAllConnections();
