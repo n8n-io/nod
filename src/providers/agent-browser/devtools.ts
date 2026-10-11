@@ -76,15 +76,24 @@ const maskScript = (on: boolean, secrets: string[], allFields: boolean, snapshot
     return '';
   })()`;
 
-export async function openDevtools(url: string, targetId: string) {
+export async function openDevtools(url: string, targetId: string, signal?: AbortSignal) {
   const address = new URL(url);
   if (address.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname))
     throw new Error('The browser inspector must be local.');
+  signal?.throwIfAborted();
   const socket = new WebSocket(url);
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error('The browser inspector is unavailable.')),
       10_000,
+    );
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      },
+      { once: true },
     );
     socket.addEventListener(
       'open',
