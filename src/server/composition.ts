@@ -740,7 +740,9 @@ async function initializeApplication(
     pool,
     ownerId,
     review: async (instructions, input) =>
-      curator.configured ? curator.curate({ task: 'review', instructions, input }) : undefined,
+      onboardingCurator.configured
+        ? onboardingCurator.curate({ task: 'review', instructions, input })
+        : undefined,
   });
   await trust.initialize();
   vaultAccess = await createVaultAccess(pool, {
