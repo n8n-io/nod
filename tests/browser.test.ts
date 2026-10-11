@@ -5802,6 +5802,38 @@ test('navigation stays available when a saved script fence cannot reach the insp
   }
 });
 
+test('a history step counts when its document changed even if agent-browser reports a failure', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-history-race-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (executable, args, options) => {
+      const command = args.slice(args.indexOf('--idle-timeout') + 2);
+      if (command[0] !== 'back' && command[0] !== 'forward')
+        return fixture.run(executable, args, options);
+      if (command[0] === 'back')
+        await fixture.run(
+          executable,
+          [...args.slice(0, args.indexOf('--idle-timeout') + 2), 'reload'],
+          options,
+        );
+      return { stdout: '{"success":false}', stderr: '', exitCode: 1 };
+    },
+  });
+  try {
+    await computer.act('history', { action: 'open', url: 'https://1.1.1.1/login' });
+    await computer.act('history', { action: 'back' });
+    await assert.rejects(
+      computer.act('history', { action: 'forward' }),
+      (error: unknown) =>
+        error instanceof BrowserActionError && error.code === 'browser_action_failed',
+    );
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('failed private entry holds every Pi action until the filled document changes', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-private-cleanup-'));
   const fixture = stagedLoginBrowser();

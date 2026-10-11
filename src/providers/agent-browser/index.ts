@@ -1071,14 +1071,20 @@ export function createAgentBrowserComputer(options: {
             );
         }
         if (['back', 'forward', 'reload'].includes(input.action)) {
-          const devtools = state.saved.scripted
-            ? await inspector(state).catch(() => undefined)
-            : undefined;
+          const devtools =
+            state.saved.scripted || input.action !== 'reload'
+              ? await inspector(state).catch(() => undefined)
+              : undefined;
           try {
             const before = await devtools?.document().catch(() => undefined);
-            await command(state, [input.action], { signal });
-            const after = await devtools?.document().catch(() => undefined);
-            if (before && after && before !== after) {
+            const moved = async () => {
+              const after = await devtools?.document().catch(() => undefined);
+              return Boolean(before && after && before !== after);
+            };
+            await command(state, [input.action], { signal }).catch(async (error: unknown) => {
+              if (!(error instanceof DaemonCommandError) || !(await moved())) throw error;
+            });
+            if (state.saved.scripted && (await moved())) {
               delete state.saved.scripted;
               await saveState(state);
             }
