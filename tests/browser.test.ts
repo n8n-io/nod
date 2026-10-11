@@ -2413,6 +2413,26 @@ test('browser observations redact manually typed secrets in encoded paths and un
   assert.doesNotThrow(() => redactBrowserText('fixture', ['\ud800']));
 });
 
+test('observations reject embedded HTTP credentials and redact credentials in other tabs', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-url-credentials-'));
+  const fixture = stagedLoginBrowser();
+  const computer = createBrowserFixture({ dataRoot: directory, run: fixture.run });
+  try {
+    await computer.act('url', { action: 'open', url: 'https://1.1.1.1/login' });
+    const url = 'https://synthetic-user:synthetic-password@1.1.1.1/report';
+    fixture.pages.get('url')!.location = new URL(url);
+    await assert.rejects(computer.act('url', { action: 'snapshot' }));
+    await assert.rejects(computer.currentPage('url'));
+    const redacted = redactBrowserUrl(url, []);
+    assert.equal(new URL(redacted).username, '');
+    assert.equal(new URL(redacted).password, '');
+    assert.equal(redacted.includes('synthetic-password'), false);
+  } finally {
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('Pi can submit each staged sign-in step without exposing entered values', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-staged-login-'));
   const fixture = stagedLoginBrowser();
@@ -2489,7 +2509,7 @@ test('a sign-in approval can be observed after a wait, and Stop cancels the wait
 
     const controller = new AbortController();
     const cancelled = assert.rejects(
-      computer.act('login', { action: 'snapshot', waitMs: 15000 }, controller.signal),
+      computer.act('login', { action: 'snapshot', waitMs: 90_000 }, controller.signal),
       { name: 'AbortError' },
     );
     await delay(25);
@@ -2620,14 +2640,14 @@ for (const failure of ['cancelled hold', 'cancelled drag', 'failed drag'])
       await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
       const input: BrowserAction =
         failure === 'cancelled hold'
-          ? { action: 'click', x: 0.5, y: 0.25, durationMs: 1000 }
+          ? { action: 'click', x: 0.5, y: 0.25, durationMs: 3_600_000 }
           : {
               action: 'drag',
-              points: [
-                { x: 0.2, y: 0.5 },
-                { x: 0.8, y: 0.5 },
-              ],
-              durationMs: 1000,
+              points: Array.from({ length: 101 }, (_, index) => ({
+                x: 0.2 + (0.6 * index) / 100,
+                y: 0.5,
+              })),
+              durationMs: failure === 'failed drag' ? 1000 : 3_600_000,
             };
       const pending = computer.act('fixture', input, controller.signal);
       await Promise.race([

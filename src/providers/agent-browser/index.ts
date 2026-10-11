@@ -259,6 +259,8 @@ export function redactBrowserUrl(
   hideQuery = false,
 ): string {
   const url = new URL(value);
+  url.username = '';
+  url.password = '';
   const sensitive =
     /^(?:code|state|token|accesstoken|idtoken|refreshtoken|password|otp|session|sessionid|ticket|assertion|authorization|email|username|identifier|phone|apikey|xapikey|clientsecret|signature|sig|xamzsignature|xamzcredential|xgoogsignature|xgoogcredential)$/i;
   for (const name of url.searchParams.keys())
@@ -644,6 +646,7 @@ export function createAgentBrowserComputer(options: {
     const url = String(data.url ?? data.value ?? '');
     const storedUrl = new URL(url);
     if (!['http:', 'https:'].includes(storedUrl.protocol)) return url;
+    browserUrl(url);
     storedUrl.search = '';
     storedUrl.hash = '';
     if (redactBrowserText(storedUrl.pathname, state.secrets) !== storedUrl.pathname)

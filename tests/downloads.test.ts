@@ -147,74 +147,84 @@ test(
   { skip: !process.env.OTTO_TEST_BROWSER_EXECUTABLE, timeout: 90_000 },
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'otto-blob-pdf-'));
-    const fixture = await createBrowserDownloadFixture();
-    const bridge = await createDownloadBrowser(root);
     try {
-      const computer = bridge.computer;
-      await computer.act('blob-view', { action: 'open', url: `${fixture.origin}/session` });
-      const notes = 'Typed €\nSecond line';
-      await computer.act('blob-view', { action: 'type', selector: '#notes', text: notes });
-      await computer.act('blob-view', { action: 'select', selector: '#format', text: 'pdf' });
-      await computer.act('blob-view', { action: 'check', selector: '#copy' });
-      const fields = await computer.act('blob-view', {
-        action: 'evaluate',
-        script: `({notes: document.querySelector('#notes').value, enter: window.keys.includes('Enter'), format: document.querySelector('#format').value, copy: document.querySelector('#copy').checked})`,
-      });
-      assert.deepEqual(JSON.parse(fields.text.split('\n')[1]), {
-        notes,
-        enter: true,
-        format: 'pdf',
-        copy: true,
-      });
-      await computer.act('blob-view', { action: 'uncheck', selector: '#copy' });
-      const unchecked = await computer.act('blob-view', {
-        action: 'evaluate',
-        script: `document.querySelector('#copy').checked`,
-      });
-      assert.equal(JSON.parse(unchecked.text.split('\n')[1]), false);
-      const longNotes = 'Synthetic document text.\n'.repeat(2000);
-      await computer.act('blob-view', { action: 'fill', selector: '#notes', text: longNotes });
-      const documentText = await computer.act('blob-view', {
-        action: 'evaluate',
-        script: `document.querySelector('#notes').value`,
-      });
-      assert.equal(JSON.parse(documentText.text.split('\n')[1]), longNotes);
-      const ready = await computer.act('blob-view', {
-        action: 'wait',
-        text: 'Download invoice',
-        waitMs: 90_000,
-      });
-      assert.match(ready.text, /Download invoice/);
-      await computer.injectCredentials({
-        threadId: 'blob-view',
-        origin: fixture.origin,
-        kind: 'identifier',
-        username: 'synthetic-download@example.test',
-        usernameSelector: '#identifier',
-        submitSelector: '#continue',
-      });
-      await assert.rejects(computer.download!('blob-view', { selector: '#blob-view' }));
-      let tabId: string | undefined;
-      const deadline = Date.now() + 5000;
-      do {
-        const tabs = await computer.act('blob-view', { action: 'tab_list' });
-        tabId = /(?:Active|Open) (\S+): blob:/.exec(tabs.text)?.[1];
-      } while (!tabId && Date.now() < deadline);
-      assert.ok(tabId);
-      const view = await computer.act('blob-view', { action: 'tab_switch', tabId });
-      assert.equal(new URL(view.url).protocol, 'blob:');
-      await computer.act('blob-view', { action: 'snapshot' });
-      assert.match(
-        (await computer.act('blob-view', { action: 'evaluate', script: 'document.contentType' }))
-          .text,
-        /application\/pdf/,
-      );
-      await assert.rejects(computer.currentPage('blob-view'));
-      assert.deepEqual((await computer.download!('blob-view', {})).bytes, browserDownloadPdf);
-      assert.equal(fixture.unauthenticatedDownloads(), 0);
+      const fixture = await createBrowserDownloadFixture();
+      try {
+        const bridge = await createDownloadBrowser(root);
+        try {
+          const computer = bridge.computer;
+          await computer.act('blob-view', { action: 'open', url: `${fixture.origin}/session` });
+          const notes = 'Typed €\nSecond line';
+          await computer.act('blob-view', { action: 'type', selector: '#notes', text: notes });
+          await computer.act('blob-view', { action: 'select', selector: '#format', text: 'pdf' });
+          await computer.act('blob-view', { action: 'check', selector: '#copy' });
+          const fields = await computer.act('blob-view', {
+            action: 'evaluate',
+            script: `({notes: document.querySelector('#notes').value, enter: window.keys.includes('Enter'), format: document.querySelector('#format').value, copy: document.querySelector('#copy').checked})`,
+          });
+          assert.deepEqual(JSON.parse(fields.text.split('\n')[1]), {
+            notes,
+            enter: true,
+            format: 'pdf',
+            copy: true,
+          });
+          await computer.act('blob-view', { action: 'uncheck', selector: '#copy' });
+          const unchecked = await computer.act('blob-view', {
+            action: 'evaluate',
+            script: `document.querySelector('#copy').checked`,
+          });
+          assert.equal(JSON.parse(unchecked.text.split('\n')[1]), false);
+          const longNotes = 'Synthetic document text.\n'.repeat(2000);
+          await computer.act('blob-view', { action: 'fill', selector: '#notes', text: longNotes });
+          const documentText = await computer.act('blob-view', {
+            action: 'evaluate',
+            script: `document.querySelector('#notes').value`,
+          });
+          assert.equal(JSON.parse(documentText.text.split('\n')[1]), longNotes);
+          const ready = await computer.act('blob-view', {
+            action: 'wait',
+            text: 'Download invoice',
+            waitMs: 90_000,
+          });
+          assert.match(ready.text, /Download invoice/);
+          await computer.injectCredentials({
+            threadId: 'blob-view',
+            origin: fixture.origin,
+            kind: 'identifier',
+            username: 'synthetic-download@example.test',
+            usernameSelector: '#identifier',
+            submitSelector: '#continue',
+          });
+          await assert.rejects(computer.download!('blob-view', { selector: '#blob-view' }));
+          let tabId: string | undefined;
+          const deadline = Date.now() + 5000;
+          do {
+            const tabs = await computer.act('blob-view', { action: 'tab_list' });
+            tabId = /(?:Active|Open) (\S+): blob:/.exec(tabs.text)?.[1];
+          } while (!tabId && Date.now() < deadline);
+          assert.ok(tabId);
+          const view = await computer.act('blob-view', { action: 'tab_switch', tabId });
+          assert.equal(new URL(view.url).protocol, 'blob:');
+          await computer.act('blob-view', { action: 'snapshot' });
+          assert.match(
+            (
+              await computer.act('blob-view', {
+                action: 'evaluate',
+                script: 'document.contentType',
+              })
+            ).text,
+            /application\/pdf/,
+          );
+          await assert.rejects(computer.currentPage('blob-view'));
+          assert.deepEqual((await computer.download!('blob-view', {})).bytes, browserDownloadPdf);
+          assert.equal(fixture.unauthenticatedDownloads(), 0);
+        } finally {
+          await bridge.close();
+        }
+      } finally {
+        await fixture.close();
+      }
     } finally {
-      await bridge.close();
-      await fixture.close();
       await rm(root, { recursive: true, force: true });
     }
   },
