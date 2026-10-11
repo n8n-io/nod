@@ -54,7 +54,7 @@
     "@tiptap/pm": "3.31.4",
     "@tiptap/react": "3.31.4",
     "@tiptap/starter-kit": "3.31.4",
-    "agent-browser": "0.38.1",
+    "agent-browser": "0.38.2",
     "better-auth": "1.7.7",
     "chat": "^4.41.0",
     "class-variance-authority": "^0.7.1",
