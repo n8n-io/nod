@@ -7,7 +7,7 @@ sidebar:
 
 This page explains where Otto keeps your data, what leaves your computer and to whom, and how to delete it.
 
-The short version: in the desktop app and a source install, everything Otto stores stays on your computer. Requests go to the model provider and apps you choose. The Otto team at n8n receives none of your data unless you send feedback or opt in to usage analytics.
+By default, desktop and source installs keep Otto's database, workspace and browser on your computer. Requests go to the model provider and apps you choose. Managed app requests and results pass through n8n's hosted connection service and Composio. Feedback and usage analytics are optional.
 
 ## Where your data lives
 

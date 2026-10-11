@@ -56,7 +56,7 @@ Desktop and source/server installs use managed app connections by default, witho
 | Variable                           | What it does                                                                                                           | Default                |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | `COMPOSIO_API_KEY`                 | Uses your own Composio project directly. Set it in the server environment or `.env`, then restart Otto.                | Empty                  |
-| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom managed connection service when `COMPOSIO_API_KEY` is absent. Only use a service you trust.              | Otto's managed service |
+| `OTTO_COMPOSIO_PROXY_URL`          | Uses a custom managed connection service when `COMPOSIO_API_KEY` is absent. The desktop app ignores this setting.      | Otto's managed service |
 | `COMPOSIO_WEBHOOK_SECRET`          | Verifies Composio webhook deliveries for automatic app updates. The key then also needs **Triggers → Read and write**. | Empty                  |
 | `COMPOSIO_GMAIL_AUTH_CONFIG_ID`    | Picks the Composio auth config, and so the OAuth scopes, for Gmail.                                                    | Automatic              |
 | `COMPOSIO_CALENDAR_AUTH_CONFIG_ID` | The same for Google Calendar.                                                                                          | Automatic              |
@@ -65,6 +65,8 @@ Desktop and source/server installs use managed app connections by default, witho
 | `COMPOSIO_DOCS_AUTH_CONFIG_ID`     | The same for Google Docs.                                                                                              | Automatic              |
 | `COMPOSIO_SLACK_AUTH_CONFIG_ID`    | The same for Slack.                                                                                                    | Automatic              |
 | `COMPOSIO_NOTION_AUTH_CONFIG_ID`   | The same for Notion.                                                                                                   | Automatic              |
+
+For `OTTO_COMPOSIO_PROXY_URL`, use a trusted HTTPS origin without a path, query, fragment or user credentials. HTTP is allowed only for `localhost`, `127.0.0.1` or `[::1]` during local development.
 
 Webhook and auth-config settings apply only when you supply `COMPOSIO_API_KEY`. "Automatic" means that, for Google apps, Otto uses the project's one enabled custom OAuth config. Otherwise Composio's project default applies. These settings don't change the built-in Notion and Linear connections, which use their hosted MCP servers. See [Apps](/connect/apps/) for key permissions and automatic-update limits.
 
