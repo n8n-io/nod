@@ -238,7 +238,7 @@ Each scenario is one file in `evals/src/scenarios/`, named after its `id`. The s
 | `expect`                 | `check()` for state you can test, and one `judge()` criterion per judgement               |
 | `evidence`               | The exact end state the judge sees                                                        |
 
-Every attempt also checks that the last turn finished and that no saved password or key-shaped string appears in a message.
+Every attempt also checks that the last turn finished, unless the scenario defines its own `completion` check, and that no saved password or key-shaped string appears in Otto's messages.
 
 Follow these rules:
 
