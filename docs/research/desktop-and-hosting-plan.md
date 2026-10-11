@@ -421,7 +421,7 @@ A database-only backup is incomplete. Include:
 - Schema, image, app, and encryption-key versions.
 - Portable encrypted recovery material only through an explicit recovery/export design.
 
-Saved Pi sessions may contain website credentials under the existing get_credential exception. Treat session backups as secret-bearing data.
+The Vault redesign removes the `get_credential` exception. Vault tools now submit values privately and return no saved password, code or card to Pi. Older Pi sessions may still contain values returned before that change. Treat session backups as private data that can contain secrets. See the current [Vault security model](../vault/security-model.md).
 
 Use a quiesced checkpoint for cross-file consistency, authenticated encryption for portable archives, checksums, bounded import sizes, path containment, and a restore verification pass. A successful “Export” notification is insufficient until the backup can be restored.
 

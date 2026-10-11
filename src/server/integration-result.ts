@@ -110,7 +110,7 @@ function privateEmailResult(value: unknown): unknown {
       ...safe,
       ...(metadata.length && { headers: metadata }),
       message:
-        'Verification email content is private. Use get_credential with emailCode:true to retrieve and enter its code.',
+        'Verification email content is private. Use sign_in with emailCode:true to retrieve and enter its code.',
     };
   }
   return Object.fromEntries(

@@ -9,6 +9,8 @@ export interface Interaction {
   kind: 'question' | 'chat' | 'approval' | 'secret' | 'unanswered' | 'stalled';
   text: string;
   reply?: string;
+  action?: string;
+  requestKind?: 'otp' | 'payment';
   at: number;
 }
 
@@ -163,7 +165,13 @@ export function createSession(options: {
           ? user.approve(pending.approval.action, pending.approval.args)
           : (user.approve ?? true);
       const reply = approve ? 'Yes' : 'No';
-      interactions.push({ kind: 'approval', text: pending.text, reply, at });
+      interactions.push({
+        kind: 'approval',
+        action: pending.approval.action,
+        text: pending.text,
+        reply,
+        at,
+      });
       userMessages.push({ at, text: reply });
       await post('/api/messages', {
         text: reply,
@@ -180,7 +188,12 @@ export function createSession(options: {
         interactions.push({ kind: 'unanswered', text: pending.text, at });
         return false;
       }
-      interactions.push({ kind: 'secret', text: pending.text, at });
+      interactions.push({
+        kind: 'secret',
+        requestKind: pending.request.kind,
+        text: pending.text,
+        at,
+      });
       await post('/api/messages', { text: value, verificationRequestId: pending.request.id });
       return true;
     }

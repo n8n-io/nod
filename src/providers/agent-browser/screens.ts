@@ -4,17 +4,18 @@ import { connect } from 'node:net';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { threadIdentity } from '../../ports/thread-identity.ts';
-import { BrowserActionError } from '../../ports/computer.ts';
+import { BrowserActionError, browserRequestBytes } from '../../ports/computer.ts';
 
 const storedScreen = z.object({
   version: z.literal(1),
-  url: z.string().max(8192),
+  url: z.string(),
   sensitive: z.boolean(),
   active: z.boolean(),
   navigationFailed: z.boolean().optional(),
   restoreSession: z.boolean().optional(),
+  scripted: z.boolean().optional(),
   profileId: z.uuid().optional(),
-  resumeUrl: z.string().max(8192).optional(),
+  resumeUrl: z.string().optional(),
   capturedAt: z.iso.datetime().optional(),
   timeZone: z.string().max(100).optional(),
   locale: z.string().max(35).optional(),
@@ -47,7 +48,7 @@ export function createScreenStore(root: string) {
     },
     async load(id: string): Promise<StoredScreen | null> {
       try {
-        if ((await stat(metadata(id))).size > 16_384) return null;
+        if ((await stat(metadata(id))).size > browserRequestBytes) return null;
         return storedScreen.parse(JSON.parse(await readFile(metadata(id), 'utf8')));
       } catch {
         return null;
@@ -126,8 +127,8 @@ export function existingDaemonCommand(
   path: string,
   command: Record<string, unknown>,
   signal?: AbortSignal,
-  timeoutMs = 45_000,
-  maxBytes = 256 * 1024,
+  timeoutMs?: number,
+  maxBytes = browserRequestBytes,
 ): Promise<Record<string, unknown>> {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -135,7 +136,7 @@ export function existingDaemonCommand(
     socket.setEncoding('utf8');
     let received = '';
     let settled = false;
-    let deadline: ReturnType<typeof setTimeout>;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     const stop = (error?: Error, data?: Record<string, unknown>) => {
       if (settled) return;
       settled = true;
@@ -147,7 +148,8 @@ export function existingDaemonCommand(
     };
     const abort = () => stop(new DaemonTransportError('aborted'));
     signal?.addEventListener('abort', abort, { once: true });
-    deadline = setTimeout(() => stop(new DaemonTransportError('timeout')), timeoutMs);
+    if (timeoutMs !== undefined)
+      deadline = setTimeout(() => stop(new DaemonTransportError('timeout')), timeoutMs);
     socket.once('error', (error: NodeJS.ErrnoException) =>
       command.action === 'close' && ['ENOENT', 'ECONNREFUSED'].includes(error.code ?? '')
         ? stop(undefined, {})

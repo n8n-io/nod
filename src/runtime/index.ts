@@ -39,7 +39,7 @@ const parallelTools = new Set([
   'manage_personal_context',
 ]);
 const mixedTools = new Set(['apps', 'manage_personal_context']);
-const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'get_credential']);
+const browserTools = new Set(['browser', 'browser_flow', 'browser_session', 'sign_in', 'pay']);
 const handsOverBrowser = (name: string, params: unknown) =>
   name === 'ask_user' &&
   /\]\(\/browser\)/.test(String((params as { question?: unknown } | null)?.question));
@@ -225,7 +225,18 @@ export function createAgentRuntime(dependencies: {
     });
     const owner = context.background ? context.turnId : conversation;
     let browserReady: Promise<void> | undefined;
-    const takeBrowser = () => (browserReady ??= claims.take(threadId, owner, signal));
+    const takeBrowser = () =>
+      (browserReady ??= claims
+        .take(threadId, owner, signal)
+        .then(() => {
+          signal.throwIfAborted();
+          return context.prepareBrowser?.();
+        })
+        .then(() => signal.throwIfAborted())
+        .catch((error: unknown) => {
+          browserReady = undefined;
+          throw error;
+        }));
     let session: AgentSession | undefined;
     let status: RuntimeResult['status'] = 'succeeded';
     let waitingForUser = false;
@@ -514,9 +525,7 @@ export function createAgentRuntime(dependencies: {
             }
             await end({
               status: 'succeeded',
-              ...(['get_credential', 'browser_flow'].includes(name) || memoryAction
-                ? {}
-                : { output }),
+              ...(['sign_in', 'browser_flow'].includes(name) || memoryAction ? {} : { output }),
             });
           } catch (error) {
             if (reservedRecord) checkRecording = false;
@@ -597,7 +606,11 @@ export function createAgentRuntime(dependencies: {
         parameters,
         parallel: parallelTools.has(name),
         execute: async (params) => {
-          if (browserTools.has(name) || handsOverBrowser(name, params)) await takeBrowser();
+          if (
+            (!context.readOnly || allowedReadOnly(name, params)) &&
+            (browserTools.has(name) || handsOverBrowser(name, params))
+          )
+            await takeBrowser();
           return inTurn(name, params, () =>
             guard(name, params, async () => {
               if (!Value.Check(parameters, params))
@@ -771,6 +784,7 @@ export function createAgentRuntime(dependencies: {
       } finally {
         clearTimeout(deadline);
         await Promise.allSettled([...activeToolCalls]);
+        await browserReady?.catch(() => {});
         await Promise.all([observations.flush(), promptCaptures.flush()]);
         activeTurns.delete(context.turnId);
         claims.release(threadId, owner, waitingForUser);

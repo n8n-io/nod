@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
@@ -9,6 +9,9 @@ import type {
   BrowserUploadInput,
   BrowserObservation,
   Computer,
+  CardEntry,
+  CardFields,
+  CardExpiryField,
   CredentialInput,
   CredentialSubmission,
   BrowserPage,
@@ -19,6 +22,7 @@ import { threadIdentity } from '../../ports/thread-identity.ts';
 import { runProcess, serviceEnvironment } from '../process.ts';
 import { createBrowserProxy, browserUrl } from './network.ts';
 import { credentialFields } from './credentials.ts';
+import { openDevtools } from './devtools.ts';
 import {
   createScreenStore,
   existingDaemonCommand,
@@ -27,12 +31,12 @@ import {
   type StoredScreen,
 } from './screens.ts';
 import {
+  completedDownloads,
   createDownloadCapture,
   decodeDownload,
   downloadName,
   fetchDownloadScript,
   readDownload,
-  waitForDownload,
 } from './downloads.ts';
 
 interface BrowserState {
@@ -44,7 +48,11 @@ interface BrowserState {
   typed?: { value: string; origin: string; field: number; fresh: boolean };
   pageSize?: [number, number];
   protectedSelectors: Set<string>;
+  privateDocument?: string;
   uploads: Set<string>;
+  origins?: Set<string>;
+  blocked: Set<string>;
+  proxy?: ReturnType<typeof createBrowserProxy>;
   started: boolean;
   lastUsed: number;
   busy: number;
@@ -71,21 +79,6 @@ const streamFrame = z.object({
   metadata: z.object({ deviceWidth: z.number().positive(), deviceHeight: z.number().positive() }),
 });
 
-const withoutPasskeys = `(() => {
-  const credentials = navigator.credentials;
-  if (!credentials) return;
-  const unavailable = () =>
-    Promise.reject(new DOMException('Passkeys are not available in this browser.', 'NotAllowedError'));
-  const get = credentials.get.bind(credentials);
-  const create = credentials.create.bind(credentials);
-  credentials.get = (options) => (options && options.publicKey ? unavailable() : get(options));
-  credentials.create = (options) => (options && options.publicKey ? unavailable() : create(options));
-  if (window.PublicKeyCredential) {
-    PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);
-    PublicKeyCredential.isConditionalMediationAvailable = () => Promise.resolve(false);
-  }
-})();`;
-
 class BrowserLockedError extends Error {
   statusCode = 423;
   constructor() {
@@ -109,6 +102,9 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
   }
   for (const value of variants)
     variants.add(value.replace(/%[0-9A-F]{2}/g, (code) => code.toLowerCase()));
+  for (const secret of secrets)
+    if (/^\d{12,19}$/.test(secret))
+      text = text.replace(new RegExp(secret.split('').join('\\D{0,3}'), 'g'), secret);
   let parts: Array<string | null> = [text];
   for (const value of [...variants].sort((a, b) => b.length - a.length))
     parts = parts.flatMap((part) => {
@@ -116,12 +112,15 @@ export function redactBrowserText(text: string, secrets: Iterable<string>): stri
       return part.split(value).flatMap((section, index) => (index ? [null, section] : [section]));
     });
   const result = parts.map((part) => part ?? '[redacted]').join('');
-  return result.replace(/(password[^\n]*?)(?:value=|: )[^\n]*/gi, '$1 [redacted]');
+  return result.replace(
+    /((?:password|card ?number|security code|cvc|cvv|csc)[^\n]*?)(?:value=|: )[^\n]*/gi,
+    '$1 [redacted]',
+  );
 }
 
-const browserTabList = z
-  .array(z.object({ tabId: z.string(), active: z.boolean(), url: z.string() }))
-  .max(64);
+const browserTabList = z.array(
+  z.object({ tabId: z.string(), active: z.boolean(), url: z.string() }),
+);
 const browserPoint = z
   .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
   .strict();
@@ -150,13 +149,31 @@ function daemonRequest(args: string[], input?: string): Record<string, unknown> 
     case 'get':
       return args[1] === 'url'
         ? { action: 'url' }
-        : args[1] === 'attr'
-          ? { action: 'getattribute', selector: args[2], attribute: args[3] }
-          : null;
+        : args[1] === 'cdp-url'
+          ? { action: 'cdp_url' }
+          : args[1] === 'attr'
+            ? { action: 'getattribute', selector: args[2], attribute: args[3] }
+            : null;
     case 'click':
       return { action: 'click', selector: args[1] };
     case 'fill':
       return { action: 'fill', selector: args[1], value: args[2] };
+    case 'type':
+      return { action: 'type', selector: args[1], text: args[2] };
+    case 'select':
+      return { action: 'select', selector: args[1], value: args[2] };
+    case 'check':
+    case 'uncheck':
+    case 'hover':
+      return { action: args[0], selector: args[1] };
+    case 'drag':
+      return { action: 'drag', source: args[1], target: args[2] };
+    case 'upload':
+      return { action: 'upload', selector: args[1], file: args[2] };
+    case 'back':
+    case 'forward':
+    case 'reload':
+      return { action: args[0] };
     case 'focus':
       return { action: 'focus', selector: args[1] };
     case 'keyboard':
@@ -175,7 +192,13 @@ function daemonRequest(args: string[], input?: string): Record<string, unknown> 
         ...(args[4] ? { selector: args[4] } : {}),
       };
     case 'screenshot':
-      return { action: 'screenshot', path: args[1], fullPage: false, annotate: false };
+      return {
+        action: 'screenshot',
+        path: args[1],
+        fullPage: args.includes('--full'),
+        annotate: false,
+        ...(args.includes('jpeg') ? { format: 'jpeg', quality: 70 } : {}),
+      };
     case 'download':
       return { action: 'download', selector: args[1], path: args[2] };
     case 'snapshot':
@@ -191,11 +214,17 @@ function daemonRequest(args: string[], input?: string): Record<string, unknown> 
     case 'dialog':
       return { action: 'dialog', response: args[1], ...(args[2] && { promptText: args[2] }) };
     case 'wait':
-      return args[1] === '--url'
-        ? { action: 'waitforurl', url: args[2], timeout: Number(args[4]) }
-        : args[1] === '--load'
-          ? { action: 'waitforloadstate', state: args[2], timeout: Number(args[4]) }
-          : { action: 'wait', text: args[2], timeout: Number(args[4]) };
+      return args[1] === '--download'
+        ? { action: 'waitfordownload' }
+        : args[1] === '--url'
+          ? { action: 'waitforurl', url: args[2], ...(args[4] && { timeout: Number(args[4]) }) }
+          : args[1] === '--load'
+            ? {
+                action: 'waitforloadstate',
+                state: args[2],
+                ...(args[4] && { timeout: Number(args[4]) }),
+              }
+            : { action: 'wait', text: args[2], ...(args[4] && { timeout: Number(args[4]) }) };
     case 'set':
       return { action: 'viewport', width: Number(args[2]), height: Number(args[3]) };
   }
@@ -213,14 +242,13 @@ function visualGesture(input: BrowserAction) {
     input.action === 'click' && input.points === undefined
       ? [browserPoint.parse({ x: input.x, y: input.y })]
       : input.action === 'drag' && input.x === undefined && input.y === undefined
-        ? z.array(browserPoint).min(2).max(100).parse(input.points)
+        ? z.array(browserPoint).min(2).parse(input.points)
         : undefined;
   if (!points) throw new Error('Use screenshot coordinates with click or drag.');
   const durationMs = z
     .number()
     .int()
     .min(0)
-    .max(15_000)
     .parse(input.durationMs ?? (input.action === 'click' ? 0 : 500));
   return { points, durationMs };
 }
@@ -231,6 +259,8 @@ export function redactBrowserUrl(
   hideQuery = false,
 ): string {
   const url = new URL(value);
+  url.username = '';
+  url.password = '';
   const sensitive =
     /^(?:code|state|token|accesstoken|idtoken|refreshtoken|password|otp|session|sessionid|ticket|assertion|authorization|email|username|identifier|phone|apikey|xapikey|clientsecret|signature|sig|xamzsignature|xamzcredential|xgoogsignature|xgoogcredential)$/i;
   for (const name of url.searchParams.keys())
@@ -287,7 +317,6 @@ export function createAgentBrowserComputer(options: {
   const headed = options.headless === undefined ? platform === 'darwin' : !options.headless;
   const idleTimeoutMs = options.idleTimeoutMs ?? 30 * 60_000;
   const maxLiveSessions = Math.max(1, Math.min(4, options.maxLiveSessions ?? 4));
-  const proxy = createBrowserProxy();
   let disposed = false;
   let activeCalls = 0;
   let allocationQueue: Promise<void> = Promise.resolve();
@@ -357,6 +386,7 @@ export function createAgentBrowserComputer(options: {
         secrets: new Set(),
         secretsByOrigin: new Map(),
         protectedSelectors: new Set(),
+        blocked: new Set(),
         uploads: new Set(),
         started: false,
         lastUsed: Date.now(),
@@ -431,7 +461,7 @@ export function createAgentBrowserComputer(options: {
   }
 
   function selector(value: string | undefined): string {
-    if (!value || value.length > 500 || /^[\s-]/.test(value) || value.includes('\0'))
+    if (!value?.trim() || value.includes('\0'))
       throw new Error('A valid observed selector or element reference is required.');
     return value;
   }
@@ -473,39 +503,31 @@ export function createAgentBrowserComputer(options: {
     options: { input?: string; signal?: AbortSignal; maxBytes?: number; timeoutMs?: number } = {},
   ): Promise<Record<string, unknown>> {
     options.signal?.throwIfAborted();
-    if (
-      state.socket &&
-      ![
-        'select',
-        'check',
-        'uncheck',
-        'hover',
-        'drag',
-        'upload',
-        'back',
-        'forward',
-        'reload',
-      ].includes(args[0])
-    ) {
+    if (state.socket) {
       const request = daemonRequest(args, options.input);
       if (!request) throw new Error('Reopen this page before continuing browser actions.');
       const result = await drainInterruptedCommand(state, args[0], () =>
-        requestDaemon(
-          state.socket!,
-          request,
-          options.signal,
-          options.timeoutMs ?? 45_000,
-          options.maxBytes,
-        ),
+        requestDaemon(state.socket!, request, options.signal, options.timeoutMs, options.maxBytes),
       );
+      if (args[0] === 'close') {
+        const started = Date.now();
+        while (await stat(state.socket!).catch(() => null)) {
+          if (Date.now() - started > 5000) throw new Error('The previous browser did not stop.');
+          await delay(50);
+        }
+      }
       return result;
     }
     await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
     const config = resolve(runtimeRoot, 'browser-config.json');
     await writeFile(config, '{}', { mode: 0o600 });
-    const initScript = resolve(runtimeRoot, 'browser-init.js');
-    await writeFile(initScript, withoutPasskeys, { mode: 0o600 });
-    const proxyUrl = await proxy.url();
+    if (!state.proxy)
+      state.proxy = createBrowserProxy((origin) => {
+        if (!state.origins || state.origins.has(origin)) return true;
+        if (state.blocked.size < 20) state.blocked.add(origin);
+        return false;
+      });
+    const proxyUrl = await state.proxy.url();
     const profile = profilePath(state);
     const timeZone = browserTimeZone(state.saved.timeZone);
     const locale = browserLocale(state.saved.locale);
@@ -524,15 +546,13 @@ export function createAgentBrowserComputer(options: {
           ...(state.browserExecutable ? ['--executable-path', state.browserExecutable] : []),
           ...(headed ? ['--headed'] : []),
           '--no-webmcp',
-          '--init-script',
-          initScript,
           '--json',
           '--proxy',
           proxyUrl,
           '--proxy-bypass',
           '<-loopback>',
           '--args',
-          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--enable-unsafe-swiftshader,--disable-blink-features=AutomationControlled' +
+          '--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--disable-background-networking,--disable-crash-reporter,--disable-breakpad,--disable-gpu-rasterization,--enable-unsafe-swiftshader,--disable-blink-features=AutomationControlled,--disable-features=BackForwardCache' +
             `,--disk-cache-dir=${cachePath(state)},--disk-cache-size=67108864` +
             (locale ? `,--accept-lang=${locale}` : '') +
             (sandbox ? '' : ',--no-sandbox') +
@@ -549,11 +569,10 @@ export function createAgentBrowserComputer(options: {
           env: {
             ...serviceEnvironment(),
             ...(timeZone && { TZ: timeZone }),
-            AGENT_BROWSER_DEFAULT_TIMEOUT: '25000',
           },
           input: options.input,
           signal: options.signal,
-          timeoutMs: options.timeoutMs ?? 45_000,
+          timeoutMs: options.timeoutMs ?? null,
           maxBytes: 256 * 1024,
         },
       ),
@@ -625,9 +644,9 @@ export function createAgentBrowserComputer(options: {
     if (await pendingDialog(state, signal)) throw new BrowserActionError('browser_dialog_open');
     const data = await observationCommand(state, ['get', 'url'], { signal });
     const url = String(data.url ?? data.value ?? '');
-    if (url === 'about:blank') return url;
-    browserUrl(url);
     const storedUrl = new URL(url);
+    if (!['http:', 'https:'].includes(storedUrl.protocol)) return url;
+    browserUrl(url);
     storedUrl.search = '';
     storedUrl.hash = '';
     if (redactBrowserText(storedUrl.pathname, state.secrets) !== storedUrl.pathname)
@@ -636,56 +655,9 @@ export function createAgentBrowserComputer(options: {
     return url;
   }
 
-  async function browserTabs(state: BrowserState, signal?: AbortSignal, timeoutMs?: number) {
-    const data = await command(state, ['tab', 'list'], { signal, timeoutMs });
+  async function browserTabs(state: BrowserState, signal?: AbortSignal) {
+    const data = await command(state, ['tab', 'list'], { signal });
     return browserTabList.parse(data.tabs);
-  }
-
-  async function settleTabs(
-    state: BrowserState,
-    before: z.infer<typeof browserTabList>,
-    signal?: AbortSignal,
-  ) {
-    const known = new Set(before.map((tab) => tab.tabId));
-    const opener = before.find((tab) => tab.active)?.tabId;
-    const deadline = Date.now() + 5000;
-    let candidate: string | undefined;
-    for (;;) {
-      const tabs = await browserTabs(state, signal, Math.max(1, deadline - Date.now()));
-      const opened = tabs.filter((tab) => !known.has(tab.tabId));
-      const loading = opened.some((tab) => !/^https?:/.test(tab.url));
-      const loaded = opened.findLast((tab) => /^https?:/.test(tab.url));
-      const settled = loaded && `${loaded.tabId} ${loaded.url}`;
-      const expired = Date.now() >= deadline;
-      const target = loading
-        ? expired
-          ? opener
-          : undefined
-        : !loaded
-          ? opener
-          : settled === candidate
-            ? loaded.tabId
-            : expired
-              ? opener
-              : undefined;
-      if (target) {
-        if (!tabs.some((tab) => tab.tabId === target && !tab.active)) return;
-        try {
-          await command(state, ['tab', 'switch', target], {
-            signal,
-            timeoutMs: Math.max(1, deadline - Date.now()),
-          });
-          return;
-        } catch (error) {
-          if (target === opener || !(error instanceof DaemonCommandError)) throw error;
-          known.add(target);
-          continue;
-        }
-      }
-      if (expired) return;
-      candidate = loading ? undefined : settled;
-      await delay(25, undefined, { signal });
-    }
   }
 
   async function saveState(state: BrowserState) {
@@ -781,7 +753,8 @@ export function createAgentBrowserComputer(options: {
     signal?: AbortSignal,
     input?: BrowserAction,
   ): Promise<BrowserObservation> {
-    if (state.injecting) throw new BrowserLockedError();
+    if (state.injecting || (await privateDocumentOpen(state, signal)))
+      throw new BrowserLockedError();
     let url: string;
     try {
       url = await currentUrl(state, signal);
@@ -801,21 +774,29 @@ export function createAgentBrowserComputer(options: {
     const scope =
       input?.action === 'snapshot' && input.selector ? selector(input.selector) : undefined;
     const offset = input?.action === 'snapshot' ? (input.offset ?? 0) : 0;
-    if (!Number.isInteger(offset) || offset < 0 || offset > 100_000)
-      throw new Error('Choose a page offset of at most 100000 characters.');
-    const snapshot = () =>
-      observationCommand(state, scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'], {
-        signal,
-        maxBytes: 1024 * 1024,
-      });
-    let data = await snapshot();
-    for (let attempt = 0; attempt < 4 && !String(data.snapshot ?? '').trim(); attempt++) {
-      await delay(750, undefined, { signal });
-      data = await snapshot();
-    }
+    if (!Number.isInteger(offset) || offset < 0)
+      throw new Error('Choose a non-negative page offset.');
+    const snapshot = async () => {
+      const devtools = state.secrets.size ? await inspector(state) : undefined;
+      try {
+        await devtools?.mask(true, [], false, true);
+        return await observationCommand(
+          state,
+          scope ? ['snapshot', '-c', '-s', scope] : ['snapshot', '-c'],
+          {
+            signal,
+          },
+        );
+      } finally {
+        await devtools?.mask(false, [], false).catch(() => {});
+        devtools?.close();
+      }
+    };
+    const data = await snapshot();
+    if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
     const page = redactBrowserText(String(data.snapshot ?? ''), state.secrets);
     return {
-      text: `Page (${offset}-${Math.min(offset + 16_000, page.length)} of ${page.length} characters):\n${page.slice(offset, offset + 16_000)}`,
+      text: `${state.blocked.size ? `Blocked network destinations: ${[...state.blocked].join(', ')}. Use browser_session use with this connection and destinations set to the required exact origins to request access.\n` : ''}Page (${offset}-${page.length} of ${page.length} characters):\n${page.slice(offset)}`,
       url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
     };
   }
@@ -868,20 +849,22 @@ export function createAgentBrowserComputer(options: {
   ): Promise<BrowserObservation> {
     if (disposed) throw new Error('The browser service has stopped.');
     const gesture = visualGesture(input);
-    if (
-      input.waitMs !== undefined &&
-      (!Number.isInteger(input.waitMs) || input.waitMs < 0 || input.waitMs > 15_000)
-    )
-      throw new Error('Choose a wait of at most 15 seconds.');
+    if (input.waitMs !== undefined && (!Number.isInteger(input.waitMs) || input.waitMs < 0))
+      throw new Error('Choose a non-negative wait.');
     const savedProfile = input.action === 'open' ? await screens.load(id) : null;
     if (input.action === 'open' && !browsers.has(id)) await recoverBrowser(id, true);
     const existing = input.action === 'open' ? browsers.get(id) : undefined;
     if (
       existing &&
-      (existing.recovered || existing.closed || existing.closing || existing.saved.navigationFailed)
+      (existing.recovered ||
+        existing.closed ||
+        existing.closing ||
+        existing.saved.navigationFailed ||
+        existing.privateDocument)
     )
       await closeBrowser(id);
     const state = stateFor(id);
+    state.origins ??= existing?.origins;
     if (input.action === 'open' && savedProfile?.profileId && !state.saved.profileId) {
       state.saved.profileId = savedProfile.profileId;
       state.saved.restoreSession = savedProfile.restoreSession;
@@ -896,6 +879,13 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
       if (input.action === 'open') {
+        if (
+          state.saved.profileId &&
+          (!state.origins || !state.origins.has(browserUrl(input.url ?? '').origin))
+        )
+          throw new Error(
+            'This saved session needs a grant for that destination. Use browser_session use.',
+          );
         const url = browserUrl(input.url ?? '');
         const previous = state.saved.restoreSession ? state.saved : await screens.load(id);
         if (previous?.restoreSession) {
@@ -960,10 +950,10 @@ export function createAgentBrowserComputer(options: {
             url: state.saved.url,
           };
         }
-        if (!state.started) throw new Error('Open a website first.');
+        if (!state.started) throw new BrowserActionError('browser_not_open');
         markActivity(id);
-        if (!['snapshot', 'accept_dialog', 'dismiss_dialog'].includes(input.action))
-          await currentUrl(state, signal);
+        if (input.action !== 'reload' && (await privateDocumentOpen(state, signal)))
+          throw new BrowserActionError('browser_card_paused');
         if (input.action === 'tab_list') {
           const tabs = await browserTabs(state, signal);
           return {
@@ -977,16 +967,11 @@ export function createAgentBrowserComputer(options: {
           };
         }
         if (input.action === 'tab_switch') {
-          const tabs = await browserTabs(state, signal);
-          if (!tabs.some((tab) => tab.tabId === input.tabId))
-            throw new Error('Choose a tab from the current browser list.');
           await command(state, ['tab', 'switch', input.tabId!], { signal });
         }
         if (input.action === 'click') {
-          const tabs = await browserTabs(state, signal);
           if (gesture) await movePointer(state, gesture, signal);
           else await command(state, ['click', selector(input.selector)], { signal });
-          await settleTabs(state, tabs, signal);
         }
         if (input.action === 'fill' || input.action === 'type') {
           const target = selector(input.selector);
@@ -1000,25 +985,9 @@ export function createAgentBrowserComputer(options: {
           )
             throw new Error('Use the secure credential request tool for this field.');
           const text = input.text ?? '';
-          if (
-            text.length > 8000 ||
-            [...state.secrets].some((secret) => secret && text.includes(secret))
-          )
+          if ([...state.secrets].some((secret) => secret && text.includes(secret)))
             throw new Error('This field must use the secure credential flow.');
-          if (input.action === 'fill') await command(state, ['fill', target, text], { signal });
-          else {
-            await command(state, ['focus', target], { signal });
-            for (const character of text)
-              await command(
-                state,
-                /^[\x20-\x7e]$/.test(character)
-                  ? ['press', character]
-                  : character === '\n'
-                    ? ['press', 'Enter']
-                    : ['keyboard', 'type', character],
-                { signal },
-              );
-          }
+          await command(state, [input.action, target, text], { signal });
         }
         if (input.action === 'scroll')
           await command(
@@ -1030,16 +999,13 @@ export function createAgentBrowserComputer(options: {
           );
         if (input.action === 'press') {
           if (!input.key) throw new Error('Choose a key to press.');
-          const tabs = await browserTabs(state, signal);
           await command(state, ['press', input.key], { signal });
-          await settleTabs(state, tabs, signal);
         }
         if (input.action === 'accept_dialog' || input.action === 'dismiss_dialog') {
           const text = input.action === 'accept_dialog' ? input.text : undefined;
           if (
             text !== undefined &&
-            (text.length > 2000 ||
-              [...state.secrets].some((secret) => secret && text.includes(secret)))
+            [...state.secrets].some((secret) => secret && text.includes(secret))
           )
             throw new Error('Answer the dialog without private details.');
           await command(
@@ -1063,30 +1029,33 @@ export function createAgentBrowserComputer(options: {
           if (
             !flag ||
             !value ||
-            value.length > 2000 ||
             [input.text, input.url, input.load].filter(Boolean).length > 1 ||
             (flag === '--load' && !['load', 'domcontentloaded', 'networkidle'].includes(value))
           )
             throw new Error('Wait for one of text, url or load.');
-          const timeout = input.waitMs || 15_000;
           try {
-            await command(state, ['wait', flag, value, '--timeout', String(timeout)], { signal });
+            await command(
+              state,
+              [
+                'wait',
+                flag,
+                value,
+                ...(input.waitMs === undefined ? [] : ['--timeout', String(input.waitMs)]),
+              ],
+              { signal },
+            );
           } catch (error) {
             if (!(error instanceof DaemonCommandError)) throw error;
             const observation = await observe(state, signal);
             return {
               ...observation,
-              text: `The wait condition was not met within ${timeout / 1000} seconds.\n${observation.text}`,
+              text: `The wait condition was not met.\n${observation.text}`,
             };
           }
         }
         if (input.action === 'select') {
           const value = input.text ?? '';
-          if (
-            !value ||
-            value.length > 8000 ||
-            [...state.secrets].some((secret) => secret && value.includes(secret))
-          )
+          if (!value || [...state.secrets].some((secret) => secret && value.includes(secret)))
             throw new Error('Choose a visible option without private details.');
           await command(state, ['select', selector(input.selector), value], { signal });
         }
@@ -1101,23 +1070,46 @@ export function createAgentBrowserComputer(options: {
               { signal },
             );
         }
-        if (['back', 'forward', 'reload'].includes(input.action))
-          await command(state, [input.action], { signal });
+        if (['back', 'forward', 'reload'].includes(input.action)) {
+          const devtools = state.saved.scripted
+            ? await inspector(state).catch(() => undefined)
+            : undefined;
+          try {
+            const before = await devtools?.document().catch(() => undefined);
+            await command(state, [input.action], { signal });
+            const after = await devtools?.document().catch(() => undefined);
+            if (before && after && before !== after) {
+              delete state.saved.scripted;
+              await saveState(state);
+            }
+          } finally {
+            devtools?.close();
+          }
+        }
         if (input.action === 'evaluate') {
           const script = input.script ?? '';
-          if (!script.trim() || script.length > 20_000)
-            throw new Error('Provide a script of at most 20,000 characters.');
+          if (!script.trim()) throw new Error('Provide a script.');
           const url = await currentUrl(state, signal);
-          const value = await evaluate(
-            state,
-            `Promise.race([Promise.resolve().then(() => (${script})), new Promise((resolve) => setTimeout(() => resolve({ __ottoTimedOut: true }), 5000))])`,
-            signal,
-          );
-          if (value && typeof value === 'object' && '__ottoTimedOut' in value)
-            throw new Error('The script did not finish within 5 seconds.');
+          const devtools = await inspector(state);
+          let read;
+          try {
+            read = await devtools.readOnly(script);
+            if (!read) {
+              await devtools.scripted(true);
+              await saveState(state);
+            }
+          } finally {
+            devtools.close();
+          }
+          const value = read ? read.value : await evaluate(state, script, signal);
+          if (await privateDocumentOpen(state, signal))
+            throw new Error(
+              'Card details are on this page, so scripts are paused. Use snapshot until the page changes.',
+            );
+          if (!read) await markScripted(state);
           const result = redactBrowserText(JSON.stringify(value ?? null) ?? 'null', state.secrets);
           return {
-            text: `Script result (JSON${result.length > 20_000 ? ', first 20,000 characters' : ''}):\n${result.slice(0, 20_000)}`,
+            text: `Script result (JSON):\n${result}`,
             url: redactBrowserUrl(url, state.secrets, Boolean(state.saved.profileId)),
           };
         }
@@ -1144,10 +1136,9 @@ export function createAgentBrowserComputer(options: {
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
-      if (state.uploads.size >= 8)
-        throw new Error('Close this browser before uploading more files.');
+      if (await privateDocumentOpen(state, signal))
+        throw new BrowserActionError('browser_card_paused');
       markActivity(id);
-      const current = await currentUrl(state, signal);
       const directory = resolve(uploadRoot, randomUUID());
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const file = resolve(directory, input.name);
@@ -1173,6 +1164,7 @@ export function createAgentBrowserComputer(options: {
       if (state.injecting) throw new BrowserLockedError();
       signal?.throwIfAborted();
       markActivity(id);
+      if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
       const current = await currentUrl(state, signal);
       const directory = resolve(runtimeRoot, 'downloads', state.id);
       let target = input.selector ? selector(input.selector) : undefined;
@@ -1196,8 +1188,13 @@ export function createAgentBrowserComputer(options: {
         const type = await evaluate(state, 'document.contentType', signal);
         if (type === 'application/pdf') url = current;
         else {
-          const file = await waitForDownload(directory, signal);
-          const result = await readDownload(directory, file, input.name);
+          let files = await completedDownloads(directory);
+          if (!files.length) {
+            await command(state, ['wait', '--download'], { signal });
+            files = await completedDownloads(directory);
+          }
+          if (files.length !== 1) throw new Error('Choose the specific download link or URL.');
+          const result = await readDownload(directory, files[0], input.name);
           signal?.throwIfAborted();
           return result;
         }
@@ -1218,20 +1215,6 @@ export function createAgentBrowserComputer(options: {
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const capture = await createDownloadCapture(directory);
       const anchor = !target ? `otto-download-${randomUUID()}` : undefined;
-      const controller = new AbortController();
-      const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-      let watching: Promise<void> | undefined;
-      let completed = false;
-      const watch = setInterval(() => {
-        if (watching) return;
-        watching = capture
-          .inspect()
-          .then(() => {})
-          .catch(() => controller.abort())
-          .finally(() => {
-            watching = undefined;
-          });
-      }, 25);
       try {
         if (anchor) {
           await evaluate(
@@ -1244,86 +1227,298 @@ export function createAgentBrowserComputer(options: {
             anchor.style.cssText = 'position:fixed;top:0;left:0;z-index:2147483647;background:white;color:black;padding:8px';
             document.documentElement.append(anchor);
           })()`,
-            combined,
+            signal,
           );
           target = `#${anchor}`;
         }
         await command(state, ['download', target!, resolve(directory, capture.file)], {
-          signal: combined,
+          signal,
         });
-        combined.throwIfAborted();
-        const files = await capture.inspect();
-        if (files.length !== 1 || files[0] !== capture.file)
-          throw new Error('The browser download did not finish.');
+        signal?.throwIfAborted();
         const result = await readDownload(directory, capture.file, input.name);
-        combined.throwIfAborted();
-        completed = true;
+        signal?.throwIfAborted();
         return result;
-      } catch (error) {
-        if (!completed && !state.closed && !state.closing)
-          await drainInterruptedCommand(state, 'download', async () => {
-            throw new Error('The browser download did not finish.');
-          });
-        throw error;
       } finally {
-        clearInterval(watch);
-        await watching;
         try {
           if (anchor && !state.closed && !state.closing)
             await evaluate(state, `document.getElementById(${JSON.stringify(anchor)})?.remove()`);
         } finally {
-          if (completed || state.closed) await capture.cleanup();
+          await capture.cleanup(state.closed);
         }
       }
     });
   }
 
-  async function injectCredentials(input: CredentialInput): Promise<CredentialSubmission> {
-    const state = browsers.get(threadIdentity(input.threadId));
-    if (!state?.started) throw new Error('The browser session has expired. Reopen the login page.');
+  async function privateEntry<T>(
+    state: BrowserState,
+    submitSelector: string | undefined,
+    operation: (devtools: Awaited<ReturnType<typeof openDevtools>>, document: string) => Promise<T>,
+    submitOrigins: string[] = [],
+  ): Promise<T> {
     if (state.injecting) throw new BrowserLockedError();
-    if (browserUrl(input.origin).origin !== input.origin)
-      throw new Error('An exact login origin is required.');
-    const fields = credentialFields(input);
     state.injecting = true;
-    markActivity(input.threadId);
     try {
       return await serialize(state, async () => {
-        const onOrigin = async () => {
-          if (new URL(await currentUrl(state)).origin !== input.origin)
-            throw new Error(
-              'The page is not on the website for this login. Inspect the page and request the credential again.',
-            );
-        };
-        await onOrigin();
-        const socket = await daemonSocket(state);
-        const secrets = state.secretsByOrigin.get(input.origin) ?? new Set<string>();
-        for (const field of fields) {
-          state.secrets.add(field.value);
-          secrets.add(field.value);
-        }
-        state.secretsByOrigin.set(input.origin, secrets);
-        await saveState(state);
-        for (const field of fields) {
-          await onOrigin();
-          await requestDaemon(socket, {
-            action: 'fill',
-            selector: field.selector,
-            value: field.code ? '' : field.value,
-          });
-          if (field.code)
-            for (const key of field.value) {
-              await onOrigin();
-              await requestDaemon(socket, { action: 'press', key });
+        const devtools = await inspector(state);
+        try {
+          const document = await checkout(state, devtools);
+          state.privateDocument = document;
+          state.saved.sensitive = true;
+          await saveState(state);
+          const result = await operation(devtools, document);
+          if (submitSelector && (await devtools.document()) !== document)
+            throw new BrowserActionError('browser_card_changed');
+          if ((await devtools.document()) === document) {
+            if (submitSelector) {
+              const field = await focusField(state, devtools, selector(submitSelector));
+              const origin = new URL(await currentUrl(state)).origin;
+              if (
+                (field.origin !== origin && !submitOrigins.includes(field.origin)) ||
+                (await devtools.document()) !== document
+              )
+                throw new Error('The submit control is not on this page.');
+              await command(state, ['click', selector(submitSelector)]);
             }
-          if (!field.selector.startsWith('@')) state.protectedSelectors.add(field.selector);
+          }
+          state.privateDocument = undefined;
+          return result;
+        } finally {
+          devtools.close();
         }
-        await onOrigin();
-        return { status: 'submitted' as const };
       });
     } finally {
       state.injecting = false;
     }
+  }
+
+  async function injectCredentials(input: CredentialInput): Promise<CredentialSubmission> {
+    const state = browsers.get(threadIdentity(input.threadId));
+    if (!state?.started) throw new Error('The browser session has expired. Reopen the login page.');
+    if (browserUrl(input.origin).origin !== input.origin)
+      throw new Error('An exact login origin is required.');
+    const fields = credentialFields(input);
+    markActivity(input.threadId);
+    return privateEntry(state, input.submitSelector, async (devtools, document) => {
+      if (new URL(await currentUrl(state)).origin !== input.origin)
+        throw new Error('The page is not on the website for this login.');
+      const secrets = state.secretsByOrigin.get(input.origin) ?? new Set<string>();
+      for (const step of fields) {
+        const secret = input.kind === 'otp' ? input.code! : step.value;
+        state.secrets.add(secret);
+        secrets.add(secret);
+        const field = await focusField(state, devtools, step.selector);
+        if (field.origin !== input.origin)
+          throw new Error('The login field is on a different origin.');
+        if (step.code) {
+          if (!(await devtools.code(field, step.selector, step.value)))
+            throw new Error('The code fields changed during private entry.');
+          continue;
+        }
+        if (!(await devtools.arm(field)))
+          throw new Error('The login field is no longer available.');
+        if ((await devtools.document()) !== document || !(await devtools.insert(field, step.value)))
+          throw new Error(
+            'The login field changed during entry. Check the result before another attempt.',
+          );
+        if (!step.selector.startsWith('@')) state.protectedSelectors.add(step.selector);
+      }
+      state.secretsByOrigin.set(input.origin, secrets);
+      await saveState(state);
+      return { status: 'submitted' as const };
+    });
+  }
+
+  async function privateDocumentOpen(state: BrowserState, signal?: AbortSignal) {
+    if (!state.privateDocument) return false;
+    signal?.throwIfAborted();
+    const devtools = await inspector(state).catch(() => undefined);
+    if (!devtools) return true;
+    try {
+      const alive = await devtools.alive(state.privateDocument);
+      if (!alive) state.privateDocument = undefined;
+      return alive;
+    } catch {
+      return true;
+    } finally {
+      devtools.close();
+    }
+  }
+
+  async function markScripted(state: BrowserState) {
+    const devtools = await inspector(state).catch(() => undefined);
+    try {
+      if (!devtools || !(await devtools.scripted(true).catch(() => false))) {
+        state.saved.scripted = true;
+        await saveState(state);
+      }
+    } finally {
+      devtools?.close();
+    }
+  }
+
+  async function inspector(state: BrowserState) {
+    const { cdpUrl } = z
+      .object({ cdpUrl: z.string() })
+      .passthrough()
+      .parse(await command(state, ['get', 'cdp-url']));
+    const tab = z
+      .array(z.object({ active: z.boolean(), targetId: z.string() }).passthrough())
+      .parse((await command(state, ['tab', 'list'])).tabs)
+      .find((item) => item.active);
+    if (!tab) throw new Error('The checkout tab is no longer open.');
+    return openDevtools(cdpUrl, tab.targetId);
+  }
+
+  async function focusField(
+    state: BrowserState,
+    devtools: Awaited<ReturnType<typeof openDevtools>>,
+    selector: string,
+  ) {
+    await devtools.blur();
+    await command(state, ['focus', selector]).catch(() => {
+      throw new BrowserActionError('browser_card_field');
+    });
+    const field = await devtools.focused();
+    if (!field) throw new BrowserActionError('browser_card_field');
+    return field;
+  }
+
+  async function checkout(state: BrowserState, devtools: Awaited<ReturnType<typeof openDevtools>>) {
+    const document = await devtools.document();
+    if (state.saved.scripted || (await devtools.scripted()))
+      throw new BrowserActionError('browser_card_reload');
+    return document;
+  }
+
+  async function cardDestinations(
+    id: string,
+    fields: CardFields,
+  ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }> {
+    const state = browsers.get(threadIdentity(id));
+    if (!state?.started) throw new Error('The checkout page is no longer open.');
+    if (state.injecting) throw new BrowserLockedError();
+    return serialize(state, async () => {
+      if (state.injecting || (await privateDocumentOpen(state))) throw new BrowserLockedError();
+      const devtools = await inspector(state);
+      try {
+        const document = await checkout(state, devtools);
+        const destinations: Partial<Record<keyof CardFields, string>> = {};
+        for (const [name, field] of Object.entries(fields) as Array<
+          [keyof CardFields, CardExpiryField]
+        >)
+          if (field)
+            destinations[name] = (
+              await focusField(state, devtools, typeof field === 'string' ? field : field.selector)
+            ).origin;
+        await devtools.blur();
+        if ((await devtools.document()) !== document)
+          throw new BrowserActionError('browser_card_changed');
+        return { document, destinations };
+      } finally {
+        devtools.close();
+      }
+    });
+  }
+
+  async function checkoutImage(id: string): Promise<Uint8Array> {
+    const state = browsers.get(threadIdentity(id));
+    if (!state?.started) throw new Error('The checkout page is no longer open.');
+    if (state.injecting) throw new BrowserLockedError();
+    return serialize(state, async () => {
+      if (await privateDocumentOpen(state)) throw new BrowserActionError('browser_card_paused');
+      await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
+      const path = resolve(runtimeRoot, `checkout-${state.id}.jpg`);
+      const devtools = await inspector(state);
+      try {
+        await devtools.mask(true);
+        await observationCommand(
+          state,
+          ['screenshot', path, '--full', '--screenshot-format', 'jpeg'],
+          {},
+        );
+        const bytes = await readFile(path);
+        if (!bytes.byteLength || bytes.byteLength > 12 * 1024 * 1024)
+          throw new Error('The checkout page could not be captured.');
+        return new Uint8Array(bytes);
+      } finally {
+        await devtools.mask(false).catch(() => {});
+        devtools.close();
+        await rm(path, { force: true });
+      }
+    });
+  }
+
+  async function fillCard(input: CardEntry): Promise<void> {
+    const state = browsers.get(threadIdentity(input.threadId));
+    if (!state?.started) throw new Error('The checkout page is no longer open.');
+    if (state.injecting) throw new BrowserLockedError();
+    const { card, fields } = input;
+    if (fields.securityCode && !card.securityCode)
+      throw new Error('The security code is needed for this card.');
+    const month = String(card.expiryMonth).padStart(2, '0');
+    const year = String(card.expiryYear);
+    const expiry = (field: CardExpiryField | undefined, defaults: string[]) => {
+      if (!field || typeof field === 'string') return defaults;
+      return [
+        field.format.replace(/MMMM|MMM|MM|M|YYYY|YY/g, (token) => {
+          if (token === 'M') return String(card.expiryMonth);
+          if (token === 'MM') return month;
+          if (token === 'YYYY') return year;
+          if (token === 'YY') return year.slice(-2);
+          return new Intl.DateTimeFormat(field.locale ?? 'en', {
+            month: token === 'MMM' ? 'short' : 'long',
+            timeZone: 'UTC',
+          }).format(new Date(Date.UTC(card.expiryYear, card.expiryMonth - 1, 1)));
+        }),
+      ];
+    };
+    const plan: Array<{ field: keyof CardFields; values: string[] }> = [
+      { field: 'number', values: [card.cardNumber] },
+      { field: 'expiry', values: expiry(fields.expiry, [`${month}/${year.slice(-2)}`]) },
+      {
+        field: 'expiryMonth',
+        values: expiry(fields.expiryMonth, [month, String(card.expiryMonth)]),
+      },
+      { field: 'expiryYear', values: expiry(fields.expiryYear, [year, year.slice(-2)]) },
+      { field: 'securityCode', values: card.securityCode ? [card.securityCode] : [] },
+      { field: 'name', values: [card.cardholder] },
+    ];
+    const steps = plan.filter((step) => fields[step.field] && step.values.length);
+    for (const step of steps)
+      if (!input.destinations[step.field])
+        throw new Error('The approved card destinations are missing.');
+    markActivity(input.threadId);
+    await privateEntry(
+      state,
+      input.submitSelector,
+      async (devtools, document) => {
+        if (document !== input.document) throw new BrowserActionError('browser_card_changed');
+        for (const step of steps) {
+          const privateValue =
+            step.field === 'number' || step.field === 'securityCode' || step.field === 'name';
+          if (privateValue) for (const value of step.values) state.secrets.add(value);
+          const selection = fields[step.field]!;
+          const field = await focusField(
+            state,
+            devtools,
+            typeof selection === 'string' ? selection : selection.selector,
+          );
+          if (field.origin !== input.destinations[step.field])
+            throw new BrowserActionError('browser_card_site');
+          const tag = await devtools.arm(field, privateValue);
+          if (!tag) throw new BrowserActionError('browser_card_field');
+          if (tag === 'SELECT') {
+            if (!(await devtools.choose(field, step.values)))
+              throw new BrowserActionError('browser_card_field');
+          } else if (
+            (await devtools.document()) !== document ||
+            !(await devtools.insert(field, step.values[0]!))
+          )
+            throw new BrowserActionError('browser_card_site');
+        }
+      },
+      steps.map((step) => input.destinations[step.field]!),
+    );
   }
 
   async function currentPage(id: string): Promise<BrowserPage> {
@@ -1334,6 +1529,7 @@ export function createAgentBrowserComputer(options: {
     if (state.injecting) throw new BrowserLockedError();
     return serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
+      if (await privateDocumentOpen(state)) throw new BrowserLockedError();
       const url = await currentUrl(state);
       return {
         origin: browserUrl(url).origin,
@@ -1350,7 +1546,10 @@ export function createAgentBrowserComputer(options: {
         throw new Error('A valid browser hold expiry is required.');
       state.heldUntil = until === null ? 0 : Math.min(until, Date.now() + 30 * 60_000);
       if (state.heldUntil > Date.now()) await currentUrl(state);
-      if (state.heldUntil > Date.now()) await captureScreen(state);
+      if (state.heldUntil > Date.now())
+        await captureScreen(state).catch((error: unknown) => {
+          if (!(error instanceof BrowserLockedError)) throw error;
+        });
     });
   }
 
@@ -1359,8 +1558,20 @@ export function createAgentBrowserComputer(options: {
     if (state.recovered && state.saved.sensitive && !state.secrets.size)
       throw new Error('Reopen the login page before continuing this browser session.');
     const url = await currentUrl(state, signal);
+    if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
     const path = resolve(runtimeRoot, `screen-${state.id}.capture.png`);
-    await observationCommand(state, ['screenshot', path], { signal });
+    const devtools = state.secrets.size ? await inspector(state) : undefined;
+    try {
+      await devtools?.mask(true, [...state.secrets], false);
+      await observationCommand(state, ['screenshot', path], { signal });
+      if (await privateDocumentOpen(state, signal)) {
+        await rm(path, { force: true });
+        throw new BrowserLockedError();
+      }
+    } finally {
+      await devtools?.mask(false).catch(() => {});
+      devtools?.close();
+    }
     const buffer = await screens.accept(state.id, path);
     state.saved.capturedAt = new Date().toISOString();
     await saveState(state);
@@ -1386,6 +1597,7 @@ export function createAgentBrowserComputer(options: {
     markActivity(id);
     await serialize(state, async () => {
       if (state.injecting) throw new BrowserLockedError();
+      if (await privateDocumentOpen(state, signal)) throw new BrowserLockedError();
       const socket = await daemonSocket(state, signal);
       if (input.type === 'mouse') {
         const [width, height] = (state.pageSize ??= z
@@ -1486,7 +1698,8 @@ export function createAgentBrowserComputer(options: {
           continue;
         }
         state.pageSize = [frame.metadata.deviceWidth, frame.metadata.deviceHeight];
-        if (!state.injecting) yield Buffer.from(frame.data, 'base64');
+        if (!state.injecting && !(await privateDocumentOpen(state, signal)))
+          yield Buffer.from(frame.data, 'base64');
         if (socket.readyState === WebSocket.OPEN)
           socket.send(JSON.stringify({ type: 'ack', seq: frame.seq }));
       }
@@ -1507,7 +1720,7 @@ export function createAgentBrowserComputer(options: {
         return await captureScreen(state, signal);
       } catch (error) {
         signal?.throwIfAborted();
-        if (!state.recovered) throw error;
+        if (!state.recovered || error instanceof BrowserLockedError) throw error;
         return lastKnownScreen(id);
       }
     });
@@ -1530,6 +1743,7 @@ export function createAgentBrowserComputer(options: {
       state.closed = true;
       if (state.started || state.saved.navigationFailed) await command(state, ['close']);
       state.started = false;
+      await state.proxy?.dispose();
       await saveState(state);
       state.secrets.clear();
       state.secretsByOrigin.clear();
@@ -1553,13 +1767,16 @@ export function createAgentBrowserComputer(options: {
     await pending;
   }
 
-  async function bindProfile(id: string, rawProfileId: string): Promise<void> {
+  async function bindProfile(id: string, rawProfileId: string, origins?: string[]): Promise<void> {
     const profileId = z.uuid().parse(rawProfileId);
+    const granted = new Set(origins?.map((origin) => browserUrl(origin).origin));
+    if (!granted.size) throw new Error('A saved browser profile needs an exact destination grant.');
     assertNotDiscarded(id);
     await allocate(async () => {
       assertNotDiscarded(id);
       const previous = browsers.get(id) ?? (await recoverBrowser(id, true));
       if (previous?.saved.profileId === profileId) {
+        for (const origin of granted) (previous.origins ??= new Set()).add(origin);
         if (!previous.saved.restoreSession) {
           previous.saved.restoreSession = true;
           previous.saved.sensitive = true;
@@ -1581,6 +1798,7 @@ export function createAgentBrowserComputer(options: {
         await closeBrowser(otherId);
       }
       const state = stateFor(id);
+      state.origins = granted;
       state.saved = {
         version: 1,
         url: '',
@@ -1612,6 +1830,27 @@ export function createAgentBrowserComputer(options: {
         ]);
         screenStatuses.delete(id);
       }
+    });
+  }
+
+  async function signOut(rawId: string): Promise<void> {
+    const id = threadIdentity(rawId);
+    assertNotDiscarded(id);
+    await allocate(async () => {
+      const state = browsers.get(id) ?? (await recoverBrowser(id, true));
+      if (state?.injecting) throw new BrowserLockedError();
+      if (state) await closeBrowser(id);
+      const fresh = stateFor(id);
+      await Promise.all([
+        rm(resolve(runtimeRoot, 'profiles', id), { recursive: true, force: true }),
+        rm(resolve(runtimeRoot, 'downloads', id), { recursive: true, force: true }),
+        rm(cachePath(fresh), { recursive: true, force: true }),
+      ]);
+      await screens.clearImage(id);
+      screenStatuses.delete(id);
+      fresh.saved = { version: 1, url: '', sensitive: false, active: false };
+      await saveState(fresh);
+      browsers.delete(id);
     });
   }
 
@@ -1671,10 +1910,14 @@ export function createAgentBrowserComputer(options: {
     view,
     screenStatus: (id) => screenStatuses.get(threadIdentity(id)) ?? { state: 'unavailable' },
     injectCredentials: tracked(injectCredentials),
+    fillCard: tracked(fillCard),
+    cardDestinations: tracked(cardDestinations),
+    checkoutImage: tracked(checkoutImage),
     currentPage: tracked(currentPage),
     hold: tracked(hold),
     close: tracked(closeBrowser),
     discard: tracked(discard),
+    signOut: tracked(signOut),
     status: browserStatus,
     dispose: async () => {
       disposed = true;
@@ -1682,7 +1925,6 @@ export function createAgentBrowserComputer(options: {
       const results = await Promise.allSettled([...browsers.keys()].map((id) => closeBrowser(id)));
       if (results.some((result) => result.status === 'rejected'))
         throw new Error('The browser service could not finish closing its sessions.');
-      await proxy.dispose();
     },
   };
 }

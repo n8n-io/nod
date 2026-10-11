@@ -24,7 +24,7 @@ export function vaultInvitation(
 
 export function requestsPrivateInput(text: string) {
   const detail =
-    '(?:user[ -]?name|password|passcode|passphrase|pin(?: code)?|login identifier|credentials|(?:login|sign[ -]?in) details|recovery code|backup code|authentication code|(?:login|account|X|Twitter) (?:email|e-mail|handle)|one[ -]?time(?: code)?|otp|verification code|security code|sms code|api[ _-]?key|nome de utilizador|palavra[ -]passe|codigo (?:de (?:verificacao|seguranca|confirmacao|autenticacao|verificacion|seguridad|confirmacion|autenticacion)|pin)|code de (?:verification|securite|confirmation|authentification)|chave(?: de| da)? api|nif|eori|numero (?:de )?(?:contribuinte|identificacao fiscal)|tax (?:identification )?(?:number|id)|contrasena|mot de passe)';
+    "(?:card(?:'s|’s)? (?:number|details)|card(?:'s|’s)? (?:expiry|expiration)(?: date)?|cvc2?|cvv2?|user[ -]?name|password|passcode|passphrase|pin(?: code)?|login identifier|credentials|(?:login|sign[ -]?in) details|recovery code|backup code|authentication code|(?:login|account|X|Twitter) (?:email|e-mail|handle)|one[ -]?time(?: code)?|otp|verification code|security code|sms code|api[ _-]?key|nome de utilizador|palavra[ -]passe|codigo (?:de (?:verificacao|seguranca|confirmacao|autenticacao|verificacion|seguridad|confirmacion|autenticacion)|pin)|code de (?:verification|securite|confirmation|authentification)|chave(?: de| da)? api|nif|eori|numero (?:de )?(?:contribuinte|identificacao fiscal)|tax (?:identification )?(?:number|id)|contrasena|mot de passe)";
   const normalized = text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
   return (
     requestsPrivateValue(normalized, detail) ||

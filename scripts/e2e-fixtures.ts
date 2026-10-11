@@ -189,12 +189,53 @@ function createSignupFixture(audit: Audit, operatorPath?: string) {
   };
 }
 
+function createCheckoutFixture(audit: Audit) {
+  return async (request: IncomingMessage, response: ServerResponse, url: URL) => {
+    if (request.method === 'GET' && url.pathname === fixturePrefix + 'checkout') {
+      response.end(
+        html(
+          'Northstar shop checkout',
+          `<p>Synthetic test shop. No real payment is made.</p><p>Two brass hinges. Total €43.20</p><form method="post" action="${fixturePrefix}order" id="order"><label for="name">Name on card</label><input id="name" name="name" autocomplete="cc-name" required><label for="expiry">Expiry (MM/YY)</label><input id="expiry" name="expiry" autocomplete="cc-exp" placeholder="MM/YY" required><iframe title="Card details" src="https://pay.example.com${fixturePrefix}card-frame" style="border:0;height:220px;width:100%"></iframe><input type="hidden" name="number"><input type="hidden" name="cvc"><button type="submit">Place order</button></form><script>addEventListener('message',(event)=>{if(event.origin!=='https://pay.example.com')return;document.querySelector('[name=number]').value=event.data.number;document.querySelector('[name=cvc]').value=event.data.cvc;});</script>`,
+        ),
+      );
+      return true;
+    }
+    if (request.method === 'GET' && url.pathname === fixturePrefix + 'card-frame') {
+      response.end(
+        `<!doctype html><html lang="en"><meta charset="utf-8"><style>body{font:18px system-ui;margin:0}label,input{display:block;margin:12px 0}input{font:inherit;padding:10px}</style><label for="number">Card number</label><input id="number" autocomplete="cc-number" inputmode="numeric"><label for="cvc">Security code</label><input id="cvc" autocomplete="cc-csc" inputmode="numeric" maxlength="4"><script>addEventListener('input',()=>parent.postMessage({number:document.getElementById('number').value,cvc:document.getElementById('cvc').value},'https://example.com'));</script></html>`,
+      );
+      return true;
+    }
+    if (request.method === 'POST' && url.pathname === fixturePrefix + 'order') {
+      const input = await form(request);
+      const number = (input.get('number') ?? '').replace(/\D/g, '');
+      const accepted =
+        number === '4242424242424242' &&
+        /^\d{3,4}$/.test(input.get('cvc') ?? '') &&
+        /^\d{2}\s*\/\s*\d{2}$/.test(input.get('expiry') ?? '') &&
+        Boolean(input.get('name')?.trim());
+      audit('fixture_order', { accepted, last4: number.slice(-4) });
+      response.end(
+        accepted
+          ? html(
+              'Order placed',
+              '<p role="status">Order placed. Paid €43.20 with the card ending 4242.</p>',
+            )
+          : html('Payment declined', '<p role="alert">The card details were not accepted.</p>'),
+      );
+      return true;
+    }
+    return false;
+  };
+}
+
 export function createAuthFixture(
   audit: Audit = () => {},
   pricesPath?: string,
   operatorPath?: string,
 ) {
   const signup = createSignupFixture(audit, operatorPath);
+  const checkout = createCheckoutFixture(audit);
   const sessions = new Map<string, { stage: 'password' | 'otp' | 'portal'; expires: number }>();
   const login = (error = '') =>
     html(
@@ -231,6 +272,7 @@ export function createAuthFixture(
     const active = session && session.expires > Date.now() ? session : undefined;
     try {
       if (await signup(request, response, url)) return;
+      if (await checkout(request, response, url)) return;
       if (
         request.method === 'GET' &&
         [fixturePrefix + 'hotel', fixturePrefix + 'flight'].includes(url.pathname)
@@ -374,7 +416,7 @@ export async function createFixtureProxy(
     '-subj',
     '/CN=example.com',
     '-addext',
-    'subjectAltName=DNS:example.com',
+    'subjectAltName=DNS:example.com,DNS:pay.example.com',
   ]);
   if (generated.exitCode) throw new Error('Could not create the isolated fixture certificate.');
   const certificate = await readFile(cert);
@@ -406,7 +448,7 @@ export async function createFixtureProxy(
   });
   proxy.on('connection', track);
   proxy.on('connect', (request, socket, head) => {
-    if (request.url === 'example.com:443') {
+    if (request.url === 'example.com:443' || request.url === 'pay.example.com:443') {
       socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head.length) socket.unshift(head);
       https.emit('connection', socket);

@@ -41,9 +41,9 @@ function money(value: number) {
 
 function Summary({ week }: { week: TrustView['week'] }) {
   if (!week.things && !week.spentUsd)
-    return <p className="trust-summary">Nothing yet this week.</p>;
+    return <p className="statement-summary">Nothing yet this week.</p>;
   return (
-    <p className="trust-summary">
+    <p className="statement-summary">
       In the last 7 days, Otto did{' '}
       <b>
         {formatNumber(week.things)} {week.things === 1 ? 'thing' : 'things'}
@@ -246,17 +246,17 @@ function Entry({ entry }: { entry: TrustEntry }) {
   const { icon: Icon, label } = sources[entry.source];
   const did = [...new Set(entry.actions)].join(', ');
   return (
-    <li className="trust-entry">
+    <li className="statement-entry">
       <Icon size={16} aria-hidden="true" />
       <div>
-        <span className="trust-entry-title">{entry.title}</span>
-        <span className={`trust-entry-meta${entry.error ? ' is-error' : ''}`}>
+        <span className="statement-entry-title">{entry.title}</span>
+        <span className={`statement-entry-meta${entry.error ? ' is-error' : ''}`}>
           {[formatTime(entry.at, format), label].filter(Boolean).join(' · ')}
           {entry.error ? ` · ${entry.error}` : did ? ` · ${did}` : ''}
         </span>
       </div>
       <span
-        className="trust-entry-cost"
+        className="statement-entry-end"
         title={entry.unpriced ? 'Included in your plan' : undefined}
       >
         {entry.costUsd !== null ? money(entry.costUsd) : '—'}
@@ -287,16 +287,17 @@ function Statement({ view }: { view: TrustView }) {
       setLoading(false);
     }
   }
-  if (!entries.length) return <p className="trust-empty">What Otto spends will show up here.</p>;
+  if (!entries.length)
+    return <p className="statement-empty">What Otto spends will show up here.</p>;
   const days = new Map<string, TrustEntry[]>();
   for (const entry of entries) {
     const label = formatDayLabel(entry.at, format);
     days.set(label, [...(days.get(label) ?? []), entry]);
   }
   return (
-    <section className="trust-statement" aria-label="Statement">
+    <section className="statement" aria-label="Statement">
       {[...days].map(([label, items]) => (
-        <div key={label} className="trust-day">
+        <div key={label} className="statement-day">
           <h4>{label}</h4>
           <ul>
             {items.map((entry) => (

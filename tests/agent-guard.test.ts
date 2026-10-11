@@ -403,7 +403,7 @@ test('verification email codes stay out of app tool results, observations and wo
   assert.equal(full.data.messages[0].sender, 'login@example.test');
   assert.equal(full.data.messages[0].to, 'owner+trial@example.test');
   assert.equal(full.data.messages[0].messageId, 'subject-code');
-  assert.match(full.data.messages[0].message, /get_credential/);
+  assert.match(full.data.messages[0].message, /sign_in/);
   assert.equal(full.data.messages[0].payload, undefined);
   assert.deepEqual(full.data.messages[2].headers, [
     { name: 'From', value: 'security@example.test' },
@@ -615,13 +615,19 @@ test('attachments and credential reads mark the thread', async () => {
   await fixture(
     async (tools) => {
       events.push('prompt');
-      await call(tools, 'get_credential', { id: randomUUID(), origin: 'https://example.test' });
+      await call(tools, 'sign_in', {
+        origin: 'https://example.test',
+        label: 'Example',
+        kind: 'password',
+        passwordSelector: '@password',
+        submitSelector: '@submit',
+        message: 'Example needs your password.',
+        action: 'Sign in',
+      });
     },
     {
       attachments: [{ path: '/tmp/synthetic.pdf', mimeType: 'application/pdf' }],
-      requestCredential: async () => ({
-        credential: { username: 'synthetic', password: 'synthetic-value' },
-      }),
+      requestCredential: async () => ({ filled: true }),
       markUntrustedContext: async () => {
         events.push('marked');
       },
@@ -631,12 +637,18 @@ test('attachments and credential reads mark the thread', async () => {
   const marks: string[] = [];
   await fixture(
     async (tools) => {
-      await call(tools, 'get_credential', { id: randomUUID(), origin: 'https://example.test' });
+      await call(tools, 'sign_in', {
+        origin: 'https://example.test',
+        label: 'Example',
+        kind: 'password',
+        passwordSelector: '@password',
+        submitSelector: '@submit',
+        message: 'Example needs your password.',
+        action: 'Sign in',
+      });
     },
     {
-      requestCredential: async () => ({
-        credential: { username: 'synthetic', password: 'synthetic-value' },
-      }),
+      requestCredential: async () => ({ filled: true }),
       markUntrustedContext: async () => {
         marks.push('marked');
       },
@@ -902,9 +914,20 @@ test('PIN and semantic login identifier requests never reach chat', async () => 
     'Envia-me a chave API.',
     'Qual é a tua chave de API?',
     'Enter the API key to continue.',
+    'What is your card number?',
+    'Send me your card details and the CVC.',
+    'Enter your CVC2.',
+    "What's your card's expiry date?",
+    "What's your card's number?",
+    'Please send your card’s details.',
   ];
   for (const text of requests) assert.equal(requestsPrivateInput(text), true, text);
-  for (const text of ['Can you explain what an API key is?', 'How do I rotate an API key?'])
+  for (const text of [
+    'Can you explain what an API key is?',
+    'How do I rotate an API key?',
+    'What is the expiry date of your passport?',
+    'Tell me your preferred delivery date.',
+  ])
     assert.equal(requestsPrivateInput(text), false, text);
   const text = requests[0];
   for (const method of ['ask_user', 'send_message', 'final']) {
@@ -992,12 +1015,14 @@ test('secure credential pause prevents subsequent tools in the same execution se
       label: 'Example',
       kind: 'password' as const,
       passwordSelector: '@password',
+      submitSelector: '@submit',
     },
     {
       origin: 'https://example.com',
       label: 'Example',
       kind: 'otp' as const,
       passwordSelector: '@verification',
+      submitSelector: '@submit',
       emailCode: true,
     },
   ]) {
@@ -1005,7 +1030,7 @@ test('secure credential pause prevents subsequent tools in the same execution se
     let requested = false;
     const result = await fixture(
       async (tools) => {
-        await call(tools, 'get_credential', {
+        await call(tools, 'sign_in', {
           ...input,
           message: 'Example needs this sign-in step.',
           action: 'Open secure step',
@@ -1047,12 +1072,13 @@ test('a chosen saved login reaches the credential broker without pausing the tur
     kind: 'password' as const,
     usernameSelector: '@account',
     passwordSelector: '@password',
+    submitSelector: '@submit',
     savedLoginId: randomUUID(),
   };
   let requested = false;
   const result = await fixture(
     async (tools) => {
-      await call(tools, 'get_credential', {
+      await call(tools, 'sign_in', {
         ...input,
         message: 'Example needs your saved login.',
         action: 'Use saved login',
@@ -1072,21 +1098,26 @@ test('a chosen saved login reaches the credential broker without pausing the tur
   assert.deepEqual(result.replies, []);
 });
 
-test('Pi can get an owned Vault login without putting its value in runtime observations', async () => {
+test('sign_in never returns a saved value to Pi and pauses for the owner when Otto asks first', async () => {
   const secret = 'synthetic-vault-password';
   const observations: unknown[] = [];
-  const id = randomUUID();
+  const input = {
+    origin: 'https://example.test',
+    label: 'Example',
+    kind: 'password' as const,
+    passwordSelector: '@password',
+    submitSelector: '@submit',
+    message: 'Example needs your password.',
+    action: 'Sign in',
+  };
   await fixture(
     async (tools) => {
-      assert.deepEqual(
-        await call(tools, 'get_credential', { id, origin: 'https://example.test' }),
-        {
-          content: [
-            { type: 'text', text: JSON.stringify({ username: 'fixture', password: secret }) },
-          ],
-          details: {},
-        },
-      );
+      const result = await call(tools, 'sign_in', input);
+      assert.equal(JSON.stringify(result).includes(secret), false);
+      assert.deepEqual(result, {
+        content: [{ type: 'text', text: 'Saved login entered.' }],
+        details: {},
+      });
       await call(tools, 'browser', {
         action: 'fill',
         selector: '#search',
@@ -1102,12 +1133,83 @@ test('Pi can get an owned Vault login without putting its value in runtime obser
       observe: async (event) => {
         observations.push(event);
       },
-      requestCredential: async () => ({ credential: { username: 'fixture', password: secret } }),
+      requestCredential: async () => ({ filled: true }),
     },
   );
   assert.equal(JSON.stringify(observations).includes(secret), false);
   assert.equal(JSON.stringify(observations).includes('private fixture text'), false);
   assert.equal(JSON.stringify(observations).includes('private typed text'), false);
+  const asked = await fixture(
+    async (tools) => {
+      await call(tools, 'sign_in', input);
+    },
+    { requestCredential: async () => ({ [appConfirmation]: 'Sign in to example.test as fi…?' }) },
+  );
+  assert.equal(asked.result.status, 'waiting_user');
+  assert.deepEqual(asked.replies, []);
+});
+
+test('pay never returns card data to Pi and waits for the owner on every new payment', async () => {
+  const input = {
+    amount: '43.20',
+    currency: 'EUR',
+    fields: { number: '@e4', expiry: '@e5', securityCode: '@e6' },
+    submitSelector: '@submit',
+  };
+  const requests: unknown[] = [];
+  const asked = await fixture(
+    async (tools) => {
+      await call(tools, 'pay', input);
+    },
+    {
+      requestPayment: async (request: unknown) => {
+        requests.push(request);
+        return { [appConfirmation]: 'Pay €43.20 at shop.example.test with Visa ••4242?' };
+      },
+    },
+  );
+  assert.equal(asked.result.status, 'waiting_user');
+  assert.deepEqual(requests, [input]);
+  const question =
+    'Pay €43.20 at shop.example.test with Visa ••4242? Reply with its security code.';
+  const coded = await fixture(
+    async (tools) => {
+      await call(tools, 'pay', input);
+    },
+    { requestPayment: async () => ({ question }) },
+  );
+  assert.equal(coded.result.status, 'waiting_credentials');
+  assert.ok(JSON.stringify(coded.replies).includes(question));
+});
+
+test('a turn prepares the shared browser before its first browser action and again after a failed preparation', async () => {
+  const events: string[] = [];
+  await fixture(
+    async (tools) => {
+      await call(tools, 'send_message', { text: 'Opening the site.' });
+      await assert.rejects(
+        call(tools, 'browser', { action: 'open', url: 'https://example.test/' }),
+        /sign-out failed/,
+      );
+      await call(tools, 'browser', { action: 'open', url: 'https://example.test/' });
+      await call(tools, 'browser', { action: 'snapshot' });
+    },
+    {
+      prepareBrowser: async () => {
+        events.push('prepare');
+        if (events.length === 1) throw new Error('Synthetic sign-out failed.');
+      },
+    },
+    {
+      computer: fakeComputer({
+        act: async (_threadId, action) => {
+          events.push(String(action.action));
+          return { text: '', url: 'https://example.test/' };
+        },
+      }),
+    },
+  );
+  assert.deepEqual(events, ['prepare', 'prepare', 'open', 'snapshot']);
 });
 
 const refusal = 'This turn can only read. Use app reads, and browser open, snapshot or scroll.';
@@ -1130,8 +1232,23 @@ const refused: Array<[string, Record<string, unknown>]> = [
   ['manage_apps', { action: 'connect', service: 'gmail' }],
   ['manage_personal_context', { action: 'schedule_create', args: { title: 'Synthetic' } }],
   [
-    'get_credential',
-    { action: 'request', origin: 'https://mail.example.test', label: 'Sign in', kind: 'password' },
+    'sign_in',
+    {
+      origin: 'https://mail.example.test',
+      label: 'Sign in',
+      kind: 'password',
+      message: 'Sign in.',
+      action: 'Sign in',
+    },
+  ],
+  [
+    'pay',
+    {
+      amount: '1.00',
+      currency: 'EUR',
+      description: 'Synthetic',
+      fields: { number: '@e1', expiry: '@e2' },
+    },
   ],
   ['ask_user', { question: 'Which email should I answer?' }],
 ];
@@ -1165,13 +1282,16 @@ test('a read-only turn refuses every outside action with a fixed error and still
     {
       readOnly: true,
       background: true,
+      prepareBrowser: async () => {
+        sideEffects++;
+      },
       connections: async (action) => {
         assert.equal(action, 'discover');
         return { apps: [] };
       },
       requestCredential: async () => {
         sideEffects++;
-        return {};
+        return { filled: true };
       },
       manage: async () => {
         sideEffects++;
@@ -1237,7 +1357,7 @@ test('activity checks scope reads to one account, deny other tools and record ex
         ['fetch_content', { urls: ['https://example.test/source'] }],
         ['source_check', { source: 'synthetic' }],
         ['get_search_content', { responseId: 'synthetic' }],
-        ['get_credential', { id: randomUUID(), origin: 'https://example.test' }],
+
         ['browser', { action: 'open', url: 'https://example.test' }],
         ['read', { path: '/fixture/workspace/private.txt' }],
         ['read', { path: '.otto/skills/connected-apps/../../private.txt' }],

@@ -12,15 +12,27 @@ export function credentialFields(input: CredentialInput): CredentialField[] {
     kind === 'identifier' ? input.username : kind === 'otp' ? input.code : input.password;
   if (!value || value.length > (kind === 'otp' ? 100 : 8192) || (input.username?.length ?? 0) > 320)
     throw new Error('A valid credential value is required.');
+  const target = (kind === 'identifier' ? input.usernameSelector : input.passwordSelector) ?? '';
+  const characters = Array.from(value);
+  if (
+    Array.isArray(target) &&
+    (kind !== 'otp' ||
+      target.length !== characters.length ||
+      target.some((selector) => !/^@e\d+$/.test(selector)) ||
+      new Set(target).size !== target.length)
+  )
+    throw new Error('Choose one distinct field for each code character, in code order.');
   const fields = [
     ...(kind === 'password' && input.username && input.usernameSelector
       ? [{ selector: input.usernameSelector, value: input.username, code: false }]
       : []),
-    {
-      selector: (kind === 'identifier' ? input.usernameSelector : input.passwordSelector) ?? '',
-      value,
-      code: kind === 'otp',
-    },
+    ...(Array.isArray(target)
+      ? target.map((selector, index) => ({
+          selector,
+          value: characters[index]!,
+          code: false,
+        }))
+      : [{ selector: target, value, code: kind === 'otp' }]),
   ];
   for (const { selector } of fields)
     if (

@@ -1,13 +1,8 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-  timingSafeEqual,
-} from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
+import { openVaultValue, sealVaultValue } from './vault-crypto.ts';
 import {
   ChannelSetupFailure,
   type ChannelSetupConfiguration,
@@ -108,7 +103,7 @@ function createLock() {
 }
 
 function binding(owner: string, provider: ChannelProvider) {
-  return Buffer.from(JSON.stringify(['otto-channel-settings-v1', owner, provider]));
+  return ['otto-channel-settings-v1', owner, provider];
 }
 function seal(
   key: Buffer,
@@ -116,11 +111,7 @@ function seal(
   provider: ChannelProvider,
   environment: Record<string, string>,
 ) {
-  const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  cipher.setAAD(binding(owner, provider));
-  const encrypted = Buffer.concat([cipher.update(JSON.stringify(environment)), cipher.final()]);
-  return Buffer.concat([nonce, cipher.getAuthTag(), encrypted]).toString('base64');
+  return sealVaultValue(key, binding(owner, provider), JSON.stringify(environment));
 }
 function pairingHash(code: string) {
   return createHash('sha256').update(code).digest('hex');
@@ -145,17 +136,9 @@ function issuePairing(summary: ChannelSetupSummary) {
   };
 }
 function open(key: Buffer, owner: string, row: SettingsRow) {
-  const encoded = Buffer.from(row.ciphertext!, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', key, encoded.subarray(0, 12));
-  decipher.setAAD(binding(owner, row.provider));
-  decipher.setAuthTag(encoded.subarray(12, 28));
   const result = z
     .record(z.string(), z.string().max(8192))
-    .parse(
-      JSON.parse(
-        Buffer.concat([decipher.update(encoded.subarray(28)), decipher.final()]).toString('utf8'),
-      ),
-    );
+    .parse(JSON.parse(openVaultValue(key, binding(owner, row.provider), row.ciphertext!)));
   if (Object.keys(result).some((key) => !fields[row.provider].has(key)))
     throw new Error('Invalid channel configuration.');
   return result;

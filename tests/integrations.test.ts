@@ -2429,11 +2429,20 @@ test(
       },
       browserAccounts: async () => {
         savedLoginReads++;
-        return savedLoginIds.map((id, index) => ({
+        return [
+          ...savedLoginIds.map((id, index) => ({
+            id,
+            label: index ? 'Personal' : 'Work',
+            origin: 'https://login.example.test',
+          })),
+          ...Array.from({ length: 25 }, (_, index) => ({
+            id: randomUUID(),
+            label: `Shop ${index}`,
+            origin: `https://shop-${index}.example.test`,
+          })),
+        ].map((login) => ({
+          ...login,
           kind: 'login' as const,
-          id,
-          label: index ? 'Personal' : 'Work',
-          origin: 'https://login.example.test',
           usernameHint: 'synthetic-private-hint',
           username: 'synthetic-private-username',
           password: 'synthetic-private-password',
@@ -2481,8 +2490,16 @@ test(
       });
     }
     try {
-      const browserPaths = await integrations.manageConnections('list');
-      assert.ok(Array.isArray(browserPaths));
+      const listed = await integrations.manageConnections(
+        'list',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'https://login.example.test/signin',
+      );
+      assert.ok(Array.isArray(listed));
+      const browserPaths = listed.flatMap((item) => ('slug' in item ? [item] : []));
       assert.deepEqual(
         browserPaths
           .filter((connection) => connection.accessPaths?.some((path) => path.kind === 'browser'))
@@ -2504,8 +2521,44 @@ test(
         'browser_session',
       );
       assert.doesNotMatch(JSON.stringify(browserPaths), /synthetic-private|usernameHint|password/);
+      const everything = await integrations.manageConnections('list');
+      assert.ok(Array.isArray(everything));
+      assert.equal(everything.filter((item) => 'savedLogin' in item && item.savedLogin).length, 20);
+      assert.deepEqual(everything.at(-1), {
+        savedLogins: 27,
+        note: 'Call list with query set to the website or service to see its saved logins.',
+      });
+      const byName = await integrations.manageConnections(
+        'list',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'Shop 7',
+      );
+      assert.ok(Array.isArray(byName));
+      assert.deepEqual(
+        byName.flatMap((item) =>
+          'savedLogin' in item && item.savedLogin ? [item.accountName] : [],
+        ),
+        ['Shop 7'],
+      );
       await assert.rejects(integrations.list('another-user'), { statusCode: 403 });
-      assert.equal(savedLoginReads, 1);
+      const wrongSite = await integrations.manageConnections(
+        'list',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'example.test',
+      );
+      assert.ok(Array.isArray(wrongSite));
+      assert.equal(
+        wrongSite.filter((connection) => 'savedLogin' in connection && connection.savedLogin)
+          .length,
+        0,
+      );
+      assert.equal(savedLoginReads, 4);
       await t.test(
         'app icons use only owned origins and never connection paths or credentials',
         async () => {
@@ -7199,8 +7252,9 @@ test(
         `INSERT INTO app_connections(owner_id,slug,account_id,provider_id)
          VALUES('another-owner','notion','foreign-notion','direct') RETURNING id`,
       );
-      const inventory = await integrations.manageConnections('list');
-      assert.ok(Array.isArray(inventory));
+      const listed = await integrations.manageConnections('list');
+      assert.ok(Array.isArray(listed));
+      const inventory = listed.flatMap((item) => ('slug' in item ? [item] : []));
       assert.deepEqual(inventory.find((item) => item.connectionId === httpId)?.accessPaths, [
         { id: httpPaths[0].id, kind: 'http', endpoint: httpPaths[0].endpoint },
       ]);

@@ -12,7 +12,11 @@ import type {
 import type { SuggestedTask, TaskSuggestions } from '../../shared/onboarding';
 import type { TrustView } from '../../shared/trust';
 import { integrationServices } from '../../shared/integrations';
-import { classifyVerificationReply } from '../../shared/verification-code';
+import {
+  classifyVerificationReply,
+  mayHoldSecurityCode,
+  securityCodeIn,
+} from '../../shared/verification-code';
 import { Composer, type ComposerHandle, type ComposerSendResult } from '../components/composer';
 import { MessageBubble } from '../components/message';
 import { ChatTurnRail } from '../components/chat-turn-rail';
@@ -457,13 +461,21 @@ export function Chat({
     const verificationRequests = (state.verificationRequests ?? []).filter(
       (request) => !reply || request.turnId === reply.turnId,
     );
+    const explicitVerification =
+      classifyVerificationReply(value).kind !== 'ordinary' || Boolean(securityCodeIn(value));
     let privateVerification =
-      classifyVerificationReply(value).kind !== 'ordinary' && verificationRequests.length > 0;
+      (classifyVerificationReply(value).kind !== 'ordinary' &&
+        verificationRequests.some((request) => request.kind === 'otp')) ||
+      (mayHoldSecurityCode(value) &&
+        verificationRequests.some((request) => request.kind === 'payment'));
     const verificationRequestId =
       privateVerification && verificationRequests.length === 1
         ? verificationRequests[0].id
         : undefined;
     let verificationStatus: SubmitMessageResponse['verificationStatus'];
+    const masked = verificationRequests.every((request) => request.kind === 'payment')
+      ? 'Security code sent securely.'
+      : 'Verification code sent securely.';
     const signature = privateVerification
       ? null
       : JSON.stringify([value, attachments.map((item) => item.id), reply?.id ?? null]);
@@ -487,7 +499,7 @@ export function Chat({
     const message: Message = {
       id,
       role: 'user',
-      text: privateVerification ? 'Verification code sent securely.' : value,
+      text: privateVerification ? masked : value,
       attachments,
       turnId: null,
       createdAt: new Date().toISOString(),
@@ -513,7 +525,7 @@ export function Chat({
       if (!(await previous)) {
         failed = true;
         setOptimistic((current) => current.filter((item) => item.message.id !== id));
-        return { sent: false, restoreText: !privateVerification };
+        return { sent: false, restoreText: !privateVerification || !explicitVerification };
       }
       const response = await apiResponse('/api/messages', {
         method: 'POST',
@@ -551,7 +563,7 @@ export function Chat({
         typeof result.messageText === 'string'
           ? result.messageText
           : privateVerification
-            ? 'Verification code sent securely.'
+            ? masked
             : message.text;
       retry.current = null;
       setOptimistic((current) =>
@@ -588,7 +600,7 @@ export function Chat({
           : errorMessage(cause),
       );
       captureAnalytics('otto_ui_error', { area: 'chat', action: 'send' });
-      return { sent: false, restoreText: !privateVerification };
+      return { sent: false, restoreText: !privateVerification || !explicitVerification };
     } finally {
       outstandingSends.current--;
       finished(!failed);

@@ -123,6 +123,15 @@ export interface ThreadDependencies {
     turn: TurnRef,
     input: Parameters<RuntimeContext['requestCredential']>[0],
   ) => ReturnType<RuntimeContext['requestCredential']>;
+  requestPayment?: (
+    turn: TurnRef,
+    input: unknown,
+    show: (image: Uint8Array) => Promise<void>,
+  ) => ReturnType<NonNullable<RuntimeContext['requestPayment']>>;
+  paymentSetting?: (
+    turn: TurnRef,
+    input: unknown,
+  ) => Promise<string | { [appConfirmation]: string }>;
   integration: (
     turn: TurnRef,
     action: string,
@@ -144,6 +153,7 @@ export interface ThreadDependencies {
     signal: AbortSignal,
     launch: { timeZone?: string; locale?: string },
   ) => Promise<unknown>;
+  prepareBrowser?: (turn: TurnRef) => Promise<void>;
   reactToMessage?: (
     input: AgentReactionInput,
   ) => ReturnType<NonNullable<RuntimeContext['reactToMessage']>>;
@@ -427,9 +437,9 @@ export async function submitUserMessage(
   return result;
 }
 
-async function cancelQueued(client: PoolClient, threadId: string) {
+async function cancelTurns(client: PoolClient, threadId: string) {
   const current = await client.query(
-    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND status IN ('queued','running') RETURNING id",
+    "UPDATE turns SET status='cancelled',finished_at=now() WHERE thread_id=$1 AND owner_id=$2 AND status IN ('queued','running','waiting') RETURNING id",
     [threadId, ownerId],
   );
   return current.rows.map((row) => row.id as string);
@@ -441,7 +451,7 @@ function abortTurns(ids: string[]) {
 
 export async function stopThread() {
   const cancelled = await transaction(async (client) =>
-    cancelQueued(client, (await lockThread(client)).id),
+    cancelTurns(client, (await lockThread(client)).id),
   );
   abortTurns(cancelled);
   refresh();
@@ -452,7 +462,7 @@ export async function resetThread(expectedThreadId: string) {
     const thread = await lockThread(client);
     if (thread.id !== expectedThreadId)
       throw httpError('This conversation has changed. Reload it before clearing messages.');
-    const cancelled = await cancelQueued(client, thread.id);
+    const cancelled = await cancelTurns(client, thread.id);
     await client.query('UPDATE threads SET archived_at=now(),updated_at=now() WHERE id=$1', [
       thread.id,
     ]);
@@ -521,8 +531,14 @@ export async function reactToAssistantMessage(
   return result;
 }
 
-async function resumeTurn(turnId: string, sourceId: string, prompt: string, pendingOnly = false) {
-  const resumed = await transaction(async (client) => {
+async function resumeTurn(
+  turnId: string,
+  sourceId: string,
+  prompt: string,
+  pendingOnly = false,
+  client?: PoolClient,
+) {
+  const create = async (client: PoolClient) => {
     await lockThread(client);
     const turn = (
       await client.query(
@@ -541,8 +557,9 @@ async function resumeTurn(turnId: string, sourceId: string, prompt: string, pend
       client,
     });
     return true;
-  });
-  if (resumed) refresh();
+  };
+  const resumed = client ? await create(client) : await transaction(create);
+  if (resumed && !client) refresh();
   return resumed;
 }
 
@@ -551,14 +568,19 @@ export async function resumeAfterCredentials(turnId: string) {
     turnId,
     `credentials:${turnId}`,
     'The secure credential step has completed. Inspect the current browser and continue the request you were working on. Do not repeat completed external actions.',
+    true,
   );
+}
+
+export async function resumeAfterPayment(turnId: string, prompt: string, client?: PoolClient) {
+  await resumeTurn(turnId, `credentials:${turnId}`, prompt, true, client);
 }
 
 export async function retryCredentials(turnId: string) {
   await resumeTurn(
     turnId,
     `credentials-retry:${turnId}`,
-    'The previous secure sign-in link expired. Inspect the current browser and request a fresh secure credential link if sign-in is still required. Do not repeat completed actions.',
+    'The owner asked you to check the previous secure sign-in step. It may have reached the website. Inspect the current browser and check its result before you request a fresh link. Do not repeat a completed or uncertain external action.',
   );
 }
 
@@ -1000,7 +1022,14 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
       await current((client) => insertEvent(client, turnId, type, summary));
       refresh();
     };
-    const { reactToMessage, connections, browserConnection, observe, inspectPrompt } = dependencies;
+    const {
+      reactToMessage,
+      connections,
+      browserConnection,
+      prepareBrowser,
+      observe,
+      inspectPrompt,
+    } = dependencies;
     if (await dependencies.spendingLimitReached?.()) {
       await current((client) =>
         finishTurn(client, turnId, 'failed', { error: spendingLimitReached }),
@@ -1049,7 +1078,23 @@ async function executeTurn(turn: any, dependencies: ThreadDependencies) {
             locale: loaded.context.locale,
           }),
         ),
+      prepareBrowser: prepareBrowser && fenced(() => prepareBrowser(ref)),
       requestCredential: fenced((input) => dependencies.requestCredential(ref, input)),
+      ...(dependencies.requestPayment
+        ? {
+            requestPayment: fenced((input: unknown) =>
+              dependencies.requestPayment!(ref, input, async (image) => {
+                if (turn.channel === 'web')
+                  await attach(image, 'checkout.jpg', 'image/jpeg', '', true, 'browser_screenshot');
+              }),
+            ),
+          }
+        : {}),
+      ...(dependencies.paymentSetting
+        ? {
+            paymentSetting: fenced((input: unknown) => dependencies.paymentSetting!(ref, input)),
+          }
+        : {}),
       integration: fenced(async (action, args, callSignal?: AbortSignal) => {
         const operation = callSignal ? AbortSignal.any([signal, callSignal]) : signal;
         operation.throwIfAborted();

@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { JSDOM } from 'jsdom';
+import { fakeDevtools } from './browser-fixture.ts';
 import type { runProcess } from '../src/providers/process.ts';
 
 export class LoginPage {
@@ -12,7 +13,10 @@ export class LoginPage {
   next!: HTMLButtonElement;
   entered: string[] = [];
   closed = false;
+  document = 'loader-0';
+  isolated: Record<string, unknown> = {};
   focused?: HTMLInputElement;
+  afterInspect?(expression: string): void;
   refs = new Map<string, Element>();
   constructor() {
     this.dom.window.HTMLElement.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
@@ -24,6 +28,16 @@ export class LoginPage {
     this.render();
   }
   render() {
+    this.dom.window.document.execCommand = (command: string, _ui?: boolean, value?: string) => {
+      const node = this.dom.window.document.activeElement as HTMLInputElement;
+      if (!node || !('value' in node)) return false;
+      if (command === 'delete') node.value = '';
+      if (command === 'insertText') {
+        node.value += value ?? '';
+        node.dispatchEvent(new this.dom.window.Event('input', { bubbles: true }));
+      }
+      return true;
+    };
     this.dom.window.document.body.innerHTML = `<h1>Sign in ${this.stage}</h1><form><label>Account<input id="account"></label><button type="button" disabled>Next</button></form><input id="search" aria-label="Search"><div id="echo"></div>`;
     this.input = this.dom.window.document.querySelector('#account')!;
     this.input.name = this.stage;
@@ -78,7 +92,8 @@ export class LoginPage {
   }
   screen() {
     const echo = this.dom.window.document.querySelector<HTMLElement>('#echo')!;
-    return `Screen ${this.stage} ${echo.style.color === 'transparent' ? '[redacted]' : echo.textContent}`;
+    const style = this.dom.window.getComputedStyle(echo);
+    return `Screen ${this.stage} ${style.color === 'transparent' || style.opacity === '0' || style.visibility === 'hidden' ? '[redacted]' : echo.textContent}`;
   }
   async evaluate(script: string) {
     this.dom.reconfigure({ url: this.location.href });
@@ -88,20 +103,70 @@ export class LoginPage {
 
 export function stagedLoginBrowser() {
   const pages = new Map<string, LoginPage>();
+  const inspectors = new Map<string, Awaited<ReturnType<typeof fakeDevtools>>>();
+  let documents = 0;
   const run: typeof runProcess = async (_executable, args, options) => {
     const id = basename(args[args.indexOf('--profile') + 1]);
     let page = pages.get(id);
     if (!page) {
       page = new LoginPage();
       pages.set(id, page);
+      page.document = `loader-${++documents}`;
     }
     const command = args.slice(args.indexOf('--idle-timeout') + 2);
     let data: Record<string, unknown> = {};
+    if (command[0] === 'get' && command[1] === 'cdp-url' && !inspectors.has(id)) {
+      const target = page;
+      const inspector = await fakeDevtools({
+        get document() {
+          return target.document;
+        },
+        get frames() {
+          return [{ id: 'main', session: 'page', origin: target.location.origin }];
+        },
+        frameOf: {},
+        values: new Map(),
+        evaluate: (expression) => {
+          const value = new Function(
+            'document',
+            'globalThis',
+            'Event',
+            'NodeFilter',
+            'getComputedStyle',
+            'MutationObserver',
+            `return ${expression}`,
+          )(
+            target.dom.window.document,
+            target.isolated,
+            target.dom.window.Event,
+            target.dom.window.NodeFilter,
+            target.dom.window.getComputedStyle.bind(target.dom.window),
+            target.dom.window.MutationObserver,
+          );
+          target.afterInspect?.(expression);
+          return value;
+        },
+      });
+      inspectors.set(id, inspector);
+    }
+    if (command[0] === 'focus')
+      page.nodes(command[1])[0]?.dispatchEvent(new page.dom.window.Event('focus'));
+    if (command[0] === 'focus') (page.nodes(command[1])[0] as HTMLElement | undefined)?.focus();
+    if (command[0] === 'press' && command[1] === 'Enter') page.next.click();
+    if (command[0] === 'reload') {
+      page.dom.window.close();
+      page.dom = new JSDOM('', { url: page.location.href, runScripts: 'outside-only' });
+      page.isolated = {};
+      page.document = `loader-${++documents}`;
+      page.render();
+    }
     if (command[0] === 'get')
       data =
         command[1] === 'url'
           ? { url: page.location.href }
-          : { value: page.nodes(command[2])[0]?.getAttribute(command[3]) ?? null };
+          : command[1] === 'cdp-url'
+            ? { cdpUrl: inspectors.get(id)!.url }
+            : { value: page.nodes(command[2])[0]?.getAttribute(command[3]) ?? null };
     if (command[0] === 'eval') data = { result: await page.evaluate(options?.input ?? '') };
     if (command[0] === 'click') {
       const node = page.nodes(command[1])[0] as HTMLElement | undefined;
@@ -133,6 +198,8 @@ export function stagedLoginBrowser() {
       page.closed = true;
       page.dom.window.close();
       pages.delete(id);
+      await inspectors.get(id)?.close();
+      inspectors.delete(id);
     }
     return { stdout: JSON.stringify({ success: true, data }), stderr: '', exitCode: 0 };
   };

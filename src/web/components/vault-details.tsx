@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Copy, Eye, EyeOff, ExternalLink, Trash2 } from 'lucide-react';
+import { Copy, Eye, EyeOff } from 'lucide-react';
 import type {
   VaultEntry,
   VaultEntryDetails,
@@ -51,12 +51,18 @@ export function VaultDetails({
   onClose,
   onSaved,
   onDeleted,
+  hosted = false,
+  visible = true,
+  children,
 }: {
   entry: VaultEntry;
+  hosted?: boolean;
+  visible?: boolean;
   autoFocus?: boolean;
   onClose(): void;
   onSaved(entry: VaultListEntry): void;
   onDeleted(id: string): void;
+  children?: React.ReactNode | ((details: VaultEntryDetails) => React.ReactNode);
 }) {
   const [details, setDetails] = useState<VaultEntryDetails | null>(null);
   const [detailsError, setDetailsError] = useState(false);
@@ -85,6 +91,7 @@ export function VaultDetails({
   const saveRequest = useRef<AbortController | null>(null);
   const actionGeneration = useRef(0);
   const isCard = entry.kind === 'card';
+  const unreadable = 'unreadable' in entry && entry.unreadable === true;
   const item = isCard ? 'card' : 'login';
   const identityName =
     details?.kind === 'login'
@@ -120,6 +127,10 @@ export function VaultDetails({
   const hideSecretsRef = useRef(hideSecrets);
   hideSecretsRef.current = hideSecrets;
 
+  useEffect(() => {
+    if (!visible) hideRevealed();
+  }, [visible]);
+
   async function loadDetails() {
     detailsRequest.current?.abort();
     const request = new AbortController();
@@ -141,7 +152,8 @@ export function VaultDetails({
 
   useEffect(() => {
     active.current = true;
-    void loadDetails();
+    if (unreadable) setDetailsError(true);
+    else void loadDetails();
     const clear = () => hideSecretsRef.current();
     const hidden = () => {
       if (document.hidden) clear();
@@ -214,6 +226,9 @@ export function VaultDetails({
     const hasSecurityCode =
       details.kind === 'card' &&
       (securityCode === null ? false : Boolean(securityCode) || details.hasSecurityCode);
+    const doItForMe =
+      details.kind === 'card' &&
+      (securityCode === null ? false : Boolean(securityCode) || details.doItForMe);
     let body = JSON.stringify(
       isCard
         ? {
@@ -261,7 +276,7 @@ export function VaultDetails({
         throw new Error('Unexpected item');
       setDetails(
         updated.kind === 'card'
-          ? { ...updated, cardholder, hasSecurityCode }
+          ? { ...updated, cardholder, hasSecurityCode, doItForMe }
           : { ...updated, username, hasPassword },
       );
       setFormRevision((value) => value + 1);
@@ -447,6 +462,7 @@ export function VaultDetails({
   }
 
   function editableValue(field: string, value: React.ReactNode) {
+    if (hosted && entry.kind === 'card') return <span className="vault-detail-value">{value}</span>;
     const label = `Edit ${field === 'label' ? 'name' : field === 'username' ? identityName.toLowerCase() : field}`;
     return (
       <button
@@ -508,16 +524,18 @@ export function VaultDetails({
               </Button>
             </>
           ) : (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-vault-edit
-              disabled={!details || saving}
-              onClick={() => startEditing()}
-            >
-              Edit
-            </Button>
+            !(hosted && entry.kind === 'card') && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-vault-edit
+                disabled={!details || saving}
+                onClick={() => startEditing()}
+              >
+                Edit
+              </Button>
+            )
           )}
         </div>
       </div>
@@ -526,15 +544,29 @@ export function VaultDetails({
           <VaultEntryIcon entry={entry} size={56} />
         </span>
         <VaultTitle>{name}</VaultTitle>
-        <p>{entry.kind === 'card' ? `${entry.brand} •••• ${entry.last4}` : host}</p>
+        <p>
+          {entry.kind === 'card' ? (
+            `${entry.brand} •••• ${entry.last4}`
+          ) : (
+            <a href={entry.origin} target="_blank" rel="noopener noreferrer">
+              {host}
+            </a>
+          )}
+        </p>
       </div>
       {!details ? (
         detailsError ? (
           <div className="vault-inset-note">
-            <Notice>This {item} could not be opened. Try again.</Notice>
-            <Button variant="outline" onClick={() => void loadDetails()}>
-              Try again
-            </Button>
+            <Notice>
+              {unreadable
+                ? 'The current Vault key can’t open this login. Restore the key or delete it.'
+                : `This ${item} could not be opened. Try again.`}
+            </Notice>
+            {!unreadable && (
+              <Button variant="outline" onClick={() => void loadDetails()}>
+                Try again
+              </Button>
+            )}
           </div>
         ) : (
           <Loading label={`Opening ${item}…`} />
@@ -553,6 +585,7 @@ export function VaultDetails({
             kind={entry.kind}
             details={details}
             disabled={saving}
+            hosted={hosted}
             onSecretChange={() => {
               hideRevealed();
               updateDirty();
@@ -561,22 +594,6 @@ export function VaultDetails({
         </form>
       ) : (
         <div className="vault-inset">
-          {field('Name', editableValue('label', name))}
-          {entry.kind === 'login' &&
-            field(
-              'Website',
-              <span className="vault-detail-value">{host}</span>,
-              <Button asChild variant="ghost" size="icon">
-                <a
-                  href={entry.origin}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Open ${host}`}
-                >
-                  <ExternalLink size={16} aria-hidden="true" />
-                </a>
-              </Button>,
-            )}
           {field(
             identityName,
             editableValue(
@@ -612,22 +629,20 @@ export function VaultDetails({
       <p className={notice ? 'vault-detail-status' : 'sr-only'} role="status" aria-live="polite">
         {notice}
       </p>
-      {details && !editing && (
-        <div className="vault-inset">
-          <button
-            ref={deleteTrigger}
-            type="button"
-            className="button button-ghost button-default vault-delete-row"
-            disabled={saving}
-            onClick={() => {
-              hideSecrets();
-              setDeleting(true);
-            }}
-          >
-            <Trash2 size={16} aria-hidden="true" />
-            Delete {item}
-          </button>
-        </div>
+      {details && !editing && (typeof children === 'function' ? children(details) : children)}
+      {(details || detailsError) && (
+        <button
+          ref={deleteTrigger}
+          type="button"
+          className="vault-delete"
+          disabled={saving}
+          onClick={() => {
+            hideSecrets();
+            setDeleting(true);
+          }}
+        >
+          Delete {item}
+        </button>
       )}
       <Dialog
         open={deleting}

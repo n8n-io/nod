@@ -2,21 +2,11 @@ import assert from 'node:assert/strict';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import {
-  link,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import test, { type TestContext } from 'node:test';
+import test from 'node:test';
 import { Composio } from '@composio/core';
 import pg from 'pg';
 import { browserDownloadBytes } from '../src/ports/computer.ts';
@@ -27,7 +17,6 @@ import {
   decodeDownload,
   downloadFile,
   readDownload,
-  waitForDownload,
 } from '../src/providers/agent-browser/downloads.ts';
 import { mcpFiles } from '../src/providers/app-files.ts';
 import { createComposioFiles } from '../src/providers/composio/downloads.ts';
@@ -43,40 +32,6 @@ import { createHttpObjectStore } from '../src/providers/object-storage/http.ts';
 import { createArtifactService } from '../src/server/artifacts.ts';
 import { createPostgresObjectStore } from '../src/server/object-storage.ts';
 import { browserDownloadPdf, createBrowserDownloadFixture } from './browser-download-fixture.ts';
-
-function downloadWaitProbe(t: TestContext) {
-  const controller = new AbortController();
-  let scanned!: () => void;
-  const scan = new Promise<void>((resolve) => {
-    scanned = resolve;
-  });
-  const check = controller.signal.throwIfAborted.bind(controller.signal);
-  let checks = 0;
-  t.mock.method(controller.signal, 'throwIfAborted', () => {
-    check();
-    if (++checks === 2) scanned();
-  });
-  return {
-    controller,
-    async scan(pending: Promise<unknown>) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          scan,
-          pending.then(() => assert.fail('Capture completed before its scan.')),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error('The download scan did not start.')), 2000);
-          }),
-        ]);
-      } catch (error) {
-        controller.abort(error);
-        throw error;
-      } finally {
-        clearTimeout(timer);
-      }
-    },
-  };
-}
 
 async function createDownloadBrowser(root: string) {
   const socketPath = join(root, 'control.sock');
@@ -163,46 +118,6 @@ test('browser file validation bounds encoded bytes and rejects unsafe metadata',
   assert.throws(() => downloadFile(Buffer.from('text'), 'file', 'text/html\r\nX-Header: value'));
 });
 
-test('no-target capture refuses replaced directories and unsafe native files', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'sk-download-unsafe-'));
-  try {
-    for (const kind of ['symlink', 'hardlink', 'oversized', 'entries', 'directory'] as const) {
-      await t.test(kind, async () => {
-        const directory = join(root, kind);
-        await mkdir(directory);
-        await writeFile(join(root, `${kind}.pdf`), browserDownloadPdf);
-        if (kind === 'symlink') await symlink(join(root, `${kind}.pdf`), join(directory, 'file'));
-        if (kind === 'hardlink') await link(join(root, `${kind}.pdf`), join(directory, 'file'));
-        if (kind === 'oversized')
-          await writeFile(
-            join(directory, 'file.crdownload'),
-            Buffer.alloc(browserDownloadBytes + 1),
-          );
-        if (kind === 'entries')
-          await Promise.all(
-            Array.from({ length: 65 }, (_, index) => writeFile(join(directory, `${index}`), 'x')),
-          );
-        if (kind === 'directory') await mkdir(join(directory, 'file'));
-        await assert.rejects(waitForDownload(directory));
-      });
-    }
-    const directory = join(root, 'replaced');
-    await mkdir(directory);
-    await writeFile(join(directory, 'file.crdownload'), browserDownloadPdf);
-    const probe = downloadWaitProbe(t);
-    const pending = waitForDownload(directory, probe.controller.signal);
-    void pending.catch(() => {});
-    await probe.scan(pending);
-    await rename(directory, join(root, 'original'));
-    await mkdir(directory);
-    await writeFile(join(directory, 'replacement.pdf'), browserDownloadPdf);
-    await assert.rejects(pending, /directory/);
-    assert.deepEqual(await readFile(join(root, 'original', 'file.crdownload')), browserDownloadPdf);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test('browser captures refuse symlinks, partial files, multiple links and excessive file size', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sk-download-files-'));
   try {
@@ -213,6 +128,8 @@ test('browser captures refuse symlinks, partial files, multiple links and excess
     await writeFile(join(directory, 'partial.crdownload'), browserDownloadPdf);
     assert.deepEqual(await completedDownloads(directory), []);
     await assert.rejects(readDownload(directory, 'private.pdf'));
+    await link(join(root, 'private'), join(directory, 'linked.pdf'));
+    await assert.rejects(readDownload(directory, 'linked.pdf'));
     await assert.rejects(readDownload(directory, '../private'));
     await writeFile(join(directory, 'invoice.pdf'), browserDownloadPdf);
     assert.deepEqual((await readDownload(directory, 'invoice.pdf')).bytes, browserDownloadPdf);
@@ -224,6 +141,94 @@ test('browser captures refuse symlinks, partial files, multiple links and excess
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test(
+  'native browser actions keep generated PDF tabs usable after a failed download',
+  { skip: !process.env.OTTO_TEST_BROWSER_EXECUTABLE, timeout: 90_000 },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'otto-blob-pdf-'));
+    try {
+      const fixture = await createBrowserDownloadFixture();
+      try {
+        const bridge = await createDownloadBrowser(root);
+        try {
+          const computer = bridge.computer;
+          await computer.act('blob-view', { action: 'open', url: `${fixture.origin}/session` });
+          const notes = 'Typed €\nSecond line';
+          await computer.act('blob-view', { action: 'type', selector: '#notes', text: notes });
+          await computer.act('blob-view', { action: 'select', selector: '#format', text: 'pdf' });
+          await computer.act('blob-view', { action: 'check', selector: '#copy' });
+          const fields = await computer.act('blob-view', {
+            action: 'evaluate',
+            script: `({notes: document.querySelector('#notes').value, enter: window.keys.includes('Enter'), format: document.querySelector('#format').value, copy: document.querySelector('#copy').checked})`,
+          });
+          assert.deepEqual(JSON.parse(fields.text.split('\n')[1]), {
+            notes,
+            enter: true,
+            format: 'pdf',
+            copy: true,
+          });
+          await computer.act('blob-view', { action: 'uncheck', selector: '#copy' });
+          const unchecked = await computer.act('blob-view', {
+            action: 'evaluate',
+            script: `document.querySelector('#copy').checked`,
+          });
+          assert.equal(JSON.parse(unchecked.text.split('\n')[1]), false);
+          const longNotes = 'Synthetic document text.\n'.repeat(2000);
+          await computer.act('blob-view', { action: 'fill', selector: '#notes', text: longNotes });
+          const documentText = await computer.act('blob-view', {
+            action: 'evaluate',
+            script: `document.querySelector('#notes').value`,
+          });
+          assert.equal(JSON.parse(documentText.text.split('\n')[1]), longNotes);
+          const ready = await computer.act('blob-view', {
+            action: 'wait',
+            text: 'Download invoice',
+            waitMs: 90_000,
+          });
+          assert.match(ready.text, /Download invoice/);
+          await computer.injectCredentials({
+            threadId: 'blob-view',
+            origin: fixture.origin,
+            kind: 'identifier',
+            username: 'synthetic-download@example.test',
+            usernameSelector: '#identifier',
+            submitSelector: '#continue',
+          });
+          await assert.rejects(computer.download!('blob-view', { selector: '#blob-view' }));
+          let tabId: string | undefined;
+          const deadline = Date.now() + 5000;
+          do {
+            const tabs = await computer.act('blob-view', { action: 'tab_list' });
+            tabId = /(?:Active|Open) (\S+): blob:/.exec(tabs.text)?.[1];
+          } while (!tabId && Date.now() < deadline);
+          assert.ok(tabId);
+          const view = await computer.act('blob-view', { action: 'tab_switch', tabId });
+          assert.equal(new URL(view.url).protocol, 'blob:');
+          await computer.act('blob-view', { action: 'snapshot' });
+          assert.match(
+            (
+              await computer.act('blob-view', {
+                action: 'evaluate',
+                script: 'document.contentType',
+              })
+            ).text,
+            /application\/pdf/,
+          );
+          await assert.rejects(computer.currentPage('blob-view'));
+          assert.deepEqual((await computer.download!('blob-view', {})).bytes, browserDownloadPdf);
+          assert.equal(fixture.unauthenticatedDownloads(), 0);
+        } finally {
+          await bridge.close();
+        }
+      } finally {
+        await fixture.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   'authenticated browser PDFs cross the real private bridge without sharing the profile',

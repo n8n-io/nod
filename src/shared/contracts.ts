@@ -38,6 +38,7 @@ export interface VerificationRequest {
   id: string;
   turnId: string;
   expiresAt: string;
+  kind: 'otp' | 'payment';
 }
 export interface Turn {
   id: string;
@@ -75,7 +76,8 @@ export interface VaultCardEntry {
   updatedAt: string;
 }
 export type VaultEntry = VaultLoginEntry | VaultCardEntry;
-export type VaultListEntry = (VaultLoginEntry & { username: string }) | VaultCardEntry;
+export type VaultListEntry =
+  (VaultLoginEntry & { username: string; unreadable?: true }) | VaultCardEntry;
 export interface VaultLoginDetails extends VaultLoginEntry {
   username: string;
   hasPassword: boolean;
@@ -83,6 +85,7 @@ export interface VaultLoginDetails extends VaultLoginEntry {
 interface VaultCardDetails extends VaultCardEntry {
   cardholder: string;
   hasSecurityCode: boolean;
+  doItForMe: boolean;
 }
 export type VaultEntryDetails = VaultLoginDetails | VaultCardDetails;
 export interface VaultEntryPassword {
@@ -94,6 +97,78 @@ export interface VaultCardNumber {
 export interface VaultCardSecurityCode {
   securityCode: string;
 }
+export type VaultActivityReason =
+  | 'asked'
+  | 'schedule'
+  | 'always'
+  | 'allowed'
+  | 'revoked'
+  | 'entered'
+  | 'picked'
+  | 'mailbox'
+  | 'readonly'
+  | 'background'
+  | 'injection'
+  | 'unrequested'
+  | 'payment'
+  | 'chat_app'
+  | 'code_typed'
+  | 'said_yes'
+  | 'owner';
+export interface VaultActivityEntry {
+  id: string;
+  at: string;
+  action:
+    | 'sign_in'
+    | 'session'
+    | 'code'
+    | 'held'
+    | 'asked'
+    | 'card'
+    | 'uncertain'
+    | 'permission'
+    | 'reveal';
+  origin: string;
+  itemId?: string;
+  itemKind?: 'login' | 'session' | 'card';
+  amount?: { minor: number; currency: string };
+  task: string;
+  reason: VaultActivityReason;
+}
+export interface VaultActivity {
+  week: { signIns: number; payments: number; held: number };
+  entries: VaultActivityEntry[];
+  next?: { at: string; id: string };
+}
+export interface VaultPaymentCard {
+  id: string;
+  version: string;
+  label: string;
+  brand: string;
+  last4: string;
+  doItForMe: boolean;
+  choice: boolean | null;
+}
+export interface VaultImportResult {
+  imported: number;
+  existing: number;
+  skipped: number;
+}
+
+export interface VaultPermission {
+  id: string;
+  origin: string;
+  createdAt: string;
+}
+export interface VaultSession {
+  kind: 'session';
+  id: string;
+  label: string;
+  origin: string;
+  url: string;
+  state: 'pending' | 'saved' | 'needs_sign_in' | 'disconnecting';
+  checkedAt?: string;
+}
 export interface CredentialRequest {
   id: string;
   turnId: string;
@@ -101,7 +176,7 @@ export interface CredentialRequest {
   label: string;
   kind: 'identifier' | 'password' | 'otp';
   fields?: { kind: 'identifier' | 'password' | 'otp'; selector: string; label: string }[];
-  status: 'pending' | 'filled' | 'expired';
+  status: 'pending' | 'entering' | 'uncertain' | 'filled' | 'expired';
   expiresAt: string;
   savedEntries?: VaultLoginEntry[];
   selectedEntryId?: string;
@@ -249,4 +324,12 @@ export interface ChannelSetupSummary {
   allowedUserId?: string;
   pairingCandidate?: { id: string; name: string; username?: string };
   pairingExpiresAt?: string;
+}
+export interface PaymentRequest {
+  origin: string;
+  amount: string;
+  card: string;
+  destinations: string[];
+  needsCode: boolean;
+  keepCode: boolean;
 }

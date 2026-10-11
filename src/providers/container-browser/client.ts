@@ -1,3 +1,4 @@
+import { browserErrorMessage, type BrowserErrorCode } from '../../shared/browser-errors.ts';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -12,6 +13,8 @@ import type { CommandProcess } from '../command-process.ts';
 import { browserUrl } from '../agent-browser/network.ts';
 import {
   browserFrame,
+  browserCredentialInput,
+  browserCardInput,
   browserRequest,
   browserResponse,
   imageBytes,
@@ -23,9 +26,7 @@ import {
 } from './protocol.ts';
 
 const viewFrameLine = 4 * 1024 * 1024 + 256;
-const observationSchema = z
-  .object({ text: z.string().max(256 * 1024), url: z.string().max(8192) })
-  .strict();
+const observationSchema = z.object({ text: z.string(), url: z.string() }).strict();
 
 export function createBridgeComputer(options: {
   namespace: string;
@@ -146,9 +147,9 @@ export function createBridgeComputer(options: {
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
       const timeoutMs =
         input.method === 'act' && input.input.action === 'open'
-          ? (options.openTimeoutMs ?? Math.max(options.timeoutMs ?? 60_000, 150_000))
-          : (options.timeoutMs ?? 60_000);
-      const timer = setTimeout(() => cancel(), timeoutMs);
+          ? (options.openTimeoutMs ?? options.timeoutMs)
+          : options.timeoutMs;
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => cancel(), timeoutMs);
       const cleanup = () => {
         clearTimeout(timer);
         clearTimeout(drainTimer);
@@ -201,16 +202,8 @@ export function createBridgeComputer(options: {
         if (cancelling || (!response.ok && response.error === 'cancelled'))
           return reject(new Error('Browser operation cancelled.'));
         if (response.ok) return resolve(response.result);
-        if (response.error === 'navigation')
-          return reject(new BrowserActionError('browser_navigation_failed'));
-        if (response.error === 'click_intercepted')
-          return reject(new BrowserActionError('browser_click_intercepted'));
-        if (response.error === 'dialog')
-          return reject(new BrowserActionError('browser_dialog_open'));
-        if (response.error === 'action')
-          return reject(new BrowserActionError('browser_action_failed'));
-        if (response.error === 'observation')
-          return reject(new BrowserActionError('browser_observation_failed'));
+        if (browserErrorMessage(response.error))
+          return reject(new BrowserActionError(response.error as BrowserErrorCode));
         if (response.error === 'locked') {
           const error = new Error('Browser observations are paused during credential entry.');
           return reject(Object.assign(error, { statusCode: 423 }));
@@ -306,8 +299,8 @@ export function createBridgeComputer(options: {
       return result;
     },
     currentSession: () => currentSession,
-    bindProfile: async (id, profileId) => {
-      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId });
+    bindProfile: async (id, profileId, origins) => {
+      await call({ method: 'bindProfile', threadId: threadIdentity(id), profileId, origins });
       screens.delete(threadIdentity(id));
     },
     deleteProfile: async (profileId) => {
@@ -379,17 +372,35 @@ export function createBridgeComputer(options: {
         .object({ origin: z.string().max(2048), url: z.string().max(8192) })
         .strict()
         .parse(await call({ method: 'currentPage', threadId: threadIdentity(id) })),
+    fillCard: async (input) => {
+      await call({
+        method: 'fillCard',
+        input: browserCardInput.parse({ ...input, threadId: threadIdentity(input.threadId) }),
+      });
+    },
+    cardDestinations: async (id, fields) =>
+      z
+        .object({
+          document: z.string().min(1).max(200),
+          destinations: z.partialRecord(
+            z.enum(['number', 'expiry', 'expiryMonth', 'expiryYear', 'securityCode', 'name']),
+            z.string().max(2048),
+          ),
+        })
+        .strict()
+        .parse(await call({ method: 'cardDestinations', threadId: threadIdentity(id), fields })),
+    checkoutImage: async (id) => {
+      const value = await call({ method: 'checkoutImage', threadId: threadIdentity(id) });
+      if (
+        typeof value !== 'string' ||
+        !value ||
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(value) ||
+        value.length > Math.ceil(imageBytes / 3) * 4
+      )
+        throw new Error('The checkout page could not be captured.');
+      return new Uint8Array(Buffer.from(value, 'base64'));
+    },
     injectCredentials: async (input) => {
-      const {
-        threadId: id,
-        origin,
-        kind,
-        username,
-        password,
-        code,
-        usernameSelector,
-        passwordSelector,
-      } = input;
       return (
         z
           .object({ status: z.literal('submitted') })
@@ -398,16 +409,10 @@ export function createBridgeComputer(options: {
           .parse(
             await call({
               method: 'injectCredentials',
-              input: {
-                threadId: threadIdentity(id),
-                origin,
-                kind,
-                username,
-                password,
-                code,
-                usernameSelector,
-                passwordSelector,
-              },
+              input: browserCredentialInput.parse({
+                ...input,
+                threadId: threadIdentity(input.threadId),
+              }),
             }),
           ) ?? undefined
       );
@@ -420,6 +425,10 @@ export function createBridgeComputer(options: {
     },
     discard: async (id) => {
       await call({ method: 'discard', threadId: threadIdentity(id) });
+      screens.delete(threadIdentity(id));
+    },
+    signOut: async (id) => {
+      await call({ method: 'signOut', threadId: threadIdentity(id) });
       screens.delete(threadIdentity(id));
     },
     dispose: () => {

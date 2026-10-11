@@ -128,9 +128,7 @@ type IntegrationOptions = {
   refresh?(): void;
   discovered?: Awaited<ReturnType<typeof createDiscoveredConnections>>;
   browserAccounts?: () => Promise<VaultLoginEntry[]>;
-  removeBrowserAccount?: (id: string) => Promise<void>;
   browserConnections?: () => Promise<Connection[]>;
-  removeBrowserConnection?: (id: string) => Promise<unknown>;
   icon?: (origin: string) => Promise<SiteIcon | null>;
 };
 
@@ -2188,7 +2186,11 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
                 : 'The connection provider could not complete this request.',
         });
       });
-      scope.get('/api/apps', async () => list());
+      scope.get('/api/apps', async () =>
+        (await list()).filter(
+          (connection) => !connection.accessPaths?.some((path) => path.kind === 'browser'),
+        ),
+      );
       scope.get('/api/apps/catalog', async () => catalog());
       scope.post('/api/apps/setup-status', async (request, reply) => {
         const { hashes, connectionIds, pairingUrl } = z
@@ -2393,27 +2395,6 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
         async (request) => {
           const id = z.uuid().parse(request.params.connectionId);
           if (
-            (await options.browserConnections?.())?.some(
-              (entry) => entry.connectionId === id && entry.slug === request.params.slug,
-            )
-          ) {
-            if (!options.removeBrowserConnection)
-              throw new IntegrationError('This account is unavailable.', 503);
-            await options.removeBrowserConnection(id);
-            options.refresh?.();
-            return { ok: true };
-          }
-          const browser = ((await options.browserAccounts?.()) ?? []).find(
-            (entry) => entry.id === id && browserService(entry.origin).slug === request.params.slug,
-          );
-          if (browser) {
-            if (!options.removeBrowserAccount)
-              throw new IntegrationError('This account is unavailable.', 503);
-            await options.removeBrowserAccount(id);
-            options.refresh?.();
-            return { ok: true };
-          }
-          if (
             (await options.discovered?.list())?.some(
               (entry) => entry.connectionId === id && entry.slug === request.params.slug,
             )
@@ -2533,8 +2514,13 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
           hasMore: matches.length > 30,
         };
       }
-      if (action === 'list')
-        return (await list())
+      if (action === 'list') {
+        const site = (z.string().trim().max(200).optional().parse(query) ?? '')
+          .toLowerCase()
+          .replace(/^[a-z][a-z\d+.-]*:\/\//, '')
+          .replace(/^www\./, '')
+          .split('/')[0]!;
+        const connections = (await list())
           .filter(
             (connection) =>
               !connection.accessPaths?.some((path) => path.kind === 'browser') ||
@@ -2545,6 +2531,36 @@ export async function createIntegrations(pool: Pool, options: IntegrationOptions
             ...connection,
             ...(connection.browserState ? { browserAccess: 'browser_session' } : {}),
           }));
+        const logins = connections.filter((connection) => connection.savedLogin);
+        const matching = site
+          ? logins.filter((connection) => {
+              const origin = connection.accessPaths?.[0]?.endpoint;
+              if (site.includes('.') || site.includes(':')) {
+                try {
+                  return new URL(origin!).host.toLowerCase().replace(/^www\./, '') === site;
+                } catch {
+                  return false;
+                }
+              }
+              return ` ${[connection.name, connection.accountName]
+                .join(' ')
+                .toLowerCase()
+                .replace(/[^\p{L}\p{N}]+/gu, ' ')} `.includes(` ${site} `);
+            })
+          : logins.slice(0, 20);
+        return [
+          ...connections.filter((connection) => !connection.savedLogin),
+          ...matching,
+          ...(matching.length < logins.length && !site
+            ? [
+                {
+                  savedLogins: logins.length,
+                  note: 'Call list with query set to the website or service to see its saved logins.',
+                },
+              ]
+            : []),
+        ];
+      }
       if (action === 'propose') {
         if (!options.discovered)
           throw new IntegrationError('Discovered connections are unavailable.', 503);

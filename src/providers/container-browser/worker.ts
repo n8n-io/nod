@@ -38,7 +38,7 @@ function metadata(computer?: Computer, request?: BrowserRequest): BrowserMetadat
     request &&
     ('threadId' in request
       ? request.threadId
-      : request.method === 'injectCredentials'
+      : request.method === 'injectCredentials' || request.method === 'fillCard'
         ? request.input.threadId
         : undefined);
   try {
@@ -58,7 +58,7 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
   switch (request.method) {
     case 'bindProfile':
       if (!computer.bindProfile) throw new Error();
-      return computer.bindProfile(request.threadId, request.profileId);
+      return computer.bindProfile(request.threadId, request.profileId, request.origins);
     case 'deleteProfile':
       if (!computer.deleteProfile) throw new Error();
       return computer.deleteProfile(request.profileId);
@@ -107,6 +107,16 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
       return computer.currentPage(request.threadId);
     case 'injectCredentials':
       return computer.injectCredentials(request.input);
+    case 'fillCard':
+      await computer.fillCard(request.input);
+      return null;
+    case 'cardDestinations':
+      return computer.cardDestinations(request.threadId, request.fields);
+    case 'checkoutImage': {
+      const image = await computer.checkoutImage(request.threadId);
+      if (!image.length || image.length > imageBytes) throw new Error();
+      return Buffer.from(image).toString('base64');
+    }
     case 'hold':
       return computer.hold(request.threadId, request.until);
     case 'close':
@@ -114,6 +124,8 @@ async function dispatch(computer: Computer, request: BrowserRequest, signal: Abo
     case 'discard':
       if (!computer.discard) throw new Error();
       return computer.discard(request.threadId);
+    case 'signOut':
+      return computer.signOut(request.threadId);
     case 'status':
       return null;
     case 'view':
@@ -235,7 +247,6 @@ export async function startContainerBrowserWorker(
       if (!terminal && request && !['quiesce', 'view'].includes(request.method))
         void dispose(request.namespace).catch(() => {});
     });
-    socket.setTimeout(90_000, stop);
     const view = async (computer: Computer, threadId: string, id: string) => {
       if (!computer.view || !computer.control) throw new Error();
       let sent = 0;
@@ -294,20 +305,11 @@ export async function startContainerBrowserWorker(
           ok: false,
           error: controller.signal.aborted
             ? 'cancelled'
-            : error instanceof BrowserActionError && error.code === 'browser_click_intercepted'
-              ? 'click_intercepted'
-              : error instanceof BrowserActionError && error.code === 'browser_navigation_failed'
-                ? 'navigation'
-                : error instanceof BrowserActionError && error.code === 'browser_dialog_open'
-                  ? 'dialog'
-                  : error instanceof BrowserActionError && error.code === 'browser_action_failed'
-                    ? 'action'
-                    : error instanceof BrowserActionError &&
-                        error.code === 'browser_observation_failed'
-                      ? 'observation'
-                      : error instanceof Error && 'statusCode' in error && error.statusCode === 423
-                        ? 'locked'
-                        : 'unavailable',
+            : error instanceof BrowserActionError
+              ? error.code
+              : error instanceof Error && 'statusCode' in error && error.statusCode === 423
+                ? 'locked'
+                : 'unavailable',
           metadata: metadata(await entry?.computer.catch(() => undefined), input),
         };
       } finally {

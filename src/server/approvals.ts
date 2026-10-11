@@ -116,6 +116,7 @@ export async function turnOrigin(turnId: string) {
     if (!chain || !origin) return undefined;
     return {
       source: origin.source,
+      channel: current.channel,
       readOnly: readOnlyChain(chain),
       scheduleInstruction:
         origin.source === 'schedule'
@@ -182,7 +183,7 @@ export async function createApprovals(
       const snapshot = JSON.parse(JSON.stringify(result ?? null));
       await pool.query(
         "UPDATE approvals SET status='completed',result=$2 WHERE id=$1 AND owner_id=$3 AND status='executing'",
-        [approval.id, snapshot, ownerId],
+        [approval.id, JSON.stringify(snapshot), ownerId],
       );
       return snapshot;
     } catch (error) {

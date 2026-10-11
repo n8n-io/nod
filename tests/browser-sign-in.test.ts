@@ -70,6 +70,16 @@ test(
       assert.equal(opened.status, 'profile_opened');
       assert.ok('connectionId' in opened);
       const connectionId = opened.connectionId;
+      assert.deepEqual(
+        await service.target({ action: 'use', url: 'https://example.test/login', connectionId }),
+        {
+          origin: 'https://example.test',
+          account: 'example.test',
+          kind: 'session',
+          itemId: connectionId,
+          destinations: [],
+        },
+      );
       assert.equal(
         (
           await service.request(
@@ -198,6 +208,35 @@ test(
         other.request({ action: 'use', url: 'https://example.test/', connectionId }, foreign),
         /unavailable/,
       );
+      assert.deepEqual(
+        await service.target({ action: 'use', url: 'https://other.test/deep', connectionId }),
+        {
+          origin: 'https://other.test',
+          account: (await service.sessions())[0]!.label,
+          kind: 'session',
+          itemId: connectionId,
+          destinations: [],
+        },
+      );
+      assert.equal(
+        await service.target({ action: 'connect', url: 'https://new.test/a' }),
+        undefined,
+      );
+      assert.equal(await service.target(save), undefined);
+      assert.equal(
+        await other.target({ action: 'use', url: 'https://example.test/', connectionId }),
+        undefined,
+      );
+      assert.deepEqual(
+        (await service.sessions()).map((session) => [session.kind, session.origin]),
+        [['session', 'https://example.test']],
+      );
+      assert.deepEqual(await other.sessions(), []);
+      await pool.query(
+        "UPDATE browser_connections SET start_url='https://example.test/login?token=synthetic-private#code' WHERE id=$1",
+        [connectionId],
+      );
+      assert.equal((await service.sessions())[0]!.url, 'https://example.test/login');
       await pool.query("UPDATE turns SET status='completed' WHERE id=$1", [second.turnId]);
       await assert.rejects(
         service.request({ action: 'use', url: 'https://example.test/', connectionId }, second),
@@ -205,6 +244,14 @@ test(
       );
       await service.disconnect(connectionId);
       assert.deepEqual(removed, [bindings[0]]);
+      await pool.query(
+        "INSERT INTO browser_connections(id,owner_id,origin,start_url,label,profile_id,state) VALUES($1,'owner-a','https://example.test','https://example.test','Synthetic', $2,'disconnecting')",
+        [connectionId, randomUUID()],
+      );
+      assert.equal(
+        await service.target({ action: 'use', url: 'https://example.test/', connectionId }),
+        undefined,
+      );
     } finally {
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);

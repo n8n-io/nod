@@ -43,79 +43,82 @@ export async function createFixtureProxy(
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
   };
-  let upstream: URL | undefined;
-  const proxy = createServer((request, response) => {
-    if (!upstream || hermetic) return void response.writeHead(hermetic ? 403 : 503).end();
-    const forward = httpRequest(
-      upstream,
-      { method: request.method, path: request.url, headers: request.headers },
-      (result) => {
-        response.writeHead(result.statusCode || 502, result.headers);
-        result.pipe(response);
-      },
-    );
-    forward.on('error', () => response.destroy());
-    request.pipe(forward);
-  });
-  proxy.on('connection', track);
-  proxy.on('connect', (request, socket, head) => {
-    if (hosts.some((host) => request.url === `${host}:443`)) {
-      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      if (head.length) socket.unshift(head);
-      https.emit('connection', socket);
-      return;
-    }
-    if (!upstream || hermetic) return socket.destroy();
-    const forward = httpRequest(upstream, {
-      method: 'CONNECT',
-      path: request.url,
-      headers: { host: request.url || '' },
-    });
-    forward.on('socket', track);
-    socket.on('close', () => forward.destroy());
-    socket.on('error', () => forward.destroy());
-    forward.on('connect', (response, remote, remoteHead) => {
-      socket.write(
-        `HTTP/1.1 ${response.statusCode || 502} ${response.statusMessage || ''}\r\n\r\n`,
+  const proxies = new Map<string, Promise<string>>();
+  const servers = new Set<ReturnType<typeof createServer>>();
+  function upstreamProxy(value: string) {
+    const upstream = new URL(value);
+    if (upstream.protocol !== 'http:' || upstream.hostname !== '127.0.0.1')
+      throw new Error('The fixture proxy requires the production loopback guard.');
+    let ready = proxies.get(upstream.href);
+    if (ready) return ready;
+    const proxy = createServer((request, response) => {
+      if (hermetic) return void response.writeHead(hermetic ? 403 : 503).end();
+      const forward = httpRequest(
+        upstream,
+        { method: request.method, path: request.url, headers: request.headers },
+        (result) => {
+          response.writeHead(result.statusCode || 502, result.headers);
+          result.pipe(response);
+        },
       );
-      if (response.statusCode !== 200) {
-        remote.destroy();
-        socket.destroy();
+      forward.on('error', () => response.destroy());
+      request.pipe(forward);
+    });
+    proxy.on('connection', track);
+    proxy.on('connect', (request, socket, head) => {
+      if (hosts.some((host) => request.url === `${host}:443`)) {
+        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (head.length) socket.unshift(head);
+        https.emit('connection', socket);
         return;
       }
-      if (remoteHead.length) socket.write(remoteHead);
-      if (head.length) remote.write(head);
-      remote.on('error', () => socket.destroy());
-      remote.on('close', () => {
-        if (!remote.readableEnded) socket.destroy();
+      if (hermetic) return socket.destroy();
+      const forward = httpRequest(upstream, {
+        method: 'CONNECT',
+        path: request.url,
+        headers: { host: request.url || '' },
       });
-      socket.on('error', () => remote.destroy());
-      socket.on('close', () => remote.destroy());
-      remote.pipe(socket).pipe(remote);
+      forward.on('socket', track);
+      socket.on('close', () => forward.destroy());
+      socket.on('error', () => forward.destroy());
+      forward.on('connect', (response, remote, remoteHead) => {
+        socket.write(
+          `HTTP/1.1 ${response.statusCode || 502} ${response.statusMessage || ''}\r\n\r\n`,
+        );
+        if (response.statusCode !== 200) {
+          remote.destroy();
+          socket.destroy();
+          return;
+        }
+        if (remoteHead.length) socket.write(remoteHead);
+        if (head.length) remote.write(head);
+        remote.on('error', () => socket.destroy());
+        remote.on('close', () => {
+          if (!remote.readableEnded) socket.destroy();
+        });
+        socket.on('error', () => remote.destroy());
+        socket.on('close', () => remote.destroy());
+        remote.pipe(socket).pipe(remote);
+      });
+      forward.on('error', () => socket.destroy());
+      forward.end();
     });
-    forward.on('error', () => socket.destroy());
-    forward.end();
-  });
-  await new Promise<void>((resolve, reject) => {
-    proxy.once('error', reject);
-    proxy.listen(0, '127.0.0.1', resolve);
-  });
-  const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
-  function upstreamProxy(value: string) {
-    const target = new URL(value);
-    if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1')
-      throw new Error('The fixture proxy requires the production loopback guard.');
-    if (upstream && upstream.href !== target.href)
-      throw new Error('The browser guard changed unexpectedly.');
-    upstream = target;
-    return proxyUrl;
+    servers.add(proxy);
+    ready = new Promise<string>((resolve, reject) => {
+      proxy.once('error', reject);
+      proxy.listen(0, '127.0.0.1', () =>
+        resolve(`http://127.0.0.1:${(proxy.address() as AddressInfo).port}`),
+      );
+    });
+    proxies.set(upstream.href, ready);
+    return ready;
   }
   return {
     run: (async (command, args, options) => {
       const values = [...args];
       const proxyIndex = values.indexOf('--proxy');
       if (proxyIndex >= 0) {
-        values[proxyIndex + 1] = upstreamProxy(values[proxyIndex + 1]);
+        values[proxyIndex + 1] = await upstreamProxy(values[proxyIndex + 1]);
         const flags = values.indexOf('--args');
         if (flags < 0) throw new Error('Browser arguments were missing.');
         values[flags + 1] += `,--ignore-certificate-errors-spki-list=${fingerprint}`;
@@ -124,7 +127,9 @@ export async function createFixtureProxy(
     }) satisfies typeof runProcess,
     close: async () => {
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await Promise.all(
+        [...servers].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+      );
       https.close();
     },
   };

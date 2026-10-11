@@ -1,14 +1,115 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, KeyRound, LockKeyhole, ArrowUpRight } from 'lucide-react';
-import type { CredentialRequest } from '../../shared/contracts';
+import type { CredentialRequest, PaymentRequest } from '../../shared/contracts';
 import { api } from '../lib/api';
 import { originLabel, suggestLoginName } from '../lib/vault-name';
 import { returnToChat } from '../lib/navigation';
+import { subscribeAppEvents } from '../lib/app-events';
 import { Button, Field, Input, Loading, Notice } from '../components/ui';
 import { BrandMark } from '../components/brand';
 
 export function Credentials({ id }: { id: string }) {
   return <CredentialForm key={id} id={id} />;
+}
+
+export function Payment({ id }: { id: string }) {
+  const [request, setRequest] = useState<PaymentRequest>();
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const action = useRef<AbortController | null>(null);
+  const path = `/api/payment-requests/${encodeURIComponent(id)}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    void api<PaymentRequest>(path, { signal: controller.signal, cache: 'no-store' })
+      .then(setRequest)
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setError('This payment request is unavailable. Ask Otto to check the checkout.');
+      });
+    return () => {
+      controller.abort();
+      action.current?.abort();
+    };
+  }, [path]);
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!request || action.current) return;
+    const form = event.currentTarget;
+    const code = new FormData(form).get('code');
+    form.reset();
+    const controller = new AbortController();
+    action.current = controller;
+    setSaving(true);
+    setError('');
+    try {
+      await api(path, {
+        method: 'POST',
+        body: JSON.stringify(code ? { code } : {}),
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted) setSubmitted(true);
+    } catch {
+      if (!controller.signal.aborted)
+        setError(
+          'The result is not confirmed. Ask Otto to check the order before another attempt.',
+        );
+    } finally {
+      if (!controller.signal.aborted) setSaving(false);
+      action.current = null;
+    }
+  }
+  return (
+    <main className="credential-page">
+      <a href="/" onClick={returnToChat} className="credential-brand" aria-label="Otto home">
+        <BrandMark />
+        <span>otto</span>
+      </a>
+      <div className="credential-card" data-analytics-private aria-busy={saving}>
+        <h1>{submitted ? 'Card submitted' : 'Approve payment'}</h1>
+        {submitted ? (
+          <p>Otto will check the result and continue your task in the same conversation.</p>
+        ) : request && !error ? (
+          <form onSubmit={(event) => void submit(event)}>
+            <p>
+              {request.amount} at {originLabel(request.origin)} with {request.card}
+            </p>
+            <p>Card details go to {request.destinations.map(originLabel).join(' and ')}.</p>
+            {request.needsCode && (
+              <Field label="Security code">
+                <Input
+                  name="code"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  pattern="[0-9]{3,4}"
+                  minLength={3}
+                  maxLength={4}
+                  required
+                  autoFocus
+                  disabled={saving}
+                />
+              </Field>
+            )}
+            {request.keepCode && (
+              <p>Otto will keep the code. Next time you can approve without it.</p>
+            )}
+            <Button type="submit" disabled={saving}>
+              {saving ? 'Submitting…' : `Pay ${request.amount}`}
+            </Button>
+          </form>
+        ) : (
+          !error && <Loading label="Opening secure payment…" />
+        )}
+        {error && <Notice>{error}</Notice>}
+        <Button variant="outline" asChild>
+          <a href="/" onClick={returnToChat}>
+            Back to Otto
+          </a>
+        </Button>
+      </div>
+    </main>
+  );
 }
 
 function CredentialForm({ id }: { id: string }) {
@@ -22,6 +123,35 @@ function CredentialForm({ id }: { id: string }) {
   const [now, setNow] = useState(Date.now());
   const [enterNew, setEnterNew] = useState(false);
   const [loginName, setLoginName] = useState<string>();
+  useEffect(() => {
+    if (request?.status !== 'entering') return;
+    const controller = new AbortController();
+    let latest = 0;
+    const refresh = () => {
+      const version = ++latest;
+      void api<CredentialRequest>(`/api/credential-requests/${encodeURIComponent(activeId)}`, {
+        signal: controller.signal,
+        cache: 'no-store',
+      })
+        .then((value) => {
+          if (!controller.signal.aborted && version === latest) setRequest(value);
+        })
+        .catch(() => {});
+    };
+    const unsubscribe = subscribeAppEvents(undefined, {
+      open: refresh,
+      error() {},
+      message: (event) => {
+        if (JSON.parse(event.data).type === 'refresh') refresh();
+      },
+    });
+    window.addEventListener('focus', refresh);
+    return () => {
+      controller.abort();
+      unsubscribe();
+      window.removeEventListener('focus', refresh);
+    };
+  }, [activeId, request?.status]);
   useEffect(() => {
     const current = ++generation.current;
     const controller = new AbortController();
@@ -48,8 +178,11 @@ function CredentialForm({ id }: { id: string }) {
       window.clearInterval(timer);
     };
   }, [activeId]);
+  const uncertain = request?.status === 'uncertain';
   const expired =
-    request?.status === 'expired' || (request && new Date(request.expiresAt).getTime() < now);
+    uncertain ||
+    request?.status === 'expired' ||
+    (request && new Date(request.expiresAt).getTime() < now);
   const filled = request?.status === 'filled';
   const fields = request?.fields ?? [];
   const username =
@@ -195,14 +328,27 @@ function CredentialForm({ id }: { id: string }) {
               </a>
             </Button>
           </div>
+        ) : request?.status === 'entering' ? (
+          <div className="credential-complete">
+            <h1>Private entry is in progress.</h1>
+            <p>Wait for this operation to finish.</p>
+          </div>
         ) : expired ? (
           <div className="credential-complete">
             <LockKeyhole size={32} />
-            <h1>{retried ? 'A new step is on its way.' : 'This link has expired.'}</h1>
+            <h1>
+              {retried
+                ? 'A new step is on its way.'
+                : uncertain
+                  ? 'The result is unknown.'
+                  : 'This link has expired.'}
+            </h1>
             <p>
               {retried
                 ? 'Return to chat for the next step.'
-                : 'Ask Otto to check the sign-in page again.'}
+                : uncertain
+                  ? 'The sign-in may have reached the website. Ask Otto to check its result before another attempt.'
+                  : 'Ask Otto to check the sign-in page again.'}
             </p>
             {!retried && (
               <Button disabled={saving} onClick={() => void retry()}>

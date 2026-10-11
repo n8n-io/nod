@@ -84,14 +84,38 @@ export interface CredentialInput {
   password?: string;
   code?: string;
   usernameSelector?: string;
-  passwordSelector?: string;
+  passwordSelector?: string | string[];
+  submitSelector?: string;
+}
+export type CardExpiryField = string | { selector: string; format: string; locale?: string };
+export interface CardFields {
+  number: string;
+  expiry?: CardExpiryField;
+  expiryMonth?: CardExpiryField;
+  expiryYear?: CardExpiryField;
+  securityCode?: string;
+  name?: string;
+}
+export interface CardEntry {
+  threadId: string;
+  fields: CardFields;
+  document: string;
+  destinations: Partial<Record<keyof CardFields, string>>;
+  submitSelector?: string;
+  card: {
+    cardNumber: string;
+    expiryMonth: number;
+    expiryYear: number;
+    cardholder: string;
+    securityCode?: string;
+  };
 }
 export interface CredentialSubmission {
   status: 'submitted';
 }
 export interface Computer {
   currentSession?(): { threadId: string; lastActivityAt: string } | undefined;
-  bindProfile?(threadId: string, profileId: string): Promise<void>;
+  bindProfile?(threadId: string, profileId: string, origins?: string[]): Promise<void>;
   deleteProfile?(profileId: string): Promise<void>;
   act(threadId: string, input: BrowserAction, signal?: AbortSignal): Promise<BrowserObservation>;
   download?(
@@ -112,10 +136,17 @@ export interface Computer {
     capturedAt?: string;
   };
   injectCredentials(input: CredentialInput): Promise<CredentialSubmission | void>;
+  fillCard(input: CardEntry): Promise<void>;
+  cardDestinations(
+    threadId: string,
+    fields: CardFields,
+  ): Promise<{ document: string; destinations: Partial<Record<keyof CardFields, string>> }>;
+  checkoutImage(threadId: string): Promise<Uint8Array>;
   currentPage(threadId: string): Promise<BrowserPage>;
   hold(threadId: string, until: number | null): Promise<void>;
   close(threadId: string): Promise<void>;
   discard?(threadId: string): Promise<void>;
+  signOut(threadId: string): Promise<void>;
   dispose(): Promise<void>;
   status(): string;
 }

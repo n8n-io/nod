@@ -1,3 +1,4 @@
+import { browserErrorCodes } from '../../shared/browser-errors.ts';
 import { z } from 'zod';
 import { browserUploadBytes } from '../../ports/computer.ts';
 import { browserHandoffInput } from '../../shared/browser-handoff.ts';
@@ -11,12 +12,12 @@ const identity = {
   namespace: z.string().regex(/^sk-[a-f0-9]{24}$/),
 };
 const thread = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
-const selector = z.string().min(1).max(500);
+const selector = z.string().min(1);
 const point = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict();
 export const browserDownloadInput = z
   .object({
     selector: selector.optional(),
-    url: z.string().min(1).max(8192).optional(),
+    url: z.string().min(1).optional(),
     name: z
       .string()
       .min(1)
@@ -51,37 +52,82 @@ const browserAction = z
       'accept_dialog',
       'dismiss_dialog',
     ]),
-    url: z.string().max(8192).optional(),
-    script: z.string().max(20_000).optional(),
+    url: z.string().optional(),
+    script: z.string().optional(),
     tabId: z.string().min(1).max(200).optional(),
     selector: selector.optional(),
     targetSelector: selector.optional(),
     x: z.number().min(0).max(1).optional(),
     y: z.number().min(0).max(1).optional(),
-    points: z.array(point).min(2).max(100).optional(),
-    durationMs: z.number().int().min(0).max(15_000).optional(),
-    text: z.string().max(20_000).optional(),
-    key: z.string().max(40).optional(),
+    points: z.array(point).min(2).optional(),
+    durationMs: z.number().int().min(0).optional(),
+    text: z.string().optional(),
+    key: z.string().optional(),
     load: z.enum(['load', 'domcontentloaded', 'networkidle']).optional(),
     direction: z.enum(['up', 'down']).optional(),
-    waitMs: z.number().int().min(0).max(15_000).optional(),
-    offset: z.number().int().min(0).max(100_000).optional(),
+    waitMs: z.number().int().min(0).optional(),
+    offset: z.number().int().min(0).optional(),
     timeZone: z.string().max(100).optional(),
     locale: z.string().max(35).optional(),
   })
   .strict();
-const credential = z
+export const browserCredentialInput = z.object({
+  threadId: thread,
+  origin: z.string().max(2048),
+  kind: z.enum(['identifier', 'password', 'otp']).optional(),
+  username: z.string().max(8192).optional(),
+  password: z.string().max(8192).optional(),
+  code: z.string().max(8192).optional(),
+  usernameSelector: selector.optional(),
+  passwordSelector: z.union([selector, z.array(selector).min(1).max(100)]).optional(),
+  submitSelector: selector.optional(),
+});
+
+const expiryField = z.union([
+  selector,
+  z
+    .object({ selector, format: z.string().min(1).max(100), locale: z.string().max(35).optional() })
+    .strict(),
+]);
+const cardFields = z
   .object({
-    threadId: thread,
-    origin: z.string().max(2048),
-    kind: z.enum(['identifier', 'password', 'otp']).optional(),
-    username: z.string().max(8192).optional(),
-    password: z.string().max(8192).optional(),
-    code: z.string().max(8192).optional(),
-    usernameSelector: selector.optional(),
-    passwordSelector: selector.optional(),
+    number: selector,
+    expiry: expiryField.optional(),
+    expiryMonth: expiryField.optional(),
+    expiryYear: expiryField.optional(),
+    securityCode: selector.optional(),
+    name: selector.optional(),
   })
   .strict();
+
+export const browserCardInput = z.object({
+  threadId: thread,
+  fields: cardFields,
+  submitSelector: selector.optional(),
+  document: z.string().min(1).max(200),
+  destinations: z
+    .object({
+      number: z.string().max(2048).optional(),
+      expiry: z.string().max(2048).optional(),
+      expiryMonth: z.string().max(2048).optional(),
+      expiryYear: z.string().max(2048).optional(),
+      securityCode: z.string().max(2048).optional(),
+      name: z.string().max(2048).optional(),
+    })
+    .strict(),
+  card: z
+    .object({
+      cardNumber: z.string().regex(/^\d{12,19}$/),
+      expiryMonth: z.number().int().min(1).max(12),
+      expiryYear: z.number().int().min(2000).max(9999),
+      cardholder: z.string().max(200),
+      securityCode: z
+        .string()
+        .regex(/^\d{3,4}$/)
+        .optional(),
+    })
+    .strict(),
+});
 
 export const browserRequest = z.discriminatedUnion('method', [
   z
@@ -93,6 +139,7 @@ export const browserRequest = z.discriminatedUnion('method', [
       method: z.literal('bindProfile'),
       threadId: thread,
       profileId: z.uuid(),
+      origins: z.array(z.string().max(2048)).max(100).optional(),
     })
     .strict(),
   z.object({ ...identity, method: z.literal('deleteProfile'), profileId: z.uuid() }).strict(),
@@ -128,7 +175,25 @@ export const browserRequest = z.discriminatedUnion('method', [
   z.object({ ...identity, method: z.literal('screenshot'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('view'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('currentPage'), threadId: thread }).strict(),
-  z.object({ ...identity, method: z.literal('injectCredentials'), input: credential }).strict(),
+  z
+    .object({
+      ...identity,
+      method: z.literal('injectCredentials'),
+      input: browserCredentialInput.strict(),
+    })
+    .strict(),
+  z
+    .object({ ...identity, method: z.literal('fillCard'), input: browserCardInput.strict() })
+    .strict(),
+  z
+    .object({
+      ...identity,
+      method: z.literal('cardDestinations'),
+      threadId: thread,
+      fields: cardFields,
+    })
+    .strict(),
+  z.object({ ...identity, method: z.literal('checkoutImage'), threadId: thread }).strict(),
   z
     .object({
       ...identity,
@@ -139,6 +204,7 @@ export const browserRequest = z.discriminatedUnion('method', [
     .strict(),
   z.object({ ...identity, method: z.literal('close'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('discard'), threadId: thread }).strict(),
+  z.object({ ...identity, method: z.literal('signOut'), threadId: thread }).strict(),
   z.object({ ...identity, method: z.literal('dispose') }).strict(),
   z.object({ ...identity, method: z.literal('quiesce') }).strict(),
   z.object({ ...identity, method: z.literal('status') }).strict(),
@@ -191,16 +257,7 @@ export const browserResponse = z.discriminatedUnion('ok', [
     .object({
       id: z.uuid(),
       ok: z.literal(false),
-      error: z.enum([
-        'cancelled',
-        'locked',
-        'navigation',
-        'click_intercepted',
-        'dialog',
-        'action',
-        'observation',
-        'unavailable',
-      ]),
+      error: z.union([z.enum(['cancelled', 'locked', 'unavailable']), z.enum(browserErrorCodes)]),
       metadata: browserMetadata,
     })
     .strict(),

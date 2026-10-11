@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { getDomain } from 'tldts';
 import { z } from 'zod';
 import type { Computer } from '../ports/computer.ts';
 import type { BrowserConnectionRequest } from '../ports/agent.ts';
-import type { Connection } from '../shared/contracts.ts';
+import type { Connection, VaultSession } from '../shared/contracts.ts';
 import type { TurnRef } from './thread.ts';
 
 const idSchema = z.uuid();
@@ -14,6 +15,7 @@ const requestSchema = z.discriminatedUnion('action', [
       action: z.literal('connect'),
       url: z.url().max(2048),
       label: z.string().trim().min(1).max(100).optional(),
+      destinations: z.array(z.url().max(2048)).max(20).optional(),
     })
     .strict(),
   z
@@ -24,7 +26,14 @@ const requestSchema = z.discriminatedUnion('action', [
       signedIn: z.literal(true),
     })
     .strict(),
-  z.object({ action: z.literal('use'), url: z.url().max(2048), connectionId: idSchema }).strict(),
+  z
+    .object({
+      action: z.literal('use'),
+      url: z.url().max(2048),
+      connectionId: idSchema,
+      destinations: z.array(z.url().max(2048)).max(20).optional(),
+    })
+    .strict(),
 ]);
 
 type Row = {
@@ -139,8 +148,17 @@ export async function createBrowserConnections(
     if (!parsed.success)
       return { status: 'rejected' as const, code: 'invalid_browser_connection_arguments' };
     let address: URL;
+    let origins: string[];
     try {
       address = site(parsed.data.url);
+      origins = [
+        ...new Set([
+          address.origin,
+          ...('destinations' in parsed.data ? (parsed.data.destinations ?? []) : []).map(
+            (value) => site(value).origin,
+          ),
+        ]),
+      ];
     } catch {
       return { status: 'rejected' as const, code: 'invalid_browser_connection_arguments' };
     }
@@ -165,7 +183,7 @@ export async function createBrowserConnections(
       );
       let bound = false;
       try {
-        await browser.bindProfile(turn.threadId, profileId);
+        await browser.bindProfile(turn.threadId, profileId, origins);
         bound = true;
         const observation = await browser.act(
           turn.threadId,
@@ -220,7 +238,7 @@ export async function createBrowserConnections(
       }
       if (!['saved', 'needs_sign_in', 'pending'].includes(row.state) || !browser.bindProfile)
         return { status: 'rejected' as const, code: 'browser_connection_unavailable' };
-      await browser.bindProfile(turn.threadId, row.profile_id);
+      await browser.bindProfile(turn.threadId, row.profile_id, origins);
       const observation = await browser.act(
         turn.threadId,
         { action: 'open', url: address.href, ...launch },
@@ -304,5 +322,99 @@ export async function createBrowserConnections(
     });
   }
 
-  return { request, list, disconnect };
+  async function target(
+    raw: unknown,
+  ): Promise<
+    | { origin: string; account: string; kind: 'session'; itemId: string; destinations: string[] }
+    | undefined
+  > {
+    const parsed = requestSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.action !== 'use') return undefined;
+    let address: URL;
+    let destinations: string[];
+    try {
+      address = site(parsed.data.url);
+      destinations = [
+        ...new Set((parsed.data.destinations ?? []).map((value) => site(value).origin)),
+      ].filter((origin) => origin !== address.origin);
+    } catch {
+      return undefined;
+    }
+    const row = (
+      await pool.query<Pick<Row, 'origin' | 'label'>>(
+        "SELECT origin,label FROM browser_connections WHERE id=$1 AND owner_id=$2 AND state<>'disconnecting'",
+        [parsed.data.connectionId, options.ownerId],
+      )
+    ).rows[0];
+    return row?.label
+      ? {
+          origin: address.origin,
+          account: row.label,
+          kind: 'session',
+          itemId: parsed.data.connectionId,
+          destinations,
+        }
+      : undefined;
+  }
+
+  async function sessions(): Promise<VaultSession[]> {
+    const rows = (
+      await pool.query<Row>(
+        'SELECT * FROM browser_connections WHERE owner_id=$1 ORDER BY created_at DESC',
+        [options.ownerId],
+      )
+    ).rows;
+    return rows.map((row) => ({
+      kind: 'session',
+      id: row.id,
+      label: row.label,
+      origin: row.origin,
+      url: (() => {
+        const url = new URL(row.start_url);
+        url.search = '';
+        url.hash = '';
+        return url.href;
+      })(),
+      state: row.state,
+      ...(row.checked_at ? { checkedAt: row.checked_at.toISOString() } : {}),
+    }));
+  }
+
+  function registerRoutes(app: FastifyInstance) {
+    app.register(async (scope) => {
+      scope.addHook('onSend', async (_request, reply, payload) => {
+        reply.header('Cache-Control', 'no-store');
+        return payload;
+      });
+      scope.setErrorHandler((error, _request, reply) => {
+        const status =
+          error instanceof BrowserConnectionError
+            ? error.statusCode
+            : error instanceof z.ZodError
+              ? 400
+              : 500;
+        reply.code(status).send({
+          error:
+            error instanceof BrowserConnectionError
+              ? error.message
+              : status === 400
+                ? 'Check the request.'
+                : 'The saved session could not be changed.',
+        });
+      });
+      scope.get('/api/vault/sessions', sessions);
+      scope.delete<{ Params: { id: string } }>('/api/vault/sessions/:id', async (request) =>
+        disconnect(request.params.id),
+      );
+    });
+  }
+
+  async function release(threadId: string) {
+    await pool.query(
+      'UPDATE browser_connections SET thread_id=NULL WHERE owner_id=$1 AND thread_id=$2',
+      [options.ownerId, threadId],
+    );
+  }
+
+  return { request, list, sessions, target, release, disconnect, registerRoutes };
 }

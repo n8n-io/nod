@@ -3,7 +3,7 @@ import type { Artifact } from '../shared/contracts.ts';
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { classifyVerificationReply } from '../shared/verification-code.ts';
+import { classifyVerificationReply, mayHoldSecurityCode } from '../shared/verification-code.ts';
 import { logFailure } from './failure-log.ts';
 import type { WorkAdmission } from './work-admission.ts';
 import type {
@@ -99,8 +99,10 @@ export function channelReply(
   hasAttachments = false,
   deliversAttachments = false,
   privateLinks: { name: string; url: string }[] = [],
+  appOrigin?: string,
 ) {
-  const securePath = '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault|credentials|approvals)\\/[^\\s)]+';
+  const securePath =
+    '(?:https?:\\/\\/[^\\s)]+)?\\/(?:vault\\?add=(?:login|card)[^\\s)]*|(?:vault|credentials|payments|approvals)\\/[^\\s)]+)';
   const safe = text
     .replace(
       /\[[^\]]*\]\((?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+\)|(?:https?:\/\/[^\s)]+)?\/api\/artifacts\/[^\s)]+/g,
@@ -111,8 +113,18 @@ export function channelReply(
           : 'Open Otto to view this file.',
     )
     .replace(
-      new RegExp(`\\[[^\\]]*\\]\\(${securePath}\\)|${securePath}`, 'g'),
-      'Open Otto to continue securely.',
+      new RegExp(`\\[[^\\]]*\\]\\((${securePath})\\)|(${securePath})`, 'g'),
+      (match, linked: string | undefined, plain: string | undefined) => {
+        try {
+          const url = new URL(linked ?? plain!);
+          if (
+            url.host !== (appOrigin ? new URL(appOrigin).host : undefined) &&
+            !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+          )
+            return match;
+        } catch {}
+        return 'Open Otto to continue securely.';
+      },
     );
   const files = privateLinks.length
     ? `Files:\n${privateLinks.map(({ name, url }) => `${name.replace(/[\r\n]/g, ' ')}: ${url}`).join('\n')}`
@@ -309,7 +321,10 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
         void drain();
         return;
       }
-      if (classifyVerificationReply(text).kind !== 'ordinary' && options.acceptVerification) {
+      if (
+        (classifyVerificationReply(text).kind !== 'ordinary' || mayHoldSecurityCode(text)) &&
+        options.acceptVerification
+      ) {
         try {
           verification = await options.acceptVerification(text, {
             clientMessageId: acceptedMessageId,
@@ -328,9 +343,9 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
           await inTransaction((client) =>
             replyWithoutTurn(
               client,
-              { ...identity, sourceId, threadId, sentAt, text: 'Verification code not applied.' },
+              { ...identity, sourceId, threadId, sentAt, text: 'Code not applied.' },
               () => ({
-                text: 'The code could not be matched to a sign-in. Open the corresponding sign-in conversation in Otto web chat to continue.',
+                text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
               }),
             ),
           );
@@ -541,6 +556,7 @@ export async function createChannels(pool: Pool, options: ChannelOptions) {
             Boolean(row.attachments?.length) && !attachments,
             Boolean(attachments),
             privateLinks,
+            options.appOrigin,
           ),
           ...(attachments ? { attachments } : {}),
         });

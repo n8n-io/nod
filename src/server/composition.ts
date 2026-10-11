@@ -116,15 +116,20 @@ import {
   restartOnboarding,
   resumeAfterConnection,
   resumeAfterCredentials,
+  resumeAfterPayment,
   retryCredentials,
   startThreadWorkers,
   stopThreadWorkers,
   withTurnLock,
   type ThreadDependencies,
+  type TurnRef,
 } from './thread.ts';
+import type { VaultActivityReason } from '../shared/contracts.ts';
 import { createTriage } from './triage.ts';
 import { createTasks } from './tasks.ts';
-import { createVault, credentialOrigin } from './vault.ts';
+import { checkedKeyStore, createVault, credentialOrigin, sealedDataExists } from './vault.ts';
+import { createVaultAccess } from './vault-access.ts';
+import { createPayments } from './payments.ts';
 import { createBrowserConnections } from './browser-connections.ts';
 import { createLinkPreviews } from './link-previews.ts';
 
@@ -172,11 +177,14 @@ export function createDefaultAdapters(
   if (!['openai', 'anthropic', 'openrouter'].includes(provider))
     throw new Error('LLM_PROVIDER must be openai, anthropic or openrouter.');
   const model = env.LLM_MODEL || agentModels[provider as keyof typeof agentModels];
-  const keyStore = env.OTTO_VAULT_KEY
-    ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
-    : process.platform === 'darwin'
-      ? createKeychainKeyStore()
-      : createEnvironmentKeyStore();
+  const keyStore = checkedKeyStore(
+    pool,
+    env.OTTO_VAULT_KEY
+      ? createEnvironmentKeyStore(env.OTTO_VAULT_KEY)
+      : process.platform === 'darwin'
+        ? createKeychainKeyStore({ canCreate: async () => !(await sealedDataExists(pool)) })
+        : createEnvironmentKeyStore(),
+  );
   const models = createModelService({
     database: pool,
     ownerId,
@@ -556,6 +564,8 @@ async function initializeApplication(
     refresh,
   });
   let vault!: Awaited<ReturnType<typeof createVault>>;
+  let vaultAccess!: Awaited<ReturnType<typeof createVaultAccess>>;
+  let payments!: Awaited<ReturnType<typeof createPayments>>;
   let browserConnections!: Awaited<ReturnType<typeof createBrowserConnections>>;
   const icon = adapters.linkPreviews?.icon
     ? (origin: string) => adapters.linkPreviews!.icon!(origin)
@@ -584,13 +594,12 @@ async function initializeApplication(
     callbackReturnTo: desktopMode ? 'window' : undefined,
     discovered,
     browserAccounts: () => vault.list(ownerId),
-    removeBrowserAccount: (id) => vault.removeLogin(id),
     browserConnections: () => browserConnections.list(),
-    removeBrowserConnection: (id) => browserConnections.disconnect(id),
     icon,
   });
   vault = await createVault(pool, {
     admission,
+    refresh,
     keyStore: adapters.keyStore,
     resume: resumeAfterCredentials,
     retry: retryCredentials,
@@ -599,6 +608,19 @@ async function initializeApplication(
     hold: computer.hold,
     emailCode: (input, signal) => integrations.emailCode(ownerId, input, signal),
     icon,
+    securityCodes: runtimeMode === 'local',
+    onOwnerUse: (entry, client) => vaultAccess.ownerUse(entry, client),
+    onUse: (use, client) =>
+      vaultAccess.used(
+        { threadId: use.threadId, turnId: use.turnId },
+        {
+          origin: use.origin,
+          reason: use.reason,
+          ...(use.entryId ? { itemId: use.entryId } : {}),
+        },
+        client,
+      ),
+    onForget: (origin) => vaultAccess.forget(origin),
   });
   browserConnections = await createBrowserConnections(pool, {
     ownerId,
@@ -609,31 +631,40 @@ async function initializeApplication(
     ownerId,
     keyStore: adapters.keyStore,
     submitCode: vault.submitChatCode,
+    submitPayment: (turnId, code, paymentId) => payments.submitCode(turnId, code, paymentId),
     refresh,
   });
   const approvals = await createApprovals(
     (action, args, provenance) =>
       action === 'OTTO_memory_save'
         ? memory.save(args, { sourceMessageId: provenance.sourceMessageId, approved: true })
-        : action.startsWith('OTTO_')
-          ? personal.manage(action.slice('OTTO_'.length), args, provenance)
-          : (async () => {
-              const result = await integrations.executeApproved(ownerId, action, args, {
-                threadId: provenance.threadId,
-                turnId: provenance.turnId,
-              });
-              await ledger.action(provenance.turnId, action, args);
-              const write = workspace.writeArtifact?.bind(workspace);
-              const save =
-                write &&
-                (async (file: { name: string; bytes: Uint8Array }) => {
-                  const name = `${randomUUID()}-${basename(file.name)}`;
-                  await write(provenance.threadId, name, file.bytes);
-                  return name;
-                });
-              return (await saveIntegrationFiles(result, save)).value;
-            })(),
+        : action === 'OTTO_vault_allow'
+          ? vaultAccess.allow(provenance, args)
+          : action === 'OTTO_payment_setting'
+            ? payments.setting(provenance, args, true)
+            : action === 'OTTO_payment_approve'
+              ? payments.approve(provenance, args)
+              : action.startsWith('OTTO_')
+                ? personal.manage(action.slice('OTTO_'.length), args, provenance)
+                : (async () => {
+                    const result = await integrations.executeApproved(ownerId, action, args, {
+                      threadId: provenance.threadId,
+                      turnId: provenance.turnId,
+                    });
+                    await ledger.action(provenance.turnId, action, args);
+                    const write = workspace.writeArtifact?.bind(workspace);
+                    const save =
+                      write &&
+                      (async (file: { name: string; bytes: Uint8Array }) => {
+                        const name = `${randomUUID()}-${basename(file.name)}`;
+                        await write(provenance.threadId, name, file.bytes);
+                        return name;
+                      });
+                    return (await saveIntegrationFiles(result, save)).value;
+                  })(),
     async (action, args) => {
+      if (['OTTO_vault_allow', 'OTTO_payment_approve', 'OTTO_payment_setting'].includes(action))
+        return;
       if (action.startsWith('OTTO_'))
         await personal.validateReview(action.slice('OTTO_'.length), args);
       else await integrations.prepare(ownerId, action, args);
@@ -680,6 +711,34 @@ async function initializeApplication(
           }
         : await accountProfiles.read(),
     );
+  async function permitVault(
+    turn: TurnRef,
+    target: {
+      origin: string;
+      kind: 'sign_in' | 'session' | 'form';
+      account?: string;
+      itemId?: string;
+      destinations?: string[];
+    },
+  ): Promise<{ reason: VaultActivityReason } | { question: string }> {
+    const access = await vaultAccess.authorize(turn, target);
+    if (access.ok) return { reason: access.reason };
+    if ('message' in access) throw new Error(access.message);
+    const args = {
+      origin: target.origin,
+      kind: target.kind,
+      ...(target.itemId ? { itemId: target.itemId } : {}),
+      ...(target.destinations?.length ? { destinations: target.destinations } : {}),
+    };
+    const result = await approvals.request(turn, 'OTTO_vault_allow', args, {
+      confirm: true,
+      question: access.question,
+    });
+    if (result && typeof result === 'object' && 'requiresConfirmation' in result)
+      return { question: String(result.question) };
+    await vaultAccess.allow(turn, args);
+    return { reason: 'allowed' };
+  }
   const trust = createTrust({
     pool,
     ownerId,
@@ -691,6 +750,41 @@ async function initializeApplication(
       curator.configured ? curator.curate({ task: 'review', instructions, input }) : undefined,
   });
   await trust.initialize();
+  vaultAccess = await createVaultAccess(pool, {
+    ownerId,
+    check: trust.signIn,
+    refresh,
+    account: async (itemKey) => {
+      const [kind, id] = itemKey.split(':');
+      if (kind === 'sign_in') {
+        const login = (await vault.list(ownerId)).find(
+          (entry) => entry.kind === 'login' && entry.id === id,
+        );
+        return login ? `${login.label} (${login.usernameHint})` : undefined;
+      }
+      return kind === 'session'
+        ? (await browserConnections.sessions()).find(
+            (entry) => entry.id === id && entry.state !== 'disconnecting',
+          )?.label
+        : undefined;
+    },
+  });
+  payments = await createPayments(pool, {
+    ownerId,
+    uses: vault.uses,
+    local: runtimeMode === 'local',
+    policy: trust.payment,
+    page: (threadId) => computer.currentPage(threadId),
+    destinations: (threadId, fields) => computer.cardDestinations(threadId, fields),
+    capture: (threadId) => computer.checkoutImage(threadId),
+    cards: () => vault.paymentCards(),
+    card: (id, version, client) => vault.paymentCard(id, version, client),
+    remember: vault.setDoItForMe,
+    keepCode: vault.keepSecurityCode,
+    fill: (input) => computer.fillCard(input),
+    resume: resumeAfterPayment,
+    record: (turn, entry, client) => vaultAccess.record(turn, entry, client),
+  });
   const userMessages = createUserMessageService({ confirmAction: approvals.acceptChat });
   if (options.workers !== false) {
     await triage.initializeHeartbeat();
@@ -703,7 +797,13 @@ async function initializeApplication(
       readArtifact: workspace.readArtifact?.bind(workspace),
       executeConfirmation: approvals.executeConfirmed,
       reactToMessage: reactions.react,
-      runTurn: (context) => ledger.withTurn(context.turnId, () => runtime.runTurn(context)),
+      runTurn: async (context) => {
+        try {
+          return await ledger.withTurn(context.turnId, () => runtime.runTurn(context));
+        } finally {
+          await vaultAccess.released(context).catch(() => {});
+        }
+      },
       spendingLimitReached: ledger.limitReached,
       observe: adapters.observe,
       inspectPrompt: adapters.inspectPrompt,
@@ -721,8 +821,29 @@ async function initializeApplication(
       flagInjection: trust.flag,
       holdBrowser: adapters.holdWaitingBrowser,
       connections: integrations.manageConnections,
-      browserConnection: (request, turn, signal, launch) =>
-        browserConnections.request(request, turn, signal, launch),
+      prepareBrowser: (turn) =>
+        vaultAccess.prepare(turn, async () => {
+          await computer.signOut(turn.threadId);
+          await browserConnections.release(turn.threadId);
+        }),
+      browserConnection: async (request, turn, signal, launch) => {
+        const target = await browserConnections.target(request);
+        if (!target) return browserConnections.request(request, turn, signal, launch);
+        const access = await permitVault(turn, target);
+        if ('question' in access) return { [appConfirmation]: access.question };
+        for (const origin of [target.origin, ...target.destinations])
+          await vaultAccess.track(turn.threadId, origin, `${target.kind}:${target.itemId}`);
+        const result = await browserConnections.request(request, turn, signal, launch);
+        if (result.status === 'session_opened')
+          await vaultAccess.record(turn, {
+            action: 'session',
+            origin: target.origin,
+            reason: access.reason,
+            itemId: result.connectionId,
+            itemKind: 'session',
+          });
+        return result;
+      },
       speech,
       manage: async (turn, action, args, provenance) => {
         if (
@@ -762,39 +883,85 @@ async function initializeApplication(
         if (action === 'usage_get') return ledger.read();
         return personal.manage(action, args, { ...provenance, turnId: turn.turnId });
       },
+      paymentSetting: async (turn, input) => {
+        const { args, question } = await payments.requestSetting(turn, input);
+        const result = await approvals.request(turn, 'OTTO_payment_setting', args, {
+          confirm: true,
+          question,
+        });
+        if (result && typeof result === 'object' && 'requiresConfirmation' in result)
+          return { [appConfirmation]: String(result.question) };
+        return String(result);
+      },
+      requestPayment: async (turn, input, show) => {
+        const result = await payments.request(turn, input);
+        await show(result.image);
+        if (!result.paymentId) return { question: result.question, url: result.url };
+        const confirmation = await approvals.request(
+          turn,
+          'OTTO_payment_approve',
+          { paymentId: result.paymentId },
+          { confirm: true, question: result.question },
+        );
+        if (
+          confirmation &&
+          typeof confirmation === 'object' &&
+          'requiresConfirmation' in confirmation
+        )
+          return { [appConfirmation]: String(confirmation.question) };
+        throw new Error('This payment needs a fresh approval. Call pay again.');
+      },
       requestCredential: async (turn, input) => {
-        if (!('kind' in input)) {
-          const { entry, secret } = await vault.readCredential(input.id);
-          if (entry.origin !== credentialOrigin(input.origin))
-            throw new Error('This saved login does not match the requested website.');
-          for (const value of [secret.username, secret.password])
-            if (value && !secrets.includes(value)) secrets.push(value);
-          return { credential: secret };
-        }
         const { savedLoginId, ...request } = input;
-        if (savedLoginId !== undefined) {
-          if (request.kind === 'otp')
-            throw new Error('Saved logins cannot supply verification codes.');
-          return (await vault.fillSaved(turn, ownerId, savedLoginId, request))
-            ? { filled: true }
+        if (savedLoginId !== undefined && request.kind === 'otp')
+          throw new Error('Saved logins cannot supply verification codes.');
+        const origin = credentialOrigin(request.origin);
+        const saved = (await vault.list(ownerId)).filter((entry) => entry.origin === origin);
+        const chosen =
+          savedLoginId !== undefined
+            ? saved.find((entry) => entry.id === savedLoginId)
+            : saved.length === 1
+              ? saved[0]
+              : undefined;
+        const access = await permitVault(turn, {
+          origin,
+          kind:
+            request.kind === 'otp'
+              ? request.emailCode
+                ? 'sign_in'
+                : 'form'
+              : chosen
+                ? 'sign_in'
+                : 'form',
+          ...(chosen
+            ? {
+                itemId: chosen.id,
+                ...(chosen.usernameHint ? { account: chosen.usernameHint } : {}),
+              }
+            : {}),
+        });
+        if ('question' in access) return { [appConfirmation]: access.question };
+        const filled = async (itemId?: string) => {
+          await vaultAccess.record(turn, {
+            action: request.kind === 'otp' ? 'code' : 'sign_in',
+            origin,
+            reason: request.kind === 'otp' ? 'mailbox' : access.reason,
+            ...(itemId ? { itemId, itemKind: 'login' as const } : {}),
+          });
+          return { filled: true as const };
+        };
+        if (request.kind === 'otp')
+          return (await vault.fillEmailCode(turn, ownerId, request))
+            ? filled()
             : vault.request(turn, ownerId, request);
-        }
-        if (request.kind === 'otp' && (await vault.fillEmailCode(turn, ownerId, request)))
-          return { filled: true };
-        if (request.kind !== 'otp') {
-          const selected = await vault.fillSelected(turn, ownerId, request);
-          if (selected) return { filled: true };
-          if (selected === undefined) {
-            const matches = (await vault.list(ownerId)).filter(
-              (entry) => entry.origin === request.origin,
-            );
-            if (matches.length === 1) {
-              try {
-                if (await vault.fillSaved(turn, ownerId, matches[0].id, request))
-                  return { filled: true };
-              } catch {}
-            }
-          }
+        if (savedLoginId !== undefined)
+          return (await vault.fillSaved(turn, ownerId, savedLoginId, request))
+            ? filled(savedLoginId)
+            : vault.request(turn, ownerId, request);
+        const selected = await vault.fillSelected(turn, ownerId, request);
+        if (selected) return filled();
+        if (selected === undefined && chosen) {
+          if (await vault.fillSaved(turn, ownerId, chosen.id, request)) return filled(chosen.id);
         }
         return vault.request(turn, ownerId, request);
       },
@@ -860,6 +1027,19 @@ async function initializeApplication(
     startOnboarding: welcome,
     planningTasks: onboardingSuggestions.planning,
     messageCosts: ledger.messageCosts,
+    browserInput: async (threadId, apply) => {
+      const page = () =>
+        computer.currentPage(threadId).then(
+          (current) => current.origin,
+          () => undefined,
+        );
+      const acted = await page();
+      try {
+        await apply();
+      } finally {
+        await vaultAccess.touched(threadId, { acted, landed: await page() });
+      }
+    },
     computer,
     runtime,
     configuration: () =>
@@ -935,6 +1115,9 @@ async function initializeApplication(
     }).registerRoutes(app);
   }
   vault.registerRoutes(app);
+  payments.registerRoutes(app);
+  vaultAccess.registerRoutes(app);
+  browserConnections.registerRoutes(app);
   integrations.registerRoutes(app);
   personal.registerRoutes(app);
   createOnboardingInterview({ curator: onboardingCurator, memory }).registerRoutes(app);

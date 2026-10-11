@@ -33,8 +33,14 @@ export type RuntimeObservation =
   | ModelUsageObservation;
 
 export type BrowserConnectionRequest =
-  | { action: 'connect'; url: string; connectionId?: string; label?: string }
-  | { action: 'use'; url: string; connectionId: string }
+  | {
+      action: 'connect';
+      url: string;
+      connectionId?: string;
+      label?: string;
+      destinations?: string[];
+    }
+  | { action: 'use'; url: string; connectionId: string; destinations?: string[] }
   | { action: 'save'; url: string; connectionId: string; signedIn: true };
 
 interface MessageAttachment {
@@ -113,6 +119,7 @@ export interface RuntimeContext {
     connectionId?: string,
   ): Promise<unknown>;
   browserConnection?(request: BrowserConnectionRequest): Promise<unknown>;
+  prepareBrowser?(): Promise<void>;
   waitForUser?(question: string): Promise<void>;
   delta(text: string, streamId?: string, done?: boolean): void;
   publish(path: string, name?: string): Promise<Artifact>;
@@ -124,25 +131,21 @@ export interface RuntimeContext {
     mimeType: string;
   }): Promise<Artifact & { workspaceFile: string }>;
   createAudio?(text: string): Promise<Artifact>;
-  requestCredential(
-    input:
-      | { id: string; origin: string }
-      | {
-          id?: never;
-          origin: string;
-          label: string;
-          kind: CredentialKind;
-          usernameSelector?: string;
-          passwordSelector?: string;
-          emailCode?: boolean;
-          emailRecipient?: string;
-          savedLoginId?: string;
-        },
-  ): Promise<{
-    url?: string;
-    filled?: boolean;
-    credential?: { username: string; password: string };
-  }>;
+  requestCredential(input: {
+    origin: string;
+    label: string;
+    kind: CredentialKind;
+    usernameSelector?: string;
+    passwordSelector?: string | string[];
+    submitSelector?: string;
+    emailCode?: boolean;
+    emailRecipient?: string;
+    savedLoginId?: string;
+  }): Promise<{ url: string } | { filled: true } | { [appConfirmation]: string }>;
+  requestPayment?(
+    input: unknown,
+  ): Promise<{ question: string; url?: string } | { [appConfirmation]: string }>;
+  paymentSetting?(input: unknown): Promise<string | { [appConfirmation]: string }>;
   integration(
     action: string,
     args: Record<string, unknown>,

@@ -375,7 +375,9 @@ function trustedAppURL(value) {
         '/privacy',
         '/privacy/',
       ].includes(url.pathname) ||
-        /^\/(vault|credentials|approvals|browser-connect)\/[A-Za-z0-9_-]+\/?$/.test(url.pathname))
+        /^\/(vault|credentials|payments|approvals|browser-connect)\/[A-Za-z0-9_-]+\/?$/.test(
+          url.pathname,
+        ))
     );
   } catch {
     return false;
@@ -588,7 +590,7 @@ async function captureFeedbackScreenshot(event) {
   const url = event.senderFrame.url;
   if (
     !window?.isVisible() ||
-    /^\/(?:vault|credentials|browser|browser-connect|onboarding)(?:\/|$)/.test(
+    /^\/(?:vault|credentials|payments|browser|browser-connect|onboarding)(?:\/|$)/.test(
       new URL(url).pathname,
     )
   )

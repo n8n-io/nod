@@ -34,6 +34,18 @@ export const personalActions = [
 const uuid = Type.String({
   pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
 });
+const fieldSelector = Type.String({ minLength: 1, maxLength: 500 });
+const cardExpiryField = Type.Union([
+  fieldSelector,
+  Type.Object(
+    {
+      selector: fieldSelector,
+      format: Type.String({ minLength: 1, maxLength: 100 }),
+      locale: Type.Optional(Type.String({ maxLength: 35 })),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 function literals<const T extends readonly string[]>(values: T) {
   return Type.Union(values.map((value) => Type.Literal(value)) as TLiteral<T[number]>[]);
@@ -198,7 +210,7 @@ export const toolDefinitions = {
   ),
   browser: defineTool(
     'browser',
-    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs; selector scopes it and offset pages through more); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. durationMs is at most 15000. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs (default 15000) for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result within 5 seconds, with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). waitMs (up to 15000) waits for slow pages.',
+    'Control your private agent-browser session. open {url}; snapshot (accessibility tree of the page with @eN refs; selector scopes it and offset skips earlier text); click {selector} or {x,y,durationMs?} (hold for durationMs); fill {selector, text} (never secrets); type {selector, text} types as real keystrokes for masked inputs and autocompletes that reject fill (never secrets); select {selector, text} by visible label or value; check/uncheck/hover {selector}; drag {selector,targetSelector} or {points:[{x,y},...],durationMs?} (follow the path with the button held, default 500ms). Coordinates are fractions from 0 to 1 of the full visible screenshot, measured from its top-left; use a fresh screenshot, including for canvas and iframe controls. upload {selector, path} from the task workspace; back/forward/reload; tab_list and tab_switch {tabId}; press {key}: any key agent-browser knows, such as Enter, Backspace, ArrowDown or a character, or a shortcut such as Control+a or Shift+Tab; accept_dialog {text?} (text answers a prompt) and dismiss_dialog close a confirm or prompt dialog that blocks the page; wait {text | url | load} waits up to waitMs when specified for text to appear, the URL to match a pattern such as **/done, or load, domcontentloaded or networkidle; scroll {direction, selector?}; evaluate {script} (one JavaScript expression run in the current page; returns its JSON result with saved secrets redacted); screenshot (image for you); share_screenshot {name?} (send the image to the user); download {url? | selector?, name?} (copy a file into the workspace; foreground downloads also deliver it, while background downloads stay private until share_file; with neither, the open PDF or the last download). If a control opens a document, click it, inspect the page or tabs, then download the document. waitMs waits for slow pages.',
     Type.Object({
       action: literals([
         'open',
@@ -227,8 +239,8 @@ export const toolDefinitions = {
         'accept_dialog',
         'dismiss_dialog',
       ]),
-      url: Type.Optional(Type.String({ maxLength: 8192 })),
-      script: Type.Optional(Type.String({ maxLength: 20000 })),
+      url: Type.Optional(Type.String()),
+      script: Type.Optional(Type.String()),
       tabId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
       selector: Type.Optional(Type.String()),
       targetSelector: Type.Optional(Type.String()),
@@ -240,17 +252,17 @@ export const toolDefinitions = {
             x: Type.Number({ minimum: 0, maximum: 1 }),
             y: Type.Number({ minimum: 0, maximum: 1 }),
           }),
-          { minItems: 2, maxItems: 100 },
+          { minItems: 2 },
         ),
       ),
-      durationMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 15000 })),
+      durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
       path: Type.Optional(Type.String()),
-      text: Type.Optional(Type.String({ maxLength: 8000 })),
-      key: Type.Optional(Type.String({ maxLength: 40 })),
+      text: Type.Optional(Type.String()),
+      key: Type.Optional(Type.String()),
       load: Type.Optional(literals(['load', 'domcontentloaded', 'networkidle'])),
       direction: Type.Optional(literals(['up', 'down'])),
-      waitMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 15000 })),
-      offset: Type.Optional(Type.Integer({ minimum: 0, maximum: 100000 })),
+      waitMs: Type.Optional(Type.Integer({ minimum: 0 })),
+      offset: Type.Optional(Type.Integer({ minimum: 0 })),
       name: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     }),
   ),
@@ -259,37 +271,66 @@ export const toolDefinitions = {
     'Reuse known website routines in the current private browser. list {query?} reads the flow registry and ranks matches. get {id} shows a flow. save {flow} stores a checked flow as a file. run {id, inputs?} replays it and checks expectText or expectUrl after each step. It stops with the current page if a check fails. Files live in the owner flow library and remain available after a conversation reset. Start with open and end with a checked snapshot. Use stable selectors and named inputs for entered text. Never store passwords or codes.',
     browserFlowParameters,
   ),
-  get_credential: defineTool(
-    'get_credential',
-    'Get a saved website login from Vault by its ID and exact origin. The result includes the username and any saved password; a passwordless login has an empty password. To fill sign-in fields without seeing the values, omit the ID and pass the field reference (@eN) or CSS selector you chose from a fresh snapshot; the page must be on that exact origin. For a code split across several boxes, pass a CSS selector that matches all of them. Pass savedLoginId to select one applicable login. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it. Vault first tries to retrieve email codes privately from a matching connected mailbox, including supported aliases. If it opens a secure form, that form requires the user to enter the value; it does not retrieve mail. Never read verification codes through apps or ask for them in chat. For the form, message is one sentence for the user about this step in their language, and action is the 2-5 word button text, such as "Add authenticator code"; never ask for the value in chat. Submit with browser and inspect the result.',
-    Type.Union([
-      Type.Object({
-        id: uuid,
-        origin: Type.String({ minLength: 1, maxLength: 2048 }),
-      }),
-      Type.Object({
-        origin: Type.String({ minLength: 1, maxLength: 2048 }),
-        label: Type.String({ minLength: 1, maxLength: 100 }),
-        kind: literals(['identifier', 'password', 'otp']),
-        usernameSelector: Type.Optional(Type.String()),
-        passwordSelector: Type.Optional(Type.String()),
-        emailCode: Type.Optional(Type.Boolean()),
-        emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
-        savedLoginId: Type.Optional(uuid),
-        message: Type.String({ minLength: 1, maxLength: 300 }),
-        action: Type.String({ minLength: 1, maxLength: 60 }),
-      }),
-    ]),
+  sign_in: defineTool(
+    'sign_in',
+    'Sign in on the current page with Vault. You never see a saved password or code: Otto types it into the field you choose. Pass the field reference (@eN) or CSS selector from a fresh snapshot and the exact current origin. For a code split across several boxes, pass an ordered array of their browser references, or a CSS selector that matches all of them. Pass savedLoginId to choose one saved login; with exactly one saved login for the origin, Otto uses it. Without a saved value, Otto opens a secure form where the user enters it. For OTP, set emailCode:true only when the page says it sent a code by email, and pass emailRecipient as the page shows it; Otto first retrieves the code privately from a matching connected mailbox. Never read verification codes through apps or ask for them in chat. If the user did not ask for this website, Otto asks them first; stop and wait for their answer. message is one sentence for the user about the secure form in their language, and action is its 2-5 word button text, such as "Add authenticator code". Pass submitSelector when this step needs a submit button. Omit it when the page submits automatically. Otto enters privately, clicks only the submit control you selected, and keeps the live page. Inspect the result; do not submit again. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
+    Type.Object({
+      origin: Type.String({ minLength: 1, maxLength: 2048 }),
+      label: Type.String({ minLength: 1, maxLength: 100 }),
+      kind: literals(['identifier', 'password', 'otp']),
+      usernameSelector: Type.Optional(fieldSelector),
+      passwordSelector: Type.Optional(
+        Type.Union([fieldSelector, Type.Array(fieldSelector, { minItems: 1, maxItems: 100 })]),
+      ),
+      submitSelector: Type.Optional(fieldSelector),
+      emailCode: Type.Optional(Type.Boolean()),
+      emailRecipient: Type.Optional(Type.String({ minLength: 3, maxLength: 320 })),
+      savedLoginId: Type.Optional(uuid),
+      message: Type.String({ minLength: 1, maxLength: 300 }),
+      action: Type.String({ minLength: 1, maxLength: 60 }),
+    }),
+  ),
+  pay: defineTool(
+    'pay',
+    'Pay at the checkout on the current page with a Vault card. You never see the card: Otto enters the number, expiry, security code and name into the fields you choose, including fields inside payment frames. Pass field references (@eN) or CSS selectors from a fresh snapshot: number, then expiry or expiryMonth and expiryYear, and securityCode and name when the page has them. For another expiry layout, use {selector, format, locale?}: M or MM for the numeric month, MMM or MMMM for its short or full name, and YY or YYYY for the year. For example, format can be YYYY-MM or MMM with locale en. amount is the total the page shows, as digits with a dot such as 43.20; currency is its ISO code; card is the card the user named, by name or last four digits. Otto shows the user the checkout and asks for a yes or the card’s security code, which you never see. Stop and wait. Pass submitSelector for the control that submits the payment. Otto enters and submits in one private operation and keeps the live page. Check the result; do not submit again. Finish all other checkout fields first. Read-only page JavaScript does not require a reload. Reload only if Otto refuses entry because a script changed the page.',
+    Type.Object({
+      amount: Type.String({ pattern: '^\\d{1,9}(\\.\\d{1,3})?$' }),
+      currency: Type.String({ minLength: 3, maxLength: 3 }),
+      card: Type.Optional(Type.String({ maxLength: 100 })),
+      submitSelector: fieldSelector,
+      fields: Type.Intersect([
+        Type.Object({
+          number: fieldSelector,
+          securityCode: Type.Optional(fieldSelector),
+          name: Type.Optional(fieldSelector),
+        }),
+        Type.Union([
+          Type.Object({ expiry: cardExpiryField }),
+          Type.Object({ expiryMonth: cardExpiryField, expiryYear: cardExpiryField }),
+        ]),
+      ]),
+    }),
+  ),
+  payment_setting: defineTool(
+    'payment_setting',
+    "Turn Do it for me on or off for a Vault card when the user asks. On: Otto keeps the card's security code from the next payment, then the user's yes in the Otto app is enough to pay. Off: Otto deletes the code and asks for it each time. card is the card the user named, by name or last four digits.",
+    Type.Object({
+      card: Type.Optional(Type.String({ maxLength: 100 })),
+      doItForMe: Type.Boolean(),
+    }),
   ),
   browser_session: defineTool(
     'browser_session',
-    'Browser profiles for website accounts. connect {url, label?} opens a new private profile. use {url, connectionId} opens an existing profile without verifying sign-in. Inspect the current page to determine the outcome. save {url, connectionId, signedIn:true} records that you observed a successful sign-in on this origin. Only connect accepts label.',
+    'Browser profiles for website accounts. connect {url, label?, destinations?} opens a new private profile. use {url, connectionId, destinations?} opens an existing profile without verifying sign-in. destinations lists additional exact origins needed for assets, APIs or sign-in redirects. Network access with a saved profile requires permission for each origin. If a destination is blocked, request it with use. Inspect the page to determine the outcome. save {url, connectionId, signedIn:true} records a successful sign-in on this origin. Only connect accepts label.',
     Type.Union([
       Type.Object(
         {
           action: Type.Literal('connect'),
           url: Type.String({ minLength: 1, maxLength: 2048 }),
           label: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+          destinations: Type.Optional(
+            Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 20 }),
+          ),
         },
         { additionalProperties: false },
       ),
@@ -298,6 +339,9 @@ export const toolDefinitions = {
           action: Type.Literal('use'),
           url: Type.String({ minLength: 1, maxLength: 2048 }),
           connectionId: uuid,
+          destinations: Type.Optional(
+            Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 20 }),
+          ),
         },
         { additionalProperties: false },
       ),
@@ -322,7 +366,7 @@ export const toolDefinitions = {
   ),
   manage_apps: defineTool(
     'manage_apps',
-    'list saved accounts and access paths: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. discover {query?} searches available integrations, including managed apps and MCP toolkits that can be connected without creating an OAuth app. Search before researching another connection method. connect {service} uses a returned service slug to start sign-in and pause, or returns existing accounts. Use connect {service, connectionId} to reconnect a saved account with canReconnect:true, using its exact saved ID. This preserves the account and its settings. Use connect {service, newAccount:true} when the user explicitly wants another account; it keeps existing accounts. For tools outside the catalog, research an official MCP, HTTP API or CLI, then propose {service, proposal} to give the user a private setup link. A CLI path names the source Otto installs privately for it: {npm} package spec, {pypi} package spec (pipx) or {url, sha256?} HTTPS release binary or archive for this workspace architecture.',
+    'list {query?} saved accounts and access paths; set query to the website or service to include its saved logins: savedLogin:true marks Vault logins for their exact access-path origin; browserAccess:browser_session marks private browser profiles. Neither exposes credentials. discover {query?} searches available integrations, including managed apps and MCP toolkits that can be connected without creating an OAuth app. Search before researching another connection method. connect {service} uses a returned service slug to start sign-in and pause, or returns existing accounts. Use connect {service, connectionId} to reconnect a saved account with canReconnect:true, using its exact saved ID. This preserves the account and its settings. Use connect {service, newAccount:true} when the user explicitly wants another account; it keeps existing accounts. For tools outside the catalog, research an official MCP, HTTP API or CLI, then propose {service, proposal} to give the user a private setup link. A CLI path names the source Otto installs privately for it: {npm} package spec, {pypi} package spec (pipx) or {url, sha256?} HTTPS release binary or archive for this workspace architecture.',
     Type.Object({
       action: literals(['list', 'discover', 'connect', 'propose']),
       service: Type.Optional(Type.String({ maxLength: 80 })),
@@ -566,26 +610,45 @@ export function ottoTools(
       return pageText(await computer.act(threadId, { action, ...rest } as BrowserAction, signal));
     }),
     bind(toolDefinitions.browser_flow, browserFlows),
-    bind(toolDefinitions.get_credential, async (input) => {
-      if (!('kind' in input)) {
-        const result = await context.requestCredential(input);
-        if (!result.credential) throw new Error('This saved login is unavailable.');
-        return result.credential;
-      }
-      const { message, action, ...request } = input;
+    bind(toolDefinitions.sign_in, async ({ message, action, ...request }) => {
       const result = await context.requestCredential(request);
-      if (result.filled)
+      if (appConfirmation in result)
+        return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
+      if ('filled' in result)
         return request.kind === 'otp'
           ? 'Verification code entered privately.'
           : 'Saved login entered.';
-      if (!result.url) throw new Error('The secure sign-in request could not be created.');
       await turn.invite(vaultInvitation(request.origin, result.url, message, action));
       await pause('credentials', undefined, { post: false });
       return 'Waiting for secure input.';
     }),
+    bind(toolDefinitions.pay, async (p) => {
+      if (!context.requestPayment) throw new Error('Payments are unavailable.');
+      const result = await context.requestPayment(p);
+      if (appConfirmation in result)
+        return confirm({ requiresConfirmation: true, question: result[appConfirmation] });
+      await turn.invite(
+        result.url ? `${result.question} [Approve payment](${result.url})` : result.question,
+      );
+      await pause('credentials', undefined, { post: false });
+      return 'Waiting for private payment approval.';
+    }),
+    bind(toolDefinitions.payment_setting, async (p) => {
+      if (!context.paymentSetting) throw new Error('Payments are unavailable.');
+      const result = await context.paymentSetting(p);
+      return typeof result === 'object'
+        ? confirm({ requiresConfirmation: true, question: result[appConfirmation] })
+        : result;
+    }),
     bind(toolDefinitions.browser_session, async (p) => {
       if (!context.browserConnection) throw new Error('Browser connections are unavailable.');
-      const result = (await context.browserConnection(p)) as Record<string, unknown>;
+      const outcome = await context.browserConnection(p);
+      if (outcome && typeof outcome === 'object' && appConfirmation in outcome)
+        return confirm({
+          requiresConfirmation: true,
+          question: (outcome as { [appConfirmation]: string })[appConfirmation],
+        });
+      const result = outcome as Record<string, unknown>;
       if (result.status === 'rejected') {
         switch (result.code) {
           case 'invalid_browser_connection_arguments':

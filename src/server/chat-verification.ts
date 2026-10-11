@@ -2,7 +2,11 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { CredentialKeyStore } from '../ports/key-store.ts';
 import type { SubmitMessageResponse, VerificationRequest } from '../shared/contracts.ts';
-import { classifyVerificationReply } from '../shared/verification-code.ts';
+import {
+  classifyVerificationReply,
+  mayHoldSecurityCode,
+  securityCodeIn,
+} from '../shared/verification-code.ts';
 import { lockThread } from './thread.ts';
 import { waitingTurnSql } from './vault.ts';
 
@@ -18,10 +22,22 @@ interface VerificationInput {
 }
 
 type VerificationStatus = 'submitted' | 'invalid' | 'unavailable';
-const maskedMessage = 'Verification code sent securely.';
-const pendingMessage = 'Verification code received securely.';
+const texts = {
+  otp: {
+    masked: 'Verification code sent securely.',
+    pending: 'Verification code received securely.',
+    failed:
+      'The code could not be applied. Check the sign-in step, then send a fresh code when it is ready.',
+  },
+  payment: {
+    masked: 'Security code sent securely.',
+    pending: 'Security code received securely.',
+    failed:
+      'The payment result is not confirmed. Check the order and payment status before another attempt.',
+  },
+};
 const unavailableMessage =
-  'This verification request is no longer available. Continue the sign-in task to request a new code.';
+  'This code request is no longer available. Continue the task to request a new code.';
 
 function conflict(message: string) {
   return Object.assign(new Error(message), { statusCode: 409 });
@@ -38,9 +54,19 @@ export async function createChatVerification(
       code: string,
       requestId: string,
     ) => Promise<{ status: VerificationStatus }>;
+    submitPayment?: (
+      turnId: string,
+      code: string,
+      paymentId: string,
+    ) => Promise<{ status: VerificationStatus }>;
     refresh: () => void;
   },
 ) {
+  const codeRequests = `(SELECT id,owner_id,thread_id,turn_id,kind,status,expires_at FROM credential_requests WHERE kind='otp'${
+    options.submitPayment
+      ? ` UNION ALL SELECT id::text,owner_id,thread_id,turn_id,'payment',status,expires_at FROM vault_payments`
+      : ''
+  })`;
   await pool.query(`CREATE TABLE IF NOT EXISTS chat_verification_submissions (
     message_id uuid PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     request_id text NOT NULL, status text NOT NULL DEFAULT 'pending', code_fingerprint text NOT NULL
@@ -68,10 +94,10 @@ export async function createChatVerification(
 
   async function pending(channel = 'web'): Promise<VerificationRequest[]> {
     const result = await pool.query<VerificationRequest>(
-      `SELECT r.id,u.id AS "turnId",r.expires_at AS "expiresAt"
-       FROM credential_requests r JOIN turns u ON u.id=r.turn_id
+      `SELECT r.id,u.id AS "turnId",r.expires_at AS "expiresAt",r.kind
+       FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
        WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2
-         AND r.kind='otp' AND r.status='pending' AND r.expires_at>now()
+         AND r.status='pending' AND r.expires_at>now()
          AND ${waitingTurnSql('u', 'credentials')} ORDER BY r.expires_at,r.id LIMIT 50`,
       [options.ownerId, channel],
     );
@@ -83,16 +109,28 @@ export async function createChatVerification(
     input: VerificationInput,
   ): Promise<SubmitMessageResponse | undefined> {
     const reply = classifyVerificationReply(text);
-    const code = reply.kind === 'code' ? reply.code : undefined;
-    if (reply.kind === 'ordinary' && !input.verificationRequestId) return;
-    if (!code && input.verificationRequestId)
-      throw conflict('Send one verification code using 4 to 8 digits.');
+    const codes = {
+      otp: reply.kind === 'code' ? reply.code : undefined,
+      payment: options.submitPayment ? securityCodeIn(text) : undefined,
+    };
+    const paymentLike = Boolean(options.submitPayment) && mayHoldSecurityCode(text);
+    if (reply.kind === 'ordinary' && !paymentLike && !input.verificationRequestId) return;
+    if (!codes.otp && !codes.payment && input.verificationRequestId)
+      throw conflict('Send the code by itself.');
     const incompatible = Boolean(input.attachmentIds?.length || input.forceNew);
     if (incompatible && input.verificationRequestId)
       throw conflict('Send the verification code by itself in the sign-in conversation.');
     const channel = input.channel ?? 'web';
     const client = await pool.connect();
-    let reserved: { threadId: string; turnId: string; requestId: string } | undefined;
+    let reserved:
+      | {
+          threadId: string;
+          turnId: string;
+          requestId: string;
+          kind: 'otp' | 'payment';
+          code: string;
+        }
+      | undefined;
     try {
       await client.query('BEGIN');
       const thread = await lockThread(client, options.ownerId);
@@ -100,7 +138,7 @@ export async function createChatVerification(
         throw conflict('This conversation has been reset. Reload it before continuing.');
       const previous = (
         await client.query(
-          `SELECT m.owner_id,m.thread_id,m.turn_id,m.reply_to_message_id,u.owner_id AS turn_owner_id,
+          `SELECT m.owner_id,m.thread_id,m.turn_id,m.reply_to_message_id,m.text,u.owner_id AS turn_owner_id,
            u.channel,v.request_id,v.status,v.code_fingerprint
            FROM messages m LEFT JOIN turns u ON u.id=m.turn_id
            LEFT JOIN chat_verification_submissions v ON v.message_id=m.id WHERE m.id=$1`,
@@ -113,7 +151,8 @@ export async function createChatVerification(
           await client.query('COMMIT');
           return;
         }
-        if (!code) throw conflict('Send one verification code using 4 to 8 digits.');
+        const code = codes.otp ?? codes.payment;
+        if (!code) throw conflict('Send the code by itself.');
         const codeFingerprint = await fingerprint(code, input);
         if (
           previous.owner_id !== options.ownerId ||
@@ -132,7 +171,7 @@ export async function createChatVerification(
           threadId: previous.thread_id,
           turnId: previous.turn_id,
           messageId: input.clientMessageId,
-          messageText: previous.status === 'pending' ? pendingMessage : maskedMessage,
+          messageText: previous.text,
           verificationStatus:
             previous.status === 'pending' || previous.status === 'submitted'
               ? previous.status
@@ -151,39 +190,62 @@ export async function createChatVerification(
         if (!target) throw conflict('The reply is unavailable in this conversation.');
         turnId = target.id;
       }
-      const requests = await client.query<{ id: string; turn_id: string }>(
-        `SELECT r.id,r.turn_id FROM credential_requests r JOIN turns u ON u.id=r.turn_id
+      const requests = await client.query<{
+        id: string;
+        turn_id: string;
+        kind: 'otp' | 'payment';
+      }>(
+        `SELECT r.id,r.turn_id,r.kind FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
          WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2 AND r.thread_id=$5
-           AND r.kind='otp' AND r.status='pending' AND r.expires_at>now()
+           AND r.status='pending' AND r.expires_at>now()
+           AND (r.kind<>'payment' OR u.channel='web')
            AND ${waitingTurnSql('u', 'credentials')}
            AND ($3::uuid IS NULL OR r.turn_id=$3) AND ($4::text IS NULL OR r.id=$4)
-           ORDER BY r.expires_at,r.id LIMIT 2 FOR UPDATE OF r`,
+           ORDER BY r.expires_at,r.id LIMIT 2`,
         [options.ownerId, channel, turnId ?? null, input.verificationRequestId ?? null, thread.id],
       );
       if (!requests.rowCount) {
         if (input.verificationRequestId) throw conflict(unavailableMessage);
-        const waiting = await client.query(
-          `SELECT 1 FROM credential_requests r JOIN turns u ON u.id=r.turn_id
-           WHERE r.owner_id=$1 AND u.owner_id=$1 AND u.channel=$2 AND r.thread_id=$4
-             AND r.kind='otp' AND (r.expires_at>now() OR $3::uuid IS NOT NULL OR
+        const waiting = await client.query<{ kind: 'otp' | 'payment'; channel: string }>(
+          `SELECT r.kind,u.channel FROM ${codeRequests} r JOIN turns u ON u.id=r.turn_id
+           WHERE r.owner_id=$1 AND u.owner_id=$1 AND (u.channel=$2 OR r.kind='payment') AND r.thread_id=$4
+             AND ((r.status='pending' AND r.expires_at>now()) OR $3::uuid IS NOT NULL OR
                NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.owner_id=$1 AND newer.thread_id=$4
                  AND newer.source='user' AND newer.id<>u.id AND newer.started_at>u.started_at))
-             AND ($3::uuid IS NULL OR r.turn_id=$3) LIMIT 1`,
-          [options.ownerId, channel, turnId ?? null, thread.id],
+             AND ($3::uuid IS NULL OR r.turn_id=$3)
+             AND ((r.kind='payment' AND $5::boolean) OR (r.kind='otp' AND $6::boolean)) LIMIT 1`,
+          [options.ownerId, channel, turnId ?? null, thread.id, paymentLike, Boolean(codes.otp)],
         );
-        if (waiting.rows[0]) throw conflict(unavailableMessage);
+        const late = waiting.rows[0];
+        if (late)
+          throw conflict(
+            late.kind === 'payment' && late.channel !== channel
+              ? 'Open the secure payment link in Otto. Otto did not use this code.'
+              : unavailableMessage,
+          );
+        await input.persistOrdinary?.(client);
+        await client.query('COMMIT');
+        return;
+      }
+      if (requests.rowCount !== 1)
+        throw conflict(
+          'More than one sign-in needs a code. Reply to the verification request you want to complete.',
+        );
+      const request = requests.rows[0]!;
+      const code = codes[request.kind];
+      if (!code && request.kind === 'otp' && reply.kind === 'ordinary') {
         await input.persistOrdinary?.(client);
         await client.query('COMMIT');
         return;
       }
       if (incompatible)
         throw conflict('Send the verification code by itself in the sign-in conversation.');
-      if (!code) throw conflict('Send one verification code using 4 to 8 digits.');
-      if (requests.rowCount !== 1)
+      if (!code)
         throw conflict(
-          'More than one sign-in needs a code. Reply to the verification request you want to complete.',
+          request.kind === 'payment'
+            ? 'Send just the card’s security code.'
+            : 'Send one verification code using 4 to 8 digits.',
         );
-      const request = requests.rows[0]!;
       const codeFingerprint = await fingerprint(code, input);
       await client.query(
         `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id,reply_to_message_id)
@@ -191,7 +253,7 @@ export async function createChatVerification(
         [
           input.clientMessageId,
           options.ownerId,
-          pendingMessage,
+          texts[request.kind].pending,
           thread.id,
           request.turn_id,
           input.replyToMessageId ?? null,
@@ -202,7 +264,13 @@ export async function createChatVerification(
         [input.clientMessageId, request.id, codeFingerprint],
       );
       await client.query('COMMIT');
-      reserved = { threadId: thread.id, turnId: request.turn_id, requestId: request.id };
+      reserved = {
+        threadId: thread.id,
+        turnId: request.turn_id,
+        requestId: request.id,
+        kind: request.kind,
+        code,
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -212,12 +280,15 @@ export async function createChatVerification(
     options.refresh();
     let status: 'submitted' | 'unavailable';
     try {
-      const result = await options.submitCode(
-        options.ownerId,
-        reserved.turnId,
-        code,
-        reserved.requestId,
-      );
+      const result =
+        reserved.kind === 'payment'
+          ? await options.submitPayment!(reserved.turnId, reserved.code, reserved.requestId)
+          : await options.submitCode(
+              options.ownerId,
+              reserved.turnId,
+              reserved.code,
+              reserved.requestId,
+            );
       status = result.status === 'submitted' ? 'submitted' : 'unavailable';
     } catch {
       status = 'unavailable';
@@ -226,19 +297,14 @@ export async function createChatVerification(
       `WITH changed AS (
        UPDATE chat_verification_submissions SET status=$2 WHERE message_id=$1 RETURNING message_id
        ) UPDATE messages SET text=$3 WHERE id IN (SELECT message_id FROM changed)`,
-      [input.clientMessageId, status, maskedMessage],
+      [input.clientMessageId, status, texts[reserved.kind].masked],
     );
     if (status !== 'submitted') {
       await pool.query(
         `INSERT INTO messages(id,owner_id,role,text,thread_id,turn_id)
          SELECT $1,$2,'assistant',$3,u.thread_id,u.id FROM turns u JOIN threads th ON th.id=u.thread_id
          WHERE u.id=$4 AND u.owner_id=$2 AND th.archived_at IS NULL`,
-        [
-          randomUUID(),
-          options.ownerId,
-          'The code could not be applied. Check the sign-in step, then send a fresh code when it is ready.',
-          reserved.turnId,
-        ],
+        [randomUUID(), options.ownerId, texts[reserved.kind].failed, reserved.turnId],
       );
     }
     options.refresh();
@@ -246,7 +312,7 @@ export async function createChatVerification(
       threadId: reserved.threadId,
       turnId: reserved.turnId,
       messageId: input.clientMessageId,
-      messageText: maskedMessage,
+      messageText: texts[reserved.kind].masked,
       verificationStatus: status,
     };
   }

@@ -14,6 +14,7 @@ export function createKeychainKeyStore(
       args: string[],
       options: { timeout: number; maxBuffer: number },
     ) => Promise<{ stdout: string }>;
+    canCreate?(): Promise<boolean>;
   } = {},
 ): CredentialKeyStore {
   const platform = options.platform ?? process.platform;
@@ -37,6 +38,8 @@ export function createKeychainKeyStore(
       if ((error as { code?: number }).code !== 44)
         throw new Error('The macOS Keychain could not be opened.');
     }
+    if (options.canCreate && !(await options.canCreate()))
+      throw new Error('The Vault key is missing from the macOS Keychain.');
     const key = randomBytes(32);
     try {
       await execute(

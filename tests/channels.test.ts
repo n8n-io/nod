@@ -508,7 +508,7 @@ test(
           channelId: 'telegram',
           accountId: 'fixture-account',
           threadId: 'fixture-thread',
-          text: 'The code could not be matched to a sign-in. Open the corresponding sign-in conversation in Otto web chat to continue.',
+          text: 'Otto didn’t use that code. Sign-in codes go in the conversation that asked for them, and payments are approved only in the Otto app.',
         },
       ]);
       const guidance = (
@@ -517,7 +517,7 @@ test(
         )
       ).rows[0];
       assert.deepEqual(guidance, {
-        text: 'Verification code not applied.',
+        text: 'Code not applied.',
         state: 'discarded',
         turn_id: null,
         role: 'assistant',
@@ -732,6 +732,15 @@ test('channel replies keep secure credential and approval links in the local app
   assert.equal(reply.includes('secret-token'), false);
   assert.equal(reply.includes('private-id'), false);
   assert.match(reply, /https:\/\/example.com\/docs/);
+  const paymentReply = channelReply(
+    '[Approve](/payments/private-id) [Owned](https://otto.example/payments/private-id) [HTTP](http://otto.example/payments/private-id) [Invoice](https://merchant.example/payments/invoice)',
+    false,
+    false,
+    [],
+    'https://otto.example',
+  );
+  assert.equal(paymentReply.includes('private-id'), false);
+  assert.match(paymentReply, /https:\/\/merchant\.example\/payments\/invoice/);
   const imageReply = channelReply(
     '[Image](http://localhost:4310/api/artifacts/private-file)',
     false,
@@ -1059,7 +1068,7 @@ test(
       assert.equal((await pool.query('SELECT * FROM channel_inbox')).rowCount, 2);
       await addReply(
         'channel:telegram:987:123456:10',
-        'Finish [securely](/credentials/private-token).',
+        'Finish [securely](/credentials/private-token), [approve payment](/payments/private-token) or [add a card](/vault?add=card).',
       );
       await addReply('channel:whatsapp:555000:wamid.good');
       await pool.query(
@@ -1105,6 +1114,7 @@ test(
         '351910000000',
       );
       assert.equal(JSON.stringify(sent).includes('private-token'), false);
+      assert.equal(JSON.stringify(sent).includes('/vault?add='), false);
       assert.equal(JSON.stringify(sent).includes('Unrelated web-only'), false);
       await channels.drain();
       assert.equal(sent.length, 3);

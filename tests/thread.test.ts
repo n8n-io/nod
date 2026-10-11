@@ -611,6 +611,78 @@ test(
         assert.equal(await drainJobs(threadId), jobsBefore);
       });
 
+      await t.test('payment outcome and continuation commit together without replay', async () => {
+        const { createVaultUses } = await import('../src/server/vault-use.ts');
+        const uses = await createVaultUses(db.pool, 'local-development');
+        const source = randomUUID();
+        await db.pool.query(
+          "INSERT INTO turns(id,owner_id,thread_id,source,prompt,channel,status,waiting_reason) VALUES($1,'local-development',$2,'user','Payment fixture','web','waiting','credentials')",
+          [source, threadId],
+        );
+        const jobsBefore = await drainJobs(threadId);
+        let entries = 0;
+        const operation = (id: string, fail: boolean) =>
+          uses.run(
+            {
+              id,
+              ownerId: 'local-development',
+              threadId,
+              turnId: source,
+              origin: 'https://shop.fixture.test',
+              kind: 'card',
+            },
+            {
+              perform: async () => {
+                entries += 1;
+              },
+              complete: async (client) => {
+                await thread.resumeAfterPayment(source, 'Inspect the submitted checkout.', client);
+                if (fail) throw new Error('Synthetic completion failure');
+              },
+            },
+          );
+        const failed = randomUUID();
+        await assert.rejects(operation(failed, true));
+        assert.equal(
+          (await db.pool.query('SELECT status FROM vault_uses WHERE id=$1', [failed])).rows[0]
+            .status,
+          'uncertain',
+        );
+        assert.equal(
+          (
+            await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [
+              `credentials:${source}`,
+            ])
+          ).rowCount,
+          0,
+        );
+        assert.equal(await drainJobs(threadId), jobsBefore);
+        await assert.rejects(operation(failed, false));
+        assert.equal(entries, 1);
+        const completed = randomUUID();
+        await operation(completed, false);
+        assert.equal(
+          (await db.pool.query('SELECT status FROM vault_uses WHERE id=$1', [completed])).rows[0]
+            .status,
+          'submitted',
+        );
+        assert.equal(
+          (
+            await db.pool.query('SELECT id FROM turns WHERE source_id=$1', [
+              `credentials:${source}`,
+            ])
+          ).rowCount,
+          1,
+        );
+        assert.equal(await drainJobs(threadId), jobsBefore + 1);
+        await assert.rejects(operation(completed, false));
+        assert.equal(entries, 2);
+        await db.pool.query("UPDATE turns SET status='cancelled' WHERE id=$1", [source]);
+        const beforeLate = await db.pool.query('SELECT count(*) FROM turns');
+        await thread.resumeAfterCredentials(source);
+        assert.deepEqual((await db.pool.query('SELECT count(*) FROM turns')).rows, beforeLate.rows);
+      });
+
       await t.test('parallel source dispatch creates one turn and one drain job', async () => {
         const jobsBefore = await drainJobs(threadId);
         const ids = await Promise.all(
@@ -4976,7 +5048,7 @@ test('feedback diagnostics build bounded private tool activity from the saved se
       true,
     ).map((entry) => ({ ...entry, message: { ...entry.message, timestamp: NaN } })),
     ...activity('fill', 'browser', { action: 'fill', text: 'synthetic-private-fill' }, username),
-    ...activity('login', 'get_credential', { origin: 'synthetic-private-origin' }, 'private-login'),
+    ...activity('login', 'sign_in', { origin: 'synthetic-private-origin' }, 'private-login'),
     ...activity('flow', 'browser_flow', { query: 'synthetic-private-flow' }, 'private-flow-output'),
     ...activity(
       'memory',

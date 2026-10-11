@@ -319,6 +319,7 @@ try {
             'fixture_signup_human',
             'fixture_signup_submit',
             'fixture_signup_account',
+            'fixture_order',
           ].includes(event.kind)
         )
           audit(

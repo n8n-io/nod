@@ -67,14 +67,16 @@ export function browserUrl(value: string): URL {
   return url;
 }
 
-export function createBrowserProxy() {
+export function createBrowserProxy(allow: (origin: string) => boolean = () => true) {
   let server: ReturnType<typeof createServer> | undefined;
   let pending: Promise<string> | undefined;
   let disposed = false;
   const sockets = new Set<Socket>();
   const track = (socket: Socket) => {
+    if (sockets.has(socket)) return;
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
+    socket.on('error', () => socket.destroy());
   };
   function url(): Promise<string> {
     if (disposed) return Promise.reject(new Error('The browser proxy has stopped.'));
@@ -82,6 +84,7 @@ export function createBrowserProxy() {
       server = createServer(async (incoming, outgoing) => {
         try {
           const url = browserUrl(incoming.url ?? '');
+          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.protocol !== 'http:') throw new Error('Invalid proxy request.');
           const headers: OutgoingHttpHeaders = { ...incoming.headers, host: url.host };
           delete headers['proxy-authorization'];
@@ -115,6 +118,7 @@ export function createBrowserProxy() {
       server.on('connect', async (incoming, socket, head) => {
         try {
           const url = browserUrl(`https://${incoming.url}`);
+          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.pathname !== '/' || url.search || url.hash) throw new Error();
           const upstream = connect({
             host: url.hostname.replace(/^\[|\]$/g, ''),
@@ -142,6 +146,7 @@ export function createBrowserProxy() {
       server.on('upgrade', (incoming, socket, head) => {
         try {
           const url = browserUrl(incoming.url ?? '');
+          if (!allow(url.origin)) throw new Error('This destination is outside the browser grant.');
           if (url.protocol !== 'http:') throw new Error();
           const headers: OutgoingHttpHeaders = { ...incoming.headers, host: url.host };
           delete headers['proxy-authorization'];

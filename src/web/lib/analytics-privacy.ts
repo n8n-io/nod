@@ -19,7 +19,7 @@ const routes = new Set([
 export function analyticsRoute(value: string) {
   try {
     const path = new URL(value, 'https://otto.invalid').pathname.replace(/\/$/, '') || '/';
-    if (/^\/(?:vault|credentials)\/[^/]+$/.test(path)) return '/credentials';
+    if (/^\/(?:vault|credentials|payments)\/[^/]+$/.test(path)) return '/credentials';
     if (path.startsWith('/browser-connect/')) return '/apps';
     if (path === '/you') return '/';
     return routes.has(path) ? path : '/not-found';

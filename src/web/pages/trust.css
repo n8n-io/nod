@@ -3,17 +3,6 @@
   gap: 32px;
   max-width: 760px;
 }
-.trust-summary {
-  color: var(--muted-foreground);
-  font-size: 24px;
-  line-height: 1.35;
-  letter-spacing: -0.01em;
-  text-wrap: pretty;
-}
-.trust-summary b {
-  color: var(--foreground);
-  font-weight: 500;
-}
 .trust-cost {
   display: grid;
   gap: 16px;
@@ -124,72 +113,7 @@
   stroke: var(--brand-pink);
   stroke-dasharray: 6 6;
 }
-.trust-statement {
-  display: grid;
-  gap: 16px;
-  justify-items: start;
-}
-.trust-day {
-  width: 100%;
-}
-.trust-day h4 {
-  padding: 0 12px 4px;
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-  font-weight: 500;
-}
-.trust-day ul {
-  display: grid;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.trust-entry {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-radius: var(--radius-full);
-}
-.trust-entry:hover {
-  background: var(--nav-hover);
-}
-.trust-entry > svg {
-  color: var(--muted-foreground);
-}
-.trust-entry > div {
-  display: grid;
-  min-width: 0;
-}
-.trust-entry-title,
-.trust-entry-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.trust-entry-title {
-  font-size: var(--text-control);
-}
-.trust-entry-meta {
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-.trust-entry-meta.is-error {
-  color: var(--warning);
-}
-.trust-entry-cost {
-  font-size: var(--text-control);
-  font-variant-numeric: tabular-nums;
-}
-.trust-empty {
-  color: var(--muted-foreground);
-  font-size: var(--text-control);
-}
 @media (max-width: 640px) {
-  .trust-summary {
-    font-size: 20px;
-  }
   .trust-cost {
     padding: 16px;
   }

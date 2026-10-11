@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -26,8 +26,7 @@ import {
   closeInterruptedCalls,
   createPiCheckpoint,
   keptImages,
-  rebaseAt,
-  rebaseSession,
+  openLocalSession,
   removedImage,
 } from './checkpoint.ts';
 import { threadIdentity } from '../../ports/thread-identity.ts';
@@ -201,14 +200,9 @@ export function createPiAgent(options: {
               directory,
             })
           : undefined;
-      let manager =
+      const manager =
         durable?.manager ??
-        (input.background
-          ? SessionManager.inMemory(directory)
-          : SessionManager.continueRecent(directory, directory));
-      const file = durable ? undefined : manager.getSessionFile();
-      if (file && existsSync(file) && statSync(file).size > rebaseAt)
-        manager = rebaseSession(manager, SessionManager.create(directory, directory));
+        (input.background ? SessionManager.inMemory(directory) : openLocalSession(directory));
       closeInterruptedCalls(manager);
       const completedEvents: AgentEvent[] = [];
       const checkpoint = async () => {

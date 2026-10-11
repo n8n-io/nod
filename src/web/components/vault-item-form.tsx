@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { CreditCard, Globe } from 'lucide-react';
 import type { VaultEntry, VaultEntryDetails, VaultListEntry } from '../../shared/contracts';
 import { api } from '../lib/api';
-import { Button, Field, Input, Notice } from './ui';
+import { Button, Field, Input, Notice, Switch } from './ui';
 import { suggestLoginName } from '../lib/vault-name';
 import { VaultTitle } from './vault-surface';
 
@@ -36,6 +36,7 @@ function VaultSecretField({
   saved = true,
   disabled,
   onChange,
+  required = false,
 }: {
   name: VaultSecretName;
   label: string;
@@ -43,6 +44,7 @@ function VaultSecretField({
   saved?: boolean;
   disabled: boolean;
   onChange?(): void;
+  required?: boolean;
 }) {
   const [removing, setRemoving] = useState(false);
   const id = useId();
@@ -60,7 +62,7 @@ function VaultSecretField({
       <div className="vault-field-heading">
         <label className="field-label" htmlFor={id}>
           {label}
-          {name === 'securityCode' || name === 'password' ? ' (optional)' : ''}
+          {!required && (name === 'securityCode' || name === 'password') ? ' (optional)' : ''}
         </label>
         {editing && name === 'securityCode' && saved && (
           <div className="vault-field-heading-actions">
@@ -101,7 +103,7 @@ function VaultSecretField({
           }
           maxLength={name === 'cardNumber' ? 32 : name === 'securityCode' ? 4 : 8192}
           pattern={name === 'securityCode' ? '[0-9]{3,4}' : undefined}
-          required={!editing && name === 'cardNumber'}
+          required={required || (!editing && name === 'cardNumber')}
           disabled={disabled}
         />
       )}
@@ -113,13 +115,17 @@ export function VaultFields({
   kind,
   details,
   disabled,
+  hosted = false,
   onSecretChange,
 }: {
   kind: 'login' | 'card';
   details?: VaultEntryDetails;
   disabled: boolean;
+  hosted?: boolean;
   onSecretChange?(): void;
 }) {
+  const savedCode = details?.kind === 'card' && details.hasSecurityCode;
+  const [remember, setRemember] = useState(savedCode);
   const identityLabel =
     details?.kind === 'login'
       ? (details.identifierLabel ?? 'Username or email')
@@ -191,14 +197,33 @@ export function VaultFields({
               disabled={disabled}
             />
           </Field>
-          <VaultSecretField
-            name="securityCode"
-            label="Security code"
-            editing={Boolean(details)}
-            saved={details?.kind === 'card' && details.hasSecurityCode}
-            disabled={disabled}
-            onChange={onSecretChange}
-          />
+          {!hosted && !savedCode && (
+            <div className="field vault-switch-row">
+              <span>
+                <span className="field-label">Do it for me</span>
+                <small className="payment-hint">
+                  Otto keeps the security code, so your yes is enough to pay.
+                </small>
+              </span>
+              <Switch
+                checked={remember}
+                aria-label="Do it for me"
+                disabled={disabled}
+                onCheckedChange={setRemember}
+              />
+            </div>
+          )}
+          {!hosted && remember && (
+            <VaultSecretField
+              name="securityCode"
+              label="Security code"
+              editing={Boolean(details)}
+              saved={savedCode}
+              required={!savedCode}
+              disabled={disabled}
+              onChange={onSecretChange}
+            />
+          )}
         </>
       )}
     </>
@@ -207,11 +232,13 @@ export function VaultFields({
 
 export function VaultItemForm({
   kind,
+  hosted = false,
   onSaved,
   onCancel,
   onSavingChange,
 }: {
   kind: 'login' | 'card';
+  hosted?: boolean;
   onSaved(entry: VaultListEntry): void;
   onCancel(): void;
   onSavingChange?(saving: boolean): void;
@@ -344,7 +371,7 @@ export function VaultItemForm({
         className="vault-inset vault-add-form"
         autoComplete="off"
       >
-        <VaultFields kind={kind} disabled={saving} />
+        <VaultFields kind={kind} disabled={saving} hosted={hosted} />
       </form>
       {error && <Notice>{error}</Notice>}
     </>
