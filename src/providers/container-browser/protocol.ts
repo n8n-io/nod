@@ -12,12 +12,12 @@ const identity = {
   namespace: z.string().regex(/^sk-[a-f0-9]{24}$/),
 };
 const thread = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
-const selector = z.string().min(1).max(500);
+const selector = z.string().min(1);
 const point = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict();
 export const browserDownloadInput = z
   .object({
     selector: selector.optional(),
-    url: z.string().min(1).max(8192).optional(),
+    url: z.string().min(1).optional(),
     name: z
       .string()
       .min(1)
@@ -52,21 +52,21 @@ const browserAction = z
       'accept_dialog',
       'dismiss_dialog',
     ]),
-    url: z.string().max(8192).optional(),
-    script: z.string().max(20_000).optional(),
+    url: z.string().optional(),
+    script: z.string().optional(),
     tabId: z.string().min(1).max(200).optional(),
     selector: selector.optional(),
     targetSelector: selector.optional(),
     x: z.number().min(0).max(1).optional(),
     y: z.number().min(0).max(1).optional(),
-    points: z.array(point).min(2).max(100).optional(),
-    durationMs: z.number().int().min(0).max(15_000).optional(),
-    text: z.string().max(20_000).optional(),
-    key: z.string().max(40).optional(),
+    points: z.array(point).min(2).optional(),
+    durationMs: z.number().int().min(0).optional(),
+    text: z.string().optional(),
+    key: z.string().optional(),
     load: z.enum(['load', 'domcontentloaded', 'networkidle']).optional(),
     direction: z.enum(['up', 'down']).optional(),
-    waitMs: z.number().int().min(0).max(15_000).optional(),
-    offset: z.number().int().min(0).max(100_000).optional(),
+    waitMs: z.number().int().min(0).optional(),
+    offset: z.number().int().min(0).optional(),
     timeZone: z.string().max(100).optional(),
     locale: z.string().max(35).optional(),
   })

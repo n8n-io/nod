@@ -809,6 +809,37 @@ async function transportFixture(respectTimeouts = false) {
   };
 }
 
+test('browser requests wait for native completion without a second execution deadline', async (t) => {
+  const browser = await transportFixture(true);
+  const bridge = await harness({ computer: browser.computer });
+  const computer = bridge.client('/synthetic/native-deadline');
+  const started = deferred();
+  const release = deferred();
+  try {
+    await computer.act('fixture', { action: 'open', url: 'https://1.1.1.1/login' });
+    browser.before(async (action) => {
+      if (action === 'snapshot') {
+        started.resolve();
+        await release.promise;
+      }
+    });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const pending = computer.act('fixture', { action: 'snapshot' });
+    void pending.catch(() => {});
+    await started.promise;
+    t.mock.timers.tick(10 * 60_000);
+    release.resolve();
+    assert.match((await pending).text, /Sign in/);
+    assert.equal(browser.actions.filter((action) => action === 'snapshot').length, 2);
+    assert.equal(browser.actions.includes('close'), false);
+  } finally {
+    t.mock.timers.reset();
+    release.resolve();
+    await bridge.close();
+    await browser.cleanup();
+  }
+});
+
 test('a timed out snapshot is not resent and its queue remains fenced until close is acknowledged', async () => {
   const f = await transportFixture();
   const closeStarted = deferred();
@@ -2543,7 +2574,7 @@ test('visual browser actions use screenshot coordinates and reject invalid gestu
       { action: 'click', x: 0.5, y: 1.1 },
       { action: 'click', x: 0.5 },
       { action: 'click', x: Number.NaN, y: 0.5 },
-      { action: 'click', x: 0.5, y: 0.5, durationMs: 15_001 },
+      { action: 'click', x: 0.5, y: 0.5, durationMs: -1 },
       { action: 'click', selector: '#account', x: 0.5, y: 0.5 },
       { action: 'drag', points: [{ x: 0.5, y: 0.5 }] },
       {
@@ -2553,7 +2584,6 @@ test('visual browser actions use screenshot coordinates and reject invalid gestu
           { x: 1.1, y: 0.5 },
         ],
       },
-      { action: 'drag', points: Array.from({ length: 101 }, () => ({ x: 0.5, y: 0.5 })) },
     ]) {
       commands.length = 0;
       await assert.rejects(computer.act('fixture', input as BrowserAction));
@@ -5696,6 +5726,61 @@ test(
     }
   },
 );
+
+test('navigation stays available when a saved script fence cannot reach the inspector', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'otto-navigation-recovery-'));
+  const fixture = stagedLoginBrowser();
+  let offline = false;
+  const navigated: string[] = [];
+  const computer = createBrowserFixture({
+    dataRoot: directory,
+    run: async (...args) => {
+      const command = args[1].slice(args[1].indexOf('--idle-timeout') + 2);
+      if (offline && command[0] === 'get' && command[1] === 'cdp-url')
+        return { stdout: '{"success":false}', stderr: '', exitCode: 1 };
+      if (['back', 'forward', 'reload'].includes(command[0])) navigated.push(command[0]);
+      const result = await fixture.run(...args);
+      if (command[0] === 'eval') offline = true;
+      return result;
+    },
+  });
+  try {
+    await computer.act('recovery', { action: 'open', url: 'https://1.1.1.1/login' });
+    await computer.act('recovery', {
+      action: 'evaluate',
+      script: "document.body.dataset.changed = 'synthetic'",
+    });
+    for (const action of ['back', 'forward', 'reload'] as const)
+      await computer.act('recovery', { action });
+    assert.deepEqual(navigated, ['back', 'forward', 'reload']);
+    offline = false;
+    await assert.rejects(
+      computer.injectCredentials({
+        threadId: 'recovery',
+        origin: 'https://1.1.1.1',
+        kind: 'identifier',
+        username: 'synthetic-recovery',
+        usernameSelector: '#account',
+        submitSelector: 'button',
+      }),
+      /script ran/,
+    );
+    await computer.act('recovery', { action: 'reload' });
+    await computer.injectCredentials({
+      threadId: 'recovery',
+      origin: 'https://1.1.1.1',
+      kind: 'identifier',
+      username: 'synthetic-recovery',
+      usernameSelector: '#account',
+      submitSelector: 'button',
+    });
+    assert.deepEqual(fixture.pages.get('recovery')!.entered, ['synthetic-recovery']);
+  } finally {
+    offline = false;
+    await computer.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('failed private entry holds every Pi action until the filled document changes', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'otto-private-cleanup-'));

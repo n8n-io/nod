@@ -26,9 +26,7 @@ import {
 } from './protocol.ts';
 
 const viewFrameLine = 4 * 1024 * 1024 + 256;
-const observationSchema = z
-  .object({ text: z.string().max(256 * 1024), url: z.string().max(8192) })
-  .strict();
+const observationSchema = z.object({ text: z.string(), url: z.string() }).strict();
 
 export function createBridgeComputer(options: {
   namespace: string;
@@ -149,9 +147,9 @@ export function createBridgeComputer(options: {
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
       const timeoutMs =
         input.method === 'act' && input.input.action === 'open'
-          ? (options.openTimeoutMs ?? Math.max(options.timeoutMs ?? 60_000, 150_000))
-          : (options.timeoutMs ?? 60_000);
-      const timer = setTimeout(() => cancel(), timeoutMs);
+          ? (options.openTimeoutMs ?? options.timeoutMs)
+          : options.timeoutMs;
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => cancel(), timeoutMs);
       const cleanup = () => {
         clearTimeout(timer);
         clearTimeout(drainTimer);

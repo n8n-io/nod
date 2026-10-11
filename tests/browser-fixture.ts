@@ -132,38 +132,56 @@ export function createBrowserFixture(options: Options, preferRealSocket = false)
                           ? ['click', String(command.selector)]
                           : command.action === 'fill'
                             ? ['fill', String(command.selector), String(command.value)]
-                            : command.action === 'press'
-                              ? ['press', String(command.key)]
-                              : command.action === 'scroll'
-                                ? [
-                                    'scroll',
-                                    String(command.direction),
-                                    String(command.amount),
-                                    ...(typeof command.selector === 'string'
-                                      ? ['-s', command.selector]
-                                      : []),
-                                  ]
-                                : command.action === 'mousemove'
-                                  ? ['mouse', 'move', String(command.x), String(command.y)]
-                                  : command.action === 'mousedown' || command.action === 'mouseup'
-                                    ? ['mouse', command.action.slice(5)]
-                                    : command.action === 'wheel'
-                                      ? ['mouse', 'wheel', String(command.deltaY)]
-                                      : command.action === 'keyboard'
-                                        ? ['keyboard', 'type', String(command.text)]
-                                        : command.action === 'dialog'
+                            : command.action === 'type'
+                              ? ['type', String(command.selector), String(command.text)]
+                              : command.action === 'select'
+                                ? ['select', String(command.selector), String(command.value)]
+                                : ['check', 'uncheck', 'hover'].includes(String(command.action))
+                                  ? [String(command.action), String(command.selector)]
+                                  : command.action === 'drag'
+                                    ? ['drag', String(command.source), String(command.target)]
+                                    : command.action === 'upload'
+                                      ? ['upload', String(command.selector), String(command.file)]
+                                      : command.action === 'press'
+                                        ? ['press', String(command.key)]
+                                        : command.action === 'scroll'
                                           ? [
-                                              'dialog',
-                                              String(command.response),
-                                              ...(typeof command.promptText === 'string'
-                                                ? [command.promptText]
+                                              'scroll',
+                                              String(command.direction),
+                                              String(command.amount),
+                                              ...(typeof command.selector === 'string'
+                                                ? ['-s', command.selector]
                                                 : []),
                                             ]
-                                          : command.action === 'reload'
-                                            ? ['reload']
-                                            : command.action === 'close'
-                                              ? ['close']
-                                              : null;
+                                          : command.action === 'mousemove'
+                                            ? [
+                                                'mouse',
+                                                'move',
+                                                String(command.x),
+                                                String(command.y),
+                                              ]
+                                            : command.action === 'mousedown' ||
+                                                command.action === 'mouseup'
+                                              ? ['mouse', command.action.slice(5)]
+                                              : command.action === 'wheel'
+                                                ? ['mouse', 'wheel', String(command.deltaY)]
+                                                : command.action === 'keyboard'
+                                                  ? ['keyboard', 'type', String(command.text)]
+                                                  : command.action === 'dialog'
+                                                    ? [
+                                                        'dialog',
+                                                        String(command.response),
+                                                        ...(typeof command.promptText === 'string'
+                                                          ? [command.promptText]
+                                                          : []),
+                                                      ]
+                                                    : ['back', 'forward', 'reload'].includes(
+                                                          String(command.action),
+                                                        )
+                                                      ? [String(command.action)]
+                                                      : command.action === 'close'
+                                                        ? ['close']
+                                                        : null;
       if (!args) throw new Error('Unsupported synthetic browser action.');
       const result = await run(session.executable, [...session.args, ...args], {
         ...session.options,

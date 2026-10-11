@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { browserDownloadBytes, type BrowserDownload } from '../../ports/computer.ts';
 
 export function downloadName(value: string | undefined, pdf = false): string {
@@ -55,78 +54,9 @@ export async function completedDownloads(directory: string): Promise<string[]> {
     throw new Error('The browser download directory is unavailable.');
   }
   const entries = await readdir(directory, { withFileTypes: true });
-  if (entries.length > 64) throw new Error('There are too many browser downloads.');
   return entries
     .filter((entry) => entry.isFile() && !entry.name.endsWith('.crdownload'))
     .map((entry) => entry.name);
-}
-
-export async function waitForDownload(
-  directory: string,
-  signal?: AbortSignal,
-  timeoutMs = 5000,
-): Promise<string> {
-  const deadline = performance.now() + timeoutMs;
-  let identity: { dev: number; ino: number } | undefined;
-  for (;;) {
-    signal?.throwIfAborted();
-    const root = await lstat(directory).catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !identity) return undefined;
-      throw new Error('The browser download directory is unavailable.');
-    });
-    if (root) {
-      if (
-        !root.isDirectory() ||
-        root.isSymbolicLink() ||
-        (identity && (identity.dev !== root.dev || identity.ino !== root.ino))
-      )
-        throw new Error('The browser download directory changed.');
-      identity ??= { dev: root.dev, ino: root.ino };
-      const names = await readdir(directory).catch(() => {
-        throw new Error('The browser download directory is unavailable.');
-      });
-      if (names.length > 64) throw new Error('There are too many browser downloads.');
-      const finishing =
-        names.length === 2 && names.some((name) => names.includes(`${name}.crdownload`));
-      if (names.length > 1 && !finishing)
-        throw new Error('Choose the specific download link or URL.');
-      if (names.length === 1) {
-        const file = await lstat(join(directory, names[0])).catch((error) => {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-          throw new Error('The browser file is unavailable.');
-        });
-        if (file) {
-          if (
-            !file.isFile() ||
-            file.isSymbolicLink() ||
-            file.nlink !== 1 ||
-            file.size > browserDownloadBytes
-          )
-            throw new Error('The browser file is unavailable or exceeds 12 MiB.');
-          if (!names[0].endsWith('.crdownload')) {
-            const current = await lstat(directory).catch(() => {
-              throw new Error('The browser download directory is unavailable.');
-            });
-            if (
-              !current.isDirectory() ||
-              current.isSymbolicLink() ||
-              current.dev !== identity.dev ||
-              current.ino !== identity.ino
-            )
-              throw new Error('The browser download directory changed.');
-            signal?.throwIfAborted();
-            if (performance.now() >= deadline) break;
-            return names[0];
-          }
-        }
-      }
-    }
-    signal?.throwIfAborted();
-    const remaining = deadline - performance.now();
-    if (remaining <= 0) break;
-    await delay(Math.min(25, remaining), undefined, { signal });
-  }
-  throw new Error('The browser download did not finish.');
 }
 
 export async function readDownload(directory: string, file: string, name?: string) {
@@ -179,53 +109,24 @@ export async function createDownloadCapture(directory: string) {
   const root = await lstat(directory);
   if (!root.isDirectory() || root.isSymbolicLink())
     throw new Error('The browser download directory is unavailable.');
-  const entries = async () => {
-    const current = await lstat(directory);
-    if (
-      !current.isDirectory() ||
-      current.isSymbolicLink() ||
-      current.dev !== root.dev ||
-      current.ino !== root.ino
-    )
-      throw new Error('The browser download directory changed.');
-    const names = await readdir(directory);
-    if (names.length > 64) throw new Error('There are too many browser downloads.');
-    const files = await Promise.all(
-      names.map(async (name) => {
-        const info = await lstat(join(directory, name)).catch((error) => {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-          throw error;
-        });
-        return info ? { name, info } : undefined;
-      }),
-    );
-    return files.filter((file) => file !== undefined);
-  };
-  const previous = await entries();
-  const names = new Set(previous.map((file) => file.name));
-  const identities = new Set(previous.map(({ info }) => `${info.dev}:${info.ino}`));
-  const created = async () =>
-    (await entries()).filter(
-      ({ name, info }) => !names.has(name) && !identities.has(`${info.dev}:${info.ino}`),
-    );
+  const previous = new Set(await readdir(directory));
   const file = `capture-${randomUUID()}`;
   return {
     file,
-    async inspect() {
-      const files = await created();
+    async cleanup(closed = false) {
+      const current = await lstat(directory);
       if (
-        files.some(({ info }) => !info.isFile() || info.isSymbolicLink()) ||
-        files.reduce((size, { info }) => size + info.size, 0) > browserDownloadBytes
+        !current.isDirectory() ||
+        current.isSymbolicLink() ||
+        current.dev !== root.dev ||
+        current.ino !== root.ino
       )
-        throw new Error('The browser download is unavailable or exceeds 12 MiB.');
-      return files.map((file) => file.name);
-    },
-    async cleanup() {
-      for (const { name, info } of await created()) {
-        if (name !== file) continue;
-        if (!info.isFile() || info.isSymbolicLink())
-          throw new Error('The browser download cleanup is unavailable.');
-        await unlink(join(directory, name));
+        throw new Error('The browser download directory changed.');
+      for (const name of closed ? await readdir(directory) : [file]) {
+        if (previous.has(name)) continue;
+        await unlink(join(directory, name)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+        });
       }
     },
   };
@@ -233,10 +134,8 @@ export async function createDownloadCapture(directory: string) {
 
 export function fetchDownloadScript(url: string) {
   return `(async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await fetch(${JSON.stringify(url)}, { credentials: 'include', signal: controller.signal });
+      const response = await fetch(${JSON.stringify(url)}, { credentials: 'include' });
       if (!response.ok || !response.body || Number(response.headers.get('content-length')) > ${browserDownloadBytes}) throw new Error();
       const reader = response.body.getReader();
       const chunks = [];
@@ -255,6 +154,5 @@ export function fetchDownloadScript(url: string) {
       for (let index = 0; index < bytes.length; index += 32768) binary += String.fromCharCode(...bytes.subarray(index, index + 32768));
       return { data: btoa(binary), mimeType: response.headers.get('content-type') || 'application/octet-stream' };
     } catch { return null; }
-    finally { clearTimeout(timer); controller.abort(); }
   })()`;
 }

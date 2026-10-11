@@ -374,6 +374,15 @@ export async function createPiCheckpoint(options: {
         stored = size;
         await cleanup();
       } catch {
+        try {
+          const published = await readSession(store, threadId);
+          if (published) entries(published.bytes);
+          await Promise.all(
+            written
+              .filter((id) => !published?.parts.includes(id))
+              .map((id) => store.remove(`sessions/${threadId}/${id}.jsonl`)),
+          );
+        } catch {}
         failed = true;
         throw failure();
       }

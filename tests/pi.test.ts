@@ -1054,6 +1054,72 @@ test('a session entry larger than one stored object is saved and restored', asyn
   }
 });
 
+for (const failure of [
+  'part-before',
+  'part-after',
+  'manifest-before',
+  'manifest-after',
+  'manifest-unreadable',
+])
+  test(`failed checkpoint ${failure} removes only unpublished parts`, async () => {
+    const f = await fixture();
+    let armed = false;
+    let failed = false;
+    const written: string[] = [];
+    const manifestKey = `sessions/${f.threadId}.jsonl`;
+    const store: PrivateObjectStore = {
+      ...f.store,
+      read: async (...args) => {
+        if (failed && failure === 'manifest-unreadable' && args[0] === manifestKey)
+          throw new Error('Synthetic read failure');
+        return f.store.read(...args);
+      },
+      write: async (...args) => {
+        if (!armed) return f.store.write(...args);
+        if (args[0] !== manifestKey) written.push(args[0]);
+        const fail =
+          args[0] === manifestKey
+            ? failure.startsWith('manifest-')
+            : failure.startsWith('part-') && written.length === 2;
+        if (fail && failure.endsWith('-before')) {
+          failed = true;
+          throw new Error('Synthetic write failure');
+        }
+        const version = await f.store.write(...args);
+        if (fail) {
+          failed = true;
+          throw new Error('Synthetic lost write acknowledgement');
+        }
+        return version;
+      },
+    };
+    try {
+      const checkpoint = await createPiCheckpoint({ ...f, store, directory: f.directory });
+      checkpoint.manager.appendMessage({
+        role: 'user',
+        content: 'synthetic-data '.repeat(700_000),
+        timestamp: 1,
+      });
+      armed = true;
+      await assert.rejects(checkpoint.checkpoint(), /could not be saved/);
+      assert.equal(written.length, 2);
+      const published = JSON.parse(
+        Buffer.from((await f.store.read(manifestKey, 1024 * 1024))!.bytes).toString(),
+      );
+      for (const key of written) {
+        const referenced = published.parts.some((id: string) => key.endsWith(`/${id}.jsonl`));
+        assert.equal(Boolean(await f.store.read(key, 15 * 1024 * 1024)), referenced);
+      }
+      const restored = await createPiCheckpoint({ ...f, directory: join(f.directory, 'restored') });
+      assert.equal(
+        restored.manager.buildSessionContext().messages.some((message) => message.role === 'user'),
+        failure === 'manifest-after' || failure === 'manifest-unreadable',
+      );
+    } finally {
+      await f.close();
+    }
+  });
+
 test('a stale Pi writer cannot overwrite a newer session checkpoint', async () => {
   const f = await fixture();
   try {

@@ -5,7 +5,7 @@ export interface ProcessOptions {
   env?: NodeJS.ProcessEnv;
   input?: string;
   signal?: AbortSignal;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   maxBytes?: number;
 }
 
@@ -50,7 +50,8 @@ export function runProcess(
       stopped = true;
       child.kill('SIGKILL');
     };
-    const timer = setTimeout(stop, options.timeoutMs ?? 30_000);
+    const timer =
+      options.timeoutMs === null ? undefined : setTimeout(stop, options.timeoutMs ?? 30_000);
     const abort = () => stop();
     options.signal?.addEventListener('abort', abort, { once: true });
     const capture = (target: Buffer[], chunk: Buffer) => {

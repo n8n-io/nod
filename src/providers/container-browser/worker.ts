@@ -247,7 +247,6 @@ export async function startContainerBrowserWorker(
       if (!terminal && request && !['quiesce', 'view'].includes(request.method))
         void dispose(request.namespace).catch(() => {});
     });
-    socket.setTimeout(90_000, stop);
     const view = async (computer: Computer, threadId: string, id: string) => {
       if (!computer.view || !computer.control) throw new Error();
       let sent = 0;
