@@ -223,7 +223,7 @@ You can inspect and change saved memory. Automatic changes archive earlier entri
 
 ## Deploy with a clear data boundary
 
-In desktop and local mode, Otto's runtime runs on your computer. Commands and file tools run in the sandbox workspace. Provider keys stay in the server. Local API access to owner data requires the owner access key. Connected CLI credentials reach only the verified program through the separate connected-command path.
+In desktop and local mode, Otto's runtime runs on your computer. Commands and file tools run in the sandbox workspace. Provider keys stay in the server. Local API access to owner data requires the owner access key. Connected CLI credentials reach only a separate, sealed installation from the declared source. The server checks a download's SHA-256 when that source includes a checksum.
 
 Hosted mode gives each owner a separate runtime, SQL role, schemas, browser and workspace. The gateway authenticates the owner and sends signed requests to that owner's runtime. The runtime owner does not change between requests.
 
