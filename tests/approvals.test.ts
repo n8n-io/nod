@@ -528,7 +528,7 @@ test(
       );
 
       await t.test(
-        'only the owner own addresses skip the review and a matching request needs no confirmation',
+        "only the owner's own addresses skip the review and a matching request needs no confirmation",
         async () => {
           aligned = false;
           const reviewed = reviews.length;
@@ -548,7 +548,14 @@ test(
               confirm: true,
               reason: 'unrequested',
             });
-          assert.equal(reviews.length, reviewed + 2);
+          assert.deepEqual(
+            await trust.check(turn, 'CONNECTED_MCP_CALL', {
+              tool: 'synthetic_operation',
+              input: { to: 'owner@example.test' },
+            }),
+            { confirm: true, reason: 'unrequested' },
+          );
+          assert.equal(reviews.length, reviewed + 3);
           aligned = true;
           const reply = await begin('Yes, reply YES to the dentist.');
           assert.deepEqual(

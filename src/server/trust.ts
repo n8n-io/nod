@@ -147,7 +147,7 @@ export function createTrust(options: {
     if (effect === 'change') return { confirm: false };
     if (await flagged(turn.threadId)) return { confirm: true, reason: 'injection' };
     const recipients = [...actionRecipients(action, args)];
-    if (effect !== 'destructive' && recipients.length && (await own(recipients)))
+    if (effect === 'outbound' && recipients.length && (await own(recipients)))
       return { confirm: false };
     const request =
       origin.source === 'schedule'

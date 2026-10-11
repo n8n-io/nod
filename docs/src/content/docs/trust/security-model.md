@@ -80,7 +80,7 @@ Only the server holds keys and decides what runs. The model, the workspace and a
 - The website receives what's submitted, and can store, encode or show it again. Masking replaces only the exact known values.
 - Once signed in, Otto can act anywhere on that website. Vault doesn't review each click, and the trust check covers app actions only.
 - The review model can be wrong, and the model isn't immune to prompt injection.
-- Changes to your own data, data sent to recipients you already trust, and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
+- Changes to your own data, sends only to your own addresses, and links Otto opens or fetches aren't checked. In a source install the workspace has no outbound firewall; the desktop app blocks private and reserved addresses.
 - A saved card can't make the issuer enforce the amount, and card support isn't a PCI DSS compliance claim.
 - In hosted mode, the operator can decrypt stored data.
 - Tests cover known failure cases. They don't prove that every injection or browser exploit is blocked.

@@ -7,7 +7,7 @@ sidebar:
 
 Before Otto runs an action in a connected app, the Otto server checks it against what you asked for. Reads and changes to your own data run. Anything that reaches other people or deletes data runs only when your request clearly covers it. Otherwise Otto asks you.
 
-Work Otto starts on its own, such as on a new email, has no request from you behind it. So it only reads and drafts, and asks for everything else. Otto doesn't remember approvals: a send you confirmed earlier never approves a later one.
+Background work, such as on a new email, has no request from you behind it. So it only reads and drafts, and asks for everything else. Otto doesn't keep a list of approved people: a send you confirmed earlier doesn't approve a later one by itself.
 
 ## How the server reads an action
 
@@ -23,12 +23,12 @@ The server classifies the request exactly as it will be sent, not the model's de
 
 ## What runs directly
 
-| Kind of work                                      | Reads | Changes                | Outbound or unknown                                   | Destructive             |
-| ------------------------------------------------- | ----- | ---------------------- | ----------------------------------------------------- | ----------------------- |
-| A conversation with you                           | Run   | Run                    | Run if it's only to you or matches your request       | Run with a review match |
-| A scheduled run                                   | Run   | Run                    | Run if it's only to you or matches the instruction    | Run with a review match |
-| Background work Otto starts, such as on new email | Run   | Drafts run, others ask | Ask                                                   | Ask                     |
-| Read-only and onboarding work                     | Run   | Refused                | Outbound refused, unknown left to Otto's instructions | Refused                 |
+| Kind of work                                      | Reads | Changes                | Outbound or unknown                                       | Destructive             |
+| ------------------------------------------------- | ----- | ---------------------- | --------------------------------------------------------- | ----------------------- |
+| A conversation with you                           | Run   | Run                    | Run if it's a send only to you or matches your request    | Run with a review match |
+| A scheduled run                                   | Run   | Run                    | Run if it's a send only to you or matches the instruction | Run with a review match |
+| Background work Otto starts, such as on new email | Run   | Drafts run, others ask | Ask                                                       | Ask                     |
+| Read-only and onboarding work                     | Run   | Refused                | Outbound refused, unknown left to Otto's instructions     | Refused                 |
 
 When an action doesn't run directly, Otto asks you a yes/no question. Read-only work is the exception: classified writes are refused. Otto's instructions tell it to only read there, because the server can refuse only actions it can classify.
 
@@ -49,9 +49,9 @@ The diagram shows a conversation. Background work only reads and drafts, read-on
 
 ## Your own addresses
 
-A send or other outbound action runs directly when every recipient is your own address, from your Otto account or a connected app account. Nobody else is reached, so there's nothing to check.
+In a conversation or a scheduled run, a send runs directly when every recipient is your own address, from your Otto account or a connected app account. Nobody else is reached, so there's nothing to check.
 
-Any other recipient goes to the review, even someone you emailed before. Deletions always go to the review.
+Any other recipient goes to the review, even someone you emailed before. Deletions and actions Otto can't classify always go to the review. Background work still asks, even for a send to you.
 
 ## The review model
 
