@@ -62,7 +62,13 @@ const state: State =
   input.phase === 'initial'
     ? { sequence: 0, accounts: {}, sessions: {} }
     : JSON.parse(await readFile(statePath, 'utf8'));
-const calls: Array<{ method: string; path: string; project: string; action?: string }> = [];
+const calls: Array<{
+  method: string;
+  path: string;
+  project: string;
+  action?: string;
+  status?: number;
+}> = [];
 const violations: string[] = [];
 const requestIds = new Set<string>();
 const privateValues: string[] = [];
@@ -139,6 +145,7 @@ globalThis.fetch = async (resource, options) => {
     const accountMatch = url.pathname.match(/^\/api\/v3\.1\/connected_accounts\/([^/]+)$/);
     if (accountMatch && request.method === 'GET') {
       const id = accountMatch[1];
+      calls.at(-1)!.status = accounts[id] ? 200 : 404;
       if (!accounts[id]) return Response.json({ error: 'missing' }, { status: 404 });
       return Response.json({
         id,
@@ -259,7 +266,7 @@ try {
   if (input.phase === 'initial') {
     state.accounts = {
       [managed ? 'hosted' : 'project-a']: { ca_retained: managed ? managedUser : ownerId },
-      'project-b': { ca_retained: 'another-owner' },
+      'project-b': { ca_other_project: ownerId },
     };
   }
   await provider.listServices!();
@@ -319,7 +326,11 @@ try {
     await assert.rejects(
       service.executeApproved(ownerId, 'GMAIL_LIST_LABELS', { connectionId: input.connectionId }),
     );
-    assert.ok(calls.some((call) => call.path.includes('/connected_accounts/')));
+    assert.ok(
+      calls.some(
+        (call) => call.path === '/api/v3.1/connected_accounts/ca_retained' && call.status === 404,
+      ),
+    );
     assert.ok(calls.every((call) => call.method === 'GET'));
   } else {
     const result = (await service.executeApproved(ownerId, 'GMAIL_LIST_LABELS', {
