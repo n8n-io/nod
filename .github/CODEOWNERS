@@ -9,6 +9,9 @@
 /deployment/cloudflare/package.json
 /deployment/cloudflare/pnpm-lock.yaml
 /deployment/cloudflare/pnpm-workspace.yaml
+/docs/package.json
+/docs/pnpm-lock.yaml
+/docs/pnpm-workspace.yaml
 /Dockerfile.browser
 /Dockerfile.workspace
 /compose.yaml

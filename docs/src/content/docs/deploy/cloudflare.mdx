@@ -1,0 +1,240 @@
+---
+title: Hosted on Cloudflare
+description: Operate a hosted Otto deployment on Cloudflare, from secrets and checks to rollout, recovery and reset.
+sidebar:
+  order: 3
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+This runbook is for operators who run Otto on Cloudflare for several people. To learn how hosted mode keeps users apart, read [Hosted mode](/how-it-works/hosted-mode/).
+
+:::danger[Reset before you deploy this release]
+This release has no migration path from the task model. Reset every existing environment with the [database reset](#reset-the-database) before you deploy it.
+:::
+
+## Architecture
+
+The Worker serves the web app and sends `/api/*` to one private gateway. The gateway signs users in with Google and sends signed requests to each user's own tenant. Provider keys stay in the Node runtime.
+
+```mermaid
+flowchart LR
+  worker[Worker<br/>web app]:::accent -- /api --> gateway[Gateway<br/>Google sign-in]
+  gateway -- signed requests --> tenant[Tenant<br/>one per user]
+  gateway -- provisions --> pg[(PostgreSQL)]
+  tenant --> pg
+  tenant --> browser[Browser container]
+  tenant --> workspace[Workspace container]
+  browser -. checkpoints .-> r2[(Private R2)]:::muted
+  workspace -. checkpoints .-> r2
+```
+
+| Class                        | Image tag                            | Instance type | Development max | Production max |
+| ---------------------------- | ------------------------------------ | ------------- | --------------- | -------------- |
+| `GatewayContainer`           | `otto-<environment>:<SHA>`           | `basic`       | 1               | 1              |
+| `TenantContainer`            | same runtime image                   | `standard-1`  | 8               | 100            |
+| `BrowserComputerContainer`   | `otto-<environment>-browser:<SHA>`   | `standard-4`  | 8               | 100            |
+| `WorkspaceComputerContainer` | `otto-<environment>-workspace:<SHA>` | `standard-2`  | 8               | 100            |
+
+`OTTO_MAX_USERS` caps admission: 8 by default, 100 in production, 400 at most. Raise it together with the container limits, database connections and budget.
+
+## Check a change
+
+```sh title="Terminal"
+pnpm install --frozen-lockfile && pnpm run build
+pnpm --dir deployment/cloudflare install --frozen-lockfile
+pnpm --dir deployment/cloudflare run check
+pnpm --dir deployment/cloudflare test
+cd deployment/cloudflare
+pnpm exec wrangler deploy --env development --dry-run --containers-rollout=none
+pnpm exec wrangler deploy --env production --dry-run --containers-rollout=none
+```
+
+Dry runs check bundling and configuration only.
+
+## Run hosted mode locally
+
+<Steps>
+
+1. Create a private `.env.hosted.local` (mode 600) from `deployment/hosted.env.example`. Add a dedicated development database reachable from Docker, fresh random 32-byte `OTTO_MASTER_KEY` and `BETTER_AUTH_SECRET`, `OTTO_ENVIRONMENT=development`, model and Composio keys, and a Google OAuth client with the redirect `http://localhost:4330/api/auth/callback/google`.
+
+2. Build and start.
+
+   ```sh title="Terminal"
+   pnpm run build
+   pnpm --dir deployment/cloudflare install --frozen-lockfile
+   node scripts/start-hosted.mjs --check
+   node scripts/start-hosted.mjs
+   ```
+
+3. Open `http://localhost:4330`. R2 is emulated locally.
+
+4. Press Ctrl-C to drain work and stop. If the stop is refused, run `node scripts/start-hosted.mjs --resume`.
+
+</Steps>
+
+Run only one Wrangler container stack at a time, and rebuild `dist/web` after UI edits.
+
+## Environments and secrets
+
+`wrangler.jsonc` defines separate `development` and `production` environments. Keep their databases, keys, Google clients and Composio projects separate too. Use a dedicated PostgreSQL database, because provisioning changes default grants.
+
+Each environment has one `GATEWAY_ENV` Worker secret, compact JSON with these keys:
+
+| Key                                                              | Value                                                                                                                      |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                   | The dedicated database                                                                                                     |
+| `OTTO_MASTER_KEY`                                                | 32 random bytes                                                                                                            |
+| `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in                                                                                                             |
+| `COMPUTER_PROVIDER`                                              | `cloudflare`, or `e2b` with `E2B_API_KEY` and `E2B_COMPUTER_TEMPLATE`                                                      |
+| `OBJECT_STORAGE_PROVIDER`                                        | `http`                                                                                                                     |
+| `OBJECT_STORAGE_ENDPOINT`                                        | `http://otto.storage/v1/objects/`                                                                                          |
+| Model and `COMPOSIO_*` keys                                      | Your provider keys                                                                                                         |
+| Optional                                                         | `OTTO_MAX_USERS`, `OTTO_DEVELOPER_IDS`, `OTTO_PRIVACY_NOTICE_FILE`, `OTTO_ANALYTICS_ENABLED`, `OTTO_ANALYTICS_ENVIRONMENT` |
+
+- Keep `GATEWAY_ENV` under 5 KiB.
+- Never put secrets in build arguments, Vite variables or Wrangler `vars`.
+- Secret changes take effect only through a new release rollout.
+
+:::danger[`OTTO_MASTER_KEY` is recovery material]
+Replacing it invalidates tenant credentials and encrypted data. Store it like a backup key.
+:::
+
+## Privacy notice and analytics
+
+Write your notice to `public/privacy-notice.md` and set `OTTO_PRIVACY_NOTICE_FILE=dist/web/privacy-notice.md`. Otto serves it at `/privacy`, and an unreadable or invalid file stops startup. Check `/privacy` while signed out, then set it as the Google OAuth privacy policy URL before you invite anyone.
+
+Analytics are on by default for `production` only, and each user still has to opt in. Set `OTTO_ANALYTICS_ENABLED=false` to turn them off, or `true` to inspect a development deployment. Describe them in your notice. See [Analytics and recordings](/deploy/analytics/).
+
+## Create storage
+
+Each environment needs exactly one private EU R2 bucket bound as `TENANT_FILES`. Create it once with a separate operator token, `CLOUDFLARE_R2_OPERATOR_TOKEN`, that has Workers R2 Storage Edit.
+
+```sh title="Terminal"
+pnpm --dir deployment/cloudflare run provision:storage development
+pnpm --dir deployment/cloudflare run provision:storage production
+```
+
+## Workspace users
+
+Workspace commands run as `node`, and connected CLIs as `otto-connected` (uid 1002) with a private home. A deployed container gives every process root's capabilities, so both start through `setpriv --no-new-privs` with inheritable and ambient capabilities cleared. Otherwise a workspace command could read a CLI token from `/proc`. Connected CLIs live outside checkpoints and reinstall from their declared source after a restart.
+
+## Computer checkpoints
+
+A checkpoint is a gzip tar of the workspace (`/home/node/state`) or the user's browser data, stored in R2.
+
+| Limit                | Value                                                                          |
+| -------------------- | ------------------------------------------------------------------------------ |
+| Size                 | 1 GiB uncompressed, 512 MiB per file, 100,000 entries                          |
+| Always skipped       | `__pycache__` and `.cache` folders, FIFOs and sockets                          |
+| Browser skips        | Chromium HTTP, code, GPU, shader, Dawn and CRX caches                          |
+| Browser keeps        | Cookies, Local Storage, IndexedDB and Service Worker data                      |
+| Browser saves when   | It goes idle, which closes its pages                                           |
+| Workspace saves when | About 20 seconds after the last command, and before it sleeps, stops or drains |
+
+When a conversation turn ends waiting for the user, the tenant holds a running browser for up to 30 minutes. The next turn or a reset releases it.
+
+:::caution[Changes between checkpoints can be lost]
+If a workspace container is lost before its next checkpoint, recent changes are lost. The model is told on its next command.
+:::
+
+A workspace too large to save keeps running on its previous checkpoint, and the model's next bash output says what to delete. Unsaved changes are dropped when it sleeps, stops or drains. This never blocks a deploy.
+
+## CI and rollout
+
+`ci.yml` runs root checks, PostgreSQL tests, the build, this package's checks and tests, both dry runs and the image builds. `deploy.yml` runs after CI passes on the current `main` commit, in the GitHub `production` environment.
+
+| Kind     | Name                    | Value                                                       |
+| -------- | ----------------------- | ----------------------------------------------------------- |
+| Secret   | `CLOUDFLARE_API_TOKEN`  | Deployment token (Workers publish and settings, Containers) |
+| Secret   | `CLOUDFLARE_ACCOUNT_ID` | Account ID                                                  |
+| Secret   | `GATEWAY_ENV`           | Production gateway JSON                                     |
+| Variable | `OTTO_PUBLIC_URL`       | Canonical HTTPS origin                                      |
+
+`scripts/deploy.mjs production` then runs these steps:
+
+<Steps>
+
+1. Push all three images and resolve their digests.
+2. Close a durable admission barrier, authorized by an HMAC derived from `OTTO_MASTER_KEY`.
+3. Drain each tenant, then require clean browser and workspace checkpoints and a confirmed stop of each exact generation. Active holds, uncertain state or an expired deadline block the deploy. Nothing is force-cancelled.
+4. Publish Worker code, image references and `GATEWAY_ENV` together with `wrangler deploy --secrets-file`.
+5. Verify every container application's image and rollout, the R2 binding and a public smoke test, then reopen admission.
+
+</Steps>
+
+```mermaid
+sequenceDiagram
+  participant Deploy as deploy.mjs
+  participant Gateway
+  participant Tenants
+  participant CF as Cloudflare
+  Deploy->>CF: Push images
+  Deploy->>Gateway: Close admission
+  Gateway->>Tenants: Drain, checkpoint, stop
+  Tenants-->>Gateway: Stopped cleanly
+  Deploy->>CF: Publish Worker, images, secret
+  Deploy->>CF: Verify and smoke test
+  Deploy->>Gateway: Reopen admission
+```
+
+Otto refuses to redeploy the SHA already in production, so configuration changes need a new release. For a manual development deploy with locally built `linux/amd64` images, run `pnpm --dir deployment/cloudflare run deploy:development`.
+
+## Recover or roll back
+
+If a deployment is interrupted, check out the same release, load the same private environment with `OTTO_RELEASE` set to that SHA, and run:
+
+```sh title="Terminal"
+node deployment/cloudflare/scripts/recover.mjs production status
+node deployment/cloudflare/scripts/recover.mjs production abort
+node deployment/cloudflare/scripts/recover.mjs production complete
+```
+
+Use `abort` only before activation and `complete` only after it. A failed or expired deployment never reopens on its own. Don't delete the barrier, substitute a nonce or clear a fence to get past a failure.
+
+Before a rollback, confirm the previous code supports the current SQL schema, Durable Object classes, checkpoint format and keys, and stop the current generations. A Worker rollback doesn't revert PostgreSQL, R2 or completed external actions, so prefer a forward fix.
+
+## Reset the database
+
+A reset removes every account and its data from one environment. Use it only when a release requires it.
+
+<details>
+<summary>Database reset runbook</summary>
+
+<Steps>
+
+1. Confirm the exact origin, database, bucket, provider projects and release. Keep the deployment, OAuth clients, provider keys, Composio auth configs and `OTTO_MASTER_KEY`.
+2. Close admission with the deployment barrier, as in a rollout. Confirm every tenant and computer generation has stopped, and keep the gateway from restarting.
+3. Remove external resources while their IDs are readable: unregister each user's Telegram webhook, delete their Composio triggers, sessions and connected accounts, and revoke direct OAuth grants.
+4. Delete R2 objects under `<environment>/<owner>/` (`artifacts/`, `sessions/`, `computers/`) and abort incomplete multipart uploads.
+5. In PostgreSQL, drop every tenant app and jobs schema and tenant role. Delete Better Auth users, accounts, sessions, verification rows and account settings. Clear the tenant registry and channel claim records, but keep the auth and control table definitions.
+6. Verify zero users, sessions, tenant schemas, roles, registry rows and owner objects. Keep a counts-only record, and never log user content or credentials.
+7. Reopen admission with the same deployment operation. Check `/api/health`, that anonymous sessions have no access, and that old sessions are rejected.
+
+</Steps>
+
+If a provider or database call fails partway, keep admission closed and verify again before you retry. Provider backups and logs are outside this procedure.
+
+</details>
+
+## Optional: E2B computers
+
+E2B runs one sandbox per user, with the browser, workspace and connected CLIs as separate Linux users behind an nftables guard. Cloudflare remains the selected hosted provider.
+
+```sh title="Terminal"
+node --import tsx deployment/e2b/build.ts computer --check
+node --import tsx deployment/e2b/build-local.ts
+node deployment/e2b/validate-computer.mjs otto-e2b-computer:<hash-prefix>
+node --env-file=<private-dev-env> --import tsx deployment/e2b/build.ts computer <template-name>
+```
+
+In order: an offline context check, a local image, isolation checks, and the billable template build.
+
+Select it with `COMPUTER_PROVIDER=e2b`, `OBJECT_STORAGE_PROVIDER=postgres`, `E2B_API_KEY` and the returned template ID as `E2B_COMPUTER_TEMPLATE`. Live acceptance (`deployment/e2b/acceptance.ts plan|run|inspect|cleanup`) must pass in a disposable development sandbox before you turn E2B on anywhere.
+
+## Related resources
+
+- [Configuration reference](/deploy/configuration/)
+- [Analytics and recordings](/deploy/analytics/)
+- [Hosted mode](/how-it-works/hosted-mode/)
+- [Troubleshooting](/deploy/troubleshooting/)

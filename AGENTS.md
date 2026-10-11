@@ -1,6 +1,6 @@
 # Otto
 
-Setup is in [README](README.md), development and checks are in [CONTRIBUTING](CONTRIBUTING.md), and how the system works is in [architecture](docs/architecture.md).
+Setup, use and how the system works are in the docs site, whose pages live in `docs/src/content/docs` (start with [architecture](docs/src/content/docs/how-it-works/architecture.mdx) and [Trust and Vault](docs/src/content/docs/trust/index.mdx)). Development and checks are in [CONTRIBUTING](CONTRIBUTING.md).
 
 ## Rules
 
@@ -9,6 +9,7 @@ Setup is in [README](README.md), development and checks are in [CONTRIBUTING](CO
 - No code comments or JSDoc.
 - Prefer deleting to patching ceremony. Breaking changes are fine; keep the code small.
 - Use synthetic data and disposable database schemas. Never reset the normal local database, and never call a live model, connected account or real recipient from a test.
+- Documentation lives only in `docs/`. When setup, behaviour or a safety rule changes, update the matching page in the same change and follow [Write docs](docs/src/content/docs/contribute/write-docs.mdx). Package READMEs stay short pointers to the docs.
 
 ## Architecture
 
@@ -43,7 +44,7 @@ Setup is in [README](README.md), development and checks are in [CONTRIBUTING](CO
 
 ## Validation
 
-Run focused tests while editing, then `pnpm run check`, `pnpm run test:integration` and `pnpm run build`. For capability eval changes also run `pnpm --dir evals run check` and `pnpm --dir evals test`. The evals themselves call live models, so run them manually (see [evals](evals/README.md)). For deployment changes also run `pnpm --dir deployment/cloudflare run check`, `pnpm --dir deployment/cloudflare test` and both Wrangler dry runs (see [Cloudflare](deployment/cloudflare/README.md)). Report fixtures, UI checks and live checks separately.
+Run focused tests while editing, then `pnpm run check`, `pnpm run test:integration` and `pnpm run build`. For capability eval changes also run `pnpm --dir evals run check` and `pnpm --dir evals test`. The evals themselves call live models, so run them manually (see [evals](docs/src/content/docs/contribute/evals.mdx)). For deployment changes also run `pnpm --dir deployment/cloudflare run check`, `pnpm --dir deployment/cloudflare test` and both Wrangler dry runs (see [Cloudflare](docs/src/content/docs/deploy/cloudflare.mdx)). For docs changes run `pnpm --dir docs build`, which fails on a broken link. Report fixtures, UI checks and live checks separately.
 
 ## Tests
 

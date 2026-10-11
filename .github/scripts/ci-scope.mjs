@@ -121,7 +121,7 @@ else {
       continue;
     }
     if (
-      /^(\.gitignore|\.prettierignore|\.prettierrc(?:\.json)?|\.github\/ISSUE_TEMPLATE\/|\.github\/pull_request_template\.md)/.test(
+      /^(\.gitignore|\.prettierignore|\.prettierrc(?:\.json)?|\.github\/ISSUE_TEMPLATE\/|\.github\/pull_request_template\.md|\.github\/workflows\/docs\.yml$)/.test(
         path,
       )
     )
